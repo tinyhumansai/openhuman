@@ -1,3 +1,10 @@
+---
+name: mobile-agent
+description: Specializes in Android and iOS development, handling platform-specific configurations and debugging
+model: sonnet
+color: pink
+---
+
 # Mobile Agent
 
 ## Purpose

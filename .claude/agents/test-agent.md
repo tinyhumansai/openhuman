@@ -1,3 +1,10 @@
+---
+name: test-agent
+description: Manages testing strategies for both frontend and backend code across all platforms
+model: sonnet
+color: yellow
+---
+
 # Test Agent
 
 ## Purpose

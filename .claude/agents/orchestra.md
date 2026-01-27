@@ -1,3 +1,10 @@
+---
+name: orchestra
+description: Development Pipeline Orchestrator that manages the entire development pipeline by coordinating all specialist agents through stevebaba → elvinbaba → neilbaba → prembaba workflow.
+model: sonnet
+color: purple
+---
+
 # orchestra - Development Pipeline Orchestrator
 
 ## Agent Description

@@ -1,3 +1,10 @@
+---
+name: build-agent
+description: Handles building and bundling the Tauri application for all target platforms
+model: sonnet
+color: cyan
+---
+
 # Build Agent
 
 ## Purpose

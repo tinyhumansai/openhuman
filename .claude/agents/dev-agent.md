@@ -1,3 +1,10 @@
+---
+name: dev-agent
+description: Assists with day-to-day development tasks, code generation, and feature implementation
+model: sonnet
+color: teal
+---
+
 # Development Agent
 
 ## Purpose

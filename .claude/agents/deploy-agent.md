@@ -1,3 +1,10 @@
+---
+name: deploy-agent
+description: Handles deployment, distribution, and release management for all platforms
+model: sonnet
+color: red
+---
+
 # Deploy Agent
 
 ## Purpose
