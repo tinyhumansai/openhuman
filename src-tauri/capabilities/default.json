@@ -5,6 +5,7 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "deep-link:default"
   ]
 }

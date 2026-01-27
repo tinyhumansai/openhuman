@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { countries } from '../data/countries';
+import { BACKEND_URL } from '../utils/config';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -35,9 +37,12 @@ const Login = () => {
     }
   };
 
-  const handleTelegramAuth = () => {
-    // In a real app, this would handle Telegram OAuth
-    navigate('/onboarding/step1');
+  const handleTelegramAuth = async () => {
+    try {
+      await openUrl(`${BACKEND_URL}/auth/telegram?platform=desktop`);
+    } catch (error) {
+      console.error('Failed to open Telegram auth page:', error);
+    }
   };
 
   return (
