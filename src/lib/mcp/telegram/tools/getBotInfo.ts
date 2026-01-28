@@ -1,6 +1,9 @@
 import type { MCPTool, MCPToolResult } from "../../types";
 import type { TelegramMCPContext } from "../types";
-import { notImplemented } from "./notImplemented";
+import { ErrorCategory, logAndFormatError } from '../../errorHandler';
+import { validateId } from '../../validation';
+import { mtprotoService } from '../../../../services/mtprotoService';
+import { Api } from 'telegram';
 
 export const tool: MCPTool = {
   name: "get_bot_info",
@@ -15,8 +18,50 @@ export const tool: MCPTool = {
 };
 
 export async function getBotInfo(
-  _args: Record<string, unknown>,
+  args: Record<string, unknown>,
   _context: TelegramMCPContext,
 ): Promise<MCPToolResult> {
-  return notImplemented("get_bot_info");
+  try {
+    const botId = validateId(args.chat_id, 'chat_id');
+    const client = mtprotoService.getClient();
+
+    const result = await mtprotoService.withFloodWaitHandling(async () => {
+      const inputUser = await client.getInputEntity(botId);
+      return client.invoke(
+        new Api.users.GetFullUser({ id: inputUser as Api.TypeInputUser }),
+      );
+    });
+
+    const fullUser = (result as any)?.fullUser;
+    const user = (result as any)?.users?.[0];
+
+    if (!user) {
+      return { content: [{ type: 'text', text: 'Bot not found: ' + botId }], isError: true };
+    }
+
+    const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Unknown';
+    const lines = [
+      'Name: ' + name,
+      'Username: @' + (user.username ?? 'N/A'),
+      'ID: ' + user.id,
+      'Bot: ' + (user.bot ? 'Yes' : 'No'),
+      'About: ' + (fullUser?.about ?? 'N/A'),
+      'Bot Info Description: ' + (fullUser?.botInfo?.description ?? 'N/A'),
+    ];
+
+    if (fullUser?.botInfo?.commands) {
+      lines.push('Commands:');
+      for (const cmd of fullUser.botInfo.commands) {
+        lines.push('  /' + cmd.command + ' - ' + cmd.description);
+      }
+    }
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  } catch (error) {
+    return logAndFormatError(
+      'get_bot_info',
+      error instanceof Error ? error : new Error(String(error)),
+      ErrorCategory.CONTACT,
+    );
+  }
 }
