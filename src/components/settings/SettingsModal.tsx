@@ -3,6 +3,11 @@ import { useLocation } from 'react-router-dom';
 import SettingsLayout from './SettingsLayout';
 import SettingsHome from './SettingsHome';
 import ConnectionsPanel from './panels/ConnectionsPanel';
+import MessagingPanel from './panels/MessagingPanel';
+import PrivacyPanel from './panels/PrivacyPanel';
+import ProfilePanel from './panels/ProfilePanel';
+import AdvancedPanel from './panels/AdvancedPanel';
+import BillingPanel from './panels/BillingPanel';
 import { useSettingsNavigation } from './hooks/useSettingsNavigation';
 
 const SettingsModal = () => {
@@ -21,13 +26,11 @@ const SettingsModal = () => {
       <Routes>
         <Route path="/settings" element={<SettingsHome />} />
         <Route path="/settings/connections" element={<ConnectionsPanel />} />
-
-        {/* Future settings panels */}
-        <Route path="/settings/messaging" element={<div className="p-6 text-center">Messaging settings coming soon</div>} />
-        <Route path="/settings/privacy" element={<div className="p-6 text-center">Privacy settings coming soon</div>} />
-        <Route path="/settings/profile" element={<div className="p-6 text-center">Profile settings coming soon</div>} />
-        <Route path="/settings/advanced" element={<div className="p-6 text-center">Advanced settings coming soon</div>} />
-        <Route path="/settings/billing" element={<div className="p-6 text-center">Billing settings coming soon</div>} />
+        <Route path="/settings/messaging" element={<MessagingPanel />} />
+        <Route path="/settings/privacy" element={<PrivacyPanel />} />
+        <Route path="/settings/profile" element={<ProfilePanel />} />
+        <Route path="/settings/advanced" element={<AdvancedPanel />} />
+        <Route path="/settings/billing" element={<BillingPanel />} />
       </Routes>
     </SettingsLayout>
   );
