@@ -1,6 +1,4 @@
 import { useState } from "react";
-import { openUrl } from "../../../utils/openUrl";
-import { TELEGRAM_BOT_USERNAME } from "../../../utils/config";
 import ConnectionIndicator from "../../../components/ConnectionIndicator";
 
 interface GetStartedStepProps {
@@ -15,7 +13,6 @@ const GetStartedStep = ({ onComplete }: GetStartedStepProps) => {
     setError(null);
     setLoading(true);
     try {
-      await openUrl(`https://t.me/${TELEGRAM_BOT_USERNAME}`);
       await onComplete();
     } catch (e) {
       setError(

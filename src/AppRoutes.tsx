@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import Welcome from "./pages/Welcome";
 import Login from "./pages/Login";
 import Onboarding from "./pages/onboarding/Onboarding";
@@ -7,6 +7,17 @@ import PublicRoute from "./components/PublicRoute";
 import ProtectedRoute from "./components/ProtectedRoute";
 import DefaultRedirect from "./components/DefaultRedirect";
 import SettingsModal from "./components/settings/SettingsModal";
+import { useAppSelector } from "./store/hooks";
+import { selectIsOnboarded } from "./store/authSelectors";
+
+const OnboardingRoute = () => {
+  const isOnboarded = useAppSelector(selectIsOnboarded);
+
+  // If the user has already completed onboarding, skip this page and go home.
+  // On first load, when onboarding status is unset/false, we allow showing onboarding.
+  if (isOnboarded) return <Navigate to="/home" replace />;
+  return <Onboarding />;
+};
 
 const AppRoutes = () => {
   return (
@@ -35,7 +46,7 @@ const AppRoutes = () => {
           path="/onboarding"
           element={
             <ProtectedRoute requireAuth={true} requireOnboarded={false}>
-              <Onboarding />
+              <OnboardingRoute />
             </ProtectedRoute>
           }
         />
