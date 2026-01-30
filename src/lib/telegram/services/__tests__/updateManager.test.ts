@@ -84,9 +84,9 @@ vi.mock("telegram/tl", () => ({
 }));
 
 vi.mock("big-integer", () => ({ default: (v: any) => v }));
-vi.mock("../lib/mcp/logger");
+vi.mock("../../../mcp/logger");
 
-import { UpdateManager } from "./updateManager";
+import { UpdateManager } from "../updateManager";
 import { Api } from "telegram/tl";
 
 function createMockClient(): TelegramClient {

@@ -16,10 +16,10 @@ import {
   selectSelectedChat,
   selectFilteredChats,
   selectChatLatestMessage,
-} from "./telegramSelectors";
-import type { TelegramState, TelegramChat, TelegramMessage } from "./telegram/types";
-import { initialState } from "./telegram/types";
-import type { RootState } from "./index";
+} from "../telegramSelectors";
+import type { TelegramState, TelegramChat, TelegramMessage } from "../telegram/types";
+import { initialState } from "../telegram/types";
+import type { RootState } from "../index";
 
 /**
  * Helper to build a mock RootState with customizable telegram state

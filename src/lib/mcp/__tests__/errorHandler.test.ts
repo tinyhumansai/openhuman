@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { logAndFormatError, withErrorHandling, ErrorCategory } from "./errorHandler";
-import { ValidationError } from "./validation";
-import type { MCPToolResult } from "./types";
+import { logAndFormatError, withErrorHandling, ErrorCategory } from "../errorHandler";
+import { ValidationError } from "../validation";
+import type { MCPToolResult } from "../types";
 
 describe("logAndFormatError", () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;

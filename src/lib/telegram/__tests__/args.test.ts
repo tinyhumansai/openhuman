@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { optNumber, optString } from "./args";
+import { optNumber, optString } from "../args";
 
 describe("optNumber", () => {
   it("returns the number when args[key] is a valid number", () => {

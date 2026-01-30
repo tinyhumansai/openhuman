@@ -18,7 +18,7 @@ vi.mock("redux-persist", async () => {
 });
 
 // Mock the main store exports to prevent store initialization
-vi.mock("../index", () => ({
+vi.mock("../../index", () => ({
   store: { getState: vi.fn(), dispatch: vi.fn(), subscribe: vi.fn(), replaceReducer: vi.fn() },
   persistor: { purge: vi.fn(), flush: vi.fn() },
 }));
@@ -60,7 +60,7 @@ import telegramReducer, {
   setCurrentUser,
   setUsers,
   addUsers,
-} from "./index";
+} from "../index";
 
 function createStore() {
   return configureStore({ reducer: { telegram: telegramReducer } });

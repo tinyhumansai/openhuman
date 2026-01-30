@@ -6,10 +6,10 @@ import {
   enforceRateLimit,
   resetRequestCallCount,
   RATE_LIMIT_CONFIG,
-} from "./rateLimiter";
+} from "../rateLimiter";
 
 // Mock the logger module to avoid console output during tests
-vi.mock("./logger", () => ({
+vi.mock("../logger", () => ({
   mcpLog: vi.fn(),
   mcpWarn: vi.fn(),
 }));

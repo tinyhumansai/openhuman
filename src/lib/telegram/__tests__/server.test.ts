@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { MCPToolResult } from "../mcp/types";
+import type { MCPToolResult } from "../../mcp/types";
 
 // Use vi.hoisted so mock variables are available when vi.mock factories run
 const {
@@ -21,12 +21,12 @@ const {
 }));
 
 // Mock the transport module — must use hoisted variables
-vi.mock("../mcp/transport", () => ({
+vi.mock("../../mcp/transport", () => ({
   SocketIOMCPTransportImpl: vi.fn(),
 }));
 
 // Mock the store
-vi.mock("../../store", () => ({
+vi.mock("../../../store", () => ({
   store: {
     getState: vi.fn(() => ({
       user: { user: { _id: "u1" } },
@@ -70,7 +70,7 @@ vi.mock("../../store", () => ({
   },
 }));
 
-vi.mock("../../store/telegramSelectors", () => ({
+vi.mock("../../../store/telegramSelectors", () => ({
   selectTelegramUserState: vi.fn((state: any) => {
     const userId = state?.user?.user?._id ?? "";
     return state?.telegram?.byUser?.[userId] ?? {};
@@ -80,7 +80,7 @@ vi.mock("../../store/telegramSelectors", () => ({
 }));
 
 // Mock the skills module
-vi.mock("../mcp/skills", () => ({
+vi.mock("../../mcp/skills", () => ({
   useExtraToolDefinition: {
     name: "use_extra_tool",
     description: "meta",
@@ -93,7 +93,7 @@ vi.mock("../mcp/skills", () => ({
 }));
 
 // Mock rateLimiter
-vi.mock("../mcp/rateLimiter", () => ({
+vi.mock("../../mcp/rateLimiter", () => ({
   enforceRateLimit: vi.fn().mockResolvedValue(undefined),
   resetRequestCallCount: vi.fn(),
   isStateOnlyTool: vi.fn(() => false),
@@ -102,13 +102,13 @@ vi.mock("../mcp/rateLimiter", () => ({
 }));
 
 // Mock logger
-vi.mock("../mcp/logger", () => ({
+vi.mock("../../mcp/logger", () => ({
   mcpLog: vi.fn(),
   mcpWarn: vi.fn(),
 }));
 
 // Mock API functions used by tool handlers
-vi.mock("./api/getChats", () => ({
+vi.mock("../api/getChats", () => ({
   getChats: vi.fn(() =>
     Promise.resolve({
       data: [
@@ -132,7 +132,7 @@ vi.mock("./api/getChats", () => ({
   ),
 }));
 
-vi.mock("./api/sendMessage", () => ({
+vi.mock("../api/sendMessage", () => ({
   sendMessage: vi.fn(() =>
     Promise.resolve({
       data: { id: "msg1", message: "Hello", chatId: "1", date: 1234567890 },
@@ -141,7 +141,7 @@ vi.mock("./api/sendMessage", () => ({
   ),
 }));
 
-vi.mock("./api/getCurrentUser", () => ({
+vi.mock("../api/getCurrentUser", () => ({
   getCurrentUser: vi.fn(() =>
     Promise.resolve({
       data: {
@@ -156,7 +156,7 @@ vi.mock("./api/getCurrentUser", () => ({
   ),
 }));
 
-vi.mock("./api/getMessages", () => ({
+vi.mock("../api/getMessages", () => ({
   getMessages: vi.fn(() =>
     Promise.resolve({
       data: [
@@ -180,7 +180,7 @@ vi.mock("./api/getMessages", () => ({
   ),
 }));
 
-vi.mock("./api/helpers", async (importOriginal) => {
+vi.mock("../api/helpers", async (importOriginal) => {
   const original = (await importOriginal()) as any;
   return {
     ...original,
@@ -218,7 +218,7 @@ describe("TelegramMCPServer", () => {
     vi.clearAllMocks();
 
     // Re-apply mock implementations (mockReset: true in config clears them between tests)
-    const { SocketIOMCPTransportImpl } = await import("../mcp/transport");
+    const { SocketIOMCPTransportImpl } = await import("../../mcp/transport");
     vi.mocked(SocketIOMCPTransportImpl).mockImplementation(function (
       this: any
     ) {
@@ -230,18 +230,18 @@ describe("TelegramMCPServer", () => {
       return this;
     } as any);
 
-    const rateLimiter = await import("../mcp/rateLimiter");
+    const rateLimiter = await import("../../mcp/rateLimiter");
     vi.mocked(rateLimiter.enforceRateLimit).mockResolvedValue(undefined);
     vi.mocked(rateLimiter.resetRequestCallCount).mockImplementation(() => {});
     vi.mocked(rateLimiter.isStateOnlyTool).mockReturnValue(false);
 
-    const skills = await import("../mcp/skills");
+    const skills = await import("../../mcp/skills");
     vi.mocked(skills.executeExtraToolIfExists).mockReturnValue(null as any);
     vi.mocked(skills.getAllExtraTools).mockReturnValue([]);
     vi.mocked(skills.isExtraToolByName).mockReturnValue(false);
 
     // Re-apply API mocks
-    const getChatsApi = await import("./api/getChats");
+    const getChatsApi = await import("../api/getChats");
     vi.mocked(getChatsApi.getChats).mockResolvedValue({
       data: [
         {
@@ -262,7 +262,7 @@ describe("TelegramMCPServer", () => {
       fromCache: true,
     });
 
-    const sendMsgApi = await import("./api/sendMessage");
+    const sendMsgApi = await import("../api/sendMessage");
     vi.mocked(sendMsgApi.sendMessage).mockResolvedValue({
       data: {
         id: "msg1",
@@ -273,7 +273,7 @@ describe("TelegramMCPServer", () => {
       fromCache: false,
     });
 
-    const getUserApi = await import("./api/getCurrentUser");
+    const getUserApi = await import("../api/getCurrentUser");
     vi.mocked(getUserApi.getCurrentUser).mockResolvedValue({
       data: {
         id: "1",
@@ -285,7 +285,7 @@ describe("TelegramMCPServer", () => {
       fromCache: true,
     });
 
-    const getMsgsApi = await import("./api/getMessages");
+    const getMsgsApi = await import("../api/getMessages");
     vi.mocked(getMsgsApi.getMessages).mockResolvedValue({
       data: [
         {
@@ -306,7 +306,7 @@ describe("TelegramMCPServer", () => {
       fromCache: true,
     });
 
-    const helpers = await import("./api/helpers");
+    const helpers = await import("../api/helpers");
     vi.mocked(helpers.getChatById).mockReturnValue({
       id: "1",
       title: "Chat One",
@@ -315,7 +315,7 @@ describe("TelegramMCPServer", () => {
       isPinned: false,
     });
 
-    const store = await import("../../store");
+    const store = await import("../../../store");
     vi.mocked(store.store.getState).mockReturnValue({
       user: { user: { _id: "u1" } },
       telegram: {
@@ -335,7 +335,7 @@ describe("TelegramMCPServer", () => {
     } as any);
 
     // Import server after all mocks are set up
-    const { TelegramMCPServer } = await import("./server");
+    const { TelegramMCPServer } = await import("../server");
 
     // Create server instance — constructor calls setupHandlers() which calls
     // transport.on("toolCall", ...) and transport.on("listTools", ...)
@@ -551,7 +551,7 @@ describe("TelegramMCPServer", () => {
 
     it("should handle rate limit errors", async () => {
       // Mock enforceRateLimit to reject for this call
-      const rateLimiter = await import("../mcp/rateLimiter");
+      const rateLimiter = await import("../../mcp/rateLimiter");
       vi.mocked(rateLimiter.enforceRateLimit).mockRejectedValueOnce(
         new Error("Rate limit exceeded")
       );
@@ -578,7 +578,7 @@ describe("TelegramMCPServer", () => {
 
     it("should handle API errors gracefully", async () => {
       // Make the send_message tool handler throw
-      const sendMessageApi = await import("./api/sendMessage");
+      const sendMessageApi = await import("../api/sendMessage");
       vi.mocked(sendMessageApi.sendMessage).mockRejectedValueOnce(
         new Error("Network error: Connection timeout")
       );

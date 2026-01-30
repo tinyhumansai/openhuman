@@ -209,8 +209,8 @@ Key updates from recent commits:
 - **Tauri IPC**: Frontend calls Rust via `invoke()` from `@tauri-apps/api/core`. Rust commands are registered in `generate_handler![]` macro.
 - **CORS workaround**: External HTTP requests from the WebView hit CORS. Use Rust `reqwest` via Tauri commands instead of browser `fetch()`.
 - **Hash Routing**: Uses HashRouter for desktop app compatibility and deep link handling.
-- **State Layer**: All Redux dispatches for Telegram state go through functions in `src/lib/telegram/state/` — never import Redux actions directly from services or update handlers. State functions accept an optional `userId` param (falls back to `getCurrentUserId()`).
-- **Telegram Services**: All Telegram-related services live in `src/lib/telegram/services/` (mtprotoService, updateManager, messageLoader, syncService, updateHandler, entityBuilders). Non-Telegram services remain in `src/services/`.
+- **Integration Libraries**: Each integration (Telegram, future Gmail, etc.) lives under `src/lib/<integration>/` with its own `state/`, `services/`, `api/` subdirectories. Domain-specific services belong in the integration folder, not in `src/services/` (which holds only cross-cutting services like socketService, apiClient).
+- **State Layer**: Each integration dispatches Redux changes through state functions in `src/lib/<integration>/state/` — never import Redux actions directly from services or update handlers. State functions accept an optional `userId` param (falls back to `getCurrentUserId()`).
 - **Unit Tests**: All unit tests live in `__tests__/` folders co-located with the code they test.
 
 ## Platform Gotchas

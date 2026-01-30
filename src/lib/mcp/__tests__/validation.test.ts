@@ -5,7 +5,7 @@ import {
   validateIdList,
   validatePositiveInt,
   validateOptionalId,
-} from "./validation";
+} from "../validation";
 
 describe("ValidationError", () => {
   it("should have correct name property", () => {
