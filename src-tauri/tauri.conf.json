@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "AlphaHuman",
   "version": "0.1.0",
   "identifier": "com.megamind.tauri-app",
   "build": {
@@ -12,14 +12,20 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-app",
+        "label": "main",
+        "title": "AlphaHuman",
         "width": 800,
-        "height": 600
+        "height": 600,
+        "visible": false,
+        "decorations": true,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
@@ -35,7 +41,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["outsourced"]
+        "schemes": ["alphahuman"]
       }
     }
   }

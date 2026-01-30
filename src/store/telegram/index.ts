@@ -41,6 +41,16 @@ export const {
   resetTelegramForUser,
   resetChats,
   resetMessages,
+  // Normalized message indexing
+  addChatMessagesById,
+  setViewportIds,
+  addOutlyingList,
+  mergeOutlyingLists,
+  deleteChatMessages,
+  setThreadListedIds,
+  // Update sequencing
+  setCommonBoxState,
+  setChannelPts,
 } = telegramSlice.actions;
 
 // Re-export thunks
@@ -62,7 +72,8 @@ export type {
   TelegramThread,
   TelegramState,
   TelegramRootState,
+  ThreadMessageState,
 } from "./types";
-export { initialState } from "./types";
+export { initialState, MAIN_THREAD_ID } from "./types";
 
 export default telegramSlice.reducer;

@@ -9,17 +9,44 @@ import {
   updateTelegramMCPServerSocket,
   cleanupTelegramMCPServer,
 } from "../lib/mcp/telegram";
+import {
+  isTauri,
+  setupTauriSocketListeners,
+  cleanupTauriSocketListeners,
+  reportSocketConnected,
+  reportSocketDisconnected,
+  reportSocketError,
+  updateSocketStatus,
+} from "../utils/tauriSocket";
 
 /**
  * SocketProvider manages the socket connection based on JWT token
  * - Connects when token is set
  * - Disconnects when token is unset
+ * - Integrates with Tauri for background persistence
  */
 const SocketProvider = ({ children }: { children: React.ReactNode }) => {
   const token = useAppSelector((state) => state.auth.token);
   const socketStatus = useAppSelector(selectSocketStatus);
   const previousTokenRef = useRef<string | null>(null);
+  const tauriListenersSetup = useRef(false);
 
+  // Setup Tauri event listeners once
+  useEffect(() => {
+    if (isTauri() && !tauriListenersSetup.current) {
+      setupTauriSocketListeners();
+      tauriListenersSetup.current = true;
+    }
+
+    return () => {
+      if (isTauri() && tauriListenersSetup.current) {
+        cleanupTauriSocketListeners();
+        tauriListenersSetup.current = false;
+      }
+    };
+  }, []);
+
+  // Handle socket connection based on token
   useEffect(() => {
     const previousToken = previousTokenRef.current;
 
@@ -27,6 +54,11 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
     if (token && token !== previousToken) {
       socketService.connect(token);
       previousTokenRef.current = token;
+
+      // Report to Rust that we're connecting
+      if (isTauri()) {
+        updateSocketStatus("connecting");
+      }
     }
 
     // Token was unset - disconnect
@@ -34,10 +66,15 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       socketService.disconnect();
       cleanupTelegramMCPServer();
       previousTokenRef.current = null;
+
+      // Report to Rust
+      if (isTauri()) {
+        reportSocketDisconnected();
+      }
     }
   }, [token]);
 
-  // Handle MCP initialization when socket connects
+  // Handle MCP initialization and Tauri status reporting
   useEffect(() => {
     if (socketStatus === "connected") {
       const socket = socketService.getSocket();
@@ -48,18 +85,58 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       } else {
         initTelegramMCPServer(socket);
       }
+
+      // Report to Rust
+      if (isTauri()) {
+        reportSocketConnected(socket?.id);
+      }
     } else if (socketStatus === "disconnected") {
       cleanupTelegramMCPServer();
+
+      // Report to Rust
+      if (isTauri()) {
+        reportSocketDisconnected();
+      }
+    } else if (socketStatus === "connecting") {
+      // Report connecting status to Rust
+      if (isTauri()) {
+        updateSocketStatus("connecting");
+      }
     }
   }, [socketStatus]);
 
+  // Listen for socket errors and report to Rust
+  useEffect(() => {
+    const socket = socketService.getSocket();
+    if (!socket) return;
+
+    const handleError = (error: Error) => {
+      if (isTauri()) {
+        reportSocketError(error.message || "Socket error");
+      }
+    };
+
+    const handleConnectError = (error: Error) => {
+      if (isTauri()) {
+        reportSocketError(error.message || "Connection error");
+        updateSocketStatus("error");
+      }
+    };
+
+    socket.on("error", handleError);
+    socket.on("connect_error", handleConnectError);
+
+    return () => {
+      socket.off("error", handleError);
+      socket.off("connect_error", handleConnectError);
+    };
+  }, [socketStatus]);
+
   // Cleanup on unmount only
-  // Note: This should only run when the entire app unmounts, not on re-renders
   useEffect(() => {
     return () => {
       // Only disconnect on actual unmount (e.g., app closing)
       // Don't disconnect on re-renders or route changes
-      // Check if token still exists - if it does, don't disconnect (might be a re-render)
       const currentToken = store.getState().auth.token;
       if (!currentToken) {
         socketService.disconnect();

@@ -116,9 +116,9 @@ Model Context Protocol implementation for AI tool execution over Socket.io:
 
 ### Deep Link Auth Flow
 
-Web-to-desktop handoff using `outsourced://` URL scheme:
+Web-to-desktop handoff using `alphahuman://` URL scheme:
 1. User authenticates in browser
-2. Browser redirects to `outsourced://auth?token=<loginToken>`
+2. Browser redirects to `alphahuman://auth?token=<loginToken>`
 3. Tauri catches the deep link, Rust `exchange_token` command calls backend via `reqwest` (bypasses CORS)
 4. Backend returns `sessionToken` + user object
 5. App stores session in Redux, navigates to onboarding/home
@@ -182,7 +182,7 @@ Key updates from recent commits:
   - ConnectionsPanel.tsx - Connection management with status indicators
   - Hooks: useSettingsNavigation.ts, useSettingsAnimation.ts
 - **Onboarding Flow**: Multi-step process with privacy, analytics, and connection steps
-- **Authentication**: Web-to-desktop handoff using `outsourced://` scheme
+- **Authentication**: Web-to-desktop handoff using `alphahuman://` scheme
 - **Connection Management**: Telegram MTProto and Socket.io integration
 
 ## Key Patterns

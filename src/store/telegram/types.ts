@@ -73,6 +73,22 @@ export interface TelegramThread {
   isPinned: boolean;
 }
 
+/**
+ * Per-thread message indexing state.
+ * Tracks which messages are loaded, visible, and where gaps exist.
+ */
+export interface ThreadMessageState {
+  /** All loaded message IDs in chronological order (contiguous range) */
+  listedIds: string[];
+  /** Disjoint loaded ranges when there are gaps in history (e.g. user jumped to a pinned message) */
+  outlyingLists: string[][];
+  /** Currently visible message IDs (capped at viewport limit) */
+  viewportIds: string[];
+}
+
+/** Default key for the main (non-threaded) conversation */
+export const MAIN_THREAD_ID = "__main__";
+
 export interface TelegramState {
   // Connection state
   connectionStatus: TelegramConnectionStatus;
@@ -93,9 +109,18 @@ export interface TelegramState {
   chatsOrder: string[]; // Ordered list of chat IDs
   selectedChatId: string | null;
 
-  // Messages (organized by chatId)
-  messages: Record<string, Record<string, TelegramMessage>>; // [chatId][messageId] = message
-  messagesOrder: Record<string, string[]>; // [chatId] = [messageId, ...]
+  // ---------------------------------------------------------------------------
+  // Messages — Normalized storage
+  // ---------------------------------------------------------------------------
+
+  /** Flat message map per chat: messages[chatId][messageId] = message (O(1) lookup) */
+  messages: Record<string, Record<string, TelegramMessage>>;
+
+  /** Ordered message IDs per chat — equivalent of main-thread listedIds */
+  messagesOrder: Record<string, string[]>;
+
+  /** Per-chat, per-thread message indexing (listedIds, outlyingLists, viewportIds) */
+  threadIndex: Record<string, Record<string, ThreadMessageState>>;
 
   // Threads (organized by chatId)
   threads: Record<string, Record<string, TelegramThread>>; // [chatId][threadId] = thread
@@ -115,6 +140,21 @@ export interface TelegramState {
   // Filters and search
   searchQuery: string | null;
   filteredChatIds: string[] | null;
+
+  // ---------------------------------------------------------------------------
+  // Update sequencing state (pts/qts/seq)
+  // ---------------------------------------------------------------------------
+
+  /** Common update box state — global pts/qts/seq/date */
+  commonBoxState: {
+    seq: number;
+    date: number;
+    pts: number;
+    qts: number;
+  };
+
+  /** Per-channel PTS tracking */
+  channelPtsById: Record<string, number>;
 }
 
 export const initialState: TelegramState = {
@@ -140,6 +180,7 @@ export const initialState: TelegramState = {
   // Messages
   messages: {},
   messagesOrder: {},
+  threadIndex: {},
 
   // Threads
   threads: {},
@@ -159,6 +200,10 @@ export const initialState: TelegramState = {
   // Search
   searchQuery: null,
   filteredChatIds: null,
+
+  // Update sequencing
+  commonBoxState: { seq: 0, date: 0, pts: 0, qts: 0 },
+  channelPtsById: {},
 };
 
 /** Root telegram slice state: per-user */

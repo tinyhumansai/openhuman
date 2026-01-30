@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `outsourced://` custom URL scheme is used to hand off authentication from a web browser to the Tauri desktop app. This document covers platform-specific behavior, gotchas, and build requirements discovered during development.
+The `alphahuman://` custom URL scheme is used to hand off authentication from a web browser to the Tauri desktop app. This document covers platform-specific behavior, gotchas, and build requirements discovered during development.
 
 ## Scheme Registration
 
@@ -12,7 +12,7 @@ Configured in `src-tauri/tauri.conf.json`:
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["outsourced"]
+        "schemes": ["alphahuman"]
       }
     }
   }
@@ -53,7 +53,7 @@ cp -R src-tauri/target/debug/bundle/macos/tauri-app.app /Applications/
 open /Applications/tauri-app.app
 
 # Test deep link
-open "outsourced://auth?token=YOUR_TOKEN"
+open "alphahuman://auth?token=YOUR_TOKEN"
 ```
 
 ### Cargo Caching Gotcha

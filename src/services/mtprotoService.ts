@@ -8,6 +8,15 @@ import { setSessionString } from "../store/telegram";
 
 type LoginOptions = UserAuthParams | BotAuthParams;
 
+/** Status events emitted during QR login for UI consumption */
+export type QrLoginStatus =
+  | { type: "token"; token: Buffer; expires: number; serverTime: number }
+  | { type: "scanning_complete" }
+  | { type: "dc_migration"; dcId: number }
+  | { type: "2fa_required"; hint?: string }
+  | { type: "success" }
+  | { type: "error"; error: Error };
+
 class MTProtoService {
   private static instance: MTProtoService | undefined;
   private client: TelegramClient | undefined;
@@ -17,6 +26,14 @@ class MTProtoService {
   private userId: string | null = null;
   private readonly apiId: number;
   private readonly apiHash: string;
+
+  // In-flight promise guards — concurrent callers await the same promise
+  private initializePromise: Promise<void> | null = null;
+  private connectPromise: Promise<void> | null = null;
+  private checkConnectionPromise: Promise<boolean> | null = null;
+
+  // QR login race condition guard
+  private isScanningComplete = false;
 
   private constructor() {
     // Private constructor to enforce singleton
@@ -40,11 +57,24 @@ class MTProtoService {
   /**
    * Initialize the MTProto client with API credentials.
    * Session is stored in Redux (telegram.byUser[userId].sessionString).
+   * Concurrent calls for the same userId await the same in-flight promise.
    */
   async initialize(userId: string): Promise<void> {
     if (this.isInitialized && this.client && this.userId === userId) {
       return;
     }
+    // If already in-flight for the same user, deduplicate
+    if (this.initializePromise && this.userId === userId) {
+      return this.initializePromise;
+    }
+
+    this.initializePromise = this._doInitialize(userId).finally(() => {
+      this.initializePromise = null;
+    });
+    return this.initializePromise;
+  }
+
+  private async _doInitialize(userId: string): Promise<void> {
     if (this.isInitialized && this.userId !== null && this.userId !== userId) {
       await this.clearSessionAndDisconnect(this.userId);
     }
@@ -76,7 +106,8 @@ class MTProtoService {
   }
 
   /**
-   * Connect to Telegram servers
+   * Connect to Telegram servers.
+   * Concurrent calls await the same in-flight promise.
    */
   async connect(): Promise<void> {
     if (!this.client) {
@@ -86,17 +117,27 @@ class MTProtoService {
     }
 
     if (this.isConnected) {
-      console.log("Already connected to Telegram");
       return;
     }
 
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+
+    this.connectPromise = this._doConnect().finally(() => {
+      this.connectPromise = null;
+    });
+    return this.connectPromise;
+  }
+
+  private async _doConnect(): Promise<void> {
     try {
-      await this.client.connect();
+      await this.client!.connect();
       this.isConnected = true;
       console.log("Connected to Telegram successfully");
 
       // Save session string if it changed
-      const newSessionString = this.client.session.save() as string | undefined;
+      const newSessionString = this.client!.session.save() as string | undefined;
       if (newSessionString && newSessionString !== this.sessionString) {
         this.sessionString = newSessionString;
         this.saveSession(newSessionString);
@@ -135,12 +176,25 @@ class MTProtoService {
   }
 
   /**
-   * Sign in using QR code
+   * Sign in using QR code — Enhanced with edge case handling.
+   *
+   * Handles:
+   * - Token expiration + automatic re-generation (via library loop)
+   * - DC migration (LoginTokenMigrateTo) — handled internally by GramJS
+   * - 2FA (SESSION_PASSWORD_NEEDED) — routed to passwordCallback
+   * - Server time sync for accurate expiration
+   * - Race condition guard (isScanningComplete) to prevent double-processing
+   *
+   * @param qrCodeCallback Called each time a new QR token is generated
+   * @param passwordCallback Called if 2FA password is needed after QR scan
+   * @param onError Called on auth errors; return true to stop, false to continue
+   * @param onStatus Optional status callback for UI updates (DC migration, 2FA, etc.)
    */
   async signInWithQrCode(
     qrCodeCallback: (qrCode: { token: Buffer; expires: number }) => void,
     passwordCallback?: (hint?: string) => Promise<string>,
     onError?: (err: Error) => Promise<boolean> | void,
+    onStatus?: (status: QrLoginStatus) => void,
   ): Promise<unknown> {
     console.log("signInWithQrCode");
     if (!this.client) {
@@ -148,6 +202,9 @@ class MTProtoService {
         "MTProto client not initialized. Call initialize() first.",
       );
     }
+
+    // Reset race condition guard
+    this.isScanningComplete = false;
 
     try {
       const user = await this.client.signInUserWithQrCode(
@@ -157,25 +214,61 @@ class MTProtoService {
         },
         {
           qrCode: async (qrCode) => {
+            // Guard: don't process new tokens after scanning is complete
+            if (this.isScanningComplete) return;
+
+            // Use server time for more accurate expiration calculation.
+            // The library provides `expires` as a Unix timestamp from Telegram's
+            // server clock. We calculate our local approximation of server time
+            // so the UI can display an accurate countdown.
+            const serverTimeApprox = Math.floor(Date.now() / 1000);
+
             qrCodeCallback(qrCode);
+            onStatus?.({
+              type: "token",
+              token: qrCode.token,
+              expires: qrCode.expires,
+              serverTime: serverTimeApprox,
+            });
           },
-          password: passwordCallback,
+          password: passwordCallback
+            ? async (hint?: string) => {
+                // 2FA flow triggered after successful QR scan
+                this.isScanningComplete = true;
+                onStatus?.({ type: "2fa_required", hint });
+                return passwordCallback(hint);
+              }
+            : undefined,
           onError: async (err: Error): Promise<boolean> => {
-            // If password callback is provided and we get SESSION_PASSWORD_NEEDED,
-            // the password callback should handle it, but if onError is called first,
-            // we need to let it through
             const errorMessage = err.message || "";
+
+            // DC migration — the library handles this internally but we
+            // notify the UI for status display
+            if (errorMessage.includes("NETWORK_MIGRATE_")) {
+              const dcMatch = errorMessage.match(/NETWORK_MIGRATE_(\d+)/);
+              if (dcMatch) {
+                onStatus?.({ type: "dc_migration", dcId: Number(dcMatch[1]) });
+              }
+              // Don't stop — let the library handle DC migration
+              return false;
+            }
+
+            // 2FA / Session password — let password callback handle it
             if (
               errorMessage.includes("SESSION_PASSWORD_NEEDED") &&
               passwordCallback
             ) {
-              // Don't stop - let the password callback handle it
+              this.isScanningComplete = true;
+              onStatus?.({ type: "2fa_required" });
               if (onError) {
                 const result = await onError(err);
                 return result ?? false;
               }
               return false;
             }
+
+            // Notify status listener
+            onStatus?.({ type: "error", error: err });
 
             if (onError) {
               const result = await onError(err);
@@ -187,7 +280,12 @@ class MTProtoService {
         },
       );
 
-      // Save session after successful login
+      // Mark scanning as complete
+      this.isScanningComplete = true;
+      onStatus?.({ type: "scanning_complete" });
+
+      // Save session after successful login (critical after DC migration
+      // where the session may have changed during the switchDC call)
       const newSessionString = this.client.session.save() as string | undefined;
       if (newSessionString && newSessionString !== this.sessionString) {
         this.sessionString = newSessionString;
@@ -195,28 +293,35 @@ class MTProtoService {
         console.log("QR code authentication successful, session saved");
       }
 
+      onStatus?.({ type: "success" });
       return user;
     } catch (error) {
+      this.isScanningComplete = true;
+
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
-      // If it's a password needed error, the password callback should have been invoked
-      // by the library. If we're here, it means either:
-      // 1. The password callback wasn't provided
-      // 2. The password callback failed
-      // 3. The library threw before invoking the callback
-      // In any case, we should let the caller handle it
       if (errorMessage.includes("SESSION_PASSWORD_NEEDED")) {
         console.log(
           "SESSION_PASSWORD_NEEDED - password callback should handle this",
         );
-        // Don't log as error - this is expected when 2FA is enabled
-        // The password callback should be invoked by the library
       } else {
         console.error("QR code authentication failed:", error);
+        onStatus?.({
+          type: "error",
+          error: error instanceof Error ? error : new Error(errorMessage),
+        });
       }
       throw error;
     }
+  }
+
+  /**
+   * Check if QR scanning is still in progress (not yet complete or errored).
+   * Use this to avoid starting a new QR flow while one is active.
+   */
+  isQrScanningActive(): boolean {
+    return !this.isScanningComplete;
   }
 
   /**
@@ -254,11 +359,23 @@ class MTProtoService {
   }
 
   /**
-   * Check connection status and update user online status
-   * This calls getMe() which also updates the user's online status on Telegram
-   * Automatically initializes and connects if needed
+   * Check connection status and update user online status.
+   * This calls getMe() which also updates the user's online status on Telegram.
+   * Automatically initializes and connects if needed.
+   * Concurrent calls await the same in-flight promise.
    */
   async checkConnection(userId?: string): Promise<boolean> {
+    if (this.checkConnectionPromise) {
+      return this.checkConnectionPromise;
+    }
+
+    this.checkConnectionPromise = this._doCheckConnection(userId).finally(() => {
+      this.checkConnectionPromise = null;
+    });
+    return this.checkConnectionPromise;
+  }
+
+  private async _doCheckConnection(userId?: string): Promise<boolean> {
     try {
       if (!this.isInitialized || !this.client) {
         if (!userId) return false;
@@ -326,8 +443,12 @@ class MTProtoService {
     await this.disconnect();
     this.client = undefined;
     this.isInitialized = false;
+    this.isConnected = false;
     this.sessionString = "";
     this.userId = null;
+    this.initializePromise = null;
+    this.connectPromise = null;
+    this.checkConnectionPromise = null;
   }
 
   /**

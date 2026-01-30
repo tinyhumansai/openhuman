@@ -1,7 +1,7 @@
 import type { MCPTool, MCPToolResult } from "../../types";
 import type { TelegramMCPContext } from "../types";
 import { ErrorCategory, logAndFormatError } from "../../errorHandler";
-import { getChatById, getMessages, formatMessage } from "../telegramApi";
+import { getChatById, getMessagesWithApiFallback, formatMessage } from "../telegramApi";
 import { validateId } from "../../validation";
 import { optNumber } from "../args";
 
@@ -34,7 +34,7 @@ export async function getHistory(
       };
     }
 
-    const messages = await getMessages(chatId, limit, 0);
+    const messages = await getMessagesWithApiFallback(chatId, limit, 0);
     if (!messages || messages.length === 0) {
       return {
         content: [{ type: "text", text: "No messages found in this chat." }],

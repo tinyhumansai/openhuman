@@ -5,8 +5,9 @@ import type {
   TelegramMessage,
   TelegramThread,
   TelegramState,
+  ThreadMessageState,
 } from "./telegram";
-import { initialState } from "./telegram/types";
+import { initialState, MAIN_THREAD_ID } from "./telegram/types";
 
 function selectCurrentUserId(state: RootState): string {
   return state.user.user?._id ?? "";
@@ -181,6 +182,86 @@ export const selectTotalUnreadCount = createSelector(
 export const selectPinnedChats = createSelector(
   [selectOrderedChats],
   (chats): TelegramChat[] => chats.filter((chat) => chat.isPinned),
+);
+
+// ---------------------------------------------------------------------------
+// Normalized message indexing selectors
+// ---------------------------------------------------------------------------
+
+const emptyThreadState: ThreadMessageState = {
+  listedIds: [],
+  outlyingLists: [],
+  viewportIds: [],
+};
+
+/** Select the thread index map for a given chat */
+export const selectChatThreadIndex = (state: RootState, chatId: string) =>
+  selectTelegramUserState(state).threadIndex[chatId];
+
+/** Select the thread message state for a given chat + thread */
+export const selectThreadMessageState = (
+  state: RootState,
+  chatId: string,
+  threadId: string = MAIN_THREAD_ID,
+): ThreadMessageState =>
+  selectTelegramUserState(state).threadIndex[chatId]?.[threadId] ??
+  emptyThreadState;
+
+/** O(1) lookup: get a single message by chat ID and message ID */
+export const selectChatMessageById = (
+  state: RootState,
+  chatId: string,
+  messageId: string,
+): TelegramMessage | undefined =>
+  selectTelegramUserState(state).messages[chatId]?.[messageId];
+
+/** Select the listed (loaded) IDs for a chat's main thread */
+export const selectChatListedIds = createSelector(
+  [
+    (state: RootState) => selectTelegramUserState(state).messagesOrder,
+    (_: RootState, chatId: string) => chatId,
+  ],
+  (messagesOrder, chatId): string[] => messagesOrder[chatId] ?? [],
+);
+
+/** Select viewport IDs for a chat + thread */
+export const selectChatViewportIds = createSelector(
+  [
+    (state: RootState) => selectTelegramUserState(state).threadIndex,
+    (_: RootState, chatId: string) => chatId,
+    (_: RootState, _chatId: string, threadId?: string) =>
+      threadId ?? MAIN_THREAD_ID,
+  ],
+  (threadIndex, chatId, threadId): string[] =>
+    threadIndex[chatId]?.[threadId]?.viewportIds ?? [],
+);
+
+/** Select outlying (disjoint) lists for a chat + thread */
+export const selectChatOutlyingLists = createSelector(
+  [
+    (state: RootState) => selectTelegramUserState(state).threadIndex,
+    (_: RootState, chatId: string) => chatId,
+    (_: RootState, _chatId: string, threadId?: string) =>
+      threadId ?? MAIN_THREAD_ID,
+  ],
+  (threadIndex, chatId, threadId): string[][] =>
+    threadIndex[chatId]?.[threadId]?.outlyingLists ?? [],
+);
+
+/** Resolve viewport IDs to full message objects */
+export const selectViewportMessages = createSelector(
+  [
+    (state: RootState) => selectTelegramUserState(state).messages,
+    (state: RootState) => selectTelegramUserState(state).threadIndex,
+    (_: RootState, chatId: string) => chatId,
+    (_: RootState, _chatId: string, threadId?: string) =>
+      threadId ?? MAIN_THREAD_ID,
+  ],
+  (messages, threadIndex, chatId, threadId): TelegramMessage[] => {
+    const ids = threadIndex[chatId]?.[threadId]?.viewportIds ?? [];
+    const byId = messages[chatId] ?? {};
+    return ids.map((id) => byId[id]).filter(Boolean);
+  },
 );
 
 export { selectCurrentUserId as selectTelegramCurrentUserId };

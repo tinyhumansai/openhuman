@@ -9,19 +9,30 @@ import AppRoutes from "./AppRoutes";
 
 function App() {
   return (
-    <Provider store={store}>
-      <PersistGate loading={null} persistor={persistor}>
-        <UserProvider>
-          <SocketProvider>
-            <TelegramProvider>
-              <Router>
-                <AppRoutes />
-              </Router>
-            </TelegramProvider>
-          </SocketProvider>
-        </UserProvider>
-      </PersistGate>
-    </Provider>
+    <>
+      <Provider store={store}>
+        <PersistGate loading={null} persistor={persistor}>
+          <UserProvider>
+            <SocketProvider>
+              <TelegramProvider>
+                <Router>
+                  <div className="relative min-h-screen">
+                    <div className="pointer-events-none fixed inset-x-0 bottom-3 flex justify-center z-50">
+                      <div className="bg-black/30 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-white/40">
+                        AlphaHuman is in alpha &mdash; share feedback by messaging
+                        the Telegram bot.
+                      </div>
+                    </div>
+                    <AppRoutes />
+                  </div>
+                </Router>
+              </TelegramProvider>
+            </SocketProvider>
+          </UserProvider>
+        </PersistGate>
+      </Provider>
+
+    </>
   );
 }
 

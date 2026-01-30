@@ -2,6 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import {
   persistStore,
   persistReducer,
+  createTransform,
   FLUSH,
   REHYDRATE,
   PAUSE,
@@ -16,6 +17,8 @@ import userReducer from "./userSlice";
 import telegramReducer from "./telegram";
 import { createLogger } from "redux-logger";
 import { IS_DEV } from "../utils/config";
+import type { TelegramRootState, TelegramState } from "./telegram/types";
+import { initialState as telegramInitialState } from "./telegram/types";
 
 // Persist config for auth only
 const authPersistConfig = {
@@ -24,11 +27,41 @@ const authPersistConfig = {
   whitelist: ["token", "isOnboardedByUser"],
 };
 
+// Strip volatile runtime fields from each per-user Telegram state on rehydrate.
+// These fields reflect in-memory MTProto client state and must start fresh on reload.
+const telegramVolatileTransform = createTransform<
+  TelegramRootState["byUser"],
+  TelegramRootState["byUser"]
+>(
+  // inbound (state -> storage): pass through as-is
+  (inboundState) => inboundState,
+  // outbound (storage -> state): reset volatile fields per user
+  (outboundState) => {
+    const cleaned: Record<string, TelegramState> = {};
+    for (const [userId, userState] of Object.entries(outboundState)) {
+      cleaned[userId] = {
+        ...userState,
+        isInitialized: telegramInitialState.isInitialized,
+        connectionStatus: telegramInitialState.connectionStatus,
+        connectionError: telegramInitialState.connectionError,
+        isLoadingChats: telegramInitialState.isLoadingChats,
+        isLoadingMessages: telegramInitialState.isLoadingMessages,
+        isLoadingThreads: telegramInitialState.isLoadingThreads,
+        // Thread index is volatile — viewport/outlying state is runtime-only
+        threadIndex: telegramInitialState.threadIndex,
+      };
+    }
+    return cleaned;
+  },
+  { whitelist: ["byUser"] },
+);
+
 // Persist config for telegram state (scoped by user in byUser)
 const telegramPersistConfig = {
   key: "telegram",
   storage,
   whitelist: ["byUser"],
+  transforms: [telegramVolatileTransform],
 };
 
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);

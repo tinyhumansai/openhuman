@@ -7,7 +7,7 @@ import type { TelegramMCPContext } from "../types";
 
 import { ErrorCategory, logAndFormatError } from "../../errorHandler";
 import { optNumber, optString } from "../args";
-import { formatEntity, getChats as getChatsApi } from "../telegramApi";
+import { formatEntity, getChatsWithApiFallback } from "../telegramApi";
 import { toHumanReadableAction } from "../toolActionParser";
 
 export const tool: MCPTool = {
@@ -40,7 +40,7 @@ export async function listChats(
     const limit = optNumber(args, "limit", 20);
     const chatType = optString(args, "chat_type")?.toLowerCase();
 
-    const chats = await getChatsApi(limit);
+    const chats = await getChatsWithApiFallback(limit);
     const contentItems: Array<{ type: "text"; text: string }> = [];
 
     for (const chat of chats) {

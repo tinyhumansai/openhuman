@@ -1,4 +1,5 @@
 import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
+import { isTauri } from "@tauri-apps/api/core";
 
 /**
  * Opens a URL in the default browser or app.
@@ -6,7 +7,7 @@ import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
  */
 export const openUrl = async (url: string): Promise<void> => {
   // Check if we're running in Tauri desktop app
-  if ((window as any).__TAURI__) {
+  if (isTauri()) {
     try {
       await tauriOpenUrl(url);
       return;

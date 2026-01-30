@@ -28,6 +28,11 @@ export const initializeTelegram = createAsyncThunk(
 export const connectTelegram = createAsyncThunk(
   "telegram/connect",
   async (_userId: string, { rejectWithValue }) => {
+    if (!mtprotoService.isReady()) {
+      return rejectWithValue(
+        "MTProto client not initialized. Call initialize() first.",
+      );
+    }
     try {
       await mtprotoService.connect();
       return true;
@@ -44,6 +49,12 @@ export const connectTelegram = createAsyncThunk(
 export const checkAuthStatus = createAsyncThunk(
   "telegram/checkAuthStatus",
   async (userId: string, { rejectWithValue, getState }) => {
+    if (!mtprotoService.isReady()) {
+      return rejectWithValue(
+        "MTProto client not initialized. Call initialize() first.",
+      );
+    }
+
     const now = Date.now();
     if (isCheckingAuth && now - lastCheckTime < MIN_CHECK_INTERVAL) {
       const state = getState() as RootState;
@@ -92,6 +103,11 @@ export const checkAuthStatus = createAsyncThunk(
 export const fetchChats = createAsyncThunk(
   "telegram/fetchChats",
   async (_userId: string, { rejectWithValue }) => {
+    if (!mtprotoService.isReady()) {
+      return rejectWithValue(
+        "MTProto client not initialized. Call initialize() first.",
+      );
+    }
     try {
       const client = mtprotoService.getClient();
       const dialogs = await mtprotoService.withFloodWaitHandling(async () => {
@@ -117,6 +133,11 @@ export const fetchMessages = createAsyncThunk(
     }: { userId: string; chatId: string; limit?: number; offsetId?: number },
     { rejectWithValue },
   ) => {
+    if (!mtprotoService.isReady()) {
+      return rejectWithValue(
+        "MTProto client not initialized. Call initialize() first.",
+      );
+    }
     try {
       void _userId;
       const client = mtprotoService.getClient();

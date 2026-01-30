@@ -7,7 +7,7 @@ import type { TelegramMCPContext } from "../types";
 
 import { ErrorCategory, logAndFormatError } from "../../errorHandler";
 import { optNumber } from "../args";
-import { formatEntity, getChats as getChatsApi } from "../telegramApi";
+import { formatEntity, getChatsWithApiFallback } from "../telegramApi";
 
 export const tool: MCPTool = {
   name: "get_chats",
@@ -38,7 +38,7 @@ export async function getChats(
     const pageSize = optNumber(args, "page_size", 20);
     const start = (page - 1) * pageSize;
 
-    const chats = await getChatsApi(pageSize + start);
+    const chats = await getChatsWithApiFallback(pageSize + start);
     const paginatedChats = chats.slice(start, start + pageSize);
 
     if (paginatedChats.length === 0) {

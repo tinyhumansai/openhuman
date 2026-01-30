@@ -18,6 +18,14 @@ import { ErrorCategory, logAndFormatError } from "../errorHandler";
 import { ValidationError } from "../validation";
 import { SocketIOMCPTransportImpl } from "../transport";
 import { mcpLog } from "../logger";
+import { enforceRateLimit, resetRequestCallCount } from "../rateLimiter";
+import {
+  useExtraToolDefinition,
+  executeUseExtraTool,
+  executeExtraToolIfExists,
+  getAllExtraTools,
+  isExtraToolByName,
+} from "../skills";
 import {
   type TelegramMCPToolHandler,
   type TelegramMCPToolName,
@@ -68,6 +76,8 @@ export class TelegramMCPServer {
   }): Promise<void> {
     const { requestId, toolCall } = data;
     try {
+      // Reset per-request counter at the start of each new request
+      resetRequestCallCount();
       const result = await this.handleToolCall(toolCall);
       this.transport.emit("toolResult", { requestId, result });
     } catch (error) {
@@ -80,27 +90,90 @@ export class TelegramMCPServer {
   }
 
   private listTools(): MCPTool[] {
-    return Object.values(tools).filter((t): t is MCPTool => {
-      return (
-        t !== undefined &&
-        typeof t === "object" &&
-        "name" in t &&
-        "description" in t &&
-        "inputSchema" in t &&
-        typeof (t as MCPTool).name === "string" &&
-        typeof (t as MCPTool).description === "string"
-      );
-    });
+    const baseTelegramTools = Object.values(tools).filter(
+      (t): t is MCPTool => {
+        return (
+          t !== undefined &&
+          typeof t === "object" &&
+          "name" in t &&
+          "description" in t &&
+          "inputSchema" in t &&
+          typeof (t as MCPTool).name === "string" &&
+          typeof (t as MCPTool).description === "string"
+        );
+      },
+    );
+
+    // Add the use_extra_tool meta-tool + all extra tool definitions
+    const extraTools = getAllExtraTools();
+
+    // Dedupe by name (base tools take precedence)
+    const toolsByName = new Map<string, MCPTool>();
+    for (const t of baseTelegramTools) toolsByName.set(t.name, t);
+    toolsByName.set(useExtraToolDefinition.name, useExtraToolDefinition);
+    for (const t of extraTools) {
+      if (!toolsByName.has(t.name)) toolsByName.set(t.name, t);
+    }
+
+    return Array.from(toolsByName.values());
   }
 
   private async handleToolCall(toolCall: MCPToolCall): Promise<MCPToolResult> {
     const { name, arguments: args } = toolCall;
     mcpLog(`Executing tool: ${name}`, args);
 
+    // Handle use_extra_tool meta-tool (no rate limit needed)
+    if (name === "use_extra_tool") {
+      return executeUseExtraTool(args);
+    }
+
+    // Check if this is an extra tool from a loaded skill
+    if (isExtraToolByName(name)) {
+      // Enforce rate limits for extra tools too
+      try {
+        await enforceRateLimit(name);
+      } catch (rateLimitError) {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                rateLimitError instanceof Error
+                  ? rateLimitError.message
+                  : String(rateLimitError),
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      const result = await executeExtraToolIfExists(name, args);
+      if (result) return result;
+    }
+
+    // Standard Telegram tool
     const toolHandler = this.findToolHandler(name);
     if (!toolHandler) {
       return {
         content: [{ type: "text", text: `Tool '${name}' not found` }],
+        isError: true,
+      };
+    }
+
+    // Enforce rate limits before executing (may sleep or throw)
+    try {
+      await enforceRateLimit(name);
+    } catch (rateLimitError) {
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              rateLimitError instanceof Error
+                ? rateLimitError.message
+                : String(rateLimitError),
+          },
+        ],
         isError: true,
       };
     }

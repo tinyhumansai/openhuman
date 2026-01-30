@@ -15,7 +15,7 @@ export interface TelegramLoginContext {
 
 export type WebLoginContext = PhoneLoginContext | TelegramLoginContext;
 
-const DESKTOP_SCHEME = "outsourced";
+const DESKTOP_SCHEME = "alphahuman";
 
 export const buildDesktopDeeplink = (token: string): string => {
   const encoded = encodeURIComponent(token);

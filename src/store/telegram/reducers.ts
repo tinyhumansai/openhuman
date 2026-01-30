@@ -8,8 +8,9 @@ import type {
   TelegramChat,
   TelegramMessage,
   TelegramThread,
+  ThreadMessageState,
 } from "./types";
-import { initialState } from "./types";
+import { initialState, MAIN_THREAD_ID } from "./types";
 
 function ensureUser(
   state: TelegramRootState,
@@ -19,6 +20,24 @@ function ensureUser(
     state.byUser[userId] = { ...initialState };
   }
   return state.byUser[userId];
+}
+
+function ensureThreadIndex(
+  u: TelegramState,
+  chatId: string,
+  threadId: string,
+): ThreadMessageState {
+  if (!u.threadIndex[chatId]) {
+    u.threadIndex[chatId] = {};
+  }
+  if (!u.threadIndex[chatId][threadId]) {
+    u.threadIndex[chatId][threadId] = {
+      listedIds: [],
+      outlyingLists: [],
+      viewportIds: [],
+    };
+  }
+  return u.threadIndex[chatId][threadId];
 }
 
 export const reducers = {
@@ -283,5 +302,229 @@ export const reducers = {
     action: PayloadAction<{ userId: string }>,
   ) => {
     state.byUser[action.payload.userId] = { ...initialState };
+  },
+
+  // ---------------------------------------------------------------------------
+  // Normalized message indexing reducers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Bulk-add messages into the normalized byId map for a chat.
+   * Also appends new IDs to messagesOrder (listedIds equivalent) and
+   * the main thread index, de-duplicating and maintaining chronological order.
+   */
+  addChatMessagesById: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      chatId: string;
+      messages: TelegramMessage[];
+    }>,
+  ) => {
+    const u = ensureUser(state, action.payload.userId);
+    const { chatId, messages } = action.payload;
+
+    if (!u.messages[chatId]) {
+      u.messages[chatId] = {};
+      u.messagesOrder[chatId] = [];
+    }
+
+    const existingIds = new Set(u.messagesOrder[chatId]);
+    const newIds: string[] = [];
+
+    for (const msg of messages) {
+      u.messages[chatId][msg.id] = msg;
+      if (!existingIds.has(msg.id)) {
+        newIds.push(msg.id);
+        existingIds.add(msg.id);
+      }
+    }
+
+    if (newIds.length > 0) {
+      // Merge into order maintaining chronological sort (Telegram IDs are sequential)
+      u.messagesOrder[chatId].push(...newIds);
+      u.messagesOrder[chatId].sort((a, b) => {
+        const msgA = u.messages[chatId][a];
+        const msgB = u.messages[chatId][b];
+        if (!msgA || !msgB) return 0;
+        return msgA.date - msgB.date;
+      });
+
+      // Also update the main thread index
+      ensureThreadIndex(u, chatId, MAIN_THREAD_ID);
+      u.threadIndex[chatId][MAIN_THREAD_ID].listedIds =
+        u.messagesOrder[chatId];
+    }
+  },
+
+  /**
+   * Set the viewport IDs for a chat + thread.
+   * Viewport = currently visible messages, capped by the caller.
+   */
+  setViewportIds: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      chatId: string;
+      threadId?: string;
+      viewportIds: string[];
+    }>,
+  ) => {
+    const u = ensureUser(state, action.payload.userId);
+    const { chatId, viewportIds } = action.payload;
+    const threadId = action.payload.threadId ?? MAIN_THREAD_ID;
+    ensureThreadIndex(u, chatId, threadId);
+    u.threadIndex[chatId][threadId].viewportIds = viewportIds;
+  },
+
+  /**
+   * Add an outlying (disjoint) list of message IDs for a chat + thread.
+   * Used when the user jumps to a message far from the current viewport.
+   */
+  addOutlyingList: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      chatId: string;
+      threadId?: string;
+      ids: string[];
+    }>,
+  ) => {
+    const u = ensureUser(state, action.payload.userId);
+    const { chatId, ids } = action.payload;
+    const threadId = action.payload.threadId ?? MAIN_THREAD_ID;
+    ensureThreadIndex(u, chatId, threadId);
+    u.threadIndex[chatId][threadId].outlyingLists.push(ids);
+  },
+
+  /**
+   * Merge overlapping outlying lists for a chat + thread.
+   * Call after fetching messages that bridge a gap between ranges.
+   */
+  mergeOutlyingLists: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      chatId: string;
+      threadId?: string;
+    }>,
+  ) => {
+    const u = ensureUser(state, action.payload.userId);
+    const { chatId } = action.payload;
+    const threadId = action.payload.threadId ?? MAIN_THREAD_ID;
+    const ti = u.threadIndex[chatId]?.[threadId];
+    if (!ti || ti.outlyingLists.length < 2) return;
+
+    // Convert each list to a set of IDs, then merge overlapping sets
+    const idSets: Set<string>[] = ti.outlyingLists.map((l) => new Set(l));
+    const merged: Set<string>[] = [];
+
+    for (const current of idSets) {
+      let didMerge = false;
+      for (let i = 0; i < merged.length; i++) {
+        // If any IDs overlap, merge the sets
+        for (const id of current) {
+          if (merged[i].has(id)) {
+            for (const cId of current) merged[i].add(cId);
+            didMerge = true;
+            break;
+          }
+        }
+        if (didMerge) break;
+      }
+      if (!didMerge) merged.push(current);
+    }
+
+    ti.outlyingLists = merged.map((s) => [...s].sort());
+  },
+
+  /**
+   * Bulk delete messages from a chat by ID.
+   * Removes from byId, messagesOrder, and all thread indices.
+   */
+  deleteChatMessages: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      chatId: string;
+      messageIds: string[];
+    }>,
+  ) => {
+    const u = ensureUser(state, action.payload.userId);
+    const { chatId, messageIds } = action.payload;
+    if (!u.messages[chatId]) return;
+
+    const toDelete = new Set(messageIds);
+    for (const id of messageIds) {
+      delete u.messages[chatId][id];
+    }
+    u.messagesOrder[chatId] = (u.messagesOrder[chatId] ?? []).filter(
+      (id) => !toDelete.has(id),
+    );
+
+    // Clean up thread indices
+    if (u.threadIndex[chatId]) {
+      for (const threadId of Object.keys(u.threadIndex[chatId])) {
+        const ti = u.threadIndex[chatId][threadId];
+        ti.listedIds = ti.listedIds.filter((id) => !toDelete.has(id));
+        ti.viewportIds = ti.viewportIds.filter((id) => !toDelete.has(id));
+        ti.outlyingLists = ti.outlyingLists
+          .map((list) => list.filter((id) => !toDelete.has(id)))
+          .filter((list) => list.length > 0);
+      }
+    }
+  },
+
+  /**
+   * Update the listed IDs for a specific thread within a chat.
+   * Used when thread-specific message fetches complete.
+   */
+  setThreadListedIds: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      chatId: string;
+      threadId: string;
+      listedIds: string[];
+    }>,
+  ) => {
+    const u = ensureUser(state, action.payload.userId);
+    const { chatId, threadId, listedIds } = action.payload;
+    ensureThreadIndex(u, chatId, threadId);
+    u.threadIndex[chatId][threadId].listedIds = listedIds;
+  },
+
+  // ---------------------------------------------------------------------------
+  // Update sequencing (pts/qts/seq) reducers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Set the common box state (seq, pts, qts, date).
+   */
+  setCommonBoxState: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      commonBoxState: { seq: number; date: number; pts: number; qts: number };
+    }>,
+  ) => {
+    ensureUser(state, action.payload.userId).commonBoxState =
+      action.payload.commonBoxState;
+  },
+
+  /**
+   * Set the PTS for a specific channel.
+   */
+  setChannelPts: (
+    state: TelegramRootState,
+    action: PayloadAction<{
+      userId: string;
+      channelId: string;
+      pts: number;
+    }>,
+  ) => {
+    ensureUser(state, action.payload.userId).channelPtsById[
+      action.payload.channelId
+    ] = action.payload.pts;
   },
 };

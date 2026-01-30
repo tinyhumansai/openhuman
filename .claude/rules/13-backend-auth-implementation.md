@@ -24,7 +24,7 @@ Web Browser                    Backend Server                 Desktop App (Tauri
     │<─────────────────────────────│                              │
     │                              │                              │
     │  5. Redirect to              │                              │
-    │     outsourced://auth?token= │                              │
+    │     alphahuman://auth?token= │                              │
     │─────────────────────────────────────────────────────────────>│
     │                              │                              │
     │                              │  6. Rust invoke               │
@@ -56,7 +56,7 @@ Initiates Telegram OAuth. The frontend opens this URL in the system browser.
 2. On callback, validate Telegram user data
 3. Create or find user in database
 4. Generate a short-lived `loginToken` (single-use, 5-minute TTL)
-5. Redirect to `outsourced://auth?token=<loginToken>`
+5. Redirect to `alphahuman://auth?token=<loginToken>`
 
 ### 2. `POST /api/auth/web-complete`
 
@@ -180,7 +180,7 @@ Called by the Tauri Rust command `exchange_token` (NOT browser fetch). Exchanges
 3. **HTTPS only** in production — tokens travel as URL parameters and POST bodies
 4. **Rate limiting** — on `/api/auth/web-complete` and `/auth/desktop-exchange`
 5. **Token entropy** — minimum 256 bits of randomness
-6. **Deep link validation** — the desktop app only processes `outsourced://auth` paths; ignore unknown paths
+6. **Deep link validation** — the desktop app only processes `alphahuman://auth` paths; ignore unknown paths
 7. **Telegram data verification** — validate the `hash` field using your bot token per Telegram docs
 
 ## Implementation Details
@@ -226,7 +226,7 @@ Set `VITE_BACKEND_URL` environment variable for different environments.
 |------|------|
 | `src/main.tsx` | Lazy-imports and starts the deep link listener |
 | `src/utils/desktopDeepLinkListener.ts` | Parses deep link -> invokes Rust `exchange_token` -> stores session -> navigates |
-| `src/utils/deeplink.ts` | Web-side: calls `/api/auth/web-complete` and builds `outsourced://auth?token=...` URL |
+| `src/utils/deeplink.ts` | Web-side: calls `/api/auth/web-complete` and builds `alphahuman://auth?token=...` URL |
 | `src/utils/config.ts` | Backend URL configuration |
 | `src/pages/Login.tsx` | Opens `GET /auth/telegram?platform=desktop` in browser |
 | `src-tauri/src/lib.rs` | Rust `exchange_token` command using `reqwest` (CORS-free) |

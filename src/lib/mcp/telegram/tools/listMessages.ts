@@ -10,7 +10,7 @@ import { optNumber, optString } from "../args";
 import {
   formatMessage,
   getChatById,
-  getMessages as getMessagesApi,
+  getMessagesWithApiFallback,
 } from "../telegramApi";
 import { validateId } from "../../validation";
 
@@ -65,7 +65,7 @@ export async function listMessages(
       };
     }
 
-    let messages = await getMessagesApi(chatId, limit * 2, 0);
+    let messages = await getMessagesWithApiFallback(chatId, limit * 2, 0);
     if (!messages || messages.length === 0) {
       return {
         content: [

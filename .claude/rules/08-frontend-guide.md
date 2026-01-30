@@ -75,7 +75,7 @@ src/
 - **165+ TypeScript files**: Comprehensive component library with settings modal system
 - **Provider chain**: Redux → PersistGate → Socket → Telegram → HashRouter → Routes
 - **MCP Integration**: 99 Telegram tools for AI-driven interactions
-- **Deep Link Auth**: Web-to-desktop handoff using `outsourced://` scheme
+- **Deep Link Auth**: Web-to-desktop handoff using `alphahuman://` scheme
 
 ## React with Tauri
 

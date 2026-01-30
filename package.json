@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "macos:build": "tauri build --debug --bundles app",
+    "macos:run": "open 'src-tauri/target/debug/bundle/macos/AlphaHuman.app'",
+    "macos:dev": "tauri build --debug --bundles app && open 'src-tauri/target/debug/bundle/macos/AlphaHuman.app'"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",

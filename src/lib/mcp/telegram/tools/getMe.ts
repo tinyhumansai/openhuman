@@ -6,7 +6,7 @@ import type { MCPTool, MCPToolResult } from "../../types";
 import type { TelegramMCPContext } from "../types";
 
 import { ErrorCategory, logAndFormatError } from "../../errorHandler";
-import { formatEntity, getCurrentUser } from "../telegramApi";
+import { formatEntity, getCurrentUserWithApiFallback } from "../telegramApi";
 
 export const tool: MCPTool = {
   name: "get_me",
@@ -22,7 +22,7 @@ export async function getMe(
   _context: TelegramMCPContext,
 ): Promise<MCPToolResult> {
   try {
-    const user = getCurrentUser();
+    const user = await getCurrentUserWithApiFallback();
     if (!user) {
       return {
         content: [{ type: "text", text: "User information not available" }],

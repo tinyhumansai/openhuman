@@ -9,7 +9,7 @@ import { ErrorCategory, logAndFormatError } from "../../errorHandler";
 import {
   formatMessage,
   getChatById,
-  getMessages as getMessagesApi,
+  getMessagesWithApiFallback,
 } from "../telegramApi";
 import { validateId } from "../../validation";
 import type { TelegramMessage } from "../../../../store/telegram/types";
@@ -62,7 +62,7 @@ export async function getMessages(
       };
     }
 
-    const messages = await getMessagesApi(chatId, pageSize, offset);
+    const messages = await getMessagesWithApiFallback(chatId, pageSize, offset);
     if (!messages || messages.length === 0) {
       return {
         content: [{ type: "text", text: "No messages found for this page." }],
