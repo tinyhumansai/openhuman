@@ -1,0 +1,3 @@
+[submodule "skills"]
+	path = skills
+	url = https://github.com/vezuresdotxyz/alphahuman-skills

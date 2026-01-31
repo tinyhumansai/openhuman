@@ -66,5 +66,41 @@ export interface User {
   waitlist?: string;
 }
 
+// Billing types
+export type PlanTier = "FREE" | "BASIC" | "PRO";
+
+export type PlanIdentifier =
+  | "BASIC_MONTHLY"
+  | "BASIC_YEARLY"
+  | "PRO_MONTHLY"
+  | "PRO_YEARLY";
+
+export interface CurrentPlanData {
+  plan: PlanTier;
+  hasActiveSubscription: boolean;
+  planExpiry: string | null;
+  subscription: {
+    id: string;
+    status: string;
+    currentPeriodEnd: string;
+  } | null;
+}
+
+export interface PurchasePlanData {
+  checkoutUrl: string | null;
+  sessionId: string;
+}
+
+export interface PortalSessionData {
+  portalUrl: string;
+}
+
+export interface CoinbaseChargeData {
+  gatewayTransactionId: string;
+  hostedUrl: string;
+  status: string;
+  expiresAt: string;
+}
+
 // API Endpoints
 export type GetMeResponse = ApiResponse<User>;
