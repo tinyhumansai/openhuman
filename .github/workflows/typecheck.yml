@@ -1,0 +1,51 @@
+name: Type Check
+
+on:
+  push:
+    branches: ['*']
+  pull_request:
+    branches: ['*']
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Type Check TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: 'yarn'
+
+      - name: Cache node modules
+        id: yarn-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-typecheck-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-typecheck-
+            ${{ runner.os }}-test-
+            ${{ runner.os }}-build-
+
+      - name: Install dependencies
+        if: steps.yarn-cache.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile
+
+      - name: Type check TypeScript files
+        run: npx tsc
+        env:
+          NODE_ENV: test

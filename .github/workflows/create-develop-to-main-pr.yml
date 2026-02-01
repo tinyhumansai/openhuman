@@ -1,0 +1,190 @@
+name: Create PR from Develop to Main
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: develop-to-main-pr
+  cancel-in-progress: false
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch tags and branches
+        run: |
+          git fetch origin --tags
+          git fetch origin main develop
+
+      - name: Check if push is from sync workflow
+        id: check-sync
+        run: |
+          # Check if the latest commit on develop is the same as main (indicating a sync operation)
+          # When sync-main-to-develop runs, it fast-forwards develop to match main's HEAD
+          DEVELOP_HEAD=$(git rev-parse origin/develop 2>/dev/null || echo "")
+          MAIN_HEAD=$(git rev-parse origin/main 2>/dev/null || echo "")
+
+          if [ -z "$DEVELOP_HEAD" ] || [ -z "$MAIN_HEAD" ]; then
+            echo "Could not determine branch heads. Proceeding with PR check."
+            echo "is_sync=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Develop HEAD: $DEVELOP_HEAD"
+          echo "Main HEAD: $MAIN_HEAD"
+
+          # If develop HEAD is the same as main HEAD, this is a sync operation and we should skip
+          if [ "$DEVELOP_HEAD" = "$MAIN_HEAD" ]; then
+            echo "Latest commit on develop is the same as main. This is a sync operation from sync-main-to-develop workflow. Skipping PR creation."
+            echo "is_sync=true" >> $GITHUB_OUTPUT
+          else
+            echo "This is not a sync operation. Proceeding with PR check."
+            echo "is_sync=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check for existing PR
+        if: steps.check-sync.outputs.is_sync != 'true'
+        id: check-pr
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              base: 'main',
+              head: `${context.repo.owner}:develop`,
+              state: 'open'
+            });
+
+            if (pulls.length > 0) {
+              core.setOutput('exists', 'true');
+              core.setOutput('number', pulls[0].number.toString());
+              console.log(`Existing PR found: #${pulls[0].number}. Skipping PR creation.`);
+            } else {
+              core.setOutput('exists', 'false');
+              console.log('No existing PR found');
+            }
+
+      - name: Check if develop is ahead of main
+        id: check-diff
+        if: steps.check-sync.outputs.is_sync != 'true' && steps.check-pr.outputs.exists == 'false'
+        run: |
+          # Get the commit counts
+          DEVELOP_COMMITS=$(git rev-list --count origin/main..origin/develop)
+          MAIN_COMMITS=$(git rev-list --count origin/develop..origin/main)
+
+          echo "Commits in develop ahead of main: $DEVELOP_COMMITS"
+          echo "Commits in main ahead of develop: $MAIN_COMMITS"
+
+          if [ "$DEVELOP_COMMITS" -eq 0 ]; then
+            echo "develop is not ahead of main. No PR needed."
+            echo "ahead=false" >> $GITHUB_OUTPUT
+          else
+            echo "develop is ahead of main by $DEVELOP_COMMITS commits. Creating PR..."
+            echo "ahead=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Calculate next version
+        id: next-version
+        if: steps.check-sync.outputs.is_sync != 'true' && steps.check-pr.outputs.exists == 'false' && steps.check-diff.outputs.ahead == 'true'
+        run: |
+          # Get the latest version tag (format: v1.2.3)
+          LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1 || echo "")
+
+          if [ -z "$LATEST_TAG" ]; then
+            # No tags found, start with v1.0.0
+            NEXT_VERSION="v1.0.0"
+            LATEST_TAG="(none)"
+          else
+            # Extract version number (remove 'v' prefix)
+            VERSION="${LATEST_TAG#v}"
+
+            # Split into major.minor.patch
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+            # Ensure we have valid numbers (default to 0 if empty)
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            PATCH=${PATCH:-0}
+
+            # Increment minor version and reset patch to 0
+            MINOR=$((MINOR + 1))
+            PATCH=0
+
+            NEXT_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "Latest tag: $LATEST_TAG"
+          echo "Predicted next version: $NEXT_VERSION"
+          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate PR description
+        id: pr-description
+        if: steps.check-sync.outputs.is_sync != 'true' && steps.check-pr.outputs.exists == 'false' && steps.check-diff.outputs.ahead == 'true'
+        run: |
+          cat <<EOF > pr_body.txt
+          ## Overview
+
+          This PR automatically merges changes from develop into main. This merge will trigger a tag action that will bump the minor version to ${{ steps.next-version.outputs.version }}.
+
+          ## Notes
+
+          This PR was automatically created by GitHub Actions. Please review the changes before merging.
+          EOF
+
+      - name: Create pull request
+        if: steps.check-sync.outputs.is_sync != 'true' && steps.check-pr.outputs.exists == 'false' && steps.check-diff.outputs.ahead == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const prBody = fs.readFileSync('pr_body.txt', 'utf8');
+            const nextVersion = '${{ steps.next-version.outputs.version }}';
+
+            const { data: pr } = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `chore: merge develop into main (${nextVersion})`,
+              head: 'develop',
+              base: 'main',
+              body: prBody
+            });
+
+            // Add labels
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels: ['chore', 'type: chore']
+            });
+
+            // Request review from senamakel
+            await github.rest.pulls.requestReviewers({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              reviewers: ['senamakel']
+            });
+
+            console.log(`Created PR #${pr.number} with version ${nextVersion} and requested review from senamakel`);

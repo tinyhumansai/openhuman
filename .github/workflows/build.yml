@@ -1,8 +1,6 @@
 name: Build
 
 on:
-  push:
-    branches: ["*"]
   pull_request:
     branches: ["*"]
 
@@ -11,7 +9,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
