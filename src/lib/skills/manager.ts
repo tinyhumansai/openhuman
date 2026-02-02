@@ -29,6 +29,17 @@ class SkillManager {
   private runtimes = new Map<string, SkillRuntime>();
 
   /**
+   * Get skill-specific load parameters (e.g., session data for Telegram)
+   */
+  private getSkillLoadParams(_skillId: string): Record<string, unknown> {
+    const params: Record<string, unknown> = {};
+
+    // For now, just return empty params - skill-specific session data
+    // will be handled through the skill's own setup process
+    return params;
+  }
+
+  /**
    * Add a discovered skill manifest to Redux.
    */
   registerSkill(manifest: SkillManifest): void {
@@ -81,8 +92,9 @@ class SkillManager {
 
       store.dispatch(setSkillStatus({ skillId, status: "running" }));
 
-      // Load the skill
-      await runtime.load();
+      // Load the skill with additional parameters based on skill type
+      const loadParams = this.getSkillLoadParams(manifest.id);
+      await runtime.load(loadParams);
 
       // Check if setup is needed
       const state = store.getState();
@@ -300,6 +312,33 @@ class SkillManager {
    */
   getSkillStatus(skillId: string): SkillStatus | undefined {
     return store.getState().skills.skills[skillId]?.status;
+  }
+
+  /**
+   * Reload a skill with updated parameters (e.g., after authentication).
+   */
+  async reloadSkill(skillId: string): Promise<void> {
+    const runtime = this.runtimes.get(skillId);
+    if (!runtime || !runtime.isRunning) {
+      return; // Skill not running, nothing to reload
+    }
+
+    try {
+      // Get updated load parameters
+      const loadParams = this.getSkillLoadParams(skillId);
+
+      // Reload the skill with new parameters
+      await runtime.load(loadParams);
+
+      // Check if skill needs activation
+      const state = store.getState();
+      const skillState = state.skills.skills[skillId];
+      if (skillState?.setupComplete) {
+        await this.activateSkill(skillId);
+      }
+    } catch (err) {
+      console.error(`Error reloading skill ${skillId}:`, err);
+    }
   }
 
   // -----------------------------------------------------------------------
