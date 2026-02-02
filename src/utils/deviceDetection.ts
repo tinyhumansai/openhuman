@@ -188,6 +188,12 @@ export function getArchitectureDisplayName(arch: Architecture): string {
 export function parseReleaseAssetsByArchitecture(assets: GitHubReleaseAsset[]): PlatformArchitectureLinks {
   const links: PlatformArchitectureLinks = {};
 
+  // Use Maps to track unique architectures per platform
+  const windowsMap = new Map<Architecture, ArchitectureDownloadLink>();
+  const macosMap = new Map<Architecture, ArchitectureDownloadLink>();
+  const linuxMap = new Map<Architecture, ArchitectureDownloadLink>();
+  const androidMap = new Map<Architecture, ArchitectureDownloadLink>();
+
   for (const asset of assets) {
     const name = asset.name.toLowerCase();
 
@@ -207,32 +213,57 @@ export function parseReleaseAssetsByArchitecture(assets: GitHubReleaseAsset[]): 
 
     // Windows: .exe, .msi, .zip (Windows)
     if (name.includes('windows') || name.includes('.exe') || name.includes('.msi') || (name.includes('.zip') && !name.includes('macos'))) {
-      if (!links.windows) {
-        links.windows = [];
+      // Only add if this architecture doesn't exist yet, or prefer more specific filenames
+      if (!windowsMap.has(architecture) || (name.includes('windows') && !windowsMap.get(architecture)?.fileName.toLowerCase().includes('windows'))) {
+        windowsMap.set(architecture, link);
       }
-      links.windows.push(link);
     }
     // macOS: .dmg
     else if (name.includes('macos') || name.includes('.dmg') || name.includes('darwin')) {
-      if (!links.macos) {
-        links.macos = [];
+      // Only add if this architecture doesn't exist yet, or prefer more specific filenames
+      if (!macosMap.has(architecture) || (name.includes('macos') && !macosMap.get(architecture)?.fileName.toLowerCase().includes('macos'))) {
+        macosMap.set(architecture, link);
       }
-      links.macos.push(link);
     }
     // Linux: .AppImage, .deb, .rpm
     else if (name.includes('linux') || name.includes('.appimage') || name.includes('.deb') || name.includes('.rpm')) {
-      if (!links.linux) {
-        links.linux = [];
+      // Prefer AppImage, then deb, then rpm for the same architecture
+      const existing = linuxMap.get(architecture);
+      if (!existing) {
+        linuxMap.set(architecture, link);
+      } else {
+        const existingName = existing.fileName.toLowerCase();
+        // Prefer AppImage over others
+        if (name.includes('.appimage') && !existingName.includes('.appimage')) {
+          linuxMap.set(architecture, link);
+        }
+        // Prefer deb over rpm
+        else if (name.includes('.deb') && existingName.includes('.rpm')) {
+          linuxMap.set(architecture, link);
+        }
       }
-      links.linux.push(link);
     }
     // Android: .apk
     else if (name.includes('android') || name.includes('.apk')) {
-      if (!links.android) {
-        links.android = [];
+      // Only add if this architecture doesn't exist yet
+      if (!androidMap.has(architecture)) {
+        androidMap.set(architecture, link);
       }
-      links.android.push(link);
     }
+  }
+
+  // Convert Maps to arrays
+  if (windowsMap.size > 0) {
+    links.windows = Array.from(windowsMap.values());
+  }
+  if (macosMap.size > 0) {
+    links.macos = Array.from(macosMap.values());
+  }
+  if (linuxMap.size > 0) {
+    links.linux = Array.from(linuxMap.values());
+  }
+  if (androidMap.size > 0) {
+    links.android = Array.from(androidMap.values());
   }
 
   // Sort architectures: prefer detected architecture, then x64, then aarch64
