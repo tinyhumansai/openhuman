@@ -76,11 +76,21 @@ jobs:
 
           echo "Checking if release already exists for tag: $TAG_NAME"
 
-          RESPONSE=$(curl -s -H "Authorization: token $XGH_TOKEN" \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $XGH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
             "https://api.github.com/repos/$PUBLISH_REPO/releases/tags/$TAG_NAME")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
 
-          if echo "$RESPONSE" | jq -e '.tag_name' > /dev/null; then
-            IS_DRAFT=$(echo "$RESPONSE" | jq -r '.draft')
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "🆕 No release found for version $PACKAGE_VERSION, will create new release"
+            echo "should-skip=false" >> $GITHUB_OUTPUT
+          elif [ "$HTTP_CODE" != "200" ]; then
+            echo "⚠️ Warning: Failed to check release (HTTP $HTTP_CODE). Response: $BODY"
+            echo "Continuing anyway..."
+            echo "should-skip=false" >> $GITHUB_OUTPUT
+          elif echo "$BODY" | jq -e '.tag_name' > /dev/null; then
+            IS_DRAFT=$(echo "$BODY" | jq -r '.draft')
             if [ "$IS_DRAFT" = "false" ]; then
               echo "✅ Published release already exists for version $PACKAGE_VERSION"
               echo "should-skip=true" >> $GITHUB_OUTPUT
@@ -97,6 +107,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [get-version, check-version]
     if: needs.get-version.outputs.should-publish != '' && needs.check-version.outputs.should-skip != 'true'
+    permissions:
+      contents: write
     outputs:
       releaseId: ${{ steps.create-release.outputs.releaseId }}
     steps:
@@ -109,14 +121,24 @@ jobs:
         run: |
           echo "Creating draft release for tag: $TAG_NAME"
           echo "Repository: $PUBLISH_REPO"
-          RESPONSE=$(curl -X POST \
-            -H "Authorization: token $XGH_TOKEN" \
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: Bearer $XGH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
             -d '{"tag_name": "'"$TAG_NAME"'", "name": "'"$RELEASE_NAME"'", "draft": true}' \
             "https://api.github.com/repos/$PUBLISH_REPO/releases")
-          RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Status Code: $HTTP_CODE"
+          echo "Response body: $BODY"
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "Error: Failed to create release. HTTP $HTTP_CODE"
+            echo "Response: $BODY"
+            exit 1
+          fi
+          RELEASE_ID=$(echo "$BODY" | jq -r '.id')
           echo "Extracted Release ID: $RELEASE_ID"
-          if [ "$RELEASE_ID" = "null" ]; then
-            echo "Error: Failed to create release. Response was: $RESPONSE"
+          if [ "$RELEASE_ID" = "null" ] || [ -z "$RELEASE_ID" ]; then
+            echo "Error: Failed to extract release ID. Response was: $BODY"
             exit 1
           fi
           echo "releaseId=$RELEASE_ID" >> $GITHUB_OUTPUT
@@ -321,6 +343,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [get-version, check-version, create-release, package-tauri]
     if: needs.get-version.outputs.should-publish != '' && needs.check-version.outputs.should-skip != 'true'
+    permissions:
+      contents: write
     env:
       RELEASE_ID: ${{ needs.create-release.outputs.releaseId }}
     steps:
@@ -331,11 +355,30 @@ jobs:
 
       - name: Publish release
         run: |
-          curl -X PATCH -H "Authorization: Bearer $XGH_TOKEN" -d '{"draft": false}' "https://api.github.com/repos/$PUBLISH_REPO/releases/$RELEASE_ID"
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X PATCH \
+            -H "Authorization: Bearer $XGH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d '{"draft": false}' \
+            "https://api.github.com/repos/$PUBLISH_REPO/releases/$RELEASE_ID")
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Error: Failed to publish release. HTTP $HTTP_CODE"
+            echo "Response: $BODY"
+            exit 1
+          fi
+          echo "Release published successfully"
 
       - name: Update Gist with JSON
         run: |
-          ASSET_ID=$(curl -s -H "Authorization: Bearer $XGH_TOKEN" "https://api.github.com/repos/$PUBLISH_REPO/releases/$RELEASE_ID/assets" | jq -r '.[] | select(.name == "latest.json") | .id')
-          JSON_CONTENT=$(curl -sSL -H "Accept: application/octet-stream" -H "Authorization: token $XGH_TOKEN" "https://api.github.com/repos/$PUBLISH_REPO/releases/assets/$ASSET_ID")
+          ASSET_ID=$(curl -s -H "Authorization: Bearer $XGH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$PUBLISH_REPO/releases/$RELEASE_ID/assets" | jq -r '.[] | select(.name == "latest.json") | .id')
+          JSON_CONTENT=$(curl -sSL -H "Accept: application/octet-stream" \
+            -H "Authorization: Bearer $XGH_TOKEN" \
+            "https://api.github.com/repos/$PUBLISH_REPO/releases/assets/$ASSET_ID")
           GIST_CONTENT=$(jq -n --arg json "$JSON_CONTENT" '{"files":{"updater.json":{"content":$json}}}')
-          curl -X PATCH -H "Authorization: token $XGH_TOKEN" -d "$GIST_CONTENT" "https://api.github.com/gists/$UPDATER_GIST_ID"
+          curl -X PATCH -H "Authorization: Bearer $XGH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -d "$GIST_CONTENT" \
+            "https://api.github.com/gists/$UPDATER_GIST_ID"
