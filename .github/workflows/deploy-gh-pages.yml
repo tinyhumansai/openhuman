@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   workflow_run:
-    workflows: ["Version Bump"]
+    workflows: ['Version Bump']
     types:
       - completed
     branches:
@@ -27,14 +27,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.XGH_TOKEN }}
-          repository: alphahumanxyz/alphahuman
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20.x
-          cache: "yarn"
+          cache: 'yarn'
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
@@ -60,9 +58,9 @@ jobs:
           external_repository: alphahumanxyz/alphahuman
           publish_dir: ./deploy
           publish_branch: gh-pages
-          commit_message: "chore: deploy to gh-pages [skip ci]"
-          user_name: "github-actions[bot]"
-          user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_message: 'chore: deploy to gh-pages [skip ci]'
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
 
       - name: Update GH repo
         uses: peaceiris/actions-gh-pages@v4
@@ -71,6 +69,6 @@ jobs:
           external_repository: alphahumanxyz/alphahuman
           publish_dir: ./publish
           publish_branch: main
-          user_name: "github-actions[bot]"
-          user_email: "github-actions[bot]@users.noreply.github.com"
-          commit_message: "chore: update main branch [skip ci]"
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'chore: update main branch [skip ci]'
