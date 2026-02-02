@@ -14,4 +14,3 @@ export const TELEGRAM_API_HASH = import.meta.env.VITE_TELEGRAM_API_HASH || undef
 export const IS_DEV = Boolean(import.meta.env.DEV) || import.meta.env.MODE === 'development';
 
 export const SKILLS_GITHUB_REPO = import.meta.env.VITE_SKILLS_GITHUB_REPO || 'alphahumanxyz/skills';
-

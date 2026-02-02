@@ -51,9 +51,7 @@ interface UpdateCheckResult {
 
 async function checkForUpdates(): Promise<UpdateCheckResult> {
   const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<UpdateCheckResult>('skill_check_for_updates', {
-    repo: SKILLS_GITHUB_REPO,
-  });
+  return invoke<UpdateCheckResult>('skill_check_for_updates', { repo: SKILLS_GITHUB_REPO });
 }
 
 // ---------------------------------------------------------------------------

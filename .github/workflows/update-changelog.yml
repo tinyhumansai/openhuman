@@ -1,0 +1,197 @@
+name: Update Changelog
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-changelog
+  cancel-in-progress: false
+
+jobs:
+  update-changelog:
+    runs-on: ubuntu-latest
+    # Skip if commit message contains [skip ci] or is a version bump commit
+    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, 'chore: bump version')"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch tags
+        run: |
+          git fetch origin --tags
+
+      - name: Calculate next version
+        id: next-version
+        run: |
+          # Get the latest version tag (format: v1.2.3)
+          LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1 || echo "")
+
+          if [ -z "$LATEST_TAG" ]; then
+            # No tags found, start with v1.0.0
+            NEXT_VERSION="v1.0.0"
+            LATEST_TAG="(none)"
+          else
+            # Extract version number (remove 'v' prefix)
+            VERSION="${LATEST_TAG#v}"
+
+            # Split into major.minor.patch
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+            # Ensure we have valid numbers (default to 0 if empty)
+            MAJOR=${MAJOR:-0}
+            MINOR=${MINOR:-0}
+            PATCH=${PATCH:-0}
+
+            # Increment minor version and reset patch to 0
+            MINOR=$((MINOR + 1))
+            PATCH=0
+
+            NEXT_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "Latest tag: $LATEST_TAG"
+          echo "Predicted next version: $NEXT_VERSION"
+          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get commits since last tag
+        id: get-commits
+        run: |
+          # Get the latest actual tag (not the predicted one)
+          LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1 || echo "")
+
+          # Get commits since the last tag (or all commits if no tag exists)
+          if [ -n "$LATEST_TAG" ] && git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
+            # Tag exists, get commits since that tag
+            git log "$LATEST_TAG"..HEAD --pretty=format:"- %s (%h)" --no-merges > commits.txt || echo "- $(git log -1 --pretty=format:'%s (%h)')" > commits.txt
+          else
+            # No tag exists, get all commits
+            git log --pretty=format:"- %s (%h)" --no-merges > commits.txt || echo "- $(git log -1 --pretty=format:'%s (%h)')" > commits.txt
+          fi
+
+          # If file is empty, use current commit
+          if [ ! -s commits.txt ]; then
+            echo "- $(git log -1 --pretty=format:'%s (%h)')" > commits.txt
+          fi
+
+      - name: Get current date
+        id: date
+        run: |
+          echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Update CHANGELOG.md
+        run: |
+          CHANGELOG_PATH="publish/CHANGELOG.md"
+          NEXT_VERSION="${{ steps.next-version.outputs.version }}"
+          RELEASE_DATE="${{ steps.date.outputs.date }}"
+
+          # Create changelog directory if it doesn't exist
+          mkdir -p publish
+
+          # Check if changelog exists and has content
+          if [ ! -f "$CHANGELOG_PATH" ] || [ ! -s "$CHANGELOG_PATH" ]; then
+            # Create new changelog with header
+            cat > "$CHANGELOG_PATH" <<'EOF'
+          # Changelog
+
+          All notable changes to this project will be documented in this file.
+
+          The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+          and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+          ## [Unreleased]
+
+          ### Added
+          - Initial changelog
+
+          EOF
+          fi
+
+          # Check if this version already exists in changelog
+          if grep -q "## \[$NEXT_VERSION\]" "$CHANGELOG_PATH"; then
+            echo "Version $NEXT_VERSION already exists in CHANGELOG.md. Skipping update."
+            exit 0
+          fi
+
+          # Use Python to update the changelog
+          python3 <<PYTHON_SCRIPT
+          changelog_path = "$CHANGELOG_PATH"
+          next_version = "$NEXT_VERSION"
+          release_date = "$RELEASE_DATE"
+
+          # Read commits
+          with open("commits.txt", "r") as f:
+              commits = f.read().strip()
+
+          # Read existing changelog
+          with open(changelog_path, "r") as f:
+              lines = f.readlines()
+
+          # Create new version entry
+          new_entry = f"""## [{next_version}] - {release_date}
+
+          ### Changed
+          {commits}
+
+          """
+
+          # Find [Unreleased] section and insert after it
+          output_lines = []
+          inserted = False
+          i = 0
+          while i < len(lines):
+              line = lines[i]
+              output_lines.append(line)
+              
+              # Check if this is the [Unreleased] header line
+              if line.strip() == "## [Unreleased]":
+                  # Find the end of the [Unreleased] section (next ## header or end of file)
+                  i += 1
+                  while i < len(lines) and not lines[i].startswith("##"):
+                      output_lines.append(lines[i])
+                      i += 1
+                  # Insert new entry after the [Unreleased] section
+                  output_lines.append("\n")
+                  output_lines.append(new_entry)
+                  inserted = True
+                  # Continue with remaining lines
+                  continue
+              
+              i += 1
+
+          # If [Unreleased] not found, prepend
+          if not inserted:
+              output_lines = [new_entry, "\n"] + lines
+
+          # Write updated changelog
+          with open(changelog_path, "w") as f:
+              f.writelines(output_lines)
+
+          print(f"Updated CHANGELOG.md with version {next_version}")
+          PYTHON_SCRIPT
+
+      - name: Commit and push changes
+        run: |
+          git add publish/CHANGELOG.md
+
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update changelog for ${{ steps.next-version.outputs.version }} [skip ci]"
+          git push origin develop
