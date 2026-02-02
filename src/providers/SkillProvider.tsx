@@ -11,39 +11,32 @@
  *   the Rust side). If a newer commit is available, re-downloads and
  *   re-discovers.
  */
+import { type ReactNode, useEffect, useRef } from 'react';
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { useAppSelector } from "../store/hooks";
-import { skillManager } from "../lib/skills/manager";
-import type { SkillManifest } from "../lib/skills/types";
-import {
-  IS_DEV,
-  SKILLS_GITHUB_REPO,
-  SKILLS_GITHUB_TOKEN,
-} from "../utils/config";
+import { skillManager } from '../lib/skills/manager';
+import type { SkillManifest } from '../lib/skills/types';
+import { useAppSelector } from '../store/hooks';
+import { IS_DEV, SKILLS_GITHUB_REPO, SKILLS_GITHUB_TOKEN } from '../utils/config';
 
 // ---------------------------------------------------------------------------
 // Helpers (all lazy-import @tauri-apps/api/core to avoid loading before IPC)
 // ---------------------------------------------------------------------------
 
 async function discoverSkills(): Promise<SkillManifest[]> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  const raw = await invoke<Record<string, unknown>[]>("skill_list_manifests");
+  const { invoke } = await import('@tauri-apps/api/core');
+  const raw = await invoke<Record<string, unknown>[]>('skill_list_manifests');
   return raw as unknown as SkillManifest[];
 }
 
 async function syncSkillsFromGithub(): Promise<void> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke("skill_sync_repo", {
-    repo: SKILLS_GITHUB_REPO,
-    githubToken: SKILLS_GITHUB_TOKEN,
-  });
+  const { invoke } = await import('@tauri-apps/api/core');
+  await invoke('skill_sync_repo', { repo: SKILLS_GITHUB_REPO, githubToken: SKILLS_GITHUB_TOKEN });
 }
 
 async function catalogExists(): Promise<boolean> {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<boolean>("skill_catalog_exists");
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<boolean>('skill_catalog_exists');
   } catch {
     return false;
   }
@@ -57,8 +50,8 @@ interface UpdateCheckResult {
 }
 
 async function checkForUpdates(): Promise<UpdateCheckResult> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<UpdateCheckResult>("skill_check_for_updates", {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<UpdateCheckResult>('skill_check_for_updates', {
     repo: SKILLS_GITHUB_REPO,
     githubToken: SKILLS_GITHUB_TOKEN,
   });
@@ -69,8 +62,8 @@ async function checkForUpdates(): Promise<UpdateCheckResult> {
 // ---------------------------------------------------------------------------
 
 export default function SkillProvider({ children }: { children: ReactNode }) {
-  const { token } = useAppSelector((state) => state.auth);
-  const skillsState = useAppSelector((state) => state.skills.skills);
+  const { token } = useAppSelector(state => state.auth);
+  const skillsState = useAppSelector(state => state.skills.skills);
   const initRef = useRef(false);
 
   useEffect(() => {
@@ -85,11 +78,8 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
       for (const manifest of manifests) {
         const existing = skillsState[manifest.id];
         if (existing?.setupComplete) {
-          skillManager.startSkill(manifest).catch((err) => {
-            console.error(
-              `[SkillProvider] Failed to start ${manifest.id}:`,
-              err,
-            );
+          skillManager.startSkill(manifest).catch(err => {
+            console.error(`[SkillProvider] Failed to start ${manifest.id}:`, err);
           });
         }
       }
@@ -101,16 +91,11 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
           // First-time install: no skills at all yet
           const exists = await catalogExists();
           if (!exists) {
-            console.log(
-              "[SkillProvider] No local skills found, syncing from GitHub...",
-            );
+            console.log('[SkillProvider] No local skills found, syncing from GitHub...');
             try {
               await syncSkillsFromGithub();
             } catch (syncErr) {
-              console.error(
-                "[SkillProvider] Failed to sync skills from GitHub:",
-                syncErr,
-              );
+              console.error('[SkillProvider] Failed to sync skills from GitHub:', syncErr);
             }
           }
         }
@@ -124,7 +109,7 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
           checkForSkillUpdates(registerAndStart);
         }
       } catch (err) {
-        console.error("[SkillProvider] Failed to discover skills:", err);
+        console.error('[SkillProvider] Failed to discover skills:', err);
       }
     };
 
@@ -144,9 +129,7 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
  * whether a newer commit exists on GitHub (respects 24h cooldown).
  * If yes, re-syncs and re-discovers skills.
  */
-async function checkForSkillUpdates(
-  onNewSkills: (manifests: SkillManifest[]) => Promise<void>,
-) {
+async function checkForSkillUpdates(onNewSkills: (manifests: SkillManifest[]) => Promise<void>) {
   try {
     const result = await checkForUpdates();
 
@@ -155,12 +138,12 @@ async function checkForSkillUpdates(
     }
 
     if (!result.needs_update) {
-      console.log("[SkillProvider] Skills are up to date");
+      console.log('[SkillProvider] Skills are up to date');
       return;
     }
 
     console.log(
-      `[SkillProvider] Skills update available: ${result.local_sha?.slice(0, 8) ?? "none"} → ${result.remote_sha?.slice(0, 8)}`,
+      `[SkillProvider] Skills update available: ${result.local_sha?.slice(0, 8) ?? 'none'} → ${result.remote_sha?.slice(0, 8)}`
     );
 
     // Stop all running skills before re-syncing
@@ -172,8 +155,8 @@ async function checkForSkillUpdates(
     const manifests = await discoverSkills();
     await onNewSkills(manifests);
 
-    console.log("[SkillProvider] Skills updated and reloaded");
+    console.log('[SkillProvider] Skills updated and reloaded');
   } catch (err) {
-    console.error("[SkillProvider] Background update check failed:", err);
+    console.error('[SkillProvider] Background update check failed:', err);
   }
 }

@@ -1,5 +1,5 @@
-import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
-import { isTauri } from "@tauri-apps/api/core";
+import { isTauri } from '@tauri-apps/api/core';
+import { openUrl as tauriOpenUrl } from '@tauri-apps/plugin-opener';
 
 /**
  * Opens a URL in the default browser or app.
@@ -12,11 +12,11 @@ export const openUrl = async (url: string): Promise<void> => {
       await tauriOpenUrl(url);
       return;
     } catch (error) {
-      console.error("Failed to open URL with Tauri:", error);
+      console.error('Failed to open URL with Tauri:', error);
       // Fall through to browser fallback
     }
   }
 
   // Browser fallback
-  window.open(url, "_blank", "noopener,noreferrer");
+  window.open(url, '_blank', 'noopener,noreferrer');
 };

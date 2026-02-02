@@ -1,15 +1,20 @@
 // ESLint flat config for ESLint 9+
 // This config is compatible with Prettier and won't conflict with formatting rules
 
-const js = require('@eslint/js');
-const tseslint = require('@typescript-eslint/eslint-plugin');
-const tsparser = require('@typescript-eslint/parser');
-const reactPlugin = require('eslint-plugin-react');
-const reactHooksPlugin = require('eslint-plugin-react-hooks');
-const importPlugin = require('eslint-plugin-import');
-const prettierConfig = require('eslint-config-prettier');
+import js from '@eslint/js';
+import tseslint from '@typescript-eslint/eslint-plugin';
+import tsparser from '@typescript-eslint/parser';
+import reactPlugin from 'eslint-plugin-react';
+import reactHooksPlugin from 'eslint-plugin-react-hooks';
+import importPlugin from 'eslint-plugin-import';
+import prettierConfig from 'eslint-config-prettier';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
-module.exports = [
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+export default [
   // Base recommended rules
   js.configs.recommended,
 
@@ -21,6 +26,9 @@ module.exports = [
       'coverage/**',
       'src-tauri/**',
       'skills/**',
+      'references/**',
+      'deploy/**',
+      'scripts/**',
       '*.config.js',
       '*.config.ts',
       'vitest.config.ts',
@@ -44,6 +52,12 @@ module.exports = [
         clearInterval: 'readonly',
         fetch: 'readonly',
         AbortSignal: 'readonly',
+        self: 'readonly',
+        crypto: 'readonly',
+        atob: 'readonly',
+        btoa: 'readonly',
+        // React globals
+        React: 'readonly',
         // Node.js globals (for Vite/node polyfills)
         require: 'readonly',
         process: 'readonly',
@@ -59,7 +73,7 @@ module.exports = [
 
   // TypeScript files configuration
   {
-    files: ['**/*.ts', '**/*.tsx'],
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
@@ -123,7 +137,7 @@ module.exports = [
 
   // React files configuration
   {
-    files: ['**/*.jsx', '**/*.tsx'],
+    files: ['src/**/*.jsx', 'src/**/*.tsx'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {
@@ -151,8 +165,11 @@ module.exports = [
       'react/react-in-jsx-scope': 'off', // Not needed in React 17+
       'react/prop-types': 'off', // TypeScript handles prop validation
       'react/display-name': 'off', // Not needed with TypeScript
+      'react/no-unescaped-entities': 'off', // Prettier handles this
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/set-state-in-effect': 'warn', // Allow initialization in effects
+      'react-hooks/refs': 'off', // Allow ref access in context providers
     },
   },
 

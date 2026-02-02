@@ -1,8 +1,9 @@
-import { useEffect } from "react";
-import { useAppSelector, useAppDispatch } from "../store/hooks";
-import { fetchCurrentUser } from "../store/userSlice";
-import { fetchTeams } from "../store/teamSlice";
-import { clearToken } from "../store/authSlice";
+import { useEffect } from 'react';
+
+import { clearToken } from '../store/authSlice';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { fetchTeams } from '../store/teamSlice';
+import { fetchCurrentUser } from '../store/userSlice';
 
 /**
  * UserProvider automatically fetches user data when JWT token is available.
@@ -10,11 +11,11 @@ import { clearToken } from "../store/authSlice";
  */
 const UserProvider = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useAppDispatch();
-  const token = useAppSelector((state) => state.auth.token);
+  const token = useAppSelector(state => state.auth.token);
 
   useEffect(() => {
     if (!token) return;
-    dispatch(fetchCurrentUser()).then((result) => {
+    dispatch(fetchCurrentUser()).then(result => {
       if (fetchCurrentUser.fulfilled.match(result)) {
         dispatch(fetchTeams());
       } else if (fetchCurrentUser.rejected.match(result)) {

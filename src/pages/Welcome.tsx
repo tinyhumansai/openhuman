@@ -1,7 +1,6 @@
-
-import TypewriterGreeting from "../components/TypewriterGreeting";
-import TelegramLoginButton from "../components/TelegramLoginButton";
-import DownloadScreen from "../components/DownloadScreen";
+import DownloadScreen from '../components/DownloadScreen';
+import TelegramLoginButton from '../components/TelegramLoginButton';
+import TypewriterGreeting from '../components/TypewriterGreeting';
 
 interface WelcomeProps {
   isWeb: boolean;
@@ -9,9 +8,9 @@ interface WelcomeProps {
 
 const Welcome = ({ isWeb }: WelcomeProps) => {
   const greetings = [
-    "Hello HAL9000! 👋",
+    'Hello HAL9000! 👋',
     "Let's cook! 🔥",
-    "The A-Team is here! 👊",
+    'The A-Team is here! 👊',
     // "Welcome to the exclusive club of crypto degenerates! 🎪🚀",
     // "Let's get you richer than a Nigerian prince's email! 👑💸",
     // "Ready to HODL like your life depends on it? 🤝💀",
@@ -32,24 +31,24 @@ const Welcome = ({ isWeb }: WelcomeProps) => {
           {/* <br /> */}
 
           <p className="opacity-70 mb-8 leading-relaxed">
-            Welcome to AlphaHuman. Your Telegram assistant here to get you 10x
-            more done in your journey.
+            Welcome to AlphaHuman. Your Telegram assistant here to get you 10x more done in your
+            journey.
           </p>
 
-          <p className="opacity-70 leading-relaxed">
-            Are you ready for this?
-          </p>
+          <p className="opacity-70 leading-relaxed">Are you ready for this?</p>
 
           {/* Show Telegram login button in Tauri app, download screen on web */}
-          {!isWeb && <div className="mt-6"><TelegramLoginButton /></div>}
+          {!isWeb && (
+            <div className="mt-6">
+              <TelegramLoginButton />
+            </div>
+          )}
         </div>
 
         {isWeb && <DownloadScreen />}
 
         {/* Bottom text */}
-        <p className="text-center opacity-60 text-sm">
-          Made with ❤️ by a bunch of Web3 nerds
-        </p>
+        <p className="text-center opacity-60 text-sm">Made with ❤️ by a bunch of Web3 nerds</p>
       </div>
     </div>
   );

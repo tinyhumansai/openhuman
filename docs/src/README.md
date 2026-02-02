@@ -4,35 +4,35 @@ This documentation covers the `/src` folder structure of the Outsourced Crypto C
 
 ## Quick Reference
 
-| Document | Description |
-|----------|-------------|
-| [Architecture Overview](./01-architecture.md) | High-level system architecture and provider chain |
-| [State Management](./02-state-management.md) | Redux Toolkit slices, persistence, and selectors |
-| [Services Layer](./03-services.md) | Singleton services (Socket.io, MTProto, API client) |
-| [MCP System](./04-mcp-system.md) | Model Context Protocol with 81 Telegram tools |
-| [Pages & Routing](./05-pages-routing.md) | Route definitions, guards, and page components |
-| [Components](./06-components.md) | Reusable UI components and settings modal system |
-| [Providers](./07-providers.md) | React context providers and lifecycle management |
-| [Hooks & Utils](./08-hooks-utils.md) | Custom hooks and utility functions |
+| Document                                      | Description                                         |
+| --------------------------------------------- | --------------------------------------------------- |
+| [Architecture Overview](./01-architecture.md) | High-level system architecture and provider chain   |
+| [State Management](./02-state-management.md)  | Redux Toolkit slices, persistence, and selectors    |
+| [Services Layer](./03-services.md)            | Singleton services (Socket.io, MTProto, API client) |
+| [MCP System](./04-mcp-system.md)              | Model Context Protocol with 81 Telegram tools       |
+| [Pages & Routing](./05-pages-routing.md)      | Route definitions, guards, and page components      |
+| [Components](./06-components.md)              | Reusable UI components and settings modal system    |
+| [Providers](./07-providers.md)                | React context providers and lifecycle management    |
+| [Hooks & Utils](./08-hooks-utils.md)          | Custom hooks and utility functions                  |
 
 ## File Count Summary
 
-| Category | Files | Purpose |
-|----------|-------|---------|
-| Entry & Configuration | 7 | App init, routing, styles, types |
-| State Management | 13 | Redux slices, selectors, hooks |
-| Providers | 3 | Socket, Telegram, User contexts |
-| Services | 5 | Singleton API clients |
-| Pages | 9 | Full-page route components |
-| Components | 28 | Reusable UI + settings modal (16 files) |
-| MCP Core | 14 | MCP interfaces, transport, logging |
-| MCP Telegram Tools | 81 | Individual Telegram API operations |
-| Hooks | 2 | Custom React hooks |
-| Types | 2 | TypeScript interfaces |
-| Utils | 4 | Config, deep link, URL utilities |
-| Data | 1 | Static data (countries) |
-| Assets | 10+ | Icons and images |
-| **TOTAL** | **171+** | Complete frontend application |
+| Category              | Files    | Purpose                                 |
+| --------------------- | -------- | --------------------------------------- |
+| Entry & Configuration | 7        | App init, routing, styles, types        |
+| State Management      | 13       | Redux slices, selectors, hooks          |
+| Providers             | 3        | Socket, Telegram, User contexts         |
+| Services              | 5        | Singleton API clients                   |
+| Pages                 | 9        | Full-page route components              |
+| Components            | 28       | Reusable UI + settings modal (16 files) |
+| MCP Core              | 14       | MCP interfaces, transport, logging      |
+| MCP Telegram Tools    | 81       | Individual Telegram API operations      |
+| Hooks                 | 2        | Custom React hooks                      |
+| Types                 | 2        | TypeScript interfaces                   |
+| Utils                 | 4        | Config, deep link, URL utilities        |
+| Data                  | 1        | Static data (countries)                 |
+| Assets                | 10+      | Icons and images                        |
+| **TOTAL**             | **171+** | Complete frontend application           |
 
 ## Directory Structure
 
@@ -75,4 +75,4 @@ src/
 
 ---
 
-*Documentation maintained by stevenbaba*
+_Documentation maintained by stevenbaba_

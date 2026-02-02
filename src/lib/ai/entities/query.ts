@@ -1,11 +1,5 @@
-import type { EntityManager } from "./manager";
-import type {
-  Entity,
-  EntityType,
-  EntitySource,
-  EntitySearchResult,
-  RelationType,
-} from "./types";
+import type { EntityManager } from './manager';
+import type { Entity, EntitySearchResult, EntitySource, EntityType, RelationType } from './types';
 
 /**
  * Fluent query builder for entity search and traversal.
@@ -30,7 +24,7 @@ export class EntityQuery {
   private tagFilter?: string;
   private searchQuery?: string;
   private relatedEntityId?: string;
-  private relatedDirection?: "from" | "to" | "both";
+  private relatedDirection?: 'from' | 'to' | 'both';
   private relatedRelationType?: RelationType;
   private limitValue = 50;
   private offsetValue = 0;
@@ -67,7 +61,7 @@ export class EntityQuery {
   relatedTo(
     entityId: string,
     relationType?: RelationType,
-    direction?: "from" | "to" | "both",
+    direction?: 'from' | 'to' | 'both'
   ): this {
     this.relatedEntityId = entityId;
     this.relatedRelationType = relationType;
@@ -102,7 +96,7 @@ export class EntityQuery {
       const relations = await this.manager.getRelations(
         this.relatedEntityId,
         this.relatedDirection,
-        this.relatedRelationType,
+        this.relatedRelationType
       );
 
       // Collect related entity IDs
@@ -131,12 +125,8 @@ export class EntityQuery {
     // FTS search
     if (this.searchQuery) {
       const types = this.typeFilter ? [this.typeFilter] : undefined;
-      const results = await this.manager.search(
-        this.searchQuery,
-        types,
-        this.limitValue,
-      );
-      return results.filter((e) => this.matchesFilters(e));
+      const results = await this.manager.search(this.searchQuery, types, this.limitValue);
+      return results.filter(e => this.matchesFilters(e));
     }
 
     // Tag-based lookup

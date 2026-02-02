@@ -1,44 +1,37 @@
-import { configureStore } from "@reduxjs/toolkit";
+import { configureStore } from '@reduxjs/toolkit';
+import { createLogger } from 'redux-logger';
 import {
-  persistStore,
-  persistReducer,
   FLUSH,
-  REHYDRATE,
   PAUSE,
   PERSIST,
+  persistReducer,
+  persistStore,
   PURGE,
   REGISTER,
-} from "redux-persist";
-import storage from "redux-persist/lib/storage";
-import authReducer from "./authSlice";
-import socketReducer from "./socketSlice";
-import userReducer from "./userSlice";
-import aiReducer from "./aiSlice";
-import skillsReducer from "./skillsSlice";
-import teamReducer from "./teamSlice";
-import { createLogger } from "redux-logger";
-import { IS_DEV } from "../utils/config";
+  REHYDRATE,
+} from 'redux-persist';
+import storage from 'redux-persist/lib/storage';
+
+import { IS_DEV } from '../utils/config';
+import aiReducer from './aiSlice';
+import authReducer from './authSlice';
+import skillsReducer from './skillsSlice';
+import socketReducer from './socketSlice';
+import teamReducer from './teamSlice';
+import userReducer from './userSlice';
 
 // Persist config for auth only
 const authPersistConfig = {
-  key: "auth",
+  key: 'auth',
   storage,
-  whitelist: ["token", "isOnboardedByUser", "isAnalyticsEnabledByUser"],
+  whitelist: ['token', 'isOnboardedByUser', 'isAnalyticsEnabledByUser'],
 };
 
 // Persist config for AI state (config only)
-const aiPersistConfig = {
-  key: "ai",
-  storage,
-  whitelist: ["config"],
-};
+const aiPersistConfig = { key: 'ai', storage, whitelist: ['config'] };
 
 // Persist config for skills state (setupComplete per skill)
-const skillsPersistConfig = {
-  key: "skills",
-  storage,
-  whitelist: ["skills"],
-};
+const skillsPersistConfig = { key: 'skills', storage, whitelist: ['skills'] };
 
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);
 const persistedAiReducer = persistReducer(aiPersistConfig, aiReducer);
@@ -53,22 +46,14 @@ export const store = configureStore({
     skills: persistedSkillsReducer,
     team: teamReducer,
   },
-  middleware: (getDefaultMiddleware) => {
+  middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({
-      serializableCheck: {
-        ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER],
-      },
+      serializableCheck: { ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER] },
     });
 
     // Add redux-logger in development with collapsed groups
     if (IS_DEV) {
-      return middleware.concat(
-        createLogger({
-          collapsed: true,
-          duration: true,
-          timestamp: true,
-        }),
-      );
+      return middleware.concat(createLogger({ collapsed: true, duration: true, timestamp: true }));
     }
     return middleware;
   },

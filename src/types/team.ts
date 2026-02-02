@@ -1,5 +1,5 @@
-export type TeamRole = "ADMIN" | "BILLING_MANAGER" | "MEMBER";
-export type TeamPlan = "FREE" | "BASIC" | "PRO";
+export type TeamRole = 'ADMIN' | 'BILLING_MANAGER' | 'MEMBER';
+export type TeamPlan = 'FREE' | 'BASIC' | 'PRO';
 
 export interface TeamSubscription {
   plan: TeamPlan;
@@ -55,8 +55,5 @@ export interface TeamInvite {
   expiresAt: string;
   maxUses: number;
   currentUses: number;
-  usageHistory: Array<{
-    userId: string;
-    usedAt: string;
-  }>;
+  usageHistory: Array<{ userId: string; usedAt: string }>;
 }

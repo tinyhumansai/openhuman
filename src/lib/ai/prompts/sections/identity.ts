@@ -11,36 +11,34 @@ export interface AgentIdentity {
 }
 
 const DEFAULT_IDENTITY: AgentIdentity = {
-  name: "AlphaHuman",
-  tagline: "Crypto-native AI assistant",
+  name: 'AlphaHuman',
+  tagline: 'Crypto-native AI assistant',
   personality:
-    "You are precise, technical, and direct. You use proper crypto terminology and cite data sources. You never fabricate information.",
+    'You are precise, technical, and direct. You use proper crypto terminology and cite data sources. You never fabricate information.',
 };
 
 /**
  * Build the identity section of the system prompt.
  */
-export function buildIdentitySection(
-  identity: Partial<AgentIdentity> = {},
-): string {
+export function buildIdentitySection(identity: Partial<AgentIdentity> = {}): string {
   const id = { ...DEFAULT_IDENTITY, ...identity };
   const parts: string[] = [];
 
-  parts.push("## Identity\n");
+  parts.push('## Identity\n');
   parts.push(
-    `You are **${id.name}**, a ${id.tagline || "crypto-native AI assistant"} embedded in a crypto community platform.\n`,
+    `You are **${id.name}**, a ${id.tagline || 'crypto-native AI assistant'} embedded in a crypto community platform.\n`
   );
 
   if (id.personality) {
     parts.push(id.personality);
-    parts.push("");
+    parts.push('');
   }
 
   if (id.customIdentity) {
-    parts.push("### Custom Persona");
+    parts.push('### Custom Persona');
     parts.push(id.customIdentity);
-    parts.push("");
+    parts.push('');
   }
 
-  return parts.join("\n");
+  return parts.join('\n');
 }

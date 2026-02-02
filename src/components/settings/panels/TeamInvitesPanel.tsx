@@ -1,19 +1,20 @@
-import { useState, useEffect } from "react";
-import { useAppSelector, useAppDispatch } from "../../../store/hooks";
-import { fetchInvites } from "../../../store/teamSlice";
-import { teamApi } from "../../../services/api/teamApi";
-import { useSettingsNavigation } from "../hooks/useSettingsNavigation";
-import SettingsHeader from "../components/SettingsHeader";
+import { useEffect, useState } from 'react';
+
+import { teamApi } from '../../../services/api/teamApi';
+import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { fetchInvites } from '../../../store/teamSlice';
+import SettingsHeader from '../components/SettingsHeader';
+import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const TeamInvitesPanel = () => {
   const { navigateBack } = useSettingsNavigation();
   const dispatch = useAppDispatch();
-  const user = useAppSelector((state) => state.user.user);
-  const { teams, invites } = useAppSelector((state) => state.team);
+  const user = useAppSelector(state => state.user.user);
+  const { teams, invites } = useAppSelector(state => state.team);
 
   const activeTeamId = user?.activeTeamId;
-  const activeTeam = teams.find((t) => t.team._id === activeTeamId);
-  const isAdmin = activeTeam?.role === "ADMIN";
+  const activeTeam = teams.find(t => t.team._id === activeTeamId);
+  const isAdmin = activeTeam?.role === 'ADMIN';
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -35,9 +36,9 @@ const TeamInvitesPanel = () => {
       dispatch(fetchInvites(activeTeamId));
     } catch (err) {
       setError(
-        err && typeof err === "object" && "error" in err
+        err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : "Failed to generate invite",
+          : 'Failed to generate invite'
       );
     } finally {
       setIsGenerating(false);
@@ -63,9 +64,9 @@ const TeamInvitesPanel = () => {
       dispatch(fetchInvites(activeTeamId));
     } catch (err) {
       setError(
-        err && typeof err === "object" && "error" in err
+        err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : "Failed to revoke invite",
+          : 'Failed to revoke invite'
       );
     } finally {
       setRevokingId(null);
@@ -76,11 +77,7 @@ const TeamInvitesPanel = () => {
 
   return (
     <div className="overflow-hidden flex flex-col h-full">
-      <SettingsHeader
-        title="Invites"
-        showBackButton={true}
-        onBack={navigateBack}
-      />
+      <SettingsHeader title="Invites" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-4">
@@ -95,15 +92,10 @@ const TeamInvitesPanel = () => {
             <button
               onClick={handleGenerate}
               disabled={isGenerating}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl bg-primary-500 hover:bg-primary-600 text-white transition-colors disabled:opacity-50"
-            >
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl bg-primary-500 hover:bg-primary-600 text-white transition-colors disabled:opacity-50">
               {isGenerating ? (
                 <>
-                  <svg
-                    className="w-4 h-4 animate-spin"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                  >
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle
                       className="opacity-25"
                       cx="12"
@@ -122,12 +114,7 @@ const TeamInvitesPanel = () => {
                 </>
               ) : (
                 <>
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -144,17 +131,16 @@ const TeamInvitesPanel = () => {
           {/* Invites list */}
           {invites.length > 0 ? (
             <div className="space-y-2">
-              {invites.map((invite) => {
+              {invites.map(invite => {
                 const expired = isExpired(invite.expiresAt);
                 return (
                   <div
                     key={invite._id}
                     className={`rounded-xl border p-3 ${
                       expired
-                        ? "border-stone-700/30 bg-stone-800/20 opacity-60"
-                        : "border-stone-700/50 bg-stone-800/40"
-                    }`}
-                  >
+                        ? 'border-stone-700/30 bg-stone-800/20 opacity-60'
+                        : 'border-stone-700/50 bg-stone-800/40'
+                    }`}>
                     <div className="flex items-center justify-between mb-2">
                       {/* Code */}
                       <code className="text-sm font-mono text-white bg-stone-900/60 px-2 py-1 rounded-lg">
@@ -165,15 +151,13 @@ const TeamInvitesPanel = () => {
                         <button
                           onClick={() => handleCopy(invite.code, invite._id)}
                           className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-700/50 transition-colors"
-                          aria-label="Copy invite code"
-                        >
+                          aria-label="Copy invite code">
                           {copiedId === invite._id ? (
                             <svg
                               className="w-4 h-4 text-sage-400"
                               fill="none"
                               stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
+                              viewBox="0 0 24 24">
                               <path
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
@@ -186,8 +170,7 @@ const TeamInvitesPanel = () => {
                               className="w-4 h-4"
                               fill="none"
                               stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
+                              viewBox="0 0 24 24">
                               <path
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
@@ -203,14 +186,12 @@ const TeamInvitesPanel = () => {
                             onClick={() => handleRevoke(invite._id)}
                             disabled={revokingId === invite._id}
                             className="p-1.5 rounded-lg text-stone-500 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
-                            aria-label="Revoke invite"
-                          >
+                            aria-label="Revoke invite">
                             <svg
                               className="w-4 h-4"
                               fill="none"
                               stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
+                              viewBox="0 0 24 24">
                               <path
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
@@ -225,11 +206,11 @@ const TeamInvitesPanel = () => {
                     <div className="flex items-center gap-3 text-xs text-stone-500">
                       <span>
                         Uses: {invite.currentUses}
-                        {invite.maxUses > 0 ? `/${invite.maxUses}` : ""}
+                        {invite.maxUses > 0 ? `/${invite.maxUses}` : ''}
                       </span>
                       <span>
                         {expired
-                          ? "Expired"
+                          ? 'Expired'
                           : `Expires ${new Date(invite.expiresAt).toLocaleDateString()}`}
                       </span>
                     </div>
@@ -243,8 +224,7 @@ const TeamInvitesPanel = () => {
                 className="w-10 h-10 mx-auto text-stone-600 mb-3"
                 fill="none"
                 stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+                viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"

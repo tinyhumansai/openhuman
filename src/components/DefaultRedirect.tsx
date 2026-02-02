@@ -1,6 +1,7 @@
-import { Navigate } from "react-router-dom";
-import { useAppSelector } from "../store/hooks";
-import { selectIsOnboarded } from "../store/authSelectors";
+import { Navigate } from 'react-router-dom';
+
+import { selectIsOnboarded } from '../store/authSelectors';
+import { useAppSelector } from '../store/hooks';
 
 /**
  * Default redirect component that routes users based on their auth and onboarding status
@@ -9,7 +10,7 @@ import { selectIsOnboarded } from "../store/authSelectors";
  * - Logged in and onboarded → /home
  */
 const DefaultRedirect = () => {
-  const token = useAppSelector((state) => state.auth.token);
+  const token = useAppSelector(state => state.auth.token);
   const isOnboarded = useAppSelector(selectIsOnboarded);
 
   if (token && isOnboarded) {

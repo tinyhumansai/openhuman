@@ -48,7 +48,7 @@ export interface ConstitutionValidation {
 /** A specific constitution violation */
 export interface ConstitutionViolation {
   rule: string;
-  category: "safety" | "privacy" | "accuracy" | "consent" | "reversibility";
-  severity: "error" | "warning";
+  category: 'safety' | 'privacy' | 'accuracy' | 'consent' | 'reversibility';
+  severity: 'error' | 'warning';
   message: string;
 }

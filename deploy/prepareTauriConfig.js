@@ -1,13 +1,7 @@
-/* eslint-disable no-null/no-null */
 export default function prepareTauriConfig() {
   const config = {
-    build: {
-      frontendDist: process.env.BASE_URL,
-      devUrl: null,
-    },
-    bundle: {
-      windows: {},
-    },
+    build: { frontendDist: process.env.BASE_URL, devUrl: null },
+    bundle: { windows: {} },
     identifier: 'org.telegram.TelegramAir',
   };
 

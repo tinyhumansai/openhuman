@@ -301,7 +301,7 @@ The settings modal overlays existing content using URL-based routing.
 ```typescript
 // In SettingsModal.tsx
 const location = useLocation();
-const isOpen = location.pathname.startsWith("/settings");
+const isOpen = location.pathname.startsWith('/settings');
 ```
 
 ### Sub-Routes
@@ -342,7 +342,7 @@ The app uses HashRouter for desktop compatibility:
 
 ```typescript
 // App.tsx
-import { HashRouter } from "react-router-dom";
+import { HashRouter } from 'react-router-dom';
 
 // URLs look like: app://localhost/#/home
 // Instead of: app://localhost/home
@@ -361,7 +361,7 @@ Deep links are handled before routing:
 
 ```typescript
 // main.tsx
-import("./utils/desktopDeepLinkListener").then((m) => {
+import('./utils/desktopDeepLinkListener').then(m => {
   m.setupDesktopDeepLinkListener().catch(console.error);
 });
 ```
@@ -377,15 +377,15 @@ The listener intercepts `alphahuman://auth?token=...` and:
 ### Programmatic Navigation
 
 ```typescript
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from 'react-router-dom';
 
 const navigate = useNavigate();
 
 // Navigate to route
-navigate("/home");
+navigate('/home');
 
 // Replace history entry
-navigate("/login", { replace: true });
+navigate('/login', { replace: true });
 
 // Go back
 navigate(-1);
@@ -403,7 +403,7 @@ import { Link } from "react-router-dom";
 
 ```typescript
 // Pass state to route
-navigate("/details", { state: { itemId: 123 } });
+navigate('/details', { state: { itemId: 123 } });
 
 // Receive state
 const location = useLocation();

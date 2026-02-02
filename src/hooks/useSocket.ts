@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
-import { socketService } from "../services/socketService";
-import { useAppSelector } from "../store/hooks";
-import { selectSocketStatus } from "../store/socketSelectors";
-import type { Socket } from "socket.io-client";
+import { useEffect, useRef } from 'react';
+import type { Socket } from 'socket.io-client';
+
+import { socketService } from '../services/socketService';
+import { useAppSelector } from '../store/hooks';
+import { selectSocketStatus } from '../store/socketSelectors';
 
 /**
  * React hook for using the Socket.IO connection
@@ -25,9 +26,7 @@ import type { Socket } from "socket.io-client";
  * ```
  */
 export const useSocket = () => {
-  const listenersRef = useRef<
-    Array<{ event: string; callback: (...args: unknown[]) => void }>
-  >([]);
+  const listenersRef = useRef<Array<{ event: string; callback: (...args: unknown[]) => void }>>([]);
   const socketStatus = useAppSelector(selectSocketStatus);
 
   useEffect(() => {
@@ -53,13 +52,10 @@ export const useSocket = () => {
     socketService.off(event, callback);
     if (callback) {
       listenersRef.current = listenersRef.current.filter(
-        (listener) =>
-          listener.event !== event || listener.callback !== callback,
+        listener => listener.event !== event || listener.callback !== callback
       );
     } else {
-      listenersRef.current = listenersRef.current.filter(
-        (listener) => listener.event !== event,
-      );
+      listenersRef.current = listenersRef.current.filter(listener => listener.event !== event);
     }
   };
 
@@ -69,7 +65,7 @@ export const useSocket = () => {
 
   return {
     socket: socketService.getSocket() as Socket | null,
-    isConnected: socketStatus === "connected",
+    isConnected: socketStatus === 'connected',
     status: socketStatus,
     emit,
     on,

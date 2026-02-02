@@ -15,9 +15,7 @@
     "jsx": "react-jsx",
 
     /* Path aliases */
-    "paths": {
-      "@alphahuman/skill-types": ["./src/lib/skills/types.ts"]
-    },
+    "paths": { "@alphahuman/skill-types": ["./src/lib/skills/types.ts"] },
 
     /* Linting */
     "strict": true,

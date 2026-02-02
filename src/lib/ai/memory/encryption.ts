@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
 
 /**
  * Encryption layer that delegates to Rust Tauri commands.
@@ -13,9 +13,9 @@ export class MemoryEncryption {
    * Creates the key file if it doesn't exist.
    */
   async init(password: string): Promise<void> {
-    const success = await invoke<boolean>("ai_init_encryption", { password });
+    const success = await invoke<boolean>('ai_init_encryption', { password });
     if (!success) {
-      throw new Error("Failed to initialize encryption");
+      throw new Error('Failed to initialize encryption');
     }
     this.password = password;
     this.initialized = true;
@@ -31,12 +31,9 @@ export class MemoryEncryption {
    */
   async encrypt(plaintext: string): Promise<string> {
     if (!this.password) {
-      throw new Error("Encryption not initialized");
+      throw new Error('Encryption not initialized');
     }
-    return invoke<string>("ai_encrypt", {
-      password: this.password,
-      plaintext,
-    });
+    return invoke<string>('ai_encrypt', { password: this.password, plaintext });
   }
 
   /**
@@ -44,12 +41,9 @@ export class MemoryEncryption {
    */
   async decrypt(encrypted: string): Promise<string> {
     if (!this.password) {
-      throw new Error("Encryption not initialized");
+      throw new Error('Encryption not initialized');
     }
-    return invoke<string>("ai_decrypt", {
-      password: this.password,
-      encrypted,
-    });
+    return invoke<string>('ai_decrypt', { password: this.password, encrypted });
   }
 
   /**

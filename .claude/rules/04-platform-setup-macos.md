@@ -5,6 +5,7 @@
 ### 1. Xcode
 
 Install from the Mac App Store or:
+
 ```bash
 xcode-select --install
 ```
@@ -24,6 +25,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ### 4. Additional Dependencies (via Homebrew)
 
 For iOS development:
+
 ```bash
 brew install xcodegen
 brew install libimobiledevice
@@ -42,6 +44,7 @@ npm run tauri build -- --target universal-apple-darwin
 ## Output Files
 
 After building, find installers in:
+
 ```
 src-tauri/target/release/bundle/
 ├── macos/
@@ -65,13 +68,7 @@ Set up code signing for App Store or notarization:
 3. Configure in `tauri.conf.json`:
 
 ```json
-{
-  "bundle": {
-    "macOS": {
-      "signingIdentity": "Developer ID Application: Your Name (TEAM_ID)"
-    }
-  }
-}
+{ "bundle": { "macOS": { "signingIdentity": "Developer ID Application: Your Name (TEAM_ID)" } } }
 ```
 
 ## Notarization

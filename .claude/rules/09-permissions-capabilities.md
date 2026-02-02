@@ -22,10 +22,7 @@ src-tauri/capabilities/
   "identifier": "default",
   "description": "Default permissions for the main window",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "opener:default"
-  ]
+  "permissions": ["core:default", "opener:default"]
 }
 ```
 
@@ -39,13 +36,7 @@ src-tauri/capabilities/
     "fs:default",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        "$APPDATA/*",
-        "$DOCUMENT/*"
-      ]
-    }
+    { "identifier": "fs:scope", "allow": ["$APPDATA/*", "$DOCUMENT/*"] }
   ]
 }
 ```
@@ -71,10 +62,7 @@ src-tauri/capabilities/
     "http:default",
     {
       "identifier": "http:scope",
-      "allow": [
-        { "url": "https://api.example.com/*" },
-        { "url": "https://*.myapp.com/*" }
-      ]
+      "allow": [{ "url": "https://api.example.com/*" }, { "url": "https://*.myapp.com/*" }]
     }
   ]
 }
@@ -104,48 +92,43 @@ Create `src-tauri/capabilities/mobile.json`:
   "description": "Mobile-specific permissions",
   "platforms": ["android", "iOS"],
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "barcode-scanner:default",
-    "biometric:default",
-    "haptics:default"
-  ]
+  "permissions": ["core:default", "barcode-scanner:default", "biometric:default", "haptics:default"]
 }
 ```
 
 ## Available Permission Plugins
 
-| Plugin | Description | Install Command |
-|--------|-------------|-----------------|
-| fs | File system access | `npm run tauri add fs` |
-| dialog | System dialogs | `npm run tauri add dialog` |
-| http | HTTP requests | `npm run tauri add http` |
-| notification | System notifications | `npm run tauri add notification` |
-| clipboard | Clipboard access | `npm run tauri add clipboard-manager` |
-| shell | Shell commands | `npm run tauri add shell` |
-| store | Persistent storage | `npm run tauri add store` |
-| os | OS information | `npm run tauri add os` |
+| Plugin       | Description          | Install Command                       |
+| ------------ | -------------------- | ------------------------------------- |
+| fs           | File system access   | `npm run tauri add fs`                |
+| dialog       | System dialogs       | `npm run tauri add dialog`            |
+| http         | HTTP requests        | `npm run tauri add http`              |
+| notification | System notifications | `npm run tauri add notification`      |
+| clipboard    | Clipboard access     | `npm run tauri add clipboard-manager` |
+| shell        | Shell commands       | `npm run tauri add shell`             |
+| store        | Persistent storage   | `npm run tauri add store`             |
+| os           | OS information       | `npm run tauri add os`                |
 
 ## Scope Paths
 
 Available path variables:
 
-| Variable | Description |
-|----------|-------------|
-| `$APPDATA` | Application data directory |
-| `$APPCONFIG` | Application config directory |
-| `$APPLOCALDATA` | Application local data |
-| `$APPCACHE` | Application cache |
-| `$APPLOG` | Application logs |
-| `$AUDIO` | User's audio directory |
-| `$CACHE` | System cache |
-| `$CONFIG` | System config |
-| `$DATA` | System data |
-| `$DOCUMENT` | User's documents |
-| `$DOWNLOAD` | User's downloads |
-| `$PICTURE` | User's pictures |
-| `$VIDEO` | User's videos |
-| `$TEMP` | Temporary directory |
+| Variable        | Description                  |
+| --------------- | ---------------------------- |
+| `$APPDATA`      | Application data directory   |
+| `$APPCONFIG`    | Application config directory |
+| `$APPLOCALDATA` | Application local data       |
+| `$APPCACHE`     | Application cache            |
+| `$APPLOG`       | Application logs             |
+| `$AUDIO`        | User's audio directory       |
+| `$CACHE`        | System cache                 |
+| `$CONFIG`       | System config                |
+| `$DATA`         | System data                  |
+| `$DOCUMENT`     | User's documents             |
+| `$DOWNLOAD`     | User's downloads             |
+| `$PICTURE`      | User's pictures              |
+| `$VIDEO`        | User's videos                |
+| `$TEMP`         | Temporary directory          |
 
 ## Best Practices
 

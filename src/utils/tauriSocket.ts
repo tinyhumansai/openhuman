@@ -14,9 +14,9 @@
  * - report_socket_disconnected - When disconnected
  * - report_socket_error - When error occurs
  */
-
+import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { invoke, isTauri as coreIsTauri } from '@tauri-apps/api/core';
+
 import { socketService } from '../services/socketService';
 
 // Check if we're running in Tauri
@@ -40,7 +40,7 @@ export async function setupTauriSocketListeners(): Promise<void> {
     // Listen for connect requests from Rust
     unlistenConnect = await listen<{ backendUrl: string; token: string }>(
       'socket:should_connect',
-      async (event) => {
+      async event => {
         console.log('[TauriSocket] Received connect request');
         const { token } = event.payload;
 
@@ -50,21 +50,18 @@ export async function setupTauriSocketListeners(): Promise<void> {
         } catch (error) {
           console.error('[TauriSocket] Failed to connect:', error);
           await invoke('report_socket_error', {
-            error: error instanceof Error ? error.message : 'Connection failed'
+            error: error instanceof Error ? error.message : 'Connection failed',
           });
         }
       }
     );
 
     // Listen for disconnect requests from Rust
-    unlistenDisconnect = await listen(
-      'socket:should_disconnect',
-      async () => {
-        console.log('[TauriSocket] Received disconnect request');
-        socketService.disconnect();
-        await invoke('report_socket_disconnected');
-      }
-    );
+    unlistenDisconnect = await listen('socket:should_disconnect', async () => {
+      console.log('[TauriSocket] Received disconnect request');
+      socketService.disconnect();
+      await invoke('report_socket_disconnected');
+    });
 
     console.log('[TauriSocket] Event listeners setup complete');
   } catch (error) {

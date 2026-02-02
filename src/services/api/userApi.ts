@@ -1,5 +1,5 @@
-import { apiClient } from "../apiClient";
-import type { GetMeResponse, User } from "../../types/api";
+import type { GetMeResponse, User } from '../../types/api';
+import { apiClient } from '../apiClient';
 
 /**
  * User API endpoints
@@ -10,9 +10,9 @@ export const userApi = {
    * GET /telegram/me
    */
   getMe: async (): Promise<User> => {
-    const response = await apiClient.get<GetMeResponse>("/telegram/me");
+    const response = await apiClient.get<GetMeResponse>('/telegram/me');
     if (!response.success) {
-      throw new Error(response.error || "Failed to fetch user data");
+      throw new Error(response.error || 'Failed to fetch user data');
     }
     return response.data;
   },
@@ -23,8 +23,8 @@ export const userApi = {
    */
   onboardingComplete: async (): Promise<void> => {
     await apiClient.post<{ success: boolean; data: unknown }>(
-      "/telegram/settings/onboarding-complete",
-      {},
+      '/telegram/settings/onboarding-complete',
+      {}
     );
   },
 };

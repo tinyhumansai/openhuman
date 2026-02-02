@@ -33,7 +33,7 @@ The backend base URL is configured here (`src/utils/config.ts`):
 
 ```ts
 export const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "https://2937933edf8a.ngrok-free.app";
+  import.meta.env.VITE_BACKEND_URL || 'https://2937933edf8a.ngrok-free.app';
 ```
 
 ### 2) Deep link registration (Tauri config + Rust)
@@ -41,15 +41,7 @@ export const BACKEND_URL =
 The URL scheme is declared in `src-tauri/tauri.conf.json`:
 
 ```json
-{
-  "plugins": {
-    "deep-link": {
-      "desktop": {
-        "schemes": ["alphahuman"]
-      }
-    }
-  }
-}
+{ "plugins": { "deep-link": { "desktop": { "schemes": ["alphahuman"] } } } }
 ```
 
 The deep-link plugin is initialized in `src-tauri/src/lib.rs`:
@@ -77,9 +69,9 @@ pub fn run() {
 The listener is lazy-loaded in `src/main.tsx`:
 
 ```ts
-import("./utils/desktopDeepLinkListener").then((m) => {
-  m.setupDesktopDeepLinkListener().catch((err) => {
-    console.error("[DeepLink] setup error:", err);
+import('./utils/desktopDeepLinkListener').then(m => {
+  m.setupDesktopDeepLinkListener().catch(err => {
+    console.error('[DeepLink] setup error:', err);
   });
 });
 ```

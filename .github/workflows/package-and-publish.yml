@@ -9,19 +9,19 @@
 name: Package and publish
 
 on:
-  push:
-    branches: ["master", "main"]
-  workflow_dispatch:
-    inputs:
-      forceRelease:
-        description: "Force release build even without publishing"
-        required: false
-        type: boolean
-        default: false
+  workflow_run:
+    workflows: ['Version Bump']
+    types:
+      - completed
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 env:
-  IS_ON_MASTER: ${{ github.ref == 'refs/heads/master' }}
-  SHOULD_PUBLISH: ${{ (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && vars.PUBLISH_REPO || '' }}
+  IS_PR: ${{ github.event_name == 'pull_request' }}
+  SHOULD_PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.PUBLISH_REPO || '' }}
   PUBLISH_REPO: ${{ vars.PUBLISH_REPO }}
   GH_TOKEN: ${{ secrets.GH_TOKEN }}
   UPDATER_GIST_URL: ${{ secrets.UPDATER_GIST_URL }}
@@ -39,11 +39,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref }}
 
       - name: Extract version and tag
         id: extract-version
         run: |
-          PACKAGE_VERSION=$(grep -m1 '^version' tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          PACKAGE_VERSION=$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
           TAG_NAME="air_v${PACKAGE_VERSION}"
           RELEASE_NAME="AlphaHuman v${PACKAGE_VERSION}"
           echo "package-version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
@@ -66,9 +67,9 @@ jobs:
           PACKAGE_VERSION: ${{ needs.get-version.outputs.package-version }}
           TAG_NAME: ${{ needs.get-version.outputs.tag-name }}
         run: |
-          # For non-master branches or when publishing is disabled, always continue
+          # For non-main branches or when publishing is disabled, always continue
           if [ -z "$SHOULD_PUBLISH" ]; then
-            echo "🚧 Publishing disabled (non-master branch or PUBLISH_REPO not set)"
+            echo "🚧 Publishing disabled (non-main branch or PUBLISH_REPO not set)"
             echo "should-skip=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -130,18 +131,19 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          - platform: "macos-latest"
-            args: "--target aarch64-apple-darwin"
-          - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin"
-          - platform: "ubuntu-22.04"
-            args: ""
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
     runs-on: ${{ matrix.settings.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref }}
 
       - name: Set Xcode version
         if: matrix.settings.platform == 'macos-latest'
@@ -153,7 +155,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: 'yarn'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -223,7 +225,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           WITH_UPDATER: ${{ needs.get-version.outputs.should-publish != '' && 'true' || 'false' }}
         with:
-          args: "-c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}"
+          args: '-c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}'
           includeDebug: ${{ needs.get-version.outputs.should-publish == '' && inputs.forceRelease != 'true' }}
           includeRelease: ${{ needs.get-version.outputs.should-publish != '' || inputs.forceRelease == 'true' }}
           releaseId: ${{ needs.create-release.outputs.releaseId }}
@@ -283,6 +285,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref }}
 
       - name: Publish release
         run: |

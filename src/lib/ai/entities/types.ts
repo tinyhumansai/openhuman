@@ -1,24 +1,18 @@
 /** Entity types in the platform graph */
 export type EntityType =
-  | "contact"
-  | "chat"
-  | "message"
-  | "email"
-  | "wallet"
-  | "token"
-  | "transaction";
+  | 'contact'
+  | 'chat'
+  | 'message'
+  | 'email'
+  | 'wallet'
+  | 'token'
+  | 'transaction';
 
 /** Source system for an entity */
-export type EntitySource = "telegram" | "gmail" | "manual" | "onchain";
+export type EntitySource = 'telegram' | 'gmail' | 'manual' | 'onchain';
 
 /** Relationship types between entities */
-export type RelationType =
-  | "member_of"
-  | "sent_by"
-  | "sent_to"
-  | "owns"
-  | "traded"
-  | "replied_to";
+export type RelationType = 'member_of' | 'sent_by' | 'sent_to' | 'owns' | 'traded' | 'replied_to';
 
 /** Core entity record (frontend domain type) */
 export interface Entity {
@@ -104,7 +98,7 @@ function parseProperties(props: string | null): Record<string, unknown> {
 export function fromNeo4jEntity(node: Neo4jEntityNode): Entity {
   const props = parseProperties(node.properties);
 
-  const source = (props.source as string) ?? "manual";
+  const source = (props.source as string) ?? 'manual';
   const sourceId = (props.sourceId as string) ?? null;
 
   // Build metadata from remaining properties (excluding source, sourceId, tags)
@@ -128,16 +122,13 @@ export function fromNeo4jEntity(node: Neo4jEntityNode): Entity {
 export function toNeo4jCreateBody(entity: Entity): Record<string, unknown> {
   // Merge source, sourceId, tags, and any existing metadata into properties
   const existingMeta = parseProperties(entity.metadata);
-  const properties: Record<string, unknown> = {
-    ...existingMeta,
-    source: entity.source,
-  };
+  const properties: Record<string, unknown> = { ...existingMeta, source: entity.source };
   if (entity.sourceId) {
     properties.sourceId = entity.sourceId;
   }
 
   return {
-    name: entity.title ?? "",
+    name: entity.title ?? '',
     type: entity.type,
     description: entity.summary ?? undefined,
     properties: JSON.stringify(properties),
@@ -158,9 +149,7 @@ export function fromNeo4jRelation(r: Neo4jRelationshipRecord): EntityRelation {
 }
 
 /** Build a request body for POST to the Neo4j relationship API */
-export function toNeo4jRelationBody(
-  relation: EntityRelation,
-): Record<string, unknown> {
+export function toNeo4jRelationBody(relation: EntityRelation): Record<string, unknown> {
   return {
     sourceId: relation.fromEntityId,
     targetId: relation.toEntityId,
@@ -180,7 +169,7 @@ export interface ContactMetadata {
 
 /** Chat metadata */
 export interface ChatMetadata {
-  chatType?: "group" | "channel" | "private";
+  chatType?: 'group' | 'channel' | 'private';
   memberCount?: number;
   isChannel?: boolean;
 }

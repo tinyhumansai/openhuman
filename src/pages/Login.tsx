@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { useAppDispatch } from "../store/hooks";
-import { setToken } from "../store/authSlice";
-import { consumeLoginToken } from "../services/api/authApi";
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+
+import { consumeLoginToken } from '../services/api/authApi';
+import { setToken } from '../store/authSlice';
+import { useAppDispatch } from '../store/hooks';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -13,7 +14,7 @@ const Login = () => {
   // Handle login token from URL (e.g. from Telegram bot "Open AlphaHuman" button)
   // Consume the token with the backend and store the returned JWT
   useEffect(() => {
-    const loginToken = searchParams.get("token");
+    const loginToken = searchParams.get('token');
     if (!loginToken) return;
 
     let cancelled = false;
@@ -25,10 +26,10 @@ const Login = () => {
         if (cancelled) return;
 
         dispatch(setToken(jwtToken));
-        navigate("/onboarding/", { replace: true });
+        navigate('/onboarding/', { replace: true });
       } catch (err) {
         if (!cancelled) {
-          setConsumeError(err instanceof Error ? err.message : "Login failed");
+          setConsumeError(err instanceof Error ? err.message : 'Login failed');
         }
       }
     })();

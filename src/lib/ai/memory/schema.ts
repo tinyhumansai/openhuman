@@ -52,7 +52,7 @@ export const SCHEMA_VERSION = 2;
 
 /** Meta keys used in meta.json */
 export const META_KEYS = {
-  SCHEMA_VERSION: "schema_version",
-  LAST_INDEX_TIME: "last_index_time",
-  EMBEDDING_MODEL: "embedding_model",
+  SCHEMA_VERSION: 'schema_version',
+  LAST_INDEX_TIME: 'last_index_time',
+  EMBEDDING_MODEL: 'embedding_model',
 } as const;

@@ -14,12 +14,12 @@
  *   - Request bodies / headers
  *   - Session replay
  */
+import * as Sentry from '@sentry/react';
 
-import * as Sentry from "@sentry/react";
-import { store } from "../store";
+import { store } from '../store';
 
 const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
-const IS_DEV = Boolean(import.meta.env.DEV) || import.meta.env.MODE === "development";
+const IS_DEV = Boolean(import.meta.env.DEV) || import.meta.env.MODE === 'development';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -42,7 +42,7 @@ export function initSentry(): void {
 
   Sentry.init({
     dsn: SENTRY_DSN,
-    environment: IS_DEV ? "development" : "production",
+    environment: IS_DEV ? 'development' : 'production',
     enabled: !IS_DEV, // disable in dev builds
 
     // -----------------------------------------------------------------------
@@ -104,12 +104,7 @@ export function initSentry(): void {
     },
 
     // Ignore common non-actionable errors
-    ignoreErrors: [
-      "ResizeObserver loop",
-      "Network request failed",
-      "Load failed",
-      "AbortError",
-    ],
+    ignoreErrors: ['ResizeObserver loop', 'Network request failed', 'Load failed', 'AbortError'],
   });
 }
 

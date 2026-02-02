@@ -28,20 +28,22 @@ touch src/components/MyComponent.tsx
 ```
 
 Template:
+
 ```tsx
 import { FC } from 'react';
+
 import './MyComponent.css';
 
 interface MyComponentProps {
-    title: string;
+  title: string;
 }
 
 export const MyComponent: FC<MyComponentProps> = ({ title }) => {
-    return (
-        <div className="my-component">
-            <h2>{title}</h2>
-        </div>
-    );
+  return (
+    <div className="my-component">
+      <h2>{title}</h2>
+    </div>
+  );
 };
 ```
 
@@ -66,6 +68,7 @@ fn my_command(arg: String) -> Result<String, String> {
 
 ```typescript
 import { invoke } from '@tauri-apps/api/core';
+
 const result = await invoke<string>('my_command', { arg: 'test' });
 ```
 

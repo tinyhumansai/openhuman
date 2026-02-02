@@ -5,16 +5,19 @@
 Our design system embodies three core principles that align with the needs of crypto professionals:
 
 ### 1. **Calm Sophistication**
+
 - Soft, muted color palettes that reduce visual noise
 - Generous whitespace for breathing room
 - Subtle animations that feel natural, not jarring
 
 ### 2. **Trust Through Clarity**
+
 - Clear information hierarchy
 - Consistent component patterns
 - Professional typography that's easy to scan
 
 ### 3. **Functional Beauty**
+
 - Every aesthetic choice serves a functional purpose
 - Data visualization that's both beautiful and informative
 - Interactions that feel intuitive and responsive
@@ -24,21 +27,25 @@ Our design system embodies three core principles that align with the needs of cr
 ### Primary Palette
 
 #### Canvas (Backgrounds)
+
 - **Canvas-50** (#FAFAF9): Primary background, slight warmth prevents sterility
 - **Canvas-100** (#F5F5F4): Secondary surfaces, cards, elevated elements
 - **Canvas-200** (#E5E5E3): Tertiary backgrounds, hover states
 
 #### Ocean Blue (Primary Actions)
+
 - **Primary-500** (#5B9BF3): Main brand color, CTAs, active states
 - **Primary-600** (#4A83DD): Hover states for primary elements
 - **Why**: Blue conveys trust, stability, and professionalism - crucial for financial platforms
 
 #### Sage Green (Success/Growth)
+
 - **Sage-500** (#4DC46F): Positive changes, success states, gains
 - **Sage-600** (#3BA858): Hover states for success elements
 - **Why**: A sophisticated green that feels less aggressive than typical "success" greens
 
 #### Coral Red (Errors/Losses)
+
 - **Coral-500** (#F56565): Errors, losses, critical actions
 - **Why**: Softer than harsh reds, maintains professionalism even in negative states
 
@@ -95,40 +102,42 @@ font-mono: 'JetBrains Mono'
 ### Cards
 
 #### Elevated Card
+
 ```jsx
-<div className="card-elevated">
-  // Shadow creates depth, white bg provides focus
-</div>
+<div className="card-elevated">// Shadow creates depth, white bg provides focus</div>
 ```
+
 - Use for primary content containers
 - Subtle shadow creates hierarchy without borders
 
 #### Interactive Card
+
 ```jsx
-<div className="card-interactive">
-  // Hover state with top border animation
-</div>
+<div className="card-interactive">// Hover state with top border animation</div>
 ```
+
 - Use for clickable items
 - Progressive disclosure through hover states
 
 #### Glass Card
+
 ```jsx
-<div className="glass-surface">
-  // Backdrop blur for overlay contexts
-</div>
+<div className="glass-surface">// Backdrop blur for overlay contexts</div>
 ```
+
 - Use for floating elements, overlays
 - Creates depth while maintaining context
 
 ### Buttons
 
 #### Hierarchy
+
 1. **Premium Button**: Primary CTAs, most important actions
 2. **Glass Button**: Secondary actions, less emphasis
 3. **Outline Button**: Tertiary actions, minimal visual weight
 
 #### Button Psychology
+
 - **Rounded corners** (0.75rem): Feels approachable, modern
 - **Subtle shadows**: Creates tactile feeling, encourages clicks
 - **Hover animations**: Provides feedback, builds confidence
@@ -136,9 +145,11 @@ font-mono: 'JetBrains Mono'
 ### Forms
 
 #### Input Design
+
 ```jsx
 <input className="input-elevated" />
 ```
+
 - **White background**: Maximum contrast for readability
 - **Subtle border**: Defines boundaries without heaviness
 - **Focus ring**: Clear feedback for keyboard navigation
@@ -146,6 +157,7 @@ font-mono: 'JetBrains Mono'
 ## Motion & Animation
 
 ### Timing Functions
+
 ```css
 --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
 --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -201,6 +213,7 @@ font-mono: 'JetBrains Mono'
 ## Responsive Design
 
 ### Breakpoints
+
 ```css
 sm: 640px
 md: 768px
@@ -245,6 +258,7 @@ xl: 1280px
 ## Summary
 
 This design system creates a premium experience that:
+
 - **Builds trust** through consistency and clarity
 - **Reduces cognitive load** with calm aesthetics
 - **Enhances usability** through thoughtful interactions

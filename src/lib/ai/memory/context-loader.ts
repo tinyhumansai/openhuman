@@ -1,6 +1,6 @@
-import type { MemoryManager } from "./manager";
-import type { EnrichedSearchResult } from "./context-formatter";
-import { MEMORY_PATHS } from "./types";
+import type { EnrichedSearchResult } from './context-formatter';
+import type { MemoryManager } from './manager';
+import { MEMORY_PATHS } from './types';
 
 export interface CategorizedContext {
   profileFacts: string[];
@@ -14,11 +14,11 @@ export interface CategorizedContext {
  */
 function parseBulletPoints(content: string): string[] {
   return content
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => line.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, ""))
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .map(line => line.replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, ''))
+    .filter(line => line.length > 0 && !line.startsWith('#'));
 }
 
 /**
@@ -31,7 +31,7 @@ function parseBulletPoints(content: string): string[] {
  */
 export async function loadCategorizedContext(
   memoryManager: MemoryManager,
-  query?: string,
+  query?: string
 ): Promise<CategorizedContext> {
   const profileFacts: string[] = [];
   const recentContext: string[] = [];
@@ -47,9 +47,7 @@ export async function loadCategorizedContext(
 
   // 2. Read memory/preferences.md
   try {
-    const prefs = await memoryManager.readFile(
-      `${MEMORY_PATHS.MEMORY_DIR}/preferences.md`,
-    );
+    const prefs = await memoryManager.readFile(`${MEMORY_PATHS.MEMORY_DIR}/preferences.md`);
     profileFacts.push(...parseBulletPoints(prefs));
   } catch {
     // preferences.md doesn't exist yet
@@ -68,7 +66,7 @@ export async function loadCategorizedContext(
   if (query) {
     try {
       const results = await memoryManager.search(query);
-      searchResults = results.map((r) => ({
+      searchResults = results.map(r => ({
         ...r,
         updatedAt: (r as EnrichedSearchResult).updatedAt,
       }));

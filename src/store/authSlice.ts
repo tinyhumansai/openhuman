@@ -1,6 +1,7 @@
-import { createSlice, PayloadAction, createAsyncThunk } from "@reduxjs/toolkit";
-import { clearUser } from "./userSlice";
-import { clearTeamState } from "./teamSlice";
+import { createAsyncThunk, createSlice, PayloadAction } from '@reduxjs/toolkit';
+
+import { clearTeamState } from './teamSlice';
+import { clearUser } from './userSlice';
 
 export interface AuthState {
   token: string | null;
@@ -17,26 +18,20 @@ const initialState: AuthState = {
 };
 
 const authSlice = createSlice({
-  name: "auth",
+  name: 'auth',
   initialState,
   reducers: {
     setToken: (state, action: PayloadAction<string>) => {
       state.token = action.payload;
     },
-    _clearToken: (state) => {
+    _clearToken: state => {
       state.token = null;
     },
-    setOnboardedForUser: (
-      state,
-      action: PayloadAction<{ userId: string; value: boolean }>,
-    ) => {
+    setOnboardedForUser: (state, action: PayloadAction<{ userId: string; value: boolean }>) => {
       const { userId, value } = action.payload;
       state.isOnboardedByUser[userId] = value;
     },
-    setAnalyticsForUser: (
-      state,
-      action: PayloadAction<{ userId: string; enabled: boolean }>,
-    ) => {
+    setAnalyticsForUser: (state, action: PayloadAction<{ userId: string; enabled: boolean }>) => {
       const { userId, enabled } = action.payload;
       state.isAnalyticsEnabledByUser[userId] = enabled;
     },
@@ -44,14 +39,11 @@ const authSlice = createSlice({
 });
 
 // Thunk that clears both token and user data
-export const clearToken = createAsyncThunk(
-  "auth/clearToken",
-  async (_, { dispatch }) => {
-    dispatch(authSlice.actions._clearToken());
-    dispatch(clearUser());
-    dispatch(clearTeamState());
-  },
-);
+export const clearToken = createAsyncThunk('auth/clearToken', async (_, { dispatch }) => {
+  dispatch(authSlice.actions._clearToken());
+  dispatch(clearUser());
+  dispatch(clearTeamState());
+});
 
 export const { setToken, setOnboardedForUser, setAnalyticsForUser } = authSlice.actions;
 export default authSlice.reducer;

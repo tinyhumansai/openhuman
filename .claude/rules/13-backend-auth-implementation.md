@@ -67,11 +67,7 @@ Called by the web frontend after phone-based authentication completes.
 **Request body:**
 
 ```json
-{
-  "method": "phone",
-  "phoneNumber": "+1234567890",
-  "countryCode": "+1"
-}
+{ "method": "phone", "phoneNumber": "+1234567890", "countryCode": "+1" }
 ```
 
 or
@@ -88,9 +84,7 @@ or
 **Response (200):**
 
 ```json
-{
-  "loginToken": "short-lived-opaque-token"
-}
+{ "loginToken": "short-lived-opaque-token" }
 ```
 
 **Behavior:**
@@ -112,9 +106,7 @@ Called by the Tauri Rust command `exchange_token` (NOT browser fetch). Exchanges
 **Request body:**
 
 ```json
-{
-  "token": "loginToken-from-web"
-}
+{ "token": "loginToken-from-web" }
 ```
 
 **Response (200):**
@@ -122,21 +114,14 @@ Called by the Tauri Rust command `exchange_token` (NOT browser fetch). Exchanges
 ```json
 {
   "sessionToken": "long-lived-session-token",
-  "user": {
-    "id": "uuid",
-    "username": "string",
-    "firstName": "string"
-  }
+  "user": { "id": "uuid", "username": "string", "firstName": "string" }
 }
 ```
 
 **Error response (401):**
 
 ```json
-{
-  "success": false,
-  "error": "Token expired or invalid"
-}
+{ "success": false, "error": "Token expired or invalid" }
 ```
 
 **Behavior:**
@@ -213,10 +198,10 @@ async fn exchange_token(backend_url: String, token: String) -> Result<serde_json
 Frontend invocation:
 
 ```typescript
-const data = await invoke<{ sessionToken?: string; user?: object }>(
-  "exchange_token",
-  { backendUrl: BACKEND_URL, token },
-);
+const data = await invoke<{ sessionToken?: string; user?: object }>('exchange_token', {
+  backendUrl: BACKEND_URL,
+  token,
+});
 ```
 
 ### Deep Link Listener
@@ -234,7 +219,7 @@ Configured in `src/utils/config.ts`:
 
 ```typescript
 export const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "https://2937933edf8a.ngrok-free.app";
+  import.meta.env.VITE_BACKEND_URL || 'https://2937933edf8a.ngrok-free.app';
 ```
 
 Set `VITE_BACKEND_URL` environment variable for different environments.

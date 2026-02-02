@@ -3,8 +3,7 @@
  *
  * Helper functions for invoking Tauri commands from the frontend.
  */
-
-import { invoke, isTauri as coreIsTauri } from '@tauri-apps/api/core';
+import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 
 // Check if we're running in Tauri
 export const isTauri = (): boolean => {
@@ -52,10 +51,7 @@ export async function exchangeToken(
 /**
  * Get the current authentication state from Rust
  */
-export async function getAuthState(): Promise<{
-  is_authenticated: boolean;
-  user: object | null;
-}> {
+export async function getAuthState(): Promise<{ is_authenticated: boolean; user: object | null }> {
   if (!isTauri()) {
     return { is_authenticated: false, user: null };
   }
@@ -88,10 +84,7 @@ export async function logout(): Promise<void> {
 /**
  * Store session in secure storage
  */
-export async function storeSession(
-  token: string,
-  user: object
-): Promise<void> {
+export async function storeSession(token: string, user: object): Promise<void> {
   if (!isTauri()) {
     return;
   }

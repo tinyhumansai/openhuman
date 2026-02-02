@@ -1,33 +1,23 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  type ReactNode,
-} from "react";
-import { useAppDispatch, useAppSelector } from "../store/hooks";
-import {
-  setAIStatus,
-  setAIError,
-  setMemoryInitialized,
-} from "../store/aiSlice";
-import { MemoryManager } from "../lib/ai/memory/manager";
-import { SessionManager } from "../lib/ai/sessions/manager";
-import { ToolRegistry } from "../lib/ai/tools/registry";
-import { EntityManager } from "../lib/ai/entities/manager";
-import { CustomLLMProvider } from "../lib/ai/providers/custom";
-import { OpenAIEmbeddingProvider } from "../lib/ai/providers/openai";
-import { NullEmbeddingProvider } from "../lib/ai/providers/embeddings";
-import { loadConstitution } from "../lib/ai/constitution/loader";
-import { createMemorySearchTool } from "../lib/ai/tools/memory-search";
-import { createMemoryReadTool } from "../lib/ai/tools/memory-read";
-import { createMemoryWriteTool } from "../lib/ai/tools/memory-write";
-import { createWebSearchTool } from "../lib/ai/tools/web-search";
-import type { ConstitutionConfig } from "../lib/ai/constitution/types";
-import type { LLMProvider } from "../lib/ai/providers/interface";
-import type { EmbeddingProvider } from "../lib/ai/providers/embeddings";
-import { bridgeSkillTools } from "../lib/skills/tool-bridge";
-import type { SkillState } from "../lib/skills/types";
+import { createContext, type ReactNode, useContext, useEffect, useRef } from 'react';
+
+import { loadConstitution } from '../lib/ai/constitution/loader';
+import type { ConstitutionConfig } from '../lib/ai/constitution/types';
+import { EntityManager } from '../lib/ai/entities/manager';
+import { MemoryManager } from '../lib/ai/memory/manager';
+import { CustomLLMProvider } from '../lib/ai/providers/custom';
+import { type EmbeddingProvider, NullEmbeddingProvider } from '../lib/ai/providers/embeddings';
+import type { LLMProvider } from '../lib/ai/providers/interface';
+import { OpenAIEmbeddingProvider } from '../lib/ai/providers/openai';
+import { SessionManager } from '../lib/ai/sessions/manager';
+import { createMemoryReadTool } from '../lib/ai/tools/memory-read';
+import { createMemorySearchTool } from '../lib/ai/tools/memory-search';
+import { createMemoryWriteTool } from '../lib/ai/tools/memory-write';
+import { ToolRegistry } from '../lib/ai/tools/registry';
+import { createWebSearchTool } from '../lib/ai/tools/web-search';
+import { bridgeSkillTools } from '../lib/skills/tool-bridge';
+import type { SkillState } from '../lib/skills/types';
+import { setAIError, setAIStatus, setMemoryInitialized } from '../store/aiSlice';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
 
 /** AI context value */
 interface AIContextValue {
@@ -46,16 +36,16 @@ const AIContext = createContext<AIContextValue | null>(null);
 export function useAI(): AIContextValue {
   const ctx = useContext(AIContext);
   if (!ctx) {
-    throw new Error("useAI must be used within an AIProvider");
+    throw new Error('useAI must be used within an AIProvider');
   }
   return ctx;
 }
 
 export default function AIProvider({ children }: { children: ReactNode }) {
   const dispatch = useAppDispatch();
-  const { config } = useAppSelector((state) => state.ai);
-  const { token } = useAppSelector((state) => state.auth);
-  const skillsMap = useAppSelector((state) => state.skills.skills);
+  const { config } = useAppSelector(state => state.ai);
+  const { token } = useAppSelector(state => state.auth);
+  const skillsMap = useAppSelector(state => state.skills.skills);
 
   const memoryManagerRef = useRef(new MemoryManager());
   const sessionManagerRef = useRef(new SessionManager());
@@ -63,9 +53,7 @@ export default function AIProvider({ children }: { children: ReactNode }) {
   const entityManagerRef = useRef(new EntityManager());
   const constitutionRef = useRef<ConstitutionConfig | null>(null);
   const llmProviderRef = useRef<LLMProvider | null>(null);
-  const embeddingProviderRef = useRef<EmbeddingProvider>(
-    new NullEmbeddingProvider(),
-  );
+  const embeddingProviderRef = useRef<EmbeddingProvider>(new NullEmbeddingProvider());
   const isReadyRef = useRef(false);
 
   useEffect(() => {
@@ -74,7 +62,7 @@ export default function AIProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function initAI() {
-      dispatch(setAIStatus("initializing"));
+      dispatch(setAIStatus('initializing'));
 
       try {
         // 1. Load constitution
@@ -94,7 +82,7 @@ export default function AIProvider({ children }: { children: ReactNode }) {
         // 4. Setup embedding provider
         if (config.openaiApiKey) {
           const provider = new OpenAIEmbeddingProvider({
-            id: "openai",
+            id: 'openai',
             apiKey: config.openaiApiKey,
           });
           embeddingProviderRef.current = provider;
@@ -104,7 +92,7 @@ export default function AIProvider({ children }: { children: ReactNode }) {
         // 5. Setup LLM provider
         if (config.llmEndpoint) {
           llmProviderRef.current = new CustomLLMProvider({
-            id: "custom",
+            id: 'custom',
             endpoint: config.llmEndpoint,
             model: config.llmModel,
           });
@@ -120,31 +108,21 @@ export default function AIProvider({ children }: { children: ReactNode }) {
 
         // 8. Register tools
         const toolReg = toolRegistryRef.current;
-        toolReg.register(
-          createMemorySearchTool(memoryManagerRef.current),
-        );
-        toolReg.register(
-          createMemoryReadTool(memoryManagerRef.current),
-        );
-        toolReg.register(
-          createMemoryWriteTool(
-            memoryManagerRef.current,
-            constitution,
-          ),
-        );
+        toolReg.register(createMemorySearchTool(memoryManagerRef.current));
+        toolReg.register(createMemoryReadTool(memoryManagerRef.current));
+        toolReg.register(createMemoryWriteTool(memoryManagerRef.current, constitution));
         toolReg.register(
           createWebSearchTool({
             endpoint: config.webSearchEndpoint,
             apiKey: config.webSearchApiKey,
-          }),
+          })
         );
 
         isReadyRef.current = true;
-        dispatch(setAIStatus("ready"));
+        dispatch(setAIStatus('ready'));
       } catch (error) {
         if (!cancelled) {
-          const msg =
-            error instanceof Error ? error.message : String(error);
+          const msg = error instanceof Error ? error.message : String(error);
           dispatch(setAIError(msg));
         }
       }
@@ -165,20 +143,14 @@ export default function AIProvider({ children }: { children: ReactNode }) {
     const newRegistered = new Set<string>();
 
     for (const [skillId, skill] of Object.entries(skillsMap) as [string, SkillState][]) {
-      if (skill.status === "ready" && skill.tools.length > 0) {
+      if (skill.status === 'ready' && skill.tools.length > 0) {
         const bridged = bridgeSkillTools(skillId, skill.tools);
         for (const bt of bridged) {
           newRegistered.add(bt.name);
           if (!currentlyRegistered.has(bt.name)) {
             toolReg.register({
-              definition: {
-                name: bt.name,
-                description: bt.description,
-                parameters: bt.parameters,
-              },
-              execute: async (args) => ({
-                content: await bt.execute(args),
-              }),
+              definition: { name: bt.name, description: bt.description, parameters: bt.parameters },
+              execute: async args => ({ content: await bt.execute(args) }),
             });
           }
         }
@@ -206,7 +178,5 @@ export default function AIProvider({ children }: { children: ReactNode }) {
     isReady: isReadyRef.current,
   };
 
-  return (
-    <AIContext.Provider value={contextValue}>{children}</AIContext.Provider>
-  );
+  return <AIContext.Provider value={contextValue}>{children}</AIContext.Provider>;
 }

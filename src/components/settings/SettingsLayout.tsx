@@ -1,5 +1,5 @@
-import { ReactNode, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
+import { ReactNode, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 interface SettingsLayoutProps {
   children: ReactNode;
@@ -12,13 +12,13 @@ const SettingsLayout = ({ children, onClose }: SettingsLayoutProps) => {
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === 'Escape') {
         onClose();
       }
     };
 
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
   }, [onClose]);
 
   // Handle backdrop click
@@ -51,19 +51,17 @@ const SettingsLayout = ({ children, onClose }: SettingsLayoutProps) => {
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="settings-modal-title"
-    >
+      aria-labelledby="settings-modal-title">
       <div
         ref={modalRef}
         className="bg-stone-900 rounded-3xl shadow-large w-full max-w-[520px] max-h-[90vh] overflow-hidden animate-slide-right focus:outline-none focus:ring-0"
         style={{
-          animationDuration: "300ms",
-          animationTimingFunction: "cubic-bezier(0.25, 0.46, 0.45, 0.94)",
-          animationFillMode: "both",
+          animationDuration: '300ms',
+          animationTimingFunction: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+          animationFillMode: 'both',
         }}
         tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-      >
+        onClick={e => e.stopPropagation()}>
         {children}
       </div>
     </div>

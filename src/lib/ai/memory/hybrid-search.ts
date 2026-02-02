@@ -1,7 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { SearchResult, MemoryConfig } from "./types";
-import { DEFAULT_MEMORY_CONFIG } from "./types";
-import type { EmbeddingProvider } from "../providers/embeddings";
+import { invoke } from '@tauri-apps/api/core';
+
+import type { EmbeddingProvider } from '../providers/embeddings';
+import { DEFAULT_MEMORY_CONFIG, type MemoryConfig, type SearchResult } from './types';
 
 /** Raw search result from Rust FTS5 */
 interface FtsSearchResult {
@@ -59,27 +59,21 @@ function decodeEmbedding(bytes: number[]): number[] {
 export async function hybridSearch(
   query: string,
   embeddingProvider: EmbeddingProvider | null,
-  config: Partial<MemoryConfig> = {},
+  config: Partial<MemoryConfig> = {}
 ): Promise<SearchResult[]> {
-  const { vectorWeight, textWeight, maxResults } = {
-    ...DEFAULT_MEMORY_CONFIG,
-    ...config,
-  };
+  const { vectorWeight, textWeight, maxResults } = { ...DEFAULT_MEMORY_CONFIG, ...config };
 
   // Run FTS5 search
-  const ftsResults = await invoke<FtsSearchResult[]>("ai_memory_fts_search", {
+  const ftsResults = await invoke<FtsSearchResult[]>('ai_memory_fts_search', {
     query,
     limit: maxResults * 2,
   });
 
   // Normalize FTS scores to 0-1 range
-  const maxFtsScore = Math.max(...ftsResults.map((r) => r.score), 1);
+  const maxFtsScore = Math.max(...ftsResults.map(r => r.score), 1);
   const ftsScoreMap = new Map<string, { result: FtsSearchResult; score: number }>();
   for (const r of ftsResults) {
-    ftsScoreMap.set(r.chunk_id, {
-      result: r,
-      score: r.score / maxFtsScore,
-    });
+    ftsScoreMap.set(r.chunk_id, { result: r, score: r.score / maxFtsScore });
   }
 
   // Vector search (if embedding provider available)
@@ -88,9 +82,7 @@ export async function hybridSearch(
   if (embeddingProvider) {
     try {
       const queryEmbedding = await embeddingProvider.embedQuery(query);
-      const allEmbeddings = await invoke<[string, number[]][]>(
-        "ai_memory_get_all_embeddings",
-      );
+      const allEmbeddings = await invoke<[string, number[]][]>('ai_memory_get_all_embeddings');
 
       for (const [chunkId, embeddingBytes] of allEmbeddings) {
         const embedding = decodeEmbedding(embeddingBytes);
@@ -103,10 +95,7 @@ export async function hybridSearch(
   }
 
   // Merge results with weighted scoring
-  const allChunkIds = new Set([
-    ...ftsScoreMap.keys(),
-    ...vectorScoreMap.keys(),
-  ]);
+  const allChunkIds = new Set([...ftsScoreMap.keys(), ...vectorScoreMap.keys()]);
 
   const mergedResults: SearchResult[] = [];
 
@@ -122,7 +111,7 @@ export async function hybridSearch(
       mergedResults.push({
         chunkId,
         path: ftsEntry.result.path,
-        source: ftsEntry.result.source as "memory" | "sessions",
+        source: ftsEntry.result.source as 'memory' | 'sessions',
         text: ftsEntry.result.text,
         score: combinedScore,
         startLine: ftsEntry.result.start_line,
@@ -134,9 +123,9 @@ export async function hybridSearch(
       // This is handled by adding score placeholder, details filled by caller
       mergedResults.push({
         chunkId,
-        path: "",
-        source: "memory",
-        text: "",
+        path: '',
+        source: 'memory',
+        text: '',
         score: combinedScore,
         startLine: 0,
         endLine: 0,

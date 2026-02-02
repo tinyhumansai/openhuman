@@ -1,5 +1,5 @@
 /** Source of a memory file */
-export type MemorySource = "memory" | "sessions";
+export type MemorySource = 'memory' | 'sessions';
 
 /** File metadata tracked in the database */
 export interface FileRecord {
@@ -70,7 +70,7 @@ export interface MemoryConfig {
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   chunkTokenLimit: 512,
   chunkOverlap: 64,
-  embeddingModel: "text-embedding-3-small",
+  embeddingModel: 'text-embedding-3-small',
   vectorWeight: 0.7,
   textWeight: 0.3,
   maxResults: 10,
@@ -88,10 +88,10 @@ export interface EmbeddingCacheEntry {
 
 /** Memory file layout under ~/.alphahuman/ */
 export const MEMORY_PATHS = {
-  CONSTITUTION: "CONSTITUTION.md",
-  MEMORY_ROOT: "memory.md",
-  MEMORY_DIR: "memory",
-  SESSIONS_DIR: "sessions",
-  SKILLS_DIR: "skills",
-  IDENTITY: "identity.md",
+  CONSTITUTION: 'CONSTITUTION.md',
+  MEMORY_ROOT: 'memory.md',
+  MEMORY_DIR: 'memory',
+  SESSIONS_DIR: 'sessions',
+  SKILLS_DIR: 'skills',
+  IDENTITY: 'identity.md',
 } as const;

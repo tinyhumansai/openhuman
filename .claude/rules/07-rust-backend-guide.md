@@ -89,9 +89,9 @@ const greeting = await invoke<string>('greet', { name: 'World' });
 
 // With error handling
 try {
-    const data = await invoke<string>('fetch_data', { url: 'https://api.example.com' });
+  const data = await invoke<string>('fetch_data', { url: 'https://api.example.com' });
 } catch (error) {
-    console.error('Command failed:', error);
+  console.error('Command failed:', error);
 }
 ```
 
@@ -116,8 +116,8 @@ fn start_process(app: tauri::AppHandle) {
 ```typescript
 import { listen } from '@tauri-apps/api/event';
 
-const unlisten = await listen('process-complete', (event) => {
-    console.log('Process completed:', event.payload);
+const unlisten = await listen('process-complete', event => {
+  console.log('Process completed:', event.payload);
 });
 
 // Later: unlisten();

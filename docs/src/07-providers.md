@@ -24,6 +24,7 @@ The providers wrap the application in a specific order:
 ```
 
 **Order matters because:**
+
 1. Redux must be outermost for state access
 2. PersistGate rehydrates state before rendering children
 3. SocketProvider depends on Redux auth token
@@ -35,6 +36,7 @@ The providers wrap the application in a specific order:
 Manages Socket.io connection lifecycle and MCP initialization.
 
 ### Responsibilities
+
 - Auto-connect when auth token is available
 - Auto-disconnect when token is cleared
 - Initialize MCP server when socket connects
@@ -140,6 +142,7 @@ function MyComponent() {
 Manages Telegram MTProto connection lifecycle.
 
 ### Responsibilities
+
 - Initialize MTProto client when user is authenticated
 - Connect to Telegram servers
 - Store session string in Redux
@@ -250,6 +253,7 @@ function ChatList() {
 Minimal user context provider (most user state is in Redux).
 
 ### Responsibilities
+
 - Legacy user context for compatibility
 - May be deprecated in favor of Redux
 
@@ -312,7 +316,7 @@ Providers read from and dispatch to Redux:
 
 ```typescript
 // Read state
-const token = useAppSelector((state) => state.auth.token);
+const token = useAppSelector(state => state.auth.token);
 
 // Dispatch actions
 const dispatch = useAppDispatch();
@@ -326,7 +330,7 @@ TelegramProvider runs init and connect in parallel:
 ```typescript
 await Promise.all([
   dispatch(initializeTelegram(userId)).unwrap(),
-  dispatch(connectTelegram(userId)).unwrap()
+  dispatch(connectTelegram(userId)).unwrap(),
 ]);
 ```
 
@@ -346,13 +350,14 @@ useEffect(() => {
 
 ## Context vs Redux
 
-| Use Context For | Use Redux For |
-|-----------------|---------------|
-| Service instances (socket, client) | Serializable state (status, data) |
-| Methods (emit, on, off) | Persisted state (sessions, tokens) |
-| Derived values | Complex state logic |
+| Use Context For                    | Use Redux For                      |
+| ---------------------------------- | ---------------------------------- |
+| Service instances (socket, client) | Serializable state (status, data)  |
+| Methods (emit, on, off)            | Persisted state (sessions, tokens) |
+| Derived values                     | Complex state logic                |
 
 Example:
+
 - `SocketContext` provides `socket` instance and `emit` method
 - Redux stores `socketStatus` and `socketId`
 
@@ -401,4 +406,4 @@ test('SocketProvider connects when token is available', () => {
 
 ---
 
-*Previous: [Components](./06-components.md) | Next: [Hooks & Utils](./08-hooks-utils.md)*
+_Previous: [Components](./06-components.md) | Next: [Hooks & Utils](./08-hooks-utils.md)_

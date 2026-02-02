@@ -85,14 +85,14 @@ src/
 ### Basic Component
 
 ```tsx
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
+import { useState } from 'react';
 
 function App() {
-  const [result, setResult] = useState("");
+  const [result, setResult] = useState('');
 
   async function handleClick() {
-    const greeting = await invoke<string>("greet", { name: "User" });
+    const greeting = await invoke<string>('greet', { name: 'User' });
     setResult(greeting);
   }
 
@@ -112,7 +112,7 @@ export default App;
 ### Window Management
 
 ```typescript
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 const appWindow = getCurrentWindow();
 
@@ -126,7 +126,7 @@ await appWindow.maximize();
 await appWindow.close();
 
 // Set title
-await appWindow.setTitle("New Title");
+await appWindow.setTitle('New Title');
 ```
 
 ### File System
@@ -138,21 +138,13 @@ npm run tauri add fs
 ```
 
 ```typescript
-import {
-  readTextFile,
-  writeTextFile,
-  BaseDirectory,
-} from "@tauri-apps/plugin-fs";
+import { BaseDirectory, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 
 // Read file
-const content = await readTextFile("config.json", {
-  baseDir: BaseDirectory.AppData,
-});
+const content = await readTextFile('config.json', { baseDir: BaseDirectory.AppData });
 
 // Write file
-await writeTextFile("config.json", JSON.stringify(data), {
-  baseDir: BaseDirectory.AppData,
-});
+await writeTextFile('config.json', JSON.stringify(data), { baseDir: BaseDirectory.AppData });
 ```
 
 ### Dialogs
@@ -164,26 +156,19 @@ npm run tauri add dialog
 ```
 
 ```typescript
-import { open, save, message } from "@tauri-apps/plugin-dialog";
+import { message, open, save } from '@tauri-apps/plugin-dialog';
 
 // Open file picker
 const filePath = await open({
   multiple: false,
-  filters: [
-    {
-      name: "Text",
-      extensions: ["txt", "md"],
-    },
-  ],
+  filters: [{ name: 'Text', extensions: ['txt', 'md'] }],
 });
 
 // Save dialog
-const savePath = await save({
-  defaultPath: "document.txt",
-});
+const savePath = await save({ defaultPath: 'document.txt' });
 
 // Message box
-await message("Operation completed!", { title: "Success" });
+await message('Operation completed!', { title: 'Success' });
 ```
 
 ### HTTP Requests
@@ -195,13 +180,11 @@ npm run tauri add http
 ```
 
 ```typescript
-import { fetch } from "@tauri-apps/plugin-http";
+import { fetch } from '@tauri-apps/plugin-http';
 
-const response = await fetch("https://api.example.com/data", {
-  method: "GET",
-  headers: {
-    "Content-Type": "application/json",
-  },
+const response = await fetch('https://api.example.com/data', {
+  method: 'GET',
+  headers: { 'Content-Type': 'application/json' },
 });
 
 const data = await response.json();
@@ -210,24 +193,24 @@ const data = await response.json();
 ## Platform Detection
 
 ```typescript
-import { platform } from "@tauri-apps/plugin-os";
+import { platform } from '@tauri-apps/plugin-os';
 
 const currentPlatform = await platform();
 
 switch (currentPlatform) {
-  case "windows":
+  case 'windows':
     // Windows-specific UI
     break;
-  case "macos":
+  case 'macos':
     // macOS-specific UI
     break;
-  case "linux":
+  case 'linux':
     // Linux-specific UI
     break;
-  case "android":
+  case 'android':
     // Android-specific UI
     break;
-  case "ios":
+  case 'ios':
     // iOS-specific UI
     break;
 }

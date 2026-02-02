@@ -1,16 +1,12 @@
-import { useSettingsNavigation } from "../hooks/useSettingsNavigation";
-import SettingsHeader from "../components/SettingsHeader";
+import SettingsHeader from '../components/SettingsHeader';
+import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const MessagingPanel = () => {
   const { navigateBack } = useSettingsNavigation();
 
   return (
     <div className="overflow-hidden h-full flex flex-col">
-      <SettingsHeader
-        title="Messaging"
-        showBackButton={true}
-        onBack={navigateBack}
-      />
+      <SettingsHeader title="Messaging" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 h-full flex items-center justify-center">
@@ -20,8 +16,7 @@ const MessagingPanel = () => {
                 className="w-8 h-8 text-stone-400"
                 fill="none"
                 stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+                viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -30,12 +25,9 @@ const MessagingPanel = () => {
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-white mb-2">
-              Messaging Settings
-            </h3>
+            <h3 className="text-lg font-medium text-white mb-2">Messaging Settings</h3>
             <p className="text-stone-400 text-sm max-w-sm mx-auto">
-              Configure your messaging preferences, notifications, and
-              communication settings.
+              Configure your messaging preferences, notifications, and communication settings.
             </p>
             <div className="mt-6">
               <span className="px-4 py-2 text-sm font-medium rounded-full border bg-stone-700/30 text-stone-300 border-stone-600/50">

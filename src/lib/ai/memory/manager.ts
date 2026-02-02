@@ -1,16 +1,18 @@
-import { invoke } from "@tauri-apps/api/core";
-import type {
-  FileRecord,
-  ChunkRecordRust,
-  SearchResult,
-  MemoryConfig,
-  MemorySource,
-} from "./types";
-import { DEFAULT_MEMORY_CONFIG, MEMORY_PATHS } from "./types";
-import { chunkMarkdown, sha256 } from "./chunker";
-import { hybridSearch } from "./hybrid-search";
-import type { EmbeddingProvider } from "../providers/embeddings";
-import { deduplicateAppend } from "./dedup";
+import { invoke } from '@tauri-apps/api/core';
+
+import type { EmbeddingProvider } from '../providers/embeddings';
+import { chunkMarkdown, sha256 } from './chunker';
+import { deduplicateAppend } from './dedup';
+import { hybridSearch } from './hybrid-search';
+import {
+  type ChunkRecordRust,
+  DEFAULT_MEMORY_CONFIG,
+  type FileRecord,
+  MEMORY_PATHS,
+  type MemoryConfig,
+  type MemorySource,
+  type SearchResult,
+} from './types';
 
 /**
  * MemoryManager handles indexing, chunking, and searching memory files.
@@ -36,7 +38,7 @@ export class MemoryManager {
 
   /** Initialize the memory database */
   async init(): Promise<void> {
-    await invoke("ai_memory_init");
+    await invoke('ai_memory_init');
     this.initialized = true;
   }
 
@@ -47,7 +49,7 @@ export class MemoryManager {
   async indexFile(
     relativePath: string,
     content: string,
-    source: MemorySource = "memory",
+    source: MemorySource = 'memory'
   ): Promise<number> {
     if (!this.initialized) await this.init();
 
@@ -55,10 +57,9 @@ export class MemoryManager {
     const now = Date.now();
 
     // Check if file has changed
-    const existingFile = await invoke<FileRecord | null>(
-      "ai_memory_get_file",
-      { path: relativePath },
-    );
+    const existingFile = await invoke<FileRecord | null>('ai_memory_get_file', {
+      path: relativePath,
+    });
 
     if (existingFile && existingFile.hash === hash) {
       return 0; // No changes
@@ -68,7 +69,7 @@ export class MemoryManager {
     const chunks = await chunkMarkdown(content, this.config);
 
     // Delete old chunks for this file
-    await invoke("ai_memory_delete_chunks_by_path", { path: relativePath });
+    await invoke('ai_memory_delete_chunks_by_path', { path: relativePath });
 
     // Store new chunks
     let indexed = 0;
@@ -102,7 +103,7 @@ export class MemoryManager {
         updated_at: now,
       };
 
-      await invoke("ai_memory_upsert_chunk", { chunk: chunkRecord });
+      await invoke('ai_memory_upsert_chunk', { chunk: chunkRecord });
       indexed++;
     }
 
@@ -114,7 +115,7 @@ export class MemoryManager {
       mtime: now,
       size: content.length,
     };
-    await invoke("ai_memory_upsert_file", { file: fileRecord });
+    await invoke('ai_memory_upsert_file', { file: fileRecord });
 
     return indexed;
   }
@@ -127,30 +128,25 @@ export class MemoryManager {
 
     // Index memory.md (core durable facts)
     try {
-      const memoryRoot = await invoke<string>("ai_read_memory_file", {
+      const memoryRoot = await invoke<string>('ai_read_memory_file', {
         relativePath: MEMORY_PATHS.MEMORY_ROOT,
       });
-      totalIndexed += await this.indexFile(
-        MEMORY_PATHS.MEMORY_ROOT,
-        memoryRoot,
-      );
+      totalIndexed += await this.indexFile(MEMORY_PATHS.MEMORY_ROOT, memoryRoot);
     } catch {
       // memory.md doesn't exist yet — that's fine
     }
 
     // Index memory directory files
     try {
-      const memoryFiles = await invoke<string[]>("ai_list_memory_files", {
+      const memoryFiles = await invoke<string[]>('ai_list_memory_files', {
         relativeDir: MEMORY_PATHS.MEMORY_DIR,
       });
 
       for (const fileName of memoryFiles) {
-        if (!fileName.endsWith(".md")) continue;
+        if (!fileName.endsWith('.md')) continue;
         const relativePath = `${MEMORY_PATHS.MEMORY_DIR}/${fileName}`;
         try {
-          const content = await invoke<string>("ai_read_memory_file", {
-            relativePath,
-          });
+          const content = await invoke<string>('ai_read_memory_file', { relativePath });
           totalIndexed += await this.indexFile(relativePath, content);
         } catch {
           // Skip unreadable files
@@ -175,14 +171,14 @@ export class MemoryManager {
    * Read a specific memory file.
    */
   async readFile(relativePath: string): Promise<string> {
-    return invoke<string>("ai_read_memory_file", { relativePath });
+    return invoke<string>('ai_read_memory_file', { relativePath });
   }
 
   /**
    * Write to a memory file.
    */
   async writeFile(relativePath: string, content: string): Promise<void> {
-    await invoke("ai_write_memory_file", { relativePath, content });
+    await invoke('ai_write_memory_file', { relativePath, content });
     // Re-index the file
     await this.indexFile(relativePath, content);
   }
@@ -194,9 +190,9 @@ export class MemoryManager {
   async appendToFile(
     relativePath: string,
     content: string,
-    options?: { deduplicate?: boolean },
+    options?: { deduplicate?: boolean }
   ): Promise<void> {
-    let existing = "";
+    let existing = '';
     try {
       existing = await this.readFile(relativePath);
     } catch {
@@ -211,9 +207,7 @@ export class MemoryManager {
       }
     }
 
-    const newContent = existing
-      ? `${existing}\n\n${contentToAppend}`
-      : contentToAppend;
+    const newContent = existing ? `${existing}\n\n${contentToAppend}` : contentToAppend;
     await this.writeFile(relativePath, newContent);
   }
 
@@ -223,8 +217,8 @@ export class MemoryManager {
   getDailyLogPath(): string {
     const now = new Date();
     const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const dd = String(now.getDate()).padStart(2, "0");
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
     return `${MEMORY_PATHS.MEMORY_DIR}/${yyyy}-${mm}-${dd}.md`;
   }
 
@@ -238,11 +232,11 @@ export class MemoryManager {
 
   /** Set metadata */
   async setMeta(key: string, value: string): Promise<void> {
-    await invoke("ai_memory_set_meta", { key, value });
+    await invoke('ai_memory_set_meta', { key, value });
   }
 
   /** Get metadata */
   async getMeta(key: string): Promise<string | null> {
-    return invoke<string | null>("ai_memory_get_meta", { key });
+    return invoke<string | null>('ai_memory_get_meta', { key });
   }
 }

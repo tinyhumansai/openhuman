@@ -1,9 +1,10 @@
-import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
-import { invoke, isTauri as coreIsTauri } from "@tauri-apps/api/core";
-import { store } from "../store";
-import { setToken } from "../store/authSlice";
-import { consumeLoginToken } from "../services/api/authApi";
-import { IS_DEV } from "./config";
+import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
+import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
+
+import { consumeLoginToken } from '../services/api/authApi';
+import { store } from '../store';
+import { setToken } from '../store/authSlice';
+import { IS_DEV } from './config';
 
 /**
  * Handle a list of deep link URLs delivered by the Tauri deep-link plugin.
@@ -19,38 +20,38 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
 
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== "alphahuman:") {
+    if (parsed.protocol !== 'alphahuman:') {
       return;
     }
     // Harden: ensure this deep link is intended for auth handoff
-    if (parsed.hostname !== "auth") {
+    if (parsed.hostname !== 'auth') {
       return;
     }
 
-    const token = parsed.searchParams.get("token");
+    const token = parsed.searchParams.get('token');
     if (!token) {
-      console.warn("[DeepLink] URL did not contain a token query parameter");
+      console.warn('[DeepLink] URL did not contain a token query parameter');
       return;
     }
 
-    console.log("[DeepLink] Received token", token);
+    console.log('[DeepLink] Received token', token);
 
     try {
       // Bring app window to foreground so macOS users actually see completion.
       // (In this app, the window can start hidden and live in the tray.)
-      await invoke("show_window");
+      await invoke('show_window');
     } catch (err) {
       // Not fatal; we still continue the auth flow.
-      console.warn("[DeepLink] Failed to show window:", err);
+      console.warn('[DeepLink] Failed to show window:', err);
     }
 
     const jwtToken = await consumeLoginToken(token);
     store.dispatch(setToken(jwtToken));
 
     // Navigate to post-login flow. We use HashRouter, so update the hash route.
-    window.location.hash = "/onboarding";
+    window.location.hash = '/onboarding';
   } catch (error) {
-    console.error("[DeepLink] Failed to handle deep link URL:", url, error);
+    console.error('[DeepLink] Failed to handle deep link URL:', url, error);
   }
 };
 
@@ -71,14 +72,16 @@ export const setupDesktopDeepLinkListener = async () => {
       await handleDeepLinkUrls(startUrls);
     }
 
-    await onOpenUrl((urls) => {
+    await onOpenUrl(urls => {
       void handleDeepLinkUrls(urls);
     });
 
-    if (IS_DEV && typeof window !== "undefined") {
-      (window as Window & { __simulateDeepLink?: (url: string) => Promise<void> }).__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);
+    if (IS_DEV && typeof window !== 'undefined') {
+      (
+        window as Window & { __simulateDeepLink?: (url: string) => Promise<void> }
+      ).__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);
     }
   } catch (err) {
-    console.error("[DeepLink] Setup failed:", err);
+    console.error('[DeepLink] Setup failed:', err);
   }
 };

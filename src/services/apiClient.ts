@@ -1,8 +1,8 @@
-import { BACKEND_URL } from "../utils/config";
-import type { ApiError } from "../types/api";
-import { store } from "../store";
+import { store } from '../store';
+import type { ApiError } from '../types/api';
+import { BACKEND_URL } from '../utils/config';
 
-type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface RequestOptions {
   method?: HttpMethod;
@@ -34,7 +34,7 @@ class ApiClient {
    */
   private buildHeaders(options: RequestOptions): HeadersInit {
     const headers: Record<string, string> = {
-      "Content-Type": "application/json",
+      'Content-Type': 'application/json',
       ...options.headers,
     };
 
@@ -52,21 +52,15 @@ class ApiClient {
   /**
    * Make an API request
    */
-  private async request<T>(
-    endpoint: string,
-    options: RequestOptions = {},
-  ): Promise<T> {
-    const { method = "GET", body, requireAuth = true } = options;
+  private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
+    const { method = 'GET', body, requireAuth = true } = options;
 
     const url = `${this.baseUrl}${endpoint}`;
     const headers = this.buildHeaders({ ...options, requireAuth });
 
-    const config: RequestInit = {
-      method,
-      headers,
-    };
+    const config: RequestInit = { method, headers };
 
-    if (body && method !== "GET") {
+    if (body && method !== 'GET') {
       config.body = JSON.stringify(body);
     }
 
@@ -74,8 +68,8 @@ class ApiClient {
       const response = await fetch(url, config);
 
       // Handle non-JSON responses
-      const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -88,25 +82,21 @@ class ApiClient {
       if (!response.ok) {
         const error: ApiError = data.error
           ? { success: false, error: data.error, message: data.message }
-          : {
-              success: false,
-              error: `HTTP ${response.status}: ${response.statusText}`,
-            };
+          : { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
         throw error;
       }
 
       return data as T;
     } catch (error) {
       // Re-throw API errors as-is
-      if (error && typeof error === "object" && "error" in error) {
+      if (error && typeof error === 'object' && 'error' in error) {
         throw error;
       }
 
       // Wrap network/other errors
       throw {
         success: false,
-        error:
-          error instanceof Error ? error.message : "Unknown error occurred",
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
       } as ApiError;
     }
   }
@@ -114,11 +104,8 @@ class ApiClient {
   /**
    * GET request
    */
-  async get<T>(
-    endpoint: string,
-    options?: Omit<RequestOptions, "method" | "body">,
-  ): Promise<T> {
-    return this.request<T>(endpoint, { ...options, method: "GET" });
+  async get<T>(endpoint: string, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+    return this.request<T>(endpoint, { ...options, method: 'GET' });
   }
 
   /**
@@ -127,9 +114,9 @@ class ApiClient {
   async post<T>(
     endpoint: string,
     body?: unknown,
-    options?: Omit<RequestOptions, "method" | "body">,
+    options?: Omit<RequestOptions, 'method' | 'body'>
   ): Promise<T> {
-    return this.request<T>(endpoint, { ...options, method: "POST", body });
+    return this.request<T>(endpoint, { ...options, method: 'POST', body });
   }
 
   /**
@@ -138,9 +125,9 @@ class ApiClient {
   async put<T>(
     endpoint: string,
     body?: unknown,
-    options?: Omit<RequestOptions, "method" | "body">,
+    options?: Omit<RequestOptions, 'method' | 'body'>
   ): Promise<T> {
-    return this.request<T>(endpoint, { ...options, method: "PUT", body });
+    return this.request<T>(endpoint, { ...options, method: 'PUT', body });
   }
 
   /**
@@ -149,19 +136,16 @@ class ApiClient {
   async patch<T>(
     endpoint: string,
     body?: unknown,
-    options?: Omit<RequestOptions, "method" | "body">,
+    options?: Omit<RequestOptions, 'method' | 'body'>
   ): Promise<T> {
-    return this.request<T>(endpoint, { ...options, method: "PATCH", body });
+    return this.request<T>(endpoint, { ...options, method: 'PATCH', body });
   }
 
   /**
    * DELETE request
    */
-  async delete<T>(
-    endpoint: string,
-    options?: Omit<RequestOptions, "method" | "body">,
-  ): Promise<T> {
-    return this.request<T>(endpoint, { ...options, method: "DELETE" });
+  async delete<T>(endpoint: string, options?: Omit<RequestOptions, 'method' | 'body'>): Promise<T> {
+    return this.request<T>(endpoint, { ...options, method: 'DELETE' });
   }
 }
 

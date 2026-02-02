@@ -62,6 +62,7 @@ npm run tauri android build -- --target x86_64
 ### Signing
 
 Create keystore:
+
 ```bash
 keytool -genkey -v -keystore release.keystore \
     -alias my-key-alias \
@@ -117,19 +118,15 @@ npm run tauri ios build
 ### Signing
 
 Set development team:
+
 ```bash
 export APPLE_DEVELOPMENT_TEAM="YOUR_TEAM_ID"
 ```
 
 Or in `tauri.conf.json`:
+
 ```json
-{
-  "bundle": {
-    "iOS": {
-      "developmentTeam": "YOUR_TEAM_ID"
-    }
-  }
-}
+{ "bundle": { "iOS": { "developmentTeam": "YOUR_TEAM_ID" } } }
 ```
 
 ### Debugging
@@ -148,19 +145,16 @@ npm run tauri ios dev -- --verbose
 
 ```css
 .app {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 ```
 
 ### Touch Events
 
 ```tsx
-<button
-    onTouchStart={handleTouchStart}
-    onTouchEnd={handleTouchEnd}
->
-    Touch Me
+<button onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+  Touch Me
 </button>
 ```
 
@@ -171,7 +165,7 @@ import { platform } from '@tauri-apps/plugin-os';
 
 const os = await platform();
 if (os === 'android' || os === 'ios') {
-    // Mobile-specific behavior
+  // Mobile-specific behavior
 }
 ```
 

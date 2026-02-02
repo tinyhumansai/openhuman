@@ -1,6 +1,7 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import { teamApi } from "../services/api/teamApi";
-import type { TeamWithRole, TeamMember, TeamInvite } from "../types/team";
+import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
+
+import { teamApi } from '../services/api/teamApi';
+import type { TeamInvite, TeamMember, TeamWithRole } from '../types/team';
 
 interface TeamState {
   teams: TeamWithRole[];
@@ -18,61 +19,56 @@ const initialState: TeamState = {
   error: null,
 };
 
-export const fetchTeams = createAsyncThunk(
-  "team/fetchTeams",
-  async (_, { rejectWithValue }) => {
-    try {
-      return await teamApi.getTeams();
-    } catch (error) {
-      const msg =
-        error && typeof error === "object" && "error" in error
-          ? String(error.error)
-          : "Failed to fetch teams";
-      return rejectWithValue(msg);
-    }
-  },
-);
+export const fetchTeams = createAsyncThunk('team/fetchTeams', async (_, { rejectWithValue }) => {
+  try {
+    return await teamApi.getTeams();
+  } catch (error) {
+    const msg =
+      error && typeof error === 'object' && 'error' in error
+        ? String(error.error)
+        : 'Failed to fetch teams';
+    return rejectWithValue(msg);
+  }
+});
 
 export const fetchMembers = createAsyncThunk(
-  "team/fetchMembers",
+  'team/fetchMembers',
   async (teamId: string, { rejectWithValue }) => {
     try {
       return await teamApi.getMembers(teamId);
     } catch (error) {
       const msg =
-        error && typeof error === "object" && "error" in error
+        error && typeof error === 'object' && 'error' in error
           ? String(error.error)
-          : "Failed to fetch members";
+          : 'Failed to fetch members';
       return rejectWithValue(msg);
     }
-  },
+  }
 );
 
 export const fetchInvites = createAsyncThunk(
-  "team/fetchInvites",
+  'team/fetchInvites',
   async (teamId: string, { rejectWithValue }) => {
     try {
       return await teamApi.getInvites(teamId);
     } catch (error) {
       const msg =
-        error && typeof error === "object" && "error" in error
+        error && typeof error === 'object' && 'error' in error
           ? String(error.error)
-          : "Failed to fetch invites";
+          : 'Failed to fetch invites';
       return rejectWithValue(msg);
     }
-  },
+  }
 );
 
 const teamSlice = createSlice({
-  name: "team",
+  name: 'team',
   initialState,
-  reducers: {
-    clearTeamState: () => initialState,
-  },
-  extraReducers: (builder) => {
+  reducers: { clearTeamState: () => initialState },
+  extraReducers: builder => {
     builder
       // fetchTeams
-      .addCase(fetchTeams.pending, (state) => {
+      .addCase(fetchTeams.pending, state => {
         state.isLoading = true;
         state.error = null;
       })
@@ -85,7 +81,7 @@ const teamSlice = createSlice({
         state.error = action.payload as string;
       })
       // fetchMembers
-      .addCase(fetchMembers.pending, (state) => {
+      .addCase(fetchMembers.pending, state => {
         state.error = null;
       })
       .addCase(fetchMembers.fulfilled, (state, action) => {
@@ -95,7 +91,7 @@ const teamSlice = createSlice({
         state.error = action.payload as string;
       })
       // fetchInvites
-      .addCase(fetchInvites.pending, (state) => {
+      .addCase(fetchInvites.pending, state => {
         state.error = null;
       })
       .addCase(fetchInvites.fulfilled, (state, action) => {

@@ -1,4 +1,4 @@
-import type { SearchResult } from "./types";
+import type { SearchResult } from './types';
 
 /** Enriched search result with timestamp for display */
 export interface EnrichedSearchResult extends SearchResult {
@@ -11,7 +11,7 @@ export interface EnrichedSearchResult extends SearchResult {
  */
 export function formatRelativeTime(timestamp: number): string {
   try {
-    if (!Number.isFinite(timestamp)) return "";
+    if (!Number.isFinite(timestamp)) return '';
 
     const now = Date.now();
     const seconds = (now - timestamp) / 1000;
@@ -19,19 +19,19 @@ export function formatRelativeTime(timestamp: number): string {
     const hours = seconds / 3600;
     const days = seconds / 86400;
 
-    if (minutes < 30) return "just now";
+    if (minutes < 30) return 'just now';
     if (minutes < 60) return `${Math.floor(minutes)}mins ago`;
     if (hours < 24) return `${Math.floor(hours)}hrs ago`;
     if (days < 7) return `${Math.floor(days)}d ago`;
 
     const dt = new Date(timestamp);
-    const month = dt.toLocaleString("en", { month: "short" });
+    const month = dt.toLocaleString('en', { month: 'short' });
     if (dt.getFullYear() === new Date().getFullYear()) {
       return `${dt.getDate()} ${month}`;
     }
     return `${dt.getDate()} ${month}, ${dt.getFullYear()}`;
   } catch {
-    return "";
+    return '';
   }
 }
 
@@ -42,42 +42,34 @@ export function formatRelativeTime(timestamp: number): string {
 export function deduplicateMemories(
   profileFacts: string[],
   recentContext: string[],
-  searchResults: EnrichedSearchResult[],
-): {
-  profile: string[];
-  recent: string[];
-  search: EnrichedSearchResult[];
-} {
+  searchResults: EnrichedSearchResult[]
+): { profile: string[]; recent: string[]; search: EnrichedSearchResult[] } {
   const seen = new Set<string>();
 
-  const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
-  const uniqueProfile = profileFacts.filter((fact) => {
+  const uniqueProfile = profileFacts.filter(fact => {
     const key = normalize(fact);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  const uniqueRecent = recentContext.filter((fact) => {
+  const uniqueRecent = recentContext.filter(fact => {
     const key = normalize(fact);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  const uniqueSearch = searchResults.filter((r) => {
+  const uniqueSearch = searchResults.filter(r => {
     const key = normalize(r.text);
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  return {
-    profile: uniqueProfile,
-    recent: uniqueRecent,
-    search: uniqueSearch,
-  };
+  return { profile: uniqueProfile, recent: uniqueRecent, search: uniqueSearch };
 }
 
 /**
@@ -99,7 +91,7 @@ export function formatMemoryContext(params: {
   const deduped = deduplicateMemories(
     params.profileFacts,
     params.recentContext,
-    params.searchResults,
+    params.searchResults
   );
 
   const profile = deduped.profile.slice(0, maxResults);
@@ -113,35 +105,29 @@ export function formatMemoryContext(params: {
   const sections: string[] = [];
 
   if (profile.length > 0) {
-    sections.push(
-      "## User Profile (Persistent)\n" +
-        profile.map((f) => `- ${f}`).join("\n"),
-    );
+    sections.push('## User Profile (Persistent)\n' + profile.map(f => `- ${f}`).join('\n'));
   }
 
   if (recent.length > 0) {
-    sections.push(
-      "## Recent Context\n" + recent.map((f) => `- ${f}`).join("\n"),
-    );
+    sections.push('## Recent Context\n' + recent.map(f => `- ${f}`).join('\n'));
   }
 
   if (search.length > 0) {
-    const lines = search.map((r) => {
-      const timeStr = r.updatedAt ? formatRelativeTime(r.updatedAt) : "";
+    const lines = search.map(r => {
+      const timeStr = r.updatedAt ? formatRelativeTime(r.updatedAt) : '';
       const pct = `[${Math.round(r.score * 100)}%]`;
-      const prefix = timeStr ? `[${timeStr}] ` : "";
+      const prefix = timeStr ? `[${timeStr}] ` : '';
       // Truncate long text for context display
-      const text =
-        r.text.length > 200 ? r.text.slice(0, 200) + "..." : r.text;
+      const text = r.text.length > 200 ? r.text.slice(0, 200) + '...' : r.text;
       return `- ${prefix}${text} ${pct}`;
     });
-    sections.push("## Relevant Memories\n" + lines.join("\n"));
+    sections.push('## Relevant Memories\n' + lines.join('\n'));
   }
 
   const intro =
-    "The following is recalled context about the user. Reference it only when relevant to the conversation.";
+    'The following is recalled context about the user. Reference it only when relevant to the conversation.';
   const disclaimer =
     "Use these memories naturally when relevant but don't force them into every response or make assumptions beyond what's stated.";
 
-  return `<memory-context>\n${intro}\n\n${sections.join("\n\n")}\n\n${disclaimer}\n</memory-context>`;
+  return `<memory-context>\n${intro}\n\n${sections.join('\n\n')}\n\n${disclaimer}\n</memory-context>`;
 }

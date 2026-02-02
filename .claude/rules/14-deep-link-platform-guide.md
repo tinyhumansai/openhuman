@@ -9,15 +9,7 @@ The `alphahuman://` custom URL scheme is used to hand off authentication from a 
 Configured in `src-tauri/tauri.conf.json`:
 
 ```json
-{
-  "plugins": {
-    "deep-link": {
-      "desktop": {
-        "schemes": ["alphahuman"]
-      }
-    }
-  }
-}
+{ "plugins": { "deep-link": { "desktop": { "schemes": ["alphahuman"] } } } }
 ```
 
 ## macOS
@@ -113,7 +105,7 @@ open "alphahuman://auth?token=YOUR_TOKEN"
 - **Solution**: Use dynamic `import()` for the deep link listener and wrap plugin calls in try/catch:
   ```typescript
   // main.tsx
-  import("./utils/desktopDeepLinkListener").then((m) => {
+  import('./utils/desktopDeepLinkListener').then(m => {
     m.setupDesktopDeepLinkListener().catch(console.error);
   });
   ```
@@ -141,7 +133,7 @@ open "alphahuman://auth?token=YOUR_TOKEN"
 - **Solution**: Use a Rust Tauri command with `reqwest` to make HTTP requests (no CORS):
   ```typescript
   // Instead of fetch():
-  const data = await invoke("exchange_token", { backendUrl, token });
+  const data = await invoke('exchange_token', { backendUrl, token });
   ```
 
 ## Tauri Plugin Dependencies
@@ -163,9 +155,7 @@ tokio = { version = "1", features = ["full"] }
 ### Capabilities (`src-tauri/capabilities/default.json`)
 
 ```json
-{
-  "permissions": ["core:default", "opener:default", "deep-link:default"]
-}
+{ "permissions": ["core:default", "opener:default", "deep-link:default"] }
 ```
 
 ---

@@ -171,8 +171,7 @@ Environment variable access with defaults.
 
 ```typescript
 // Backend URL
-export const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL || "https://api.example.com";
+export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://api.example.com';
 
 // Telegram configuration
 export const TELEGRAM_API_ID = import.meta.env.VITE_TELEGRAM_API_ID;
@@ -181,18 +180,18 @@ export const TELEGRAM_BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME;
 export const TELEGRAM_BOT_ID = import.meta.env.VITE_TELEGRAM_BOT_ID;
 
 // Debug mode
-export const DEBUG = import.meta.env.VITE_DEBUG === "true";
+export const DEBUG = import.meta.env.VITE_DEBUG === 'true';
 ```
 
 **Usage:**
 
 ```typescript
-import { BACKEND_URL, DEBUG } from "../utils/config";
+import { BACKEND_URL, DEBUG } from '../utils/config';
 
 const response = await fetch(`${BACKEND_URL}/api/users`);
 
 if (DEBUG) {
-  console.log("Response:", response);
+  console.log('Response:', response);
 }
 ```
 
@@ -211,7 +210,7 @@ function parseDeepLink(url: string): { path: string; params: URLSearchParams };
 **Usage:**
 
 ```typescript
-import { buildAuthDeepLink } from "../utils/deeplink";
+import { buildAuthDeepLink } from '../utils/deeplink';
 
 // Build URL for browser redirect
 const deepLink = buildAuthDeepLink(loginToken);
@@ -234,7 +233,7 @@ async function setupDesktopDeepLinkListener(): Promise<void>;
 
 ```typescript
 // Lazy import to ensure Tauri IPC is ready
-import("./utils/desktopDeepLinkListener").then((m) => {
+import('./utils/desktopDeepLinkListener').then(m => {
   m.setupDesktopDeepLinkListener().catch(console.error);
 });
 ```
@@ -251,12 +250,12 @@ import("./utils/desktopDeepLinkListener").then((m) => {
 
 ```typescript
 // Set flag before navigation to prevent reprocessing
-localStorage.setItem("deepLinkHandled", "true");
-window.location.replace("/");
+localStorage.setItem('deepLinkHandled', 'true');
+window.location.replace('/');
 
 // On next load, clear flag
-if (localStorage.getItem("deepLinkHandled") === "true") {
-  localStorage.removeItem("deepLinkHandled");
+if (localStorage.getItem('deepLinkHandled') === 'true') {
+  localStorage.removeItem('deepLinkHandled');
   return; // Don't process again
 }
 ```
@@ -273,10 +272,10 @@ async function openUrl(url: string): Promise<void>;
 **Usage:**
 
 ```typescript
-import { openUrl } from "../utils/openUrl";
+import { openUrl } from '../utils/openUrl';
 
 // Opens in system browser (not in-app WebView)
-await openUrl("https://telegram.org/auth");
+await openUrl('https://telegram.org/auth');
 ```
 
 **Implementation:**
@@ -285,11 +284,11 @@ await openUrl("https://telegram.org/auth");
 export async function openUrl(url: string): Promise<void> {
   try {
     // Try Tauri opener plugin first
-    const { open } = await import("@tauri-apps/plugin-opener");
+    const { open } = await import('@tauri-apps/plugin-opener');
     await open(url);
   } catch {
     // Fallback to browser API
-    window.open(url, "_blank");
+    window.open(url, '_blank');
   }
 }
 ```
@@ -302,9 +301,9 @@ The `telegram` npm package requires Node.js APIs. These are polyfilled:
 
 ```typescript
 // polyfills.ts
-import { Buffer } from "buffer";
-import process from "process";
-import util from "util";
+import { Buffer } from 'buffer';
+import process from 'process';
+import util from 'util';
 
 window.Buffer = Buffer;
 window.process = process;
@@ -315,7 +314,8 @@ window.util = util;
 
 ```typescript
 // main.tsx
-import "./polyfills";
+import './polyfills';
+
 // ... rest of app
 ```
 
@@ -324,17 +324,8 @@ import "./polyfills";
 ```typescript
 // vite.config.ts
 export default defineConfig({
-  resolve: {
-    alias: {
-      buffer: "buffer",
-      process: "process/browser",
-      util: "util",
-    },
-  },
-  define: {
-    "process.env": {},
-    global: "globalThis",
-  },
+  resolve: { alias: { buffer: 'buffer', process: 'process/browser', util: 'util' } },
+  define: { 'process.env': {}, global: 'globalThis' },
 });
 ```
 
@@ -453,14 +444,14 @@ Always include dependencies in useEffect:
 ```typescript
 // Good
 useEffect(() => {
-  on("event", handler);
-  return () => off("event", handler);
+  on('event', handler);
+  return () => off('event', handler);
 }, [on, off, handler]);
 
 // Bad - missing dependencies
 useEffect(() => {
-  on("event", handler);
-  return () => off("event", handler);
+  on('event', handler);
+  return () => off('event', handler);
 }, []);
 ```
 
@@ -483,7 +474,7 @@ Wrap utility calls in try-catch:
 try {
   await openUrl(url);
 } catch (error) {
-  console.error("Failed to open URL:", error);
+  console.error('Failed to open URL:', error);
   // Fallback behavior
 }
 ```
@@ -493,7 +484,7 @@ try {
 Use TypeScript generics for API calls:
 
 ```typescript
-const user = await apiClient.get<User>("/users/me");
+const user = await apiClient.get<User>('/users/me');
 // user is typed as User
 ```
 

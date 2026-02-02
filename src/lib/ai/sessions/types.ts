@@ -16,7 +16,7 @@ export interface SessionEntry {
 
 /** Session header (first line of JSONL file) */
 export interface SessionHeader {
-  type: "session";
+  type: 'session';
   version: string;
   sessionId: string;
   timestamp: string;
@@ -24,21 +24,18 @@ export interface SessionHeader {
 
 /** Message entry in transcript */
 export interface TranscriptMessage {
-  type: "message";
+  type: 'message';
   timestamp: string;
   message: {
-    role: "user" | "assistant" | "system" | "tool";
+    role: 'user' | 'assistant' | 'system' | 'tool';
     content: Array<{ type: string; text?: string; [key: string]: unknown }>;
-    usage?: {
-      inputTokens: number;
-      outputTokens: number;
-    };
+    usage?: { inputTokens: number; outputTokens: number };
   };
 }
 
 /** Compaction marker in transcript */
 export interface CompactionMarker {
-  type: "compaction";
+  type: 'compaction';
   timestamp: string;
   compactionCount: number;
   summary: string;
@@ -47,7 +44,7 @@ export interface CompactionMarker {
 
 /** Session end marker in transcript */
 export interface SessionEndMarker {
-  type: "session_end";
+  type: 'session_end';
   timestamp: string;
   memoryCaptured: boolean;
 }
@@ -60,11 +57,11 @@ export type TranscriptLine =
   | SessionEndMarker;
 
 export type TranscriptLineType =
-  | "session"
-  | "message"
-  | "tool_result"
-  | "compaction"
-  | "session_end";
+  | 'session'
+  | 'message'
+  | 'tool_result'
+  | 'compaction'
+  | 'session_end';
 
 /** Session state for the current active session */
 export interface SessionState {

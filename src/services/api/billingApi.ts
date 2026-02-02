@@ -1,13 +1,13 @@
-import { apiClient } from "../apiClient";
 import type {
   ApiResponse,
-  CurrentPlanData,
-  PurchasePlanData,
-  PortalSessionData,
   CoinbaseChargeData,
+  CurrentPlanData,
   PlanIdentifier,
   PlanTier,
-} from "../../types/api";
+  PortalSessionData,
+  PurchasePlanData,
+} from '../../types/api';
+import { apiClient } from '../apiClient';
 
 /**
  * Billing API endpoints
@@ -18,10 +18,9 @@ export const billingApi = {
    * GET /payments/stripe/currentPlan
    */
   getCurrentPlan: async (): Promise<CurrentPlanData> => {
-    const response =
-      await apiClient.get<ApiResponse<CurrentPlanData>>(
-        "/payments/stripe/currentPlan",
-      );
+    const response = await apiClient.get<ApiResponse<CurrentPlanData>>(
+      '/payments/stripe/currentPlan'
+    );
     return response.data;
   },
 
@@ -31,8 +30,8 @@ export const billingApi = {
    */
   purchasePlan: async (plan: PlanIdentifier): Promise<PurchasePlanData> => {
     const response = await apiClient.post<ApiResponse<PurchasePlanData>>(
-      "/payments/stripe/purchasePlan",
-      { plan },
+      '/payments/stripe/purchasePlan',
+      { plan }
     );
     return response.data;
   },
@@ -42,9 +41,8 @@ export const billingApi = {
    * POST /payments/stripe/portal
    */
   createPortalSession: async (): Promise<PortalSessionData> => {
-    const response = await apiClient.post<ApiResponse<PortalSessionData>>(
-      "/payments/stripe/portal",
-    );
+    const response =
+      await apiClient.post<ApiResponse<PortalSessionData>>('/payments/stripe/portal');
     return response.data;
   },
 
@@ -54,11 +52,11 @@ export const billingApi = {
    */
   createCoinbaseCharge: async (
     plan: PlanTier,
-    interval: "annual" = "annual",
+    interval: 'annual' = 'annual'
   ): Promise<CoinbaseChargeData> => {
     const response = await apiClient.post<ApiResponse<CoinbaseChargeData>>(
-      "/payments/coinbase/charge",
-      { plan, interval },
+      '/payments/coinbase/charge',
+      { plan, interval }
     );
     return response.data;
   },

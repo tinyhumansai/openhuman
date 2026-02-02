@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { parseConstitution, loadConstitution } from "../loader";
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { loadConstitution, parseConstitution } from '../loader';
 
 const SAMPLE_OLD_FORMAT = `# AlphaHuman Agent Constitution
 
@@ -179,57 +180,55 @@ AlphaHuman agents are designed to be trusted collaborators. Trust is earned thro
 // ---------------------------------------------------------------------------
 // parseConstitution — old format
 // ---------------------------------------------------------------------------
-describe("parseConstitution (old format)", () => {
-  it("should parse core principles", () => {
+describe('parseConstitution (old format)', () => {
+  it('should parse core principles', () => {
     const result = parseConstitution(SAMPLE_OLD_FORMAT, true);
     expect(result.corePrinciples).toHaveLength(3);
-    expect(result.corePrinciples[0].title).toBe("User sovereignty");
-    expect(result.corePrinciples[0].description).toBe(
-      "The user owns their data.",
-    );
-    expect(result.corePrinciples[1].title).toBe("Truth over comfort");
-    expect(result.corePrinciples[2].title).toBe("Privacy is sacred");
+    expect(result.corePrinciples[0].title).toBe('User sovereignty');
+    expect(result.corePrinciples[0].description).toBe('The user owns their data.');
+    expect(result.corePrinciples[1].title).toBe('Truth over comfort');
+    expect(result.corePrinciples[2].title).toBe('Privacy is sacred');
   });
 
-  it("should parse memory principles", () => {
+  it('should parse memory principles', () => {
     const result = parseConstitution(SAMPLE_OLD_FORMAT, true);
     expect(result.memoryPrinciples).toHaveLength(3);
-    expect(result.memoryPrinciples[0].rule).toContain("facts and decisions");
-    expect(result.memoryPrinciples[2].rule).toContain("private keys");
+    expect(result.memoryPrinciples[0].rule).toContain('facts and decisions');
+    expect(result.memoryPrinciples[2].rule).toContain('private keys');
   });
 
-  it("should parse decision framework", () => {
+  it('should parse decision framework', () => {
     const result = parseConstitution(SAMPLE_OLD_FORMAT, true);
     expect(result.decisionFramework).toHaveLength(3);
-    expect(result.decisionFramework[0].id).toBe("safety");
-    expect(result.decisionFramework[1].id).toBe("privacy");
-    expect(result.decisionFramework[2].id).toBe("accuracy");
+    expect(result.decisionFramework[0].id).toBe('safety');
+    expect(result.decisionFramework[1].id).toBe('privacy');
+    expect(result.decisionFramework[2].id).toBe('accuracy');
   });
 
-  it("should parse prohibited actions", () => {
+  it('should parse prohibited actions', () => {
     const result = parseConstitution(SAMPLE_OLD_FORMAT, true);
     expect(result.prohibitedActions).toHaveLength(3);
-    expect(result.prohibitedActions[0].description).toContain("trades");
+    expect(result.prohibitedActions[0].description).toContain('trades');
   });
 
-  it("should parse interaction guidelines", () => {
+  it('should parse interaction guidelines', () => {
     const result = parseConstitution(SAMPLE_OLD_FORMAT, true);
     expect(result.interactionGuidelines).toHaveLength(3);
-    expect(result.interactionGuidelines[0]).toContain("crypto terminology");
+    expect(result.interactionGuidelines[0]).toContain('crypto terminology');
   });
 
-  it("should preserve raw markdown", () => {
+  it('should preserve raw markdown', () => {
     const result = parseConstitution(SAMPLE_OLD_FORMAT, true);
     expect(result.raw).toBe(SAMPLE_OLD_FORMAT);
   });
 
-  it("should set isDefault flag", () => {
+  it('should set isDefault flag', () => {
     expect(parseConstitution(SAMPLE_OLD_FORMAT, true).isDefault).toBe(true);
     expect(parseConstitution(SAMPLE_OLD_FORMAT, false).isDefault).toBe(false);
   });
 
-  it("should handle empty constitution gracefully", () => {
-    const result = parseConstitution("# Empty Constitution\n", true);
+  it('should handle empty constitution gracefully', () => {
+    const result = parseConstitution('# Empty Constitution\n', true);
     expect(result.corePrinciples).toHaveLength(0);
     expect(result.memoryPrinciples).toHaveLength(0);
     expect(result.prohibitedActions).toHaveLength(0);
@@ -239,75 +238,63 @@ describe("parseConstitution (old format)", () => {
 // ---------------------------------------------------------------------------
 // parseConstitution — new GitHub format
 // ---------------------------------------------------------------------------
-describe("parseConstitution (GitHub format)", () => {
-  it("should parse core values as corePrinciples", () => {
+describe('parseConstitution (GitHub format)', () => {
+  it('should parse core values as corePrinciples', () => {
     const result = parseConstitution(SAMPLE_GITHUB_FORMAT, false);
     expect(result.corePrinciples).toHaveLength(6);
-    expect(result.corePrinciples[0].title).toBe("Human-Centeredness");
+    expect(result.corePrinciples[0].title).toBe('Human-Centeredness');
     expect(result.corePrinciples[0].description).toContain(
-      "AlphaHuman agents exist to serve humans",
+      'AlphaHuman agents exist to serve humans'
     );
-    expect(result.corePrinciples[0].id).toBe("principle-1");
-    expect(result.corePrinciples[1].title).toBe("Safety First");
-    expect(result.corePrinciples[2].title).toBe("Beneficence");
-    expect(result.corePrinciples[3].title).toBe("Non-Maleficence");
-    expect(result.corePrinciples[4].title).toBe("Respect and Dignity");
-    expect(result.corePrinciples[5].title).toBe("Honesty and Integrity");
+    expect(result.corePrinciples[0].id).toBe('principle-1');
+    expect(result.corePrinciples[1].title).toBe('Safety First');
+    expect(result.corePrinciples[2].title).toBe('Beneficence');
+    expect(result.corePrinciples[3].title).toBe('Non-Maleficence');
+    expect(result.corePrinciples[4].title).toBe('Respect and Dignity');
+    expect(result.corePrinciples[5].title).toBe('Honesty and Integrity');
   });
 
-  it("should parse privacy section as memoryPrinciples", () => {
+  it('should parse privacy section as memoryPrinciples', () => {
     const result = parseConstitution(SAMPLE_GITHUB_FORMAT, false);
     expect(result.memoryPrinciples.length).toBeGreaterThan(0);
-    expect(
-      result.memoryPrinciples.some((p) =>
-        p.rule.toLowerCase().includes("personal data"),
-      ),
-    ).toBe(true);
-    expect(
-      result.memoryPrinciples.some((p) =>
-        p.rule.toLowerCase().includes("private"),
-      ),
-    ).toBe(true);
+    expect(result.memoryPrinciples.some(p => p.rule.toLowerCase().includes('personal data'))).toBe(
+      true
+    );
+    expect(result.memoryPrinciples.some(p => p.rule.toLowerCase().includes('private'))).toBe(true);
   });
 
-  it("should parse alignment section as decisionFramework", () => {
+  it('should parse alignment section as decisionFramework', () => {
     const result = parseConstitution(SAMPLE_GITHUB_FORMAT, false);
     expect(result.decisionFramework).toHaveLength(4);
-    expect(result.decisionFramework[0].id).toBe("intent interpretation");
-    expect(result.decisionFramework[0].question).toContain(
-      "Interpret user intent",
-    );
-    expect(result.decisionFramework[1].id).toBe("proportionality");
-    expect(result.decisionFramework[2].id).toBe("least harm principle");
-    expect(result.decisionFramework[3].id).toBe("long-term impact awareness");
+    expect(result.decisionFramework[0].id).toBe('intent interpretation');
+    expect(result.decisionFramework[0].question).toContain('Interpret user intent');
+    expect(result.decisionFramework[1].id).toBe('proportionality');
+    expect(result.decisionFramework[2].id).toBe('least harm principle');
+    expect(result.decisionFramework[3].id).toBe('long-term impact awareness');
   });
 
-  it("should parse boundaries section as prohibitedActions", () => {
+  it('should parse boundaries section as prohibitedActions', () => {
     const result = parseConstitution(SAMPLE_GITHUB_FORMAT, false);
     expect(result.prohibitedActions.length).toBeGreaterThan(0);
     expect(
-      result.prohibitedActions.some((a) =>
-        a.description.toLowerCase().includes("respectful"),
-      ),
+      result.prohibitedActions.some(a => a.description.toLowerCase().includes('respectful'))
     ).toBe(true);
   });
 
-  it("should parse agency section as interactionGuidelines", () => {
+  it('should parse agency section as interactionGuidelines', () => {
     const result = parseConstitution(SAMPLE_GITHUB_FORMAT, false);
     expect(result.interactionGuidelines.length).toBeGreaterThan(0);
-    expect(
-      result.interactionGuidelines.some((g) =>
-        g.toLowerCase().includes("persuasive"),
-      ),
-    ).toBe(true);
+    expect(result.interactionGuidelines.some(g => g.toLowerCase().includes('persuasive'))).toBe(
+      true
+    );
   });
 
-  it("should preserve raw markdown", () => {
+  it('should preserve raw markdown', () => {
     const result = parseConstitution(SAMPLE_GITHUB_FORMAT, false);
     expect(result.raw).toBe(SAMPLE_GITHUB_FORMAT);
   });
 
-  it("should set isDefault to false", () => {
+  it('should set isDefault to false', () => {
     const result = parseConstitution(SAMPLE_GITHUB_FORMAT, false);
     expect(result.isDefault).toBe(false);
   });
@@ -316,18 +303,15 @@ describe("parseConstitution (GitHub format)", () => {
 // ---------------------------------------------------------------------------
 // loadConstitution — fetches from GitHub, falls back to bundled default
 // ---------------------------------------------------------------------------
-describe("loadConstitution", () => {
+describe('loadConstitution', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("should fetch from GitHub and parse with isDefault false", async () => {
+  it('should fetch from GitHub and parse with isDefault false', async () => {
     vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        text: () => Promise.resolve(SAMPLE_GITHUB_FORMAT),
-      }),
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(SAMPLE_GITHUB_FORMAT) })
     );
 
     const result = await loadConstitution();
@@ -338,11 +322,8 @@ describe("loadConstitution", () => {
     expect(result.corePrinciples.length).toBeGreaterThan(0);
   });
 
-  it("should fall back to bundled default on network error", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockRejectedValue(new Error("network error")),
-    );
+  it('should fall back to bundled default on network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
 
     const result = await loadConstitution();
 
@@ -351,14 +332,8 @@ describe("loadConstitution", () => {
     expect(result.corePrinciples.length).toBeGreaterThan(0);
   });
 
-  it("should fall back to bundled default on non-200 response", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 404,
-      }),
-    );
+  it('should fall back to bundled default on non-200 response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
 
     const result = await loadConstitution();
 
@@ -366,19 +341,16 @@ describe("loadConstitution", () => {
     expect(result.isDefault).toBe(true);
   });
 
-  it("should call the correct GitHub URL", async () => {
+  it('should call the correct GitHub URL', async () => {
     vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        text: () => Promise.resolve(SAMPLE_GITHUB_FORMAT),
-      }),
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve(SAMPLE_GITHUB_FORMAT) })
     );
 
     await loadConstitution();
 
     expect(fetch).toHaveBeenCalledWith(
-      "https://raw.githubusercontent.com/alphahumanxyz/constitution/refs/heads/main/CONSTITUTION.md",
+      'https://raw.githubusercontent.com/alphahumanxyz/constitution/refs/heads/main/CONSTITUTION.md'
     );
   });
 });

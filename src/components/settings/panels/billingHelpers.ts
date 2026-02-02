@@ -1,4 +1,4 @@
-import type { PlanIdentifier, PlanTier } from "../../../types/api";
+import type { PlanIdentifier, PlanTier } from '../../../types/api';
 
 export interface PlanFeature {
   text: string;
@@ -15,46 +15,40 @@ export interface PlanMeta {
 
 export const PLANS: PlanMeta[] = [
   {
-    tier: "FREE",
-    name: "Free",
+    tier: 'FREE',
+    name: 'Free',
     monthlyPrice: 0,
     annualPrice: 0,
-    features: [{ text: "Limited Access", included: true }],
+    features: [{ text: 'Limited Access', included: true }],
   },
   {
-    tier: "BASIC",
-    name: "Basic",
+    tier: 'BASIC',
+    name: 'Basic',
     monthlyPrice: 25,
     annualPrice: 250,
-    features: [{ text: "20x Priority Access", included: true }],
+    features: [{ text: '20x Priority Access', included: true }],
   },
   {
-    tier: "PRO",
-    name: "Pro",
+    tier: 'PRO',
+    name: 'Pro',
     monthlyPrice: 200,
     annualPrice: 2000,
-    features: [{ text: "400x Priority Access", included: true }],
+    features: [{ text: '400x Priority Access', included: true }],
   },
 ];
 
 export function tierIndex(tier: PlanTier): number {
-  return PLANS.findIndex((p) => p.tier === tier);
+  return PLANS.findIndex(p => p.tier === tier);
 }
 
-export function buildPlanId(
-  tier: PlanTier,
-  interval: "monthly" | "annual"
-): PlanIdentifier {
-  const suffix = interval === "annual" ? "YEARLY" : "MONTHLY";
+export function buildPlanId(tier: PlanTier, interval: 'monthly' | 'annual'): PlanIdentifier {
+  const suffix = interval === 'annual' ? 'YEARLY' : 'MONTHLY';
   return `${tier}_${suffix}` as PlanIdentifier;
 }
 
-export function displayPrice(
-  plan: PlanMeta,
-  billingInterval: "monthly" | "annual"
-): string {
-  if (plan.tier === "FREE") return "$0";
-  if (billingInterval === "annual") {
+export function displayPrice(plan: PlanMeta, billingInterval: 'monthly' | 'annual'): string {
+  if (plan.tier === 'FREE') return '$0';
+  if (billingInterval === 'annual') {
     const monthly = Math.round(plan.annualPrice / 12);
     return `$${monthly}`;
   }
@@ -63,19 +57,14 @@ export function displayPrice(
 
 export function annualSavings(
   plan: PlanMeta,
-  billingInterval: "monthly" | "annual"
+  billingInterval: 'monthly' | 'annual'
 ): number | null {
-  if (plan.tier === "FREE" || billingInterval !== "annual") return null;
+  if (plan.tier === 'FREE' || billingInterval !== 'annual') return null;
   const monthlyTotal = plan.monthlyPrice * 12;
-  const pct = Math.round(
-    ((monthlyTotal - plan.annualPrice) / monthlyTotal) * 100
-  );
+  const pct = Math.round(((monthlyTotal - plan.annualPrice) / monthlyTotal) * 100);
   return pct > 0 ? pct : null;
 }
 
-export function isUpgrade(
-  targetTier: PlanTier,
-  currentTier: PlanTier
-): boolean {
+export function isUpgrade(targetTier: PlanTier, currentTier: PlanTier): boolean {
   return tierIndex(targetTier) > tierIndex(currentTier);
 }

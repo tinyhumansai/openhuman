@@ -1,26 +1,23 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { Message } from "../providers/interface";
-import type { LLMProvider } from "../providers/interface";
-import type { ConstitutionConfig } from "../constitution/types";
-import type { MemoryManager } from "../memory/manager";
-import type {
-  SessionEntry,
-  SessionConfig,
-  TranscriptMessage,
-} from "./types";
-import { DEFAULT_SESSION_CONFIG } from "./types";
+import { invoke } from '@tauri-apps/api/core';
+
+import type { ConstitutionConfig } from '../constitution/types';
+import type { MemoryManager } from '../memory/manager';
+import type { LLMProvider, Message } from '../providers/interface';
+import { compactSession, shouldCompact } from './compaction';
+import { captureSessionEnd, shouldCaptureSession } from './session-capture';
 import {
-  writeSessionHeader,
-  appendMessage,
   appendCompactionMarker,
+  appendMessage,
   appendSessionEndMarker,
   readMessages,
-} from "./transcript";
-import { shouldCompact, compactSession } from "./compaction";
+  writeSessionHeader,
+} from './transcript';
 import {
-  shouldCaptureSession,
-  captureSessionEnd,
-} from "./session-capture";
+  DEFAULT_SESSION_CONFIG,
+  type SessionConfig,
+  type SessionEntry,
+  type TranscriptMessage,
+} from './types';
 
 /**
  * SessionManager handles session lifecycle:
@@ -42,7 +39,7 @@ export class SessionManager {
 
   /** Initialize the sessions directory */
   async init(): Promise<void> {
-    await invoke("ai_sessions_init");
+    await invoke('ai_sessions_init');
   }
 
   /** Get the current session ID */
@@ -88,10 +85,7 @@ export class SessionManager {
     await writeSessionHeader(sessionId);
 
     // Update index
-    await invoke("ai_sessions_update_index", {
-      sessionId,
-      entry,
-    });
+    await invoke('ai_sessions_update_index', { sessionId, entry });
 
     this.currentSessionId = sessionId;
     this.currentEntry = entry;
@@ -105,9 +99,7 @@ export class SessionManager {
    */
   async loadSession(sessionId: string): Promise<void> {
     // Load session entry from index
-    const index = await invoke<Record<string, SessionEntry>>(
-      "ai_sessions_load_index",
-    );
+    const index = await invoke<Record<string, SessionEntry>>('ai_sessions_load_index');
     const entry = index[sessionId];
     if (!entry) {
       throw new Error(`Session not found: ${sessionId}`);
@@ -117,20 +109,19 @@ export class SessionManager {
     const transcriptMessages = await readMessages(sessionId);
 
     // Convert transcript messages to Message format
-    this.messageBuffer = transcriptMessages.map((tm) => ({
+    this.messageBuffer = transcriptMessages.map(tm => ({
       role: tm.message.role,
-      content: tm.message.content.map((c) => {
-        if (c.type === "text") {
-          return { type: "text" as const, text: c.text || "" };
+      content: tm.message.content.map(c => {
+        if (c.type === 'text') {
+          return { type: 'text' as const, text: c.text || '' };
         }
-        return c as Message["content"][0];
+        return c as Message['content'][0];
       }),
       usage: tm.message.usage
         ? {
             inputTokens: tm.message.usage.inputTokens,
             outputTokens: tm.message.usage.outputTokens,
-            totalTokens:
-              tm.message.usage.inputTokens + tm.message.usage.outputTokens,
+            totalTokens: tm.message.usage.inputTokens + tm.message.usage.outputTokens,
           }
         : undefined,
     }));
@@ -144,20 +135,14 @@ export class SessionManager {
    */
   async addUserMessage(text: string): Promise<void> {
     if (!this.currentSessionId) {
-      throw new Error("No active session");
+      throw new Error('No active session');
     }
 
-    const message: Message = {
-      role: "user",
-      content: [{ type: "text", text }],
-    };
+    const message: Message = { role: 'user', content: [{ type: 'text', text }] };
 
     this.messageBuffer.push(message);
 
-    await appendMessage(this.currentSessionId, {
-      role: "user",
-      content: [{ type: "text", text }],
-    });
+    await appendMessage(this.currentSessionId, { role: 'user', content: [{ type: 'text', text }] });
   }
 
   /**
@@ -165,22 +150,19 @@ export class SessionManager {
    */
   async addAssistantMessage(message: Message): Promise<void> {
     if (!this.currentSessionId || !this.currentEntry) {
-      throw new Error("No active session");
+      throw new Error('No active session');
     }
 
     this.messageBuffer.push(message);
 
     await appendMessage(this.currentSessionId, {
-      role: "assistant",
-      content: message.content.map((c) => {
-        if (c.type === "text") return { type: "text", text: c.text };
-        return c as TranscriptMessage["message"]["content"][0];
+      role: 'assistant',
+      content: message.content.map(c => {
+        if (c.type === 'text') return { type: 'text', text: c.text };
+        return c as TranscriptMessage['message']['content'][0];
       }),
       usage: message.usage
-        ? {
-            inputTokens: message.usage.inputTokens,
-            outputTokens: message.usage.outputTokens,
-          }
+        ? { inputTokens: message.usage.inputTokens, outputTokens: message.usage.outputTokens }
         : undefined,
     });
 
@@ -192,7 +174,7 @@ export class SessionManager {
     }
     this.currentEntry.updatedAt = Date.now();
 
-    await invoke("ai_sessions_update_index", {
+    await invoke('ai_sessions_update_index', {
       sessionId: this.currentSessionId,
       entry: this.currentEntry,
     });
@@ -218,8 +200,7 @@ export class SessionManager {
       memoryManager: params.memoryManager,
       messages: this.messageBuffer,
       compactionCount: this.currentEntry.compactionCount,
-      lastFlushCompactionCount:
-        this.currentEntry.memoryFlushCompactionCount,
+      lastFlushCompactionCount: this.currentEntry.memoryFlushCompactionCount,
       config: this.config,
     });
 
@@ -231,17 +212,16 @@ export class SessionManager {
       this.currentSessionId,
       result.compactionCount,
       result.summary,
-      result.compactedMessages.length,
+      result.compactedMessages.length
     );
 
     // Update entry
     this.currentEntry.compactionCount = result.compactionCount;
-    this.currentEntry.memoryFlushCompactionCount =
-      result.memoryFlushCompactionCount;
+    this.currentEntry.memoryFlushCompactionCount = result.memoryFlushCompactionCount;
     this.currentEntry.memoryFlushAt = Date.now();
     this.currentEntry.updatedAt = Date.now();
 
-    await invoke("ai_sessions_update_index", {
+    await invoke('ai_sessions_update_index', {
       sessionId: this.currentSessionId,
       entry: this.currentEntry,
     });
@@ -282,11 +262,10 @@ export class SessionManager {
         // Update entry with flush tracking
         if (memoryCaptured) {
           this.currentEntry.memoryFlushAt = Date.now();
-          this.currentEntry.memoryFlushCompactionCount =
-            this.currentEntry.compactionCount + 1;
+          this.currentEntry.memoryFlushCompactionCount = this.currentEntry.compactionCount + 1;
           this.currentEntry.updatedAt = Date.now();
 
-          await invoke("ai_sessions_update_index", {
+          await invoke('ai_sessions_update_index', {
             sessionId: this.currentSessionId,
             entry: this.currentEntry,
           });
@@ -311,9 +290,7 @@ export class SessionManager {
    * List all sessions.
    */
   async listSessions(): Promise<SessionEntry[]> {
-    const index = await invoke<Record<string, SessionEntry>>(
-      "ai_sessions_load_index",
-    );
+    const index = await invoke<Record<string, SessionEntry>>('ai_sessions_load_index');
     return Object.values(index).sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
@@ -321,7 +298,7 @@ export class SessionManager {
    * Delete a session.
    */
   async deleteSession(sessionId: string): Promise<void> {
-    await invoke("ai_sessions_delete", { sessionId });
+    await invoke('ai_sessions_delete', { sessionId });
     if (this.currentSessionId === sessionId) {
       this.currentSessionId = null;
       this.currentEntry = null;

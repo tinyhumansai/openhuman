@@ -1,21 +1,22 @@
-import { useNavigate } from "react-router-dom";
-import { openUrl } from "../utils/openUrl";
-import { TELEGRAM_BOT_USERNAME } from "../utils/config";
-import ConnectionIndicator from "../components/ConnectionIndicator";
-import SkillsGrid from "../components/SkillsGrid";
-import { useUser } from "../hooks/useUser";
+import { useNavigate } from 'react-router-dom';
+
+import ConnectionIndicator from '../components/ConnectionIndicator';
+import SkillsGrid from '../components/SkillsGrid';
+import { useUser } from '../hooks/useUser';
+import { TELEGRAM_BOT_USERNAME } from '../utils/config';
+import { openUrl } from '../utils/openUrl';
 
 const Home = () => {
   const navigate = useNavigate();
   const { user } = useUser();
-  const userName = user?.firstName || "User";
+  const userName = user?.firstName || 'User';
 
   // Get greeting based on time
   const getGreeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return "Good morning";
-    if (hour < 18) return "Good afternoon";
-    return "Good evening";
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
   };
 
   // Handle Telegram bot link
@@ -24,15 +25,15 @@ const Home = () => {
   };
 
   const handleManageConnections = () => {
-    navigate("/settings");
+    navigate('/settings');
   };
 
   const handleUpgrade = () => {
-    navigate("/settings/billing");
+    navigate('/settings/billing');
   };
 
-  const currentPlan = user?.subscription?.plan || "FREE";
-  const showUpgradeCTA = currentPlan === "FREE";
+  const currentPlan = user?.subscription?.plan || 'FREE';
+  const showUpgradeCTA = currentPlan === 'FREE';
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -45,8 +46,7 @@ const Home = () => {
             {showUpgradeCTA && (
               <button
                 onClick={handleUpgrade}
-                className="glass rounded-3xl p-4 shadow-large animate-fade-up mb-4 w-full text-left hover:bg-stone-800/30 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500/50 group"
-              >
+                className="glass rounded-3xl p-4 shadow-large animate-fade-up mb-4 w-full text-left hover:bg-stone-800/30 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary-500/50 group">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
@@ -54,8 +54,7 @@ const Home = () => {
                         className="w-5 h-5 text-primary-500"
                         fill="none"
                         stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
+                        viewBox="0 0 24 24">
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -73,8 +72,7 @@ const Home = () => {
                     className="w-5 h-5 opacity-60 group-hover:opacity-100 transition-opacity"
                     fill="none"
                     stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
+                    viewBox="0 0 24 24">
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
@@ -99,27 +97,22 @@ const Home = () => {
               {/* Get Access button */}
               <button
                 onClick={handleStartCooking}
-                className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl"
-              >
+                className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl">
                 Message AlphaHuman 🔥
               </button>
             </div>
-
-
 
             {/* Action buttons */}
             <div className="glass rounded-3xl p-0 shadow-large animate-fade-up mt-4 overflow-hidden">
               {/* Settings */}
               <button
                 onClick={handleManageConnections}
-                className="w-full flex items-center justify-between p-3 bg-black/50 hover:bg-stone-800/30 transition-all duration-200 text-left rounded-3xl focus:outline-none"
-              >
+                className="w-full flex items-center justify-between p-3 bg-black/50 hover:bg-stone-800/30 transition-all duration-200 text-left rounded-3xl focus:outline-none">
                 <svg
                   className="w-5 h-5 opacity-60 flex-shrink-0 mr-3"
                   fill="none"
                   stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                  viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"

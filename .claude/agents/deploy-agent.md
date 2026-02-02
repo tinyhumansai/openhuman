@@ -29,6 +29,7 @@ npm run tauri build -- --target x86_64-pc-windows-msvc
 ```
 
 Outputs:
+
 - `src-tauri/target/release/bundle/msi/*.msi`
 - `src-tauri/target/release/bundle/nsis/*-setup.exe`
 
@@ -36,6 +37,7 @@ Outputs:
 
 1. Obtain EV code signing certificate
 2. Set environment variables:
+
 ```bash
 export TAURI_SIGNING_PRIVATE_KEY="path/to/key"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="password"
@@ -50,6 +52,7 @@ npm run tauri build -- --target universal-apple-darwin
 ```
 
 Outputs:
+
 - `src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg`
 - `src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app`
 
@@ -78,6 +81,7 @@ npm run tauri build -- --target x86_64-unknown-linux-gnu
 ```
 
 Outputs:
+
 - `src-tauri/target/release/bundle/deb/*.deb`
 - `src-tauri/target/release/bundle/appimage/*.AppImage`
 
@@ -86,6 +90,7 @@ Outputs:
 ### Android (Google Play)
 
 1. Build signed AAB:
+
 ```bash
 npm run tauri android build
 ```
@@ -99,6 +104,7 @@ npm run tauri android build
 ### iOS (App Store)
 
 1. Build release:
+
 ```bash
 npm run tauri ios build
 ```
@@ -124,14 +130,13 @@ npm run tauri add updater
 ### Configure
 
 In `tauri.conf.json`:
+
 ```json
 {
   "plugins": {
     "updater": {
       "pubkey": "YOUR_PUBLIC_KEY",
-      "endpoints": [
-        "https://releases.myapp.com/{{current_version}}"
-      ]
+      "endpoints": ["https://releases.myapp.com/{{current_version}}"]
     }
   }
 }
@@ -174,7 +179,7 @@ import { check } from '@tauri-apps/plugin-updater';
 
 const update = await check();
 if (update?.available) {
-    await update.downloadAndInstall();
+  await update.downloadAndInstall();
 }
 ```
 

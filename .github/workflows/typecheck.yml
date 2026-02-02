@@ -49,3 +49,13 @@ jobs:
         run: npx tsc
         env:
           NODE_ENV: test
+
+      - name: Check Prettier formatting
+        run: yarn format:check
+        env:
+          NODE_ENV: test
+
+      - name: Run ESLint
+        run: yarn lint
+        env:
+          NODE_ENV: test

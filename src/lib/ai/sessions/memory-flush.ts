@@ -1,9 +1,9 @@
-import type { MemoryManager } from "../memory/manager";
-import type { LLMProvider, Message } from "../providers/interface";
-import type { ConstitutionConfig } from "../constitution/types";
-import { MEMORY_FLUSH_TEMPLATE } from "../prompts/templates";
-import { buildSystemPrompt } from "../prompts/system-prompt";
-import { validateMemoryContent } from "../constitution/validator";
+import type { ConstitutionConfig } from '../constitution/types';
+import { validateMemoryContent } from '../constitution/validator';
+import type { MemoryManager } from '../memory/manager';
+import { buildSystemPrompt } from '../prompts/system-prompt';
+import { MEMORY_FLUSH_TEMPLATE } from '../prompts/templates';
+import type { LLMProvider, Message } from '../providers/interface';
 
 /**
  * Execute a memory flush before context compaction.
@@ -38,18 +38,12 @@ export async function executeMemoryFlush(params: {
   }
 
   // Build a minimal system prompt for the flush
-  const systemPrompt = buildSystemPrompt({
-    constitution,
-    mode: "minimal",
-  });
+  const systemPrompt = buildSystemPrompt({ constitution, mode: 'minimal' });
 
   // Create flush request with conversation context
   const flushMessages: Message[] = [
     ...conversationMessages,
-    {
-      role: "user",
-      content: [{ type: "text", text: MEMORY_FLUSH_TEMPLATE }],
-    },
+    { role: 'user', content: [{ type: 'text', text: MEMORY_FLUSH_TEMPLATE }] },
   ];
 
   // Get the LLM to identify what should be saved
@@ -63,7 +57,7 @@ export async function executeMemoryFlush(params: {
 
   // Parse the response for memory write instructions
   for (const block of response.content) {
-    if (block.type !== "text") continue;
+    if (block.type !== 'text') continue;
 
     const text = block.text;
 
@@ -87,9 +81,7 @@ export async function executeMemoryFlush(params: {
         }
 
         try {
-          await memoryManager.appendToFile(filePath, content, {
-            deduplicate: true,
-          });
+          await memoryManager.appendToFile(filePath, content, { deduplicate: true });
           savedFiles.push(filePath);
         } catch {
           // File write failed — non-fatal
@@ -103,7 +95,7 @@ export async function executeMemoryFlush(params: {
       if (validation.valid) {
         try {
           await memoryManager.appendToDailyLog(
-            `## Memory Flush (Compaction #${currentCompactionCount})\n\n${text}`,
+            `## Memory Flush (Compaction #${currentCompactionCount})\n\n${text}`
           );
           savedFiles.push(memoryManager.getDailyLogPath());
         } catch {

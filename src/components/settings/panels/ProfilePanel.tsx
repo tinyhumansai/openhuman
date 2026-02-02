@@ -1,16 +1,12 @@
-import { useSettingsNavigation } from "../hooks/useSettingsNavigation";
-import SettingsHeader from "../components/SettingsHeader";
+import SettingsHeader from '../components/SettingsHeader';
+import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const ProfilePanel = () => {
   const { navigateBack } = useSettingsNavigation();
 
   return (
     <div className="overflow-hidden h-full flex flex-col">
-      <SettingsHeader
-        title="Profile"
-        showBackButton={true}
-        onBack={navigateBack}
-      />
+      <SettingsHeader title="Profile" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 h-full flex items-center justify-center">
@@ -20,8 +16,7 @@ const ProfilePanel = () => {
                 className="w-8 h-8 text-stone-400"
                 fill="none"
                 stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+                viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -30,9 +25,7 @@ const ProfilePanel = () => {
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-white mb-2">
-              Profile Settings
-            </h3>
+            <h3 className="text-lg font-medium text-white mb-2">Profile Settings</h3>
             <p className="text-stone-400 text-sm max-w-sm mx-auto">
               Update your profile information, avatar, and personal preferences.
             </p>

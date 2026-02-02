@@ -1,6 +1,6 @@
-import type { RootState } from "./index";
+import type { RootState } from './index';
 
-const PENDING_USER = "__pending__";
+const PENDING_USER = '__pending__';
 
 function selectCurrentUserId(state: RootState): string {
   return state.user.user?._id ?? PENDING_USER;
@@ -9,7 +9,7 @@ function selectCurrentUserId(state: RootState): string {
 export const selectSocketStatus = (state: RootState) => {
   const userId = selectCurrentUserId(state);
   const userState = state.socket.byUser[userId];
-  return userState?.status ?? "disconnected";
+  return userState?.status ?? 'disconnected';
 };
 
 export const selectSocketId = (state: RootState): string | null => {

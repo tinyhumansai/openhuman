@@ -3,13 +3,13 @@
    ============================================ */
 
 /* Import premium fonts */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
 /* Custom font declarations for premium typography */
 @font-face {
-  font-family: "Cabinet Grotesk";
-  src: url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap");
+  font-family: 'Cabinet Grotesk';
+  src: url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
   font-display: swap;
 }
 
@@ -18,28 +18,28 @@
    ============================================ */
 :root {
   /* Semantic color tokens */
-  --color-background: theme("colors.canvas.50");
-  --color-surface: theme("colors.white");
-  --color-surface-elevated: theme("colors.canvas.100");
-  --color-border: theme("colors.stone.200");
-  --color-border-subtle: theme("colors.stone.100");
+  --color-background: theme('colors.canvas.50');
+  --color-surface: theme('colors.white');
+  --color-surface-elevated: theme('colors.canvas.100');
+  --color-border: theme('colors.stone.200');
+  --color-border-subtle: theme('colors.stone.100');
 
   /* Text colors with hierarchy */
-  --color-text-primary: theme("colors.stone.900");
-  --color-text-secondary: theme("colors.stone.600");
-  --color-text-tertiary: theme("colors.stone.500");
-  --color-text-muted: theme("colors.stone.400");
+  --color-text-primary: theme('colors.stone.900');
+  --color-text-secondary: theme('colors.stone.600');
+  --color-text-tertiary: theme('colors.stone.500');
+  --color-text-muted: theme('colors.stone.400');
 
   /* Interaction states */
-  --color-hover: theme("colors.primary.50");
-  --color-active: theme("colors.primary.100");
-  --color-focus: theme("colors.primary.500");
+  --color-hover: theme('colors.primary.50');
+  --color-active: theme('colors.primary.100');
+  --color-focus: theme('colors.primary.500');
 
   /* Semantic status colors */
-  --color-success: theme("colors.sage.500");
-  --color-warning: theme("colors.amber.500");
-  --color-error: theme("colors.coral.500");
-  --color-info: theme("colors.primary.500");
+  --color-success: theme('colors.sage.500');
+  --color-warning: theme('colors.amber.500');
+  --color-error: theme('colors.coral.500');
+  --color-info: theme('colors.primary.500');
 
   /* Spacing rhythm */
   --spacing-unit: 0.25rem;
@@ -76,9 +76,9 @@ html {
   text-rendering: optimizeLegibility;
   scroll-behavior: smooth;
   font-feature-settings:
-    "kern" 1,
-    "liga" 1,
-    "calt" 1;
+    'kern' 1,
+    'liga' 1,
+    'calt' 1;
 }
 
 body {
@@ -92,7 +92,7 @@ body {
 
 /* Subtle noise texture overlay for depth */
 body::before {
-  content: "";
+  content: '';
   position: fixed;
   top: 0;
   left: 0;
@@ -108,7 +108,7 @@ body::before {
    Typography Enhancements
    ============================================ */
 .text-display {
-  font-family: theme("fontFamily.display");
+  font-family: theme('fontFamily.display');
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1.1;
@@ -121,8 +121,8 @@ body::before {
 .text-gradient {
   background: linear-gradient(
     135deg,
-    theme("colors.primary.600") 0%,
-    theme("colors.accent.lavender") 100%
+    theme('colors.primary.600') 0%,
+    theme('colors.accent.lavender') 100%
   );
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -130,9 +130,9 @@ body::before {
 }
 
 .text-crypto-price {
-  font-family: theme("fontFamily.mono");
+  font-family: theme('fontFamily.mono');
   font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1;
+  font-feature-settings: 'tnum' 1;
 }
 
 /* ============================================
@@ -182,7 +182,7 @@ body::before {
 
 .card-interactive {
   @apply bg-white rounded-xl p-6;
-  border: 1px solid theme("colors.stone.200");
+  border: 1px solid theme('colors.stone.200');
   transition: all var(--transition-fast);
   cursor: pointer;
   position: relative;
@@ -190,7 +190,7 @@ body::before {
 }
 
 .card-interactive::before {
-  content: "";
+  content: '';
   position: absolute;
   top: 0;
   left: 0;
@@ -198,17 +198,17 @@ body::before {
   height: 2px;
   background: linear-gradient(
     90deg,
-    theme("colors.primary.500") 0%,
-    theme("colors.accent.lavender") 50%,
-    theme("colors.accent.sky") 100%
+    theme('colors.primary.500') 0%,
+    theme('colors.accent.lavender') 50%,
+    theme('colors.accent.sky') 100%
   );
   transform: scaleX(0);
   transition: transform var(--transition-base);
 }
 
 .card-interactive:hover {
-  border-color: theme("colors.primary.200");
-  background: theme("colors.primary.50");
+  border-color: theme('colors.primary.200');
+  background: theme('colors.primary.50');
 }
 
 .card-interactive:hover::before {
@@ -222,8 +222,8 @@ body::before {
   @apply relative inline-flex items-center justify-center px-6 py-3 rounded-xl font-medium;
   background: linear-gradient(
     135deg,
-    theme("colors.primary.500") 0%,
-    theme("colors.primary.600") 100%
+    theme('colors.primary.500') 0%,
+    theme('colors.primary.600') 100%
   );
   color: white;
   box-shadow:
@@ -235,7 +235,7 @@ body::before {
 }
 
 .btn-premium::before {
-  content: "";
+  content: '';
   position: absolute;
   top: 0;
   left: 0;
@@ -272,7 +272,7 @@ body::before {
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  color: theme("colors.stone.700");
+  color: theme('colors.stone.700');
   transition: all var(--transition-base);
 }
 
@@ -285,22 +285,22 @@ body::before {
 .btn-outline {
   @apply relative inline-flex items-center justify-center px-6 py-3 rounded-xl font-medium;
   background: transparent;
-  border: 1.5px solid theme("colors.stone.300");
-  color: theme("colors.stone.700");
+  border: 1.5px solid theme('colors.stone.300');
+  color: theme('colors.stone.700');
   transition: all var(--transition-base);
   position: relative;
   overflow: hidden;
 }
 
 .btn-outline::before {
-  content: "";
+  content: '';
   position: absolute;
   top: 50%;
   left: 50%;
   width: 0;
   height: 0;
   border-radius: 50%;
-  background: theme("colors.primary.50");
+  background: theme('colors.primary.50');
   transform: translate(-50%, -50%);
   transition:
     width 0.6s,
@@ -308,8 +308,8 @@ body::before {
 }
 
 .btn-outline:hover {
-  border-color: theme("colors.primary.500");
-  color: theme("colors.primary.600");
+  border-color: theme('colors.primary.500');
+  color: theme('colors.primary.600');
 }
 
 .btn-outline:hover::before {
@@ -323,23 +323,23 @@ body::before {
 .input-elevated {
   @apply w-full px-4 py-3 rounded-xl;
   background: white;
-  border: 1px solid theme("colors.stone.200");
-  color: theme("colors.stone.900");
-  font-size: theme("fontSize.base");
+  border: 1px solid theme('colors.stone.200');
+  color: theme('colors.stone.900');
+  font-size: theme('fontSize.base');
   transition: all var(--transition-fast);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .input-elevated:focus {
   outline: none;
-  border-color: theme("colors.primary.500");
+  border-color: theme('colors.primary.500');
   box-shadow:
-    0 0 0 3px theme("colors.primary.50"),
+    0 0 0 3px theme('colors.primary.50'),
     0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 .input-elevated::placeholder {
-  color: theme("colors.stone.400");
+  color: theme('colors.stone.400');
 }
 
 /* ============================================
@@ -347,30 +347,30 @@ body::before {
    ============================================ */
 .nav-item-premium {
   @apply relative flex items-center px-4 py-2.5 rounded-xl;
-  color: theme("colors.stone.600");
+  color: theme('colors.stone.600');
   transition: all var(--transition-fast);
   font-weight: 500;
 }
 
 .nav-item-premium:hover {
-  color: theme("colors.stone.900");
-  background: theme("colors.stone.50");
+  color: theme('colors.stone.900');
+  background: theme('colors.stone.50');
 }
 
 .nav-item-premium.active {
-  color: theme("colors.primary.600");
-  background: theme("colors.primary.50");
+  color: theme('colors.primary.600');
+  background: theme('colors.primary.50');
 }
 
 .nav-item-premium.active::before {
-  content: "";
+  content: '';
   position: absolute;
   left: 0;
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
   height: 20px;
-  background: theme("colors.primary.500");
+  background: theme('colors.primary.500');
   border-radius: 0 3px 3px 0;
 }
 
@@ -381,11 +381,11 @@ body::before {
   @apply inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-semibold;
   background: linear-gradient(
     135deg,
-    theme("colors.primary.50") 0%,
-    theme("colors.accent.lavender/10") 100%
+    theme('colors.primary.50') 0%,
+    theme('colors.accent.lavender/10') 100%
   );
-  color: theme("colors.primary.700");
-  border: 1px solid theme("colors.primary.200");
+  color: theme('colors.primary.700');
+  border: 1px solid theme('colors.primary.200');
 }
 
 .status-indicator {
@@ -427,26 +427,18 @@ body::before {
 
 .market-card {
   @apply relative overflow-hidden rounded-2xl p-6;
-  background: linear-gradient(
-    135deg,
-    white 0%,
-    theme("colors.canvas.100") 100%
-  );
-  border: 1px solid theme("colors.stone.200");
+  background: linear-gradient(135deg, white 0%, theme('colors.canvas.100') 100%);
+  border: 1px solid theme('colors.stone.200');
 }
 
 .market-card::before {
-  content: "";
+  content: '';
   position: absolute;
   top: -50%;
   right: -50%;
   width: 200%;
   height: 200%;
-  background: radial-gradient(
-    circle,
-    theme("colors.primary.500/5") 0%,
-    transparent 70%
-  );
+  background: radial-gradient(circle, theme('colors.primary.500/5') 0%, transparent 70%);
   animation: float 20s ease-in-out infinite;
 }
 
@@ -456,14 +448,14 @@ body::before {
 .chart-container {
   @apply relative rounded-xl p-4;
   background: white;
-  border: 1px solid theme("colors.stone.200");
+  border: 1px solid theme('colors.stone.200');
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .chart-grid {
   background-image:
-    linear-gradient(0deg, theme("colors.stone.100") 1px, transparent 1px),
-    linear-gradient(90deg, theme("colors.stone.100") 1px, transparent 1px);
+    linear-gradient(0deg, theme('colors.stone.100') 1px, transparent 1px),
+    linear-gradient(90deg, theme('colors.stone.100') 1px, transparent 1px);
   background-size: 20px 20px;
 }
 
@@ -475,7 +467,7 @@ body::before {
 }
 
 .skeleton::after {
-  content: "";
+  content: '';
   position: absolute;
   top: 0;
   right: 0;
@@ -484,7 +476,7 @@ body::before {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    theme("colors.stone.100") 50%,
+    theme('colors.stone.100') 50%,
     transparent 100%
   );
   animation: shimmer 2s linear infinite;
@@ -504,7 +496,7 @@ body::before {
    ============================================ */
 .scrollbar-elegant {
   scrollbar-width: thin;
-  scrollbar-color: theme("colors.stone.300") transparent;
+  scrollbar-color: theme('colors.stone.300') transparent;
 }
 
 .scrollbar-elegant::-webkit-scrollbar {
@@ -517,14 +509,14 @@ body::before {
 }
 
 .scrollbar-elegant::-webkit-scrollbar-thumb {
-  background: theme("colors.stone.300");
+  background: theme('colors.stone.300');
   border-radius: 4px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 
 .scrollbar-elegant::-webkit-scrollbar-thumb:hover {
-  background: theme("colors.stone.400");
+  background: theme('colors.stone.400');
 }
 
 /* ============================================
@@ -546,7 +538,7 @@ body::before {
    Accessibility Enhancements
    ============================================ */
 .focus-visible:focus {
-  outline: 2px solid theme("colors.primary.500");
+  outline: 2px solid theme('colors.primary.500');
   outline-offset: 2px;
 }
 
@@ -567,16 +559,16 @@ body::before {
    ============================================ */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-background: theme("colors.slate.950");
-    --color-surface: theme("colors.slate.900");
-    --color-surface-elevated: theme("colors.slate.800");
-    --color-border: theme("colors.slate.700");
-    --color-border-subtle: theme("colors.slate.800");
+    --color-background: theme('colors.slate.950');
+    --color-surface: theme('colors.slate.900');
+    --color-surface-elevated: theme('colors.slate.800');
+    --color-border: theme('colors.slate.700');
+    --color-border-subtle: theme('colors.slate.800');
 
-    --color-text-primary: theme("colors.slate.50");
-    --color-text-secondary: theme("colors.slate.300");
-    --color-text-tertiary: theme("colors.slate.400");
-    --color-text-muted: theme("colors.slate.500");
+    --color-text-primary: theme('colors.slate.50');
+    --color-text-secondary: theme('colors.slate.300');
+    --color-text-tertiary: theme('colors.slate.400');
+    --color-text-muted: theme('colors.slate.500');
   }
 
   .glass-surface {

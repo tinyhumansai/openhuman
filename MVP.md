@@ -1,4 +1,3 @@
-
 ---
 
 ```md
@@ -26,12 +25,12 @@ The assistant:
 
 ## Core Platform Behavior Summary
 
-| Platform | Listening Model | Trigger to Respond |
-|--------|-----------------|-------------------|
-| Windows | Continuous (background) | Bot DM or channel activity |
-| macOS | Continuous (background) | Bot DM or channel activity |
-| Android | Continuous (foreground service) | Bot DM or channel activity |
-| iOS | On-demand only | Bot DM → push → tap → sync |
+| Platform | Listening Model                 | Trigger to Respond         |
+| -------- | ------------------------------- | -------------------------- |
+| Windows  | Continuous (background)         | Bot DM or channel activity |
+| macOS    | Continuous (background)         | Bot DM or channel activity |
+| Android  | Continuous (foreground service) | Bot DM or channel activity |
+| iOS      | On-demand only                  | Bot DM → push → tap → sync |
 
 ---
 
@@ -52,17 +51,20 @@ The assistant:
 ## Phase 0 — Project Skeleton & Tooling
 
 ### Goals
+
 - Prepare repo structure
 - Establish documentation and contribution rules
 - No business logic yet
 
 ### Deliverables
+
 - Monorepo structure
 - Tauri project scaffold
 - Mobile targets enabled (Tauri v2)
 - CI hooks (optional)
 
 ### Repo Structure
+
 ```
 
 /apps
@@ -75,19 +77,20 @@ The assistant:
 /backend
 /docs
 
-````
+```
 
 ### Documentation Commands (Required)
+
 ```bash
 /docs/architecture.md        # high-level system design
 /docs/decisions/ADR-000.md   # initial architecture decision record
-````
+```
 
 ### Exit Criteria
 
-* App builds and runs (blank UI)
-* Docs folder initialized
-* ADR process agreed upon
+- App builds and runs (blank UI)
+- Docs folder initialized
+- ADR process agreed upon
 
 ---
 
@@ -99,24 +102,24 @@ Build the **entire UI flow** before implementing logic.
 
 ### UI Screens
 
-* Login / Signup
-* Telegram Connect (bot instructions)
-* Channel Selection
-* Sync Status Screen
-* Settings (background, privacy, storage)
-* Plan & Billing (stub)
-* Logs / Activity View (local only)
+- Login / Signup
+- Telegram Connect (bot instructions)
+- Channel Selection
+- Sync Status Screen
+- Settings (background, privacy, storage)
+- Plan & Billing (stub)
+- Logs / Activity View (local only)
 
 ### Platforms
 
-* All platforms (desktop + mobile)
+- All platforms (desktop + mobile)
 
 ### Deliverables
 
-* Responsive UI
-* Navigation between screens
-* Mock data only
-* No Telegram, no backend, no Rust logic
+- Responsive UI
+- Navigation between screens
+- Mock data only
+- No Telegram, no backend, no Rust logic
 
 ### Documentation Commands
 
@@ -128,9 +131,9 @@ Build the **entire UI flow** before implementing logic.
 
 ### Exit Criteria
 
-* Entire app is navigable
-* No dead-end screens
-* UI approved before logic begins
+- Entire app is navigable
+- No dead-end screens
+- UI approved before logic begins
 
 ---
 
@@ -142,19 +145,19 @@ Implement the **local agent engine** without Telegram or backend.
 
 ### Components
 
-* Rust agent runtime
-* Intent router (question / sync / config)
-* Processing pipeline (stubbed)
-* Response composer (mock responses)
+- Rust agent runtime
+- Intent router (question / sync / config)
+- Processing pipeline (stubbed)
+- Response composer (mock responses)
 
 ### Deliverables
 
-* Tauri IPC commands:
+- Tauri IPC commands:
+  - `agent_init`
+  - `agent_process_query`
+  - `agent_status`
 
-  * `agent_init`
-  * `agent_process_query`
-  * `agent_status`
-* In-memory only state
+- In-memory only state
 
 ### Documentation Commands
 
@@ -166,9 +169,9 @@ Implement the **local agent engine** without Telegram or backend.
 
 ### Exit Criteria
 
-* UI can send a question
-* Agent returns a mock response
-* No persistence yet
+- UI can send a question
+- Agent returns a mock response
+- No persistence yet
 
 ---
 
@@ -180,20 +183,20 @@ Add **efficient, privacy-first local storage**.
 
 ### Storage Rules
 
-* No Telegram message bodies by default
-* Store only:
+- No Telegram message bodies by default
+- Store only:
+  - channel IDs
+  - last processed message IDs
+  - dedupe hashes
 
-  * channel IDs
-  * last processed message IDs
-  * dedupe hashes
-* Encrypted at rest
+- Encrypted at rest
 
 ### Deliverables
 
-* Encrypted SQLite
-* OS keychain integration
-* Storage abstraction in Rust
-* “Ephemeral mode” toggle
+- Encrypted SQLite
+- OS keychain integration
+- Storage abstraction in Rust
+- “Ephemeral mode” toggle
 
 ### Documentation Commands
 
@@ -205,9 +208,9 @@ Add **efficient, privacy-first local storage**.
 
 ### Exit Criteria
 
-* App restarts without losing cursors
-* “Delete local data” wipes all state
-* No plaintext sensitive data on disk
+- App restarts without losing cursors
+- “Delete local data” wipes all state
+- No plaintext sensitive data on disk
 
 ---
 
@@ -219,22 +222,22 @@ Turn the app into a **real Telegram agent assistant**.
 
 ### Telegram Capabilities (MVP)
 
-* Bot DM interaction
-* Read user questions
-* Fetch channel messages (where bot has access)
-* Reply via DM
+- Bot DM interaction
+- Read user questions
+- Fetch channel messages (where bot has access)
+- Reply via DM
 
 ### Platform Behavior
 
-* Windows/macOS/Android: continuous polling
-* iOS: no polling (on-demand only)
+- Windows/macOS/Android: continuous polling
+- iOS: no polling (on-demand only)
 
 ### Deliverables
 
-* Telegram Bot Gateway (Rust)
-* Update polling / fetching
-* Message dedupe + cursoring
-* Agent replies sent via bot DM
+- Telegram Bot Gateway (Rust)
+- Update polling / fetching
+- Message dedupe + cursoring
+- Agent replies sent via bot DM
 
 ### Documentation Commands
 
@@ -246,10 +249,10 @@ Turn the app into a **real Telegram agent assistant**.
 
 ### Exit Criteria
 
-* User asks a question in Telegram
-* App processes it
-* Bot replies correctly
-* No duplicate replies
+- User asks a question in Telegram
+- App processes it
+- Bot replies correctly
+- No duplicate replies
 
 ---
 
@@ -263,24 +266,24 @@ Enable **platform-appropriate background behavior**.
 
 #### Windows
 
-* Tray app
-* Autostart
-* Background polling
+- Tray app
+- Autostart
+- Background polling
 
 #### macOS
 
-* Menu bar app
-* Launch at login
+- Menu bar app
+- Launch at login
 
 #### Android
 
-* Foreground service (persistent notification)
-* Background polling allowed
+- Foreground service (persistent notification)
+- Background polling allowed
 
 #### iOS
 
-* ❌ No continuous background
-* Only foreground execution
+- ❌ No continuous background
+- Only foreground execution
 
 ### Documentation Commands
 
@@ -293,9 +296,9 @@ Enable **platform-appropriate background behavior**.
 
 ### Exit Criteria
 
-* Desktop apps run without UI open
-* Android foreground service stable
-* iOS behaves strictly foreground-only
+- Desktop apps run without UI open
+- Android foreground service stable
+- iOS behaves strictly foreground-only
 
 ---
 
@@ -307,23 +310,23 @@ Introduce backend **without violating privacy goals**.
 
 ### Backend Responsibilities
 
-* Authentication
-* Device registration
-* Entitlements
-* Push notifications
-* Payment verification
+- Authentication
+- Device registration
+- Entitlements
+- Push notifications
+- Payment verification
 
 ### Explicit Non-Responsibilities
 
-* No Telegram message storage
-* No agent logic
-* No summaries
+- No Telegram message storage
+- No agent logic
+- No summaries
 
 ### Deliverables
 
-* Auth flow wired into UI
-* Entitlements fetched on startup
-* Device registered for push
+- Auth flow wired into UI
+- Entitlements fetched on startup
+- Device registered for push
 
 ### Documentation Commands
 
@@ -335,9 +338,9 @@ Introduce backend **without violating privacy goals**.
 
 ### Exit Criteria
 
-* User login works
-* Entitlements enforced locally
-* Backend DB contains no message content
+- User login works
+- Entitlements enforced locally
+- Backend DB contains no message content
 
 ---
 
@@ -359,9 +362,9 @@ Implement the **iOS-specific agent interaction model**.
 
 ### Deliverables
 
-* APNs integration
-* Push payload handling
-* Sync-on-open logic
+- APNs integration
+- Push payload handling
+- Sync-on-open logic
 
 ### Documentation Commands
 
@@ -372,9 +375,9 @@ Implement the **iOS-specific agent interaction model**.
 
 ### Exit Criteria
 
-* Push reliably opens app
-* Sync runs automatically
-* Bot replies successfully
+- Push reliably opens app
+- Sync runs automatically
+- Bot replies successfully
 
 ---
 
@@ -386,15 +389,15 @@ Monetize safely and correctly.
 
 ### Platforms
 
-* Desktop: Stripe / Paddle
-* Android: Play Billing
-* iOS: StoreKit
+- Desktop: Stripe / Paddle
+- Android: Play Billing
+- iOS: StoreKit
 
 ### Deliverables
 
-* Purchase flow per platform
-* Receipt verification
-* Feature gating in Rust
+- Purchase flow per platform
+- Receipt verification
+- Feature gating in Rust
 
 ### Documentation Commands
 
@@ -406,9 +409,9 @@ Monetize safely and correctly.
 
 ### Exit Criteria
 
-* Paid features unlock correctly
-* Downgrades enforced
-* Offline grace period handled
+- Paid features unlock correctly
+- Downgrades enforced
+- Offline grace period handled
 
 ---
 
@@ -420,11 +423,11 @@ Stability, observability, and trust.
 
 ### Deliverables
 
-* Error handling
-* Rate limiting
-* Abuse prevention
-* Crash-safe storage
-* UX polish
+- Error handling
+- Rate limiting
+- Abuse prevention
+- Crash-safe storage
+- UX polish
 
 ### Documentation Commands
 
@@ -436,18 +439,18 @@ Stability, observability, and trust.
 
 ### Exit Criteria
 
-* No critical crashes
-* No duplicate Telegram replies
-* Clear user-facing error states
+- No critical crashes
+- No duplicate Telegram replies
+- Clear user-facing error states
 
 ---
 
 ## Final Notes
 
-* The **Telegram bot is the product interface**
-* The **Tauri app is the execution engine**
-* The **backend is infrastructure, not intelligence**
-* iOS behavior is intentionally constrained for correctness
+- The **Telegram bot is the product interface**
+- The **Tauri app is the execution engine**
+- The **backend is infrastructure, not intelligence**
+- iOS behavior is intentionally constrained for correctness
 
 ---
 

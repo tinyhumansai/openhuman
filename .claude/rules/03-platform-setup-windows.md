@@ -7,6 +7,7 @@
 Download and install from: https://visualstudio.microsoft.com/visual-cpp-build-tools/
 
 During installation, select:
+
 - "Desktop development with C++"
 - Windows 10/11 SDK
 - MSVC v143+ build tools
@@ -20,6 +21,7 @@ For older systems, download from: https://developer.microsoft.com/microsoft-edge
 ### 3. Rust
 
 Install via rustup:
+
 ```powershell
 winget install Rustlang.Rustup
 ```
@@ -40,6 +42,7 @@ npm run tauri build -- --target aarch64-pc-windows-msvc
 ## Output Files
 
 After building, find installers in:
+
 ```
 src-tauri/target/release/bundle/
 ├── msi/

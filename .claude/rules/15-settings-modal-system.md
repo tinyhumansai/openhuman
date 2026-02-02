@@ -43,6 +43,7 @@ SettingsModal.tsx           # Route-based modal container
 ## Design Specifications
 
 ### Modal Container
+
 - **Width**: 520px (desktop), responsive on mobile
 - **Background**: Pure white (#FFFFFF) - contrasts with app's glass morphism
 - **Border-radius**: 16px
@@ -51,12 +52,14 @@ SettingsModal.tsx           # Route-based modal container
 - **Position**: Fixed center with flexbox
 
 ### User Profile Section
+
 - **Avatar**: 56px circular with border and shadow
 - **Typography**: 18px semibold name, 14px gray email
 - **Background**: Subtle gradient from white to gray-50
 - **Integration**: Redux user state for name and email display
 
 ### Menu Items
+
 - **Height**: 52px with proper touch targets
 - **Hover**: bg-gray-50 with smooth transitions
 - **Icons**: 20px with consistent spacing
@@ -64,6 +67,7 @@ SettingsModal.tsx           # Route-based modal container
 - **Typography**: 15px medium weight for clarity
 
 ### Animation System
+
 - **Entry**: 200ms ease-out modal slide up
 - **Panel transitions**: 250ms slide from right
 - **Micro-interactions**: 150ms hover effects
@@ -87,12 +91,7 @@ const openConnections = () => navigate('/settings/connections');
 ```tsx
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const {
-  currentRoute,
-  navigateTo,
-  navigateBack,
-  closeModal
-} = useSettingsNavigation();
+const { currentRoute, navigateTo, navigateBack, closeModal } = useSettingsNavigation();
 
 // Navigate to connections
 navigateTo('connections');
@@ -105,11 +104,11 @@ navigateBack(); // or closeModal();
 
 ```tsx
 // User profile data
-const { user } = useAppSelector((state) => state.user);
+const { user } = useAppSelector(state => state.user);
 const displayName = user?.username || user?.firstName || 'User';
 
 // Connection status
-const { isAuthenticated } = useAppSelector((state) => state.telegram);
+const { isAuthenticated } = useAppSelector(state => state.telegram);
 
 // Logout functionality
 const dispatch = useAppDispatch();
@@ -122,16 +121,19 @@ const handleLogout = () => {
 ## Connection Management
 
 ### Status Display
+
 - **Connected**: Green badge with proper status
 - **Offline**: Gray badge for disconnected services
 - **Coming Soon**: Disabled state for future integrations
 
 ### Integration Points
+
 - **Telegram**: Uses existing `TelegramConnectionModal` for setup
 - **Redux State**: Real-time status from telegram slice
 - **Component Reuse**: Leverages `connectOptions` from onboarding
 
 ### Connection Actions
+
 ```tsx
 // Connect new service
 const handleConnect = (serviceId: string) => {
@@ -150,11 +152,13 @@ const handleDisconnect = (serviceId: string) => {
 ## Mobile Responsiveness
 
 ### Breakpoint Behavior
+
 - **Mobile (<640px)**: Full-screen modal with slight margins
 - **Tablet (640-1024px)**: Scaled modal with backdrop
 - **Desktop (>1024px)**: Fixed 520px width
 
 ### Touch Interactions
+
 - **Minimum target size**: 48px for accessibility
 - **Swipe gestures**: Down-to-close support
 - **Safe areas**: iOS notch and navigation accommodation
@@ -162,16 +166,19 @@ const handleDisconnect = (serviceId: string) => {
 ## Accessibility Features
 
 ### Focus Management
+
 - Trap focus within modal during interaction
 - Return focus to trigger element on close
 - Keyboard navigation between menu items
 
 ### ARIA Labels
+
 - `role="dialog"` with proper modal attributes
 - `aria-labelledby` for modal title
 - Screen reader friendly navigation
 
 ### Keyboard Support
+
 - **Escape key**: Close modal and return to previous page
 - **Arrow keys**: Navigate between menu items
 - **Enter/Space**: Activate menu items
@@ -180,16 +187,19 @@ const handleDisconnect = (serviceId: string) => {
 ## Integration Patterns
 
 ### Existing Component Reuse
+
 - **Connection Options**: Reuses `connectOptions` array from `ConnectStep.tsx`
 - **Modal Pattern**: Follows `TelegramConnectionModal.tsx` pattern
 - **Redux Patterns**: Uses existing slice patterns and selectors
 
 ### State Management
+
 - **No new Redux state**: Leverages existing auth, user, telegram slices
 - **URL state**: Modal state driven by route parameters
 - **Component state**: Local state for animations and temporary UI state
 
 ### Future Extensibility
+
 - **Panel Structure**: Easy to add new settings panels
 - **Menu Items**: Simple configuration for new settings categories
 - **Service Integration**: Pattern established for new connection types
@@ -197,16 +207,19 @@ const handleDisconnect = (serviceId: string) => {
 ## Performance Considerations
 
 ### Code Splitting
+
 - Settings panels lazy-loaded when accessed
 - Modal infrastructure loaded on first settings access
 - Minimal impact on initial app bundle size
 
 ### Animation Performance
+
 - Hardware-accelerated CSS transforms
 - Proper will-change declarations for animations
 - Debounced interactions for smooth experience
 
 ### Memory Management
+
 - Proper cleanup of event listeners and timers
 - Component unmounting handled correctly
 - Redux subscriptions managed efficiently
@@ -214,18 +227,21 @@ const handleDisconnect = (serviceId: string) => {
 ## Development Guidelines
 
 ### Adding New Settings Panels
+
 1. Create panel component in `src/components/settings/panels/`
 2. Add route in `SettingsModal.tsx` switch statement
 3. Add menu item in `SettingsHome.tsx` menu array
 4. Follow `ConnectionsPanel.tsx` pattern for consistency
 
 ### Styling Conventions
+
 - Use existing Tailwind classes where possible
 - Follow clean white design (not glass morphism)
 - Maintain 52px height for interactive elements
 - Use consistent spacing and typography scales
 
 ### Testing Patterns
+
 - Test modal open/close functionality
 - Verify URL navigation between panels
 - Test Redux state integration
@@ -234,4 +250,4 @@ const handleDisconnect = (serviceId: string) => {
 
 ---
 
-*This settings modal system provides a robust, extensible foundation for app configuration while maintaining the sophisticated design standards of the crypto community platform.*
+_This settings modal system provides a robust, extensible foundation for app configuration while maintaining the sophisticated design standards of the crypto community platform._

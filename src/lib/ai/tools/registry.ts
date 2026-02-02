@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../providers/interface";
+import type { ToolDefinition } from '../providers/interface';
 
 /** Result from executing a tool */
 export interface ToolResult {
@@ -37,20 +37,14 @@ export class ToolRegistry {
 
   /** Get all tool definitions for the LLM */
   getDefinitions(): ToolDefinition[] {
-    return Array.from(this.tools.values()).map((t) => t.definition);
+    return Array.from(this.tools.values()).map(t => t.definition);
   }
 
   /** Execute a tool by name */
-  async execute(
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<ToolResult> {
+  async execute(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
-      return {
-        content: `Unknown tool: ${name}`,
-        isError: true,
-      };
+      return { content: `Unknown tool: ${name}`, isError: true };
     }
     try {
       return await tool.execute(args);

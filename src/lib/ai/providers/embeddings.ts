@@ -37,8 +37,8 @@ export interface EmbeddingProviderConfig {
  * Returns zero vectors, effectively disabling vector search.
  */
 export class NullEmbeddingProvider implements EmbeddingProvider {
-  id = "null";
-  model = "none";
+  id = 'null';
+  model = 'none';
   dimensions = 0;
 
   async embedQuery(_text: string): Promise<number[]> {

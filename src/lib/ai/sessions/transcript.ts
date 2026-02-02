@@ -1,11 +1,12 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
+
 import type {
-  SessionHeader,
-  TranscriptMessage,
-  TranscriptLine,
   CompactionMarker,
   SessionEndMarker,
-} from "./types";
+  SessionHeader,
+  TranscriptLine,
+  TranscriptMessage,
+} from './types';
 
 /**
  * Append-only JSONL transcript operations.
@@ -15,20 +16,15 @@ import type {
 /**
  * Write the session header (first line of a new transcript).
  */
-export async function writeSessionHeader(
-  sessionId: string,
-): Promise<void> {
+export async function writeSessionHeader(sessionId: string): Promise<void> {
   const header: SessionHeader = {
-    type: "session",
-    version: "1.0",
+    type: 'session',
+    version: '1.0',
     sessionId,
     timestamp: new Date().toISOString(),
   };
 
-  await invoke("ai_sessions_append_transcript", {
-    sessionId,
-    line: JSON.stringify(header),
-  });
+  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(header) });
 }
 
 /**
@@ -36,18 +32,15 @@ export async function writeSessionHeader(
  */
 export async function appendMessage(
   sessionId: string,
-  message: TranscriptMessage["message"],
+  message: TranscriptMessage['message']
 ): Promise<void> {
   const entry: TranscriptMessage = {
-    type: "message",
+    type: 'message',
     timestamp: new Date().toISOString(),
     message,
   };
 
-  await invoke("ai_sessions_append_transcript", {
-    sessionId,
-    line: JSON.stringify(entry),
-  });
+  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(entry) });
 }
 
 /**
@@ -57,34 +50,27 @@ export async function appendCompactionMarker(
   sessionId: string,
   compactionCount: number,
   summary: string,
-  preservedMessages: number,
+  preservedMessages: number
 ): Promise<void> {
   const marker: CompactionMarker = {
-    type: "compaction",
+    type: 'compaction',
     timestamp: new Date().toISOString(),
     compactionCount,
     summary,
     preservedMessages,
   };
 
-  await invoke("ai_sessions_append_transcript", {
-    sessionId,
-    line: JSON.stringify(marker),
-  });
+  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(marker) });
 }
 
 /**
  * Read and parse all lines from a session transcript.
  */
-export async function readTranscript(
-  sessionId: string,
-): Promise<TranscriptLine[]> {
-  const lines = await invoke<string[]>("ai_sessions_read_transcript", {
-    sessionId,
-  });
+export async function readTranscript(sessionId: string): Promise<TranscriptLine[]> {
+  const lines = await invoke<string[]>('ai_sessions_read_transcript', { sessionId });
 
   return lines
-    .map((line) => {
+    .map(line => {
       try {
         return JSON.parse(line) as TranscriptLine;
       } catch {
@@ -97,13 +83,9 @@ export async function readTranscript(
 /**
  * Extract all messages from a transcript (excluding headers and markers).
  */
-export async function readMessages(
-  sessionId: string,
-): Promise<TranscriptMessage[]> {
+export async function readMessages(sessionId: string): Promise<TranscriptMessage[]> {
   const lines = await readTranscript(sessionId);
-  return lines.filter(
-    (l): l is TranscriptMessage => l.type === "message",
-  );
+  return lines.filter((l): l is TranscriptMessage => l.type === 'message');
 }
 
 /**
@@ -111,29 +93,22 @@ export async function readMessages(
  */
 export async function appendSessionEndMarker(
   sessionId: string,
-  memoryCaptured: boolean,
+  memoryCaptured: boolean
 ): Promise<void> {
   const marker: SessionEndMarker = {
-    type: "session_end",
+    type: 'session_end',
     timestamp: new Date().toISOString(),
     memoryCaptured,
   };
 
-  await invoke("ai_sessions_append_transcript", {
-    sessionId,
-    line: JSON.stringify(marker),
-  });
+  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(marker) });
 }
 
 /**
  * Get the latest compaction marker from a transcript.
  */
-export async function getLastCompaction(
-  sessionId: string,
-): Promise<CompactionMarker | null> {
+export async function getLastCompaction(sessionId: string): Promise<CompactionMarker | null> {
   const lines = await readTranscript(sessionId);
-  const compactions = lines.filter(
-    (l): l is CompactionMarker => l.type === "compaction",
-  );
+  const compactions = lines.filter((l): l is CompactionMarker => l.type === 'compaction');
   return compactions.length > 0 ? compactions[compactions.length - 1] : null;
 }

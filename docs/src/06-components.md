@@ -150,6 +150,7 @@ const [showModal, setShowModal] = useState(false);
 ```
 
 **Features:**
+
 - QR code login flow
 - Phone number login flow
 - Connection status display
@@ -204,6 +205,7 @@ import welcomeAnimation from '../assets/animations/welcome.json';
 Complete modal system with URL-based routing.
 
 ### File Structure
+
 ```
 components/settings/
 ├── SettingsModal.tsx          # Route-based container
@@ -467,15 +469,15 @@ export const connectOptions = [
     id: 'telegram',
     label: 'Telegram',
     icon: TelegramIcon,
-    description: 'Connect your Telegram account'
+    description: 'Connect your Telegram account',
   },
   {
     id: 'gmail',
     label: 'Gmail',
     icon: GmailIcon,
     description: 'Connect your Gmail account',
-    comingSoon: true
-  }
+    comingSoon: true,
+  },
 ];
 ```
 
@@ -508,4 +510,4 @@ const [isOpen, setIsOpen] = useState(false);
 
 ---
 
-*Previous: [Pages & Routing](./05-pages-routing.md) | Next: [Providers](./07-providers.md)*
+_Previous: [Pages & Routing](./05-pages-routing.md) | Next: [Providers](./07-providers.md)_

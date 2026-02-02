@@ -1,22 +1,23 @@
-import { useState, useEffect } from "react";
-import { useAppSelector, useAppDispatch } from "../../../store/hooks";
-import { fetchMembers } from "../../../store/teamSlice";
-import { teamApi } from "../../../services/api/teamApi";
-import { useSettingsNavigation } from "../hooks/useSettingsNavigation";
-import SettingsHeader from "../components/SettingsHeader";
-import type { TeamRole, TeamMember } from "../../../types/team";
+import { useEffect, useState } from 'react';
 
-const ROLES: TeamRole[] = ["ADMIN", "BILLING_MANAGER", "MEMBER"];
+import { teamApi } from '../../../services/api/teamApi';
+import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { fetchMembers } from '../../../store/teamSlice';
+import type { TeamMember, TeamRole } from '../../../types/team';
+import SettingsHeader from '../components/SettingsHeader';
+import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+const ROLES: TeamRole[] = ['ADMIN', 'BILLING_MANAGER', 'MEMBER'];
 
 const TeamMembersPanel = () => {
   const { navigateBack } = useSettingsNavigation();
   const dispatch = useAppDispatch();
-  const user = useAppSelector((state) => state.user.user);
-  const { teams, members } = useAppSelector((state) => state.team);
+  const user = useAppSelector(state => state.user.user);
+  const { teams, members } = useAppSelector(state => state.team);
 
   const activeTeamId = user?.activeTeamId;
-  const activeTeam = teams.find((t) => t.team._id === activeTeamId);
-  const isAdmin = activeTeam?.role === "ADMIN";
+  const activeTeam = teams.find(t => t.team._id === activeTeamId);
+  const isAdmin = activeTeam?.role === 'ADMIN';
 
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [changingRoleId, setChangingRoleId] = useState<string | null>(null);
@@ -37,9 +38,9 @@ const TeamMembersPanel = () => {
       dispatch(fetchMembers(activeTeamId));
     } catch (err) {
       setError(
-        err && typeof err === "object" && "error" in err
+        err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : "Failed to change role",
+          : 'Failed to change role'
       );
     } finally {
       setChangingRoleId(null);
@@ -55,9 +56,9 @@ const TeamMembersPanel = () => {
       dispatch(fetchMembers(activeTeamId));
     } catch (err) {
       setError(
-        err && typeof err === "object" && "error" in err
+        err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : "Failed to remove member",
+          : 'Failed to remove member'
       );
     } finally {
       setRemovingId(null);
@@ -66,26 +67,22 @@ const TeamMembersPanel = () => {
 
   const displayName = (m: TeamMember) => {
     const parts = [m.user.firstName, m.user.lastName].filter(Boolean);
-    if (parts.length) return parts.join(" ");
+    if (parts.length) return parts.join(' ');
     if (m.user.username) return m.user.username;
-    return "Unknown";
+    return 'Unknown';
   };
 
   const isCurrentUser = (m: TeamMember) => m.user._id === user?._id;
 
   const roleBadgeColor: Record<string, string> = {
-    ADMIN: "bg-primary-500/20 text-primary-400 border-primary-500/30",
-    BILLING_MANAGER: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-    MEMBER: "bg-stone-500/20 text-stone-400 border-stone-500/30",
+    ADMIN: 'bg-primary-500/20 text-primary-400 border-primary-500/30',
+    BILLING_MANAGER: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+    MEMBER: 'bg-stone-500/20 text-stone-400 border-stone-500/30',
   };
 
   return (
     <div className="overflow-hidden flex flex-col h-full">
-      <SettingsHeader
-        title="Members"
-        showBackButton={true}
-        onBack={navigateBack}
-      />
+      <SettingsHeader title="Members" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-3">
@@ -96,15 +93,14 @@ const TeamMembersPanel = () => {
           )}
 
           <p className="text-xs text-stone-500 px-1">
-            {members.length} member{members.length !== 1 ? "s" : ""}
+            {members.length} member{members.length !== 1 ? 's' : ''}
           </p>
 
           <div className="space-y-2">
-            {members.map((member) => (
+            {members.map(member => (
               <div
                 key={member._id}
-                className="flex items-center justify-between p-3 rounded-xl border border-stone-700/50 bg-stone-800/40"
-              >
+                className="flex items-center justify-between p-3 rounded-xl border border-stone-700/50 bg-stone-800/40">
                 <div className="flex items-center gap-3 min-w-0">
                   {/* Avatar */}
                   <div className="w-8 h-8 rounded-full bg-stone-700/60 flex items-center justify-center flex-shrink-0">
@@ -118,15 +114,11 @@ const TeamMembersPanel = () => {
                         {displayName(member)}
                       </span>
                       {isCurrentUser(member) && (
-                        <span className="text-[10px] text-stone-500">
-                          (You)
-                        </span>
+                        <span className="text-[10px] text-stone-500">(You)</span>
                       )}
                     </div>
                     {member.user.username && (
-                      <p className="text-xs text-stone-500 truncate">
-                        @{member.user.username}
-                      </p>
+                      <p className="text-xs text-stone-500 truncate">@{member.user.username}</p>
                     )}
                   </div>
                 </div>
@@ -136,13 +128,10 @@ const TeamMembersPanel = () => {
                   {isAdmin && !isCurrentUser(member) ? (
                     <select
                       value={member.role}
-                      onChange={(e) =>
-                        handleChangeRole(member, e.target.value as TeamRole)
-                      }
+                      onChange={e => handleChangeRole(member, e.target.value as TeamRole)}
                       disabled={changingRoleId === member._id}
-                      className="px-2 py-1 text-[10px] font-medium rounded-full border bg-stone-800 text-stone-300 border-stone-600 focus:outline-none focus:border-primary-500/50 disabled:opacity-50"
-                    >
-                      {ROLES.map((r) => (
+                      className="px-2 py-1 text-[10px] font-medium rounded-full border bg-stone-800 text-stone-300 border-stone-600 focus:outline-none focus:border-primary-500/50 disabled:opacity-50">
+                      {ROLES.map(r => (
                         <option key={r} value={r}>
                           {r}
                         </option>
@@ -150,8 +139,7 @@ const TeamMembersPanel = () => {
                     </select>
                   ) : (
                     <span
-                      className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full border ${roleBadgeColor[member.role] ?? roleBadgeColor.MEMBER}`}
-                    >
+                      className={`px-1.5 py-0.5 text-[10px] font-medium rounded-full border ${roleBadgeColor[member.role] ?? roleBadgeColor.MEMBER}`}>
                       {member.role}
                     </span>
                   )}
@@ -162,14 +150,12 @@ const TeamMembersPanel = () => {
                       onClick={() => handleRemoveMember(member)}
                       disabled={removingId === member._id}
                       className="p-1 rounded-lg text-stone-500 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
-                      aria-label={`Remove ${displayName(member)}`}
-                    >
+                      aria-label={`Remove ${displayName(member)}`}>
                       <svg
                         className="w-4 h-4"
                         fill="none"
                         stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
+                        viewBox="0 0 24 24">
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"

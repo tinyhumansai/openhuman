@@ -1,17 +1,18 @@
-import { useEffect, useRef } from "react";
-import { useAppSelector } from "../store/hooks";
-import { store } from "../store";
-import { selectSocketStatus } from "../store/socketSelectors";
-import { socketService } from "../services/socketService";
+import { useEffect, useRef } from 'react';
+
+import { socketService } from '../services/socketService';
+import { store } from '../store';
+import { useAppSelector } from '../store/hooks';
+import { selectSocketStatus } from '../store/socketSelectors';
 import {
-  isTauri,
-  setupTauriSocketListeners,
   cleanupTauriSocketListeners,
+  isTauri,
   reportSocketConnected,
   reportSocketDisconnected,
   reportSocketError,
+  setupTauriSocketListeners,
   updateSocketStatus,
-} from "../utils/tauriSocket";
+} from '../utils/tauriSocket';
 
 /**
  * SocketProvider manages the socket connection based on JWT token
@@ -20,7 +21,7 @@ import {
  * - Integrates with Tauri for background persistence
  */
 const SocketProvider = ({ children }: { children: React.ReactNode }) => {
-  const token = useAppSelector((state) => state.auth.token);
+  const token = useAppSelector(state => state.auth.token);
   const socketStatus = useAppSelector(selectSocketStatus);
   const previousTokenRef = useRef<string | null>(null);
   const tauriListenersSetup = useRef(false);
@@ -51,7 +52,7 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
       // Report to Rust that we're connecting
       if (isTauri()) {
-        updateSocketStatus("connecting");
+        updateSocketStatus('connecting');
       }
     }
 
@@ -69,22 +70,22 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Handle Tauri status reporting
   useEffect(() => {
-    if (socketStatus === "connected") {
+    if (socketStatus === 'connected') {
       const socket = socketService.getSocket();
 
       // Report to Rust
       if (isTauri()) {
         reportSocketConnected(socket?.id);
       }
-    } else if (socketStatus === "disconnected") {
+    } else if (socketStatus === 'disconnected') {
       // Report to Rust
       if (isTauri()) {
         reportSocketDisconnected();
       }
-    } else if (socketStatus === "connecting") {
+    } else if (socketStatus === 'connecting') {
       // Report connecting status to Rust
       if (isTauri()) {
-        updateSocketStatus("connecting");
+        updateSocketStatus('connecting');
       }
     }
   }, [socketStatus]);
@@ -96,23 +97,23 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
     const handleError = (error: Error) => {
       if (isTauri()) {
-        reportSocketError(error.message || "Socket error");
+        reportSocketError(error.message || 'Socket error');
       }
     };
 
     const handleConnectError = (error: Error) => {
       if (isTauri()) {
-        reportSocketError(error.message || "Connection error");
-        updateSocketStatus("error");
+        reportSocketError(error.message || 'Connection error');
+        updateSocketStatus('error');
       }
     };
 
-    socket.on("error", handleError);
-    socket.on("connect_error", handleConnectError);
+    socket.on('error', handleError);
+    socket.on('connect_error', handleConnectError);
 
     return () => {
-      socket.off("error", handleError);
-      socket.off("connect_error", handleConnectError);
+      socket.off('error', handleError);
+      socket.off('connect_error', handleConnectError);
     };
   }, [socketStatus]);
 

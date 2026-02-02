@@ -26,11 +26,11 @@ jobs:
             const prTitle = pr.title;
             const prBody = pr.body || '';
 
-            // Check if PR is targeting main or master
-            const isTargetingMain = baseBranch === 'main' || baseBranch === 'master';
+            // Check if PR is targeting main
+            const isTargetingMain = baseBranch === 'main';
 
             if (!isTargetingMain) {
-              console.log(`PR is targeting ${baseBranch}, not main/master. Skipping protection check.`);
+              console.log(`PR is targeting ${baseBranch}, not main. Skipping protection check.`);
               core.setOutput('needs_check', 'false');
               return;
             }

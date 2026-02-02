@@ -1,4 +1,4 @@
-import React from "react";
+import React from 'react';
 
 /**
  * Design System Showcase Component
@@ -25,9 +25,7 @@ const DesignSystemShowcase: React.FC = () => {
               Good afternoon,
               <span className="text-gradient"> Cyrus</span>
             </h1>
-            <p className="text-xl text-stone-600 mb-8">
-              Your portfolio is up 12.5% today
-            </p>
+            <p className="text-xl text-stone-600 mb-8">Your portfolio is up 12.5% today</p>
 
             {/* Status Card */}
             <div className="glass-surface inline-flex items-center space-x-4 px-6 py-4 rounded-2xl">
@@ -46,12 +44,7 @@ const DesignSystemShowcase: React.FC = () => {
           {/* Quick Actions */}
           <div className="mt-12 flex flex-wrap gap-4">
             <button className="btn-premium">
-              <svg
-                className="w-5 h-5 mr-2"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -69,32 +62,24 @@ const DesignSystemShowcase: React.FC = () => {
 
       {/* Color Palette Section */}
       <section className="container mx-auto px-6 py-16">
-        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">
-          Color System
-        </h2>
+        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">Color System</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Primary Colors */}
           <div className="card-elevated p-6">
-            <h3 className="text-lg font-semibold text-stone-900 mb-4">
-              Primary Ocean
-            </h3>
+            <h3 className="text-lg font-semibold text-stone-900 mb-4">Primary Ocean</h3>
             <div className="space-y-2">
               <div className="flex items-center space-x-3">
                 <div className="w-12 h-12 bg-primary-500 rounded-xl shadow-soft" />
                 <div>
-                  <p className="text-sm font-medium text-stone-900">
-                    Primary 500
-                  </p>
+                  <p className="text-sm font-medium text-stone-900">Primary 500</p>
                   <p className="text-xs text-stone-500">#5B9BF3</p>
                 </div>
               </div>
               <div className="flex items-center space-x-3">
                 <div className="w-12 h-12 bg-primary-600 rounded-xl shadow-soft" />
                 <div>
-                  <p className="text-sm font-medium text-stone-900">
-                    Primary 600
-                  </p>
+                  <p className="text-sm font-medium text-stone-900">Primary 600</p>
                   <p className="text-xs text-stone-500">#4A83DD</p>
                 </div>
               </div>
@@ -103,9 +88,7 @@ const DesignSystemShowcase: React.FC = () => {
 
           {/* Success Colors */}
           <div className="card-elevated p-6">
-            <h3 className="text-lg font-semibold text-stone-900 mb-4">
-              Sage Success
-            </h3>
+            <h3 className="text-lg font-semibold text-stone-900 mb-4">Sage Success</h3>
             <div className="space-y-2">
               <div className="flex items-center space-x-3">
                 <div className="w-12 h-12 bg-sage-500 rounded-xl shadow-soft" />
@@ -126,9 +109,7 @@ const DesignSystemShowcase: React.FC = () => {
 
           {/* Accent Colors */}
           <div className="card-elevated p-6">
-            <h3 className="text-lg font-semibold text-stone-900 mb-4">
-              Accent Palette
-            </h3>
+            <h3 className="text-lg font-semibold text-stone-900 mb-4">Accent Palette</h3>
             <div className="space-y-2">
               <div className="flex items-center space-x-3">
                 <div className="w-12 h-12 bg-accent-lavender rounded-xl shadow-soft" />
@@ -151,16 +132,12 @@ const DesignSystemShowcase: React.FC = () => {
 
       {/* Typography Section */}
       <section className="container mx-auto px-6 py-16">
-        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">
-          Typography Scale
-        </h2>
+        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">Typography Scale</h2>
 
         <div className="card-elevated p-8 space-y-6">
           <div>
             <p className="text-xs text-stone-500 mb-1">Display · 4.5rem</p>
-            <h1 className="text-7xl font-display font-bold text-stone-900">
-              Beautiful Typography
-            </h1>
+            <h1 className="text-7xl font-display font-bold text-stone-900">Beautiful Typography</h1>
           </div>
 
           <div>
@@ -180,17 +157,14 @@ const DesignSystemShowcase: React.FC = () => {
           <div>
             <p className="text-xs text-stone-500 mb-1">Body · 1rem</p>
             <p className="text-base text-stone-700 leading-relaxed max-w-3xl">
-              The typography system is designed to create clear visual hierarchy
-              while maintaining excellent readability. Each text size has been
-              carefully calibrated with appropriate line heights and letter
-              spacing to ensure optimal legibility across all device sizes.
+              The typography system is designed to create clear visual hierarchy while maintaining
+              excellent readability. Each text size has been carefully calibrated with appropriate
+              line heights and letter spacing to ensure optimal legibility across all device sizes.
             </p>
           </div>
 
           <div>
-            <p className="text-xs text-stone-500 mb-1">
-              Monospace · For prices and data
-            </p>
+            <p className="text-xs text-stone-500 mb-1">Monospace · For prices and data</p>
             <p className="text-crypto-price text-2xl text-stone-900">
               $48,392.50 <span className="text-market-bullish">+2.45%</span>
             </p>
@@ -200,9 +174,7 @@ const DesignSystemShowcase: React.FC = () => {
 
       {/* Card Components Section */}
       <section className="container mx-auto px-6 py-16">
-        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">
-          Card Components
-        </h2>
+        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">Card Components</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Market Card */}
@@ -224,9 +196,7 @@ const DesignSystemShowcase: React.FC = () => {
               <div className="space-y-2">
                 <p className="price-ticker up">$48,392.50</p>
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm text-market-bullish font-medium">
-                    +$1,185.20
-                  </span>
+                  <span className="text-sm text-market-bullish font-medium">+$1,185.20</span>
                   <span className="text-sm text-market-bullish">(+2.45%)</span>
                 </div>
               </div>
@@ -235,20 +205,13 @@ const DesignSystemShowcase: React.FC = () => {
 
           {/* Interactive Card */}
           <div className="card-interactive">
-            <h3 className="text-lg font-semibold text-stone-900 mb-2">
-              Portfolio Overview
-            </h3>
+            <h3 className="text-lg font-semibold text-stone-900 mb-2">Portfolio Overview</h3>
             <p className="text-stone-600 mb-4">
               Track your investments and monitor performance in real-time.
             </p>
             <div className="flex items-center text-primary-600 font-medium">
               <span>View Details</span>
-              <svg
-                className="w-4 h-4 ml-2"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
+              <svg className="w-4 h-4 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -262,16 +225,13 @@ const DesignSystemShowcase: React.FC = () => {
           {/* Elevated Card */}
           <div className="card-elevated">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-stone-900">
-                Quick Stats
-              </h3>
+              <h3 className="text-lg font-semibold text-stone-900">Quick Stats</h3>
               <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
                 <svg
                   className="w-4 h-4 text-primary-600"
                   fill="none"
                   stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                  viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -284,21 +244,15 @@ const DesignSystemShowcase: React.FC = () => {
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-stone-600">Total Value</span>
-                <span className="font-mono font-semibold text-stone-900">
-                  $125,430
-                </span>
+                <span className="font-mono font-semibold text-stone-900">$125,430</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-stone-600">24h Change</span>
-                <span className="font-mono font-semibold text-market-bullish">
-                  +3.2%
-                </span>
+                <span className="font-mono font-semibold text-market-bullish">+3.2%</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-stone-600">Holdings</span>
-                <span className="font-mono font-semibold text-stone-900">
-                  12
-                </span>
+                <span className="font-mono font-semibold text-stone-900">12</span>
               </div>
             </div>
           </div>
@@ -327,12 +281,7 @@ const DesignSystemShowcase: React.FC = () => {
             {/* Navigation Items */}
             <nav className="p-2">
               <a href="#" className="nav-item-premium active">
-                <svg
-                  className="w-5 h-5 mr-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -343,12 +292,7 @@ const DesignSystemShowcase: React.FC = () => {
                 Dashboard
               </a>
               <a href="#" className="nav-item-premium">
-                <svg
-                  className="w-5 h-5 mr-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -359,12 +303,7 @@ const DesignSystemShowcase: React.FC = () => {
                 Profile Settings
               </a>
               <a href="#" className="nav-item-premium">
-                <svg
-                  className="w-5 h-5 mr-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -375,12 +314,7 @@ const DesignSystemShowcase: React.FC = () => {
                 Notifications
               </a>
               <a href="#" className="nav-item-premium">
-                <svg
-                  className="w-5 h-5 mr-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -391,12 +325,7 @@ const DesignSystemShowcase: React.FC = () => {
                 Security
               </a>
               <a href="#" className="nav-item-premium">
-                <svg
-                  className="w-5 h-5 mr-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
+                <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -413,21 +342,13 @@ const DesignSystemShowcase: React.FC = () => {
 
       {/* Form Elements */}
       <section className="container mx-auto px-6 py-16">
-        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">
-          Form Elements
-        </h2>
+        <h2 className="text-3xl font-display font-bold text-stone-900 mb-8">Form Elements</h2>
 
         <div className="max-w-2xl">
           <div className="card-elevated p-8 space-y-6">
             <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">
-                Email Address
-              </label>
-              <input
-                type="email"
-                className="input-elevated"
-                placeholder="Enter your email"
-              />
+              <label className="block text-sm font-medium text-stone-700 mb-2">Email Address</label>
+              <input type="email" className="input-elevated" placeholder="Enter your email" />
             </div>
 
             <div>
@@ -436,11 +357,7 @@ const DesignSystemShowcase: React.FC = () => {
               </label>
               <div className="relative">
                 <span className="absolute left-4 top-3 text-stone-500">$</span>
-                <input
-                  type="text"
-                  className="input-elevated pl-8"
-                  placeholder="0.00"
-                />
+                <input type="text" className="input-elevated pl-8" placeholder="0.00" />
               </div>
             </div>
 

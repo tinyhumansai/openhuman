@@ -1,12 +1,12 @@
-import { useState, useEffect, useMemo } from "react";
-import { useSkillConnectionStatus } from "../lib/skills/hooks";
-import type { SkillConnectionStatus, SkillHostConnectionState } from "../lib/skills/types";
-import { useAppSelector } from "../store/hooks";
-import SkillSetupModal from "./skills/SkillSetupModal";
+import { useEffect, useMemo, useState } from 'react';
 
-import TelegramIcon from "../assets/icons/telegram.svg";
-import GoogleIcon from "../assets/icons/GoogleIcon";
-import NotionIcon from "../assets/icons/notion.svg";
+import GoogleIcon from '../assets/icons/GoogleIcon';
+import NotionIcon from '../assets/icons/notion.svg';
+import TelegramIcon from '../assets/icons/telegram.svg';
+import { useSkillConnectionStatus } from '../lib/skills/hooks';
+import type { SkillConnectionStatus, SkillHostConnectionState } from '../lib/skills/types';
+import { useAppSelector } from '../store/hooks';
+import SkillSetupModal from './skills/SkillSetupModal';
 
 // Map skill IDs to icons
 const SKILL_ICONS: Record<string, React.ReactElement> = {
@@ -29,41 +29,25 @@ const SKILL_ICONS: Record<string, React.ReactElement> = {
 const DefaultIcon = () => (
   <div className="w-5 h-5 rounded-full bg-primary-500/20 flex items-center justify-center">
     <svg className="w-3 h-3 text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+      />
     </svg>
   </div>
 );
 
 // Status display text and colors
 const STATUS_DISPLAY: Record<SkillConnectionStatus, { text: string; color: string }> = {
-  connected: {
-    text: "Connected",
-    color: "text-sage-400",
-  },
-  connecting: {
-    text: "Connecting",
-    color: "text-amber-400",
-  },
-  not_authenticated: {
-    text: "Not Auth",
-    color: "text-amber-400",
-  },
-  disconnected: {
-    text: "Disconnected",
-    color: "text-stone-400",
-  },
-  error: {
-    text: "Error",
-    color: "text-coral-400",
-  },
-  offline: {
-    text: "Offline",
-    color: "text-stone-500",
-  },
-  setup_required: {
-    text: "Setup",
-    color: "text-primary-400",
-  },
+  connected: { text: 'Connected', color: 'text-sage-400' },
+  connecting: { text: 'Connecting', color: 'text-amber-400' },
+  not_authenticated: { text: 'Not Auth', color: 'text-amber-400' },
+  disconnected: { text: 'Disconnected', color: 'text-stone-400' },
+  error: { text: 'Error', color: 'text-coral-400' },
+  offline: { text: 'Offline', color: 'text-stone-500' },
+  setup_required: { text: 'Setup', color: 'text-primary-400' },
 };
 
 interface SkillRowProps {
@@ -80,8 +64,7 @@ function SkillRow({ skillId, name, icon, onConnect }: SkillRowProps) {
   return (
     <tr
       onClick={onConnect}
-      className="skill-row group hover:bg-stone-800/20 transition-all duration-300 cursor-pointer border-b border-stone-800/30 last:border-0"
-    >
+      className="skill-row group hover:bg-stone-800/20 transition-all duration-300 cursor-pointer border-b border-stone-800/30 last:border-0">
       <td className="py-2.5 px-3">
         <div className="flex items-center gap-3">
           <div className="w-5 h-5 flex items-center justify-center text-white opacity-70 group-hover:opacity-100 transition-opacity flex-shrink-0">
@@ -98,8 +81,7 @@ function SkillRow({ skillId, name, icon, onConnect }: SkillRowProps) {
           className="w-4 h-4 text-stone-500 group-hover:text-stone-300 transition-colors"
           fill="none"
           stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+          viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
       </td>
@@ -136,42 +118,42 @@ interface SkillListEntry {
 function deriveConnectionStatus(
   lifecycleStatus: string | undefined,
   setupComplete: boolean | undefined,
-  skillState: Record<string, unknown> | undefined,
+  skillState: Record<string, unknown> | undefined
 ): SkillConnectionStatus {
-  if (!lifecycleStatus || lifecycleStatus === "installed") {
-    return "offline";
+  if (!lifecycleStatus || lifecycleStatus === 'installed') {
+    return 'offline';
   }
-  if (lifecycleStatus === "error") {
-    return "error";
+  if (lifecycleStatus === 'error') {
+    return 'error';
   }
-  if (lifecycleStatus === "setup_required" || lifecycleStatus === "setup_in_progress") {
-    return "setup_required";
+  if (lifecycleStatus === 'setup_required' || lifecycleStatus === 'setup_in_progress') {
+    return 'setup_required';
   }
-  if (lifecycleStatus === "starting") {
-    return "connecting";
+  if (lifecycleStatus === 'starting') {
+    return 'connecting';
   }
   const hostState = skillState as SkillHostConnectionState | undefined;
   if (!hostState) {
-    return lifecycleStatus === "ready" ? "connecting" : "connecting";
+    return lifecycleStatus === 'ready' ? 'connecting' : 'connecting';
   }
   const connStatus = hostState.connection_status;
   const authStatus = hostState.auth_status;
-  if (connStatus === "error" || authStatus === "error") {
-    return "error";
+  if (connStatus === 'error' || authStatus === 'error') {
+    return 'error';
   }
-  if (connStatus === "connected" && authStatus === "authenticated") {
-    return "connected";
+  if (connStatus === 'connected' && authStatus === 'authenticated') {
+    return 'connected';
   }
-  if (connStatus === "connecting" || authStatus === "authenticating") {
-    return "connecting";
+  if (connStatus === 'connecting' || authStatus === 'authenticating') {
+    return 'connecting';
   }
-  if (connStatus === "connected" && authStatus === "not_authenticated") {
-    return "not_authenticated";
+  if (connStatus === 'connected' && authStatus === 'not_authenticated') {
+    return 'not_authenticated';
   }
-  if (connStatus === "disconnected") {
-    return setupComplete ? "disconnected" : "setup_required";
+  if (connStatus === 'disconnected') {
+    return setupComplete ? 'disconnected' : 'setup_required';
   }
-  return "connecting";
+  return 'connecting';
 }
 
 // Priority order for sorting (lower number = higher priority)
@@ -191,41 +173,44 @@ export default function SkillsGrid() {
   const [setupModalOpen, setSetupModalOpen] = useState(false);
   const [managementModalOpen, setManagementModalOpen] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
-  const [activeSkillName, setActiveSkillName] = useState<string>("");
-  const [activeSkillDescription, setActiveSkillDescription] = useState<string>("");
+  const [activeSkillName, setActiveSkillName] = useState<string>('');
+  const [activeSkillDescription, setActiveSkillDescription] = useState<string>('');
   const [activeSkillHasSetup, setActiveSkillHasSetup] = useState(false);
 
   // Get Redux state for sorting
-  const skillsState = useAppSelector((state) => state.skills.skills);
-  const skillStates = useAppSelector((state) => state.skills.skillStates);
+  const skillsState = useAppSelector(state => state.skills.skills);
+  const skillStates = useAppSelector(state => state.skills.skillStates);
 
   useEffect(() => {
     // Load skills catalog from the local skills directory via Rust.
     // In dev: reads from the submodule. In prod: reads from ~/.alphahuman/skills/.
     const loadSkillsCatalog = async () => {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const catalog: SkillsCatalog = await invoke("skill_read_catalog");
+        const { invoke } = await import('@tauri-apps/api/core');
+        const catalog: SkillsCatalog = await invoke('skill_read_catalog');
 
         // Load manifests to get proper display names
-        const manifests = await invoke<Array<Record<string, unknown>>>("skill_list_manifests");
+        const manifests = await invoke<Array<Record<string, unknown>>>('skill_list_manifests');
         const manifestMap = new Map(
           manifests
-            .filter((m): m is { id: string; name: string } => typeof m.id === "string" && typeof m.name === "string")
-            .map((m) => [m.id, m.name])
+            .filter(
+              (m): m is { id: string; name: string } =>
+                typeof m.id === 'string' && typeof m.name === 'string'
+            )
+            .map(m => [m.id, m.name])
         );
 
         processCatalog(catalog, manifestMap);
       } catch (error) {
-        console.warn("Could not load skills catalog from filesystem:", error);
+        console.warn('Could not load skills catalog from filesystem:', error);
         setLoading(false);
       }
     };
 
     const processCatalog = (catalog: SkillsCatalog, manifestMap: Map<string, string>) => {
       // Validate skill names (underscores are reserved for tool namespacing)
-      const validSkills = catalog.skills.filter((skill) => {
-        if (skill.name.includes("_")) {
+      const validSkills = catalog.skills.filter(skill => {
+        if (skill.name.includes('_')) {
           console.warn(
             `Skill "${skill.name}" contains underscore and will be skipped. Skill names cannot contain underscores.`
           );
@@ -234,10 +219,11 @@ export default function SkillsGrid() {
         return true;
       });
 
-      const processed: SkillListEntry[] = validSkills.map((skill) => {
+      const processed: SkillListEntry[] = validSkills.map(skill => {
         const skillId = skill.name;
         // Use manifest name if available, otherwise capitalize the ID
-        const displayName = manifestMap.get(skillId) || skill.name.charAt(0).toUpperCase() + skill.name.slice(1);
+        const displayName =
+          manifestMap.get(skillId) || skill.name.charAt(0).toUpperCase() + skill.name.slice(1);
 
         return {
           id: skillId,
@@ -245,9 +231,9 @@ export default function SkillsGrid() {
           description: skill.description,
           icon: SKILL_ICONS[skillId],
           hasSetup:
-            skill.hooks.includes("on_setup_start") &&
-            skill.hooks.includes("on_setup_submit") &&
-            skill.hooks.includes("on_setup_cancel"),
+            skill.hooks.includes('on_setup_start') &&
+            skill.hooks.includes('on_setup_submit') &&
+            skill.hooks.includes('on_setup_cancel'),
         };
       });
 
@@ -266,16 +252,8 @@ export default function SkillsGrid() {
       const stateA = skillStates[a.id];
       const stateB = skillStates[b.id];
 
-      const statusA = deriveConnectionStatus(
-        skillA?.status,
-        skillA?.setupComplete,
-        stateA,
-      );
-      const statusB = deriveConnectionStatus(
-        skillB?.status,
-        skillB?.setupComplete,
-        stateB,
-      );
+      const statusA = deriveConnectionStatus(skillA?.status, skillA?.setupComplete, stateA);
+      const statusB = deriveConnectionStatus(skillB?.status, skillB?.setupComplete, stateB);
 
       const priorityA = STATUS_PRIORITY[statusA] ?? 999;
       const priorityB = STATUS_PRIORITY[statusB] ?? 999;
@@ -305,32 +283,37 @@ export default function SkillsGrid() {
   return (
     <>
       <div className="animate-fade-up mt-4 mb-8 relative">
-        <h3 className="text-sm font-semibold text-white mb-3 px-1 opacity-80 text-center">Available Skills</h3>
+        <h3 className="text-sm font-semibold text-white mb-3 px-1 opacity-80 text-center">
+          Available Skills
+        </h3>
         <div
           className="glass rounded-xl overflow-hidden skills-table-container relative cursor-pointer"
-          onClick={() => setManagementModalOpen(true)}
-        >
+          onClick={() => setManagementModalOpen(true)}>
           <div className="skills-table-scroll">
             <table className="w-full">
               <thead className="skills-table-header">
                 <tr className="border-b border-stone-800/30">
                   <th className="py-2 px-3 text-left">
-                    <span className="text-xs font-medium text-stone-400 uppercase tracking-wider">Skill</span>
+                    <span className="text-xs font-medium text-stone-400 uppercase tracking-wider">
+                      Skill
+                    </span>
                   </th>
                   <th className="py-2 px-3 text-right">
-                    <span className="text-xs font-medium text-stone-400 uppercase tracking-wider">Status</span>
+                    <span className="text-xs font-medium text-stone-400 uppercase tracking-wider">
+                      Status
+                    </span>
                   </th>
                   <th className="py-2 px-3 w-8"></th>
                 </tr>
               </thead>
               <tbody className="skills-table-body">
-                {sortedSkillsList.map((skill) => (
+                {sortedSkillsList.map(skill => (
                   <SkillRow
                     key={skill.id}
                     skillId={skill.id}
                     name={skill.name}
                     icon={skill.icon}
-                    onConnect={(e) => {
+                    onConnect={e => {
                       e.stopPropagation();
                       handleConnect(skill);
                     }}
@@ -364,42 +347,43 @@ export default function SkillsGrid() {
       {managementModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-fade-in"
-          onClick={() => setManagementModalOpen(false)}
-        >
+          onClick={() => setManagementModalOpen(false)}>
           <div
             className="bg-stone-900 rounded-2xl max-w-2xl w-full max-h-[80vh] shadow-large border border-stone-700/50 flex flex-col overflow-hidden animate-slide-up"
-            onClick={(e) => e.stopPropagation()}
-          >
+            onClick={e => e.stopPropagation()}>
             {/* Sticky Header */}
             <div className="flex items-center justify-between p-6 pb-4 border-b border-stone-700/50 flex-shrink-0 bg-stone-900">
               <h2 className="text-xl font-semibold text-white">Manage Skills</h2>
               <button
                 onClick={() => setManagementModalOpen(false)}
-                className="text-stone-400 hover:text-white transition-colors"
-              >
+                className="text-stone-400 hover:text-white transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
             </div>
             {/* Scrollable Content */}
             <div className="overflow-y-auto flex-1 p-6 pt-4">
               <div className="space-y-2">
-                {sortedSkillsList.map((skill) => {
+                {sortedSkillsList.map(skill => {
                   const skillState = skillsState[skill.id];
                   const stateData = skillStates[skill.id];
                   const connectionStatus = deriveConnectionStatus(
                     skillState?.status,
                     skillState?.setupComplete,
-                    stateData,
+                    stateData
                   );
                   const statusDisplay = STATUS_DISPLAY[connectionStatus] || STATUS_DISPLAY.offline;
 
                   return (
                     <div
                       key={skill.id}
-                      className="flex items-center justify-between p-3 rounded-lg bg-stone-800/30 border border-stone-700/30 hover:bg-stone-800/50 transition-colors"
-                    >
+                      className="flex items-center justify-between p-3 rounded-lg bg-stone-800/30 border border-stone-700/30 hover:bg-stone-800/50 transition-colors">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="w-8 h-8 flex items-center justify-center text-white opacity-70 flex-shrink-0">
                           {skill.icon || <DefaultIcon />}
@@ -407,13 +391,15 @@ export default function SkillsGrid() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <div className="text-sm font-medium text-white">{skill.name}</div>
-                            <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.text}</span>
+                            <span className={`text-xs ${statusDisplay.color}`}>
+                              {statusDisplay.text}
+                            </span>
                           </div>
                           <div className="text-xs text-stone-400">{skill.description}</div>
                         </div>
                       </div>
                       <button
-                        onClick={(e) => {
+                        onClick={e => {
                           e.stopPropagation();
                           setActiveSkillId(skill.id);
                           setActiveSkillName(skill.name);
@@ -421,8 +407,7 @@ export default function SkillsGrid() {
                           setActiveSkillHasSetup(skill.hasSetup);
                           setSetupModalOpen(true);
                         }}
-                        className="px-4 py-1.5 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors flex-shrink-0 ml-3"
-                      >
+                        className="px-4 py-1.5 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors flex-shrink-0 ml-3">
                         Configure
                       </button>
                     </div>

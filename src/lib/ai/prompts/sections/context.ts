@@ -2,9 +2,7 @@
  * User context section of the system prompt.
  * Injects preferences, timezone, and project-specific context.
  */
-
-import type { EnrichedSearchResult } from "../../memory/context-formatter";
-import { formatMemoryContext } from "../../memory/context-formatter";
+import { type EnrichedSearchResult, formatMemoryContext } from '../../memory/context-formatter';
 
 export interface MemoryCategorized {
   profileFacts: string[];
@@ -34,14 +32,14 @@ export function buildContextSection(context: UserContext): string {
   const parts: string[] = [];
 
   if (context.displayName || context.timezone) {
-    parts.push("## User Context\n");
+    parts.push('## User Context\n');
     if (context.displayName) {
       parts.push(`- **User**: ${context.displayName}`);
     }
     if (context.timezone) {
       parts.push(`- **Timezone**: ${context.timezone}`);
     }
-    parts.push("");
+    parts.push('');
   }
 
   // Use categorized memory if available, otherwise fall back to raw
@@ -49,27 +47,27 @@ export function buildContextSection(context: UserContext): string {
     const formatted = formatMemoryContext(context.memoryCategorized);
     if (formatted) {
       parts.push(formatted);
-      parts.push("");
+      parts.push('');
     }
   } else {
     if (context.preferences) {
-      parts.push("## User Preferences\n");
+      parts.push('## User Preferences\n');
       parts.push(context.preferences);
-      parts.push("");
+      parts.push('');
     }
 
     if (context.memoryContext) {
-      parts.push("## Project Context (memory.md)\n");
+      parts.push('## Project Context (memory.md)\n');
       parts.push(context.memoryContext);
-      parts.push("");
+      parts.push('');
     }
   }
 
   if (context.identityContext) {
-    parts.push("## Agent Persona (identity.md)\n");
+    parts.push('## Agent Persona (identity.md)\n');
     parts.push(context.identityContext);
-    parts.push("");
+    parts.push('');
   }
 
-  return parts.join("\n");
+  return parts.join('\n');
 }

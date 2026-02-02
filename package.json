@@ -1,11 +1,12 @@
 {
-  "name": "tauri-app",
+  "name": "alphahuman",
   "private": true,
   "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "compile": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
     "macos:build": "tauri build --debug --bundles app",
@@ -18,7 +19,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --ext .ts,.tsx",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix"
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "prepare": "husky"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",
@@ -47,18 +49,29 @@
     "zustand": "^5.0.10"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.2",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/cli": "^2",
+    "@trivago/prettier-plugin-sort-imports": "^6.0.2",
     "@types/debug": "^4.1.12",
     "@types/node": "^25.0.10",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/redux-logger": "^3.0.13",
+    "@typescript-eslint/eslint-plugin": "^8.54.0",
+    "@typescript-eslint/parser": "^8.54.0",
     "@vitejs/plugin-react": "^4.6.0",
     "@vitest/coverage-v8": "^4.0.18",
     "autoprefixer": "^10.4.23",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "husky": "^9.1.7",
     "postcss": "^8.5.6",
+    "prettier": "^3.8.1",
     "tailwindcss": "^3.4.19",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",

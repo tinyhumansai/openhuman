@@ -1,12 +1,9 @@
-import type { Message, LLMProvider } from "../providers/interface";
-import type { ConstitutionConfig } from "../constitution/types";
-import type { MemoryManager } from "../memory/manager";
-import type { SessionEntry, ToolCaptureConfig } from "./types";
-import {
-  compressMessagesForSummary,
-  DEFAULT_TOOL_CAPTURE_CONFIG,
-} from "./tool-compress";
-import { executeMemoryFlush } from "./memory-flush";
+import type { ConstitutionConfig } from '../constitution/types';
+import type { MemoryManager } from '../memory/manager';
+import type { LLMProvider, Message } from '../providers/interface';
+import { executeMemoryFlush } from './memory-flush';
+import { compressMessagesForSummary, DEFAULT_TOOL_CAPTURE_CONFIG } from './tool-compress';
+import type { SessionEntry, ToolCaptureConfig } from './types';
 
 /**
  * Estimate token count for a message (rough: ~4 chars per token).
@@ -19,7 +16,7 @@ function estimateTokens(text: string): number {
  * Count user turns in a message array.
  */
 function countUserTurns(messages: Message[]): number {
-  return messages.filter((m) => m.role === "user").length;
+  return messages.filter(m => m.role === 'user').length;
 }
 
 /**
@@ -28,9 +25,9 @@ function countUserTurns(messages: Message[]): number {
 function estimateUserTokens(messages: Message[]): number {
   let total = 0;
   for (const msg of messages) {
-    if (msg.role !== "user") continue;
+    if (msg.role !== 'user') continue;
     for (const block of msg.content) {
-      if (block.type === "text") {
+      if (block.type === 'text') {
         total += estimateTokens(block.text);
       }
     }
@@ -46,10 +43,7 @@ function estimateUserTokens(messages: Message[]): number {
  * - At least 100 estimated tokens of user content
  * - Session hasn't been flushed recently (no flush at current compaction count)
  */
-export function shouldCaptureSession(
-  messages: Message[],
-  entry: SessionEntry,
-): boolean {
+export function shouldCaptureSession(messages: Message[], entry: SessionEntry): boolean {
   if (countUserTurns(messages) < 2) return false;
   if (estimateUserTokens(messages) < 100) return false;
 
@@ -101,8 +95,5 @@ export async function captureSessionEnd(params: {
     lastFlushCompactionCount: sessionEntry.memoryFlushCompactionCount,
   });
 
-  return {
-    captured: result.flushed,
-    savedFiles: result.savedFiles,
-  };
+  return { captured: result.flushed, savedFiles: result.savedFiles };
 }

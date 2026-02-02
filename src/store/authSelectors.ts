@@ -1,4 +1,4 @@
-import type { RootState } from "./index";
+import type { RootState } from './index';
 
 export const selectIsOnboarded = (state: RootState): boolean => {
   const userId = state.user.user?._id;

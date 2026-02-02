@@ -29,8 +29,7 @@ export const COMPACTION_SUMMARY_TEMPLATE = `Summarize the conversation so far in
 Keep the summary concise but preserve critical context. This will replace the full history.`;
 
 /** Template for daily log entry */
-export const DAILY_LOG_TEMPLATE = (date: string) =>
-  `# Daily Log — ${date}\n\n`;
+export const DAILY_LOG_TEMPLATE = (date: string) => `# Daily Log — ${date}\n\n`;
 
 /** Silent response token (matches OpenClaw) */
-export const SILENT_TOKEN = "\u2039silent\u203a";
+export const SILENT_TOKEN = '\u2039silent\u203a';

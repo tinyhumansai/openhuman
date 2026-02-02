@@ -1,11 +1,11 @@
 import type {
+  ChatParams,
   LLMProvider,
   LLMProviderConfig,
-  ChatParams,
-  StreamChunk,
   Message,
+  StreamChunk,
   TokenUsage,
-} from "./interface";
+} from './interface';
 
 /**
  * Custom LLM provider for connecting to your own model endpoint.
@@ -19,8 +19,8 @@ export class CustomLLMProvider implements LLMProvider {
   private config: LLMProviderConfig;
 
   constructor(config: LLMProviderConfig) {
-    this.id = config.id || "custom";
-    this.name = "Custom LLM";
+    this.id = config.id || 'custom';
+    this.name = 'Custom LLM';
     this.config = config;
   }
 
@@ -30,51 +30,47 @@ export class CustomLLMProvider implements LLMProvider {
 
   async *chat(params: ChatParams): AsyncIterable<StreamChunk> {
     if (!this.config.endpoint) {
-      throw new Error("Custom LLM endpoint not configured");
+      throw new Error('Custom LLM endpoint not configured');
     }
 
     const body = this.buildRequestBody(params, true);
 
-    const response = await fetch(this.config.endpoint + "/v1/chat/completions", {
-      method: "POST",
+    const response = await fetch(this.config.endpoint + '/v1/chat/completions', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        ...(this.config.apiKey
-          ? { Authorization: `Bearer ${this.config.apiKey}` }
-          : {}),
+        'Content-Type': 'application/json',
+        ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Custom LLM error: ${response.status} ${response.statusText}`,
-      );
+      throw new Error(`Custom LLM error: ${response.status} ${response.statusText}`);
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      throw new Error("No response body");
+      throw new Error('No response body');
     }
 
     const decoder = new TextDecoder();
-    let buffer = "";
+    let buffer = '';
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
 
         const data = trimmed.slice(6);
-        if (data === "[DONE]") {
-          yield { type: "done" };
+        if (data === '[DONE]') {
+          yield { type: 'done' };
           return;
         }
 
@@ -85,7 +81,7 @@ export class CustomLLMProvider implements LLMProvider {
 
           const delta = choice.delta;
           if (delta?.content) {
-            yield { type: "text", text: delta.content };
+            yield { type: 'text', text: delta.content };
           }
 
           // Handle tool calls in streaming
@@ -93,21 +89,17 @@ export class CustomLLMProvider implements LLMProvider {
             for (const tc of delta.tool_calls) {
               if (tc.function?.name) {
                 yield {
-                  type: "tool_use_start",
+                  type: 'tool_use_start',
                   toolUse: {
-                    id: tc.id || "",
+                    id: tc.id || '',
                     name: tc.function.name,
-                    input: tc.function.arguments || "",
+                    input: tc.function.arguments || '',
                   },
                 };
               } else if (tc.function?.arguments) {
                 yield {
-                  type: "tool_use_delta",
-                  toolUse: {
-                    id: tc.id || "",
-                    name: "",
-                    input: tc.function.arguments,
-                  },
+                  type: 'tool_use_delta',
+                  toolUse: { id: tc.id || '', name: '', input: tc.function.arguments },
                 };
               }
             }
@@ -116,7 +108,7 @@ export class CustomLLMProvider implements LLMProvider {
           // Usage info at the end
           if (parsed.usage) {
             yield {
-              type: "done",
+              type: 'done',
               usage: {
                 inputTokens: parsed.usage.prompt_tokens || 0,
                 outputTokens: parsed.usage.completion_tokens || 0,
@@ -130,31 +122,27 @@ export class CustomLLMProvider implements LLMProvider {
       }
     }
 
-    yield { type: "done" };
+    yield { type: 'done' };
   }
 
   async complete(params: ChatParams): Promise<Message> {
     if (!this.config.endpoint) {
-      throw new Error("Custom LLM endpoint not configured");
+      throw new Error('Custom LLM endpoint not configured');
     }
 
     const body = this.buildRequestBody(params, false);
 
-    const response = await fetch(this.config.endpoint + "/v1/chat/completions", {
-      method: "POST",
+    const response = await fetch(this.config.endpoint + '/v1/chat/completions', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        ...(this.config.apiKey
-          ? { Authorization: `Bearer ${this.config.apiKey}` }
-          : {}),
+        'Content-Type': 'application/json',
+        ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {}),
       },
       body: JSON.stringify(body),
     });
 
     if (!response.ok) {
-      throw new Error(
-        `Custom LLM error: ${response.status} ${response.statusText}`,
-      );
+      throw new Error(`Custom LLM error: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json();
@@ -166,45 +154,39 @@ export class CustomLLMProvider implements LLMProvider {
       totalTokens: data.usage?.total_tokens || 0,
     };
 
-    const content: Message["content"] = [];
+    const content: Message['content'] = [];
 
     if (choice?.message?.content) {
-      content.push({ type: "text", text: choice.message.content });
+      content.push({ type: 'text', text: choice.message.content });
     }
 
     if (choice?.message?.tool_calls) {
       for (const tc of choice.message.tool_calls) {
         content.push({
-          type: "tool_use",
+          type: 'tool_use',
           id: tc.id,
           name: tc.function.name,
-          input: JSON.parse(tc.function.arguments || "{}"),
+          input: JSON.parse(tc.function.arguments || '{}'),
         });
       }
     }
 
-    return {
-      role: "assistant",
-      content,
-      usage,
-    };
+    return { role: 'assistant', content, usage };
   }
 
   private buildRequestBody(params: ChatParams, stream: boolean) {
     const messages = [
-      { role: "system" as const, content: params.systemPrompt },
-      ...params.messages.map((m) => ({
+      { role: 'system' as const, content: params.systemPrompt },
+      ...params.messages.map(m => ({
         role: m.role,
         content:
-          m.content.length === 1 && m.content[0].type === "text"
-            ? m.content[0].text
-            : m.content,
+          m.content.length === 1 && m.content[0].type === 'text' ? m.content[0].text : m.content,
         ...(m.toolCallId ? { tool_call_id: m.toolCallId } : {}),
       })),
     ];
 
     const body: Record<string, unknown> = {
-      model: this.config.model || "default",
+      model: this.config.model || 'default',
       messages,
       stream,
       max_tokens: params.maxTokens ?? this.config.maxTokens ?? 4096,
@@ -217,13 +199,9 @@ export class CustomLLMProvider implements LLMProvider {
     }
 
     if (params.tools?.length) {
-      body.tools = params.tools.map((t) => ({
-        type: "function",
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
+      body.tools = params.tools.map(t => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: t.parameters },
       }));
     }
 

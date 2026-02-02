@@ -30,29 +30,25 @@ npm install -D vitest @testing-library/react @testing-library/jest-dom jsdom
 ### Configuration
 
 Create `vitest.config.ts`:
+
 ```typescript
-import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-    plugins: [react()],
-    test: {
-        environment: 'jsdom',
-        setupFiles: './src/test/setup.ts',
-        globals: true,
-    },
+  plugins: [react()],
+  test: { environment: 'jsdom', setupFiles: './src/test/setup.ts', globals: true },
 });
 ```
 
 Create `src/test/setup.ts`:
+
 ```typescript
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
 // Mock Tauri APIs
-vi.mock('@tauri-apps/api/core', () => ({
-    invoke: vi.fn(),
-}));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 ```
 
 ### Writing Tests
@@ -98,6 +94,7 @@ npm test -- --coverage
 ### Unit Tests
 
 In `src-tauri/src/lib.rs`:
+
 ```rust
 #[cfg(test)]
 mod tests {
@@ -145,26 +142,23 @@ cargo install tauri-driver
 const { Builder, By } = require('selenium-webdriver');
 
 describe('App E2E', () => {
-    let driver;
+  let driver;
 
-    beforeAll(async () => {
-        driver = await new Builder()
-            .usingServer('http://localhost:4444')
-            .forBrowser('tauri')
-            .build();
-    });
+  beforeAll(async () => {
+    driver = await new Builder().usingServer('http://localhost:4444').forBrowser('tauri').build();
+  });
 
-    afterAll(async () => {
-        await driver.quit();
-    });
+  afterAll(async () => {
+    await driver.quit();
+  });
 
-    it('shows greeting', async () => {
-        const button = await driver.findElement(By.css('button'));
-        await button.click();
+  it('shows greeting', async () => {
+    const button = await driver.findElement(By.css('button'));
+    await button.click();
 
-        const message = await driver.findElement(By.css('.message'));
-        expect(await message.getText()).toContain('Hello');
-    });
+    const message = await driver.findElement(By.css('.message'));
+    expect(await message.getText()).toContain('Hello');
+  });
 });
 ```
 
@@ -191,6 +185,7 @@ xcodebuild test \
 ## Test Scripts
 
 Add to `package.json`:
+
 ```json
 {
   "scripts": {
@@ -206,6 +201,7 @@ Add to `package.json`:
 ## CI Integration
 
 GitHub Actions example:
+
 ```yaml
 name: Test
 on: [push, pull_request]

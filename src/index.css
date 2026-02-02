@@ -1,6 +1,6 @@
 /* Import Google Fonts for trust and professionalism */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&display=swap');
 
 /* Tailwind CSS imports */
 @tailwind base;
@@ -11,8 +11,14 @@
 @layer base {
   /* Set default font and improve text rendering */
   html {
-    font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
-      "Segoe UI", Roboto, sans-serif;
+    font-family:
+      'Inter',
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      Roboto,
+      sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -35,8 +41,8 @@
     bottom: 0;
 
     &::after {
-      content: "";
-      background-image: url("/bg-dark.png");
+      content: '';
+      background-image: url('/bg-dark.png');
       position: absolute;
       top: 0;
       left: 0;
@@ -96,7 +102,7 @@
   input:focus,
   textarea:focus,
   select:focus,
-  [role="button"]:focus,
+  [role='button']:focus,
   [tabindex]:focus {
     outline: none !important;
     box-shadow: none !important;
@@ -345,17 +351,13 @@
 
   /* Gradient fade overlay at bottom */
   .skills-table-container::after {
-    content: "";
+    content: '';
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
     height: 50px;
-    background: linear-gradient(
-      to bottom,
-      transparent,
-      rgba(255, 255, 255, 0.15)
-    );
+    background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.15));
     pointer-events: none;
     z-index: 10;
   }

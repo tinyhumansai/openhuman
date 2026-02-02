@@ -22,12 +22,14 @@ Services Layer
 HTTP REST client for backend communication.
 
 ### Features
+
 - Fetch-based implementation
 - Auto-injects JWT from Redux store
 - Typed request/response handling
 - Error handling with typed errors
 
 ### Usage
+
 ```typescript
 import apiClient from '../services/apiClient';
 
@@ -35,19 +37,16 @@ import apiClient from '../services/apiClient';
 const user = await apiClient.get<User>('/users/me');
 
 // POST request
-const result = await apiClient.post<LoginResponse>('/auth/login', {
-  email,
-  password
-});
+const result = await apiClient.post<LoginResponse>('/auth/login', { email, password });
 
 // With custom headers
-const data = await apiClient.get<Data>('/endpoint', {
-  headers: { 'X-Custom': 'value' }
-});
+const data = await apiClient.get<Data>('/endpoint', { headers: { 'X-Custom': 'value' } });
 ```
 
 ### Configuration
+
 Reads `VITE_BACKEND_URL` from environment or uses default:
+
 ```typescript
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://api.example.com';
 ```
@@ -93,12 +92,14 @@ const settings = await userApi.getSettings();
 Socket.io client singleton for real-time communication.
 
 ### Features
+
 - Singleton pattern - single connection per app
 - Auth token passed in socket `auth` object
 - Transports: polling first, then WebSocket upgrade
 - Auto-reconnection handling
 
 ### API
+
 ```typescript
 import socketService from '../services/socketService';
 
@@ -112,7 +113,7 @@ socketService.disconnect();
 socketService.emit('event-name', data);
 
 // Listen for events
-socketService.on('event-name', (data) => {
+socketService.on('event-name', data => {
   // Handle event
 });
 
@@ -120,7 +121,7 @@ socketService.on('event-name', (data) => {
 socketService.off('event-name', handler);
 
 // One-time listener
-socketService.once('event-name', (data) => {
+socketService.once('event-name', data => {
   // Handle once
 });
 
@@ -132,6 +133,7 @@ const isConnected = socketService.isConnected();
 ```
 
 ### Connection Flow
+
 ```typescript
 // In SocketProvider.tsx
 useEffect(() => {
@@ -157,13 +159,14 @@ useEffect(() => {
 ```
 
 ### Configuration
+
 ```typescript
 const socket = io(BACKEND_URL, {
   auth: { token },
   transports: ['polling', 'websocket'],
   reconnection: true,
   reconnectionAttempts: 5,
-  reconnectionDelay: 1000
+  reconnectionDelay: 1000,
 });
 ```
 
@@ -172,12 +175,14 @@ const socket = io(BACKEND_URL, {
 Telegram MTProto client singleton.
 
 ### Features
+
 - Singleton pattern - one client per user
 - Session persistence via Redux (not localStorage)
 - Auto-retry for FLOOD_WAIT up to 60s
 - Supports QR login and phone auth
 
 ### Initialization
+
 ```typescript
 import mtprotoService from '../services/mtprotoService';
 
@@ -192,12 +197,11 @@ await client.connect();
 ```
 
 ### Session Management
+
 ```typescript
 // Session is stored in Redux, not localStorage
 // In TelegramProvider:
-const sessionString = useAppSelector((state) =>
-  state.telegram.byUser[userId]?.sessionString
-);
+const sessionString = useAppSelector(state => state.telegram.byUser[userId]?.sessionString);
 
 // When session updates
 useEffect(() => {
@@ -212,6 +216,7 @@ dispatch(setSessionString({ userId, sessionString: newSession }));
 ```
 
 ### API Operations
+
 ```typescript
 // Get current user
 const me = await client.getMe();
@@ -227,6 +232,7 @@ const messages = await client.getMessages(peer, { limit: 50 });
 ```
 
 ### Error Handling
+
 ```typescript
 try {
   await client.connect();
@@ -246,6 +252,7 @@ try {
 ## Service Integration with Providers
 
 ### SocketProvider
+
 ```typescript
 // providers/SocketProvider.tsx
 export function SocketProvider({ children }) {
@@ -264,6 +271,7 @@ export function SocketProvider({ children }) {
 ```
 
 ### TelegramProvider
+
 ```typescript
 // providers/TelegramProvider.tsx
 export function TelegramProvider({ children }) {
@@ -294,4 +302,4 @@ export function TelegramProvider({ children }) {
 
 ---
 
-*Previous: [State Management](./02-state-management.md) | Next: [MCP System](./04-mcp-system.md)*
+_Previous: [State Management](./02-state-management.md) | Next: [MCP System](./04-mcp-system.md)_

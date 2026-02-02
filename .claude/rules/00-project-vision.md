@@ -7,6 +7,7 @@ A **cross-platform crypto-focused communication platform** built with Tauri (Rea
 ## Target Audience
 
 ### Primary Users
+
 - **Traders** - Day traders, swing traders, algorithmic traders
 - **Yield Farmers** - DeFi protocol users, liquidity providers
 - **Investors** - Long-term holders, institutional investors, VCs
@@ -39,4 +40,4 @@ A **cross-platform crypto-focused communication platform** built with Tauri (Rea
 
 ---
 
-*Updated: 2026-01-27 - Initial vision documentation*
+_Updated: 2026-01-27 - Initial vision documentation_

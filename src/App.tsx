@@ -1,13 +1,14 @@
-import { HashRouter as Router } from "react-router-dom";
-import { Provider } from "react-redux";
-import { PersistGate } from "redux-persist/integration/react";
-import * as Sentry from "@sentry/react";
-import { store, persistor } from "./store";
-import UserProvider from "./providers/UserProvider";
-import SocketProvider from "./providers/SocketProvider";
-import AIProvider from "./providers/AIProvider";
-import SkillProvider from "./providers/SkillProvider";
-import AppRoutes from "./AppRoutes";
+import * as Sentry from '@sentry/react';
+import { Provider } from 'react-redux';
+import { HashRouter as Router } from 'react-router-dom';
+import { PersistGate } from 'redux-persist/integration/react';
+
+import AppRoutes from './AppRoutes';
+import AIProvider from './providers/AIProvider';
+import SkillProvider from './providers/SkillProvider';
+import SocketProvider from './providers/SocketProvider';
+import UserProvider from './providers/UserProvider';
+import { persistor, store } from './store';
 
 function App() {
   return (

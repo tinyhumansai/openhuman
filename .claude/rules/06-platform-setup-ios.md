@@ -63,16 +63,11 @@ This creates the iOS project in `src-tauri/gen/apple/`.
 Set in `tauri.conf.json`:
 
 ```json
-{
-  "bundle": {
-    "iOS": {
-      "developmentTeam": "YOUR_TEAM_ID"
-    }
-  }
-}
+{ "bundle": { "iOS": { "developmentTeam": "YOUR_TEAM_ID" } } }
 ```
 
 Or via environment variable:
+
 ```bash
 export APPLE_DEVELOPMENT_TEAM="YOUR_TEAM_ID"
 ```

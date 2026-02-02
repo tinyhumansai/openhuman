@@ -1,4 +1,4 @@
-import type { AITool, ToolResult } from "./registry";
+import type { AITool, ToolResult } from './registry';
 
 /**
  * Web search configuration.
@@ -17,35 +17,29 @@ export interface WebSearchConfig {
 export function createWebSearchTool(config: WebSearchConfig = {}): AITool {
   return {
     definition: {
-      name: "web_search",
+      name: 'web_search',
       description:
         "Search the web for current information. Useful for real-time crypto prices, news, protocol updates, and on-chain data that isn't in memory.",
       parameters: {
-        type: "object",
+        type: 'object',
         properties: {
-          query: {
-            type: "string",
-            description: "Search query.",
-          },
-          limit: {
-            type: "number",
-            description: "Max results to return (default: 5).",
-          },
+          query: { type: 'string', description: 'Search query.' },
+          limit: { type: 'number', description: 'Max results to return (default: 5).' },
         },
-        required: ["query"],
+        required: ['query'],
       },
     },
 
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
-      const query = String(args.query || "");
+      const query = String(args.query || '');
       if (!query.trim()) {
-        return { content: "Error: query is required", isError: true };
+        return { content: 'Error: query is required', isError: true };
       }
 
       if (!config.endpoint || !config.apiKey) {
         return {
           content:
-            "Web search is not configured. Please set up a search API endpoint and key in settings.",
+            'Web search is not configured. Please set up a search API endpoint and key in settings.',
           isError: true,
         };
       }
@@ -53,12 +47,7 @@ export function createWebSearchTool(config: WebSearchConfig = {}): AITool {
       try {
         const response = await fetch(
           `${config.endpoint}?q=${encodeURIComponent(query)}&count=${Number(args.limit) || 5}`,
-          {
-            headers: {
-              Authorization: `Bearer ${config.apiKey}`,
-              Accept: "application/json",
-            },
-          },
+          { headers: { Authorization: `Bearer ${config.apiKey}`, Accept: 'application/json' } }
         );
 
         if (!response.ok) {
@@ -74,16 +63,17 @@ export function createWebSearchTool(config: WebSearchConfig = {}): AITool {
         const results = (data.results || data.web?.results || [])
           .slice(0, Number(args.limit) || 5)
           .map(
-            (r: { title?: string; url?: string; description?: string; snippet?: string }, i: number) =>
-              `### ${i + 1}. ${r.title || "Untitled"}\n` +
-              `**URL**: ${r.url || "N/A"}\n` +
-              `${r.description || r.snippet || "No description"}`,
+            (
+              r: { title?: string; url?: string; description?: string; snippet?: string },
+              i: number
+            ) =>
+              `### ${i + 1}. ${r.title || 'Untitled'}\n` +
+              `**URL**: ${r.url || 'N/A'}\n` +
+              `${r.description || r.snippet || 'No description'}`
           )
-          .join("\n\n");
+          .join('\n\n');
 
-        return {
-          content: results || "No results found.",
-        };
+        return { content: results || 'No results found.' };
       } catch (error) {
         return {
           content: `Search failed: ${error instanceof Error ? error.message : String(error)}`,

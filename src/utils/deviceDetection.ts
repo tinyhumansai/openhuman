@@ -1,6 +1,6 @@
 /**
  * Device Detection Utility
- * 
+ *
  * Detects the user's platform/device type for showing appropriate download links
  */
 
@@ -25,7 +25,7 @@ export function detectPlatform(): PlatformInfo {
 
   // Mobile detection
   const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
-  
+
   // iOS detection
   if (/iphone|ipad|ipod/i.test(userAgent)) {
     return { platform: 'ios', isMobile: true, isDesktop: false };

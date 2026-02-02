@@ -1,16 +1,15 @@
-import type { ConstitutionConfig } from "../constitution/types";
-import type { ToolDefinition } from "../providers/interface";
-import type { AgentIdentity } from "./sections/identity";
-import type { CryptoIntelligenceContext } from "./sections/crypto-intelligence";
-import type { UserContext } from "./sections/context";
-
-import { buildConstitutionSection } from "./sections/constitution";
-import { buildIdentitySection } from "./sections/identity";
-import { buildCryptoIntelligenceSection } from "./sections/crypto-intelligence";
-import { buildMemoryRecallSection } from "./sections/memory-recall";
-import { buildSkillsSection } from "./sections/skills";
-import { buildToolsSection } from "./sections/tools";
-import { buildContextSection } from "./sections/context";
+import type { ConstitutionConfig } from '../constitution/types';
+import type { ToolDefinition } from '../providers/interface';
+import { buildConstitutionSection } from './sections/constitution';
+import { buildContextSection, type UserContext } from './sections/context';
+import {
+  buildCryptoIntelligenceSection,
+  type CryptoIntelligenceContext,
+} from './sections/crypto-intelligence';
+import { type AgentIdentity, buildIdentitySection } from './sections/identity';
+import { buildMemoryRecallSection } from './sections/memory-recall';
+import { buildSkillsSection } from './sections/skills';
+import { buildToolsSection } from './sections/tools';
 
 /** Minimal skill entry for prompt rendering */
 interface SkillPromptEntry {
@@ -36,7 +35,7 @@ export interface SystemPromptParams {
   /** Crypto market/portfolio context */
   cryptoContext?: CryptoIntelligenceContext;
   /** Prompt mode: full for main agent, minimal for sub-agents */
-  mode?: "full" | "minimal" | "none";
+  mode?: 'full' | 'minimal' | 'none';
 }
 
 /**
@@ -52,10 +51,10 @@ export interface SystemPromptParams {
  * 7. User Context (preferences, timezone, project context)
  */
 export function buildSystemPrompt(params: SystemPromptParams): string {
-  const { mode = "full" } = params;
+  const { mode = 'full' } = params;
 
-  if (mode === "none") {
-    const name = params.identity?.name || "AlphaHuman";
+  if (mode === 'none') {
+    const name = params.identity?.name || 'AlphaHuman';
     return `You are ${name}, a crypto-native AI assistant.`;
   }
 
@@ -70,7 +69,7 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
   // 3. Crypto Intelligence
   sections.push(buildCryptoIntelligenceSection(params.cryptoContext));
 
-  if (mode === "full") {
+  if (mode === 'full') {
     // 4. Tools
     if (params.tools?.length) {
       sections.push(buildToolsSection(params.tools));
@@ -90,5 +89,5 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     sections.push(buildContextSection(params.userContext));
   }
 
-  return sections.filter(Boolean).join("\n");
+  return sections.filter(Boolean).join('\n');
 }

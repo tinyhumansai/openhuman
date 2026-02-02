@@ -1,8 +1,8 @@
-import { useAppDispatch } from "../../store/hooks";
-import { clearToken } from "../../store/authSlice";
-import { useSettingsNavigation } from "./hooks/useSettingsNavigation";
-import SettingsHeader from "./components/SettingsHeader";
-import SettingsMenuItem from "./components/SettingsMenuItem";
+import { clearToken } from '../../store/authSlice';
+import { useAppDispatch } from '../../store/hooks';
+import SettingsHeader from './components/SettingsHeader';
+import SettingsMenuItem from './components/SettingsMenuItem';
+import { useSettingsNavigation } from './hooks/useSettingsNavigation';
 
 const SettingsHome = () => {
   const dispatch = useAppDispatch();
@@ -15,12 +15,12 @@ const SettingsHome = () => {
 
   const handleViewEncryptionKey = () => {
     // TODO: Show encryption key in a secure modal
-    console.log("View encryption key");
+    console.log('View encryption key');
   };
 
   const handleDeleteAllData = () => {
     // TODO: Show confirmation dialog and delete all data
-    console.log("Delete all data");
+    console.log('Delete all data');
   };
 
   // Main settings menu items
@@ -48,16 +48,11 @@ const SettingsHome = () => {
     //   dangerous: false,
     // },
     {
-      id: "privacy",
-      title: "Privacy & Security",
-      description: "Control your privacy and security settings",
+      id: 'privacy',
+      title: 'Privacy & Security',
+      description: 'Control your privacy and security settings',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -66,20 +61,15 @@ const SettingsHome = () => {
           />
         </svg>
       ),
-      onClick: () => navigateToSettings("privacy"),
+      onClick: () => navigateToSettings('privacy'),
       dangerous: false,
     },
     {
-      id: "profile",
-      title: "Profile",
-      description: "Update your profile information and preferences",
+      id: 'profile',
+      title: 'Profile',
+      description: 'Update your profile information and preferences',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -88,20 +78,15 @@ const SettingsHome = () => {
           />
         </svg>
       ),
-      onClick: () => navigateToSettings("profile"),
+      onClick: () => navigateToSettings('profile'),
       dangerous: false,
     },
     {
-      id: "advanced",
-      title: "Advanced",
-      description: "Advanced configuration and developer options",
+      id: 'advanced',
+      title: 'Advanced',
+      description: 'Advanced configuration and developer options',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -116,20 +101,15 @@ const SettingsHome = () => {
           />
         </svg>
       ),
-      onClick: () => navigateToSettings("advanced"),
+      onClick: () => navigateToSettings('advanced'),
       dangerous: false,
     },
     {
-      id: "encryption",
-      title: "View Encryption Key",
-      description: "Access your encryption key for backup purposes",
+      id: 'encryption',
+      title: 'View Encryption Key',
+      description: 'Access your encryption key for backup purposes',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -142,16 +122,11 @@ const SettingsHome = () => {
       dangerous: false,
     },
     {
-      id: "team",
-      title: "Team",
-      description: "Manage your team and invite members",
+      id: 'team',
+      title: 'Team',
+      description: 'Manage your team and invite members',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -160,20 +135,15 @@ const SettingsHome = () => {
           />
         </svg>
       ),
-      onClick: () => navigateToSettings("team"),
+      onClick: () => navigateToSettings('team'),
       dangerous: false,
     },
     {
-      id: "billing",
-      title: "Billing",
-      description: "Manage your subscription and payment methods",
+      id: 'billing',
+      title: 'Billing',
+      description: 'Manage your subscription and payment methods',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -182,7 +152,7 @@ const SettingsHome = () => {
           />
         </svg>
       ),
-      onClick: () => navigateToSettings("billing"),
+      onClick: () => navigateToSettings('billing'),
       dangerous: false,
     },
   ];
@@ -190,16 +160,11 @@ const SettingsHome = () => {
   // Destructive actions menu items
   const destructiveMenuItems = [
     {
-      id: "delete",
-      title: "Delete All Data",
-      description: "Permanently delete all your data and reset your account",
+      id: 'delete',
+      title: 'Delete All Data',
+      description: 'Permanently delete all your data and reset your account',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -212,16 +177,11 @@ const SettingsHome = () => {
       dangerous: true,
     },
     {
-      id: "logout",
-      title: "Log out",
-      description: "Sign out of your account",
+      id: 'logout',
+      title: 'Log out',
+      description: 'Sign out of your account',
       icon: (
-        <svg
-          className="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"

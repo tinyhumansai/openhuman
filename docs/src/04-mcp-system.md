@@ -64,6 +64,7 @@ interface MCPError {
 Socket.IO-based JSON-RPC 2.0 transport.
 
 **Features:**
+
 - Request ID tracking
 - 30-second timeout
 - Error handling
@@ -138,10 +139,7 @@ interface TelegramMCPToolHandler {
   inputSchema: JSONSchema;
   call: (
     args: unknown,
-    context: {
-      telegramClient: TelegramClient;
-      userId: string;
-    }
+    context: { telegramClient: TelegramClient; userId: string }
   ) => Promise<ToolResult>;
 }
 
@@ -157,125 +155,135 @@ interface ToolResult {
 ### 81 Telegram Tools
 
 #### User & Profile (5 tools)
-| Tool | Description |
-|------|-------------|
-| `getMe` | Get current authenticated user |
-| `getUserInfo` | Get info about any user |
-| `getUserPhotos` | Get user profile photos |
-| `getUserStatus` | Get online status |
-| `setUserStatus` | Update own status |
+
+| Tool            | Description                    |
+| --------------- | ------------------------------ |
+| `getMe`         | Get current authenticated user |
+| `getUserInfo`   | Get info about any user        |
+| `getUserPhotos` | Get user profile photos        |
+| `getUserStatus` | Get online status              |
+| `setUserStatus` | Update own status              |
 
 #### Chats & Dialogs (12 tools)
-| Tool | Description |
-|------|-------------|
-| `getChats` | Fetch chat list |
-| `getChatInfo` | Get chat details |
-| `createGroup` | Create new group |
-| `createChannel` | Create new channel |
-| `leaveChat` | Leave chat/group/channel |
-| `deleteChat` | Delete chat |
-| `muteChat` | Mute notifications |
-| `unmuteChat` | Unmute notifications |
-| `pinChat` | Pin chat to top |
-| `unpinChat` | Unpin chat |
-| `archiveChat` | Archive chat |
-| `unarchiveChat` | Unarchive chat |
+
+| Tool            | Description              |
+| --------------- | ------------------------ |
+| `getChats`      | Fetch chat list          |
+| `getChatInfo`   | Get chat details         |
+| `createGroup`   | Create new group         |
+| `createChannel` | Create new channel       |
+| `leaveChat`     | Leave chat/group/channel |
+| `deleteChat`    | Delete chat              |
+| `muteChat`      | Mute notifications       |
+| `unmuteChat`    | Unmute notifications     |
+| `pinChat`       | Pin chat to top          |
+| `unpinChat`     | Unpin chat               |
+| `archiveChat`   | Archive chat             |
+| `unarchiveChat` | Unarchive chat           |
 
 #### Messages (15 tools)
-| Tool | Description |
-|------|-------------|
-| `getHistory` | Fetch message history |
-| `sendMessage` | Send text message |
-| `replyToMessage` | Reply to specific message |
-| `editMessage` | Edit sent message |
-| `deleteMessage` | Delete message |
-| `forwardMessage` | Forward to another chat |
-| `pinMessage` | Pin message in chat |
-| `unpinMessage` | Unpin message |
-| `markAsRead` | Mark messages as read |
-| `searchMessages` | Search in chat |
-| `translateMessage` | Translate message text |
-| `getMessageReactions` | Get reactions |
-| `addReaction` | React to message |
-| `removeReaction` | Remove reaction |
-| `reportMessage` | Report spam/abuse |
+
+| Tool                  | Description               |
+| --------------------- | ------------------------- |
+| `getHistory`          | Fetch message history     |
+| `sendMessage`         | Send text message         |
+| `replyToMessage`      | Reply to specific message |
+| `editMessage`         | Edit sent message         |
+| `deleteMessage`       | Delete message            |
+| `forwardMessage`      | Forward to another chat   |
+| `pinMessage`          | Pin message in chat       |
+| `unpinMessage`        | Unpin message             |
+| `markAsRead`          | Mark messages as read     |
+| `searchMessages`      | Search in chat            |
+| `translateMessage`    | Translate message text    |
+| `getMessageReactions` | Get reactions             |
+| `addReaction`         | React to message          |
+| `removeReaction`      | Remove reaction           |
+| `reportMessage`       | Report spam/abuse         |
 
 #### Media (10 tools)
-| Tool | Description |
-|------|-------------|
-| `sendPhoto` | Send image |
-| `sendVideo` | Send video |
-| `sendDocument` | Send file |
-| `sendVoice` | Send voice message |
-| `sendAudio` | Send audio file |
-| `sendSticker` | Send sticker |
-| `sendGif` | Send animation |
-| `sendLocation` | Send location |
-| `sendContact` | Send contact card |
+
+| Tool            | Description         |
+| --------------- | ------------------- |
+| `sendPhoto`     | Send image          |
+| `sendVideo`     | Send video          |
+| `sendDocument`  | Send file           |
+| `sendVoice`     | Send voice message  |
+| `sendAudio`     | Send audio file     |
+| `sendSticker`   | Send sticker        |
+| `sendGif`       | Send animation      |
+| `sendLocation`  | Send location       |
+| `sendContact`   | Send contact card   |
 | `downloadMedia` | Download media file |
 
 #### Contacts (8 tools)
-| Tool | Description |
-|------|-------------|
-| `addContact` | Add new contact |
-| `deleteContact` | Remove contact |
-| `getContacts` | Get contact list |
-| `searchContacts` | Search contacts |
-| `importContacts` | Bulk import |
+
+| Tool             | Description         |
+| ---------------- | ------------------- |
+| `addContact`     | Add new contact     |
+| `deleteContact`  | Remove contact      |
+| `getContacts`    | Get contact list    |
+| `searchContacts` | Search contacts     |
+| `importContacts` | Bulk import         |
 | `exportContacts` | Export contact list |
-| `blockUser` | Block user |
-| `unblockUser` | Unblock user |
+| `blockUser`      | Block user          |
+| `unblockUser`    | Unblock user        |
 
 #### Groups & Channels (15 tools)
-| Tool | Description |
-|------|-------------|
-| `getAdmins` | Get admin list |
-| `getMembers` | Get member list |
-| `addMember` | Add user to group |
-| `removeMember` | Remove from group |
-| `banUser` | Ban user |
-| `unbanUser` | Unban user |
-| `promoteAdmin` | Promote to admin |
-| `demoteAdmin` | Remove admin rights |
-| `setGroupTitle` | Change group name |
-| `setGroupPhoto` | Change group photo |
-| `setGroupDescription` | Change description |
+
+| Tool                     | Description         |
+| ------------------------ | ------------------- |
+| `getAdmins`              | Get admin list      |
+| `getMembers`             | Get member list     |
+| `addMember`              | Add user to group   |
+| `removeMember`           | Remove from group   |
+| `banUser`                | Ban user            |
+| `unbanUser`              | Unban user          |
+| `promoteAdmin`           | Promote to admin    |
+| `demoteAdmin`            | Remove admin rights |
+| `setGroupTitle`          | Change group name   |
+| `setGroupPhoto`          | Change group photo  |
+| `setGroupDescription`    | Change description  |
 | `subscribePublicChannel` | Join public channel |
-| `inviteToChannel` | Invite user |
-| `getInviteLink` | Get invite link |
-| `revokeInviteLink` | Revoke invite link |
+| `inviteToChannel`        | Invite user         |
+| `getInviteLink`          | Get invite link     |
+| `revokeInviteLink`       | Revoke invite link  |
 
 #### Polls & Interactive (5 tools)
-| Tool | Description |
-|------|-------------|
-| `createPoll` | Create poll |
-| `votePoll` | Vote on poll |
-| `stopPoll` | Close poll |
+
+| Tool                | Description         |
+| ------------------- | ------------------- |
+| `createPoll`        | Create poll         |
+| `votePoll`          | Vote on poll        |
+| `stopPoll`          | Close poll          |
 | `pressInlineButton` | Click inline button |
-| `answerCallback` | Respond to callback |
+| `answerCallback`    | Respond to callback |
 
 #### Drafts (3 tools)
-| Tool | Description |
-|------|-------------|
-| `saveDraft` | Save draft message |
-| `getDrafts` | Get all drafts |
-| `deleteDraft` | Delete draft |
+
+| Tool          | Description        |
+| ------------- | ------------------ |
+| `saveDraft`   | Save draft message |
+| `getDrafts`   | Get all drafts     |
+| `deleteDraft` | Delete draft       |
 
 #### Privacy & Settings (5 tools)
-| Tool | Description |
-|------|-------------|
-| `getBlockedUsers` | Get blocked list |
+
+| Tool                 | Description        |
+| -------------------- | ------------------ |
+| `getBlockedUsers`    | Get blocked list   |
 | `getPrivacySettings` | Get privacy config |
-| `updatePrivacy` | Update privacy |
-| `get2FAStatus` | Check 2FA status |
-| `getActiveSessions` | Get login sessions |
+| `updatePrivacy`      | Update privacy     |
+| `get2FAStatus`       | Check 2FA status   |
+| `getActiveSessions`  | Get login sessions |
 
 #### Misc (3 tools)
-| Tool | Description |
-|------|-------------|
-| `resolveUsername` | Resolve @username |
-| `checkUsername` | Check availability |
-| `getWebPage` | Get link preview |
+
+| Tool              | Description        |
+| ----------------- | ------------------ |
+| `resolveUsername` | Resolve @username  |
+| `checkUsername`   | Check availability |
+| `getWebPage`      | Get link preview   |
 
 ## Tool Implementation Example
 
@@ -289,20 +297,11 @@ export const sendMessage: TelegramMCPToolHandler = {
   inputSchema: {
     type: 'object',
     properties: {
-      chatId: {
-        type: 'string',
-        description: 'Chat ID to send message to'
-      },
-      text: {
-        type: 'string',
-        description: 'Message text'
-      },
-      replyToMsgId: {
-        type: 'string',
-        description: 'Optional message ID to reply to'
-      }
+      chatId: { type: 'string', description: 'Chat ID to send message to' },
+      text: { type: 'string', description: 'Message text' },
+      replyToMsgId: { type: 'string', description: 'Optional message ID to reply to' },
     },
-    required: ['chatId', 'text']
+    required: ['chatId', 'text'],
   },
 
   call: async (args, { telegramClient, userId }) => {
@@ -318,23 +317,14 @@ export const sendMessage: TelegramMCPToolHandler = {
 
       const result = await telegramClient.sendMessage(peer, {
         message: text,
-        replyTo: replyToMsgId ? parseInt(replyToMsgId) : undefined
+        replyTo: replyToMsgId ? parseInt(replyToMsgId) : undefined,
       });
 
-      return {
-        success: true,
-        data: {
-          messageId: result.id.toString(),
-          date: result.date
-        }
-      };
+      return { success: true, data: { messageId: result.id.toString(), date: result.date } };
     } catch (error) {
-      return {
-        success: false,
-        error: error.message
-      };
+      return { success: false, error: error.message };
     }
-  }
+  },
 };
 ```
 
@@ -351,7 +341,7 @@ useEffect(() => {
     mcpServer.initialize();
 
     // Listen for tool execution requests
-    mcpServer.onRequest(async (request) => {
+    mcpServer.onRequest(async request => {
       if (request.method === 'tools/call') {
         const { name, arguments: args } = request.params;
         return mcpServer.executeTool(name, args);
@@ -367,6 +357,7 @@ useEffect(() => {
 ## JSON-RPC Protocol
 
 ### Request Format
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -374,39 +365,28 @@ useEffect(() => {
   "method": "tools/call",
   "params": {
     "name": "sendMessage",
-    "arguments": {
-      "chatId": "123456789",
-      "text": "Hello from AI!"
-    }
+    "arguments": { "chatId": "123456789", "text": "Hello from AI!" }
   }
 }
 ```
 
 ### Response Format (Success)
+
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "result": {
-    "success": true,
-    "data": {
-      "messageId": "12345",
-      "date": 1706540000
-    }
-  }
+  "result": { "success": true, "data": { "messageId": "12345", "date": 1706540000 } }
 }
 ```
 
 ### Response Format (Error)
+
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "error": {
-    "code": -32000,
-    "message": "Chat not found",
-    "data": { "chatId": "invalid" }
-  }
+  "error": { "code": -32000, "message": "Chat not found", "data": { "chatId": "invalid" } }
 }
 ```
 
@@ -434,4 +414,4 @@ const idString = chatId.toString();
 
 ---
 
-*Previous: [Services Layer](./03-services.md) | Next: [Pages & Routing](./05-pages-routing.md)*
+_Previous: [Services Layer](./03-services.md) | Next: [Pages & Routing](./05-pages-routing.md)_

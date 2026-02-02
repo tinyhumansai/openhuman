@@ -1,5 +1,4 @@
-import type { MemoryConfig } from "./types";
-import { DEFAULT_MEMORY_CONFIG } from "./types";
+import { DEFAULT_MEMORY_CONFIG, type MemoryConfig } from './types';
 
 /** A chunk of markdown content */
 export interface MarkdownChunk {
@@ -24,9 +23,9 @@ function estimateTokens(text: string): number {
 export async function sha256(text: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -39,7 +38,7 @@ export function quickHash(text: string): string {
     hash ^= text.charCodeAt(i);
     hash = (hash * 16777619) >>> 0;
   }
-  return hash.toString(16).padStart(8, "0");
+  return hash.toString(16).padStart(8, '0');
 }
 
 /**
@@ -53,14 +52,11 @@ export function quickHash(text: string): string {
  */
 export async function chunkMarkdown(
   content: string,
-  config: Partial<MemoryConfig> = {},
+  config: Partial<MemoryConfig> = {}
 ): Promise<MarkdownChunk[]> {
-  const { chunkTokenLimit, chunkOverlap } = {
-    ...DEFAULT_MEMORY_CONFIG,
-    ...config,
-  };
+  const { chunkTokenLimit, chunkOverlap } = { ...DEFAULT_MEMORY_CONFIG, ...config };
 
-  const lines = content.split("\n");
+  const lines = content.split('\n');
   const chunks: MarkdownChunk[] = [];
 
   let currentChunkLines: string[] = [];
@@ -80,13 +76,8 @@ export async function chunkMarkdown(
       (currentTokens + lineTokens > chunkTokenLimit && currentChunkLines.length > 0) ||
       (isHeader && currentTokens > chunkTokenLimit * 0.3 && currentChunkLines.length > 0)
     ) {
-      const text = currentChunkLines.join("\n");
-      chunks.push({
-        text,
-        startLine: currentStartLine,
-        endLine: i - 1,
-        hash: await sha256(text),
-      });
+      const text = currentChunkLines.join('\n');
+      chunks.push({ text, startLine: currentStartLine, endLine: i - 1, hash: await sha256(text) });
 
       // Apply overlap: keep the last N tokens worth of lines
       const overlapLines: string[] = [];
@@ -109,7 +100,7 @@ export async function chunkMarkdown(
 
   // Flush remaining content
   if (currentChunkLines.length > 0) {
-    const text = currentChunkLines.join("\n");
+    const text = currentChunkLines.join('\n');
     chunks.push({
       text,
       startLine: currentStartLine,

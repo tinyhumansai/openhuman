@@ -11,7 +11,7 @@ The application uses Redux Toolkit with Redux-Persist for robust state managemen
 const persistConfig = {
   key: 'root',
   storage,
-  whitelist: ['auth', 'telegram']  // Persisted slices
+  whitelist: ['auth', 'telegram'], // Persisted slices
 };
 ```
 
@@ -20,24 +20,24 @@ const persistConfig = {
 ```typescript
 RootState = {
   auth: {
-    token: string | null,                      // JWT (persisted)
-    isOnboardedByUser: Record<string, boolean> // Per-user flag (persisted)
+    token: string | null, // JWT (persisted)
+    isOnboardedByUser: Record<string, boolean>, // Per-user flag (persisted)
   },
   socket: {
-    byUser: Record<string, {                   // Per user ID
-      status: "connecting" | "connected" | "disconnected",
-      socketId: string | null
-    }>
+    byUser: Record<
+      string,
+      {
+        // Per user ID
+        status: 'connecting' | 'connected' | 'disconnected';
+        socketId: string | null;
+      }
+    >,
   },
-  user: {
-    profile: User | null,
-    loading: boolean,
-    error: string | null
-  },
+  user: { profile: User | null, loading: boolean, error: string | null },
   telegram: {
-    byUser: Record<string, TelegramState>     // Per Telegram user (persisted)
-  }
-}
+    byUser: Record<string, TelegramState>, // Per Telegram user (persisted)
+  },
+};
 ```
 
 ## Slices
@@ -47,6 +47,7 @@ RootState = {
 Manages JWT token and per-user onboarding status.
 
 **State:**
+
 ```typescript
 interface AuthState {
   token: string | null;
@@ -55,11 +56,13 @@ interface AuthState {
 ```
 
 **Actions:**
+
 - `setToken(token: string)` - Store JWT after login
 - `clearToken()` - Remove token on logout
 - `setOnboarded({ userId, isOnboarded })` - Mark user as onboarded
 
 **Selectors (`store/authSelectors.ts`):**
+
 - `selectToken` - Get current JWT
 - `selectIsOnboarded(userId)` - Check if user completed onboarding
 
@@ -68,21 +71,24 @@ interface AuthState {
 Tracks Socket.io connection status per user.
 
 **State:**
+
 ```typescript
 interface SocketState {
-  byUser: Record<string, {
-    status: 'connecting' | 'connected' | 'disconnected';
-    socketId: string | null;
-  }>;
+  byUser: Record<
+    string,
+    { status: 'connecting' | 'connected' | 'disconnected'; socketId: string | null }
+  >;
 }
 ```
 
 **Actions:**
+
 - `setSocketStatus({ userId, status })` - Update connection status
 - `setSocketId({ userId, socketId })` - Store socket ID
 - `clearSocketState(userId)` - Clear user's socket state
 
 **Selectors (`store/socketSelectors.ts`):**
+
 - `selectSocketStatus(userId)` - Get connection status
 - `selectIsSocketConnected(userId)` - Boolean connected check
 
@@ -91,6 +97,7 @@ interface SocketState {
 Stores user profile data.
 
 **State:**
+
 ```typescript
 interface UserState {
   profile: User | null;
@@ -100,6 +107,7 @@ interface UserState {
 ```
 
 **Actions:**
+
 - `setUser(user)` - Store user profile
 - `setUserLoading(loading)` - Set loading state
 - `setUserError(error)` - Set error state
@@ -110,6 +118,7 @@ interface UserState {
 Complex nested state management for Telegram integration.
 
 **Files:**
+
 - `index.ts` - Slice exports (actions, thunks)
 - `types.ts` - Entity and state interfaces
 - `reducers.ts` - Synchronous reducers
@@ -117,6 +126,7 @@ Complex nested state management for Telegram integration.
 - `thunks.ts` - Async operations
 
 **State Structure:**
+
 ```typescript
 telegram.byUser[telegramUserId] = {
   connectionStatus: "disconnected" | "connecting" | "connected" | "error",
@@ -131,6 +141,7 @@ telegram.byUser[telegramUserId] = {
 ```
 
 **Reducers:**
+
 - `setCurrentUser` - Store authenticated Telegram user
 - `setSessionString` - Store MTProto session (for persistence)
 - `setConnectionStatus` - Update connection state
@@ -140,6 +151,7 @@ telegram.byUser[telegramUserId] = {
 - `setThreads` - Store thread data
 
 **Thunks (`store/telegram/thunks.ts`):**
+
 - `initializeTelegram(userId)` - Initialize MTProto client
 - `connectTelegram(userId)` - Establish Telegram connection
 - `fetchChats(userId)` - Load chat list
@@ -147,6 +159,7 @@ telegram.byUser[telegramUserId] = {
 - `disconnectTelegram(userId)` - Clean disconnect
 
 **Selectors (`store/telegramSelectors.ts`):**
+
 - `selectTelegramState(userId)` - Get full Telegram state
 - `selectTelegramConnectionStatus(userId)` - Get connection status
 - `selectTelegramAuthStatus(userId)` - Get auth status
@@ -166,39 +179,40 @@ export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector;
 ## Persistence Configuration
 
 ### What's Persisted
+
 - `auth.token` - JWT for authentication
 - `auth.isOnboardedByUser` - Per-user onboarding status
 - `telegram.byUser` - Telegram state (sessions, chats, etc.)
 
 ### What's NOT Persisted
+
 - `socket` - Connection state (reconnects on app start)
 - `user.loading` / `user.error` - Transient UI states
 - Telegram loading/error states
 
 ### Storage Backend
+
 Redux-Persist uses localStorage adapter by default. This is the ONLY acceptable use of localStorage in the application.
 
 ## Usage Examples
 
 ### Reading State
+
 ```typescript
 import { useAppSelector } from '../store/hooks';
 
 function MyComponent() {
-  const token = useAppSelector((state) => state.auth.token);
-  const isConnected = useAppSelector((state) =>
-    state.socket.byUser[userId]?.status === 'connected'
-  );
-  const chats = useAppSelector((state) =>
-    state.telegram.byUser[userId]?.chats
-  );
+  const token = useAppSelector(state => state.auth.token);
+  const isConnected = useAppSelector(state => state.socket.byUser[userId]?.status === 'connected');
+  const chats = useAppSelector(state => state.telegram.byUser[userId]?.chats);
 }
 ```
 
 ### Dispatching Actions
+
 ```typescript
+import { clearToken, setToken } from '../store/authSlice';
 import { useAppDispatch } from '../store/hooks';
-import { setToken, clearToken } from '../store/authSlice';
 import { initializeTelegram } from '../store/telegram/thunks';
 
 function MyComponent() {
@@ -217,16 +231,15 @@ function MyComponent() {
 ```
 
 ### Using Selectors
+
 ```typescript
-import { useAppSelector } from '../store/hooks';
 import { selectIsOnboarded } from '../store/authSelectors';
+import { useAppSelector } from '../store/hooks';
 import { selectTelegramConnectionStatus } from '../store/telegramSelectors';
 
 function MyComponent({ userId }) {
-  const isOnboarded = useAppSelector((state) => selectIsOnboarded(state, userId));
-  const connectionStatus = useAppSelector((state) =>
-    selectTelegramConnectionStatus(state, userId)
-  );
+  const isOnboarded = useAppSelector(state => selectIsOnboarded(state, userId));
+  const connectionStatus = useAppSelector(state => selectTelegramConnectionStatus(state, userId));
 }
 ```
 
@@ -240,4 +253,4 @@ function MyComponent({ userId }) {
 
 ---
 
-*Previous: [Architecture Overview](./01-architecture.md) | Next: [Services Layer](./03-services.md)*
+_Previous: [Architecture Overview](./01-architecture.md) | Next: [Services Layer](./03-services.md)_

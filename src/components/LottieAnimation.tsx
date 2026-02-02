@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useLottie } from "lottie-react";
+import { useLottie } from 'lottie-react';
+import { useEffect, useState } from 'react';
 
 interface LottieAnimationProps {
   src: string;
@@ -10,7 +10,7 @@ interface LottieAnimationProps {
 
 const LottieAnimation = ({
   src,
-  className = "",
+  className = '',
   height = 200,
   width = 200,
 }: LottieAnimationProps) => {
@@ -18,23 +18,14 @@ const LottieAnimation = ({
 
   useEffect(() => {
     fetch(src)
-      .then((response) => response.json())
-      .then((data) => setAnimationData(data))
-      .catch((error) =>
-        console.error("Failed to load Lottie animation:", error),
-      );
+      .then(response => response.json())
+      .then(data => setAnimationData(data))
+      .catch(error => console.error('Failed to load Lottie animation:', error));
   }, [src]);
 
-  const options = {
-    animationData,
-    loop: true,
-    autoplay: true,
-  };
+  const options = { animationData, loop: true, autoplay: true };
 
-  const { View } = useLottie(options, {
-    height,
-    width,
-  });
+  const { View } = useLottie(options, { height, width });
 
   if (!animationData) {
     return <div className={className} style={{ height, width }} />;

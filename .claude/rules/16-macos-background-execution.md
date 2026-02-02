@@ -140,16 +140,16 @@ pub fn run() {
 Control autostart via Tauri commands:
 
 ```typescript
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
 
 // Enable autostart
-await invoke("plugin:autostart|enable");
+await invoke('plugin:autostart|enable');
 
 // Disable autostart
-await invoke("plugin:autostart|disable");
+await invoke('plugin:autostart|disable');
 
 // Check if enabled
-const isEnabled = await invoke<boolean>("plugin:autostart|is_enabled");
+const isEnabled = await invoke<boolean>('plugin:autostart|is_enabled');
 ```
 
 ### Tray Behavior

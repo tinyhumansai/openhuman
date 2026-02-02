@@ -77,13 +77,13 @@ strip = true
 
 ## Environment Variables
 
-| Variable | Purpose |
-|----------|---------|
-| `TAURI_SIGNING_PRIVATE_KEY` | Code signing key |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Key password |
-| `APPLE_DEVELOPMENT_TEAM` | iOS/macOS team ID |
-| `ANDROID_HOME` | Android SDK path |
-| `NDK_HOME` | Android NDK path |
+| Variable                             | Purpose           |
+| ------------------------------------ | ----------------- |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Code signing key  |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Key password      |
+| `APPLE_DEVELOPMENT_TEAM`             | iOS/macOS team ID |
+| `ANDROID_HOME`                       | Android SDK path  |
+| `NDK_HOME`                           | Android NDK path  |
 
 ## Troubleshooting
 

@@ -10,8 +10,7 @@
  *   - Per-request counter (caps tool calls within a single agent request)
  *   - Per-minute sliding window (prevents sustained high-frequency usage)
  */
-
-import { mcpLog, mcpWarn } from "./logger";
+import { mcpLog, mcpWarn } from './logger';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -32,7 +31,7 @@ export const RATE_LIMIT_CONFIG = {
 // Tool classification
 // ---------------------------------------------------------------------------
 
-export type ToolTier = "state_only" | "api_read" | "api_write";
+export type ToolTier = 'state_only' | 'api_read' | 'api_write';
 
 /**
  * Tools that ONLY read from cached Redux state — zero Telegram API calls.
@@ -40,27 +39,27 @@ export type ToolTier = "state_only" | "api_read" | "api_write";
  */
 const STATE_ONLY_TOOLS = new Set<string>([
   // Chat state (selectOrderedChats / state.chats)
-  "get_chats",
-  "list_chats",
-  "get_chat",
+  'get_chats',
+  'list_chats',
+  'get_chat',
 
   // Message state (state.messages / state.messagesOrder)
-  "get_messages",
-  "list_messages",
-  "get_message_context",
-  "get_history",
+  'get_messages',
+  'list_messages',
+  'get_message_context',
+  'get_history',
 
   // Current user (state.currentUser)
-  "get_me",
+  'get_me',
 
   // Derived from cached chat/message data
-  "list_inline_buttons",
-  "get_contact_chats",
-  "get_direct_chat_by_contact",
+  'list_inline_buttons',
+  'get_contact_chats',
+  'get_direct_chat_by_contact',
 
   // These read from cached messages only (no API call)
-  "get_last_interaction",
-  "get_media_info",
+  'get_last_interaction',
+  'get_media_info',
 ]);
 
 /**
@@ -69,38 +68,38 @@ const STATE_ONLY_TOOLS = new Set<string>([
  */
 const API_READ_TOOLS = new Set<string>([
   // Contacts / users (contacts.GetContacts, contacts.Search, etc.)
-  "list_contacts",
-  "search_contacts",
-  "get_contact_ids",
-  "get_blocked_users",
-  "get_user_status",
-  "get_user_photos",
+  'list_contacts',
+  'search_contacts',
+  'get_contact_ids',
+  'get_blocked_users',
+  'get_user_status',
+  'get_user_photos',
 
   // Chat metadata (channels.GetParticipants, messages.GetFullChat, etc.)
-  "get_participants",
-  "get_admins",
-  "get_banned_users",
-  "get_recent_actions",
-  "get_bot_info",
-  "get_privacy_settings",
+  'get_participants',
+  'get_admins',
+  'get_banned_users',
+  'get_recent_actions',
+  'get_bot_info',
+  'get_privacy_settings',
 
   // Messages (messages.Search, messages.GetMessagesReactions, etc.)
-  "get_pinned_messages",
-  "get_message_reactions",
-  "search_messages",
+  'get_pinned_messages',
+  'get_message_reactions',
+  'search_messages',
 
   // Drafts / misc reads
-  "get_drafts",
-  "get_sticker_sets",
-  "get_gif_search",
+  'get_drafts',
+  'get_sticker_sets',
+  'get_gif_search',
 
   // Topics (channels.GetForumTopics)
-  "list_topics",
+  'list_topics',
 
   // Discovery (these call the Telegram API for server-side search)
-  "search_public_chats",
-  "resolve_username",
-  "export_contacts",
+  'search_public_chats',
+  'resolve_username',
+  'export_contacts',
 ]);
 
 /**
@@ -109,60 +108,60 @@ const API_READ_TOOLS = new Set<string>([
  */
 const API_WRITE_TOOLS = new Set<string>([
   // Message mutations
-  "send_message",
-  "reply_to_message",
-  "edit_message",
-  "delete_message",
-  "forward_message",
-  "pin_message",
-  "unpin_message",
-  "mark_as_read",
-  "send_reaction",
-  "remove_reaction",
-  "save_draft",
-  "clear_draft",
-  "press_inline_button",
-  "create_poll",
+  'send_message',
+  'reply_to_message',
+  'edit_message',
+  'delete_message',
+  'forward_message',
+  'pin_message',
+  'unpin_message',
+  'mark_as_read',
+  'send_reaction',
+  'remove_reaction',
+  'save_draft',
+  'clear_draft',
+  'press_inline_button',
+  'create_poll',
 
   // Invite link (generates/exports a link — treated as write)
-  "get_invite_link",
+  'get_invite_link',
 
   // Chat mutations
-  "create_group",
-  "create_channel",
-  "invite_to_group",
-  "edit_chat_title",
-  "edit_chat_photo",
-  "delete_chat_photo",
-  "leave_chat",
-  "archive_chat",
-  "unarchive_chat",
-  "mute_chat",
-  "unmute_chat",
-  "export_chat_invite",
-  "import_chat_invite",
-  "join_chat_by_link",
-  "subscribe_public_channel",
+  'create_group',
+  'create_channel',
+  'invite_to_group',
+  'edit_chat_title',
+  'edit_chat_photo',
+  'delete_chat_photo',
+  'leave_chat',
+  'archive_chat',
+  'unarchive_chat',
+  'mute_chat',
+  'unmute_chat',
+  'export_chat_invite',
+  'import_chat_invite',
+  'join_chat_by_link',
+  'subscribe_public_channel',
 
   // Admin / moderation
-  "promote_admin",
-  "demote_admin",
-  "ban_user",
-  "unban_user",
+  'promote_admin',
+  'demote_admin',
+  'ban_user',
+  'unban_user',
 
   // Contact mutations
-  "add_contact",
-  "delete_contact",
-  "block_user",
-  "unblock_user",
-  "import_contacts",
+  'add_contact',
+  'delete_contact',
+  'block_user',
+  'unblock_user',
+  'import_contacts',
 
   // Profile mutations
-  "update_profile",
-  "set_profile_photo",
-  "delete_profile_photo",
-  "set_privacy_settings",
-  "set_bot_commands",
+  'update_profile',
+  'set_profile_photo',
+  'delete_profile_photo',
+  'set_privacy_settings',
+  'set_bot_commands',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -187,11 +186,11 @@ const callHistory: number[] = [];
  * Unknown tools default to api_read (safe fallback — rate limited but not heavy).
  */
 export function classifyTool(toolName: string): ToolTier {
-  if (STATE_ONLY_TOOLS.has(toolName)) return "state_only";
-  if (API_WRITE_TOOLS.has(toolName)) return "api_write";
-  if (API_READ_TOOLS.has(toolName)) return "api_read";
+  if (STATE_ONLY_TOOLS.has(toolName)) return 'state_only';
+  if (API_WRITE_TOOLS.has(toolName)) return 'api_write';
+  if (API_READ_TOOLS.has(toolName)) return 'api_read';
   // Unknown tools default to api_read so they're rate limited
-  return "api_read";
+  return 'api_read';
 }
 
 /**
@@ -230,14 +229,11 @@ export function resetRequestCallCount(): void {
  *
  * Call BEFORE executing the tool handler. May sleep or throw.
  */
-export async function enforceRateLimit(
-  toolName: string,
-  overrideTier?: ToolTier,
-): Promise<void> {
+export async function enforceRateLimit(toolName: string, overrideTier?: ToolTier): Promise<void> {
   const tier = overrideTier ?? classifyTool(toolName);
 
   // State-only tools are always allowed instantly
-  if (tier === "state_only") {
+  if (tier === 'state_only') {
     return;
   }
 
@@ -246,7 +242,7 @@ export async function enforceRateLimit(
   if (callsInCurrentRequest > RATE_LIMIT_CONFIG.MAX_CALLS_PER_REQUEST) {
     throw new Error(
       `Rate limit: exceeded ${RATE_LIMIT_CONFIG.MAX_CALLS_PER_REQUEST} API tool calls per request. ` +
-        `Try breaking your task into smaller steps.`,
+        `Try breaking your task into smaller steps.`
     );
   }
 
@@ -259,7 +255,7 @@ export async function enforceRateLimit(
     const waitMs = oldestTimestamp + 60_000 - now + 50; // +50ms buffer
     mcpWarn(
       `Rate limit: per-minute cap reached (${RATE_LIMIT_CONFIG.MAX_CALLS_PER_MINUTE}/min). ` +
-        `Waiting ${waitMs}ms for '${toolName}'.`,
+        `Waiting ${waitMs}ms for '${toolName}'.`
     );
     await sleep(waitMs);
     purgeOldEntries(Date.now());
@@ -267,16 +263,14 @@ export async function enforceRateLimit(
 
   // --- Inter-call delay (tier-dependent) ---
   const requiredDelay =
-    tier === "api_write"
+    tier === 'api_write'
       ? RATE_LIMIT_CONFIG.API_WRITE_DELAY_MS
       : RATE_LIMIT_CONFIG.API_READ_DELAY_MS;
 
   const elapsed = Date.now() - lastCallTime;
   if (elapsed < requiredDelay) {
     const waitMs = requiredDelay - elapsed;
-    mcpLog(
-      `Rate limit: ${tier} delay ${waitMs}ms for '${toolName}'`,
-    );
+    mcpLog(`Rate limit: ${tier} delay ${waitMs}ms for '${toolName}'`);
     await sleep(waitMs);
   }
 
@@ -313,5 +307,5 @@ function purgeOldEntries(now: number): void {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
 }

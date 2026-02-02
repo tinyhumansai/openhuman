@@ -1,8 +1,4 @@
-import type {
-  ConstitutionConfig,
-  ConstitutionValidation,
-  ConstitutionViolation,
-} from "./types";
+import type { ConstitutionConfig, ConstitutionValidation, ConstitutionViolation } from './types';
 
 /** Patterns that indicate private key / seed phrase content */
 const SECRET_PATTERNS = [
@@ -29,7 +25,7 @@ const FINANCIAL_ADVICE_PATTERNS = [
  */
 export function validateMemoryContent(
   content: string,
-  _constitution: ConstitutionConfig,
+  _constitution: ConstitutionConfig
 ): ConstitutionValidation {
   const violations: ConstitutionViolation[] = [];
 
@@ -37,9 +33,9 @@ export function validateMemoryContent(
   for (const pattern of SECRET_PATTERNS) {
     if (pattern.test(content)) {
       violations.push({
-        rule: "Never persist private keys, seed phrases, or raw credentials in memory",
-        category: "privacy",
-        severity: "error",
+        rule: 'Never persist private keys, seed phrases, or raw credentials in memory',
+        category: 'privacy',
+        severity: 'error',
         message: `Content appears to contain sensitive cryptographic material matching pattern: ${pattern.source}`,
       });
     }
@@ -53,7 +49,7 @@ export function validateMemoryContent(
  */
 export function validateAction(
   actionDescription: string,
-  _constitution: ConstitutionConfig,
+  _constitution: ConstitutionConfig
 ): ConstitutionValidation {
   const violations: ConstitutionViolation[] = [];
 
@@ -61,11 +57,10 @@ export function validateAction(
   for (const pattern of FINANCIAL_ADVICE_PATTERNS) {
     if (pattern.test(actionDescription)) {
       violations.push({
-        rule: "No financial advice — Provide information and analysis, not directives",
-        category: "accuracy",
-        severity: "warning",
-        message:
-          "Content may constitute financial advice. Ensure DYOR disclaimer is included.",
+        rule: 'No financial advice — Provide information and analysis, not directives',
+        category: 'accuracy',
+        severity: 'warning',
+        message: 'Content may constitute financial advice. Ensure DYOR disclaimer is included.',
       });
     }
   }
@@ -80,16 +75,13 @@ export function sanitizeForMemory(content: string): string {
   let sanitized = content;
 
   // Redact potential private keys (64 hex chars)
-  sanitized = sanitized.replace(
-    /\b(0x)?[0-9a-fA-F]{64}\b/g,
-    "[REDACTED_KEY]",
-  );
+  sanitized = sanitized.replace(/\b(0x)?[0-9a-fA-F]{64}\b/g, '[REDACTED_KEY]');
 
   // Redact potential seed phrases (12+ words that look like a mnemonic)
   // Only redact if the words match common BIP39 word patterns
   sanitized = sanitized.replace(
     /\b(abandon|ability|able|about|above|absent|absorb|abstract|absurd|abuse)\s+\w+(\s+\w+){10,22}\b/gi,
-    "[REDACTED_SEED_PHRASE]",
+    '[REDACTED_SEED_PHRASE]'
   );
 
   return sanitized;

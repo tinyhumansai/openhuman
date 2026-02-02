@@ -1,7 +1,7 @@
-import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 /** AI system connection/initialization status */
-export type AIStatus = "idle" | "initializing" | "ready" | "error";
+export type AIStatus = 'idle' | 'initializing' | 'ready' | 'error';
 
 /** Persisted AI configuration */
 export interface AIConfig {
@@ -37,28 +37,26 @@ interface AIState {
 }
 
 const initialState: AIState = {
-  status: "idle",
+  status: 'idle',
   error: null,
   currentSessionId: null,
   loadedSkillsCount: 0,
   memoryInitialized: false,
-  config: {
-    skillsRepoUrl: "alphahuman/alphahuman-skills",
-  },
+  config: { skillsRepoUrl: 'alphahuman/alphahuman-skills' },
 };
 
 const aiSlice = createSlice({
-  name: "ai",
+  name: 'ai',
   initialState,
   reducers: {
     setAIStatus(state, action: PayloadAction<AIStatus>) {
       state.status = action.payload;
-      if (action.payload !== "error") {
+      if (action.payload !== 'error') {
         state.error = null;
       }
     },
     setAIError(state, action: PayloadAction<string>) {
-      state.status = "error";
+      state.status = 'error';
       state.error = action.payload;
     },
     setCurrentSessionId(state, action: PayloadAction<string | null>) {
