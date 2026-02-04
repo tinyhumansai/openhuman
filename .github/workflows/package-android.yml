@@ -87,14 +87,14 @@ jobs:
           if [ "$HTTP_CODE" = "200" ]; then
             RELEASE_ID=$(echo "$BODY" | jq -r '.id')
             IS_DRAFT=$(echo "$BODY" | jq -r '.draft')
-            # Check if Android APK is already uploaded
-            APK_EXISTS=$(echo "$BODY" | jq -r '.assets[]? | select(.name | endswith(".apk")) | .name' | head -1)
-            if [ -n "$APK_EXISTS" ]; then
-              echo "Android APK already exists in release: $APK_EXISTS"
+            # Check if Android AAB is already uploaded
+            AAB_EXISTS=$(echo "$BODY" | jq -r '.assets[]? | select(.name | endswith(".aab")) | .name' | head -1)
+            if [ -n "$AAB_EXISTS" ]; then
+              echo "Android AAB already exists in release: $AAB_EXISTS"
               echo "should-skip=true" >> $GITHUB_OUTPUT
               echo "release-id=$RELEASE_ID" >> $GITHUB_OUTPUT
             else
-              echo "Release found (ID: $RELEASE_ID, draft: $IS_DRAFT), no APK yet"
+              echo "Release found (ID: $RELEASE_ID, draft: $IS_DRAFT), no AAB yet"
               echo "should-skip=false" >> $GITHUB_OUTPUT
               echo "release-id=$RELEASE_ID" >> $GITHUB_OUTPUT
             fi
@@ -108,7 +108,7 @@ jobs:
             echo "release-id=" >> $GITHUB_OUTPUT
           fi
   build-android:
-    name: Build and package Android APK
+    name: Build and package Android AAB
     needs: [get-version, check-release]
     if: ${{ !failure() && !cancelled() && needs.check-release.outputs.should-skip != 'true' }}
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || '' }}
@@ -191,7 +191,7 @@ jobs:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
         run: |
           echo "$ANDROID_KEYSTORE" | base64 --decode > ${{ github.workspace }}/release.jks
-      - name: Build Android APK (signed)
+      - name: Build Android AAB (signed)
         if: needs.get-version.outputs.should-publish != ''
         env:
           BASE_URL: ${{ vars.BASE_URL }}
@@ -199,54 +199,54 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: npx tauri android build --apk true
+        run: npx tauri android build --aab true
 
-      - name: Build Android APK (unsigned)
+      - name: Build Android AAB (unsigned)
         if: needs.get-version.outputs.should-publish == ''
         env:
           BASE_URL: ${{ vars.BASE_URL }}
-        run: npx tauri android build --apk true
+        run: npx tauri android build --aab true
 
-      - name: Find APK
-        id: find-apk
+      - name: Find AAB
+        id: find-aab
         run: |
-          APK_ROOT="src-tauri/gen/android"
-          echo "Searching for APKs in $APK_ROOT..."
-          find "$APK_ROOT" -name '*.apk' -type f | sort
-          # Prefer universal release, then any signed release, then any APK (excluding unsigned)
-          APK_PATH=$(find "$APK_ROOT" -name '*-universal-release.apk' -type f | head -1)
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$APK_ROOT" -name '*-release.apk' -not -name '*-unsigned.apk' -type f | head -1)
-          fi
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$APK_ROOT" -name '*-release*.apk' -not -name '*-unsigned.apk' -type f | head -1)
-          fi
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$APK_ROOT" -name '*.apk' -not -name '*-unsigned.apk' -type f | head -1)
-          fi
-          if [ -z "$APK_PATH" ]; then
-            APK_PATH=$(find "$APK_ROOT" -name '*.apk' -type f | head -1)
-          fi
-          if [ -z "$APK_PATH" ]; then
-            echo "No APK found"
+          AAB_ROOT="src-tauri/gen/android"
+          echo "Searching for AABs in $AAB_ROOT..."
+          find "$AAB_ROOT" -name '*.aab' -type f | sort
+          AAB_PATH=$(find "$AAB_ROOT" -name '*.aab' -type f | head -1)
+          if [ -z "$AAB_PATH" ]; then
+            echo "No AAB found"
             exit 1
           fi
-          APK_FILENAME=$(basename "$APK_PATH")
-          echo "Selected APK: $APK_PATH"
-          echo "path=$APK_PATH" >> $GITHUB_OUTPUT
-          echo "filename=$APK_FILENAME" >> $GITHUB_OUTPUT
-      - name: Upload APK artifact
+          AAB_FILENAME=$(basename "$AAB_PATH")
+          echo "Selected AAB: $AAB_PATH"
+          echo "path=$AAB_PATH" >> $GITHUB_OUTPUT
+          echo "filename=$AAB_FILENAME" >> $GITHUB_OUTPUT
+      - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
-          path: ${{ steps.find-apk.outputs.path }}
+          name: android-aab
+          path: ${{ steps.find-aab.outputs.path }}
 
-      - name: Upload APK to release
+      - name: Upload AAB to release
         if: needs.get-version.outputs.should-publish == 'true' && needs.check-release.outputs.release-id != ''
         env:
           RELEASE_ID: ${{ needs.check-release.outputs.release-id }}
         run: |
           curl -X POST -H "Authorization: Bearer $XGH_TOKEN" \
             -H "Content-Type: application/octet-stream" \
-            --data-binary "@${{ steps.find-apk.outputs.path }}" \
-            "https://uploads.github.com/repos/$PUBLISH_REPO/releases/$RELEASE_ID/assets?name=${{ steps.find-apk.outputs.filename }}"
+            --data-binary "@${{ steps.find-aab.outputs.path }}" \
+            "https://uploads.github.com/repos/$PUBLISH_REPO/releases/$RELEASE_ID/assets?name=${{ steps.find-aab.outputs.filename }}"
+
+      # Requires secret GOOGLE_PLAY_SERVICE_ACCOUNT_JSON (full JSON key from Play Console API access)
+      # Track: internal | alpha | beta | production (use vars.GOOGLE_PLAY_TRACK to override)
+      - name: Upload AAB to Google Play
+        if: needs.get-version.outputs.should-publish == 'true' && secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != ''
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.alphahuman.app
+          releaseFiles: ${{ steps.find-aab.outputs.path }}
+          track: ${{ vars.GOOGLE_PLAY_TRACK || 'internal' }}
+          releaseName: AlphaHuman v${{ needs.get-version.outputs.package-version }}
+          status: completed

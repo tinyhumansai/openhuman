@@ -340,15 +340,36 @@ jobs:
       - name: Re-sign macOS app after TDLib bundling
         if: matrix.settings.platform == 'macos-latest'
         env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           TARGET="${{ matrix.settings.target }}"
           echo "Re-signing for target: $TARGET"
 
-          if [ -z "$APPLE_SIGNING_IDENTITY" ]; then
-            echo "No signing identity provided, skipping re-sign"
+          if [ -z "$APPLE_SIGNING_IDENTITY" ] || [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "No signing identity or certificate provided, skipping re-sign"
             exit 0
           fi
+
+          # Import certificate into a temporary keychain (same approach as tauri-action)
+          KEYCHAIN_PATH="$RUNNER_TEMP/tdlib-signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          # Create and configure keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          rm "$CERT_PATH"
+
+          # Add keychain to search list
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           # Find app bundle in target-specific or default location
           if [ -n "$TARGET" ]; then
@@ -364,15 +385,21 @@ jobs:
             for dylib in "$APP_BUNDLE/Contents/Frameworks/"*.dylib; do
               if [ -f "$dylib" ]; then
                 echo "Signing: $dylib"
-                codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$dylib" || true
+                codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$dylib"
               fi
             done
             # Re-sign the entire app bundle
-            codesign --force --deep --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$APP_BUNDLE" || true
+            codesign --force --deep --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$APP_BUNDLE"
             echo "App re-signed successfully"
+
+            # Verify signature
+            codesign --verify --verbose=2 "$APP_BUNDLE" || echo "Warning: Signature verification had issues"
           else
             echo "Warning: No app bundle found to re-sign"
           fi
+
+          # Cleanup keychain
+          security delete-keychain "$KEYCHAIN_PATH" || true
 
       # Re-create DMG after TDLib bundling (the original DMG was created before bundling)
       - name: Recreate DMG with bundled TDLib

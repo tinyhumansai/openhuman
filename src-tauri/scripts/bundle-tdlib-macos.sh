@@ -184,13 +184,30 @@ for dylib in "${FRAMEWORKS_DIR}"/*.dylib; do
     fi
 done
 
-# Add rpath to the binary to look in Frameworks
+# Fix rpaths in the binary
 echo ""
-echo "Adding rpath to binary..."
-# First, try to delete existing rpath if it exists (ignore errors)
+echo "Fixing binary rpaths..."
+
+# Get all current rpaths
+CURRENT_RPATHS=$(otool -l "$BINARY_PATH" | grep -A2 "cmd LC_RPATH" | grep "path " | awk '{print $2}')
+
+echo "Current rpaths:"
+echo "$CURRENT_RPATHS"
+
+# Remove all rpaths that point to build directories (they won't exist at runtime)
+for rpath in $CURRENT_RPATHS; do
+    # Remove rpaths containing /build/, /target/, or absolute paths that aren't @executable_path
+    if [[ "$rpath" == *"/build/"* ]] || [[ "$rpath" == *"/target/"* ]] || [[ "$rpath" != @* ]]; then
+        echo "Removing build-time rpath: $rpath"
+        install_name_tool -delete_rpath "$rpath" "$BINARY_PATH" 2>/dev/null || true
+    fi
+done
+
+# Delete our target rpath first if it exists (to avoid "already exists" error)
 install_name_tool -delete_rpath "@executable_path/../Frameworks" "$BINARY_PATH" 2>/dev/null || true
 
-# Add the correct rpath
+# Add the correct rpath for the bundled Frameworks
+echo "Adding rpath: @executable_path/../Frameworks"
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$BINARY_PATH"
 
 # Verify the changes
