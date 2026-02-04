@@ -149,10 +149,12 @@ Key file: `src/utils/desktopDeepLinkListener.ts` (lazy-loaded in `main.tsx`). Us
 Enhanced Rust backend with comprehensive skill execution and runtime management:
 
 **Core Commands:**
+
 - `greet` — demo command
 - `exchange_token` — CORS-free HTTP POST to backend for token exchange (desktop only)
 
 **Runtime Management:**
+
 - `discover_skills` — V8 skill discovery and manifest parsing
 - `enable_skill` / `disable_skill` — skill lifecycle management
 - `get_skill_preferences` / `set_skill_preferences` — skill configuration
@@ -160,6 +162,7 @@ Enhanced Rust backend with comprehensive skill execution and runtime management:
 - `get_socket_status` — connection status monitoring
 
 **Android Support:**
+
 - `RuntimeService` — background service for skill execution
 - Notification permissions and foreground service management
 - Android logging integration with logcat
@@ -171,6 +174,7 @@ Deep link plugin registered at setup. `register_all()` called only on Windows/Li
 Advanced JavaScript execution engine for skills using V8 (via deno_core):
 
 **Core Components:**
+
 - `v8_engine.rs` — V8 JavaScript runtime initialization and management
 - `v8_skill_instance.rs` — Individual skill execution contexts and lifecycle
 - `skill_registry.rs` — Skill discovery, registration, and state management
@@ -180,6 +184,7 @@ Advanced JavaScript execution engine for skills using V8 (via deno_core):
 - `preferences.rs` — Skill configuration and settings persistence
 
 **Bridge System (`src-tauri/src/runtime/bridge/`):**
+
 - `skills_bridge.rs` — Skill-to-skill communication and state sharing
 - `tauri_bridge.rs` — Frontend-backend IPC and environment access
 - `net.rs` — HTTP/fetch operations for skills
@@ -189,12 +194,14 @@ Advanced JavaScript execution engine for skills using V8 (via deno_core):
 - `cron_bridge.rs` — Cron job scheduling and management
 
 **TDLib Integration (`src-tauri/src/services/tdlib_v8/`):**
+
 - `service.rs` — High-level TDLib client management with V8 integration
 - `bootstrap.js` — V8 JavaScript bootstrap environment
 - `ops/mod.rs` — Native operations for WebSocket, timers, and async handling
 - `storage.rs` — Persistent storage for TDLib sessions and data
 
 **Platform Support:**
+
 - Desktop platforms: Full V8 runtime with all features
 - Mobile platforms: Error handling with feature availability checks
 - Platform-specific skill filtering based on manifest declarations
@@ -338,7 +345,9 @@ Key updates from recent commits (cd9ebcd to current):
 
 ## Git Workflow
 
-- **PR target branch**: All pull requests should target the `develop` branch, not `main`.
+- **Push target**: All pushes go to the **user's private repo** (your fork). Do not push directly to the org repository.
+- **PR target**: All pull requests are opened **from your fork** against the **org's private repo**, targeting the **`develop`** branch (not `main`).
+- **No direct pushes to org**: The org repo does not allow direct pushes. All changes reach the org repo via PRs from your fork.
 
 ## Key Patterns
 

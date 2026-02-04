@@ -73,6 +73,12 @@ extension!(
         // Data bridge ops
         op_data_read,
         op_data_write,
+        // TDLib ops (telegram skill only)
+        op_tdlib_create_client,
+        op_tdlib_send,
+        op_tdlib_receive,
+        op_tdlib_destroy,
+        op_tdlib_is_available,
     ],
     state = |state| {
         // State will be initialized when runtime is created
@@ -96,6 +102,15 @@ pub fn init_state_with_data_dir(
     state.put(SkillContext::with_state(skill_id, data_dir, skill_state));
     state.put(TimerState::default());
     state.put(WebSocketState::default());
+}
+
+/// Poll timers and return IDs of timers that are ready to fire.
+/// Also returns the duration until the next timer (for efficient sleeping).
+pub fn poll_timers(state: &mut OpState) -> (Vec<u32>, Option<std::time::Duration>) {
+    let timer_state = state.borrow_mut::<TimerState>();
+    let ready = timer_state.poll_ready();
+    let next = timer_state.time_until_next();
+    (ready, next)
 }
 
 /// Context for the current skill execution.
@@ -137,15 +152,72 @@ impl SkillContext {
 // Timer State
 // ============================================================================
 
+/// A scheduled timer (setTimeout or setInterval).
+#[derive(Clone, Debug)]
+pub struct TimerEntry {
+    /// Whether this is a repeating interval
+    pub is_interval: bool,
+    /// Delay in milliseconds
+    pub delay_ms: u64,
+    /// When the timer should fire next (Instant)
+    pub next_fire: std::time::Instant,
+}
+
 /// State for managing timers.
-/// Currently a placeholder - full timer integration with V8 event loop is TODO.
+/// Timers are polled during the event loop and fire callbacks via JS.
 #[derive(Default)]
-#[allow(dead_code)]
 pub struct TimerState {
-    /// Active timers: id -> (is_interval, delay_ms)
-    pub timers: HashMap<u32, (bool, u64)>,
-    /// Timer cancellation senders
-    pub cancel_senders: HashMap<u32, tokio::sync::oneshot::Sender<()>>,
+    /// Active timers: id -> TimerEntry
+    pub timers: HashMap<u32, TimerEntry>,
+}
+
+impl TimerState {
+    /// Get all timers that are ready to fire, returning their IDs.
+    /// For intervals, reschedules the next fire time.
+    /// For timeouts, removes them from the map.
+    pub fn poll_ready(&mut self) -> Vec<u32> {
+        let now = std::time::Instant::now();
+        let mut ready = Vec::new();
+
+        // Collect IDs of ready timers
+        let ready_ids: Vec<u32> = self
+            .timers
+            .iter()
+            .filter(|(_, entry)| now >= entry.next_fire)
+            .map(|(id, _)| *id)
+            .collect();
+
+        for id in ready_ids {
+            if let Some(entry) = self.timers.get_mut(&id) {
+                ready.push(id);
+
+                if entry.is_interval {
+                    // Reschedule for next interval
+                    entry.next_fire = now + std::time::Duration::from_millis(entry.delay_ms);
+                } else {
+                    // Remove one-shot timeout
+                    self.timers.remove(&id);
+                }
+            }
+        }
+
+        ready
+    }
+
+    /// Get the duration until the next timer fires (for sleep optimization).
+    pub fn time_until_next(&self) -> Option<std::time::Duration> {
+        let now = std::time::Instant::now();
+        self.timers
+            .values()
+            .map(|entry| {
+                if entry.next_fire > now {
+                    entry.next_fire - now
+                } else {
+                    std::time::Duration::ZERO
+                }
+            })
+            .min()
+    }
 }
 
 // ============================================================================
@@ -260,11 +332,12 @@ fn op_platform_os() -> &'static str {
 #[string]
 fn op_platform_env(#[string] key: &str) -> Option<String> {
     const ALLOWED_ENV_VARS: &[&str] = &[
-        "VITE_TELEGRAM_API_ID",
-        "VITE_TELEGRAM_API_HASH",
         "VITE_TELEGRAM_BOT_USERNAME",
         "VITE_TELEGRAM_BOT_ID",
+        "TELEGRAM_API_ID",   // Skills may use this without VITE_ prefix
+        "TELEGRAM_API_HASH", // Skills may use this without VITE_ prefix
         "VITE_BACKEND_URL",
+        "BACKEND_URL", // Skills may use this without VITE_ prefix
         "VITE_DEBUG",
     ];
 
@@ -280,26 +353,35 @@ fn op_platform_env(#[string] key: &str) -> Option<String> {
 // ============================================================================
 
 /// Start a timer (setTimeout or setInterval).
-/// The actual callback execution happens in JavaScript via __handleTimer.
+/// The actual callback execution happens in JavaScript via __handleTimer,
+/// triggered by the event loop polling TimerState.
 #[op2(fast)]
-fn op_ah_timer_start(
-    _state: &mut OpState,
-    id: u32,
-    delay_ms: u32,
-    _is_interval: bool,
-) {
-    // Note: In V8/deno_core, timers are typically handled differently.
-    // For now, we log the timer request. The actual timer execution
-    // would need integration with the V8 event loop.
-    log::debug!("[timer] Start timer {} with delay {}ms", id, delay_ms);
-    // TODO: Implement proper timer scheduling with the V8 event loop
+fn op_ah_timer_start(state: &mut OpState, id: u32, delay_ms: u32, is_interval: bool) {
+    let timer_state = state.borrow_mut::<TimerState>();
+
+    let entry = TimerEntry {
+        is_interval,
+        delay_ms: delay_ms as u64,
+        next_fire: std::time::Instant::now() + std::time::Duration::from_millis(delay_ms as u64),
+    };
+
+    timer_state.timers.insert(id, entry);
+    log::debug!(
+        "[timer] Registered {} {} with delay {}ms",
+        if is_interval { "interval" } else { "timeout" },
+        id,
+        delay_ms
+    );
 }
 
 /// Cancel a timer.
 #[op2(fast)]
-fn op_ah_timer_cancel(_state: &mut OpState, id: u32) {
-    log::debug!("[timer] Cancel timer {}", id);
-    // TODO: Implement proper timer cancellation
+fn op_ah_timer_cancel(state: &mut OpState, id: u32) {
+    let timer_state = state.borrow_mut::<TimerState>();
+
+    if timer_state.timers.remove(&id).is_some() {
+        log::debug!("[timer] Cancelled timer {}", id);
+    }
 }
 
 // ============================================================================
@@ -1009,4 +1091,94 @@ fn op_data_write(
     std::fs::write(&path, content).map_err(|e| {
         deno_core::error::generic_error(format!("Failed to write file '{}': {}", filename, e))
     })
+}
+
+// ============================================================================
+// TDLib Ops (telegram skill only)
+// ============================================================================
+
+/// Check if the current skill is the telegram skill.
+fn check_telegram_skill(state: &OpState) -> Result<(), deno_core::error::AnyError> {
+    let ctx = state.borrow::<SkillContext>();
+    if ctx.skill_id != "telegram" {
+        return Err(deno_core::error::generic_error(
+            "TDLib is only available to the telegram skill",
+        ));
+    }
+    Ok(())
+}
+
+/// Check if TDLib is available (always true on desktop).
+#[op2(fast)]
+fn op_tdlib_is_available() -> bool {
+    true
+}
+
+/// Create a TDLib client with the given data directory.
+/// This is synchronous since create_client just spawns a worker thread and returns.
+#[op2(fast)]
+fn op_tdlib_create_client(
+    state: &mut OpState,
+    #[string] data_dir: String,
+) -> Result<i32, deno_core::error::AnyError> {
+    // Check skill permission
+    check_telegram_skill(state)?;
+
+    let path = std::path::PathBuf::from(data_dir);
+
+    crate::services::tdlib::TDLIB_MANAGER
+        .create_client(path)
+        .map_err(|e| deno_core::error::generic_error(e))
+}
+
+/// Send a request to TDLib and wait for the response.
+#[op2(async)]
+#[serde]
+async fn op_tdlib_send(
+    state: Rc<RefCell<OpState>>,
+    #[serde] request: serde_json::Value,
+) -> Result<serde_json::Value, deno_core::error::AnyError> {
+    // Check skill permission
+    {
+        let state = state.borrow();
+        check_telegram_skill(&state)?;
+    }
+
+    crate::services::tdlib::TDLIB_MANAGER
+        .send(request)
+        .await
+        .map_err(|e| deno_core::error::generic_error(e))
+}
+
+/// Receive the next update from TDLib (with timeout in ms).
+#[op2(async)]
+#[serde]
+async fn op_tdlib_receive(
+    state: Rc<RefCell<OpState>>,
+    timeout_ms: u32,
+) -> Result<Option<serde_json::Value>, deno_core::error::AnyError> {
+    // Check skill permission
+    {
+        let state = state.borrow();
+        check_telegram_skill(&state)?;
+    }
+
+    Ok(crate::services::tdlib::TDLIB_MANAGER.receive(timeout_ms).await)
+}
+
+/// Destroy the TDLib client and clean up resources.
+#[op2(async)]
+async fn op_tdlib_destroy(
+    state: Rc<RefCell<OpState>>,
+) -> Result<(), deno_core::error::AnyError> {
+    // Check skill permission
+    {
+        let state = state.borrow();
+        check_telegram_skill(&state)?;
+    }
+
+    crate::services::tdlib::TDLIB_MANAGER
+        .destroy()
+        .await
+        .map_err(|e| deno_core::error::generic_error(e))
 }

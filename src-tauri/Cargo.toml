@@ -90,6 +90,12 @@ tauri-plugin-notification = "2"
 # V8 JavaScript runtime (via deno_core - powers Deno)
 # Only available on desktop - prebuilt binaries don't exist for Android/iOS
 deno_core = "0.314"
+# TDLib Rust bindings (desktop only - downloads prebuilt TDLib library)
+tdlib-rs = { version = "1.2", features = ["download-tdlib"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.build-dependencies]
+# TDLib build configuration
+tdlib-rs = { version = "1.2", features = ["download-tdlib"] }
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

@@ -128,14 +128,17 @@ class SkillManager {
    * Start the setup flow for a skill. Returns the first step.
    */
   async startSetup(skillId: string): Promise<SetupStep> {
+    console.log("[SkillManager] startSetup", skillId);
     const runtime = this.runtimes.get(skillId);
     if (!runtime) {
-      throw new Error(`Skill ${skillId} is not running`);
+      console.log("[SkillManager] runtime not found", skillId);
+      throw new Error(`Skill ${skillId} runtime not found`);
     }
 
     store.dispatch(
       setSkillStatus({ skillId, status: "setup_in_progress" }),
     );
+    console.log("[SkillManager] setup started", skillId);
     return runtime.setupStart();
   }
 
@@ -420,3 +423,8 @@ class SkillManager {
 
 // Export singleton
 export const skillManager = new SkillManager();
+
+// Debug: expose to window for console testing
+if (typeof window !== 'undefined') {
+  (window as unknown as { __skillManager: SkillManager }).__skillManager = skillManager;
+}

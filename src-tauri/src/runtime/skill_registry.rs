@@ -45,6 +45,7 @@ impl SkillRegistry {
         state: Arc<RwLock<SkillState>>,
         task_handle: tokio::task::JoinHandle<()>,
     ) {
+        log::info!("[runtime] registering skill '{}'", skill_id);
         self.skills.write().insert(
             skill_id.to_string(),
             RegistryEntry {
@@ -228,6 +229,7 @@ impl SkillRegistry {
     /// Send a message to a specific skill's message loop.
     /// Returns an error if the skill is not registered or the channel is full.
     pub fn send_message(&self, skill_id: &str, msg: SkillMessage) -> Result<(), String> {
+        log::info!("[runtime] sending message to '{}': {:?}", skill_id, msg);
         let sender = {
             let skills = self.skills.read();
             let entry = skills
@@ -236,9 +238,17 @@ impl SkillRegistry {
             entry.sender.clone()
         };
 
-        sender
-            .try_send(msg)
-            .map_err(|e| format!("Failed to send message to skill '{}': {e}", skill_id))
+        match sender.try_send(msg) {
+            Ok(()) => {
+                log::info!("[runtime] Successfully sent message to skill '{}'", skill_id);
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to send message to skill '{}': {e}", skill_id);
+                log::error!("[runtime] {}", error_msg);
+                Err(error_msg)
+            }
+        }
     }
 }
 

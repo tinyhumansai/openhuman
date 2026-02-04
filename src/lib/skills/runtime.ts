@@ -71,9 +71,11 @@ export class SkillRuntime {
    * Start the setup flow. Returns the first SetupStep.
    */
   async setupStart(): Promise<SetupStep> {
+    console.log("[SkillRuntime] setupStart", this.skillId);
     const result = await this.transport.request<{ step: SetupStep }>(
       "setup/start"
     );
+    console.log("[SkillRuntime] setupStart result", this.skillId, result);
     return result.step;
   }
 

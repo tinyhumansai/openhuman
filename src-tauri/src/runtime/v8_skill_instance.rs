@@ -4,12 +4,13 @@
 //! with:
 //! - A scoped SQLite database
 //! - Bridge globals (db, store, net, platform, console)
-//! - A message loop driven by crossbeam channels
-//! - Lifecycle hooks: init() -> start() -> [message loop] -> stop()
+//! - An async event loop that drives timers, promises, and handles messages
+//! - Lifecycle hooks: init() -> start() -> [event loop] -> stop()
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use deno_core::{v8, JsRuntime, PollEventLoopOptions, RuntimeOptions};
 use parking_lot::RwLock;
@@ -192,126 +193,238 @@ impl V8SkillInstance {
             // Extract tool definitions
             extract_tools(&mut runtime, &state);
 
-            // Call init()
-            if let Err(e) = call_lifecycle_fn_sync(&mut runtime, "init") {
-                let mut s = state.write();
-                s.status = SkillStatus::Error;
-                s.error = Some(format!("init() failed: {e}"));
-                log::error!("[skill:{}] init() failed: {e}", config.skill_id);
-                return;
-            }
+            // Create a tokio runtime for this thread FIRST - all async ops must run inside it
+            // This is critical because deno_unsync requires CurrentThread runtime for async ops
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime");
 
-            // Call start()
-            if let Err(e) = call_lifecycle_fn_sync(&mut runtime, "start") {
-                let mut s = state.write();
-                s.status = SkillStatus::Error;
-                s.error = Some(format!("start() failed: {e}"));
-                log::error!("[skill:{}] start() failed: {e}", config.skill_id);
-                return;
-            }
-
-            // Mark as running
-            state.write().status = SkillStatus::Running;
-            log::info!("[skill:{}] Running (V8)", config.skill_id);
-
-            // Message loop - use blocking_recv since we're on a dedicated thread
-            while let Some(msg) = rx.blocking_recv() {
-                match msg {
-                    SkillMessage::CallTool {
-                        tool_name,
-                        arguments,
-                        reply,
-                    } => {
-                        let result = handle_tool_call_sync(&mut runtime, &tool_name, arguments);
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::ServerEvent { event, data } => {
-                        let _ = handle_server_event_sync(&mut runtime, &event, data);
-                    }
-                    SkillMessage::CronTrigger { schedule_id } => {
-                        let _ = handle_cron_trigger_sync(&mut runtime, &schedule_id);
-                    }
-                    SkillMessage::Stop { reply } => {
-                        let _ = call_lifecycle_fn_sync(&mut runtime, "stop");
-                        state.write().status = SkillStatus::Stopped;
-                        log::info!("[skill:{}] Stopped", config.skill_id);
-                        let _ = reply.send(());
-                        break;
-                    }
-                    SkillMessage::SetupStart { reply } => {
-                        let result = handle_js_call_sync(&mut runtime, "onSetupStart", "{}");
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::SetupSubmit {
-                        step_id,
-                        values,
-                        reply,
-                    } => {
-                        let args = serde_json::json!({
-                            "stepId": step_id,
-                            "values": values,
-                        });
-                        let result =
-                            handle_js_call_sync(&mut runtime, "onSetupSubmit", &args.to_string());
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::SetupCancel { reply } => {
-                        let result = handle_js_void_call_sync(&mut runtime, "onSetupCancel", "{}");
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::ListOptions { reply } => {
-                        let result = handle_js_call_sync(&mut runtime, "onListOptions", "{}");
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::SetOption { name, value, reply } => {
-                        let args = serde_json::json!({
-                            "name": name,
-                            "value": value,
-                        });
-                        let result =
-                            handle_js_void_call_sync(&mut runtime, "onSetOption", &args.to_string());
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::SessionStart { session_id, reply } => {
-                        let args = serde_json::json!({ "sessionId": session_id });
-                        let result =
-                            handle_js_void_call_sync(&mut runtime, "onSessionStart", &args.to_string());
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::SessionEnd { session_id, reply } => {
-                        let args = serde_json::json!({ "sessionId": session_id });
-                        let result =
-                            handle_js_void_call_sync(&mut runtime, "onSessionEnd", &args.to_string());
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::Tick { reply } => {
-                        let result = handle_js_void_call_sync(&mut runtime, "onTick", "{}");
-                        let _ = reply.send(result);
-                    }
-                    SkillMessage::Rpc {
-                        method,
-                        params,
-                        reply,
-                    } => {
-                        let args = serde_json::json!({
-                            "method": method,
-                            "params": params,
-                        });
-                        let result =
-                            handle_js_call_sync(&mut runtime, "onRpc", &args.to_string());
-                        let _ = reply.send(result);
-                    }
+            // Run the entire lifecycle inside the CurrentThread runtime
+            rt.block_on(async {
+                // Call init()
+                if let Err(e) = call_lifecycle_fn_async(&mut runtime, "init").await {
+                    let mut s = state.write();
+                    s.status = SkillStatus::Error;
+                    s.error = Some(format!("init() failed: {e}"));
+                    log::error!("[skill:{}] init() failed: {e}", config.skill_id);
+                    return;
                 }
-            }
+
+                // Call start()
+                if let Err(e) = call_lifecycle_fn_async(&mut runtime, "start").await {
+                    let mut s = state.write();
+                    s.status = SkillStatus::Error;
+                    s.error = Some(format!("start() failed: {e}"));
+                    log::error!("[skill:{}] start() failed: {e}", config.skill_id);
+                    return;
+                }
+
+                // Mark as running
+                state.write().status = SkillStatus::Running;
+                log::info!("[skill:{}] Running (V8)", config.skill_id);
+
+                // Run the event loop
+                run_event_loop(&mut runtime, &mut rx, &state, &config.skill_id).await;
+            });
         })
     }
 }
 
-/// Extract tool definitions from globalThis.tools.
+// ============================================================================
+// Event Loop
+// ============================================================================
+
+/// The main event loop that drives the V8 runtime.
+/// This continuously:
+/// 1. Polls for ready timers and fires their callbacks
+/// 2. Checks for incoming messages (non-blocking)
+/// 3. Runs the V8 event loop for promises/async ops
+/// 4. Sleeps efficiently when idle
+async fn run_event_loop(
+    runtime: &mut JsRuntime,
+    rx: &mut mpsc::Receiver<SkillMessage>,
+    state: &Arc<RwLock<SkillState>>,
+    skill_id: &str,
+) {
+    // Maximum sleep duration when no timers are pending
+    const MAX_IDLE_SLEEP: Duration = Duration::from_millis(100);
+    // Minimum sleep to prevent busy-spinning
+    const MIN_SLEEP: Duration = Duration::from_millis(1);
+
+    loop {
+        // 1. Poll and fire ready timers
+        let ready_timers = {
+            let op_state = runtime.op_state();
+            let mut state_ref = op_state.borrow_mut();
+            let (ready, _next) = ops::poll_timers(&mut state_ref);
+            ready
+        };
+
+        // Fire timer callbacks in JavaScript
+        for timer_id in ready_timers {
+            fire_timer_callback(runtime, timer_id);
+        }
+
+        // 2. Check for incoming messages (non-blocking)
+        match rx.try_recv() {
+            Ok(msg) => {
+                let should_stop = handle_message(runtime, msg, state, skill_id).await;
+                if should_stop {
+                    break;
+                }
+            }
+            Err(mpsc::error::TryRecvError::Empty) => {
+                // No message - that's fine
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                // Channel closed, exit
+                log::info!("[skill:{}] Message channel disconnected, stopping", skill_id);
+                break;
+            }
+        }
+
+        // 3. Run the V8 event loop (processes promises, async ops, etc.)
+        // Use poll mode - returns immediately if nothing to do
+        let poll_result = runtime
+            .run_event_loop(PollEventLoopOptions {
+                wait_for_inspector: false,
+                pump_v8_message_loop: true,
+            })
+            .await;
+
+        if let Err(e) = poll_result {
+            log::error!("[skill:{}] Event loop error: {}", skill_id, e);
+            // Don't break - try to continue
+        }
+
+        // 4. Calculate sleep duration based on next timer
+        let sleep_duration = {
+            let op_state = runtime.op_state();
+            let mut state_ref = op_state.borrow_mut();
+            let (_, next_timer) = ops::poll_timers(&mut state_ref);
+            match next_timer {
+                Some(d) if d < MIN_SLEEP => MIN_SLEEP,
+                Some(d) if d > MAX_IDLE_SLEEP => MAX_IDLE_SLEEP,
+                Some(d) => d,
+                None => MAX_IDLE_SLEEP,
+            }
+        };
+
+        // Sleep efficiently - this yields the thread when no work is needed
+        tokio::time::sleep(sleep_duration).await;
+    }
+}
+
+/// Fire a timer callback in JavaScript.
+fn fire_timer_callback(runtime: &mut JsRuntime, timer_id: u32) {
+    let code = format!("globalThis.__handleTimer({});", timer_id);
+    if let Err(e) = runtime.execute_script("<timer-callback>", code) {
+        log::error!("[timer] Callback for timer {} failed: {}", timer_id, e);
+    }
+}
+
+/// Handle a single message from the channel.
+/// Returns true if the skill should stop.
+async fn handle_message(
+    runtime: &mut JsRuntime,
+    msg: SkillMessage,
+    state: &Arc<RwLock<SkillState>>,
+    skill_id: &str,
+) -> bool {
+    match msg {
+        SkillMessage::CallTool {
+            tool_name,
+            arguments,
+            reply,
+        } => {
+            let result = handle_tool_call_sync(runtime, &tool_name, arguments);
+            let _ = reply.send(result);
+        }
+        SkillMessage::ServerEvent { event, data } => {
+            let _ = handle_server_event_sync(runtime, &event, data);
+        }
+        SkillMessage::CronTrigger { schedule_id } => {
+            let _ = handle_cron_trigger_sync(runtime, &schedule_id);
+        }
+        SkillMessage::Stop { reply } => {
+            let _ = call_lifecycle_fn_sync(runtime, "stop");
+            state.write().status = SkillStatus::Stopped;
+            log::info!("[skill:{}] Stopped", skill_id);
+            let _ = reply.send(());
+            return true; // Signal to stop
+        }
+        SkillMessage::SetupStart { reply } => {
+            let result = handle_js_call_sync(runtime, "onSetupStart", "{}");
+            let _ = reply.send(result);
+        }
+        SkillMessage::SetupSubmit {
+            step_id,
+            values,
+            reply,
+        } => {
+            let args = serde_json::json!({
+                "stepId": step_id,
+                "values": values,
+            });
+            let result = handle_js_call_sync(runtime, "onSetupSubmit", &args.to_string());
+            let _ = reply.send(result);
+        }
+        SkillMessage::SetupCancel { reply } => {
+            let result = handle_js_void_call_sync(runtime, "onSetupCancel", "{}");
+            let _ = reply.send(result);
+        }
+        SkillMessage::ListOptions { reply } => {
+            let result = handle_js_call_sync(runtime, "onListOptions", "{}");
+            let _ = reply.send(result);
+        }
+        SkillMessage::SetOption { name, value, reply } => {
+            let args = serde_json::json!({
+                "name": name,
+                "value": value,
+            });
+            let result = handle_js_void_call_sync(runtime, "onSetOption", &args.to_string());
+            let _ = reply.send(result);
+        }
+        SkillMessage::SessionStart { session_id, reply } => {
+            let args = serde_json::json!({ "sessionId": session_id });
+            let result = handle_js_void_call_sync(runtime, "onSessionStart", &args.to_string());
+            let _ = reply.send(result);
+        }
+        SkillMessage::SessionEnd { session_id, reply } => {
+            let args = serde_json::json!({ "sessionId": session_id });
+            let result = handle_js_void_call_sync(runtime, "onSessionEnd", &args.to_string());
+            let _ = reply.send(result);
+        }
+        SkillMessage::Tick { reply } => {
+            let result = handle_js_void_call_sync(runtime, "onTick", "{}");
+            let _ = reply.send(result);
+        }
+        SkillMessage::Rpc {
+            method,
+            params,
+            reply,
+        } => {
+            let args = serde_json::json!({
+                "method": method,
+                "params": params,
+            });
+            let result = handle_js_call_sync(runtime, "onRpc", &args.to_string());
+            let _ = reply.send(result);
+        }
+    }
+    false // Don't stop
+}
+
+/// Extract tool definitions from skill.tools (supports both globalThis.__skill.default and globalThis.tools).
 fn extract_tools(runtime: &mut JsRuntime, state: &Arc<RwLock<SkillState>>) {
     let code = r#"
         (function() {
-            var tools = globalThis.tools || [];
+            // Try to get skill from bundled export first, then fall back to globalThis.tools
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || null);
+            var tools = (skill && skill.tools) || globalThis.tools || [];
             return JSON.stringify(tools.map(function(t) {
                 return {
                     name: t.name || "",
@@ -335,11 +448,51 @@ fn extract_tools(runtime: &mut JsRuntime, state: &Arc<RwLock<SkillState>>) {
     }
 }
 
-/// Call a global lifecycle function synchronously.
+/// Call a lifecycle function on the skill object asynchronously.
+/// This version runs inside the skill's CurrentThread runtime - no nested runtime creation.
+/// Looks for the skill at globalThis.__skill.default first, then falls back to globalThis.
+///
+/// Note: This does NOT wait for the event loop to complete, because lifecycle functions
+/// may start async operations (like update loops) that run indefinitely. The main event
+/// loop will process pending async work after init/start complete.
+async fn call_lifecycle_fn_async(runtime: &mut JsRuntime, name: &str) -> Result<(), String> {
+    let code = format!(
+        r#"(function() {{
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || globalThis);
+            if (typeof skill.{name} === 'function') {{
+                skill.{name}();
+            }} else if (typeof globalThis.{name} === 'function') {{
+                globalThis.{name}();
+            }}
+        }})()"#
+    );
+
+    runtime
+        .execute_script("<lifecycle>", code)
+        .map_err(|e| format!("{name}() failed: {e}"))?;
+
+    // Don't wait for event loop here - the main event loop will handle pending async work.
+    // This is important because lifecycle functions may start long-running async operations
+    // (like TDLib update loops) that would block init/start from completing.
+
+    Ok(())
+}
+
+/// Call a lifecycle function on the skill object synchronously.
+/// WARNING: This creates its own tokio runtime - only use when NOT inside an async context.
+/// Looks for the skill at globalThis.__skill.default first, then falls back to globalThis.
+#[allow(dead_code)]
 fn call_lifecycle_fn_sync(runtime: &mut JsRuntime, name: &str) -> Result<(), String> {
     let code = format!(
         r#"(function() {{
-            if (typeof globalThis.{name} === 'function') {{
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || globalThis);
+            if (typeof skill.{name} === 'function') {{
+                skill.{name}();
+            }} else if (typeof globalThis.{name} === 'function') {{
                 globalThis.{name}();
             }}
         }})()"#
@@ -365,7 +518,8 @@ fn call_lifecycle_fn_sync(runtime: &mut JsRuntime, name: &str) -> Result<(), Str
     Ok(())
 }
 
-/// Handle a tool call synchronously.
+/// Handle a tool call synchronously (no async ops waited).
+/// This is used when we just need to invoke the tool and get immediate result.
 fn handle_tool_call_sync(
     runtime: &mut JsRuntime,
     tool_name: &str,
@@ -376,7 +530,10 @@ fn handle_tool_call_sync(
 
     let code = format!(
         r#"(function() {{
-            var tools = globalThis.tools || [];
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || null);
+            var tools = (skill && skill.tools) || globalThis.tools || [];
             for (var i = 0; i < tools.length; i++) {{
                 if (tools[i].name === "{}") {{
                     var args = {};
@@ -398,17 +555,8 @@ fn handle_tool_call_sync(
         .execute_script("<tool-call>", code)
         .map_err(|e| format!("Tool execution failed: {e}"))?;
 
-    // Run event loop for any pending ops
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("Failed to create runtime: {e}"))?;
-
-    let _ = rt.block_on(async {
-        runtime
-            .run_event_loop(PollEventLoopOptions::default())
-            .await
-    });
+    // Note: We don't run the event loop here because we're already inside
+    // the skill's event loop. Pending async ops will be handled by the main loop.
 
     let scope = &mut runtime.handle_scope();
     let local = v8::Local::new(scope, result);
@@ -435,10 +583,17 @@ fn handle_server_event_sync(
 
     let code = format!(
         r#"(function() {{
-            if (typeof globalThis.onServerEvent === 'function') {{
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || globalThis);
+            if (typeof skill.onServerEvent === 'function') {{
+                skill.onServerEvent("{}", {});
+            }} else if (typeof globalThis.onServerEvent === 'function') {{
                 globalThis.onServerEvent("{}", {});
             }}
         }})()"#,
+        event.replace('"', r#"\""#),
+        data_str,
         event.replace('"', r#"\""#),
         data_str,
     );
@@ -454,10 +609,16 @@ fn handle_server_event_sync(
 fn handle_cron_trigger_sync(runtime: &mut JsRuntime, schedule_id: &str) -> Result<(), String> {
     let code = format!(
         r#"(function() {{
-            if (typeof globalThis.onCronTrigger === 'function') {{
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || globalThis);
+            if (typeof skill.onCronTrigger === 'function') {{
+                skill.onCronTrigger("{}");
+            }} else if (typeof globalThis.onCronTrigger === 'function') {{
                 globalThis.onCronTrigger("{}");
             }}
         }})()"#,
+        schedule_id.replace('"', r#"\""#),
         schedule_id.replace('"', r#"\""#),
     );
 
@@ -468,7 +629,7 @@ fn handle_cron_trigger_sync(runtime: &mut JsRuntime, schedule_id: &str) -> Resul
     Ok(())
 }
 
-/// Call a global JS function that returns a JSON value synchronously.
+/// Call a JS function on the skill object that returns a JSON value synchronously.
 fn handle_js_call_sync(
     runtime: &mut JsRuntime,
     fn_name: &str,
@@ -476,9 +637,13 @@ fn handle_js_call_sync(
 ) -> Result<serde_json::Value, String> {
     let code = format!(
         r#"(function() {{
-            if (typeof globalThis.{fn_name} === 'function') {{
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || globalThis);
+            var fn = skill.{fn_name} || globalThis.{fn_name};
+            if (typeof fn === 'function') {{
                 var args = {args_json};
-                var result = globalThis.{fn_name}(args);
+                var result = fn.call(skill, args);
                 return JSON.stringify(result);
             }}
             return "null";
@@ -502,7 +667,7 @@ fn handle_js_call_sync(
         .map_err(|e| format!("{fn_name}() returned invalid JSON: {e}"))
 }
 
-/// Call a global JS function that returns void synchronously.
+/// Call a JS function on the skill object that returns void synchronously.
 fn handle_js_void_call_sync(
     runtime: &mut JsRuntime,
     fn_name: &str,
@@ -510,9 +675,13 @@ fn handle_js_void_call_sync(
 ) -> Result<(), String> {
     let code = format!(
         r#"(function() {{
-            if (typeof globalThis.{fn_name} === 'function') {{
+            var skill = globalThis.__skill && globalThis.__skill.default
+                ? globalThis.__skill.default
+                : (globalThis.__skill || globalThis);
+            var fn = skill.{fn_name} || globalThis.{fn_name};
+            if (typeof fn === 'function') {{
                 var args = {args_json};
-                globalThis.{fn_name}(args);
+                fn.call(skill, args);
             }}
         }})()"#
     );

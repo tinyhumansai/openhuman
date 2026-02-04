@@ -12,6 +12,7 @@ import { type ReactNode, useEffect, useRef } from 'react';
 import { skillManager } from '../lib/skills/manager';
 import type { SkillManifest } from '../lib/skills/types';
 import { useAppSelector } from '../store/hooks';
+import { DEV_AUTO_LOAD_SKILL } from '../utils/config';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,9 +53,30 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
     initRef.current = true;
 
     const registerAndStart = async (manifests: SkillManifest[]) => {
+      // Register all discovered skills
       for (const manifest of manifests) {
         skillManager.registerSkill(manifest);
       }
+
+      // Auto-start skill specified in DEV_AUTO_LOAD_SKILL env variable (dev only)
+      if (DEV_AUTO_LOAD_SKILL) {
+        const autoLoadManifest = manifests.find(m => m.id === DEV_AUTO_LOAD_SKILL);
+        if (autoLoadManifest) {
+          console.log(`[SkillProvider] Auto-loading skill from env: ${DEV_AUTO_LOAD_SKILL}`);
+          try {
+            await skillManager.startSkill(autoLoadManifest);
+            console.log(`[SkillProvider] Successfully auto-loaded skill: ${DEV_AUTO_LOAD_SKILL}`);
+          } catch (err) {
+            console.error(`[SkillProvider] Failed to auto-load skill ${DEV_AUTO_LOAD_SKILL}:`, err);
+          }
+        } else {
+          console.warn(
+            `[SkillProvider] DEV_AUTO_LOAD_SKILL="${DEV_AUTO_LOAD_SKILL}" specified but skill not found in discovered skills`
+          );
+        }
+      }
+
+      // Auto-start skills with completed setup
       for (const manifest of manifests) {
         const existing = skillsState[manifest.id];
         if (existing?.setupComplete) {

@@ -35,6 +35,98 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+// Macro to define common handlers shared across all platforms
+macro_rules! common_handlers {
+    () => {
+        // Demo
+        greet,
+        // Auth commands
+        get_auth_state,
+        get_session_token,
+        get_current_user,
+        is_authenticated,
+        logout,
+        store_session,
+        // Socket commands
+        socket_connect,
+        socket_disconnect,
+        get_socket_state,
+        is_socket_connected,
+        report_socket_connected,
+        report_socket_disconnected,
+        report_socket_error,
+        update_socket_status,
+        // AI encryption commands
+        ai_init_encryption,
+        ai_encrypt,
+        ai_decrypt,
+        // AI memory filesystem commands
+        ai_memory_init,
+        ai_memory_upsert_file,
+        ai_memory_get_file,
+        ai_memory_upsert_chunk,
+        ai_memory_delete_chunks_by_path,
+        ai_memory_fts_search,
+        ai_memory_get_chunks,
+        ai_memory_get_all_embeddings,
+        ai_memory_cache_embedding,
+        ai_memory_get_cached_embedding,
+        ai_memory_set_meta,
+        ai_memory_get_meta,
+        // AI session commands
+        ai_sessions_init,
+        ai_sessions_load_index,
+        ai_sessions_update_index,
+        ai_sessions_append_transcript,
+        ai_sessions_read_transcript,
+        ai_sessions_delete,
+        ai_sessions_list,
+        ai_read_memory_file,
+        ai_write_memory_file,
+        ai_list_memory_files,
+        // V8 runtime commands
+        runtime_discover_skills,
+        runtime_list_skills,
+        runtime_start_skill,
+        runtime_stop_skill,
+        runtime_get_skill_state,
+        runtime_call_tool,
+        runtime_all_tools,
+        runtime_broadcast_event,
+        // V8 runtime enable/disable + KV commands
+        runtime_enable_skill,
+        runtime_disable_skill,
+        runtime_is_skill_enabled,
+        runtime_get_skill_preferences,
+        runtime_skill_kv_get,
+        runtime_skill_kv_set,
+        // V8 runtime JSON-RPC + data commands
+        runtime_rpc,
+        runtime_skill_data_read,
+        runtime_skill_data_write,
+        runtime_skill_data_dir,
+        // Socket.io commands (Rust-native persistent connection)
+        runtime_socket_connect,
+        runtime_socket_disconnect,
+        runtime_socket_state,
+        runtime_socket_emit,
+    };
+}
+
+// Macro to define desktop-only window handlers
+macro_rules! desktop_window_handlers {
+    () => {
+        show_window,
+        hide_window,
+        toggle_window,
+        is_window_visible,
+        minimize_window,
+        maximize_window,
+        close_window,
+        set_window_title,
+    };
+}
+
 // Helper function to show the window (used by tray and macOS reopen)
 #[cfg(desktop)]
 fn show_main_window(app: &AppHandle) {
@@ -116,7 +208,14 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Load .env file (silently ignore if missing — production won't have one)
-    let _ = dotenvy::dotenv();
+    // Try current directory first, then parent (for when running from src-tauri)
+    if dotenvy::dotenv().is_err() {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Some(parent) = cwd.parent() {
+                let _ = dotenvy::from_path(parent.join(".env"));
+            }
+        }
+    }
 
     // Initialize platform-appropriate logger
     #[cfg(target_os = "android")]
@@ -261,21 +360,19 @@ pub fn run() {
             Ok(())
         })
         // Register all commands
-        // Note: Window commands are desktop-only (show/hide/minimize/etc. not available on mobile)
+        // Common handlers are defined via macros above, conditionally include desktop window handlers
         .invoke_handler({
             #[cfg(desktop)]
             {
                 tauri::generate_handler![
-                    // Demo
+                    // Common handlers (expanded from common_handlers! macro)
                     greet,
-                    // Auth commands
                     get_auth_state,
                     get_session_token,
                     get_current_user,
                     is_authenticated,
                     logout,
                     store_session,
-                    // Socket commands
                     socket_connect,
                     socket_disconnect,
                     get_socket_state,
@@ -284,7 +381,7 @@ pub fn run() {
                     report_socket_disconnected,
                     report_socket_error,
                     update_socket_status,
-                    // Window commands (desktop only)
+                    // Desktop-only window handlers (expanded from desktop_window_handlers! macro)
                     show_window,
                     hide_window,
                     toggle_window,
@@ -347,21 +444,25 @@ pub fn run() {
                     runtime_socket_disconnect,
                     runtime_socket_state,
                     runtime_socket_emit,
+                    // TDLib commands (native Telegram library)
+                    tdlib_create_client,
+                    tdlib_send,
+                    tdlib_receive,
+                    tdlib_destroy,
+                    tdlib_is_available,
                 ]
             }
             #[cfg(not(desktop))]
             {
                 tauri::generate_handler![
-                    // Demo
+                    // Common handlers (expanded from common_handlers! macro)
                     greet,
-                    // Auth commands
                     get_auth_state,
                     get_session_token,
                     get_current_user,
                     is_authenticated,
                     logout,
                     store_session,
-                    // Socket commands
                     socket_connect,
                     socket_disconnect,
                     get_socket_state,
@@ -424,6 +525,12 @@ pub fn run() {
                     runtime_socket_disconnect,
                     runtime_socket_state,
                     runtime_socket_emit,
+                    // TDLib commands (native Telegram library)
+                    tdlib_create_client,
+                    tdlib_send,
+                    tdlib_receive,
+                    tdlib_destroy,
+                    tdlib_is_available,
                 ]
             }
         })

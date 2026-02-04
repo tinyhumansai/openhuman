@@ -76,6 +76,59 @@ globalThis.__handleTimer = function (id) {
 };
 
 // ============================================================================
+// AbortController / AbortSignal Polyfill
+// ============================================================================
+class AbortSignal {
+  constructor() {
+    this.aborted = false;
+    this.reason = undefined;
+    this._listeners = [];
+  }
+
+  addEventListener(type, listener) {
+    if (type === 'abort') {
+      this._listeners.push(listener);
+    }
+  }
+
+  removeEventListener(type, listener) {
+    if (type === 'abort') {
+      const idx = this._listeners.indexOf(listener);
+      if (idx >= 0) this._listeners.splice(idx, 1);
+    }
+  }
+
+  throwIfAborted() {
+    if (this.aborted) {
+      throw this.reason || new Error('Aborted');
+    }
+  }
+}
+
+class AbortController {
+  constructor() {
+    this.signal = new AbortSignal();
+  }
+
+  abort(reason) {
+    if (!this.signal.aborted) {
+      this.signal.aborted = true;
+      this.signal.reason = reason || new Error('Aborted');
+      for (const listener of this.signal._listeners) {
+        try {
+          listener({ type: 'abort', target: this.signal });
+        } catch (e) {
+          console.error('AbortController listener error:', e);
+        }
+      }
+    }
+  }
+}
+
+globalThis.AbortController = AbortController;
+globalThis.AbortSignal = AbortSignal;
+
+// ============================================================================
 // Fetch API
 // ============================================================================
 globalThis.fetch = async function (url, options = {}) {
@@ -799,6 +852,63 @@ globalThis.skills = {
   callTool: function (skillId, toolName, args) {
     console.warn('[skills] callTool not implemented in V8 runtime yet');
     return { error: 'Not implemented' };
+  },
+};
+
+// ============================================================================
+// TDLib Bridge API (telegram skill only)
+// ============================================================================
+// Provides native TDLib access for the telegram skill.
+// This is only available on desktop - Android uses Tauri invoke() instead.
+
+globalThis.tdlib = {
+  /**
+   * Check if TDLib ops are available.
+   * @returns {boolean} True on desktop, false on mobile/web.
+   */
+  isAvailable: function () {
+    try {
+      return typeof Deno?.core?.ops?.op_tdlib_is_available === 'function'
+        ? Deno.core.ops.op_tdlib_is_available()
+        : false;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  /**
+   * Create a TDLib client with the given data directory.
+   * @param {string} dataDir - Path to store TDLib data files.
+   * @returns {Promise<number>} Client ID (always 1 for singleton).
+   */
+  createClient: async function (dataDir) {
+    return await Deno.core.ops.op_tdlib_create_client(dataDir);
+  },
+
+  /**
+   * Send a TDLib request and wait for the response.
+   * @param {object} request - TDLib API request object with @type field.
+   * @returns {Promise<object>} TDLib response object.
+   */
+  send: async function (request) {
+    return await Deno.core.ops.op_tdlib_send(request);
+  },
+
+  /**
+   * Receive the next TDLib update (with timeout).
+   * @param {number} [timeoutMs=1000] - Timeout in milliseconds.
+   * @returns {Promise<object|null>} Update object or null if timeout.
+   */
+  receive: async function (timeoutMs = 1000) {
+    return await Deno.core.ops.op_tdlib_receive(timeoutMs);
+  },
+
+  /**
+   * Destroy the TDLib client and clean up resources.
+   * @returns {Promise<void>}
+   */
+  destroy: async function () {
+    return await Deno.core.ops.op_tdlib_destroy();
   },
 };
 

@@ -108,12 +108,6 @@ impl RuntimeEngine {
     /// Discover all JavaScript skills from the skills directory.
     pub async fn discover_skills(&self) -> Result<Vec<SkillManifest>, String> {
         let skills_dir = self.get_skills_source_dir()?;
-        log::info!(
-            "[runtime] Discovering skills in: {:?} (exists={})",
-            skills_dir,
-            skills_dir.exists()
-        );
-
         if !skills_dir.exists() {
             return Ok(Vec::new());
         }
@@ -125,10 +119,6 @@ impl RuntimeEngine {
 
         while let Ok(Some(entry)) = entries.next_entry().await {
             let path = entry.path();
-            log::info!(
-                "[runtime] Found entry: {:?}",
-                path
-            );
             if path.is_dir() {
                 let manifest_path = path.join("manifest.json");
                 if manifest_path.exists() {
@@ -202,7 +192,12 @@ impl RuntimeEngine {
         let data_dir = self.skills_data_dir.join(skill_id);
 
         // Create the V8 skill instance
+        log::info!("[runtime] Creating V8 skill instance for '{}'", skill_id);
+        log::info!("[runtime] Config: {:?}", config);
+        log::info!("[runtime] Skill dir: {:?}", skill_dir);
+        log::info!("[runtime] Data dir: {:?}", data_dir);
         let (instance, rx) = V8SkillInstance::new(config.clone(), skill_dir, data_dir.clone());
+        log::info!("[runtime] V8 skill instance created for '{}'", skill_id);
 
         // Bundle bridge dependencies
         let deps = BridgeDeps {
@@ -422,6 +417,7 @@ impl RuntimeEngine {
             "skill/load" => Ok(serde_json::json!({ "ok": true })),
 
             "setup/start" => {
+                log::info!("[runtime] setup/start for '{}'", skill_id);
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 self.registry
                     .send_message(skill_id, SkillMessage::SetupStart { reply: tx })?;
