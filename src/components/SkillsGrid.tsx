@@ -276,6 +276,7 @@ function SkillActionButton({
 export default function SkillsGrid() {
   const [skillsList, setSkillsList] = useState<SkillListEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
   const [setupModalOpen, setSetupModalOpen] = useState(false);
   const [managementModalOpen, setManagementModalOpen] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
@@ -288,6 +289,19 @@ export default function SkillsGrid() {
   const skillStates = useAppSelector(state => state.skills.skillStates);
 
   useEffect(() => {
+    // Detect mobile platform
+    const detectMobile = async () => {
+      try {
+        const { platform } = await import('@tauri-apps/plugin-os');
+        const currentPlatform = await platform();
+        setIsMobile(currentPlatform === 'android' || currentPlatform === 'ios');
+      } catch {
+        // If we can't detect platform, assume desktop
+        setIsMobile(false);
+      }
+    };
+    detectMobile();
+
     // Load skills from the V8 runtime engine.
     const loadSkills = async () => {
       try {
@@ -355,7 +369,38 @@ export default function SkillsGrid() {
     });
   }, [skillsList, skillsState, skillStates]);
 
-  // If loading or no skills, don't render
+  // Show mobile-only message on mobile platforms
+  if (!loading && isMobile) {
+    return (
+      <div className="animate-fade-up mt-4 mb-8 relative">
+        <h3 className="text-sm font-semibold text-white mb-3 px-1 opacity-80 text-center">
+          Skills
+        </h3>
+        <div className="glass rounded-xl p-4 text-center">
+          <div className="flex flex-col items-center gap-2">
+            <svg
+              className="w-8 h-8 text-stone-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+              />
+            </svg>
+            <p className="text-sm text-stone-400">Skills are available on desktop only</p>
+            <p className="text-xs text-stone-500">
+              Use the desktop app to configure and run skills
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If loading or no skills on desktop, don't render
   if (loading || skillsList.length === 0) {
     return null;
   }

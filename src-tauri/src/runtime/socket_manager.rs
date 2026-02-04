@@ -8,19 +8,27 @@
 //! - Non-MCP server events forwarded to running skills AND to the frontend
 //! - Connection state emitted to the frontend via Tauri events
 //! - Automatic reconnection with exponential backoff
+//!
+//! Note: On Android, the Rust Socket.io client is not available due to
+//! native-tls/OpenSSL build complexity. The frontend uses its own Socket.io
+//! connection instead.
 
 use std::sync::Arc;
 
-use futures_util::FutureExt;
 use parking_lot::RwLock;
-use rust_socketio::{
-    asynchronous::{Client, ClientBuilder},
-    Event, Payload,
-};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::models::socket::{ConnectionStatus, SocketState};
+
+// rust_socketio only available on non-Android platforms
+#[cfg(not(target_os = "android"))]
+use futures_util::FutureExt;
+#[cfg(not(target_os = "android"))]
+use rust_socketio::{
+    asynchronous::{Client, ClientBuilder},
+    Event, Payload,
+};
 
 // SkillRegistry only available on desktop (V8/deno_core required)
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

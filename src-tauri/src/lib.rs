@@ -236,7 +236,8 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         // Plugins
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_deep_link::init());
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_os::init());
 
     // Add desktop-only plugins (autostart, notification)
     #[cfg(desktop)]
@@ -341,20 +342,7 @@ pub fn run() {
 
             #[cfg(target_os = "android")]
             {
-                log::info!("[runtime] V8 runtime disabled on Android");
-
-                // Initialize local model service for Android
-                let data_dir = app
-                    .path()
-                    .app_data_dir()
-                    .unwrap_or_else(|_| {
-                        dirs::home_dir()
-                            .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join(".alphahuman")
-                    });
-                let model_dir = data_dir.join("models");
-                services::llama::LLAMA_MANAGER.set_data_dir(model_dir);
-                log::info!("[runtime] Local model service initialized for Android");
+                log::info!("[runtime] V8 runtime and local model disabled on Android");
             }
 
             #[cfg(target_os = "ios")]

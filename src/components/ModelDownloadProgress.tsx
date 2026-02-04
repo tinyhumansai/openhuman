@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 import { useModelStatus } from '../hooks/useModelStatus';
 
 interface ModelDownloadProgressProps {
@@ -11,6 +13,50 @@ const ModelDownloadProgress = ({
 }: ModelDownloadProgressProps) => {
   const { isAvailable, isLoaded, isLoading, downloadProgress, error, ensureLoaded } =
     useModelStatus();
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    // Detect mobile platform
+    const detectMobile = async () => {
+      try {
+        const { platform } = await import('@tauri-apps/plugin-os');
+        const currentPlatform = await platform();
+        setIsMobile(currentPlatform === 'android' || currentPlatform === 'ios');
+      } catch {
+        // If we can't detect platform, assume desktop
+        setIsMobile(false);
+      }
+    };
+    detectMobile();
+  }, []);
+
+  // Show mobile-only message on mobile platforms
+  if (isMobile) {
+    return (
+      <div className={`glass rounded-2xl p-3 shadow-large animate-fade-up ${className}`}>
+        <div className="flex items-center gap-3">
+          <div className="flex-shrink-0">
+            <svg
+              className="w-5 h-5 text-stone-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+              />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <span className="font-medium text-sm">Local AI Model</span>
+            <p className="text-xs opacity-60">Available on desktop only</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Don't render if not available on this platform
   if (!isAvailable) {

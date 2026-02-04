@@ -51,14 +51,16 @@ fn default_top_p() -> f32 {
 }
 
 /// Check if the local model API is available on this platform.
+/// Note: Currently only available on desktop (Windows, macOS, Linux).
+/// Android/iOS support requires additional llama.cpp NDK configuration.
 #[tauri::command]
 pub fn model_is_available() -> bool {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         true
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         false
     }
@@ -67,7 +69,7 @@ pub fn model_is_available() -> bool {
 /// Get the current model status.
 #[tauri::command]
 pub fn model_get_status() -> ModelStatusResponse {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let status = crate::services::llama::LLAMA_MANAGER.get_status();
         ModelStatusResponse {
@@ -80,14 +82,14 @@ pub fn model_get_status() -> ModelStatusResponse {
         }
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         ModelStatusResponse {
             available: false,
             loaded: false,
             loading: false,
             download_progress: None,
-            error: Some("Model not available on iOS".to_string()),
+            error: Some("Model not available on mobile platforms".to_string()),
             model_path: None,
         }
     }
@@ -97,21 +99,21 @@ pub fn model_get_status() -> ModelStatusResponse {
 /// This is useful for preloading the model.
 #[tauri::command]
 pub async fn model_ensure_loaded() -> Result<(), String> {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         crate::services::llama::LLAMA_MANAGER.ensure_loaded().await
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        Err("Model not available on iOS".to_string())
+        Err("Model not available on mobile platforms".to_string())
     }
 }
 
 /// Generate text from a prompt.
 #[tauri::command]
 pub async fn model_generate(request: GenerateRequest) -> Result<String, String> {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         use crate::services::llama::GenerateConfig;
 
@@ -126,17 +128,17 @@ pub async fn model_generate(request: GenerateRequest) -> Result<String, String> 
             .await
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = request;
-        Err("Model not available on iOS".to_string())
+        Err("Model not available on mobile platforms".to_string())
     }
 }
 
 /// Summarize text using a built-in prompt.
 #[tauri::command]
 pub async fn model_summarize(text: String, max_tokens: Option<u32>) -> Result<String, String> {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let tokens = max_tokens.unwrap_or(500);
         crate::services::llama::LLAMA_MANAGER
@@ -144,24 +146,24 @@ pub async fn model_summarize(text: String, max_tokens: Option<u32>) -> Result<St
             .await
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = (text, max_tokens);
-        Err("Model not available on iOS".to_string())
+        Err("Model not available on mobile platforms".to_string())
     }
 }
 
 /// Unload the model from memory to free resources.
 #[tauri::command]
 pub fn model_unload() -> Result<(), String> {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         crate::services::llama::LLAMA_MANAGER.unload();
         Ok(())
     }
 
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        Err("Model not available on iOS".to_string())
+        Err("Model not available on mobile platforms".to_string())
     }
 }

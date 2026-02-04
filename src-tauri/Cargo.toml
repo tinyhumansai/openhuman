@@ -22,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2.0.0"
+tauri-plugin-os = "2"
 # tauri-plugin-autostart moved to desktop-only target section
 # tauri-plugin-notification moved to desktop-only target section
 # Serialization
@@ -74,12 +75,15 @@ chrono = { version = "0.4", features = ["serde"] }
 cron = "0.12"
 
 # Persistent Socket.io client (Rust-native, survives app backgrounding)
-rust_socketio = { version = "0.6", features = ["async"] }
+# Note: Using default native-tls on desktop, but we'll handle Android separately
 futures-util = "0.3"
 
+# Desktop/iOS use native-tls for Socket.io
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rust_socketio = { version = "0.6", features = ["async"] }
+
+# Android uses a simpler approach - no persistent Socket.io (use web socket from frontend)
 [target.'cfg(target_os = "android")'.dependencies]
-# Vendor OpenSSL for Android (rust_socketio requires native-tls which needs OpenSSL)
-openssl = { version = "0.10", features = ["vendored"] }
 # Android logging (routes Rust `log` crate to logcat)
 android_logger = "0.14"
 
@@ -92,15 +96,15 @@ tauri-plugin-notification = "2"
 deno_core = "0.314"
 # TDLib Rust bindings (desktop only - downloads prebuilt TDLib library)
 tdlib-rs = { version = "1.2", features = ["download-tdlib"] }
+# Local LLM inference - desktop only (llama.cpp requires native C++ compilation)
+# Disable default features (including openmp) to avoid cross-compilation issues
+# on macOS where Homebrew installs ARM64-only OpenMP libraries
+llama-cpp-2 = { version = "0.1", default-features = false }
+encoding_rs = "0.8"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.build-dependencies]
 # TDLib build configuration
 tdlib-rs = { version = "1.2", features = ["download-tdlib"] }
-
-# Local LLM inference - available on desktop and Android (not iOS)
-[target.'cfg(not(target_os = "ios"))'.dependencies]
-llama-cpp-2 = "0.1"
-encoding_rs = "0.8"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
