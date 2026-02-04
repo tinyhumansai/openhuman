@@ -36,15 +36,7 @@ jobs:
       - name: Install Tauri dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf python3
-
-      - name: Setup Python sidecar binary
-        run: |
-          TARGET=$(rustc --print host-tuple)
-          PYTHON_PATH=$(which python3)
-          SIDECAR_PATH="src-tauri/runtime-skill-python-${TARGET}"
-          ln -sf "${PYTHON_PATH}" "${SIDECAR_PATH}"
-          echo "Created symlink: ${SIDECAR_PATH} -> ${PYTHON_PATH}"
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Cache Cargo registry
         uses: actions/cache@v4

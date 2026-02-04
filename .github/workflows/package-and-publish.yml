@@ -199,32 +199,13 @@ jobs:
         if: matrix.settings.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf python3
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install OpenMP (macOS only)
         if: matrix.settings.platform == 'macos-latest'
         run: |
           brew install libomp
           echo "OpenMP installed for llama-cpp-sys build"
-
-      - name: Setup Python sidecar binary (Linux)
-        if: matrix.settings.platform == 'ubuntu-22.04'
-        run: |
-          TARGET=$(rustc --print host-tuple)
-          PYTHON_PATH=$(which python3)
-          SIDECAR_PATH="src-tauri/runtime-skill-python-${TARGET}"
-          ln -sf "${PYTHON_PATH}" "${SIDECAR_PATH}"
-          echo "Created symlink: ${SIDECAR_PATH} -> ${PYTHON_PATH}"
-
-      - name: Setup Python sidecar binary (macOS)
-        if: matrix.settings.platform == 'macos-latest'
-        run: |
-          # Extract target from args (e.g., "--target aarch64-apple-darwin" -> "aarch64-apple-darwin")
-          TARGET=$(echo "${{ matrix.settings.args }}" | grep -oE '(aarch64|x86_64)-apple-darwin' || rustc --print host-tuple)
-          PYTHON_PATH=$(which python3 || which python)
-          SIDECAR_PATH="src-tauri/runtime-skill-python-${TARGET}"
-          ln -sf "${PYTHON_PATH}" "${SIDECAR_PATH}"
-          echo "Created symlink: ${SIDECAR_PATH} -> ${PYTHON_PATH}"
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
