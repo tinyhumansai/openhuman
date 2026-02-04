@@ -30,14 +30,15 @@ export default function SkillSetupWizard({
 }: SkillSetupWizardProps) {
   const [state, setState] = useState<WizardState>({ phase: "loading" });
 
-
   // Start the skill (if not running) then start the setup flow on mount
   useEffect(() => {
     let cancelled = false;
 
     async function initSetup() {
       try {
+        console.log("[SkillSetupWizard] initSetup", skillId);
         const manifest = store.getState().skills.skills[skillId]?.manifest;
+        console.log("[SkillSetupWizard] manifest", manifest);
         if (!manifest) {
           if (!cancelled) {
             setState({
@@ -49,12 +50,17 @@ export default function SkillSetupWizard({
         }
 
         if (!skillManager.isSkillRunning(skillId)) {
+          console.log("[SkillSetupWizard] starting skill", skillId);
           await skillManager.startSkill(manifest);
+          console.log("[SkillSetupWizard] skill started", skillId);
         }
+
         if (cancelled) return;
 
         if (!skillManager.isSkillRunning(skillId)) {
+          console.log("[SkillSetupWizard] skill not running", skillId);
           const status = skillManager.getSkillStatus(skillId);
+          console.log("[SkillSetupWizard] status", status);
           const errMsg =
             status === "error"
               ? store.getState().skills.skills[skillId]?.error ?? "Skill failed to start"
@@ -62,7 +68,9 @@ export default function SkillSetupWizard({
           throw new Error(errMsg);
         }
 
+        console.log("[SkillSetupWizard] starting setup", skillId);
         const firstStep = await skillManager.startSetup(skillId);
+        console.log("[SkillSetupWizard] setup started", skillId);
         if (!cancelled) {
           setState({ phase: "step", step: firstStep });
         }
@@ -163,7 +171,6 @@ export default function SkillSetupWizard({
         </div>
       );
 
-
     case "step":
       return (
         <SetupFormRenderer
@@ -180,8 +187,8 @@ export default function SkillSetupWizard({
         <SetupFormRenderer
           step={state.step}
           loading={true}
-          onSubmit={() => {}}
-          onCancel={() => {}}
+          onSubmit={() => { }}
+          onCancel={() => { }}
         />
       );
 

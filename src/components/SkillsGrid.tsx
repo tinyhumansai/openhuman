@@ -4,6 +4,7 @@ import GoogleIcon from '../assets/icons/GoogleIcon';
 import NotionIcon from '../assets/icons/notion.svg';
 import TelegramIcon from '../assets/icons/telegram.svg';
 import { useSkillConnectionStatus } from '../lib/skills/hooks';
+import { skillManager } from '../lib/skills/manager';
 import type { SkillConnectionStatus, SkillHostConnectionState } from '../lib/skills/types';
 import { useAppSelector } from '../store/hooks';
 import SkillSetupModal from './skills/SkillSetupModal';
@@ -74,7 +75,20 @@ function SkillRow({ skillId, name, icon, onConnect }: SkillRowProps) {
         </div>
       </td>
       <td className="py-2.5 px-3 text-right">
-        <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.text}</span>
+        <div className="flex items-center justify-end gap-1.5">
+          <div
+            className={`w-1.5 h-1.5 rounded-full ${
+              connectionStatus === 'connected'
+                ? 'bg-sage-400'
+                : connectionStatus === 'connecting'
+                  ? 'bg-amber-400 animate-pulse'
+                  : connectionStatus === 'error'
+                    ? 'bg-coral-400'
+                    : 'bg-stone-600'
+            }`}
+          />
+          <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.text}</span>
+        </div>
       </td>
       <td className="py-2.5 px-3 w-8">
         <svg
@@ -87,23 +101,6 @@ function SkillRow({ skillId, name, icon, onConnect }: SkillRowProps) {
       </td>
     </tr>
   );
-}
-
-interface SkillCatalogEntry {
-  name: string;
-  description: string;
-  icon: string | null;
-  version: string;
-  tools: string[];
-  hooks: string[];
-  tickIntervalMinutes: number | null;
-  path: string;
-}
-
-interface SkillsCatalog {
-  generatedAt: string;
-  version: string;
-  skills: SkillCatalogEntry[];
 }
 
 interface SkillListEntry {
@@ -134,7 +131,10 @@ function deriveConnectionStatus(
   }
   const hostState = skillState as SkillHostConnectionState | undefined;
   if (!hostState) {
-    return lifecycleStatus === 'ready' ? 'connecting' : 'connecting';
+    if (setupComplete && lifecycleStatus === 'ready') {
+      return 'connected';
+    }
+    return 'connecting';
   }
   const connStatus = hostState.connection_status;
   const authStatus = hostState.auth_status;
@@ -167,9 +167,116 @@ const STATUS_PRIORITY: Record<SkillConnectionStatus, number> = {
   error: 7,
 };
 
+// Contextual action button for skills in the management modal
+function SkillActionButton({
+  skill,
+  connectionStatus,
+  onOpenModal,
+}: {
+  skill: SkillListEntry;
+  connectionStatus: SkillConnectionStatus;
+  onOpenModal: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+
+  const handleEnable = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLoading(true);
+    try {
+      await skillManager.startSkill({
+        id: skill.id,
+        name: skill.name,
+        version: '0.0.0',
+        description: skill.description,
+        runtime: 'v8',
+      });
+      // If skill has setup, the manager will set setup_required status
+      // and the grid will re-render with the "Setup" button
+      if (skill.hasSetup) {
+        onOpenModal();
+      }
+    } catch (err) {
+      console.error(`Failed to enable ${skill.id}:`, err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="px-4 py-1.5 text-xs font-medium text-stone-400 flex-shrink-0 ml-3">
+        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+          <circle
+            className="opacity-25"
+            cx="12"
+            cy="12"
+            r="10"
+            stroke="currentColor"
+            strokeWidth="4"
+          />
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+      </div>
+    );
+  }
+
+  // Offline / not started → Enable
+  if (connectionStatus === 'offline') {
+    return (
+      <button
+        onClick={handleEnable}
+        className="px-4 py-1.5 text-xs font-medium text-sage-300 bg-sage-500/10 border border-sage-500/30 rounded-lg hover:bg-sage-500/20 transition-colors flex-shrink-0 ml-3">
+        Enable
+      </button>
+    );
+  }
+
+  // Setup required → Setup
+  if (connectionStatus === 'setup_required') {
+    return (
+      <button
+        onClick={e => {
+          e.stopPropagation();
+          onOpenModal();
+        }}
+        className="px-4 py-1.5 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors flex-shrink-0 ml-3">
+        Setup
+      </button>
+    );
+  }
+
+  // Error → Retry
+  if (connectionStatus === 'error') {
+    return (
+      <button
+        onClick={handleEnable}
+        className="px-4 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg hover:bg-amber-500/20 transition-colors flex-shrink-0 ml-3">
+        Retry
+      </button>
+    );
+  }
+
+  // Running / ready / connected → Configure
+  return (
+    <button
+      onClick={e => {
+        e.stopPropagation();
+        onOpenModal();
+      }}
+      className="px-4 py-1.5 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors flex-shrink-0 ml-3">
+      Configure
+    </button>
+  );
+}
+
 export default function SkillsGrid() {
   const [skillsList, setSkillsList] = useState<SkillListEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isMobile, setIsMobile] = useState(false);
   const [setupModalOpen, setSetupModalOpen] = useState(false);
   const [managementModalOpen, setManagementModalOpen] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
@@ -182,66 +289,61 @@ export default function SkillsGrid() {
   const skillStates = useAppSelector(state => state.skills.skillStates);
 
   useEffect(() => {
-    // Load skills catalog from the local skills directory via Rust.
-    // In dev: reads from the submodule. In prod: reads from ~/.alphahuman/skills/.
-    const loadSkillsCatalog = async () => {
+    // Detect mobile platform
+    const detectMobile = async () => {
+      try {
+        const { platform } = await import('@tauri-apps/plugin-os');
+        const currentPlatform = await platform();
+        setIsMobile(currentPlatform === 'android' || currentPlatform === 'ios');
+      } catch {
+        // If we can't detect platform, assume desktop
+        setIsMobile(false);
+      }
+    };
+    detectMobile();
+
+    // Load skills from the V8 runtime engine.
+    const loadSkills = async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const catalog: SkillsCatalog = await invoke('skill_read_catalog');
+        const manifests = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
 
-        // Load manifests to get proper display names
-        const manifests = await invoke<Array<Record<string, unknown>>>('skill_list_manifests');
-        const manifestMap = new Map(
-          manifests
-            .filter(
-              (m): m is { id: string; name: string } =>
-                typeof m.id === 'string' && typeof m.name === 'string'
-            )
-            .map(m => [m.id, m.name])
-        );
+        console.log('manifests', manifests);
 
-        processCatalog(catalog, manifestMap);
+        // Validate skill names (underscores are reserved for tool namespacing)
+        const validManifests = manifests.filter(m => {
+          const id = m.id as string;
+          if (id.includes('_')) {
+            console.warn(
+              `Skill "${id}" contains underscore and will be skipped. Skill names cannot contain underscores.`
+            );
+            return false;
+          }
+          return true;
+        });
+
+        const processed: SkillListEntry[] = validManifests.map(m => {
+          const setup = m.setup as Record<string, unknown> | undefined;
+          return {
+            id: m.id as string,
+            name:
+              (m.name as string) ||
+              (m.id as string).charAt(0).toUpperCase() + (m.id as string).slice(1),
+            description: (m.description as string) || '',
+            icon: SKILL_ICONS[m.id as string],
+            hasSetup: !!(setup && setup.required),
+          };
+        });
+
+        setSkillsList(processed);
+        setLoading(false);
       } catch (error) {
-        console.warn('Could not load skills catalog from filesystem:', error);
+        console.warn('Could not load skills from runtime:', error);
         setLoading(false);
       }
     };
 
-    const processCatalog = (catalog: SkillsCatalog, manifestMap: Map<string, string>) => {
-      // Validate skill names (underscores are reserved for tool namespacing)
-      const validSkills = catalog.skills.filter(skill => {
-        if (skill.name.includes('_')) {
-          console.warn(
-            `Skill "${skill.name}" contains underscore and will be skipped. Skill names cannot contain underscores.`
-          );
-          return false;
-        }
-        return true;
-      });
-
-      const processed: SkillListEntry[] = validSkills.map(skill => {
-        const skillId = skill.name;
-        // Use manifest name if available, otherwise capitalize the ID
-        const displayName =
-          manifestMap.get(skillId) || skill.name.charAt(0).toUpperCase() + skill.name.slice(1);
-
-        return {
-          id: skillId,
-          name: displayName,
-          description: skill.description,
-          icon: SKILL_ICONS[skillId],
-          hasSetup:
-            skill.hooks.includes('on_setup_start') &&
-            skill.hooks.includes('on_setup_submit') &&
-            skill.hooks.includes('on_setup_cancel'),
-        };
-      });
-
-      setSkillsList(processed);
-      setLoading(false);
-    };
-
-    loadSkillsCatalog();
+    loadSkills();
   }, []);
 
   // Sort skills by connection status (connected first)
@@ -267,7 +369,38 @@ export default function SkillsGrid() {
     });
   }, [skillsList, skillsState, skillStates]);
 
-  // If loading or no skills, don't render
+  // Show mobile-only message on mobile platforms
+  if (!loading && isMobile) {
+    return (
+      <div className="animate-fade-up mt-4 mb-8 relative">
+        <h3 className="text-sm font-semibold text-white mb-3 px-1 opacity-80 text-center">
+          Skills
+        </h3>
+        <div className="glass rounded-xl p-4 text-center">
+          <div className="flex flex-col items-center gap-2">
+            <svg
+              className="w-8 h-8 text-stone-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+              />
+            </svg>
+            <p className="text-sm text-stone-400">Skills are available on desktop only</p>
+            <p className="text-xs text-stone-500">
+              Use the desktop app to configure and run skills
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If loading or no skills on desktop, don't render
   if (loading || skillsList.length === 0) {
     return null;
   }
@@ -398,18 +531,17 @@ export default function SkillsGrid() {
                           <div className="text-xs text-stone-400">{skill.description}</div>
                         </div>
                       </div>
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
+                      <SkillActionButton
+                        skill={skill}
+                        connectionStatus={connectionStatus}
+                        onOpenModal={() => {
                           setActiveSkillId(skill.id);
                           setActiveSkillName(skill.name);
                           setActiveSkillDescription(skill.description);
                           setActiveSkillHasSetup(skill.hasSetup);
                           setSetupModalOpen(true);
                         }}
-                        className="px-4 py-1.5 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors flex-shrink-0 ml-3">
-                        {connectionStatus === 'connected' ? 'Manage' : 'Configure'}
-                      </button>
+                      />
                     </div>
                   );
                 })}

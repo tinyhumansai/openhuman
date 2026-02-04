@@ -16,7 +16,7 @@ const SettingsHeader = ({
   const { closeSettings } = useSettingsNavigation();
 
   return (
-    <div className={`bg-black/30 border-b border-stone-700 py-3 px-4 relative ${className}`}>
+    <div className={`bg-black/30 border-b border-stone-700 p-6 relative ${className}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center">
           {/* Back button */}

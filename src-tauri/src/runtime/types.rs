@@ -1,0 +1,166 @@
+//! Core type definitions for the V8 skill runtime.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// Status of a running skill instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillStatus {
+    /// Skill is registered but not yet started.
+    Pending,
+    /// Skill is currently initializing (loading JS, running init()).
+    Initializing,
+    /// Skill is running and ready to handle tool calls.
+    Running,
+    /// Skill is in the process of stopping.
+    Stopping,
+    /// Skill has been stopped gracefully.
+    Stopped,
+    /// Skill encountered a fatal error.
+    Error,
+}
+
+impl Default for SkillStatus {
+    fn default() -> Self {
+        Self::Pending
+    }
+}
+
+/// Messages sent to a skill instance's message loop.
+#[derive(Debug)]
+pub enum SkillMessage {
+    /// Call a tool exported by this skill.
+    CallTool {
+        tool_name: String,
+        arguments: serde_json::Value,
+        reply: tokio::sync::oneshot::Sender<Result<ToolResult, String>>,
+    },
+    /// Deliver a server event to the skill.
+    ServerEvent {
+        event: String,
+        data: serde_json::Value,
+    },
+    /// Trigger a cron job by name.
+    #[allow(dead_code)]
+    CronTrigger { schedule_id: String },
+    /// Request the skill to stop.
+    Stop {
+        reply: tokio::sync::oneshot::Sender<()>,
+    },
+    /// Start the setup flow — returns the first SetupStep.
+    SetupStart {
+        reply: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// Submit a setup step with user-provided values.
+    SetupSubmit {
+        step_id: String,
+        values: serde_json::Value,
+        reply: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// Cancel the setup flow.
+    SetupCancel {
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// List the skill's runtime-configurable options.
+    ListOptions {
+        reply: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// Set a single option value.
+    SetOption {
+        name: String,
+        value: serde_json::Value,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Notify skill of an AI session start.
+    SessionStart {
+        session_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Notify skill of an AI session end.
+    SessionEnd {
+        session_id: String,
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Trigger periodic tick.
+    Tick {
+        reply: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
+    /// Generic JSON-RPC call (for methods not covered by specific variants).
+    Rpc {
+        method: String,
+        params: serde_json::Value,
+        reply: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+}
+
+/// Result of executing a tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    /// Tool output content (array of content blocks per MCP spec).
+    pub content: Vec<ToolContent>,
+    /// Whether the tool execution resulted in an error.
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+/// A single content block in a tool result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolContent {
+    Text { text: String },
+    Json { data: serde_json::Value },
+}
+
+/// A tool definition exported by a skill.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    /// Unique tool name (within the skill).
+    pub name: String,
+    /// Human-readable description.
+    pub description: String,
+    /// JSON Schema for the tool's input parameters.
+    #[serde(default)]
+    pub input_schema: serde_json::Value,
+}
+
+/// Snapshot of a skill's current state, suitable for sending to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillSnapshot {
+    pub skill_id: String,
+    pub name: String,
+    pub status: SkillStatus,
+    pub tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Arbitrary state the skill has published for the frontend.
+    #[serde(default)]
+    pub state: HashMap<String, serde_json::Value>,
+}
+
+/// Configuration for a skill instance, derived from its manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillConfig {
+    pub skill_id: String,
+    pub name: String,
+    pub entry_point: String,
+    /// Memory limit in bytes. Default: 64 MB.
+    #[serde(default = "default_memory_limit")]
+    pub memory_limit: usize,
+    /// Whether this skill should auto-start on app launch.
+    #[serde(default)]
+    pub auto_start: bool,
+}
+
+fn default_memory_limit() -> usize {
+    64 * 1024 * 1024 // 64 MB
+}
+
+/// Events emitted from the runtime to the frontend via Tauri.
+#[allow(dead_code)]
+pub mod events {
+    pub const SKILL_STATUS_CHANGED: &str = "runtime:skill-status-changed";
+    pub const SKILL_STATE_CHANGED: &str = "runtime:skill-state-changed";
+    pub const SKILL_TOOLS_CHANGED: &str = "runtime:skill-tools-changed";
+    pub const SKILL_LOG: &str = "runtime:skill-log";
+}

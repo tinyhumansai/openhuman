@@ -44,8 +44,13 @@ function deriveConnectionStatus(
   // Process is running or ready — use the skill's self-reported state
   const hostState = skillState as SkillHostConnectionState | undefined;
   if (!hostState) {
-    // Process running but no state pushed yet
-    return lifecycleStatus === "ready" ? "connecting" : "connecting";
+    // No state pushed yet. Skills that don't maintain an external connection
+    // (e.g. cron-based skills) may never push host state. If setup is complete
+    // and the lifecycle says "ready", treat it as connected.
+    if (setupComplete && lifecycleStatus === "ready") {
+      return "connected";
+    }
+    return "connecting";
   }
 
   const connStatus = hostState.connection_status;
@@ -153,3 +158,4 @@ export function useSkillConnectionInfo(skillId: string): {
     };
   }, [skill?.status, skill?.setupComplete, skill?.error, skillState]);
 }
+

@@ -1,10 +1,11 @@
 {
   "name": "alphahuman",
   "private": true,
-  "version": "0.21.0",
+  "version": "0.23.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite",
     "build": "tsc && vite build",
     "compile": "tsc --noEmit",
     "preview": "vite preview",
@@ -12,7 +13,9 @@
     "macos:build": "tauri build --debug --bundles app",
     "macos:run": "open 'src-tauri/target/debug/bundle/macos/AlphaHuman.app'",
     "macos:dev": "tauri build --debug --bundles app && open 'src-tauri/target/debug/bundle/macos/AlphaHuman.app'",
-    "setup-python-sidecar": "node scripts/setup-python-sidecar.mjs",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build",
+    "dev:app": "RUST_BACKTRACE=1 RUST_LOG=info tauri dev",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -20,6 +23,8 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "skills:build": "cd skills && yarn build",
+    "skills:watch": "cd skills && yarn build:watch",
     "prepare": "husky"
   },
   "dependencies": {
@@ -28,6 +33,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-deep-link": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-os": "^2.3.2",
     "@tauri-apps/plugin-shell": "~2",
     "@types/react-router-dom": "^5.3.3",
     "buffer": "^6.0.3",

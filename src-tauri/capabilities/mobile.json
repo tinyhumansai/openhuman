@@ -1,0 +1,12 @@
+{
+  "identifier": "mobile",
+  "description": "Mobile-specific permissions (Android and iOS)",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "deep-link:default",
+    "os:default"
+  ]
+}

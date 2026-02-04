@@ -1,33 +1,19 @@
 /**
  * Path resolution for skills directories.
  *
- * Dev mode: skills are in the git submodule at `skills/skills/`
- * Production: skills are in `~/.alphahuman/skills/`
+ * With the V8 runtime, paths are primarily resolved by the Rust backend.
+ * These helpers provide client-side path computation for UI display and
+ * manifest file resolution.
  */
 
 import { IS_DEV } from "../../utils/config";
 
 /**
  * Get the root directory for discovering skills.
- * In dev, this is the submodule `skills/` dir (which contains `skills/<name>/`).
- * In production, this is the user's app data directory.
+ * In dev, skills are in the submodule `skills/skills/` dir.
+ * In production, paths are resolved by the Rust engine.
  */
 export function getSkillsBaseDir(): string {
-  if (IS_DEV) {
-    // In dev, the Tauri app's cwd is the project root.
-    // The submodule is at ./skills/ and skills live at ./skills/skills/<name>/
-    return "skills";
-  }
-  // Production: resolved by Rust command (appDataDir based)
-  return "";
-}
-
-/**
- * Get the working directory for spawning a skill subprocess.
- * The Python package structure expects `python -m skills.telegram`
- * to be run from the repo root (the `skills/` submodule directory).
- */
-export function getSkillCwd(): string {
   if (IS_DEV) {
     return "skills";
   }
@@ -36,21 +22,10 @@ export function getSkillCwd(): string {
 
 /**
  * Get the module path for a skill given its ID.
- * e.g. "telegram" → ["skills.telegram"] for `python -m skills.telegram`
+ * For V8 skills, this is the skill ID itself.
  */
 export function getSkillModulePath(skillId: string): string {
-  return `skills.${skillId}`;
-}
-
-/**
- * Get the data directory path for a skill.
- * Data is persisted per-skill in an isolated directory.
- */
-export function getSkillDataDir(skillId: string): string {
-  if (IS_DEV) {
-    return `skills/skills/${skillId}/data`;
-  }
-  return `skills/${skillId}/data`;
+  return skillId;
 }
 
 /**

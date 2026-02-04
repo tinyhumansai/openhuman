@@ -1,57 +1,41 @@
 /**
  * Skill Provider — discovers and manages skill lifecycles.
  *
- * On mount (when authenticated): discovers skills from the local skills
- * directory (dev: submodule, prod: ~/.alphahuman/skills/), registers them
- * in Redux, and auto-starts skills with completed setup.
+ * On mount (when authenticated): discovers skills from the V8 runtime
+ * engine, registers them in Redux, and auto-starts skills with completed setup.
  *
- * In production:
- * - If no local skills exist, downloads from GitHub before discovery.
- * - On every startup, checks for updates (respects a 24-hour cooldown on
- *   the Rust side). If a newer commit is available, re-downloads and
- *   re-discovers.
+ * The Rust V8 engine handles skill discovery and auto-start independently.
+ * This provider bridges the Rust engine state with the frontend Redux store.
  */
 import { type ReactNode, useEffect, useRef } from 'react';
 
 import { skillManager } from '../lib/skills/manager';
 import type { SkillManifest } from '../lib/skills/types';
 import { useAppSelector } from '../store/hooks';
-import { IS_DEV, SKILLS_GITHUB_REPO } from '../utils/config';
+import { DEV_AUTO_LOAD_SKILL } from '../utils/config';
 
 // ---------------------------------------------------------------------------
-// Helpers (all lazy-import @tauri-apps/api/core to avoid loading before IPC)
+// Helpers
 // ---------------------------------------------------------------------------
 
 async function discoverSkills(): Promise<SkillManifest[]> {
   const { invoke } = await import('@tauri-apps/api/core');
-  const raw = await invoke<Record<string, unknown>[]>('skill_list_manifests');
-  return raw as unknown as SkillManifest[];
-}
-
-async function syncSkillsFromGithub(): Promise<void> {
-  const { invoke } = await import('@tauri-apps/api/core');
-  await invoke('skill_sync_repo', { repo: SKILLS_GITHUB_REPO });
-}
-
-async function catalogExists(): Promise<boolean> {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    return await invoke<boolean>('skill_catalog_exists');
-  } catch {
-    return false;
-  }
-}
-
-interface UpdateCheckResult {
-  needs_update: boolean;
-  skipped?: boolean;
-  local_sha?: string | null;
-  remote_sha?: string;
-}
-
-async function checkForUpdates(): Promise<UpdateCheckResult> {
-  const { invoke } = await import('@tauri-apps/api/core');
-  return invoke<UpdateCheckResult>('skill_check_for_updates', { repo: SKILLS_GITHUB_REPO });
+  const raw = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
+  // Map the V8 manifest format to SkillManifest
+  return raw.map(m => ({
+    id: m.id as string,
+    name: m.name as string,
+    version: (m.version as string) || '0.0.0',
+    description: (m.description as string) || '',
+    runtime: 'v8' as const,
+    entry: m.entry as string | undefined,
+    setup: m.setup
+      ? {
+          required: ((m.setup as Record<string, unknown>).required as boolean) ?? false,
+          label: (m.setup as Record<string, unknown>).label as string | undefined,
+        }
+      : undefined,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -69,9 +53,30 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
     initRef.current = true;
 
     const registerAndStart = async (manifests: SkillManifest[]) => {
+      // Register all discovered skills
       for (const manifest of manifests) {
         skillManager.registerSkill(manifest);
       }
+
+      // Auto-start skill specified in DEV_AUTO_LOAD_SKILL env variable (dev only)
+      if (DEV_AUTO_LOAD_SKILL) {
+        const autoLoadManifest = manifests.find(m => m.id === DEV_AUTO_LOAD_SKILL);
+        if (autoLoadManifest) {
+          console.log(`[SkillProvider] Auto-loading skill from env: ${DEV_AUTO_LOAD_SKILL}`);
+          try {
+            await skillManager.startSkill(autoLoadManifest);
+            console.log(`[SkillProvider] Successfully auto-loaded skill: ${DEV_AUTO_LOAD_SKILL}`);
+          } catch (err) {
+            console.error(`[SkillProvider] Failed to auto-load skill ${DEV_AUTO_LOAD_SKILL}:`, err);
+          }
+        } else {
+          console.warn(
+            `[SkillProvider] DEV_AUTO_LOAD_SKILL="${DEV_AUTO_LOAD_SKILL}" specified but skill not found in discovered skills`
+          );
+        }
+      }
+
+      // Auto-start skills with completed setup
       for (const manifest of manifests) {
         const existing = skillsState[manifest.id];
         if (existing?.setupComplete) {
@@ -84,27 +89,9 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
 
     const init = async () => {
       try {
-        if (!IS_DEV) {
-          // First-time install: no skills at all yet
-          const exists = await catalogExists();
-          if (!exists) {
-            console.log('[SkillProvider] No local skills found, syncing from GitHub...');
-            try {
-              await syncSkillsFromGithub();
-            } catch (syncErr) {
-              console.error('[SkillProvider] Failed to sync skills from GitHub:', syncErr);
-            }
-          }
-        }
-
-        // Discover and start whatever is on disk right now
+        // Discover skills from the V8 runtime engine
         const manifests = await discoverSkills();
         await registerAndStart(manifests);
-
-        // Background: check for updates (non-blocking)
-        if (!IS_DEV) {
-          checkForSkillUpdates(registerAndStart);
-        }
       } catch (err) {
         console.error('[SkillProvider] Failed to discover skills:', err);
       }
@@ -119,41 +106,4 @@ export default function SkillProvider({ children }: { children: ReactNode }) {
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return <>{children}</>;
-}
-
-/**
- * Runs in the background after initial discovery. Asks the Rust side
- * whether a newer commit exists on GitHub (respects 24h cooldown).
- * If yes, re-syncs and re-discovers skills.
- */
-async function checkForSkillUpdates(onNewSkills: (manifests: SkillManifest[]) => Promise<void>) {
-  try {
-    const result = await checkForUpdates();
-
-    if (result.skipped) {
-      return; // Cooldown still active, nothing to do
-    }
-
-    if (!result.needs_update) {
-      console.log('[SkillProvider] Skills are up to date');
-      return;
-    }
-
-    console.log(
-      `[SkillProvider] Skills update available: ${result.local_sha?.slice(0, 8) ?? 'none'} → ${result.remote_sha?.slice(0, 8)}`
-    );
-
-    // Stop all running skills before re-syncing
-    await skillManager.stopAll();
-
-    await syncSkillsFromGithub();
-
-    // Re-discover and re-start
-    const manifests = await discoverSkills();
-    await onNewSkills(manifests);
-
-    console.log('[SkillProvider] Skills updated and reloaded');
-  } catch (err) {
-    console.error('[SkillProvider] Background update check failed:', err);
-  }
 }

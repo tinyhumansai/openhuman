@@ -23,7 +23,8 @@ import {
   setSkillTools,
   setSkillState,
 } from "../../store/skillsSlice";
-import { TELEGRAM_API_ID, TELEGRAM_API_HASH } from "../../utils/config";
+// Env vars kept for reverse RPC compatibility (may be used by skills via state)
+
 
 class SkillManager {
   private runtimes = new Map<string, SkillRuntime>();
@@ -78,16 +79,7 @@ class SkillManager {
     });
 
     try {
-      // Build env vars to pass to the process
-      const env: Record<string, string> = {};
-      if (TELEGRAM_API_ID) {
-        env.TELEGRAM_API_ID = String(TELEGRAM_API_ID);
-      }
-      if (TELEGRAM_API_HASH) {
-        env.TELEGRAM_API_HASH = TELEGRAM_API_HASH;
-      }
-
-      await runtime.start(env);
+      await runtime.start();
       this.runtimes.set(skillId, runtime);
 
       store.dispatch(setSkillStatus({ skillId, status: "running" }));
@@ -136,14 +128,17 @@ class SkillManager {
    * Start the setup flow for a skill. Returns the first step.
    */
   async startSetup(skillId: string): Promise<SetupStep> {
+    console.log("[SkillManager] startSetup", skillId);
     const runtime = this.runtimes.get(skillId);
     if (!runtime) {
-      throw new Error(`Skill ${skillId} is not running`);
+      console.log("[SkillManager] runtime not found", skillId);
+      throw new Error(`Skill ${skillId} runtime not found`);
     }
 
     store.dispatch(
       setSkillStatus({ skillId, status: "setup_in_progress" }),
     );
+    console.log("[SkillManager] setup started", skillId);
     return runtime.setupStart();
   }
 
@@ -370,12 +365,10 @@ class SkillManager {
       }
 
       case "data/read": {
-        // Read from the skill's data directory
-        // For now, use fetch or Tauri command
         const filename = params.filename as string;
         try {
           const { invoke } = await import("@tauri-apps/api/core");
-          const content = await invoke<string>("skill_read_data", {
+          const content = await invoke<string>("runtime_skill_data_read", {
             skillId,
             filename,
           });
@@ -390,7 +383,7 @@ class SkillManager {
         const content = params.content as string;
         try {
           const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("skill_write_data", {
+          await invoke("runtime_skill_data_write", {
             skillId,
             filename,
             content,
@@ -430,3 +423,8 @@ class SkillManager {
 
 // Export singleton
 export const skillManager = new SkillManager();
+
+// Debug: expose to window for console testing
+if (typeof window !== 'undefined') {
+  (window as unknown as { __skillManager: SkillManager }).__skillManager = skillManager;
+}

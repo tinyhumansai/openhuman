@@ -28,21 +28,6 @@ pub struct User {
     pub telegram_id: Option<String>,
 }
 
-/// Token exchange request payload
-#[allow(dead_code)]
-#[derive(Debug, Serialize)]
-pub struct TokenExchangeRequest {
-    pub token: String,
-}
-
-/// Token exchange response from backend
-#[derive(Debug, Deserialize)]
-pub struct TokenExchangeResponse {
-    #[serde(rename = "sessionToken")]
-    pub session_token: String,
-    pub user: User,
-}
-
 /// Auth error response from backend
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]

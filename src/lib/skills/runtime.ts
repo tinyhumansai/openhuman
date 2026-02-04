@@ -1,6 +1,10 @@
 /**
  * Skill runtime — higher-level wrapper around SkillTransport
  * for managing a single skill's lifecycle.
+ *
+ * With V8, skills are managed by the Rust runtime engine.
+ * This class wraps the transport layer to provide the same API
+ * that the SkillManager expects.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -12,14 +16,6 @@ import type {
   SkillToolDefinition,
   SkillOptionDefinition,
 } from "./types";
-import { getSkillModulePath } from "./paths";
-
-/** Map runtime names to Tauri shell command names */
-const SHELL_COMMANDS: Record<string, string> = {
-  python: "runtime-skill-python",
-  node: "runtime-skill-node",
-  deno: "runtime-skill-deno",
-};
 
 export class SkillRuntime {
   private transport: SkillTransport;
@@ -33,6 +29,8 @@ export class SkillRuntime {
 
   /**
    * Set a handler for reverse RPC calls from the skill process.
+   * With V8, reverse RPC is handled by bridge globals, so this
+   * is kept for API compatibility.
    */
   onReverseRpc(handler: ReverseRpcHandler): void {
     this.transport.onReverseRpc(handler);
@@ -40,72 +38,32 @@ export class SkillRuntime {
 
 
   /**
-   * Spawn the skill subprocess.
-   * Uses absolute cwd from the backend so the sidecar finds the skills package.
+   * Start the skill in the V8 runtime engine.
+   * The Rust engine handles process management, so we just tell it to start
+   * and then initialize the transport for RPC routing.
    */
-  async start(envVars?: Record<string, string>): Promise<void> {
-    const shellName = SHELL_COMMANDS[this.manifest.runtime];
-    if (!shellName) {
-      throw new Error(`Unsupported runtime: ${this.manifest.runtime}`);
-    }
+  async start(): Promise<void> {
+    // Start the skill in the Rust V8 runtime
+    await invoke("runtime_start_skill", { skillId: this.manifest.id });
 
-    const modulePath = getSkillModulePath(this.manifest.id);
-    const args = ["-m", modulePath];
-    const cwd = await invoke<string>("skill_cwd");
-
-    // Merge env vars
-    const env: Record<string, string> = {};
-    if (envVars) {
-      Object.assign(env, envVars);
-    }
-
-    // In dev, add venv site-packages and cwd to PYTHONPATH for Python skills
-    if (this.manifest.runtime === "python") {
-      // Ensure cwd is absolute (it should be from skill_cwd, but double-check)
-      const absCwd = cwd.startsWith("/") ? cwd : cwd;
-
-      // Resolve venv site-packages path dynamically (Rust scans .venv/lib/)
-      let venvSitePackages = "";
-      try {
-        venvSitePackages = await invoke<string>("skill_venv_site_packages");
-      } catch {
-        // Fallback if command fails
-        venvSitePackages = `${absCwd}/.venv/lib/python3/site-packages`;
-      }
-
-      // Add cwd to PYTHONPATH so Python can find the 'skills' package (at cwd/skills/)
-      // The skills package is at cwd/skills/, so cwd itself needs to be in PYTHONPATH
-      const existingPythonPath = env.PYTHONPATH || "";
-      const pythonPathParts = [absCwd, venvSitePackages];
-      if (existingPythonPath) {
-        pythonPathParts.push(existingPythonPath);
-      }
-      env.PYTHONPATH = pythonPathParts.join(":");
-
-      console.log("[skill-runtime] Python env setup:", {
-        cwd: absCwd,
-        PYTHONPATH: env.PYTHONPATH,
-        venvSitePackages,
-        skillsPackageExists: `${absCwd}/skills`,
-      });
-    }
-
-    await this.transport.start(shellName, args, env, cwd);
+    // Initialize the transport for RPC routing
+    await this.transport.start(this.manifest.id);
     this._started = true;
   }
 
   /**
-   * Send skill/load with manifest + data dir + session data.
+   * Send skill/load with manifest + data dir.
+   * With V8, loading is handled by the Rust engine during start_skill,
+   * so this sends a no-op skill/load RPC for protocol compatibility.
    */
   async load(additionalParams?: Record<string, unknown>): Promise<void> {
-    // Use absolute path from Rust to avoid cwd-relative ambiguity
-    const dataDir = await invoke<string>("skill_data_dir", {
+    const dataDir = await invoke<string>("runtime_skill_data_dir", {
       skillId: this.manifest.id,
     });
     await this.transport.request("skill/load", {
       manifest: this.manifest,
       dataDir,
-      ...additionalParams,
+      ...(additionalParams || {}),
     });
   }
 
@@ -113,9 +71,11 @@ export class SkillRuntime {
    * Start the setup flow. Returns the first SetupStep.
    */
   async setupStart(): Promise<SetupStep> {
+    console.log("[SkillRuntime] setupStart", this.skillId);
     const result = await this.transport.request<{ step: SetupStep }>(
       "setup/start"
     );
+    console.log("[SkillRuntime] setupStart result", this.skillId, result);
     return result.step;
   }
 
@@ -201,17 +161,15 @@ export class SkillRuntime {
   }
 
   /**
-   * Unload and kill the skill process.
+   * Unload and stop the skill.
    */
   async stop(): Promise<void> {
     if (!this._started) return;
     try {
       await this.transport.request("skill/shutdown");
     } catch {
-      // Process may already be dead
+      // Skill may already be stopped
     }
-    // Give process a moment to exit cleanly
-    await new Promise((r) => setTimeout(r, 200));
     await this.transport.kill();
     this._started = false;
   }

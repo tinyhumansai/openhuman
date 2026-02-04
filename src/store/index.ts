@@ -14,7 +14,7 @@ import storage from 'redux-persist/lib/storage';
 
 import { IS_DEV } from '../utils/config';
 import aiReducer from './aiSlice';
-import authReducer from './authSlice';
+import authReducer, { setOnboardedForUser, setToken } from './authSlice';
 import skillsReducer from './skillsSlice';
 import socketReducer from './socketSlice';
 import teamReducer from './teamSlice';
@@ -59,7 +59,25 @@ export const store = configureStore({
   },
 });
 
-export const persistor = persistStore(store);
+export const persistor = persistStore(store, null, () => {
+  // Dev-only: auto-inject JWT token for testing (e.g. Android without login flow)
+  const devToken = import.meta.env.VITE_DEV_JWT_TOKEN;
+  if (devToken && !store.getState().auth.token) {
+    store.dispatch(setToken(devToken));
+    console.log('[dev] Auto-injected JWT token from VITE_DEV_JWT_TOKEN');
+
+    // Auto-mark user as onboarded once their profile is fetched
+    const unsub = store.subscribe(() => {
+      const state = store.getState();
+      const userId = state.user.user?._id;
+      if (userId && !state.auth.isOnboardedByUser[userId]) {
+        store.dispatch(setOnboardedForUser({ userId, value: true }));
+        console.log('[dev] Auto-marked user as onboarded:', userId);
+        unsub();
+      }
+    });
+  }
+});
 
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;

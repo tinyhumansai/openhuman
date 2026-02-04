@@ -7,12 +7,14 @@
 // Skill Manifest (from manifest.json)
 // ---------------------------------------------------------------------------
 
+export type SkillPlatform = "windows" | "macos" | "linux" | "android" | "ios";
+
 export interface SkillManifest {
   id: string;
   name: string;
   version: string;
   description: string;
-  runtime: "python" | "node" | "deno";
+  runtime: "python" | "node" | "deno" | "v8";
   entry?: string;
   tick_interval?: number;
   env?: string[];
@@ -21,6 +23,9 @@ export interface SkillManifest {
     required: boolean;
     label?: string;
   };
+  /** Platform filter. When present, only listed platforms load this skill.
+   *  When absent or empty, the skill is available on all platforms. */
+  platforms?: SkillPlatform[];
 }
 
 // ---------------------------------------------------------------------------
@@ -177,3 +182,4 @@ export interface SkillState {
   setupComplete: boolean;
   tools: SkillToolDefinition[];
 }
+

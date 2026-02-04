@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Summary
 
-Cross-platform crypto community communication platform built with **Tauri v2** (React 19 + Rust). Targets desktop (Windows, macOS) and mobile (Android, iOS). Features deep Telegram integration via MTProto, real-time Socket.io communication, and an MCP (Model Context Protocol) tool system for AI-driven Telegram interactions.
+Cross-platform crypto community communication platform built with **Tauri v2** (React 19 + Rust). Targets desktop (Windows, macOS) and mobile (Android, iOS). Features deep Telegram integration via MTProto, real-time Socket.io communication, V8-based skill execution engine, and an MCP (Model Context Protocol) tool system for AI-driven Telegram interactions.
 
 ## App Theme & Design System
 
@@ -48,6 +48,9 @@ yarn dev
 # Desktop dev with hot-reload (starts Vite + Tauri)
 yarn tauri dev
 
+# Desktop dev with enhanced debugging (RUST_BACKTRACE and RUST_LOG enabled)
+yarn dev:app
+
 # Production build (TypeScript compile + Vite build + Tauri bundle)
 yarn tauri build
 
@@ -63,6 +66,10 @@ yarn tauri android build
 # iOS
 yarn tauri ios dev
 yarn tauri ios build
+
+# Skills development
+yarn skills:build   # Build skills in development mode
+yarn skills:watch   # Watch skills for changes
 
 # Rust checks
 cargo check --manifest-path src-tauri/Cargo.toml
@@ -86,7 +93,7 @@ State lives in `src/store/` using Redux Toolkit slices:
 - **socketSlice** — connection status, socket ID
 - **telegramSlice** — connection/auth status, chats, messages, threads (selectively persisted; loading/error states excluded)
 - **aiSlice** — AI system state, memory management, session tracking
-- **skillsSlice** — skills catalog, setup status, management state
+- **skillsSlice** — skills catalog, setup status, management state, V8 runtime integration
 - **teamSlice** — team management, member invites, permissions
 
 Redux Persist stores auth and telegram state (storage backend is configurable; default uses localStorage). The telegram slice has a complex nested structure in `src/store/telegram/` with separate files for types, reducers, extraReducers, and thunks.
@@ -101,7 +108,7 @@ Redux Persist stores auth and telegram state (storage backend is configurable; d
 ### Service Layer (Singletons)
 
 - **mtprotoService** (`src/services/mtprotoService.ts`) — Telegram MTProto client via `telegram` npm package. Session stored in Redux (`telegram.byUser[userId].sessionString`), not localStorage. Auto-retries FLOOD_WAIT up to 60s.
-- **socketService** (`src/services/socketService.ts`) — Socket.io client. Auth token passed in socket `auth` object (not query string). Transports: polling first, then WebSocket.
+- **socketService** (`src/services/socketService.ts`) — Socket.io client. Auth token passed in socket `auth` object (not query string). Transports: polling first, then WebSocket. Enhanced with Rust-native Socket.io client for persistent connections.
 - **apiClient** (`src/services/apiClient.ts`) — HTTP client for REST backend.
 
 ### MCP System (`src/lib/mcp/`)
@@ -139,12 +146,65 @@ Key file: `src/utils/desktopDeepLinkListener.ts` (lazy-loaded in `main.tsx`). Us
 
 ### Rust Backend (`src-tauri/src/lib.rs`)
 
-Minimal — two Tauri commands:
+Enhanced Rust backend with comprehensive skill execution and runtime management:
+
+**Core Commands:**
 
 - `greet` — demo command
-- `exchange_token` — CORS-free HTTP POST to backend for token exchange
+- `exchange_token` — CORS-free HTTP POST to backend for token exchange (desktop only)
+
+**Runtime Management:**
+
+- `discover_skills` — V8 skill discovery and manifest parsing
+- `enable_skill` / `disable_skill` — skill lifecycle management
+- `get_skill_preferences` / `set_skill_preferences` — skill configuration
+- `connect_to_socket` — Rust-native Socket.io connection
+- `get_socket_status` — connection status monitoring
+
+**Android Support:**
+
+- `RuntimeService` — background service for skill execution
+- Notification permissions and foreground service management
+- Android logging integration with logcat
 
 Deep link plugin registered at setup. `register_all()` called only on Windows/Linux (panics on macOS).
+
+### V8 Runtime System (`src-tauri/src/runtime/`)
+
+Advanced JavaScript execution engine for skills using V8 (via deno_core):
+
+**Core Components:**
+
+- `v8_engine.rs` — V8 JavaScript runtime initialization and management
+- `v8_skill_instance.rs` — Individual skill execution contexts and lifecycle
+- `skill_registry.rs` — Skill discovery, registration, and state management
+- `manifest.rs` — Skill manifest parsing with platform compatibility checks
+- `socket_manager.rs` — Persistent Socket.io connections with reconnection logic
+- `cron_scheduler.rs` — Scheduled task execution for time-based skills
+- `preferences.rs` — Skill configuration and settings persistence
+
+**Bridge System (`src-tauri/src/runtime/bridge/`):**
+
+- `skills_bridge.rs` — Skill-to-skill communication and state sharing
+- `tauri_bridge.rs` — Frontend-backend IPC and environment access
+- `net.rs` — HTTP/fetch operations for skills
+- `db.rs` — Database operations and storage management
+- `store.rs` — Key-value storage for skill data
+- `log_bridge.rs` — Structured logging from skills
+- `cron_bridge.rs` — Cron job scheduling and management
+
+**TDLib Integration (`src-tauri/src/services/tdlib_v8/`):**
+
+- `service.rs` — High-level TDLib client management with V8 integration
+- `bootstrap.js` — V8 JavaScript bootstrap environment
+- `ops/mod.rs` — Native operations for WebSocket, timers, and async handling
+- `storage.rs` — Persistent storage for TDLib sessions and data
+
+**Platform Support:**
+
+- Desktop platforms: Full V8 runtime with all features
+- Mobile platforms: Error handling with feature availability checks
+- Platform-specific skill filtering based on manifest declarations
 
 ## Environment Variables
 
@@ -162,9 +222,44 @@ Set in `.env` (Vite exposes `VITE_*` prefixed vars):
 
 Production defaults are in `src/utils/config.ts`.
 
-## Recent Changes (Last 24 Hours)
+## Recent Changes
 
-Key updates from recent commits:
+Key updates from recent commits (cd9ebcd to current):
+
+### Major Runtime Transition
+
+- **V8 Runtime Migration** (`99c20ea`, `0f6a092`): Complete transition from QuickJS to V8
+  - Replaced QuickJS with V8 (via deno_core) for improved JavaScript execution and WASM support
+  - Enhanced skill management with V8 runtime including improved performance and compatibility
+  - New V8 skill instance handling with advanced execution contexts
+  - Updated dependencies and Cargo.toml to reflect V8 integration
+  - Platform compatibility checks and enhanced manifest handling
+
+### Android Platform Support
+
+- **Full Android Integration** (`ce06cfc`, `a2578b9`): Production-ready mobile platform support
+  - Complete Android project generation with MainActivity and RuntimeService
+  - Background service for persistent skill execution on Android
+  - Notification permission handling and foreground service management
+  - Android logging integration with logcat for better debugging
+  - Deep link support configuration in AndroidManifest.xml
+
+### Enhanced Socket & Runtime Management
+
+- **Rust-Native Socket.io Client** (`68d397e`): Persistent connection infrastructure
+  - Native Rust Socket.io implementation for improved reliability
+  - Enhanced socket connection handling with reconnection logic
+  - Dynamic backend URL configuration support
+  - Improved error handling and connection status monitoring
+
+### Skills System Improvements
+
+- **Advanced Skill Management** (`e841c86`, `719e6e5`): Enhanced skill lifecycle and configuration
+  - Skill setup pipeline with contextual Enable/Setup/Configure/Retry buttons
+  - Platform filtering for skills with manifest-based compatibility checks
+  - Enhanced skill status derivation and connection indicators
+  - Environment variable exposure to skills (whitelisted values)
+  - Improved skill discovery and manifest processing with logging
 
 ### Major Additions
 
@@ -250,14 +345,16 @@ Key updates from recent commits:
 
 ## Git Workflow
 
-- **PR target branch**: All pull requests should target the `develop` branch, not `main`.
+- **Push target**: All pushes go to the **user's private repo** (your fork). Do not push directly to the org repository.
+- **PR target**: All pull requests are opened **from your fork** against the **org's private repo**, targeting the **`develop`** branch (not `main`).
+- **No direct pushes to org**: The org repo does not allow direct pushes. All changes reach the org repo via PRs from your fork.
 
 ## Key Patterns
 
 - **Code Quality**: ESLint and Prettier enforce code standards with Husky hooks. Use type-only imports (`import type`) and consolidate imports from same modules.
 - **No localStorage**: Avoid `localStorage` and `sessionStorage`; use Redux (and persist) for app state. Remove any direct usage when working on affected code.
 - **AI System Integration**: Use `src/lib/ai/` for memory management, constitution loading, entity queries, and session capture. AI providers abstracted through interface pattern.
-- **Skills Management**: Skills loaded dynamically from local directory via Rust. Use `SkillProvider` for GitHub sync and `SkillsGrid` for management interface.
+- **V8 Skills Runtime**: Skills execute in V8 JavaScript engine on desktop platforms. Use `SkillProvider` for GitHub sync, `SkillsGrid` for management interface, and Rust runtime commands for lifecycle management. Platform filtering ensures skills only run on supported platforms.
 - **Team Collaboration**: Team features in `src/components/settings/panels/Team*`. Use Redux `teamSlice` for state management and `teamApi` for backend operations.
 - **Device Detection**: Use `deviceDetection.ts` utilities for platform/architecture detection. Support multiple architectures per platform (x64, aarch64) with intelligent preference logic.
 - **GitHub Integration**: Fetch release assets via GitHub API (`fetchLatestRelease()`) and parse by architecture (`parseReleaseAssetsByArchitecture()`). Use Maps for efficient unique architecture tracking.
@@ -268,14 +365,19 @@ Key updates from recent commits:
 - **Node polyfills**: Vite config (`vite.config.ts`) polyfills `buffer`, `process`, `util`, `os`, `crypto`, `stream` for the `telegram` package which requires Node APIs.
 - **Telegram IDs**: Use `big-integer` library, not native JS numbers (Telegram IDs exceed `Number.MAX_SAFE_INTEGER`).
 - **MCP tool files**: Each tool in `src/lib/mcp/telegram/tools/` exports a handler conforming to `TelegramMCPToolHandler` interface. Tool names are typed in `src/lib/mcp/telegram/types.ts`.
-- **Tauri IPC**: Frontend calls Rust via `invoke()` from `@tauri-apps/api/core`. Rust commands are registered in `generate_handler![]` macro.
+- **Tauri IPC**: Frontend calls Rust via `invoke()` from `@tauri-apps/api/core`. Rust commands are registered in `generate_handler![]` macro. Enhanced with runtime management commands for V8 skill execution and Socket.io integration.
 - **CORS workaround**: External HTTP requests from the WebView hit CORS. Use Rust `reqwest` via Tauri commands instead of browser `fetch()`.
 - **Hash Routing**: Uses HashRouter for desktop app compatibility and deep link handling.
 - **Integration Libraries**: Each integration (Telegram, future Gmail, etc.) lives under `src/lib/<integration>/` with its own `state/`, `services/`, `api/` subdirectories. Domain-specific services belong in the integration folder, not in `src/services/` (which holds only cross-cutting services like socketService, apiClient).
 - **Unit Tests**: All unit tests live in `__tests__/` folders co-located with the code they test. Use Jest with TypeScript support.
+- **Runtime Platform Differences**: V8 runtime is desktop-only. Mobile platforms use feature detection and graceful degradation. Skills with platform restrictions are filtered during discovery.
+- **Socket Management**: Rust-native Socket.io client provides persistent connections with automatic reconnection. Use `connect_to_socket` command instead of frontend-only socket connections for reliability.
 
 ## Platform Gotchas
 
 - **macOS deep links**: Require `.app` bundle (not `tauri dev`). Clear WebKit caches when debugging stale content: `rm -rf ~/Library/WebKit/com.alphahuman.app ~/Library/Caches/com.alphahuman.app`
 - **Cargo caching**: May serve stale frontend assets on incremental builds. Run `cargo clean --manifest-path src-tauri/Cargo.toml` if the app shows outdated UI.
 - **`window.__TAURI__`**: Not available at module load time. Use dynamic `import()` and try/catch for Tauri plugin calls.
+- **Android background services**: RuntimeService requires notification permissions (API 33+) and foreground service type specification (API 34+). Use Android logging (`android_logger`) for debug output in logcat.
+- **V8 runtime limitations**: V8 engine is desktop-only. Android skills should use lightweight alternatives or server-side execution patterns.
+- **Socket connections**: Persistent Socket.io connections via Rust backend work better than WebView-based connections on mobile platforms.

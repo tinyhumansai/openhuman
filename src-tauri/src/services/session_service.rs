@@ -113,7 +113,7 @@ impl SessionService {
     }
 
     /// Save session to OS keychain
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     fn save_to_keychain(&self, session: &StoredSession) -> Result<(), String> {
         let entry = keyring::Entry::new(KEYCHAIN_SERVICE, APP_IDENTIFIER)
             .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
@@ -129,7 +129,7 @@ impl SessionService {
     }
 
     /// Load session from OS keychain
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     fn load_from_keychain(&self) -> Result<StoredSession, String> {
         let entry = keyring::Entry::new(KEYCHAIN_SERVICE, APP_IDENTIFIER)
             .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
@@ -145,7 +145,7 @@ impl SessionService {
     }
 
     /// Delete session from OS keychain
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     fn delete_from_keychain(&self) -> Result<(), String> {
         let entry = keyring::Entry::new(KEYCHAIN_SERVICE, APP_IDENTIFIER)
             .map_err(|e| format!("Failed to create keyring entry: {}", e))?;
@@ -169,6 +169,23 @@ impl SessionService {
     }
 
     #[cfg(target_os = "ios")]
+    fn delete_from_keychain(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    // Android fallback implementations (keyring not supported)
+    #[cfg(target_os = "android")]
+    fn save_to_keychain(&self, _session: &StoredSession) -> Result<(), String> {
+        // Android uses EncryptedSharedPreferences, handled by frontend
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    fn load_from_keychain(&self) -> Result<StoredSession, String> {
+        Err("Not implemented for Android".to_string())
+    }
+
+    #[cfg(target_os = "android")]
     fn delete_from_keychain(&self) -> Result<(), String> {
         Ok(())
     }

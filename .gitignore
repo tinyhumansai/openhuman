@@ -21,8 +21,6 @@ dist-ssr
 .env.*.local
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
 .idea
 .DS_Store
 *.suo
@@ -34,3 +32,5 @@ references/
 src-tauri/runtime-skill-*
 .mypy_cache
 .ruff_cache
+.kotlin
+.cargo

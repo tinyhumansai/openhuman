@@ -61,11 +61,26 @@ export default function SkillManagementPanel({
       try {
         const newValue = !currentValue;
         await skillManager.setOption(skillId, name, newValue);
-        // Refresh options to get updated values
         const opts = await skillManager.listOptions(skillId);
         setOptions(opts);
       } catch (err) {
         console.error("[SkillManagementPanel] Toggle option failed:", err);
+      } finally {
+        setTogglingOption(null);
+      }
+    },
+    [skillId],
+  );
+
+  const handleSelectOption = useCallback(
+    async (name: string, value: string) => {
+      setTogglingOption(name);
+      try {
+        await skillManager.setOption(skillId, name, value);
+        const opts = await skillManager.listOptions(skillId);
+        setOptions(opts);
+      } catch (err) {
+        console.error("[SkillManagementPanel] Set option failed:", err);
       } finally {
         setTogglingOption(null);
       }
@@ -140,64 +155,71 @@ export default function SkillManagementPanel({
                   />
                 </button>
               )}
+              {opt.type === "select" && opt.options && (
+                <select
+                  value={String(opt.value ?? "")}
+                  onChange={(e) => handleSelectOption(opt.name, e.target.value)}
+                  disabled={togglingOption === opt.name}
+                  className={`flex-shrink-0 text-xs bg-stone-700/60 border border-stone-600/50 text-stone-200 rounded-lg px-2 py-1.5 outline-none focus:border-primary-500/50 transition-colors ${
+                    togglingOption === opt.name ? "opacity-50" : ""
+                  }`}
+                >
+                  {opt.options.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      {/* Action buttons — only show if skill is actually running */}
-      {connectionStatus !== "offline" && connectionStatus !== "setup_required" ? (
-        <div className="pt-1">
-          {!confirmDisconnect ? (
-            <div className="flex space-x-2">
+      {/* Action buttons — single row */}
+      <div className="pt-1">
+        {!confirmDisconnect ? (
+          <div className="flex space-x-2">
+            <button
+              onClick={handleRestart}
+              disabled={restarting}
+              className="flex-1 px-3 py-2 text-xs font-medium text-white bg-stone-700/60 border border-stone-600/50 rounded-xl hover:bg-stone-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {restarting ? "Restarting..." : "Restart"}
+            </button>
+            {onReconfigure && (
               <button
-                onClick={handleRestart}
-                disabled={restarting}
-                className="flex-1 px-3 py-2 text-xs font-medium text-white bg-stone-700/60 border border-stone-600/50 rounded-xl hover:bg-stone-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={onReconfigure}
+                className="flex-1 px-3 py-2 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-xl hover:bg-primary-500/20 transition-colors"
               >
-                {restarting ? "Restarting..." : "Restart"}
+                Re-run Setup
               </button>
-              {onReconfigure && (
-                <button
-                  onClick={onReconfigure}
-                  className="flex-1 px-3 py-2 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-xl hover:bg-primary-500/20 transition-colors"
-                >
-                  Re-run Setup
-                </button>
-              )}
-              <button
-                onClick={() => setConfirmDisconnect(true)}
-                className="flex-1 px-3 py-2 text-xs font-medium text-coral-400 bg-coral-500/10 border border-coral-500/30 rounded-xl hover:bg-coral-500/20 transition-colors"
-              >
-                Disconnect
-              </button>
-            </div>
-          ) : (
-            <div className="flex space-x-2">
-              <button
-                onClick={() => setConfirmDisconnect(false)}
-                className="flex-1 px-3 py-2 text-xs font-medium text-stone-400 bg-stone-800/50 border border-stone-700 rounded-xl hover:bg-stone-800 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDisconnect}
-                disabled={disconnecting}
-                className="flex-1 px-3 py-2 text-xs font-medium text-white bg-coral-500 rounded-xl hover:bg-coral-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {disconnecting ? "Disconnecting..." : "Confirm Disconnect"}
-              </button>
-            </div>
-          )}
-        </div>
-      ) : (
-        // Show message for offline skills
-        <div className="pt-1">
-          <div className="text-xs text-stone-500 text-center py-2 px-3 bg-stone-800/30 rounded-xl border border-stone-700/30">
-            Skill is offline. Use "Re-run Setup" to reconnect.
+            )}
+            <button
+              onClick={() => setConfirmDisconnect(true)}
+              className="flex-1 px-3 py-2 text-xs font-medium text-coral-400 bg-coral-500/10 border border-coral-500/30 rounded-xl hover:bg-coral-500/20 transition-colors"
+            >
+              Disconnect
+            </button>
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="flex space-x-2">
+            <button
+              onClick={() => setConfirmDisconnect(false)}
+              className="flex-1 px-3 py-2 text-xs font-medium text-stone-400 bg-stone-800/50 border border-stone-700 rounded-xl hover:bg-stone-800 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className="flex-1 px-3 py-2 text-xs font-medium text-white bg-coral-500 rounded-xl hover:bg-coral-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {disconnecting ? "Disconnecting..." : "Confirm Disconnect"}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

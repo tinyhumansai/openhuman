@@ -1,12 +1,18 @@
 pub mod auth;
-pub mod skills;
+pub mod model;
+pub mod runtime;
 pub mod socket;
-pub mod telegram;
+pub mod tdlib;
+
+#[cfg(desktop)]
 pub mod window;
 
 // Re-export all commands for registration
 pub use auth::*;
-pub use skills::*;
+pub use model::*;
+pub use runtime::*;
 pub use socket::*;
-pub use telegram::*;
+pub use tdlib::*;
+
+#[cfg(desktop)]
 pub use window::*;

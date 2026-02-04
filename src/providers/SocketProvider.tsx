@@ -6,6 +6,8 @@ import { useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
   cleanupTauriSocketListeners,
+  connectRustSocket,
+  disconnectRustSocket,
   isTauri,
   reportSocketConnected,
   reportSocketDisconnected,
@@ -15,31 +17,34 @@ import {
 } from '../utils/tauriSocket';
 
 /**
- * SocketProvider manages the socket connection based on JWT token
- * - Connects when token is set
- * - Disconnects when token is unset
- * - Integrates with Tauri for background persistence
+ * SocketProvider manages the socket connection based on JWT token.
+ *
+ * In Tauri mode: delegates to the Rust-native Socket.io client
+ * (persistent, survives app backgrounding). MCP handled in Rust.
+ *
+ * In web mode: uses the frontend Socket.io client directly.
  */
 const SocketProvider = ({ children }: { children: React.ReactNode }) => {
   const token = useAppSelector(state => state.auth.token);
   const socketStatus = useAppSelector(selectSocketStatus);
   const previousTokenRef = useRef<string | null>(null);
   const tauriListenersSetup = useRef(false);
+  const usesRustSocket = isTauri();
 
   // Setup Tauri event listeners once
   useEffect(() => {
-    if (isTauri() && !tauriListenersSetup.current) {
+    if (usesRustSocket && !tauriListenersSetup.current) {
       setupTauriSocketListeners();
       tauriListenersSetup.current = true;
     }
 
     return () => {
-      if (isTauri() && tauriListenersSetup.current) {
+      if (usesRustSocket && tauriListenersSetup.current) {
         cleanupTauriSocketListeners();
         tauriListenersSetup.current = false;
       }
     };
-  }, []);
+  }, [usesRustSocket]);
 
   // Handle socket connection based on token
   useEffect(() => {
@@ -47,51 +52,53 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Token was set - connect
     if (token && token !== previousToken) {
-      socketService.connect(token);
       previousTokenRef.current = token;
 
-      // Report to Rust that we're connecting
-      if (isTauri()) {
-        updateSocketStatus('connecting');
+      if (usesRustSocket) {
+        // Tauri mode: connect via Rust-native socket
+        connectRustSocket(token);
+      } else {
+        // Web mode: connect via frontend Socket.io
+        socketService.connect(token);
       }
     }
 
     // Token was unset - disconnect
     if (!token && previousToken) {
-      socketService.disconnect();
       previousTokenRef.current = null;
 
-      // Report to Rust
-      if (isTauri()) {
-        reportSocketDisconnected();
+      if (usesRustSocket) {
+        disconnectRustSocket();
+      } else {
+        socketService.disconnect();
       }
     }
-  }, [token]);
+  }, [token, usesRustSocket]);
 
-  // Handle Tauri status reporting
+  // Handle Tauri status reporting (web mode only — Rust socket manages its own state)
   useEffect(() => {
+    if (usesRustSocket) return;
+
     if (socketStatus === 'connected') {
       const socket = socketService.getSocket();
-
-      // Report to Rust
       if (isTauri()) {
         reportSocketConnected(socket?.id);
       }
     } else if (socketStatus === 'disconnected') {
-      // Report to Rust
       if (isTauri()) {
         reportSocketDisconnected();
       }
     } else if (socketStatus === 'connecting') {
-      // Report connecting status to Rust
       if (isTauri()) {
         updateSocketStatus('connecting');
       }
     }
-  }, [socketStatus]);
+  }, [socketStatus, usesRustSocket]);
 
-  // Listen for socket errors and report to Rust
+  // Listen for socket errors and report to Rust (web mode only)
   useEffect(() => {
+    if (usesRustSocket) return;
+
     const socket = socketService.getSocket();
     if (!socket) return;
 
@@ -115,19 +122,21 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       socket.off('error', handleError);
       socket.off('connect_error', handleConnectError);
     };
-  }, [socketStatus]);
+  }, [socketStatus, usesRustSocket]);
 
   // Cleanup on unmount only
   useEffect(() => {
     return () => {
-      // Only disconnect on actual unmount (e.g., app closing)
-      // Don't disconnect on re-renders or route changes
       const currentToken = store.getState().auth.token;
       if (!currentToken) {
-        socketService.disconnect();
+        if (usesRustSocket) {
+          disconnectRustSocket();
+        } else {
+          socketService.disconnect();
+        }
       }
     };
-  }, []); // Empty deps - only run cleanup on unmount
+  }, [usesRustSocket]);
 
   return <>{children}</>;
 };

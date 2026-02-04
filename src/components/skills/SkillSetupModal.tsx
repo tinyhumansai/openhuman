@@ -7,7 +7,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useAppSelector } from "../../store/hooks";
-import { useSkillConnectionStatus } from "../../lib/skills/hooks";
 import SkillSetupWizard from "./SkillSetupWizard";
 import SkillManagementPanel from "./SkillManagementPanel";
 
@@ -28,20 +27,13 @@ export default function SkillSetupModal({
   onClose,
 }: SkillSetupModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  const skill = useAppSelector((state) => state.skills.skills[skillId]);
-  const connectionStatus = useSkillConnectionStatus(skillId);
-
-  // Simplified mode logic: Only show manage mode when skill is actually working
-  // Everything else (offline, errors, never connected, etc.) goes to setup mode
-  const [mode, setMode] = useState<"manage" | "setup">(() => {
-    // Only show manage mode when the skill is actually working
-    const isWorking = connectionStatus === "connected" || connectionStatus === "connecting";
-
-    // For skills without setup hooks, still need to check if they're working
-    // Show manage mode only if skill is currently working
-    // Everything else goes to setup mode (first-time setup, errors, offline, disconnected)
-    return isWorking ? "manage" : "setup";
-  });
+  const setupComplete = useAppSelector(
+    (state) => state.skills.skills[skillId]?.setupComplete,
+  );
+  // Skills without setup hooks always go straight to manage mode.
+  const [mode, setMode] = useState<"manage" | "setup">(
+    !hasSetup || setupComplete ? "manage" : "setup",
+  );
 
   // Handle escape key
   useEffect(() => {
@@ -145,7 +137,7 @@ export default function SkillSetupModal({
             <SkillSetupWizard
               skillId={skillId}
               onComplete={onClose}
-              onCancel={skill?.setupComplete ? () => setMode("manage") : onClose}
+              onCancel={setupComplete ? () => setMode("manage") : onClose}
             />
           )}
         </div>

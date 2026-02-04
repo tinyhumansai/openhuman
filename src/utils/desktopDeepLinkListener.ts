@@ -77,6 +77,7 @@ export const setupDesktopDeepLinkListener = async () => {
     });
 
     if (IS_DEV && typeof window !== 'undefined') {
+      // window.__simulateDeepLink('alphahuman//auth?token=1234567890')
       (
         window as Window & { __simulateDeepLink?: (url: string) => Promise<void> }
       ).__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);

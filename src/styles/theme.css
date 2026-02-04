@@ -555,24 +555,22 @@ body::before {
 }
 
 /* ============================================
-   Dark Mode Support (Optional)
+   Dark Mode Support (Always Enabled)
    ============================================ */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-background: theme('colors.slate.950');
-    --color-surface: theme('colors.slate.900');
-    --color-surface-elevated: theme('colors.slate.800');
-    --color-border: theme('colors.slate.700');
-    --color-border-subtle: theme('colors.slate.800');
+:root {
+  --color-background: theme('colors.slate.950');
+  --color-surface: theme('colors.slate.900');
+  --color-surface-elevated: theme('colors.slate.800');
+  --color-border: theme('colors.slate.700');
+  --color-border-subtle: theme('colors.slate.800');
 
-    --color-text-primary: theme('colors.slate.50');
-    --color-text-secondary: theme('colors.slate.300');
-    --color-text-tertiary: theme('colors.slate.400');
-    --color-text-muted: theme('colors.slate.500');
-  }
+  --color-text-primary: theme('colors.slate.50');
+  --color-text-secondary: theme('colors.slate.300');
+  --color-text-tertiary: theme('colors.slate.400');
+  --color-text-muted: theme('colors.slate.500');
+}
 
-  .glass-surface {
-    background: rgba(15, 23, 42, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-  }
+.glass-surface {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 
 import ConnectionIndicator from '../components/ConnectionIndicator';
+import ModelDownloadProgress from '../components/ModelDownloadProgress';
 import SkillsGrid from '../components/SkillsGrid';
 import { useUser } from '../hooks/useUser';
 import { TELEGRAM_BOT_USERNAME } from '../utils/config';
@@ -137,6 +138,8 @@ const Home = () => {
 
             {/* Skills Grid */}
             <SkillsGrid />
+
+            <ModelDownloadProgress className="mb-4" />
           </div>
         </div>
       </div>

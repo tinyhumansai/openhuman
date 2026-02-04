@@ -1,3 +1,4 @@
+import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { io, Socket } from 'socket.io-client';
 
@@ -44,16 +45,40 @@ function getSocketUserId(): string {
   }
 }
 
+/**
+ * Check if running in Tauri (where Rust handles Socket.io).
+ * When true, this service should NOT create its own socket connection
+ * because the Rust-native SocketManager handles the connection and MCP.
+ */
+function isRustSocketMode(): boolean {
+  try {
+    return coreIsTauri();
+  } catch {
+    return false;
+  }
+}
+
 class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
   private mcpTransport: SocketIOMCPTransportImpl | null = null;
 
   /**
-   * Connect to the socket server with authentication
+   * Connect to the socket server with authentication.
+   *
+   * NOTE: In Tauri mode, this is a NO-OP. The Rust-native SocketManager
+   * handles the connection. The frontend calls `connectRustSocket()` instead.
    */
   connect(token: string): void {
     if (!token) return;
+
+    // In Tauri mode, Rust handles the socket connection.
+    // Don't create a duplicate frontend socket.
+    if (isRustSocketMode()) {
+      socketLog('Skipping frontend socket — Rust SocketManager handles connection');
+      this.token = token;
+      return;
+    }
 
     // Don't connect if already connected with the same token
     if (this.socket?.connected && this.token === token) return;
@@ -84,22 +109,17 @@ class SocketService {
       return;
     }
 
-    // Create socket connection with auth token
-    // Note: path must match backend server configuration
-    // Backend expects token in socket.handshake.auth.token (NOT in query string)
-    // Match the working test script configuration: start with polling, then upgrade
-    // Socket.io sends auth in the handshake (POST request body for polling, not in GET headers)
     const socketOptions = {
       auth: { token },
       path: '/socket.io/',
-      transports: ['websocket', 'polling'], // Start with polling (more reliable), then upgrade to websocket
+      transports: ['websocket', 'polling'] as ('websocket' | 'polling')[],
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionAttempts: 5,
-      forceNew: true, // Force new connection to ensure auth is sent
-      timeout: 2000, // Increase timeout for initial connection
-      upgrade: true, // Allow upgrade from polling to websocket
-      query: {}, // Explicitly prevent token from being added to query string
+      forceNew: true,
+      timeout: 2000,
+      upgrade: true,
+      query: {},
     };
 
     this.socket = io(backendUrl, socketOptions);
@@ -139,6 +159,7 @@ class SocketService {
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
     });
 
+    // MCP handlers — only in web mode (Rust handles MCP in Tauri mode)
     this.socket.on('mcp:listTools', (data: { requestId: string }) => {
       socketLog('MCP list tools request', { requestId: data.requestId });
 
@@ -170,8 +191,6 @@ class SocketService {
       const { requestId, toolCall } = data;
       socketLog('MCP tool call', createSafeLogData({ requestId, toolName: toolCall?.name }, data));
 
-      // Tool names are namespaced as "skillId__toolName" (double underscore)
-      // Skill names cannot contain underscores to avoid ambiguity
       const separatorIdx = toolCall.name.indexOf('__');
       if (separatorIdx === -1) {
         socketError('MCP tool call - invalid tool name format', { requestId, name: toolCall.name });

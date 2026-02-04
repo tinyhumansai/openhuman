@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <!-- Simple "A" monogram icon for AlphaHuman notification -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2L4,20h3.5l1.5,-4h6l1.5,4H20L12,2zM10,14l2,-5.5L14,14h-4z" />
+</vector>

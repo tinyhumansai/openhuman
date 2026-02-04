@@ -1,0 +1,610 @@
+//! RuntimeEngine — top-level orchestrator for the V8 skill runtime.
+//!
+//! Manages skill lifecycle and provides the public API consumed by Tauri commands.
+//! Uses V8 (via deno_core) for JavaScript execution.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use parking_lot::RwLock;
+use tauri::{AppHandle, Emitter};
+
+use crate::runtime::cron_scheduler::CronScheduler;
+use crate::runtime::manifest::SkillManifest;
+use crate::runtime::preferences::PreferencesStore;
+use crate::runtime::skill_registry::SkillRegistry;
+use crate::runtime::types::{events, SkillSnapshot, SkillStatus, ToolResult};
+use crate::runtime::v8_skill_instance::{BridgeDeps, V8SkillInstance};
+use crate::services::tdlib_v8::storage::IdbStorage;
+
+/// The central runtime engine using V8.
+pub struct RuntimeEngine {
+    /// Registry of all skills.
+    registry: Arc<SkillRegistry>,
+    /// Global cron scheduler for timed skill triggers.
+    cron_scheduler: Arc<CronScheduler>,
+    /// Persistent user enable/disable preferences for skills.
+    preferences: Arc<PreferencesStore>,
+    /// Base data directory for skills (platform-aware).
+    skills_data_dir: PathBuf,
+    /// Directory containing skill source files.
+    skills_source_dir: RwLock<Option<PathBuf>>,
+    /// Tauri app handle for emitting events.
+    app_handle: RwLock<Option<AppHandle>>,
+}
+
+impl RuntimeEngine {
+    /// Create a new RuntimeEngine.
+    pub fn new(skills_data_dir: PathBuf) -> Result<Self, String> {
+        let registry = Arc::new(SkillRegistry::new());
+        let cron_scheduler = Arc::new(CronScheduler::new());
+        cron_scheduler.set_registry(Arc::clone(&registry));
+        let preferences = Arc::new(PreferencesStore::new(&skills_data_dir));
+
+        log::info!("[runtime] V8 RuntimeEngine created");
+
+        Ok(Self {
+            registry,
+            cron_scheduler,
+            preferences,
+            skills_data_dir,
+            skills_source_dir: RwLock::new(None),
+            app_handle: RwLock::new(None),
+        })
+    }
+
+    /// Get a clone of the skill registry Arc.
+    pub fn registry(&self) -> Arc<SkillRegistry> {
+        Arc::clone(&self.registry)
+    }
+
+    /// Get a clone of the cron scheduler Arc.
+    pub fn cron_scheduler(&self) -> Arc<CronScheduler> {
+        Arc::clone(&self.cron_scheduler)
+    }
+
+    /// Set the Tauri app handle for emitting events to the frontend.
+    pub fn set_app_handle(&self, handle: AppHandle) {
+        *self.app_handle.write() = Some(handle);
+    }
+
+    /// Set the directory containing skill source files.
+    #[allow(dead_code)]
+    pub fn set_skills_source_dir(&self, dir: PathBuf) {
+        *self.skills_source_dir.write() = Some(dir);
+    }
+
+    /// Get the skills source directory.
+    fn get_skills_source_dir(&self) -> Result<PathBuf, String> {
+        if let Some(dir) = self.skills_source_dir.read().as_ref() {
+            return Ok(dir.clone());
+        }
+
+        let current =
+            std::env::current_dir().map_err(|e| format!("Failed to get current dir: {e}"))?;
+
+        // Check: cwd/skills/skills
+        let dev_skills = current.join("skills").join("skills");
+        if dev_skills.exists() {
+            return Ok(dev_skills);
+        }
+
+        // Check: ../skills/skills
+        if let Some(parent) = current.parent() {
+            let parent_skills = parent.join("skills").join("skills");
+            if parent_skills.exists() {
+                return Ok(parent_skills);
+            }
+        }
+
+        let prod_dir = self.skills_data_dir.clone();
+        log::info!(
+            "[runtime] Skills source dir (production fallback): {:?}",
+            prod_dir
+        );
+        Ok(prod_dir)
+    }
+
+    /// Discover all JavaScript skills from the skills directory.
+    pub async fn discover_skills(&self) -> Result<Vec<SkillManifest>, String> {
+        let skills_dir = self.get_skills_source_dir()?;
+        if !skills_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut manifests = Vec::new();
+        let mut entries = tokio::fs::read_dir(&skills_dir)
+            .await
+            .map_err(|e| format!("Failed to read skills dir: {e}"))?;
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            if path.is_dir() {
+                let manifest_path = path.join("manifest.json");
+                if manifest_path.exists() {
+                    match SkillManifest::from_path(&manifest_path).await {
+                        Ok(manifest)
+                            if manifest.is_javascript() && manifest.supports_current_platform() =>
+                        {
+                            log::info!(
+                                "[runtime] Discovered skill '{}': {}",
+                                manifest.id,
+                                manifest.name
+                            );
+                            manifests.push(manifest);
+                        }
+                        Ok(manifest) if manifest.is_javascript() => {
+                            log::info!(
+                                "[runtime] Skipping skill '{}': not supported on this platform",
+                                manifest.id
+                            );
+                        }
+                        Ok(_) => {
+                            // Not a JavaScript skill, skip
+                            log::info!(
+                                "[runtime] Skipping skill '{}': not a JavaScript skill",
+                                manifest_path.display()
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to parse manifest at {:?}: {e}", manifest_path);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(manifests)
+    }
+
+    /// Start a specific skill by its ID.
+    pub async fn start_skill(&self, skill_id: &str) -> Result<SkillSnapshot, String> {
+        // Check if already running
+        if self.registry.has_skill(skill_id) {
+            if let Some(snap) = self.registry.get_skill(skill_id) {
+                if snap.status == SkillStatus::Running || snap.status == SkillStatus::Initializing {
+                    return Ok(snap);
+                }
+                self.registry.unregister(skill_id);
+            }
+        }
+
+        let skills_dir = self.get_skills_source_dir()?;
+        let skill_dir = skills_dir.join(skill_id);
+        let manifest_path = skill_dir.join("manifest.json");
+
+        if !manifest_path.exists() {
+            return Err(format!(
+                "Skill '{}' not found (no manifest.json)",
+                skill_id
+            ));
+        }
+
+        let manifest = SkillManifest::from_path(&manifest_path).await?;
+        if !manifest.is_javascript() {
+            return Err(format!(
+                "Skill '{}' uses runtime '{}', not 'v8' or 'javascript'",
+                skill_id, manifest.runtime
+            ));
+        }
+
+        let config = manifest.to_config();
+        let data_dir = self.skills_data_dir.join(skill_id);
+
+        // Create the V8 skill instance
+        log::info!("[runtime] Creating V8 skill instance for '{}'", skill_id);
+        log::info!("[runtime] Config: {:?}", config);
+        log::info!("[runtime] Skill dir: {:?}", skill_dir);
+        log::info!("[runtime] Data dir: {:?}", data_dir);
+        let (instance, rx) = V8SkillInstance::new(config.clone(), skill_dir, data_dir.clone());
+        log::info!("[runtime] V8 skill instance created for '{}'", skill_id);
+
+        // Bundle bridge dependencies
+        let deps = BridgeDeps {
+            cron_scheduler: self.cron_scheduler.clone(),
+            skill_registry: self.registry.clone(),
+            app_handle: self.app_handle.read().clone(),
+            data_dir: data_dir.clone(),
+        };
+
+        // Spawn the skill's execution loop
+        let task_handle = instance.spawn(rx, deps);
+
+        // Register in the registry
+        self.registry.register(
+            skill_id,
+            config,
+            instance.sender.clone(),
+            instance.state.clone(),
+            task_handle,
+        );
+
+        self.emit_status_change(skill_id);
+
+        // Wait for initialization to complete (Running or Error status)
+        // with a reasonable timeout
+        let state = instance.state.clone();
+        let skill_id_owned = skill_id.to_string();
+        let max_wait = std::time::Duration::from_secs(10);
+        let poll_interval = std::time::Duration::from_millis(50);
+        let start = std::time::Instant::now();
+
+        loop {
+            let current_status = state.read().status;
+
+            match current_status {
+                SkillStatus::Running => {
+                    // Successfully started
+                    self.emit_status_change(&skill_id_owned);
+                    return Ok(instance.snapshot());
+                }
+                SkillStatus::Error => {
+                    // Initialization failed - unregister and return error
+                    let error_msg = state
+                        .read()
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Unknown initialization error".to_string());
+                    self.registry.unregister(&skill_id_owned);
+                    self.emit_status_change(&skill_id_owned);
+                    return Err(format!(
+                        "Skill '{}' failed to start: {}",
+                        skill_id_owned, error_msg
+                    ));
+                }
+                SkillStatus::Stopped => {
+                    // Skill stopped unexpectedly during init
+                    self.registry.unregister(&skill_id_owned);
+                    return Err(format!(
+                        "Skill '{}' stopped unexpectedly during initialization",
+                        skill_id_owned
+                    ));
+                }
+                SkillStatus::Initializing | SkillStatus::Pending => {
+                    // Still initializing, continue waiting
+                    if start.elapsed() > max_wait {
+                        // Timeout - skill is taking too long
+                        log::warn!(
+                            "[runtime] Skill '{}' initialization timeout, returning current state",
+                            skill_id_owned
+                        );
+                        return Ok(instance.snapshot());
+                    }
+                    tokio::time::sleep(poll_interval).await;
+                }
+                SkillStatus::Stopping => {
+                    // Unexpected state during startup
+                    return Err(format!(
+                        "Skill '{}' is in unexpected Stopping state during startup",
+                        skill_id_owned
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Stop a running skill.
+    pub async fn stop_skill(&self, skill_id: &str) -> Result<(), String> {
+        self.registry.stop_skill(skill_id).await?;
+        self.cron_scheduler.unregister_all_for_skill(skill_id);
+        self.emit_status_change(skill_id);
+        Ok(())
+    }
+
+    /// List all registered skills.
+    pub fn list_skills(&self) -> Vec<SkillSnapshot> {
+        self.registry.list_skills()
+    }
+
+    /// Get the state of a specific skill.
+    pub fn get_skill_state(&self, skill_id: &str) -> Option<SkillSnapshot> {
+        self.registry.get_skill(skill_id)
+    }
+
+    /// Call a tool on a skill.
+    pub async fn call_tool(
+        &self,
+        skill_id: &str,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, String> {
+        self.registry.call_tool(skill_id, tool_name, arguments).await
+    }
+
+    /// Broadcast a server event to all running skills.
+    pub async fn broadcast_event(&self, event: &str, data: serde_json::Value) {
+        self.registry.broadcast_event(event, data).await;
+    }
+
+    /// Get all tool definitions across all running skills.
+    pub fn all_tools(&self) -> Vec<(String, crate::runtime::types::ToolDefinition)> {
+        self.registry.all_tools()
+    }
+
+    /// Emit a skill status change event to the frontend.
+    fn emit_status_change(&self, skill_id: &str) {
+        if let Some(ref app) = *self.app_handle.read() {
+            if let Some(snap) = self.registry.get_skill(skill_id) {
+                let _ = app.emit(events::SKILL_STATUS_CHANGED, &snap);
+            }
+        }
+    }
+
+    /// Auto-start skills based on user preferences.
+    pub async fn auto_start_skills(&self) {
+        match self.discover_skills().await {
+            Ok(manifests) => {
+                for manifest in manifests {
+                    let should_start = self
+                        .preferences
+                        .resolve_should_start(&manifest.id, manifest.auto_start);
+                    if should_start {
+                        log::info!(
+                            "[runtime] Auto-starting skill: {} ({})",
+                            manifest.name,
+                            manifest.id
+                        );
+                        if let Err(e) = self.start_skill(&manifest.id).await {
+                            log::error!(
+                                "[runtime] Failed to auto-start skill '{}': {e}",
+                                manifest.id
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("[runtime] Failed to discover skills for auto-start: {e}");
+            }
+        }
+    }
+
+    /// Enable a skill.
+    pub async fn enable_skill(&self, skill_id: &str) -> Result<(), String> {
+        self.preferences.set_enabled(skill_id, true);
+        self.start_skill(skill_id).await?;
+        Ok(())
+    }
+
+    /// Disable a skill.
+    pub async fn disable_skill(&self, skill_id: &str) -> Result<(), String> {
+        self.preferences.set_enabled(skill_id, false);
+        if self.registry.has_skill(skill_id) {
+            self.stop_skill(skill_id).await?;
+        }
+        Ok(())
+    }
+
+    /// Check whether a skill is enabled.
+    pub fn is_skill_enabled(&self, skill_id: &str) -> bool {
+        self.preferences.is_enabled(skill_id).unwrap_or(false)
+    }
+
+    /// Get all stored preferences.
+    pub fn get_preferences(
+        &self,
+    ) -> std::collections::HashMap<String, crate::runtime::preferences::SkillPreference> {
+        self.preferences.get_all()
+    }
+
+    /// Read a KV value from a skill's database.
+    pub fn kv_get(&self, skill_id: &str, key: &str) -> Result<serde_json::Value, String> {
+        let storage = IdbStorage::new(&self.skills_data_dir)?;
+        storage.skill_kv_get(skill_id, key)
+    }
+
+    /// Write a KV value into a skill's database.
+    pub fn kv_set(
+        &self,
+        skill_id: &str,
+        key: &str,
+        value: &serde_json::Value,
+    ) -> Result<(), String> {
+        let storage = IdbStorage::new(&self.skills_data_dir)?;
+        storage.skill_kv_set(skill_id, key, value)
+    }
+
+    /// Route a JSON-RPC method call.
+    pub async fn rpc(
+        &self,
+        skill_id: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        use crate::runtime::types::SkillMessage;
+
+        match method {
+            "skill/load" => Ok(serde_json::json!({ "ok": true })),
+
+            "setup/start" => {
+                log::info!("[runtime] setup/start for '{}'", skill_id);
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry
+                    .send_message(skill_id, SkillMessage::SetupStart { reply: tx })?;
+                rx.await
+                    .map_err(|_| "SetupStart channel closed".to_string())?
+            }
+
+            "setup/submit" => {
+                let step_id = params
+                    .get("stepId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let values = params
+                    .get("values")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry.send_message(
+                    skill_id,
+                    SkillMessage::SetupSubmit {
+                        step_id,
+                        values,
+                        reply: tx,
+                    },
+                )?;
+                rx.await
+                    .map_err(|_| "SetupSubmit channel closed".to_string())?
+            }
+
+            "setup/cancel" => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry
+                    .send_message(skill_id, SkillMessage::SetupCancel { reply: tx })?;
+                rx.await
+                    .map_err(|_| "SetupCancel channel closed".to_string())?
+                    .map(|()| serde_json::json!({ "ok": true }))
+            }
+
+            "tools/list" => {
+                let snap = self.registry.get_skill(skill_id);
+                let tools = snap
+                    .map(|s| {
+                        s.tools
+                            .iter()
+                            .map(|t| serde_json::to_value(t).unwrap_or_default())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                Ok(serde_json::json!({ "tools": tools }))
+            }
+
+            "tools/call" => {
+                let tool_name = params
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let arguments = params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                let result = self.call_tool(skill_id, tool_name, arguments).await?;
+                serde_json::to_value(&result)
+                    .map_err(|e| format!("Failed to serialize tool result: {e}"))
+            }
+
+            "options/list" => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry
+                    .send_message(skill_id, SkillMessage::ListOptions { reply: tx })?;
+                rx.await
+                    .map_err(|_| "ListOptions channel closed".to_string())?
+            }
+
+            "options/set" => {
+                let name = params
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let value = params
+                    .get("value")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry.send_message(
+                    skill_id,
+                    SkillMessage::SetOption {
+                        name,
+                        value,
+                        reply: tx,
+                    },
+                )?;
+                rx.await
+                    .map_err(|_| "SetOption channel closed".to_string())?
+                    .map(|()| serde_json::json!({ "ok": true }))
+            }
+
+            "skill/tick" => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry
+                    .send_message(skill_id, SkillMessage::Tick { reply: tx })?;
+                rx.await
+                    .map_err(|_| "Tick channel closed".to_string())?
+                    .map(|()| serde_json::json!({ "ok": true }))
+            }
+
+            "skill/sessionStart" => {
+                let session_id = params
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry.send_message(
+                    skill_id,
+                    SkillMessage::SessionStart {
+                        session_id,
+                        reply: tx,
+                    },
+                )?;
+                rx.await
+                    .map_err(|_| "SessionStart channel closed".to_string())?
+                    .map(|()| serde_json::json!({ "ok": true }))
+            }
+
+            "skill/sessionEnd" => {
+                let session_id = params
+                    .get("sessionId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry.send_message(
+                    skill_id,
+                    SkillMessage::SessionEnd {
+                        session_id,
+                        reply: tx,
+                    },
+                )?;
+                rx.await
+                    .map_err(|_| "SessionEnd channel closed".to_string())?
+                    .map(|()| serde_json::json!({ "ok": true }))
+            }
+
+            "skill/shutdown" => {
+                self.stop_skill(skill_id).await?;
+                Ok(serde_json::json!({ "ok": true }))
+            }
+
+            _ => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.registry.send_message(
+                    skill_id,
+                    SkillMessage::Rpc {
+                        method: method.to_string(),
+                        params,
+                        reply: tx,
+                    },
+                )?;
+                rx.await.map_err(|_| "Rpc channel closed".to_string())?
+            }
+        }
+    }
+
+    /// Read a file from a skill's data directory.
+    pub fn data_read(&self, skill_id: &str, filename: &str) -> Result<String, String> {
+        let data_dir = self.skills_data_dir.join(skill_id);
+        let path = data_dir.join(filename);
+        std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read data file '{}': {e}", filename))
+    }
+
+    /// Write a file to a skill's data directory.
+    pub fn data_write(&self, skill_id: &str, filename: &str, content: &str) -> Result<(), String> {
+        let data_dir = self.skills_data_dir.join(skill_id);
+        let path = data_dir.join(filename);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create data dir: {e}"))?;
+        }
+        std::fs::write(&path, content)
+            .map_err(|e| format!("Failed to write data file '{}': {e}", filename))
+    }
+
+    /// Get the data directory path for a skill.
+    pub fn skill_data_dir(&self, skill_id: &str) -> PathBuf {
+        self.skills_data_dir.join(skill_id)
+    }
+}

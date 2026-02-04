@@ -11,16 +11,19 @@
 mod ai;
 mod commands;
 mod models;
+mod runtime;
 mod services;
 mod utils;
 
 use ai::*;
 use commands::*;
 use services::socket_service::SOCKET_SERVICE;
+use tauri::{AppHandle, Manager, RunEvent};
+
+#[cfg(desktop)]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, RunEvent,
 };
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -32,7 +35,100 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-// Helper function to show the window
+// Macro to define common handlers shared across all platforms
+macro_rules! common_handlers {
+    () => {
+        // Demo
+        greet,
+        // Auth commands
+        get_auth_state,
+        get_session_token,
+        get_current_user,
+        is_authenticated,
+        logout,
+        store_session,
+        // Socket commands
+        socket_connect,
+        socket_disconnect,
+        get_socket_state,
+        is_socket_connected,
+        report_socket_connected,
+        report_socket_disconnected,
+        report_socket_error,
+        update_socket_status,
+        // AI encryption commands
+        ai_init_encryption,
+        ai_encrypt,
+        ai_decrypt,
+        // AI memory filesystem commands
+        ai_memory_init,
+        ai_memory_upsert_file,
+        ai_memory_get_file,
+        ai_memory_upsert_chunk,
+        ai_memory_delete_chunks_by_path,
+        ai_memory_fts_search,
+        ai_memory_get_chunks,
+        ai_memory_get_all_embeddings,
+        ai_memory_cache_embedding,
+        ai_memory_get_cached_embedding,
+        ai_memory_set_meta,
+        ai_memory_get_meta,
+        // AI session commands
+        ai_sessions_init,
+        ai_sessions_load_index,
+        ai_sessions_update_index,
+        ai_sessions_append_transcript,
+        ai_sessions_read_transcript,
+        ai_sessions_delete,
+        ai_sessions_list,
+        ai_read_memory_file,
+        ai_write_memory_file,
+        ai_list_memory_files,
+        // V8 runtime commands
+        runtime_discover_skills,
+        runtime_list_skills,
+        runtime_start_skill,
+        runtime_stop_skill,
+        runtime_get_skill_state,
+        runtime_call_tool,
+        runtime_all_tools,
+        runtime_broadcast_event,
+        // V8 runtime enable/disable + KV commands
+        runtime_enable_skill,
+        runtime_disable_skill,
+        runtime_is_skill_enabled,
+        runtime_get_skill_preferences,
+        runtime_skill_kv_get,
+        runtime_skill_kv_set,
+        // V8 runtime JSON-RPC + data commands
+        runtime_rpc,
+        runtime_skill_data_read,
+        runtime_skill_data_write,
+        runtime_skill_data_dir,
+        // Socket.io commands (Rust-native persistent connection)
+        runtime_socket_connect,
+        runtime_socket_disconnect,
+        runtime_socket_state,
+        runtime_socket_emit,
+    };
+}
+
+// Macro to define desktop-only window handlers
+macro_rules! desktop_window_handlers {
+    () => {
+        show_window,
+        hide_window,
+        toggle_window,
+        is_window_visible,
+        minimize_window,
+        maximize_window,
+        close_window,
+        set_window_title,
+    };
+}
+
+// Helper function to show the window (used by tray and macOS reopen)
+#[cfg(desktop)]
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -42,6 +138,7 @@ fn show_main_window(app: &AppHandle) {
 }
 
 // Helper function to toggle window visibility
+#[cfg(desktop)]
 fn toggle_main_window_visibility(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         match window.is_visible() {
@@ -110,23 +207,46 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Load .env file (silently ignore if missing — production won't have one)
+    // Try current directory first, then parent (for when running from src-tauri)
+    if dotenvy::dotenv().is_err() {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Some(parent) = cwd.parent() {
+                let _ = dotenvy::from_path(parent.join(".env"));
+            }
+        }
+    }
+
+    // Initialize platform-appropriate logger
+    #[cfg(target_os = "android")]
+    {
+        android_logger::init_once(
+            android_logger::Config::default()
+                .with_max_level(log::LevelFilter::Debug)
+                .with_tag("AlphaHuman"),
+        );
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = env_logger::try_init();
+    }
+
     let mut builder = tauri::Builder::default()
         // Plugins
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_autostart::init(
-            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--minimized"]),
-        ));
+        .plugin(tauri_plugin_os::init());
 
-    // Add notification plugin on desktop only
+    // Add desktop-only plugins (autostart, notification)
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_notification::init());
+        builder = builder
+            .plugin(tauri_plugin_autostart::init(
+                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+                Some(vec!["--minimized"]),
+            ))
+            .plugin(tauri_plugin_notification::init());
     }
-
-    // Add shell plugin for subprocess skill runtime
-    builder = builder.plugin(tauri_plugin_shell::init());
 
     builder
         // Setup
@@ -163,82 +283,288 @@ pub fn run() {
                 }
             }
 
+            // Create the SocketManager (persistent Rust-native Socket.io)
+            let socket_mgr = std::sync::Arc::new(
+                runtime::socket_manager::SocketManager::new(),
+            );
+            socket_mgr.set_app_handle(app.handle().clone());
+
+            // Initialize V8 Runtime Engine (desktop only - V8 not available on Android/iOS)
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let data_dir = app
+                    .path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| {
+                        // Fallback for platforms where app_data_dir isn't available
+                        dirs::home_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join(".alphahuman")
+                    });
+                let skills_data_dir = data_dir.join("skills");
+
+                // Initialize local model service (for skills to use)
+                let model_dir = data_dir.join("models");
+                services::llama::LLAMA_MANAGER.set_data_dir(model_dir);
+                log::info!("[runtime] Local model service initialized");
+
+                match runtime::v8_engine::RuntimeEngine::new(skills_data_dir) {
+                    Ok(engine) => {
+                        engine.set_app_handle(app.handle().clone());
+                        let engine = std::sync::Arc::new(engine);
+
+                        // Wire the SkillRegistry into the SocketManager for MCP
+                        socket_mgr.set_registry(engine.registry());
+
+                        app.manage(engine.clone());
+
+                        // Start the cron scheduler
+                        let cron = engine.cron_scheduler();
+                        tauri::async_runtime::spawn(async move {
+                            cron.start();
+                        });
+
+                        // Auto-start skills in background
+                        let engine_clone = engine.clone();
+                        tauri::async_runtime::spawn(async move {
+                            engine_clone.auto_start_skills().await;
+                        });
+
+                        log::info!("[runtime] V8 runtime engine initialized");
+                    }
+                    Err(e) => {
+                        log::error!("[runtime] Failed to initialize V8 runtime: {e}");
+                    }
+                }
+            }
+
+            #[cfg(target_os = "android")]
+            {
+                log::info!("[runtime] V8 runtime and local model disabled on Android");
+            }
+
+            #[cfg(target_os = "ios")]
+            {
+                log::info!("[runtime] V8 runtime and local model disabled on iOS");
+            }
+
+            // Store SocketManager as Tauri state
+            app.manage(socket_mgr.clone());
+
+            // Auto-connect socket if there's an existing session
+            let socket_mgr_clone = socket_mgr.clone();
+            tauri::async_runtime::spawn(async move {
+                use commands::auth::SESSION_SERVICE;
+                if let Some(token) = SESSION_SERVICE.get_token() {
+                    let url = utils::config::get_backend_url();
+                    log::info!("[socket-mgr] Auto-connecting with stored session");
+                    if let Err(e) = socket_mgr_clone.connect(&url, &token).await {
+                        log::error!("[socket-mgr] Auto-connect failed: {e}");
+                    }
+                } else {
+                    log::info!("[socket-mgr] No stored session — waiting for login");
+                }
+            });
+
             Ok(())
         })
         // Register all commands
-        .invoke_handler(tauri::generate_handler![
-            // Demo
-            greet,
-            // Auth commands
-            exchange_token,
-            get_auth_state,
-            get_session_token,
-            get_current_user,
-            is_authenticated,
-            logout,
-            store_session,
-            // Socket commands
-            socket_connect,
-            socket_disconnect,
-            get_socket_state,
-            is_socket_connected,
-            report_socket_connected,
-            report_socket_disconnected,
-            report_socket_error,
-            update_socket_status,
-            // Telegram commands
-            start_telegram_login,
-            start_telegram_login_with_url,
-            // Window commands
-            show_window,
-            hide_window,
-            toggle_window,
-            is_window_visible,
-            minimize_window,
-            maximize_window,
-            close_window,
-            set_window_title,
-            // AI encryption commands
-            ai_init_encryption,
-            ai_encrypt,
-            ai_decrypt,
-            // AI memory filesystem commands
-            ai_memory_init,
-            ai_memory_upsert_file,
-            ai_memory_get_file,
-            ai_memory_upsert_chunk,
-            ai_memory_delete_chunks_by_path,
-            ai_memory_fts_search,
-            ai_memory_get_chunks,
-            ai_memory_get_all_embeddings,
-            ai_memory_cache_embedding,
-            ai_memory_get_cached_embedding,
-            ai_memory_set_meta,
-            ai_memory_get_meta,
-            // AI session commands
-            ai_sessions_init,
-            ai_sessions_load_index,
-            ai_sessions_update_index,
-            ai_sessions_append_transcript,
-            ai_sessions_read_transcript,
-            ai_sessions_delete,
-            ai_sessions_list,
-            ai_read_memory_file,
-            ai_write_memory_file,
-            ai_list_memory_files,
-            // Skill commands
-            skill_read_data,
-            skill_write_data,
-            skill_data_dir,
-            skill_list_manifests,
-            skill_cwd,
-            skill_venv_site_packages,
-            skill_read_catalog,
-            skill_sync_repo,
-            skill_catalog_exists,
-            skill_check_for_updates,
-            skill_read_icon,
-        ])
+        // Common handlers are defined via macros above, conditionally include desktop window handlers
+        .invoke_handler({
+            #[cfg(desktop)]
+            {
+                tauri::generate_handler![
+                    // Common handlers (expanded from common_handlers! macro)
+                    greet,
+                    get_auth_state,
+                    get_session_token,
+                    get_current_user,
+                    is_authenticated,
+                    logout,
+                    store_session,
+                    socket_connect,
+                    socket_disconnect,
+                    get_socket_state,
+                    is_socket_connected,
+                    report_socket_connected,
+                    report_socket_disconnected,
+                    report_socket_error,
+                    update_socket_status,
+                    // Desktop-only window handlers (expanded from desktop_window_handlers! macro)
+                    show_window,
+                    hide_window,
+                    toggle_window,
+                    is_window_visible,
+                    minimize_window,
+                    maximize_window,
+                    close_window,
+                    set_window_title,
+                    // AI encryption commands
+                    ai_init_encryption,
+                    ai_encrypt,
+                    ai_decrypt,
+                    // AI memory filesystem commands
+                    ai_memory_init,
+                    ai_memory_upsert_file,
+                    ai_memory_get_file,
+                    ai_memory_upsert_chunk,
+                    ai_memory_delete_chunks_by_path,
+                    ai_memory_fts_search,
+                    ai_memory_get_chunks,
+                    ai_memory_get_all_embeddings,
+                    ai_memory_cache_embedding,
+                    ai_memory_get_cached_embedding,
+                    ai_memory_set_meta,
+                    ai_memory_get_meta,
+                    // AI session commands
+                    ai_sessions_init,
+                    ai_sessions_load_index,
+                    ai_sessions_update_index,
+                    ai_sessions_append_transcript,
+                    ai_sessions_read_transcript,
+                    ai_sessions_delete,
+                    ai_sessions_list,
+                    ai_read_memory_file,
+                    ai_write_memory_file,
+                    ai_list_memory_files,
+                    // V8 runtime commands
+                    runtime_discover_skills,
+                    runtime_list_skills,
+                    runtime_start_skill,
+                    runtime_stop_skill,
+                    runtime_get_skill_state,
+                    runtime_call_tool,
+                    runtime_all_tools,
+                    runtime_broadcast_event,
+                    // V8 runtime enable/disable + KV commands
+                    runtime_enable_skill,
+                    runtime_disable_skill,
+                    runtime_is_skill_enabled,
+                    runtime_get_skill_preferences,
+                    runtime_skill_kv_get,
+                    runtime_skill_kv_set,
+                    // V8 runtime JSON-RPC + data commands
+                    runtime_rpc,
+                    runtime_skill_data_read,
+                    runtime_skill_data_write,
+                    runtime_skill_data_dir,
+                    // Socket.io commands (Rust-native persistent connection)
+                    runtime_socket_connect,
+                    runtime_socket_disconnect,
+                    runtime_socket_state,
+                    runtime_socket_emit,
+                    // TDLib commands (native Telegram library)
+                    tdlib_create_client,
+                    tdlib_send,
+                    tdlib_receive,
+                    tdlib_destroy,
+                    tdlib_is_available,
+                    // Model commands (local LLM)
+                    model_is_available,
+                    model_get_status,
+                    model_ensure_loaded,
+                    model_generate,
+                    model_summarize,
+                    model_unload,
+                    // Android MediaPipe LLM commands
+                    model_get_recommended,
+                    model_list_downloaded,
+                    model_load_path,
+                ]
+            }
+            #[cfg(not(desktop))]
+            {
+                tauri::generate_handler![
+                    // Common handlers (expanded from common_handlers! macro)
+                    greet,
+                    get_auth_state,
+                    get_session_token,
+                    get_current_user,
+                    is_authenticated,
+                    logout,
+                    store_session,
+                    socket_connect,
+                    socket_disconnect,
+                    get_socket_state,
+                    is_socket_connected,
+                    report_socket_connected,
+                    report_socket_disconnected,
+                    report_socket_error,
+                    update_socket_status,
+                    // AI encryption commands
+                    ai_init_encryption,
+                    ai_encrypt,
+                    ai_decrypt,
+                    // AI memory filesystem commands
+                    ai_memory_init,
+                    ai_memory_upsert_file,
+                    ai_memory_get_file,
+                    ai_memory_upsert_chunk,
+                    ai_memory_delete_chunks_by_path,
+                    ai_memory_fts_search,
+                    ai_memory_get_chunks,
+                    ai_memory_get_all_embeddings,
+                    ai_memory_cache_embedding,
+                    ai_memory_get_cached_embedding,
+                    ai_memory_set_meta,
+                    ai_memory_get_meta,
+                    // AI session commands
+                    ai_sessions_init,
+                    ai_sessions_load_index,
+                    ai_sessions_update_index,
+                    ai_sessions_append_transcript,
+                    ai_sessions_read_transcript,
+                    ai_sessions_delete,
+                    ai_sessions_list,
+                    ai_read_memory_file,
+                    ai_write_memory_file,
+                    ai_list_memory_files,
+                    // V8 runtime commands
+                    runtime_discover_skills,
+                    runtime_list_skills,
+                    runtime_start_skill,
+                    runtime_stop_skill,
+                    runtime_get_skill_state,
+                    runtime_call_tool,
+                    runtime_all_tools,
+                    runtime_broadcast_event,
+                    // V8 runtime enable/disable + KV commands
+                    runtime_enable_skill,
+                    runtime_disable_skill,
+                    runtime_is_skill_enabled,
+                    runtime_get_skill_preferences,
+                    runtime_skill_kv_get,
+                    runtime_skill_kv_set,
+                    // V8 runtime JSON-RPC + data commands
+                    runtime_rpc,
+                    runtime_skill_data_read,
+                    runtime_skill_data_write,
+                    runtime_skill_data_dir,
+                    // Socket.io commands (Rust-native persistent connection)
+                    runtime_socket_connect,
+                    runtime_socket_disconnect,
+                    runtime_socket_state,
+                    runtime_socket_emit,
+                    // TDLib commands (native Telegram library)
+                    tdlib_create_client,
+                    tdlib_send,
+                    tdlib_receive,
+                    tdlib_destroy,
+                    tdlib_is_available,
+                    // Model commands (local LLM / MediaPipe)
+                    model_is_available,
+                    model_get_status,
+                    model_ensure_loaded,
+                    model_generate,
+                    model_summarize,
+                    model_unload,
+                    // Android MediaPipe LLM commands
+                    model_get_recommended,
+                    model_list_downloaded,
+                    model_load_path,
+                ]
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
@@ -248,7 +574,7 @@ pub fn run() {
                 show_main_window(app_handle);
             }
 
-            // Suppress unused variable warning on non-macOS
+            // Suppress unused variable warnings on other platforms
             #[cfg(not(target_os = "macos"))]
             let _ = (app_handle, event);
         });

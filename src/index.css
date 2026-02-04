@@ -373,11 +373,7 @@
   }
 }
 
-/* Dark mode support (optional) */
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-  }
-
-  /* Dark mode styles can be added here if needed */
+/* Dark mode support (always enabled) */
+:root {
+  color-scheme: dark;
 }

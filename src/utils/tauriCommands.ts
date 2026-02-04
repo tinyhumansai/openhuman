@@ -12,29 +12,6 @@ export const isTauri = (): boolean => {
 };
 
 /**
- * Start Telegram login via the widget in the system browser
- * The backend will redirect back to the app via deep link
- */
-export async function startTelegramLogin(): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-
-  await invoke('start_telegram_login');
-}
-
-/**
- * Start Telegram login with a custom backend URL
- */
-export async function startTelegramLoginWithUrl(backendUrl: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-
-  await invoke('start_telegram_login_with_url', { backendUrl });
-}
-
-/**
  * Exchange a login token for a session token
  */
 export async function exchangeToken(
