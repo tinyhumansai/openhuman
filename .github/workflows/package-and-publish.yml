@@ -14,7 +14,7 @@ on:
     branches:
       - develop
   workflow_run:
-    workflows: ["Version Bump"]
+    workflows: ['Version Bump']
     types:
       - completed
     branches:
@@ -169,15 +169,15 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          - platform: "macos-latest"
-            args: "--target aarch64-apple-darwin"
-            target: "aarch64-apple-darwin"
-          - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin"
-            target: "x86_64-apple-darwin"
-          - platform: "ubuntu-22.04"
-            args: ""
-            target: ""
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+            target: 'x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+            target: ''
     runs-on: ${{ matrix.settings.platform }}
     steps:
       - name: Checkout
@@ -197,7 +197,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: 'yarn'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -318,7 +318,7 @@ jobs:
           # macOS 10.15+ required for std::filesystem used by llama.cpp
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
         with:
-          args: "-c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}"
+          args: '-c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}'
           includeDebug: ${{ needs.get-version.outputs.should-publish == '' && inputs.forceRelease != 'true' }}
           includeRelease: ${{ needs.get-version.outputs.should-publish != '' || inputs.forceRelease == 'true' }}
           # Don't let tauri-action upload for macOS - we need to bundle TDLib first and recreate the DMG
