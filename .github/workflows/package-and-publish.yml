@@ -113,7 +113,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [get-version, check-version]
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || '' }}
-    if: needs.get-version.outputs.should-publish != '' && needs.check-version.outputs.should-skip != 'true'
+    if: github.ref == 'refs/heads/main' && needs.get-version.outputs.should-publish == 'true' && needs.check-version.outputs.should-skip != 'true'
     permissions:
       contents: write
     outputs:
@@ -514,7 +514,7 @@ jobs:
     # needs: [get-version, check-version, create-release, package-tauri, package-android]
     needs: [get-version, check-version, create-release, package-tauri]
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || '' }}
-    if: needs.get-version.outputs.should-publish != '' && needs.check-version.outputs.should-skip != 'true'
+    if: github.ref == 'refs/heads/main' && needs.get-version.outputs.should-publish == 'true' && needs.check-version.outputs.should-skip != 'true'
     permissions:
       contents: write
     env:
