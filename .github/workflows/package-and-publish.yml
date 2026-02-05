@@ -321,34 +321,11 @@ jobs:
           args: "-c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}"
           includeDebug: ${{ needs.get-version.outputs.should-publish == '' && inputs.forceRelease != 'true' }}
           includeRelease: ${{ needs.get-version.outputs.should-publish != '' || inputs.forceRelease == 'true' }}
-          # Don't let tauri-action upload for macOS - we need to bundle TDLib first and recreate the DMG
-          # For non-macOS platforms, upload directly via tauri-action
-          releaseId: ${{ matrix.settings.platform != 'macos-latest' && needs.create-release.outputs.releaseId || '' }}
+          # TDLib dylibs are now bundled natively via build.rs + tauri.conf.json macOS.frameworks
+          # No post-build scripts needed - Tauri bundler handles copying and signing
+          releaseId: ${{ needs.create-release.outputs.releaseId }}
           owner: alphahumanxyz
           repo: alphahuman
-
-      # # Bundle TDLib dylib into macOS app (fixes "Library not loaded" crash)
-      # - name: Bundle TDLib for macOS
-      #   if: matrix.settings.platform == 'macos-latest'
-      #   run: |
-      #     TARGET="${{ matrix.settings.target }}"
-      #     echo "Bundling TDLib for target: $TARGET"
-      #     chmod +x ./src-tauri/scripts/bundle-tdlib-macos.sh
-      #     ./src-tauri/scripts/bundle-tdlib-macos.sh release "$TARGET"
-
-      # # Re-sign the app after modifying the bundle (required for notarization)
-      # - name: Re-sign macOS app after TDLib bundling
-      #   if: matrix.settings.platform == 'macos-latest'
-      #   env:
-      #     APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-      #     APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      #     APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      #   run: bash ./src-tauri/scripts/resign-macos.sh release "${{ matrix.settings.target }}"
-
-      # # Re-create DMG after TDLib bundling (the original DMG was created before bundling)
-      # - name: Recreate DMG with bundled TDLib
-      #   if: matrix.settings.platform == 'macos-latest'
-      #   run: bash ./src-tauri/scripts/recreate-dmg-macos.sh release "${{ matrix.settings.target }}"
 
       - name: Get file info
         id: file-info

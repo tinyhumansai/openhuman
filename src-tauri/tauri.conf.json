@@ -39,7 +39,12 @@
     ],
     "resources": ["../skills/skills"],
     "macOS": {
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "frameworks": [
+        "./libraries/libtdjson.1.8.29.dylib",
+        "./libraries/libssl.3.dylib",
+        "./libraries/libcrypto.3.dylib"
+      ]
     }
   },
   "plugins": {
