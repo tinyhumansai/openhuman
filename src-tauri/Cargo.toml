@@ -80,7 +80,7 @@ futures-util = "0.3"
 
 # Desktop/iOS use native-tls for Socket.io
 [target.'cfg(not(target_os = "android"))'.dependencies]
-rust_socketio = { version = "0.6", features = ["async"] }
+tf-rust-socketio = { version = "0.7", features = ["async"] }
 
 # Android uses a simpler approach - no persistent Socket.io (use web socket from frontend)
 [target.'cfg(target_os = "android")'.dependencies]

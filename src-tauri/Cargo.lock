@@ -27,7 +27,6 @@ dependencies = [
  "reqwest",
  "rquickjs",
  "rusqlite",
- "rust_socketio",
  "serde",
  "serde_json",
  "sha2",
@@ -39,6 +38,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-os",
  "tdlib-rs",
+ "tf-rust-socketio",
  "tokio",
  "tokio-tungstenite 0.24.0",
  "uuid",
@@ -4204,53 +4204,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust_engineio"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3d3572ceba6c5d79eecedf3be93640ca9512fa4100dff6a70f96c514adf4f1f"
-dependencies = [
- "adler32",
- "async-stream",
- "async-trait",
- "base64 0.21.7",
- "bytes",
- "futures-util",
- "http",
- "native-tls",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tokio-tungstenite 0.21.0",
- "tungstenite 0.21.0",
- "url",
-]
-
-[[package]]
-name = "rust_socketio"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a6a8672db895d567b3c0b8a4c0d3e98113ebb32badf6ce66004e743e5ee1e1e"
-dependencies = [
- "adler32",
- "async-stream",
- "backoff",
- "base64 0.21.7",
- "bytes",
- "futures-util",
- "log",
- "native-tls",
- "rand 0.8.5",
- "rust_engineio",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5337,6 +5290,53 @@ dependencies = [
  "futf",
  "mac",
  "utf-8",
+]
+
+[[package]]
+name = "tf-rust-engineio"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e34149fcb6a0790edd3bd1f8cc463c1722ad39be82df8b657ca2df179744366"
+dependencies = [
+ "adler32",
+ "async-stream",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "http",
+ "native-tls",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
+ "tungstenite 0.21.0",
+ "url",
+]
+
+[[package]]
+name = "tf-rust-socketio"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f4a973c57c7158d0392cc7f6544da63220f0253e7a11ae6d225b0136c3f133e"
+dependencies = [
+ "adler32",
+ "async-stream",
+ "backoff",
+ "base64 0.22.1",
+ "bytes",
+ "futures-util",
+ "log",
+ "native-tls",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tf-rust-engineio",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
 ]
 
 [[package]]

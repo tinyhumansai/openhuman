@@ -50,8 +50,12 @@ fn copy_local_tdlib_for_bundle() {
         .join(format!("macos-{arch_name}"))
         .join(&dylib_name);
 
-    // 2. Check tdlib-local/ (local source build)
-    let local = manifest_dir.join("tdlib-local").join("lib").join(&dylib_name);
+    // 2. Check tdlib-local/<arch>/ (local source build)
+    let local = manifest_dir
+        .join("tdlib-local")
+        .join(arch_name)
+        .join("lib")
+        .join(&dylib_name);
 
     let src_dylib = if prebuilt.exists() {
         println!("cargo:warning=Using prebuilt TDLib from {}", prebuilt.display());

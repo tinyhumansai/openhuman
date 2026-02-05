@@ -21,11 +21,11 @@ use tauri::{AppHandle, Emitter};
 
 use crate::models::socket::{ConnectionStatus, SocketState};
 
-// rust_socketio only available on non-Android platforms
+// tf_rust_socketio only available on non-Android platforms
 #[cfg(not(target_os = "android"))]
 use futures_util::FutureExt;
 #[cfg(not(target_os = "android"))]
-use rust_socketio::{
+use tf_rust_socketio::{
     asynchronous::{Client, ClientBuilder},
     Event, Payload,
 };
@@ -70,7 +70,7 @@ struct SharedState {
 /// Socket.io connection instead.
 pub struct SocketManager {
     shared: Arc<SharedState>,
-    /// The active `rust_socketio` async client (if connected).
+    /// The active `tf_rust_socketio` async client (if connected).
     /// Not available on Android due to native-tls/OpenSSL build complexity.
     #[cfg(not(target_os = "android"))]
     client: tokio::sync::Mutex<Option<Client>>,
@@ -127,12 +127,33 @@ impl SocketManager {
         // Disconnect existing connection first
         self.disconnect().await?;
 
-        // Convert https:// → wss:// and http:// → ws:// for direct WebSocket
-        let ws_url = url
-            .replace("https://", "wss://")
-            .replace("http://", "ws://");
+        log::info!("[socket-mgr] Connecting to {}", url);
 
-        log::info!("[socket-mgr] Connecting to {} (ws: {})", url, ws_url);
+        // Pre-flight: verify the server is reachable at the engine.io endpoint
+        let eio_url = format!(
+            "{}/socket.io/?EIO=4&transport=polling",
+            url.trim_end_matches('/')
+        );
+        log::info!("[socket-mgr] Pre-flight check: GET {}", eio_url);
+        match reqwest::Client::new()
+            .get(&eio_url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                log::info!(
+                    "[socket-mgr] Pre-flight response: {} body={}",
+                    status,
+                    &body[..body.len().min(200)]
+                );
+            }
+            Err(e) => {
+                log::error!("[socket-mgr] Pre-flight FAILED: {e:?}");
+            }
+        }
 
         // Update status
         *self.shared.status.write() = ConnectionStatus::Connecting;
@@ -149,7 +170,7 @@ impl SocketManager {
         let s_tool_call = Arc::clone(&self.shared);
         let s_any = Arc::clone(&self.shared);
 
-        let client = ClientBuilder::new(&ws_url)
+        let client = ClientBuilder::new(url)
             .namespace("/")
             .auth(json!({"token": token}))
             // Pass JWT in opening headers so the server can authenticate
@@ -157,7 +178,7 @@ impl SocketManager {
             .opening_header("Authorization", format!("Bearer {}", token))
             .reconnect(true)
             .max_reconnect_attempts(0) // unlimited
-            .transport_type(rust_socketio::TransportType::Websocket)
+            .transport_type(tf_rust_socketio::TransportType::Any)
             // --- Connection established ---
             .on("connect", move |_payload, _client: Client| {
                 let shared = Arc::clone(&s_connect);
@@ -168,7 +189,7 @@ impl SocketManager {
                 }
                 .boxed()
             })
-            // rust_socketio v0.6 emits "message" for the namespace connect ack
+            // tf_rust_socketio v0.6 emits "message" for the namespace connect ack
             .on("message", move |payload, _client: Client| {
                 let shared = Arc::clone(&s_message);
                 async move {
@@ -315,12 +336,7 @@ impl SocketManager {
         // Disconnect existing connection first
         self.disconnect().await?;
 
-        // Convert https:// → wss:// and http:// → ws:// for direct WebSocket
-        let ws_url = url
-            .replace("https://", "wss://")
-            .replace("http://", "ws://");
-
-        log::info!("[socket-mgr] Connecting to {} (ws: {}, iOS)", url, ws_url);
+        log::info!("[socket-mgr] Connecting to {} (iOS)", url);
 
         // Update status
         *self.shared.status.write() = ConnectionStatus::Connecting;
@@ -334,13 +350,13 @@ impl SocketManager {
         let s_error = Arc::clone(&self.shared);
         let s_any = Arc::clone(&self.shared);
 
-        let client = ClientBuilder::new(&ws_url)
+        let client = ClientBuilder::new(url)
             .namespace("/")
             .auth(json!({"token": token}))
             .opening_header("Authorization", format!("Bearer {}", token))
             .reconnect(true)
             .max_reconnect_attempts(0) // unlimited
-            .transport_type(rust_socketio::TransportType::Websocket)
+            .transport_type(tf_rust_socketio::TransportType::Any)
             // --- Connection established ---
             .on("connect", move |_payload, _client: Client| {
                 let shared = Arc::clone(&s_connect);
@@ -351,7 +367,7 @@ impl SocketManager {
                 }
                 .boxed()
             })
-            // rust_socketio v0.6 emits "message" for the namespace connect ack
+            // tf_rust_socketio v0.6 emits "message" for the namespace connect ack
             .on("message", move |payload, _client: Client| {
                 let shared = Arc::clone(&s_message);
                 async move {

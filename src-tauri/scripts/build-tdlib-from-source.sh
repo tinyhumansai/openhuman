@@ -21,8 +21,6 @@ export MACOSX_DEPLOYMENT_TARGET="10.15"
 # --- Resolve paths relative to src-tauri/ ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_TAURI_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-BUILD_DIR="${SRC_TAURI_DIR}/tdlib-build"
-INSTALL_DIR="${SRC_TAURI_DIR}/tdlib-local"
 
 # --- Detect or override architecture ---
 ARCH="${1:-$(uname -m)}"
@@ -36,6 +34,10 @@ case "$ARCH" in
 esac
 echo "==> Building for architecture: $ARCH"
 echo "==> Deployment target: macOS $MACOSX_DEPLOYMENT_TARGET"
+
+# Arch-specific build and install dirs (so arm64 and x86_64 don't clobber each other)
+BUILD_DIR="${SRC_TAURI_DIR}/tdlib-build/${ARCH}"
+INSTALL_DIR="${SRC_TAURI_DIR}/tdlib-local/${ARCH}"
 
 COMMON_FLAGS="-arch $ARCH -mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
 
