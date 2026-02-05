@@ -305,6 +305,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         id: build-tauri
         env:
+          TELEGRAM_API_ID: ${{ secrets.VITE_TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.VITE_TELEGRAM_API_HASH }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
