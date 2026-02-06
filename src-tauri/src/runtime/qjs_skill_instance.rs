@@ -193,8 +193,8 @@ impl QjsSkillInstance {
                 // Load bootstrap
                 let bootstrap_code = include_str!("../services/tdlib_v8/bootstrap.js");
                 if let Err(e) = js_ctx.eval::<rquickjs::Value, _>(bootstrap_code) {
-                    let err_str = format!("Bootstrap failed: {e}");
-                    return Err(err_str);
+                    let detail = format_js_exception(&js_ctx, &e);
+                    return Err(format!("Bootstrap failed: {detail}"));
                 }
 
                 // Set skill ID
@@ -203,12 +203,14 @@ impl QjsSkillInstance {
                     skill_id.replace('"', r#"\""#)
                 );
                 if let Err(e) = js_ctx.eval::<rquickjs::Value, _>(bridge_code.as_bytes()) {
-                    return Err(format!("Skill init failed: {e}"));
+                    let detail = format_js_exception(&js_ctx, &e);
+                    return Err(format!("Skill init failed: {detail}"));
                 }
 
                 // Execute the skill's entry point
                 if let Err(e) = js_ctx.eval::<rquickjs::Value, _>(js_source.as_bytes()) {
-                    return Err(format!("Skill load failed: {e}"));
+                    let detail = format_js_exception(&js_ctx, &e);
+                    return Err(format!("Skill load failed: {detail}"));
                 }
 
                 // Extract tool definitions
@@ -410,8 +412,34 @@ async fn handle_message(
             let _ = reply.send(result);
         }
         SkillMessage::Rpc { method, params, reply } => {
-            let args = serde_json::json!({ "method": method, "params": params });
-            let result = handle_js_call(ctx, "onRpc", &args.to_string()).await;
+            let result = match method.as_str() {
+                "oauth/complete" => {
+                    // Set credential on the oauth bridge, then call onOAuthComplete
+                    let set_cred_code = format!(
+                        "if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{ globalThis.oauth.__setCredential({}); }}",
+                        serde_json::to_string(&params).unwrap_or_else(|_| "null".to_string())
+                    );
+                    ctx.with(|js_ctx| {
+                        let _ = js_ctx.eval::<rquickjs::Value, _>(set_cred_code.as_bytes());
+                    }).await;
+                    let params_str = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
+                    handle_js_call(ctx, "onOAuthComplete", &params_str).await
+                }
+                "oauth/revoked" => {
+                    // Clear credential on the oauth bridge, then call onOAuthRevoked
+                    let clear_code = "if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) { globalThis.oauth.__setCredential(null); }";
+                    ctx.with(|js_ctx| {
+                        let _ = js_ctx.eval::<rquickjs::Value, _>(clear_code.as_bytes());
+                    }).await;
+                    let params_str = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
+                    handle_js_void_call(ctx, "onOAuthRevoked", &params_str).await
+                        .map(|()| serde_json::json!({ "ok": true }))
+                }
+                _ => {
+                    let args = serde_json::json!({ "method": method, "params": params });
+                    handle_js_call(ctx, "onRpc", &args.to_string()).await
+                }
+            };
             let _ = reply.send(result);
         }
     }
@@ -421,6 +449,41 @@ async fn handle_message(
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Extract a human-readable error message from a QuickJS exception.
+/// When rquickjs returns `Error::Exception`, the actual JS error value
+/// is stored in the context and retrieved with `Ctx::catch()`.
+fn format_js_exception(js_ctx: &rquickjs::Ctx<'_>, err: &rquickjs::Error) -> String {
+    if !err.is_exception() {
+        return format!("{err}");
+    }
+
+    let exception = js_ctx.catch();
+
+    // Try to get .message and .stack from the exception object
+    if let Some(obj) = exception.as_object() {
+        let message: String = obj
+            .get::<_, String>("message")
+            .unwrap_or_default();
+        let stack: String = obj
+            .get::<_, String>("stack")
+            .unwrap_or_default();
+
+        if !message.is_empty() {
+            if !stack.is_empty() {
+                return format!("{message}\n{stack}");
+            }
+            return message;
+        }
+    }
+
+    // Fallback: try to stringify the exception value
+    if let Ok(s) = exception.get::<String>() {
+        return s;
+    }
+
+    format!("{err}")
+}
 
 /// Call a lifecycle function on the skill object.
 /// Looks for the skill at globalThis.__skill.default first, then falls back to globalThis.
@@ -440,7 +503,10 @@ async fn call_lifecycle(ctx: &rquickjs::AsyncContext, name: &str) -> Result<(), 
             }})()"#
         );
         js_ctx.eval::<rquickjs::Value, _>(code.as_bytes())
-            .map_err(|e| format!("{name}() failed: {e}"))?;
+            .map_err(|e| {
+                let detail = format_js_exception(&js_ctx, &e);
+                format!("{name}() failed: {detail}")
+            })?;
         Ok(())
     }).await
 }
@@ -517,7 +583,10 @@ async fn handle_tool_call(
 
         match js_ctx.eval::<String, _>(code.as_bytes()) {
             Ok(s) => Ok(s),
-            Err(e) => Err(format!("Tool execution failed: {e}"))
+            Err(e) => {
+                let detail = format_js_exception(&js_ctx, &e);
+                Err(format!("Tool execution failed: {detail}"))
+            }
         }
     }).await?;
 
@@ -611,7 +680,10 @@ async fn handle_js_call(
 
         match js_ctx.eval::<String, _>(code.as_bytes()) {
             Ok(s) => Ok(s),
-            Err(e) => Err(format!("{fn_name}() failed: {e}"))
+            Err(e) => {
+                let detail = format_js_exception(&js_ctx, &e);
+                Err(format!("{fn_name}() failed: {detail}"))
+            }
         }
     }).await?;
 

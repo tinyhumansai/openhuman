@@ -21,6 +21,8 @@ pub struct ModelStatusResponse {
     pub loaded: bool,
     /// Whether the model is currently being loaded or downloaded.
     pub loading: bool,
+    /// Whether the model file has been downloaded to disk.
+    pub downloaded: bool,
     /// Download progress (0.0 to 1.0) if downloading.
     pub download_progress: Option<f32>,
     /// Error message if loading failed.
@@ -135,6 +137,7 @@ pub fn model_get_status() -> ModelStatusResponse {
             available: status.available,
             loaded: status.loaded,
             loading: status.loading,
+            downloaded: status.downloaded,
             download_progress: status.download_progress,
             error: status.error,
             model_path: status.model_path,
@@ -149,6 +152,7 @@ pub fn model_get_status() -> ModelStatusResponse {
             available: true,
             loaded: false,
             loading: false,
+            downloaded: false,
             download_progress: None,
             error: Some("MediaPipe LLM: Download a model to get started".to_string()),
             model_path: None,
@@ -161,6 +165,7 @@ pub fn model_get_status() -> ModelStatusResponse {
             available: false,
             loaded: false,
             loading: false,
+            downloaded: false,
             download_progress: None,
             error: Some("Model not available on iOS".to_string()),
             model_path: None,
@@ -244,6 +249,28 @@ pub async fn model_summarize(text: String, max_tokens: Option<u32>) -> Result<St
     #[cfg(target_os = "ios")]
     {
         let _ = (text, max_tokens);
+        Err("Model not available on iOS".to_string())
+    }
+}
+
+/// Start downloading the model file without loading into memory.
+/// Safe to call from the Welcome page (pre-auth). Supports resume.
+#[tauri::command]
+pub async fn model_start_download() -> Result<(), String> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        crate::services::llama::LLAMA_MANAGER
+            .download_only()
+            .await
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        Err("Use Android model manager to download models".to_string())
+    }
+
+    #[cfg(target_os = "ios")]
+    {
         Err("Model not available on iOS".to_string())
     }
 }

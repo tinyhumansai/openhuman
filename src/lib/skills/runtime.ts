@@ -2,7 +2,7 @@
  * Skill runtime — higher-level wrapper around SkillTransport
  * for managing a single skill's lifecycle.
  *
- * With V8, skills are managed by the Rust runtime engine.
+ * Skills are managed by the Rust QuickJS runtime engine.
  * This class wraps the transport layer to provide the same API
  * that the SkillManager expects.
  */
@@ -29,7 +29,7 @@ export class SkillRuntime {
 
   /**
    * Set a handler for reverse RPC calls from the skill process.
-   * With V8, reverse RPC is handled by bridge globals, so this
+   * Reverse RPC is handled by bridge globals, so this
    * is kept for API compatibility.
    */
   onReverseRpc(handler: ReverseRpcHandler): void {
@@ -38,12 +38,12 @@ export class SkillRuntime {
 
 
   /**
-   * Start the skill in the V8 runtime engine.
+   * Start the skill in the QuickJS runtime engine.
    * The Rust engine handles process management, so we just tell it to start
    * and then initialize the transport for RPC routing.
    */
   async start(): Promise<void> {
-    // Start the skill in the Rust V8 runtime
+    // Start the skill in the Rust QuickJS runtime
     await invoke("runtime_start_skill", { skillId: this.manifest.id });
 
     // Initialize the transport for RPC routing
@@ -53,7 +53,7 @@ export class SkillRuntime {
 
   /**
    * Send skill/load with manifest + data dir.
-   * With V8, loading is handled by the Rust engine during start_skill,
+   * Loading is handled by the Rust engine during start_skill,
    * so this sends a no-op skill/load RPC for protocol compatibility.
    */
   async load(additionalParams?: Record<string, unknown>): Promise<void> {
@@ -69,13 +69,17 @@ export class SkillRuntime {
 
   /**
    * Start the setup flow. Returns the first SetupStep.
+   * Returns null if the skill does not implement setup/start (e.g. OAuth-only skills).
    */
-  async setupStart(): Promise<SetupStep> {
+  async setupStart(): Promise<SetupStep | null> {
     console.log("[SkillRuntime] setupStart", this.skillId);
-    const result = await this.transport.request<{ step: SetupStep }>(
+    const result = await this.transport.request<{ step: SetupStep } | null>(
       "setup/start"
     );
     console.log("[SkillRuntime] setupStart result", this.skillId, result);
+    if (!result || !result.step) {
+      return null;
+    }
     return result.step;
   }
 
@@ -158,6 +162,29 @@ export class SkillRuntime {
    */
   async sessionEnd(sessionId: string): Promise<void> {
     await this.transport.request("skill/sessionEnd", { sessionId });
+  }
+
+  /**
+   * Notify the skill that OAuth completed successfully.
+   * Sets the credential on the bridge and calls onOAuthComplete.
+   */
+  async oauthComplete(args: {
+    credentialId: string;
+    provider: string;
+    grantedScopes?: string[];
+    accountLabel?: string;
+  }): Promise<void> {
+    await this.transport.request("oauth/complete", args as unknown as Record<string, unknown>);
+  }
+
+  /**
+   * Notify the skill that an OAuth credential was revoked.
+   */
+  async oauthRevoked(args: {
+    credentialId: string;
+    reason: string;
+  }): Promise<void> {
+    await this.transport.request("oauth/revoked", args as unknown as Record<string, unknown>);
   }
 
   /**

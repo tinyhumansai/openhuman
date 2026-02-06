@@ -14,7 +14,7 @@ export interface SkillManifest {
   name: string;
   version: string;
   description: string;
-  runtime: "python" | "node" | "deno" | "v8";
+  runtime: "quickjs";
   entry?: string;
   tick_interval?: number;
   env?: string[];
@@ -22,10 +22,17 @@ export interface SkillManifest {
   setup?: {
     required: boolean;
     label?: string;
+    oauth?: {
+      provider: string;
+      scopes: string[];
+      apiBaseUrl: string;
+    };
   };
   /** Platform filter. When present, only listed platforms load this skill.
    *  When absent or empty, the skill is available on all platforms. */
   platforms?: SkillPlatform[];
+  /** When true, skill is hidden in production builds. */
+  ignoreInProduction?: boolean;
 }
 
 // ---------------------------------------------------------------------------

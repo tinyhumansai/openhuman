@@ -352,6 +352,7 @@ Key updates from recent commits (cd9ebcd to current):
 ## Key Patterns
 
 - **Code Quality**: ESLint and Prettier enforce code standards with Husky hooks. Use type-only imports (`import type`) and consolidate imports from same modules.
+- **No dynamic imports**: All imports must be static `import` statements at the top of the file. Do not use `await import()` or `import().then()` inside functions or code blocks. Use try/catch around Tauri API calls for non-Tauri environments instead.
 - **No localStorage**: Avoid `localStorage` and `sessionStorage`; use Redux (and persist) for app state. Remove any direct usage when working on affected code.
 - **AI System Integration**: Use `src/lib/ai/` for memory management, constitution loading, entity queries, and session capture. AI providers abstracted through interface pattern.
 - **V8 Skills Runtime**: Skills execute in V8 JavaScript engine on desktop platforms. Use `SkillProvider` for GitHub sync, `SkillsGrid` for management interface, and Rust runtime commands for lifecycle management. Platform filtering ensures skills only run on supported platforms.
@@ -377,7 +378,7 @@ Key updates from recent commits (cd9ebcd to current):
 
 - **macOS deep links**: Require `.app` bundle (not `tauri dev`). Clear WebKit caches when debugging stale content: `rm -rf ~/Library/WebKit/com.alphahuman.app ~/Library/Caches/com.alphahuman.app`
 - **Cargo caching**: May serve stale frontend assets on incremental builds. Run `cargo clean --manifest-path src-tauri/Cargo.toml` if the app shows outdated UI.
-- **`window.__TAURI__`**: Not available at module load time. Use dynamic `import()` and try/catch for Tauri plugin calls.
+- **`window.__TAURI__`**: Not available at module load time. Use static imports and try/catch around Tauri API calls (not around imports).
 - **Android background services**: RuntimeService requires notification permissions (API 33+) and foreground service type specification (API 34+). Use Android logging (`android_logger`) for debug output in logcat.
 - **V8 runtime limitations**: V8 engine is desktop-only. Android skills should use lightweight alternatives or server-side execution patterns.
 - **Socket connections**: Persistent Socket.io connections via Rust backend work better than WebView-based connections on mobile platforms.

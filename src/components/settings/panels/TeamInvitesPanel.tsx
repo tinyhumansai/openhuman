@@ -22,9 +22,7 @@ const TeamInvitesPanel = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (activeTeamId) {
-      dispatch(fetchInvites(activeTeamId));
-    }
+    if (activeTeamId) dispatch(fetchInvites(activeTeamId));
   }, [activeTeamId, dispatch]);
 
   const handleGenerate = async () => {

@@ -41,7 +41,7 @@ const Login = () => {
 
   if (consumeError) {
     return (
-      <div className="min-h-screen relative flex items-center justify-center">
+      <div className="min-h-full relative flex items-center justify-center">
         <div className="relative z-10 max-w-md w-full mx-4 text-center">
           <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
             <p className="opacity-90 text-coral mb-4">{consumeError}</p>
@@ -55,7 +55,7 @@ const Login = () => {
   }
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center">
+    <div className="min-h-full relative flex items-center justify-center">
       <div className="relative z-10 max-w-md w-full mx-4 text-center">
         <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>

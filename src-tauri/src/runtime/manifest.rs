@@ -13,6 +13,8 @@ pub struct SkillSetup {
     #[serde(default)]
     pub required: bool,
     pub label: Option<String>,
+    /// OAuth configuration (provider, scopes, apiBaseUrl).
+    pub oauth: Option<serde_json::Value>,
 }
 
 /// Raw manifest as it appears on disk.

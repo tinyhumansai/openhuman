@@ -15,11 +15,25 @@ import { isTauri } from './utils/tauriCommands';
 
 const OnboardingRoute = () => {
   const isOnboarded = useAppSelector(selectIsOnboarded);
-
-  // If the user has already completed onboarding, skip this page and go home.
-  // On first load, when onboarding status is unset/false, we allow showing onboarding.
   if (isOnboarded) return <Navigate to="/home" replace />;
   return <Onboarding />;
+};
+
+/**
+ * Home route wrapper: shows Home by default.
+ * Only redirects to onboarding when user profile is loaded and onboarding is not done.
+ */
+const HomeRoute = () => {
+  const user = useAppSelector(state => state.user.user);
+  const isOnboarded = useAppSelector(selectIsOnboarded);
+
+  // While user profile is still loading, show Home (avoid flash to onboarding)
+  if (!user) return <Home />;
+
+  // User loaded but onboarding not done → redirect to onboarding
+  if (!isOnboarded) return <Navigate to="/onboarding" replace />;
+
+  return <Home />;
 };
 
 const AppRoutes = () => {
@@ -65,8 +79,8 @@ const AppRoutes = () => {
         <Route
           path="/home"
           element={
-            <ProtectedRoute requireAuth={true} requireOnboarded={true} redirectTo="/onboarding">
-              <Home />
+            <ProtectedRoute requireAuth={true}>
+              <HomeRoute />
             </ProtectedRoute>
           }
         />
@@ -75,8 +89,8 @@ const AppRoutes = () => {
         <Route
           path="/settings/*"
           element={
-            <ProtectedRoute requireAuth={true} requireOnboarded={true} redirectTo="/onboarding">
-              <Home />
+            <ProtectedRoute requireAuth={true}>
+              <HomeRoute />
             </ProtectedRoute>
           }
         />

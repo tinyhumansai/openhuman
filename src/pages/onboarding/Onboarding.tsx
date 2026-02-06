@@ -63,7 +63,7 @@ const Onboarding = () => {
   };
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center">
+    <div className="min-h-full relative flex items-center justify-center">
       <div className="relative z-10 max-w-lg w-full mx-4">
         <div className="flex justify-center mb-6">
           <LottieAnimation src={stepAnimations[currentStep - 1]} height={120} width={120} />

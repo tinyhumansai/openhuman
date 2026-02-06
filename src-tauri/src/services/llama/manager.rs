@@ -3,6 +3,7 @@
 //! Provides:
 //! - Lazy model loading on first use
 //! - Automatic model download if not present
+//! - Resumable downloads with HTTP Range support
 //! - Thread-safe inference with dedicated thread pool
 //! - Generate and summarize API for skills
 
@@ -33,6 +34,13 @@ const MODEL_URL: &str = "https://huggingface.co/bartowski/google_gemma-3n-E2B-it
 /// Expected SHA256 hash for model verification (first 16 chars for quick check)
 const MODEL_SHA256_PREFIX: &str = ""; // Will be verified on first download
 
+/// Sidecar metadata for resumable downloads.
+#[derive(Serialize, Deserialize)]
+struct DownloadMeta {
+    total_size: u64,
+    url: String,
+}
+
 /// Status of the local model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +51,8 @@ pub struct ModelStatus {
     pub loaded: bool,
     /// Whether the model is currently being loaded or downloaded.
     pub loading: bool,
+    /// Whether the model file has been downloaded to disk.
+    pub downloaded: bool,
     /// Download progress (0.0 to 1.0) if downloading.
     pub download_progress: Option<f32>,
     /// Error message if loading failed.
@@ -57,6 +67,7 @@ impl Default for ModelStatus {
             available: true,
             loaded: false,
             loading: false,
+            downloaded: false,
             download_progress: None,
             error: None,
             model_path: None,
@@ -109,6 +120,8 @@ pub struct LlamaManager {
     status: RwLock<ModelStatus>,
     /// Lock to prevent concurrent loading.
     loading: AtomicBool,
+    /// Lock to prevent concurrent downloads.
+    downloading: AtomicBool,
 }
 
 impl LlamaManager {
@@ -119,6 +132,7 @@ impl LlamaManager {
             model: RwLock::new(None),
             status: RwLock::new(ModelStatus::default()),
             loading: AtomicBool::new(false),
+            downloading: AtomicBool::new(false),
         }
     }
 
@@ -127,14 +141,19 @@ impl LlamaManager {
         log::info!("[llama] Setting data dir: {:?}", dir);
         *self.data_dir.write() = dir.clone();
 
-        // Update status with model path
+        // Update status with model path and downloaded flag
         let model_path = dir.join(MODEL_FILENAME);
-        self.status.write().model_path = Some(model_path.to_string_lossy().to_string());
+        let mut status = self.status.write();
+        status.model_path = Some(model_path.to_string_lossy().to_string());
+        status.downloaded = model_path.exists();
     }
 
     /// Get the current model status.
     pub fn get_status(&self) -> ModelStatus {
-        self.status.read().clone()
+        let mut status = self.status.read().clone();
+        // Dynamically check downloaded state
+        status.downloaded = self.model_exists();
+        status
     }
 
     /// Get the model file path.
@@ -142,14 +161,87 @@ impl LlamaManager {
         self.data_dir.read().join(MODEL_FILENAME)
     }
 
+    /// Get the temp download file path.
+    fn download_path(&self) -> PathBuf {
+        self.model_path().with_extension("gguf.download")
+    }
+
+    /// Get the download metadata sidecar file path.
+    fn meta_path(&self) -> PathBuf {
+        self.model_path().with_extension("gguf.download.meta")
+    }
+
     /// Check if the model file exists.
     fn model_exists(&self) -> bool {
         self.model_path().exists()
     }
 
-    /// Download the model from HuggingFace.
+    /// Download the model file without loading into memory.
+    /// Safe to call from the Welcome page (pre-auth).
+    pub async fn download_only(&self) -> Result<(), String> {
+        // Already downloaded
+        if self.model_exists() {
+            log::info!("[llama] Model already downloaded, skipping");
+            return Ok(());
+        }
+
+        self.download_model().await
+    }
+
+    /// Download the model from HuggingFace with resume support.
     async fn download_model(&self) -> Result<(), String> {
+        // Already downloaded
+        if self.model_exists() {
+            return Ok(());
+        }
+
+        // Prevent concurrent downloads — second caller waits
+        if self.downloading.swap(true, Ordering::SeqCst) {
+            log::info!("[llama] Download already in progress, waiting...");
+            while self.downloading.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            // Check if the other download succeeded
+            if self.model_exists() {
+                return Ok(());
+            }
+            return Err("Download failed (another attempt)".to_string());
+        }
+
+        // Update status
+        {
+            let mut status = self.status.write();
+            status.loading = true;
+            status.error = None;
+        }
+
+        let result = self.download_model_inner().await;
+
+        // Update status based on result
+        {
+            let mut status = self.status.write();
+            status.loading = false;
+            status.download_progress = None;
+            match &result {
+                Ok(_) => {
+                    status.downloaded = true;
+                    status.error = None;
+                }
+                Err(e) => {
+                    status.error = Some(e.clone());
+                }
+            }
+        }
+
+        self.downloading.store(false, Ordering::SeqCst);
+        result
+    }
+
+    /// Inner download logic with HTTP Range resume support.
+    async fn download_model_inner(&self) -> Result<(), String> {
         let model_path = self.model_path();
+        let mut download_path = self.download_path();
+        let mut meta_path = self.meta_path();
 
         // Ensure parent directory exists
         if let Some(parent) = model_path.parent() {
@@ -157,33 +249,120 @@ impl LlamaManager {
                 .map_err(|e| format!("Failed to create model directory: {}", e))?;
         }
 
-        log::info!("[llama] Downloading model from {}", MODEL_URL);
-        self.status.write().download_progress = Some(0.0);
+        // Check for existing partial download
+        let (mut existing_size, mut resume) =
+            self.check_resume_state(&download_path, &meta_path);
 
-        // Use reqwest for download
         let client = reqwest::Client::new();
-        let response = client
-            .get(MODEL_URL)
+
+        // Build request — add Range header if resuming
+        let mut request = client.get(MODEL_URL);
+        if resume && existing_size > 0 {
+            log::info!(
+                "[llama] Resuming download from byte {}",
+                existing_size
+            );
+            request = request.header("Range", format!("bytes={}-", existing_size));
+        }
+
+        let mut response = request
             .send()
             .await
             .map_err(|e| format!("Failed to start download: {}", e))?;
 
-        if !response.status().is_success() {
-            return Err(format!("Download failed with status: {}", response.status()));
+        let mut status_code = response.status().as_u16();
+
+        // If we got 206 but the file size changed, delete temp files and start fresh
+        if status_code == 206 {
+            let total = self.parse_content_range_total(&response, existing_size);
+            let meta_total = self.read_meta_total(&meta_path);
+            if let Some(mt) = meta_total {
+                if mt != total {
+                    log::warn!(
+                        "[llama] Remote file size changed ({} vs {}), restarting download",
+                        mt,
+                        total
+                    );
+                    let _ = std::fs::remove_file(&download_path);
+                    let _ = std::fs::remove_file(&meta_path);
+
+                    // Re-issue a fresh GET (no Range header)
+                    response = client
+                        .get(MODEL_URL)
+                        .send()
+                        .await
+                        .map_err(|e| format!("Failed to restart download: {}", e))?;
+                    status_code = response.status().as_u16();
+                    existing_size = 0;
+                    let _ = resume; // no longer resuming
+
+                    // Re-read paths (unchanged, but reset state)
+                    download_path = self.download_path();
+                    meta_path = self.meta_path();
+                }
+            }
         }
 
-        let total_size = response.content_length().unwrap_or(0);
-        let mut downloaded: u64 = 0;
+        // Determine download mode based on response
+        let (mut file, start_offset, total_size) = match status_code {
+            206 => {
+                // Partial Content — resume accepted
+                let total = self.parse_content_range_total(&response, existing_size);
 
-        // Create temp file for download
-        let temp_path = model_path.with_extension("download");
-        let mut file = std::fs::File::create(&temp_path)
-            .map_err(|e| format!("Failed to create temp file: {}", e))?;
+                let file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&download_path)
+                    .map_err(|e| format!("Failed to open temp file for append: {}", e))?;
+
+                log::info!(
+                    "[llama] Resuming download: {}/{} bytes",
+                    existing_size,
+                    total
+                );
+
+                (file, existing_size, total)
+            }
+            200 => {
+                // OK — server ignored Range or fresh start
+                let total = response.content_length().unwrap_or(0);
+
+                // Start fresh — truncate any partial download
+                let file = std::fs::File::create(&download_path)
+                    .map_err(|e| format!("Failed to create temp file: {}", e))?;
+
+                // Write meta for future resume
+                self.write_meta(&meta_path, total)?;
+
+                log::info!("[llama] Starting fresh download: {} bytes", total);
+
+                (file, 0u64, total)
+            }
+            416 => {
+                // Range Not Satisfiable — file is already complete
+                log::info!("[llama] Download already complete (416), renaming");
+                let _ = std::fs::remove_file(&meta_path);
+                std::fs::rename(&download_path, &model_path)
+                    .map_err(|e| format!("Failed to rename temp file: {}", e))?;
+                return Ok(());
+            }
+            _ => {
+                return Err(format!("Download failed with status: {}", status_code));
+            }
+        };
+
+        // Set initial progress
+        if total_size > 0 {
+            let progress = start_offset as f32 / total_size as f32;
+            self.status.write().download_progress = Some(progress);
+        } else {
+            self.status.write().download_progress = Some(0.0);
+        }
 
         // Stream the download
+        use futures::StreamExt;
         use std::io::Write;
         let mut stream = response.bytes_stream();
-        use futures::StreamExt;
+        let mut downloaded = start_offset;
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
@@ -197,7 +376,10 @@ impl LlamaManager {
                 self.status.write().download_progress = Some(progress);
 
                 // Log progress every 10%
-                if (progress * 10.0) as u32 > ((downloaded - chunk.len() as u64) as f32 / total_size as f32 * 10.0) as u32 {
+                let prev_pct =
+                    ((downloaded - chunk.len() as u64) as f32 / total_size as f32 * 10.0) as u32;
+                let curr_pct = (progress * 10.0) as u32;
+                if curr_pct > prev_pct {
                     log::info!("[llama] Download progress: {:.1}%", progress * 100.0);
                 }
             }
@@ -208,13 +390,133 @@ impl LlamaManager {
             .map_err(|e| format!("Failed to flush file: {}", e))?;
         drop(file);
 
-        // Rename temp file to final path
-        std::fs::rename(&temp_path, &model_path)
+        // Clean up meta file and rename temp → final
+        let _ = std::fs::remove_file(&meta_path);
+        std::fs::rename(&download_path, &model_path)
             .map_err(|e| format!("Failed to rename temp file: {}", e))?;
 
-        log::info!("[llama] Model downloaded successfully to {:?}", model_path);
-        self.status.write().download_progress = None;
+        log::info!(
+            "[llama] Model downloaded successfully to {:?}",
+            model_path
+        );
 
+        Ok(())
+    }
+
+    /// Check if we can resume a previous partial download.
+    /// Returns (existing_bytes, should_resume).
+    fn check_resume_state(&self, download_path: &PathBuf, meta_path: &PathBuf) -> (u64, bool) {
+        let file_exists = download_path.exists();
+        let meta_exists = meta_path.exists();
+
+        if !file_exists {
+            // No partial download — start fresh
+            if meta_exists {
+                let _ = std::fs::remove_file(meta_path);
+            }
+            return (0, false);
+        }
+
+        // Get existing file size
+        let existing_size = match std::fs::metadata(download_path) {
+            Ok(m) => m.len(),
+            Err(_) => {
+                let _ = std::fs::remove_file(download_path);
+                let _ = std::fs::remove_file(meta_path);
+                return (0, false);
+            }
+        };
+
+        if existing_size == 0 {
+            let _ = std::fs::remove_file(download_path);
+            let _ = std::fs::remove_file(meta_path);
+            return (0, false);
+        }
+
+        // Validate meta file
+        if !meta_exists {
+            // No meta — can't verify, start fresh
+            log::warn!("[llama] Partial download exists but no meta file, restarting");
+            let _ = std::fs::remove_file(download_path);
+            return (0, false);
+        }
+
+        // Read and validate meta
+        match std::fs::read_to_string(meta_path) {
+            Ok(contents) => match serde_json::from_str::<DownloadMeta>(&contents) {
+                Ok(meta) => {
+                    if meta.url != MODEL_URL {
+                        log::warn!("[llama] Meta URL mismatch, restarting download");
+                        let _ = std::fs::remove_file(download_path);
+                        let _ = std::fs::remove_file(meta_path);
+                        return (0, false);
+                    }
+                    if existing_size >= meta.total_size && meta.total_size > 0 {
+                        // Download was complete but rename didn't happen — handle this
+                        log::info!(
+                            "[llama] Partial download appears complete ({}/{})",
+                            existing_size,
+                            meta.total_size
+                        );
+                    }
+                    (existing_size, true)
+                }
+                Err(_) => {
+                    log::warn!("[llama] Corrupt meta file, restarting download");
+                    let _ = std::fs::remove_file(download_path);
+                    let _ = std::fs::remove_file(meta_path);
+                    (0, false)
+                }
+            },
+            Err(_) => {
+                log::warn!("[llama] Cannot read meta file, restarting download");
+                let _ = std::fs::remove_file(download_path);
+                let _ = std::fs::remove_file(meta_path);
+                (0, false)
+            }
+        }
+    }
+
+    /// Parse the total size from a Content-Range header (e.g., "bytes 1000-2000/5000").
+    fn parse_content_range_total(
+        &self,
+        response: &reqwest::Response,
+        fallback_offset: u64,
+    ) -> u64 {
+        if let Some(range) = response.headers().get("content-range") {
+            if let Ok(range_str) = range.to_str() {
+                // Format: "bytes START-END/TOTAL"
+                if let Some(slash_pos) = range_str.rfind('/') {
+                    if let Ok(total) = range_str[slash_pos + 1..].trim().parse::<u64>() {
+                        // Write meta if we don't have it yet
+                        let _ = self.write_meta(&self.meta_path(), total);
+                        return total;
+                    }
+                }
+            }
+        }
+        // Fallback: content-length + offset
+        let content_len = response.content_length().unwrap_or(0);
+        fallback_offset + content_len
+    }
+
+    /// Read the total_size from an existing meta file.
+    fn read_meta_total(&self, meta_path: &PathBuf) -> Option<u64> {
+        let contents = std::fs::read_to_string(meta_path).ok()?;
+        let meta: DownloadMeta = serde_json::from_str(&contents).ok()?;
+        Some(meta.total_size)
+    }
+
+    /// Write download metadata sidecar file.
+    fn write_meta(&self, meta_path: &PathBuf, total_size: u64) -> Result<(), String> {
+        let meta = DownloadMeta {
+            total_size,
+            url: MODEL_URL.to_string(),
+        };
+        let json = serde_json::to_string(&meta)
+            .map_err(|e| format!("Failed to serialize meta: {}", e))?;
+        std::fs::write(meta_path, json)
+            .map_err(|e| format!("Failed to write meta file: {}", e))?;
         Ok(())
     }
 

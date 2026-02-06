@@ -11,7 +11,7 @@ const PrivacyPanel = () => {
   const analyticsEnabled = useAppSelector(state => {
     const userId = state.user.user?._id;
     if (!userId) return false;
-    return state.auth.isAnalyticsEnabledByUser[userId] === true;
+    return state.auth.isAnalyticsEnabledByUser[userId] !== false;
   });
 
   const handleToggleAnalytics = () => {

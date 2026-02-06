@@ -30,7 +30,7 @@ export function isAnalyticsEnabled(): boolean {
   const state = store.getState();
   const userId = state.user?.user?._id;
   if (!userId) return false;
-  return state.auth.isAnalyticsEnabledByUser[userId] === true;
+  return state.auth.isAnalyticsEnabledByUser[userId] !== false;
 }
 
 // ---------------------------------------------------------------------------

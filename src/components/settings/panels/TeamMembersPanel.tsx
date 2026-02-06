@@ -24,9 +24,7 @@ const TeamMembersPanel = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (activeTeamId) {
-      dispatch(fetchMembers(activeTeamId));
-    }
+    if (activeTeamId) dispatch(fetchMembers(activeTeamId));
   }, [activeTeamId, dispatch]);
 
   const handleChangeRole = async (member: TeamMember, newRole: TeamRole) => {

@@ -1,82 +1,62 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import {
+  setDownloadTriggered,
+  setModelError,
+  setModelLoading,
+  setModelStatus,
+  type ModelStatus,
+} from '../store/modelSlice';
 
 /**
- * Model status from Rust backend
+ * Hook to read model status from Redux and provide control actions.
+ * Status polling and auto-download are handled by ModelProvider.
  */
-export interface ModelStatus {
-  available: boolean;
-  loaded: boolean;
-  loading: boolean;
-  downloadProgress: number | null;
-  error: string | null;
-  modelPath: string | null;
-}
+export const useModelStatus = () => {
+  const dispatch = useAppDispatch();
+  const model = useAppSelector(state => state.model);
 
-const DEFAULT_STATUS: ModelStatus = {
-  available: false,
-  loaded: false,
-  loading: false,
-  downloadProgress: null,
-  error: null,
-  modelPath: null,
-};
-
-/**
- * Hook to monitor and control local AI model status
- */
-export const useModelStatus = (pollInterval = 1000) => {
-  const [status, setStatus] = useState<ModelStatus>(DEFAULT_STATUS);
-  const [isPolling, setIsPolling] = useState(false);
-
-  // Fetch current status from backend
   const fetchStatus = useCallback(async () => {
     try {
       const result = await invoke<ModelStatus>('model_get_status');
-      setStatus(result);
+      dispatch(setModelStatus(result));
       return result;
     } catch (error) {
       console.error('[useModelStatus] Failed to fetch status:', error);
-      setStatus(prev => ({
-        ...prev,
-        error: error instanceof Error ? error.message : 'Failed to fetch status',
-      }));
+      dispatch(setModelError(error instanceof Error ? error.message : 'Failed to fetch status'));
       return null;
     }
-  }, []);
+  }, [dispatch]);
 
-  // Check if model API is available
-  const checkAvailability = useCallback(async () => {
+  const startDownload = useCallback(async () => {
     try {
-      const available = await invoke<boolean>('model_is_available');
-      setStatus(prev => ({ ...prev, available }));
-      return available;
+      dispatch(setModelLoading(true));
+      dispatch(setModelError(null));
+      dispatch(setDownloadTriggered(true));
+      await invoke('model_start_download');
+      await fetchStatus();
     } catch (error) {
-      console.error('[useModelStatus] Failed to check availability:', error);
-      return false;
+      console.error('[useModelStatus] Failed to start download:', error);
+      dispatch(
+        setModelError(error instanceof Error ? error.message : 'Failed to download model')
+      );
     }
-  }, []);
+  }, [dispatch, fetchStatus]);
 
-  // Start loading/downloading the model
   const ensureLoaded = useCallback(async () => {
     try {
-      setStatus(prev => ({ ...prev, loading: true, error: null }));
-      setIsPolling(true);
+      dispatch(setModelLoading(true));
+      dispatch(setModelError(null));
       await invoke('model_ensure_loaded');
       await fetchStatus();
-      setIsPolling(false);
     } catch (error) {
       console.error('[useModelStatus] Failed to load model:', error);
-      setStatus(prev => ({
-        ...prev,
-        loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load model',
-      }));
-      setIsPolling(false);
+      dispatch(setModelError(error instanceof Error ? error.message : 'Failed to load model'));
     }
-  }, [fetchStatus]);
+  }, [dispatch, fetchStatus]);
 
-  // Unload the model from memory
   const unload = useCallback(async () => {
     try {
       await invoke('model_unload');
@@ -86,39 +66,19 @@ export const useModelStatus = (pollInterval = 1000) => {
     }
   }, [fetchStatus]);
 
-  // Initial check and polling setup
-  useEffect(() => {
-    // Initial fetch
-    fetchStatus();
-
-    // Check availability
-    checkAvailability();
-  }, [fetchStatus, checkAvailability]);
-
-  // Polling when loading/downloading
-  useEffect(() => {
-    if (!isPolling && !status.loading) return;
-
-    const interval = setInterval(async () => {
-      const newStatus = await fetchStatus();
-      // Stop polling when loading is done
-      if (newStatus && !newStatus.loading) {
-        setIsPolling(false);
-      }
-    }, pollInterval);
-
-    return () => clearInterval(interval);
-  }, [isPolling, status.loading, pollInterval, fetchStatus]);
-
   return {
-    status,
-    isAvailable: status.available,
-    isLoaded: status.loaded,
-    isLoading: status.loading,
-    downloadProgress: status.downloadProgress,
-    error: status.error,
+    status: model,
+    isAvailable: model.available,
+    isLoaded: model.loaded,
+    isLoading: model.loading,
+    isDownloaded: model.downloaded,
+    downloadProgress: model.downloadProgress,
+    error: model.error,
+    startDownload,
     ensureLoaded,
     unload,
     refresh: fetchStatus,
   };
 };
+
+export type { ModelStatus };

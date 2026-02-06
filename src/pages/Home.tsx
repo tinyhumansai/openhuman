@@ -37,9 +37,9 @@ const Home = () => {
   const showUpgradeCTA = currentPlan === 'FREE';
 
   return (
-    <div className="min-h-screen relative overflow-hidden">
+    <div className="min-h-full relative">
       {/* Content overlay */}
-      <div className="relative z-10 min-h-screen flex flex-col">
+      <div className="relative z-10 min-h-full flex flex-col">
         {/* Main content */}
         <div className="flex-1 flex items-center justify-center p-4">
           <div className="max-w-md w-full">

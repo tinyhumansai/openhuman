@@ -65,10 +65,16 @@ mod desktop {
                     "autoStart": m.auto_start,
                     "version": m.version,
                     "description": m.description,
-                    "setup": m.setup.as_ref().map(|s| serde_json::json!({
-                        "required": s.required,
-                        "label": s.label,
-                    })),
+                    "setup": m.setup.as_ref().map(|s| {
+                        let mut obj = serde_json::json!({
+                            "required": s.required,
+                            "label": s.label,
+                        });
+                        if let Some(oauth) = &s.oauth {
+                            obj["oauth"] = oauth.clone();
+                        }
+                        obj
+                    }),
                     "platforms": m.platforms,
                 })
             })

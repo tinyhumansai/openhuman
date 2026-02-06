@@ -5,6 +5,8 @@
  * and tool invocation. Dispatches status changes to Redux.
  */
 
+import { invoke } from "@tauri-apps/api/core";
+
 import { SkillRuntime } from "./runtime";
 import type {
   SkillManifest,
@@ -125,9 +127,10 @@ class SkillManager {
   }
 
   /**
-   * Start the setup flow for a skill. Returns the first step.
+   * Start the setup flow for a skill. Returns the first step, or null if
+   * the skill doesn't implement setup/start (e.g. OAuth-only skills).
    */
-  async startSetup(skillId: string): Promise<SetupStep> {
+  async startSetup(skillId: string): Promise<SetupStep | null> {
     console.log("[SkillManager] startSetup", skillId);
     const runtime = this.runtimes.get(skillId);
     if (!runtime) {
@@ -228,6 +231,34 @@ class SkillManager {
     }
     await runtime.setOption(name, value);
     // Refresh tools list since tool_filter options can change available tools
+    await this.activateSkill(skillId);
+  }
+
+  /**
+   * Notify a skill that OAuth completed successfully.
+   * Called by the deep link handler after backend OAuth callback.
+   */
+  async notifyOAuthComplete(
+    skillId: string,
+    integrationId: string,
+    provider?: string,
+  ): Promise<void> {
+    const runtime = this.runtimes.get(skillId);
+    if (!runtime || !runtime.isRunning) {
+      console.warn(`[SkillManager] Cannot notify OAuth complete: skill ${skillId} not running`);
+      return;
+    }
+
+    const manifest = store.getState().skills.skills[skillId]?.manifest;
+
+    await runtime.oauthComplete({
+      credentialId: integrationId,
+      provider: provider ?? manifest?.setup?.oauth?.provider ?? "unknown",
+      grantedScopes: manifest?.setup?.oauth?.scopes ?? [],
+    });
+
+    // Mark setup as complete and activate
+    store.dispatch(setSkillSetupComplete({ skillId, complete: true }));
     await this.activateSkill(skillId);
   }
 
@@ -367,7 +398,6 @@ class SkillManager {
       case "data/read": {
         const filename = params.filename as string;
         try {
-          const { invoke } = await import("@tauri-apps/api/core");
           const content = await invoke<string>("runtime_skill_data_read", {
             skillId,
             filename,
@@ -382,7 +412,6 @@ class SkillManager {
         const filename = params.filename as string;
         const content = params.content as string;
         try {
-          const { invoke } = await import("@tauri-apps/api/core");
           await invoke("runtime_skill_data_write", {
             skillId,
             filename,

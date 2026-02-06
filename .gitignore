@@ -38,3 +38,5 @@ src-tauri/runtime-skill-*
 .ruff_cache
 .kotlin
 .cargo
+
+CLAUDE.local.md

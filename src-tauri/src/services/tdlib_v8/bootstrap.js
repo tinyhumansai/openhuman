@@ -824,6 +824,91 @@ globalThis.data = {
 };
 
 // ============================================================================
+// OAuth Bridge API (credential management and authenticated proxy)
+// ============================================================================
+(function () {
+  var __oauthCredential = null;
+
+  globalThis.oauth = {
+    /** Get the current OAuth credential, or null if not connected. */
+    getCredential: function () {
+      return __oauthCredential;
+    },
+
+    /**
+     * Make an authenticated API request proxied through the backend.
+     * Path is relative to manifest's apiBaseUrl.
+     */
+    fetch: function (path, options) {
+      if (!__oauthCredential) {
+        return {
+          status: 401,
+          headers: {},
+          body: JSON.stringify({ error: 'No OAuth credential. Complete OAuth setup first.' }),
+        };
+      }
+      var backendUrl = __platform.env('BACKEND_URL') || 'https://api.alphahuman.xyz';
+      var jwtToken = __platform.env('JWT_TOKEN') || '';
+      var cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
+      var proxyUrl = backendUrl + '/proxy/by-id/' + __oauthCredential.credentialId + '/' + cleanPath;
+      var method = (options && options.method) || 'GET';
+      var headers = { 'Content-Type': 'application/json' };
+      if (jwtToken) {
+        headers['Authorization'] = 'Bearer ' + jwtToken;
+      }
+      if (options && options.headers) {
+        for (var k in options.headers) {
+          headers[k] = options.headers[k];
+        }
+      }
+      var fetchOpts = JSON.stringify({
+        method: method,
+        headers: headers,
+        body: options ? options.body : undefined,
+        timeout: options ? options.timeout : undefined,
+      });
+      var result = __net.fetch(proxyUrl, fetchOpts);
+      return JSON.parse(result);
+    },
+
+    /** Revoke the current OAuth credential server-side. */
+    revoke: function () {
+      if (__oauthCredential) {
+        try {
+          var backendUrl = __platform.env('BACKEND_URL') || 'https://api.alphahuman.xyz';
+          var jwtToken = __platform.env('JWT_TOKEN') || '';
+          var revokeOpts = JSON.stringify({
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer ' + jwtToken,
+            },
+          });
+          __net.fetch(
+            backendUrl + '/auth/integrations/' + __oauthCredential.credentialId,
+            revokeOpts
+          );
+        } catch (e) {
+          /* best effort */
+        }
+      }
+      __oauthCredential = null;
+      return true;
+    },
+
+    /** Internal: set credential (called by runtime on oauth/complete). */
+    __setCredential: function (cred) {
+      __oauthCredential = cred;
+    },
+  };
+})();
+
+// ============================================================================
+// Tools array (skills assign to this global)
+// ============================================================================
+globalThis.tools = [];
+
+// ============================================================================
 // Cron Bridge API (placeholder - requires integration with CronScheduler)
 // ============================================================================
 globalThis.cron = {

@@ -7,3 +7,8 @@ todo
 
 - integrate the payments flow properly
   skip the connect account page and goto the home page
+
+[] - get android version out
+[] - get background proceeses done
+[] - get ai to summarize messages in the device and upload to the cloud
+[] - get all the remaining skills working

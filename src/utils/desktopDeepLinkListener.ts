@@ -1,15 +1,80 @@
 import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
+import { skillManager } from '../lib/skills/manager';
 import { consumeLoginToken } from '../services/api/authApi';
 import { store } from '../store';
 import { setToken } from '../store/authSlice';
 import { IS_DEV } from './config';
 
 /**
+ * Handle an `alphahuman://auth?token=...` deep link for login.
+ */
+const handleAuthDeepLink = async (parsed: URL) => {
+  const token = parsed.searchParams.get('token');
+  if (!token) {
+    console.warn('[DeepLink] URL did not contain a token query parameter');
+    return;
+  }
+
+  console.log('[DeepLink] Received auth token');
+
+  try {
+    await invoke('show_window');
+  } catch (err) {
+    console.warn('[DeepLink] Failed to show window:', err);
+  }
+
+  const jwtToken = await consumeLoginToken(token);
+  store.dispatch(setToken(jwtToken));
+  window.location.hash = '/onboarding';
+};
+
+/**
+ * Handle `alphahuman://oauth/success?integrationId=...&skillId=...`
+ * and `alphahuman://oauth/error?error=...&provider=...` deep links.
+ */
+const handleOAuthDeepLink = async (parsed: URL) => {
+  // pathname is "/success" or "/error" (hostname is "oauth")
+  const path = parsed.pathname.replace(/^\/+/, '');
+
+  try {
+    await invoke('show_window');
+  } catch {
+    // Not fatal
+  }
+
+  if (path === 'success') {
+    const integrationId = parsed.searchParams.get('integrationId');
+    const skillId = parsed.searchParams.get('skillId');
+
+    if (!integrationId || !skillId) {
+      console.error('[DeepLink] OAuth success missing integrationId or skillId', parsed.href);
+      return;
+    }
+
+    console.log(`[DeepLink] OAuth success for skill=${skillId} integration=${integrationId}`);
+
+    try {
+      await skillManager.notifyOAuthComplete(skillId, integrationId);
+    } catch (err) {
+      console.error('[DeepLink] Failed to notify OAuth complete:', err);
+    }
+  } else if (path === 'error') {
+    const error = parsed.searchParams.get('error') ?? 'Unknown error';
+    const provider = parsed.searchParams.get('provider') ?? 'unknown';
+    console.error(`[DeepLink] OAuth error for provider=${provider}: ${error}`);
+  } else {
+    console.warn('[DeepLink] Unknown OAuth path:', path);
+  }
+};
+
+/**
  * Handle a list of deep link URLs delivered by the Tauri deep-link plugin.
- * Parses `alphahuman://auth?token=...` URLs and exchanges the token for a
- * desktop session via the backend.
+ * Routes to the appropriate handler based on the URL hostname:
+ *   - `alphahuman://auth?token=...` → login flow
+ *   - `alphahuman://oauth/success?...` → OAuth completion
+ *   - `alphahuman://oauth/error?...` → OAuth failure
  */
 const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
   if (!urls || urls.length === 0) {
@@ -23,33 +88,18 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
     if (parsed.protocol !== 'alphahuman:') {
       return;
     }
-    // Harden: ensure this deep link is intended for auth handoff
-    if (parsed.hostname !== 'auth') {
-      return;
+
+    switch (parsed.hostname) {
+      case 'auth':
+        await handleAuthDeepLink(parsed);
+        break;
+      case 'oauth':
+        await handleOAuthDeepLink(parsed);
+        break;
+      default:
+        console.warn('[DeepLink] Unknown deep link hostname:', parsed.hostname);
+        break;
     }
-
-    const token = parsed.searchParams.get('token');
-    if (!token) {
-      console.warn('[DeepLink] URL did not contain a token query parameter');
-      return;
-    }
-
-    console.log('[DeepLink] Received token', token);
-
-    try {
-      // Bring app window to foreground so macOS users actually see completion.
-      // (In this app, the window can start hidden and live in the tray.)
-      await invoke('show_window');
-    } catch (err) {
-      // Not fatal; we still continue the auth flow.
-      console.warn('[DeepLink] Failed to show window:', err);
-    }
-
-    const jwtToken = await consumeLoginToken(token);
-    store.dispatch(setToken(jwtToken));
-
-    // Navigate to post-login flow. We use HashRouter, so update the hash route.
-    window.location.hash = '/onboarding';
   } catch (error) {
     console.error('[DeepLink] Failed to handle deep link URL:', url, error);
   }

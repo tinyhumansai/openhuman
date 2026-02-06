@@ -27,15 +27,11 @@ const BillingPanel = () => {
   const activeTeam = teams.find(t => t.team._id === activeTeamId);
   const teamName = activeTeam?.team.name;
 
-  // Derive plan from active team when available, fall back to user
-  const currentTier: PlanTier =
-    activeTeam?.team.subscription?.plan ?? user?.subscription?.plan ?? 'FREE';
-  const hasActive =
-    activeTeam?.team.subscription?.hasActiveSubscription ??
-    user?.subscription?.hasActiveSubscription ??
-    false;
-  const planExpiry = activeTeam?.team.subscription?.planExpiry ?? user?.subscription?.planExpiry;
-  const usage = activeTeam?.team.usage ?? user?.usage;
+  // Derive plan from active team (team is source of truth)
+  const currentTier: PlanTier = activeTeam?.team.subscription?.plan ?? 'FREE';
+  const hasActive = activeTeam?.team.subscription?.hasActiveSubscription ?? false;
+  const planExpiry = activeTeam?.team.subscription?.planExpiry;
+  const usage = activeTeam?.team.usage;
 
   // Local state
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly');
