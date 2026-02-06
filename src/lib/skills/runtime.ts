@@ -69,13 +69,17 @@ export class SkillRuntime {
 
   /**
    * Start the setup flow. Returns the first SetupStep.
+   * Returns null if the skill does not implement setup/start (e.g. OAuth-only skills).
    */
-  async setupStart(): Promise<SetupStep> {
+  async setupStart(): Promise<SetupStep | null> {
     console.log("[SkillRuntime] setupStart", this.skillId);
-    const result = await this.transport.request<{ step: SetupStep }>(
+    const result = await this.transport.request<{ step: SetupStep } | null>(
       "setup/start"
     );
     console.log("[SkillRuntime] setupStart result", this.skillId, result);
+    if (!result || !result.step) {
+      return null;
+    }
     return result.step;
   }
 

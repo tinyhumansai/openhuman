@@ -112,9 +112,18 @@ export default function SkillSetupWizard({
 
         console.log("[SkillSetupWizard] starting setup", skillId);
         const firstStep = await skillManager.startSetup(skillId);
-        console.log("[SkillSetupWizard] setup started", skillId);
+        console.log("[SkillSetupWizard] setup started", skillId, firstStep);
         if (!cancelled) {
-          setState({ phase: "step", step: firstStep });
+          if (!firstStep) {
+            // Skill doesn't implement setup steps — likely an OAuth-only skill
+            // whose manifest.setup.oauth wasn't populated yet
+            setState({
+              phase: "error",
+              message: "This skill requires OAuth setup but no setup steps were returned. Try restarting the app.",
+            });
+          } else {
+            setState({ phase: "step", step: firstStep });
+          }
         }
       } catch (err) {
         if (!cancelled) {

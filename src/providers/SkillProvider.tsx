@@ -31,6 +31,9 @@ async function discoverSkills(): Promise<SkillManifest[]> {
       ? {
           required: ((m.setup as Record<string, unknown>).required as boolean) ?? false,
           label: (m.setup as Record<string, unknown>).label as string | undefined,
+          oauth: (m.setup as Record<string, unknown>).oauth as
+            | { provider: string; scopes: string[]; apiBaseUrl: string }
+            | undefined,
         }
       : undefined,
   }));

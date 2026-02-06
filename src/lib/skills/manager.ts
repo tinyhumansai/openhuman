@@ -127,9 +127,10 @@ class SkillManager {
   }
 
   /**
-   * Start the setup flow for a skill. Returns the first step.
+   * Start the setup flow for a skill. Returns the first step, or null if
+   * the skill doesn't implement setup/start (e.g. OAuth-only skills).
    */
-  async startSetup(skillId: string): Promise<SetupStep> {
+  async startSetup(skillId: string): Promise<SetupStep | null> {
     console.log("[SkillManager] startSetup", skillId);
     const runtime = this.runtimes.get(skillId);
     if (!runtime) {
