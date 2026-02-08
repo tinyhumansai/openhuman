@@ -669,7 +669,7 @@ globalThis.performance = {
 // ============================================================================
 // Skill Bridge API
 // ============================================================================
-// These are exposed to skills via the `platform`, `db`, `store`, etc globals
+// These are exposed to skills via the `platform`, `db`, `state`, etc globals
 
 globalThis.__db = {
   exec: function (sql, paramsJson) {
@@ -741,23 +741,6 @@ globalThis.db = {
   },
 };
 
-globalThis.store = {
-  get: function (key) {
-    var result = __store.get(key);
-    return JSON.parse(result);
-  },
-  set: function (key, value) {
-    return __store.set(key, JSON.stringify(value));
-  },
-  delete: function (key) {
-    return __store.delete(key);
-  },
-  keys: function () {
-    var result = __store.keys();
-    return JSON.parse(result);
-  },
-};
-
 globalThis.net = {
   fetch: function (url, options) {
     var result = __net.fetch(url, options ? JSON.stringify(options) : '{}');
@@ -791,14 +774,26 @@ globalThis.__state = {
 
 globalThis.state = {
   get: function (key) {
-    var result = __state.get(key);
+    var result = __store.get(key);
     return JSON.parse(result);
   },
   set: function (key, value) {
-    return __state.set(key, JSON.stringify(value));
+    __store.set(key, JSON.stringify(value));
+    __state.set(key, JSON.stringify(value));
   },
   setPartial: function (partial) {
-    return __state.setPartial(JSON.stringify(partial));
+    var keys = Object.keys(partial);
+    for (var i = 0; i < keys.length; i++) {
+      __store.set(keys[i], JSON.stringify(partial[keys[i]]));
+    }
+    __state.setPartial(JSON.stringify(partial));
+  },
+  delete: function (key) {
+    return __store.delete(key);
+  },
+  keys: function () {
+    var result = __store.keys();
+    return JSON.parse(result);
   },
 };
 
