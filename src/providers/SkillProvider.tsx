@@ -5,11 +5,13 @@
  * engine, registers them in Redux, and auto-starts skills with completed setup.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { type ReactNode, useEffect, useRef } from 'react';
 
 import { skillManager } from '../lib/skills/manager';
 import type { SkillManifest } from '../lib/skills/types';
-import { useAppSelector } from '../store/hooks';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { setSkillState } from '../store/skillsSlice';
 import { DEV_AUTO_LOAD_SKILL, IS_DEV } from '../utils/config';
 
 // ---------------------------------------------------------------------------
@@ -53,7 +55,31 @@ async function discoverSkills(): Promise<SkillManifest[]> {
 export default function SkillProvider({ children }: { children: ReactNode }) {
   const { token } = useAppSelector(state => state.auth);
   const skillsState = useAppSelector(state => state.skills.skills);
+  const dispatch = useAppDispatch();
   const initRef = useRef(false);
+
+  // Listen for skill state changes emitted from the Rust runtime event loop
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    listen<{ skillId: string; state: Record<string, unknown> }>(
+      'skill-state-changed',
+      event => {
+        const { skillId, state: newState } = event.payload;
+        dispatch(setSkillState({ skillId, state: newState }));
+      }
+    )
+      .then(fn => {
+        unlisten = fn;
+      })
+      .catch(err => {
+        console.error('[SkillProvider] Failed to listen for skill-state-changed:', err);
+      });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [dispatch]);
 
   useEffect(() => {
     if (!token) return;

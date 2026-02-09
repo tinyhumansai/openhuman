@@ -35,6 +35,7 @@ pub fn register<'js>(
                     serde_json::from_str(&value_json).map_err(|e| js_err(e.to_string()))?;
                 let mut state = ss.write();
                 state.data.insert(key, value);
+                state.dirty = true;
                 Ok(())
             },
         ))?;
@@ -50,6 +51,7 @@ pub fn register<'js>(
                 for (k, v) in partial {
                     state.data.insert(k, v);
                 }
+                state.dirty = true;
                 Ok(())
             },
         ))?;

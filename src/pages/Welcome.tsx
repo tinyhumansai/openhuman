@@ -10,11 +10,7 @@ interface WelcomeProps {
 }
 
 const Welcome = ({ isWeb }: WelcomeProps) => {
-  const greetings = [
-    'Hello HAL9000! 👋',
-    "Let's cook! 🔥",
-    'The A-Team is here! 👊',
-  ];
+  const greetings = ['Hello HAL9000! 👋', "Let's cook! 🔥", 'The A-Team is here! 👊'];
 
   const { isAvailable, isDownloaded, isLoading, downloadProgress, error, startDownload } =
     useModelStatus();
@@ -64,9 +60,7 @@ const Welcome = ({ isWeb }: WelcomeProps) => {
                 </div>
               )}
 
-              {isPreparing && (
-                <p className="text-xs opacity-50">Preparing AI model download...</p>
-              )}
+              {isPreparing && <p className="text-xs opacity-50">Preparing AI model download...</p>}
 
               {error && !isLoading && (
                 <div className="space-y-2">

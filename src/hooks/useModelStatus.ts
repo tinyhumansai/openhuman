@@ -3,11 +3,11 @@ import { useCallback } from 'react';
 
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
+  type ModelStatus,
   setDownloadTriggered,
   setModelError,
   setModelLoading,
   setModelStatus,
-  type ModelStatus,
 } from '../store/modelSlice';
 
 /**
@@ -39,9 +39,7 @@ export const useModelStatus = () => {
       await fetchStatus();
     } catch (error) {
       console.error('[useModelStatus] Failed to start download:', error);
-      dispatch(
-        setModelError(error instanceof Error ? error.message : 'Failed to download model')
-      );
+      dispatch(setModelError(error instanceof Error ? error.message : 'Failed to download model'));
     }
   }, [dispatch, fetchStatus]);
 

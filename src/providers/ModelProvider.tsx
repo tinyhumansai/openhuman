@@ -4,11 +4,11 @@ import { useEffect } from 'react';
 
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
+  type ModelStatus,
   setDownloadTriggered,
   setModelError,
   setModelLoading,
   setModelStatus,
-  type ModelStatus,
 } from '../store/modelSlice';
 
 const POLL_INTERVAL = 1000;
@@ -93,8 +93,7 @@ const ModelProvider = ({ children }: { children: React.ReactNode }) => {
         if (!cancelled) dispatch(setModelStatus(finalStatus));
       } catch (err) {
         console.error('[ModelProvider] Download failed:', err);
-        if (!cancelled)
-          dispatch(setModelError(err instanceof Error ? err.message : String(err)));
+        if (!cancelled) dispatch(setModelError(err instanceof Error ? err.message : String(err)));
       }
     };
 

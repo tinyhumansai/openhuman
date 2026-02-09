@@ -86,12 +86,16 @@ pub struct SkillContext {
 pub struct SkillState {
     #[serde(flatten)]
     pub data: serde_json::Map<String, serde_json::Value>,
+    /// Set to true when data is modified; the event loop clears it after syncing.
+    #[serde(skip)]
+    pub dirty: bool,
 }
 
 impl Default for SkillState {
     fn default() -> Self {
         Self {
             data: serde_json::Map::new(),
+            dirty: false,
         }
     }
 }

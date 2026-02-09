@@ -256,7 +256,7 @@ impl QjsSkillInstance {
             log::info!("[skill:{}] Running (QuickJS)", config.skill_id);
 
             // Run the event loop
-            run_event_loop(&rt, &ctx, &mut rx, &state, &config.skill_id, &timer_state).await;
+            run_event_loop(&rt, &ctx, &mut rx, &state, &config.skill_id, &timer_state, &published_state, _deps.app_handle.as_ref()).await;
         })
     }
 }
@@ -270,7 +270,8 @@ impl QjsSkillInstance {
 /// 1. Polls for ready timers and fires their callbacks
 /// 2. Checks for incoming messages (non-blocking)
 /// 3. Runs the QuickJS job queue for promises/async ops
-/// 4. Sleeps efficiently when idle
+/// 4. Syncs published state from ops → instance and emits Tauri events
+/// 5. Sleeps efficiently when idle
 async fn run_event_loop(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -278,6 +279,8 @@ async fn run_event_loop(
     state: &Arc<RwLock<SkillState>>,
     skill_id: &str,
     timer_state: &Arc<RwLock<qjs_ops::TimerState>>,
+    ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
+    app_handle: Option<&tauri::AppHandle>,
 ) {
     // Maximum sleep duration when no timers are pending
     const MAX_IDLE_SLEEP: Duration = Duration::from_millis(100);
@@ -317,7 +320,34 @@ async fn run_event_loop(
         // 3. Drive QuickJS job queue (process pending promises)
         drive_jobs(rt).await;
 
-        // 4. Calculate sleep duration based on next timer
+        // 4. Sync ops-level published state → instance published_state + emit event
+        {
+            let mut ops = ops_state.write();
+            if ops.dirty {
+                ops.dirty = false;
+                // Convert serde_json::Map → HashMap for the instance snapshot
+                let new_map: HashMap<String, serde_json::Value> = ops
+                    .data
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                state.write().published_state = new_map.clone();
+
+                // Emit Tauri event so the frontend picks up the change
+                if let Some(handle) = app_handle {
+                    use tauri::Emitter;
+                    let _ = handle.emit(
+                        "skill-state-changed",
+                        serde_json::json!({
+                            "skillId": skill_id,
+                            "state": new_map,
+                        }),
+                    );
+                }
+            }
+        }
+
+        // 5. Calculate sleep duration based on next timer
         let sleep_duration = {
             let (_, next_timer) = qjs_ops::poll_timers(timer_state);
             match next_timer {
