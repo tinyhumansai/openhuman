@@ -689,21 +689,6 @@ globalThis.__db = {
   },
 };
 
-globalThis.__store = {
-  get: function (key) {
-    return __ops.store_get(key);
-  },
-  set: function (key, valueJson) {
-    return __ops.store_set(key, valueJson);
-  },
-  delete: function (key) {
-    return __ops.store_delete(key);
-  },
-  keys: function () {
-    return __ops.store_keys();
-  },
-};
-
 globalThis.__net = {
   fetch: function (url, optionsJson) {
     return __ops.net_fetch(url, optionsJson);
@@ -774,25 +759,25 @@ globalThis.__state = {
 
 globalThis.state = {
   get: function (key) {
-    var result = __store.get(key);
+    var result = __ops.store_get(key);
     return JSON.parse(result);
   },
   set: function (key, value) {
-    __store.set(key, JSON.stringify(value));
+    __ops.store_set(key, JSON.stringify(value));
     __state.set(key, JSON.stringify(value));
   },
   setPartial: function (partial) {
     var keys = Object.keys(partial);
     for (var i = 0; i < keys.length; i++) {
-      __store.set(keys[i], JSON.stringify(partial[keys[i]]));
+      __ops.store_set(keys[i], JSON.stringify(partial[keys[i]]));
     }
     __state.setPartial(JSON.stringify(partial));
   },
   delete: function (key) {
-    return __store.delete(key);
+    return __ops.store_delete(key);
   },
   keys: function () {
-    var result = __store.keys();
+    var result = __ops.store_keys();
     return JSON.parse(result);
   },
 };
@@ -967,12 +952,11 @@ globalThis.tdlib = {
 
   /**
    * Send a TDLib request and wait for the response.
-   * @param {object} request - TDLib API request object with @type field.
-   * @returns {Promise<object>} TDLib response object.
+   * @param {string} requestJson - JSON-serialized TDLib API request with @type field.
+   * @returns {Promise<string>} JSON-serialized TDLib response.
    */
-  send: async function (request) {
-    const resultJson = await __ops.tdlib_send(JSON.stringify(request));
-    return JSON.parse(resultJson);
+  send: async function (requestJson) {
+    return await __ops.tdlib_send(requestJson);
   },
 
   /**
