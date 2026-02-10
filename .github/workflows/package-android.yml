@@ -22,7 +22,6 @@ on:
   pull_request:
     branches:
       - main
-      - develop
 
 env:
   IS_PR: ${{ github.event_name == 'pull_request' }}

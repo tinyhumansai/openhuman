@@ -15,7 +15,8 @@ export type SettingsRoute =
 
 interface SettingsNavigationHook {
   currentRoute: SettingsRoute;
-  navigateToSettings: (route?: SettingsRoute) => void;
+  navigateToSettings: (route?: SettingsRoute | string) => void;
+  navigateToTeamManagement: (teamId: string) => void;
   navigateBack: () => void;
   closeSettings: () => void;
 }
@@ -27,6 +28,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
   // Determine current settings route from URL
   const getCurrentRoute = (): SettingsRoute => {
     const path = location.pathname;
+    // Check specific team management paths first (more specific)
+    if (path.includes('/settings/team/manage/') && path.includes('/members')) return 'team-members';
+    if (path.includes('/settings/team/manage/') && path.includes('/invites')) return 'team-invites';
+    if (path.includes('/settings/team/manage/')) return 'team';
+    // Then check regular team paths (less specific)
     if (path.includes('/settings/team/members')) return 'team-members';
     if (path.includes('/settings/team/invites')) return 'team-invites';
     if (path.includes('/settings/team')) return 'team';
@@ -42,7 +48,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
   const currentRoute = getCurrentRoute();
 
   const navigateToSettings = useCallback(
-    (route: SettingsRoute = 'home') => {
+    (route: SettingsRoute | string = 'home') => {
       if (route === 'home') {
         navigate('/settings');
       } else {
@@ -52,19 +58,35 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     [navigate]
   );
 
+  const navigateToTeamManagement = useCallback(
+    (teamId: string) => {
+      navigate(`/settings/team/manage/${teamId}`);
+    },
+    [navigate]
+  );
+
   const navigateBack = useCallback(() => {
     if (currentRoute === 'home') {
       navigate('/home');
     } else if (currentRoute === 'team-members' || currentRoute === 'team-invites') {
+      // Check if we're in team management context (has teamId in URL)
+      const teamManageMatch = location.pathname.match(/\/team\/manage\/([^\/]+)/);
+      if (teamManageMatch) {
+        const teamId = teamManageMatch[1];
+        navigate(`/settings/team/manage/${teamId}`);
+      } else {
+        navigate('/settings/team');
+      }
+    } else if (location.pathname.includes('/team/manage/')) {
       navigate('/settings/team');
     } else {
       navigate('/settings');
     }
-  }, [navigate, currentRoute]);
+  }, [navigate, currentRoute, location.pathname]);
 
   const closeSettings = useCallback(() => {
     navigate('/home');
   }, [navigate]);
 
-  return { currentRoute, navigateToSettings, navigateBack, closeSettings };
+  return { currentRoute, navigateToSettings, navigateToTeamManagement, navigateBack, closeSettings };
 };

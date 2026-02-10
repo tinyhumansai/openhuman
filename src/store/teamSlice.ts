@@ -8,6 +8,8 @@ interface TeamState {
   members: TeamMember[];
   invites: TeamInvite[];
   isLoading: boolean;
+  isLoadingMembers: boolean;
+  isLoadingInvites: boolean;
   error: string | null;
 }
 
@@ -16,6 +18,8 @@ const initialState: TeamState = {
   members: [],
   invites: [],
   isLoading: false,
+  isLoadingMembers: false,
+  isLoadingInvites: false,
   error: null,
 };
 
@@ -82,22 +86,28 @@ const teamSlice = createSlice({
       })
       // fetchMembers
       .addCase(fetchMembers.pending, state => {
+        state.isLoadingMembers = true;
         state.error = null;
       })
       .addCase(fetchMembers.fulfilled, (state, action) => {
+        state.isLoadingMembers = false;
         state.members = action.payload;
       })
       .addCase(fetchMembers.rejected, (state, action) => {
+        state.isLoadingMembers = false;
         state.error = action.payload as string;
       })
       // fetchInvites
       .addCase(fetchInvites.pending, state => {
+        state.isLoadingInvites = true;
         state.error = null;
       })
       .addCase(fetchInvites.fulfilled, (state, action) => {
+        state.isLoadingInvites = false;
         state.invites = action.payload;
       })
       .addCase(fetchInvites.rejected, (state, action) => {
+        state.isLoadingInvites = false;
         state.error = action.payload as string;
       });
   },

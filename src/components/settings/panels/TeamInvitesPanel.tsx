@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useParams, useLocation } from 'react-router-dom';
 
 import { teamApi } from '../../../services/api/teamApi';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
@@ -7,31 +8,38 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const TeamInvitesPanel = () => {
+  const { teamId } = useParams<{ teamId: string }>();
+  const location = useLocation();
   const { navigateBack } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.user.user);
-  const { teams, invites } = useAppSelector(state => state.team);
+  const { teams, invites, isLoadingInvites } = useAppSelector(state => state.team);
 
-  const activeTeamId = user?.activeTeamId;
-  const activeTeam = teams.find(t => t.team._id === activeTeamId);
-  const isAdmin = activeTeam?.role === 'ADMIN';
+  // Check if we're in team management context (has teamId in URL)
+  const isInManagementContext = location.pathname.includes('/team/manage/');
+  const currentTeamId = isInManagementContext ? teamId : user?.activeTeamId;
+  const currentTeam = teams.find(t => t.team._id === currentTeamId);
+  const isAdmin = currentTeam?.role.toUpperCase() === 'ADMIN';
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Confirmation modal state
+  const [inviteToRevoke, setInviteToRevoke] = useState<{ id: string; code: string } | null>(null);
+
   useEffect(() => {
-    if (activeTeamId) dispatch(fetchInvites(activeTeamId));
-  }, [activeTeamId, dispatch]);
+    if (currentTeamId) dispatch(fetchInvites(currentTeamId));
+  }, [currentTeamId, dispatch]);
 
   const handleGenerate = async () => {
-    if (!activeTeamId) return;
+    if (!currentTeamId) return;
     setIsGenerating(true);
     setError(null);
     try {
-      await teamApi.createInvite(activeTeamId);
-      dispatch(fetchInvites(activeTeamId));
+      await teamApi.createInvite(currentTeamId);
+      dispatch(fetchInvites(currentTeamId));
     } catch (err) {
       setError(
         err && typeof err === 'object' && 'error' in err
@@ -53,13 +61,21 @@ const TeamInvitesPanel = () => {
     }
   };
 
-  const handleRevoke = async (inviteId: string) => {
-    if (!activeTeamId) return;
-    setRevokingId(inviteId);
+  const handleRevoke = (inviteId: string, inviteCode: string) => {
+    // Show confirmation modal for revoking invites
+    setInviteToRevoke({ id: inviteId, code: inviteCode });
+  };
+
+  const confirmRevokeInvite = async () => {
+    if (!inviteToRevoke || !currentTeamId) return;
+
+    setRevokingId(inviteToRevoke.id);
     setError(null);
+
     try {
-      await teamApi.revokeInvite(activeTeamId, inviteId);
-      dispatch(fetchInvites(activeTeamId));
+      await teamApi.revokeInvite(currentTeamId, inviteToRevoke.id);
+      dispatch(fetchInvites(currentTeamId));
+      setInviteToRevoke(null);
     } catch (err) {
       setError(
         err && typeof err === 'object' && 'error' in err
@@ -73,12 +89,21 @@ const TeamInvitesPanel = () => {
 
   const isExpired = (expiresAt: string) => new Date(expiresAt) < new Date();
 
+  const isUsedUp = (invite: { maxUses: number; currentUses: number }) =>
+    invite.maxUses > 0 && invite.currentUses >= invite.maxUses;
+
+  const getInviteStatus = (invite: { expiresAt: string; maxUses: number; currentUses: number }) => {
+    if (isExpired(invite.expiresAt)) return 'expired';
+    if (isUsedUp(invite)) return 'used';
+    return 'active';
+  };
+
   return (
     <div className="overflow-hidden flex flex-col h-full">
       <SettingsHeader title="Invites" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-4">
+        <div className="max-w-md mx-auto p-4 space-y-4">
           {error && (
             <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
               <p className="text-xs text-coral-400">{error}</p>
@@ -126,29 +151,93 @@ const TeamInvitesPanel = () => {
             </button>
           )}
 
+          {/* Refreshing indicator - only when loading and has existing data */}
+          {isLoadingInvites && invites.length > 0 && (
+            <div className="flex items-center gap-2 px-1 py-2 text-xs text-amber-400">
+              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              Refreshing invites...
+            </div>
+          )}
+
           {/* Invites list */}
-          {invites.length > 0 ? (
+          {isLoadingInvites && invites.length === 0 ? (
+            <div className="flex items-center justify-center py-8">
+              <svg className="w-5 h-5 text-stone-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              <span className="ml-3 text-sm text-stone-500">Loading invites...</span>
+            </div>
+          ) : invites.length > 0 ? (
             <div className="space-y-2">
               {invites.map(invite => {
-                const expired = isExpired(invite.expiresAt);
+                const status = getInviteStatus(invite);
+                const isInactive = status !== 'active';
+
                 return (
                   <div
                     key={invite._id}
                     className={`rounded-xl border p-3 ${
-                      expired
+                      isInactive
                         ? 'border-stone-700/30 bg-stone-800/20 opacity-60'
                         : 'border-stone-700/50 bg-stone-800/40'
                     }`}>
                     <div className="flex items-center justify-between mb-2">
-                      {/* Code */}
-                      <code className="text-sm font-mono text-white bg-stone-900/60 px-2 py-1 rounded-lg">
-                        {invite.code}
-                      </code>
+                      {/* Code with status label */}
+                      <div className="flex items-center gap-2">
+                        <code className={`text-sm font-mono px-2 py-1 rounded-lg ${
+                          isInactive
+                            ? 'text-stone-500 bg-stone-900/30'
+                            : 'text-white bg-stone-900/60'
+                        }`}>
+                          {invite.code}
+                        </code>
+                        {status === 'expired' && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-coral-500/20 text-coral-400 border border-coral-500/30">
+                            Expired
+                          </span>
+                        )}
+                        {status === 'used' && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                            Used Up
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1.5">
                         {/* Copy */}
                         <button
                           onClick={() => handleCopy(invite.code, invite._id)}
-                          className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-700/50 transition-colors"
+                          disabled={status !== 'active'}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            status === 'active'
+                              ? 'text-stone-400 hover:text-white hover:bg-stone-700/50'
+                              : 'text-stone-600 cursor-not-allowed'
+                          }`}
                           aria-label="Copy invite code">
                           {copiedId === invite._id ? (
                             <svg
@@ -178,10 +267,10 @@ const TeamInvitesPanel = () => {
                             </svg>
                           )}
                         </button>
-                        {/* Revoke */}
-                        {isAdmin && !expired && (
+                        {/* Revoke - only for active invites */}
+                        {isAdmin && status === 'active' && (
                           <button
-                            onClick={() => handleRevoke(invite._id)}
+                            onClick={() => handleRevoke(invite._id, invite.code)}
                             disabled={revokingId === invite._id}
                             className="p-1.5 rounded-lg text-stone-500 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
                             aria-label="Revoke invite">
@@ -207,7 +296,7 @@ const TeamInvitesPanel = () => {
                         {invite.maxUses > 0 ? `/${invite.maxUses}` : ''}
                       </span>
                       <span>
-                        {expired
+                        {status === 'expired'
                           ? 'Expired'
                           : `Expires ${new Date(invite.expiresAt).toLocaleDateString()}`}
                       </span>
@@ -234,6 +323,43 @@ const TeamInvitesPanel = () => {
               <p className="text-xs text-stone-600 mt-1">
                 Generate an invite code to share with others
               </p>
+            </div>
+          )}
+
+          {/* Revoke Invite Confirmation Modal */}
+          {inviteToRevoke && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-stone-900 rounded-2xl p-6 w-full max-w-md border border-stone-700/50">
+                <h3 className="text-lg font-semibold text-white mb-4">Revoke Invite Code</h3>
+
+                {error && (
+                  <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
+                    <p className="text-xs text-coral-400">{error}</p>
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div className="text-sm text-stone-400">
+                    <p>Are you sure you want to revoke the invite code <code className="text-white bg-stone-800/60 px-1.5 py-0.5 rounded font-mono text-xs">{inviteToRevoke.code}</code>?</p>
+                    <p className="mt-2 text-amber-400">This invite code will no longer be valid and cannot be used to join the team.</p>
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      onClick={() => setInviteToRevoke(null)}
+                      disabled={revokingId === inviteToRevoke.id}
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 transition-colors disabled:opacity-50">
+                      Cancel
+                    </button>
+                    <button
+                      onClick={confirmRevokeInvite}
+                      disabled={revokingId === inviteToRevoke.id}
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-coral-500 hover:bg-coral-600 text-white transition-colors disabled:opacity-50">
+                      {revokingId === inviteToRevoke.id ? 'Revoking...' : 'Revoke Invite'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
