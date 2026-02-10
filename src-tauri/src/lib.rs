@@ -219,7 +219,95 @@ pub fn run() {
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = env_logger::try_init();
+        use env_logger::fmt::style::{AnsiColor, Style};
+        use std::io::Write;
+
+        let default_filter = std::env::var("RUST_LOG")
+            .unwrap_or_else(|_| "info,tungstenite=warn,tokio_tungstenite=warn,reqwest=warn,rusqlite=warn,hyper=warn,h2=warn".to_string());
+
+        let write_style = std::env::var("RUST_LOG_STYLE")
+            .map(|v| match v.as_str() {
+                "never" => env_logger::fmt::WriteStyle::Never,
+                _ => env_logger::fmt::WriteStyle::Always,
+            })
+            .unwrap_or(env_logger::fmt::WriteStyle::Always);
+
+        let _ = env_logger::Builder::new()
+            .parse_filters(&default_filter)
+            .write_style(write_style)
+            .format(|buf, record| {
+                let timestamp = buf.timestamp_millis()
+                    .to_string();
+                // Strip the date prefix, keep only HH:MM:SS.mmm
+                let time_only = timestamp.split('T')
+                    .nth(1)
+                    .and_then(|t| t.strip_suffix('Z'))
+                    .unwrap_or(&timestamp);
+                let level = record.level();
+
+                // Level colors
+                let level_style = match level {
+                    log::Level::Error => Style::new().fg_color(Some(AnsiColor::Red.into())).bold(),
+                    log::Level::Warn  => Style::new().fg_color(Some(AnsiColor::Yellow.into())).bold(),
+                    log::Level::Info  => Style::new().fg_color(Some(AnsiColor::Green.into())),
+                    log::Level::Debug => Style::new().fg_color(Some(AnsiColor::BrightBlack.into())),
+                    log::Level::Trace => Style::new().fg_color(Some(AnsiColor::BrightBlack.into())),
+                };
+
+                let msg = format!("{}", record.args());
+
+                // Extract tag from message (e.g. "[tdlib]", "[socket-mgr]", "[skill:x]")
+                let (tag, rest) = if msg.starts_with('[') {
+                    if let Some(end) = msg.find(']') {
+                        let tag = &msg[..=end];
+                        let rest = msg[end + 1..].trim_start();
+                        (Some(tag.to_string()), rest.to_string())
+                    } else {
+                        (None, msg)
+                    }
+                } else {
+                    (None, msg)
+                };
+
+                // Tag-based colors
+                let tag_style = if let Some(ref t) = tag {
+                    let t_lower = t.to_lowercase();
+                    if t_lower.contains("tdlib") {
+                        Style::new().fg_color(Some(AnsiColor::Magenta.into())).bold()
+                    } else if t_lower.contains("socket") {
+                        Style::new().fg_color(Some(AnsiColor::Blue.into())).bold()
+                    } else if t_lower.contains("runtime") {
+                        Style::new().fg_color(Some(AnsiColor::Cyan.into())).bold()
+                    } else if t_lower.contains("skill") {
+                        Style::new().fg_color(Some(AnsiColor::Green.into())).bold()
+                    } else if t_lower.contains("ping") || t_lower.contains("cron") {
+                        Style::new().fg_color(Some(AnsiColor::Yellow.into())).bold()
+                    } else if t_lower.contains("app") {
+                        Style::new().fg_color(Some(AnsiColor::White.into())).bold()
+                    } else if t_lower.contains("ai") {
+                        Style::new().fg_color(Some(AnsiColor::BrightMagenta.into())).bold()
+                    } else {
+                        Style::new().fg_color(Some(AnsiColor::BrightBlack.into()))
+                    }
+                } else {
+                    Style::new()
+                };
+
+                let dim = Style::new().fg_color(Some(AnsiColor::BrightBlack.into()));
+
+                if let Some(ref t) = tag {
+                    writeln!(
+                        buf,
+                        "{dim}{time_only}{dim:#} {level_style}{level:<5}{level_style:#} {tag_style}{t}{tag_style:#} {rest}"
+                    )
+                } else {
+                    writeln!(
+                        buf,
+                        "{dim}{time_only}{dim:#} {level_style}{level:<5}{level_style:#} {rest}"
+                    )
+                }
+            })
+            .try_init();
     }
 
     let mut builder = tauri::Builder::default()

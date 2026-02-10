@@ -155,6 +155,19 @@ impl TdLibManager {
         self.state.is_active.store(true, Ordering::SeqCst);
         log::info!("[tdlib] Client created with ID: {}", client_id);
 
+        // Suppress TDLib's native C++ logs (Client.cpp, etc.) by default.
+        // Level 0 = fatal only. Override with TDLIB_LOG_LEVEL env var (0-5).
+        let tdlib_verbosity: i32 = std::env::var("TDLIB_LOG_LEVEL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let cid_for_log = client_id;
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = tdlib_rs::functions::set_log_verbosity_level(tdlib_verbosity, cid_for_log).await {
+                log::warn!("[tdlib] Failed to set log verbosity: {:?}", e);
+            }
+        });
+
         Ok(client_id)
     }
 

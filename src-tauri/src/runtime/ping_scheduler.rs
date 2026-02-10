@@ -23,7 +23,7 @@ use crate::runtime::skill_registry::SkillRegistry;
 use crate::runtime::types::{events, SkillMessage, SkillStatus};
 
 /// Interval between ping sweeps.
-const PING_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const PING_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Per-skill timeout when waiting for a ping reply.
 const PING_TIMEOUT: Duration = Duration::from_secs(30);
