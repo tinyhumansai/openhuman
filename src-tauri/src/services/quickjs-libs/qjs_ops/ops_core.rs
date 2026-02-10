@@ -81,6 +81,12 @@ pub fn register<'js>(ctx: &Ctx<'js>, ops: &Object<'js>, timer_state: Arc<RwLock<
         }
     }))?;
 
+    ops.set("get_session_token", Function::new(ctx.clone(), || -> String {
+        let token = crate::commands::auth::SESSION_SERVICE.get_token().unwrap_or_default();
+        log::info!("[js] get_session_token: {}", token);
+        return token;
+    }))?;
+
     // ========================================================================
     // Timers (2)
     // ========================================================================

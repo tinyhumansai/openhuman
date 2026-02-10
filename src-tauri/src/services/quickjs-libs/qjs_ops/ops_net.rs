@@ -21,7 +21,10 @@ pub fn register<'js>(ctx: &Ctx<'js>, ops: &Object<'js>, ws_state: Arc<RwLock<Web
             let headers_obj = opts["headers"].as_object();
             let body = opts["body"].as_str();
 
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .use_native_tls()
+                .build()
+                .map_err(|e| js_err(e.to_string()))?;
             let mut req = match method {
                 "GET" => client.get(&url),
                 "POST" => client.post(&url),
@@ -42,7 +45,15 @@ pub fn register<'js>(ctx: &Ctx<'js>, ops: &Object<'js>, ws_state: Arc<RwLock<Web
                 req = req.body(b.to_string());
             }
 
-            let response = req.send().await.map_err(|e| js_err(e.to_string()))?;
+            let response = req.send().await.map_err(|e| {
+                let mut msg = e.to_string();
+                let mut source = std::error::Error::source(&e);
+                while let Some(cause) = source {
+                    msg.push_str(&format!(" | caused by: {cause}"));
+                    source = std::error::Error::source(cause);
+                }
+                js_err(msg)
+            })?;
 
             let status = response.status().as_u16();
             let status_text = response.status().canonical_reason().unwrap_or("").to_string();

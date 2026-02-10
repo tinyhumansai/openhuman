@@ -21,11 +21,11 @@ export interface UserSubscription {
   stripeCustomerId?: string;
 }
 
-export interface UserUsage {
-  dailyTokenLimit: number;
-  remainingTokens: number;
-  activeSessionCount: number;
-  lastTokenResetAt?: string;
+export interface IUserUsage {
+  cycleBudgetUsd: number;
+  spentThisCycleUsd: number;
+  spentTodayUsd: number;
+  cycleStartDate: Date;
 }
 
 export interface UserReferral {
@@ -54,7 +54,6 @@ export interface User {
   magicWord: string;
   referral: UserReferral;
   subscription: UserSubscription;
-  usage: UserUsage;
   role: 'admin' | 'team' | 'user';
   settings: UserSettings;
   autoDeleteTelegramMessagesAfterDays: number;
@@ -62,6 +61,7 @@ export interface User {
   firstName?: string;
   lastName?: string;
   username?: string;
+  usage: IUserUsage;
   languageCode?: string;
   waitlist?: string;
   activeTeamId: string;

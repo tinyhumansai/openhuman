@@ -31,7 +31,7 @@ const BillingPanel = () => {
   const currentTier: PlanTier = activeTeam?.team.subscription?.plan ?? 'FREE';
   const hasActive = activeTeam?.team.subscription?.hasActiveSubscription ?? false;
   const planExpiry = activeTeam?.team.subscription?.planExpiry;
-  const usage = activeTeam?.team.usage;
+  const usage = user?.usage;
 
   // Local state
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly');
@@ -135,69 +135,66 @@ const BillingPanel = () => {
         onBack={navigateBack}
       />
 
+      {/* <div className="flex items-center justify-between max-w-md mx-auto"> */}
       <div className="overflow-y-auto">
         <div className="space-y-2">
-          {/* ── Current plan banner ──────────────────────────────── */}
-          <div className="bg-stone-800/60 p-2.5">
-            <div className="flex items-center justify-between mb-1.5">
-              <h3 className="text-sm font-semibold text-white">Your Current Plan {currentTier}</h3>
-              {usage && (
-                <span className="text-xs text-stone-400">
-                  {Math.round(
-                    ((usage.dailyTokenLimit - usage.remainingTokens) / usage.dailyTokenLimit) * 100
+          <div className="max-w-md mt-4 mx-auto">
+            <div className="p-2.5">
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-sm font-semibold text-white">
+                  Your Current Plan {currentTier}
+                </h3>
+                {usage && (
+                  <span className="text-xs text-stone-400">
+                    {Math.round((usage.spentThisCycleUsd / usage.cycleBudgetUsd) * 100)}% used
+                  </span>
+                )}
+              </div>
+
+              {hasActive && (
+                <div className="flex items-center justify-between mb-1.5">
+                  {planExpiry && (
+                    <p className="text-xs text-stone-400">
+                      Renews{' '}
+                      {new Date(planExpiry).toLocaleDateString('en-US', {
+                        month: 'long',
+                        day: 'numeric',
+                        year: 'numeric',
+                      })}
+                    </p>
                   )}
-                  % used
-                </span>
+                  <button
+                    onClick={handleManageSubscription}
+                    className="text-xs text-primary-400 hover:text-primary-300 font-medium transition-colors">
+                    Manage Subscription
+                  </button>
+                </div>
+              )}
+              {/* Renewal date (for non-active subscriptions) */}
+              {!hasActive && planExpiry && (
+                <p className="text-xs text-stone-400 mb-1.5">
+                  Renews{' '}
+                  {new Date(planExpiry).toLocaleDateString('en-US', {
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
+                </p>
+              )}
+              {usage && (
+                <div className="h-1.5 bg-stone-700/60 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-300 bg-primary-500"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        (usage.spentThisCycleUsd / usage.cycleBudgetUsd) * 100
+                      )}%`,
+                    }}
+                  />
+                </div>
               )}
             </div>
-
-            {hasActive && (
-              <div className="flex items-center justify-between mb-1.5">
-                {planExpiry && (
-                  <p className="text-xs text-stone-400">
-                    Renews{' '}
-                    {new Date(planExpiry).toLocaleDateString('en-US', {
-                      month: 'long',
-                      day: 'numeric',
-                      year: 'numeric',
-                    })}
-                  </p>
-                )}
-                <button
-                  onClick={handleManageSubscription}
-                  className="text-xs text-primary-400 hover:text-primary-300 font-medium transition-colors">
-                  Manage Subscription
-                </button>
-              </div>
-            )}
-
-            {/* Renewal date (for non-active subscriptions) */}
-            {!hasActive && planExpiry && (
-              <p className="text-xs text-stone-400 mb-1.5">
-                Renews{' '}
-                {new Date(planExpiry).toLocaleDateString('en-US', {
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
-              </p>
-            )}
-
-            {/* Token usage progress bar */}
-            {usage && (
-              <div className="h-1.5 bg-stone-700/60 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-300 bg-primary-500"
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      ((usage.dailyTokenLimit - usage.remainingTokens) / usage.dailyTokenLimit) *
-                        100
-                    )}%`,
-                  }}
-                />
-              </div>
-            )}
           </div>
 
           {/* ── Interval toggle ──────────────────────────────────── */}

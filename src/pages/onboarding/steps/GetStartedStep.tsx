@@ -1,7 +1,5 @@
 import { useState } from 'react';
 
-import ConnectionIndicator from '../../../components/ConnectionIndicator';
-
 interface GetStartedStepProps {
   onComplete: () => void | Promise<void>;
 }
@@ -31,8 +29,6 @@ const GetStartedStep = ({ onComplete }: GetStartedStepProps) => {
           to keep this tab open to keep the connection alive.
         </p>
       </div>
-
-      <ConnectionIndicator description="Your browser is now connected to the AlphaHuman AI Models. Please keep this tab open." />
 
       {error && <p className="text-coral-500 text-sm mb-3 text-center">{error}</p>}
 

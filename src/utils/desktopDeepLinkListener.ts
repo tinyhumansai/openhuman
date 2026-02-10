@@ -127,7 +127,7 @@ export const setupDesktopDeepLinkListener = async () => {
 
     if (typeof window !== 'undefined') {
       // window.__simulateDeepLink('alphahuman://auth?token=1234567890')
-      // window.__simulateDeepLink('alphahuman://oauth/success?integrationId=6989178fad6dbfe9b137f577&skillId=notion')
+      // window.__simulateDeepLink('alphahuman://oauth/success?integrationId=6989ef9c8e8bf1b6d991a08c&skillId=notion')
       (
         window as Window & { __simulateDeepLink?: (url: string) => Promise<void> }
       ).__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);

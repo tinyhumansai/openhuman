@@ -1,3 +1,4 @@
+import type { Middleware } from '@reduxjs/toolkit';
 import { configureStore } from '@reduxjs/toolkit';
 import { createLogger } from 'redux-logger';
 import {
@@ -13,6 +14,7 @@ import {
 import storage from 'redux-persist/lib/storage';
 
 import { IS_DEV } from '../utils/config';
+import { storeSession } from '../utils/tauriCommands';
 import aiReducer from './aiSlice';
 import authReducer, { setOnboardedForUser, setToken } from './authSlice';
 import skillsReducer from './skillsSlice';
@@ -37,6 +39,37 @@ const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);
 const persistedAiReducer = persistReducer(aiPersistConfig, aiReducer);
 const persistedSkillsReducer = persistReducer(skillsPersistConfig, skillsReducer);
 
+/**
+ * Middleware that syncs the JWT token to the Rust SESSION_SERVICE whenever
+ * setToken is dispatched or auth state is rehydrated from persist.
+ */
+const syncTokenToRust: Middleware = () => next => action => {
+  const result = next(action);
+
+  const syncToken = (token: string) => {
+    // Pass a minimal user object — the token is what matters for SESSION_SERVICE
+    storeSession(token, { id: '' }).catch(err =>
+      console.warn('[syncTokenToRust] Failed to sync token:', err)
+    );
+  };
+
+  // Sync on explicit setToken
+  if (setToken.match(action) && action.payload) {
+    syncToken(action.payload);
+  }
+
+  // Sync on rehydration (app restart — persist loads token from localStorage)
+  const a = action as { type?: string; key?: string; payload?: { token?: string } };
+  if (a.type === REHYDRATE && a.key === 'auth') {
+    const token = a.payload?.token;
+    if (token) {
+      syncToken(token);
+    }
+  }
+
+  return result;
+};
+
 export const store = configureStore({
   reducer: {
     auth: persistedAuthReducer,
@@ -49,7 +82,7 @@ export const store = configureStore({
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({
       serializableCheck: { ignoredActions: [FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, REGISTER] },
-    });
+    }).concat(syncTokenToRust);
 
     // Add redux-logger in development with collapsed groups
     if (IS_DEV) {

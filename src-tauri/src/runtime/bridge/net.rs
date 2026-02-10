@@ -51,6 +51,7 @@ fn do_fetch(url: &str, options_json: &str) -> Result<String, String> {
 
     let timeout_secs = options.timeout.unwrap_or(30);
     let client = reqwest::blocking::Client::builder()
+        .use_native_tls()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
@@ -74,7 +75,17 @@ fn do_fetch(url: &str, options_json: &str) -> Result<String, String> {
         req = req.body(body);
     }
 
-    let resp = req.send().map_err(|e| format!("HTTP request failed: {e}"))?;
+    let resp = req.send().map_err(|e| {
+        // Walk the full error chain so the caller sees the root cause
+        // (TLS, DNS, timeout, etc.) not just "error sending request for url".
+        let mut msg = format!("HTTP request failed: {e}");
+        let mut source = std::error::Error::source(&e);
+        while let Some(cause) = source {
+            msg.push_str(&format!(" | caused by: {cause}"));
+            source = std::error::Error::source(cause);
+        }
+        msg
+    })?;
 
     let status = resp.status().as_u16();
     let headers: HashMap<String, String> = resp

@@ -227,6 +227,8 @@ impl QjsSkillInstance {
                 return;
             }
 
+            restore_oauth_credential(&ctx, &config.skill_id).await;
+
             // Call init() lifecycle
             if let Err(e) = call_lifecycle(&ctx, "init").await {
                 let mut s = state.write();
@@ -389,6 +391,8 @@ async fn handle_message(
 ) -> bool {
     match msg {
         SkillMessage::CallTool { tool_name, arguments, reply } => {
+            // Lazy-load persisted OAuth credential before calling the tool
+            restore_oauth_credential(ctx, skill_id).await;
             let result = handle_tool_call(ctx, &tool_name, arguments).await;
             let _ = reply.send(result);
         }
@@ -400,9 +404,23 @@ async fn handle_message(
         }
         SkillMessage::Stop { reply } => {
             let _ = call_lifecycle(ctx, "stop").await;
+
+            // Clear OAuth credential from memory and mark as disconnected in store
+            let clear_code = r#"(function() {
+                if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {
+                    globalThis.oauth.__setCredential(null);
+                }
+                if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {
+                    globalThis.state.set('__oauth_credential', '');
+                }
+            })()"#;
+            ctx.with(|js_ctx| {
+                let _ = js_ctx.eval::<rquickjs::Value, _>(clear_code.as_bytes());
+            }).await;
             state.write().status = SkillStatus::Stopped;
-            log::info!("[skill:{}] Stopped", skill_id);
+            log::info!("[skill:{}] Stopped (OAuth credential cleared)", skill_id);
             let _ = reply.send(());
+
             return true; // Signal to stop
         }
         SkillMessage::SetupStart { reply } => {
@@ -444,23 +462,40 @@ async fn handle_message(
         SkillMessage::Rpc { method, params, reply } => {
             let result = match method.as_str() {
                 "oauth/complete" => {
-                    // Set credential on the oauth bridge, then call onOAuthComplete
-                    let set_cred_code = format!(
-                        "if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{ globalThis.oauth.__setCredential({}); }}",
-                        serde_json::to_string(&params).unwrap_or_else(|_| "null".to_string())
+                    // Set credential on the oauth bridge + persist to store
+                    let cred_json = serde_json::to_string(&params).unwrap_or_else(|_| "null".to_string());
+                    let code = format!(
+                        r#"(function() {{
+                            if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{
+                                globalThis.oauth.__setCredential({cred});
+                            }}
+                            if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
+                                globalThis.state.set('__oauth_credential', {cred});
+                            }}
+                        }})()"#,
+                        cred = cred_json
                     );
                     ctx.with(|js_ctx| {
-                        let _ = js_ctx.eval::<rquickjs::Value, _>(set_cred_code.as_bytes());
+                        let _ = js_ctx.eval::<rquickjs::Value, _>(code.as_bytes());
                     }).await;
+                    log::info!("[skill:{}] OAuth credential set and persisted to store", skill_id);
                     let params_str = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
                     handle_js_call(ctx, "onOAuthComplete", &params_str).await
                 }
                 "oauth/revoked" => {
-                    // Clear credential on the oauth bridge, then call onOAuthRevoked
-                    let clear_code = "if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) { globalThis.oauth.__setCredential(null); }";
+                    // Clear credential: set to empty string so it's clearly "disconnected"
+                    let clear_code = r#"(function() {
+                        if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {
+                            globalThis.oauth.__setCredential(null);
+                        }
+                        if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {
+                            globalThis.state.set('__oauth_credential', '');
+                        }
+                    })()"#;
                     ctx.with(|js_ctx| {
                         let _ = js_ctx.eval::<rquickjs::Value, _>(clear_code.as_bytes());
                     }).await;
+                    log::info!("[skill:{}] OAuth credential cleared from store", skill_id);
                     let params_str = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
                     handle_js_void_call(ctx, "onOAuthRevoked", &params_str).await
                         .map(|()| serde_json::json!({ "ok": true }))
@@ -748,4 +783,27 @@ async fn handle_js_void_call(
             .map_err(|e| format!("{fn_name}() failed: {e}"))
             .map(|_| ())
     }).await
+}
+
+/// Load a persisted OAuth credential from the skill's store and inject it
+/// into the JS context so tools have access to the credential.
+/// An empty string means "disconnected" — only non-empty values are restored.
+async fn restore_oauth_credential(ctx: &rquickjs::AsyncContext, skill_id: &str) {
+    let code = r#"(function() {
+        if (typeof globalThis.state === 'undefined' || typeof globalThis.oauth === 'undefined') return false;
+        var cred = globalThis.state.get('__oauth_credential');
+        if (cred && cred !== '' && globalThis.oauth.__setCredential) {
+            globalThis.oauth.__setCredential(cred);
+            return true;
+        }
+        return false;
+    })()"#;
+
+    let restored = ctx.with(|js_ctx| {
+        js_ctx.eval::<bool, _>(code.as_bytes()).unwrap_or(false)
+    }).await;
+
+    if restored {
+        log::info!("[skill:{}] Restored OAuth credential from store", skill_id);
+    }
 }

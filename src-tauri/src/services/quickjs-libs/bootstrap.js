@@ -807,12 +807,12 @@ globalThis.data = {
 // OAuth Bridge API (credential management and authenticated proxy)
 // ============================================================================
 (function () {
-  var __oauthCredential = null;
+  globalThis.__oauthCredential = null;
 
   globalThis.oauth = {
     /** Get the current OAuth credential, or null if not connected. */
     getCredential: function () {
-      return __oauthCredential;
+      return globalThis.__oauthCredential;
     },
 
     /**
@@ -820,7 +820,7 @@ globalThis.data = {
      * Path is relative to manifest's apiBaseUrl.
      */
     fetch: function (path, options) {
-      if (!__oauthCredential) {
+      if (!globalThis.__oauthCredential) {
         return {
           status: 401,
           headers: {},
@@ -828,9 +828,9 @@ globalThis.data = {
         };
       }
       var backendUrl = __platform.env('BACKEND_URL') || 'https://api.alphahuman.xyz';
-      var jwtToken = __platform.env('JWT_TOKEN') || '';
+      var jwtToken = __ops.get_session_token() || '';
       var cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
-      var proxyUrl = backendUrl + '/proxy/by-id/' + __oauthCredential.credentialId + '/' + cleanPath;
+      var proxyUrl = backendUrl + '/proxy/by-id/' + globalThis.__oauthCredential.credentialId + '/' + cleanPath;
       var method = (options && options.method) || 'GET';
       var headers = { 'Content-Type': 'application/json' };
       if (jwtToken) {
@@ -856,7 +856,7 @@ globalThis.data = {
       if (__oauthCredential) {
         try {
           var backendUrl = __platform.env('BACKEND_URL') || 'https://api.alphahuman.xyz';
-          var jwtToken = __platform.env('JWT_TOKEN') || '';
+          var jwtToken = __ops.get_session_token() || '';
           var revokeOpts = JSON.stringify({
             method: 'DELETE',
             headers: {
@@ -993,7 +993,7 @@ globalThis.model = {
    */
   generate: function (prompt, options) {
     var backendUrl = __platform.env('BACKEND_URL') || 'https://api.alphahuman.xyz';
-    var jwtToken = __platform.env('JWT_TOKEN') || '';
+    var jwtToken = __ops.get_session_token() || '';
     var body = { prompt: prompt };
     if (options && options.maxTokens) body.maxTokens = options.maxTokens;
     if (options && options.temperature) body.temperature = options.temperature;
@@ -1023,7 +1023,7 @@ globalThis.model = {
    */
   summarize: function (text, options) {
     var backendUrl = __platform.env('BACKEND_URL') || 'https://api.alphahuman.xyz';
-    var jwtToken = __platform.env('JWT_TOKEN') || '';
+    var jwtToken = __ops.get_session_token() || '';
     var body = { text: text };
     if (options && options.maxTokens) body.maxTokens = options.maxTokens;
     var result = __net.fetch(backendUrl + '/api/ai/summarize', JSON.stringify({

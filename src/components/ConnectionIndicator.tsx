@@ -9,7 +9,7 @@ interface ConnectionIndicatorProps {
 
 const ConnectionIndicator = ({
   status: overrideStatus,
-  description = 'Your browser is now connected to the AlphaHuman AI. Keep the app running to keep the connection alive. You can message your assistant with the button below.',
+  description = 'Your device is now connected to the AlphaHuman AI. Keep the app running to keep the connection alive. You can message your assistant with the button below.',
   className = '',
 }: ConnectionIndicatorProps) => {
   // Use socket store status, but allow override via props

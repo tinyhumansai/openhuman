@@ -1,6 +1,7 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
 import type {
+  OAuthCredential,
   SkillManifest,
   SkillState,
   SkillStatus,
@@ -57,6 +58,13 @@ const skillsSlice = createSlice({
       }
     },
 
+    setSkillOAuthCredential(state, action: PayloadAction<{ skillId: string; credential: OAuthCredential | undefined }>) {
+      const { skillId, credential } = action.payload;
+      if (state.skills[skillId]) {
+        state.skills[skillId].oauthCredential = credential;
+      }
+    },
+
     setSkillTools(state, action: PayloadAction<{ skillId: string; tools: SkillToolDefinition[] }>) {
       const { skillId, tools } = action.payload;
       if (state.skills[skillId]) {
@@ -87,6 +95,7 @@ export const {
   setSkillStatus,
   setSkillError,
   setSkillSetupComplete,
+  setSkillOAuthCredential,
   setSkillTools,
   setSkillState,
   removeSkill,

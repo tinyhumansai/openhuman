@@ -121,6 +121,8 @@ pub struct WebSocketState {
 
 pub const ALLOWED_ENV_VARS: &[&str] = &[
     "VITE_BACKEND_URL",
+    "BACKEND_URL",
+    "JWT_TOKEN",
     "VITE_TELEGRAM_BOT_USERNAME",
     "VITE_TELEGRAM_BOT_ID",
     "NODE_ENV",
@@ -135,5 +137,5 @@ pub fn check_telegram_skill(skill_id: &str) -> Result<(), String> {
 }
 
 pub fn js_err(msg: String) -> rquickjs::Error {
-    rquickjs::Error::new_from_js_message("ops", "Error", msg)
+    rquickjs::Error::new_from_js_message("skill", "RuntimeError", msg)
 }
