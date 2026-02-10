@@ -86,6 +86,13 @@ pub enum SkillMessage {
     Tick {
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+    /// Notify the skill of an error from an async operation.
+    Error {
+        error_type: String,
+        message: String,
+        source: Option<String>,
+        recoverable: bool,
+    },
     /// Generic JSON-RPC call (for methods not covered by specific variants).
     Rpc {
         method: String,
