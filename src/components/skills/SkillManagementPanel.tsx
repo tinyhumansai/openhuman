@@ -8,6 +8,7 @@ import { useAppSelector } from "../../store/hooks";
 import {
   useSkillConnectionStatus,
   useSkillConnectionInfo,
+  useSkillState,
 } from "../../lib/skills/hooks";
 import { skillManager } from "../../lib/skills/manager";
 import type {
@@ -30,6 +31,20 @@ export default function SkillManagementPanel({
   const skill = useAppSelector((state) => state.skills.skills[skillId]);
   const connectionStatus = useSkillConnectionStatus(skillId);
   const connectionInfo = useSkillConnectionInfo(skillId);
+  const skillState = useSkillState<{
+    syncInProgress?: boolean;
+    syncProgress?: number | null;
+    syncProgressMessage?: string | null;
+    syncCompleted?: boolean;
+    syncError?: string | null;
+    lastSyncTime?: number | null;
+    storage?: {
+      chatCount?: number;
+      messageCount?: number;
+      contactCount?: number;
+      unreadCount?: number;
+    };
+  }>(skillId);
 
   const [options, setOptions] = useState<SkillOptionDefinition[]>([]);
   const [togglingOption, setTogglingOption] = useState<string | null>(null);
@@ -112,12 +127,93 @@ export default function SkillManagementPanel({
     }
   }, [skillId, onClose]);
 
+  const handleSync = useCallback(async () => {
+    try {
+      await skillManager.triggerSync(skillId);
+    } catch (err) {
+      console.error("[SkillManagementPanel] Sync trigger failed:", err);
+    }
+  }, [skillId]);
+
+  const syncInProgress = skillState?.syncInProgress ?? false;
+  const syncProgress = skillState?.syncProgress ?? null;
+  const syncProgressMessage = skillState?.syncProgressMessage ?? null;
+  const syncCompleted = skillState?.syncCompleted ?? false;
+  const syncError = skillState?.syncError ?? null;
+  const lastSyncTime = skillState?.lastSyncTime ?? null;
+  // const storage = skillState?.storage;
+  const hasSyncSupport = syncCompleted || syncInProgress || syncError !== null;
+
   return (
     <div className="space-y-4">
       {/* Error message */}
       {connectionInfo.error && (
         <div className="text-xs text-coral-400 bg-coral-500/10 border border-coral-500/20 rounded-lg px-3 py-2 break-words">
           {connectionInfo.error}
+        </div>
+      )}
+
+      {/* Data Sync */}
+      {hasSyncSupport && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-0.5">
+            <div className="text-xs font-medium text-stone-400">Data Sync</div>
+            <button
+              onClick={handleSync}
+              disabled={syncInProgress || connectionStatus !== "connected"}
+              className="px-2.5 py-1 text-[11px] font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {syncInProgress ? "Syncing..." : "Sync Now"}
+            </button>
+          </div>
+
+          {syncInProgress && (
+            <div className="rounded-lg bg-stone-800/40 border border-stone-700/40 px-3 py-2.5 space-y-2">
+              {syncProgressMessage && (
+                <div className="text-[11px] text-stone-400 truncate">
+                  {syncProgressMessage}
+                </div>
+              )}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-1.5 bg-stone-700/60 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary-500 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${syncProgress ?? 0}%` }}
+                  />
+                </div>
+                {syncProgress !== null && (
+                  <span className="text-[11px] text-stone-500 tabular-nums w-8 text-right">
+                    {syncProgress}%
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!syncInProgress && syncError && (
+            <div className="text-[11px] text-coral-400 bg-coral-500/10 border border-coral-500/20 rounded-lg px-3 py-2 break-words">
+              Sync failed: {syncError}
+            </div>
+          )}
+
+          {!syncInProgress && syncCompleted && (
+            <div className="rounded-lg bg-stone-800/40 border border-stone-700/40 px-3 py-2">
+              {lastSyncTime && (
+                <div className="text-[11px] text-stone-400">
+                  Last synced: {new Date(lastSyncTime).toLocaleString()}
+                </div>
+              )}
+              {/* {storage && (storage.chatCount > 0 || storage.messageCount > 0 || storage.contactCount > 0) && (
+                <div className="text-[11px] text-stone-500 mt-0.5">
+                  {[
+                    storage.chatCount > 0 && `${storage.chatCount} chats`,
+                    storage.messageCount > 0 && `${storage.messageCount.toLocaleString()} messages`,
+                    storage.contactCount > 0 && `${storage.contactCount} contacts`,
+                  ].filter(Boolean).join(" \u00B7 ")}
+                </div>
+              )} */}
+            </div>
+          )}
         </div>
       )}
 

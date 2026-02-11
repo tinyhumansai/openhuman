@@ -12,6 +12,7 @@ import {
 } from 'redux-persist';
 import storage from 'redux-persist/lib/storage';
 
+import { setStoreForApiClient } from '../services/apiClient';
 import { IS_DEV } from '../utils/config';
 import { storeSession } from '../utils/tauriCommands';
 import aiReducer from './aiSlice';
@@ -20,6 +21,7 @@ import inviteReducer from './inviteSlice';
 import skillsReducer from './skillsSlice';
 import socketReducer from './socketSlice';
 import teamReducer from './teamSlice';
+import threadReducer from './threadSlice';
 import userReducer from './userSlice';
 
 // Persist config for auth only
@@ -78,6 +80,7 @@ export const store = configureStore({
     ai: persistedAiReducer,
     skills: persistedSkillsReducer,
     team: teamReducer,
+    thread: threadReducer,
     invite: inviteReducer,
   },
   middleware: getDefaultMiddleware => {
@@ -92,6 +95,9 @@ export const store = configureStore({
     return middleware;
   },
 });
+
+// Wire up the apiClient so it can read the token without a circular import
+setStoreForApiClient(() => store.getState().auth.token);
 
 export const persistor = persistStore(store, null, () => {
   // Dev-only: auto-inject JWT token for testing (e.g. Android without login flow)

@@ -570,6 +570,9 @@ async fn handle_message(
                 "skill/ping" => {
                     handle_js_call(rt, ctx, "onPing", "{}").await
                 }
+                "skill/sync" => {
+                    handle_js_call(rt, ctx, "onSync", "{}").await
+                }
                 "oauth/revoked" => {
                     // Clear credential: set to empty string so it's clearly "disconnected"
                     let clear_code = r#"(function() {

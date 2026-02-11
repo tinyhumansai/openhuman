@@ -1,4 +1,3 @@
-import { store } from '../store';
 import type { ApiError } from '../types/api';
 import { BACKEND_URL } from '../utils/config';
 
@@ -12,6 +11,19 @@ interface RequestOptions {
 }
 
 /**
+ * Lazy store accessor to break the circular dependency:
+ *   store/index → slices → api services → apiClient → store/index
+ *
+ * The store registers itself via `setStoreForApiClient` after creation,
+ * so apiClient never imports store/index at module level.
+ */
+let _getToken: (() => string | null) | null = null;
+
+export function setStoreForApiClient(getToken: () => string | null) {
+  _getToken = getToken;
+}
+
+/**
  * API Client for making requests to the backend
  * Handles authentication, error handling, and response typing
  */
@@ -22,11 +34,8 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  /**
-   * Get the current JWT token from Redux store
-   */
   private getToken(): string | null {
-    return store.getState().auth.token;
+    return _getToken ? _getToken() : null;
   }
 
   /**

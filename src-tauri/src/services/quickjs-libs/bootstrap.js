@@ -146,16 +146,20 @@ globalThis.fetch = async function (url, options = {}) {
     headersObj = headers;
   }
 
-  const result = await __ops.fetch(url.toString(), {
+  // __ops.fetch expects a JSON string for options (not a JS object)
+  const resultJson = await __ops.fetch(url.toString(), JSON.stringify({
     method,
     headers: headersObj,
     body: typeof body === 'string' ? body : body ? JSON.stringify(body) : null,
-  });
+  }));
 
-  return new Response(result.body, {
-    status: result.status,
-    statusText: result.statusText || '',
-    headers: new Headers(result.headers),
+  // __ops.fetch returns a JSON string — parse it to access status/headers/body
+  const parsed = JSON.parse(resultJson);
+
+  return new Response(parsed.body, {
+    status: parsed.status,
+    statusText: parsed.statusText || '',
+    headers: new Headers(parsed.headers || {}),
   });
 };
 

@@ -153,6 +153,14 @@ export class SkillRuntime {
   }
 
   /**
+   * Trigger the skill's onSync lifecycle hook.
+   * Progress updates flow via published state fields, not the RPC response.
+   */
+  async triggerSync(): Promise<unknown> {
+    return this.transport.request("skill/sync");
+  }
+
+  /**
    * Trigger periodic tick.
    */
   async tick(): Promise<void> {

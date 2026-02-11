@@ -234,6 +234,18 @@ class SkillManager {
   }
 
   /**
+   * Trigger a manual sync for a running skill.
+   * Progress updates are published to Redux via the skill's state fields.
+   */
+  async triggerSync(skillId: string): Promise<void> {
+    const runtime = this.runtimes.get(skillId);
+    if (!runtime) {
+      throw new Error(`Skill ${skillId} is not running`);
+    }
+    await runtime.triggerSync();
+  }
+
+  /**
    * Set a single option on a running skill.
    */
   async setOption(skillId: string, name: string, value: unknown): Promise<void> {
