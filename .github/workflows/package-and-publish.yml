@@ -13,12 +13,12 @@ on:
   push:
     branches:
       - main
-  workflow_run:
-    workflows: ["Version Bump"]
-    types:
-      - completed
-    branches:
-      - main
+  # workflow_run:
+  #   workflows: ["Version Bump"]
+  #   types:
+  #     - completed
+  #   branches:
+  #     - main
   pull_request:
     branches:
       - main
