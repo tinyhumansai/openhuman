@@ -1,5 +1,5 @@
-import path from "path";
-import type { Options } from "@wdio/types";
+import type { Options } from '@wdio/types';
+import path from 'path';
 
 /**
  * Resolve the path to the built Tauri application bundle.
@@ -8,62 +8,48 @@ import type { Options } from "@wdio/types";
  * On Windows/Linux, tauri-driver would be used instead (not covered here).
  */
 function getAppPath(): string {
-  const base = path.resolve("src-tauri/target/debug/bundle");
+  const base = path.resolve('src-tauri/target/debug/bundle');
 
   switch (process.platform) {
-    case "darwin":
-      return path.join(base, "macos", "AlphaHuman.app");
-    case "win32":
-      return path.join(
-        "src-tauri",
-        "target",
-        "debug",
-        "AlphaHuman.exe",
-      );
-    case "linux":
-      return path.join(
-        "src-tauri",
-        "target",
-        "debug",
-        "alpha-human",
-      );
+    case 'darwin':
+      return path.join(base, 'macos', 'AlphaHuman.app');
+    case 'win32':
+      return path.join('src-tauri', 'target', 'debug', 'AlphaHuman.exe');
+    case 'linux':
+      return path.join('src-tauri', 'target', 'debug', 'alpha-human');
     default:
       throw new Error(`Unsupported platform: ${process.platform}`);
   }
 }
 
 export const config: Options.Testrunner = {
-  runner: "local",
-  hostname: "127.0.0.1",
+  runner: 'local',
+  hostname: '127.0.0.1',
   port: 4723, // Appium default port
-  specs: ["./test/e2e/specs/**/*.spec.ts"],
+  specs: ['./test/e2e/specs/**/*.spec.ts'],
   maxInstances: 1, // Tauri apps are single-instance
   capabilities: [
     {
-      platformName: "mac",
+      platformName: 'mac',
       // @ts-expect-error -- Appium capabilities are not in standard WebDriver types
-      "appium:automationName": "Mac2",
-      "appium:app": getAppPath(),
-      "appium:bundleId": "com.alphahuman.app",
-      "appium:showServerLogs": true,
+      'appium:automationName': 'Mac2',
+      'appium:app': getAppPath(),
+      'appium:bundleId': 'com.alphahuman.app',
+      'appium:showServerLogs': true,
     },
   ],
-  logLevel: "warn",
+  logLevel: 'warn',
   bail: 0,
   waitforTimeout: 10_000,
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 3,
   // No appium service — appium is started externally via scripts/start-appium.sh
   // so we can control the Node version (appium v3 requires Node >=24).
-  framework: "mocha",
-  reporters: ["spec"],
+  framework: 'mocha',
+  reporters: ['spec'],
   mochaOpts: {
-    ui: "bdd",
+    ui: 'bdd',
     timeout: 60_000, // App startup can be slow
   },
-  autoCompileOpts: {
-    tsNodeOpts: {
-      project: "./tsconfig.e2e.json",
-    },
-  },
+  autoCompileOpts: { tsNodeOpts: { project: './tsconfig.e2e.json' } },
 };

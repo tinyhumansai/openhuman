@@ -70,7 +70,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       navigate('/home');
     } else if (currentRoute === 'team-members' || currentRoute === 'team-invites') {
       // Check if we're in team management context (has teamId in URL)
-      const teamManageMatch = location.pathname.match(/\/team\/manage\/([^\/]+)/);
+      const teamManageMatch = location.pathname.match(/\/team\/manage\/([^/]+)/);
       if (teamManageMatch) {
         const teamId = teamManageMatch[1];
         navigate(`/settings/team/manage/${teamId}`);

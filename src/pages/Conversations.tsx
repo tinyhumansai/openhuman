@@ -1,4 +1,10 @@
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
@@ -49,31 +55,34 @@ const Conversations = () => {
   const isDragging = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const handleResizePointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    isDragging.current = true;
-    const startX = e.clientX;
-    const startWidth = panelWidth;
+  const handleResizePointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      isDragging.current = true;
+      const startX = e.clientX;
+      const startWidth = panelWidth;
 
-    const onPointerMove = (ev: globalThis.PointerEvent) => {
-      const delta = ev.clientX - startX;
-      const newWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, startWidth + delta));
-      setPanelWidth(newWidth);
-    };
+      const onPointerMove = (ev: globalThis.PointerEvent) => {
+        const delta = ev.clientX - startX;
+        const newWidth = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, startWidth + delta));
+        setPanelWidth(newWidth);
+      };
 
-    const onPointerUp = () => {
-      isDragging.current = false;
-      document.removeEventListener('pointermove', onPointerMove);
-      document.removeEventListener('pointerup', onPointerUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
+      const onPointerUp = () => {
+        isDragging.current = false;
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      };
 
-    document.addEventListener('pointermove', onPointerMove);
-    document.addEventListener('pointerup', onPointerUp);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  }, [panelWidth]);
+      document.addEventListener('pointermove', onPointerMove);
+      document.addEventListener('pointerup', onPointerUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [panelWidth]
+  );
 
   // Fetch threads on mount
   useEffect(() => {
@@ -184,9 +193,7 @@ const Conversations = () => {
                   key={thread.id}
                   onClick={() => handleSelectThread(thread.id)}
                   className={`w-full text-left py-3 px-4 transition-colors cursor-pointer ${
-                    thread.id === selectedThreadId
-                      ? 'bg-white/10'
-                      : 'hover:bg-white/[0.07]'
+                    thread.id === selectedThreadId ? 'bg-white/10' : 'hover:bg-white/[0.07]'
                   }`}>
                   <div className="flex items-center gap-2 mb-1">
                     <span
@@ -343,9 +350,7 @@ const Conversations = () => {
 
             {/* Message Input */}
             <div className="flex-shrink-0 border-t border-white/10 px-4 py-3">
-              {sendError && (
-                <p className="text-xs text-coral-500 mb-2">{sendError}</p>
-              )}
+              {sendError && <p className="text-xs text-coral-500 mb-2">{sendError}</p>}
               <div className="flex items-end gap-2">
                 <textarea
                   value={inputValue}

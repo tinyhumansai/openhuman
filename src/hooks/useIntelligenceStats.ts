@@ -105,13 +105,5 @@ export function useIntelligenceStats(): IntelligenceStats {
     fetchStats();
   }, [fetchStats, aiStatus]);
 
-  return {
-    sessions,
-    memoryFiles,
-    entities,
-    entityError,
-    aiStatus,
-    isLoading,
-    refetch: fetchStats,
-  };
+  return { sessions, memoryFiles, entities, entityError, aiStatus, isLoading, refetch: fetchStats };
 }

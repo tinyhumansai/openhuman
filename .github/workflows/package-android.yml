@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish to release (requires main branch)"
+        description: 'Publish to release (requires main branch)'
         type: boolean
         default: false
   workflow_run:
-    workflows: ["Version Bump"]
+    workflows: ['Version Bump']
     types:
       - completed
     branches:
@@ -119,13 +119,14 @@ jobs:
         with:
           fetch-depth: 1
           submodules: true
+          token: ${{ secrets.XGH_TOKEN_READ }}
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref }}
 
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: 'yarn'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -135,8 +136,8 @@ jobs:
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
+          distribution: 'temurin'
+          java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3

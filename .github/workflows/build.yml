@@ -22,6 +22,7 @@ jobs:
         with:
           fetch-depth: 1
           submodules: true
+          token: ${{ secrets.XGH_TOKEN_READ }}
 
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
@@ -70,8 +71,8 @@ jobs:
         if: steps.yarn-cache.outputs.cache-hit != 'true'
         run: yarn install --frozen-lockfile
 
-      - name: Build frontend
-        run: yarn build
+      - name: Install skills dependencies
+        run: cd skills && yarn install --frozen-lockfile
 
       - name: Build Tauri app
         run: yarn tauri build -- --target x86_64-unknown-linux-gnu

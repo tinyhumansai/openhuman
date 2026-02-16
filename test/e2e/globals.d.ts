@@ -6,4 +6,3 @@ declare namespace NodeJS {
 }
 
 declare const browser: any;
-

@@ -10,6 +10,34 @@
 set -euo pipefail
 
 APPIUM_PORT="${APPIUM_PORT:-4723}"
+E2E_MOCK_PORT="${E2E_MOCK_PORT:-18473}"
+
+# Point the app at the local mock server (baked into the build already, but
+# also exported here so the Rust backend / any env-based config picks it up).
+export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
+export BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
+
+# Clean cached app data for a fresh state — Redux Persist would otherwise
+# remember the JWT from a previous run and skip the login flow.
+echo "Cleaning cached app data..."
+rm -rf ~/Library/WebKit/com.alphahuman.app
+rm -rf ~/Library/Caches/com.alphahuman.app
+rm -rf "$HOME/Library/Application Support/com.alphahuman.app"
+
+# Verify the frontend dist has the mock server URL baked in (not production).
+# Tauri compresses assets when embedding, so we check dist/ not the binary.
+DIST_JS="$(ls dist/assets/index-*.js 2>/dev/null | head -1)"
+if [ -z "$DIST_JS" ]; then
+  echo "ERROR: No frontend bundle found at dist/assets/index-*.js." >&2
+  echo "       Run 'yarn test:e2e:build' to build the app before running E2E tests." >&2
+  exit 1
+fi
+if ! grep -q "127.0.0.1:${E2E_MOCK_PORT}" "$DIST_JS"; then
+  echo "ERROR: frontend bundle does NOT contain mock server URL (127.0.0.1:${E2E_MOCK_PORT})." >&2
+  echo "       Run 'yarn test:e2e:build' to rebuild with the mock URL." >&2
+  exit 1
+fi
+echo "Verified: frontend bundle contains mock server URL."
 
 # --- Resolve Node 24 via nvm ---------------------------------------------------
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"

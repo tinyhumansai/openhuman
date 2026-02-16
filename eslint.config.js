@@ -205,6 +205,44 @@ export default [
     },
   },
 
+  // E2E test files (Appium/WebDriverIO) — use tsconfig.e2e.json for parsing
+  {
+    files: ['test/e2e/**/*.ts', 'wdio.conf.ts'],
+    languageOptions: {
+      parser: tsparser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+        project: './tsconfig.e2e.json',
+        tsconfigRootDir: __dirname,
+      },
+      globals: {
+        browser: 'readonly',
+        $: 'readonly',
+        $$: 'readonly',
+        describe: 'readonly',
+        it: 'readonly',
+        before: 'readonly',
+        after: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        expect: 'readonly',
+      },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint,
+    },
+    rules: {
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
+      '@typescript-eslint/no-explicit-any': 'off',
+      'no-undef': 'off',
+    },
+  },
+
   // JavaScript files configuration
   {
     files: ['**/*.js', '**/*.jsx'],

@@ -1,11 +1,12 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { Route, Routes } from "react-router-dom";
-import ProtectedRoute from "../ProtectedRoute";
-import { renderWithProviders } from "../../test/test-utils";
+import { screen } from '@testing-library/react';
+import { Route, Routes } from 'react-router-dom';
+import { describe, expect, it } from 'vitest';
 
-describe("ProtectedRoute", () => {
-  it("renders children when token exists", () => {
+import { renderWithProviders } from '../../test/test-utils';
+import ProtectedRoute from '../ProtectedRoute';
+
+describe('ProtectedRoute', () => {
+  it('renders children when token exists', () => {
     renderWithProviders(
       <Routes>
         <Route
@@ -19,19 +20,15 @@ describe("ProtectedRoute", () => {
       </Routes>,
       {
         preloadedState: {
-          auth: {
-            token: "valid-jwt",
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
+          auth: { token: 'valid-jwt', isOnboardedByUser: {}, isAnalyticsEnabledByUser: {} },
         },
       }
     );
 
-    expect(screen.getByText("Protected Content")).toBeInTheDocument();
+    expect(screen.getByText('Protected Content')).toBeInTheDocument();
   });
 
-  it("redirects to / when no token and requireAuth=true", () => {
+  it('redirects to / when no token and requireAuth=true', () => {
     renderWithProviders(
       <Routes>
         <Route
@@ -45,22 +42,18 @@ describe("ProtectedRoute", () => {
         <Route path="/" element={<div>Landing</div>} />
       </Routes>,
       {
-        initialEntries: ["/dashboard"],
+        initialEntries: ['/dashboard'],
         preloadedState: {
-          auth: {
-            token: null,
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
+          auth: { token: null, isOnboardedByUser: {}, isAnalyticsEnabledByUser: {} },
         },
       }
     );
 
-    expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
-    expect(screen.getByText("Landing")).toBeInTheDocument();
+    expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
+    expect(screen.getByText('Landing')).toBeInTheDocument();
   });
 
-  it("redirects to custom redirectTo when no token", () => {
+  it('redirects to custom redirectTo when no token', () => {
     renderWithProviders(
       <Routes>
         <Route
@@ -74,21 +67,17 @@ describe("ProtectedRoute", () => {
         <Route path="/login" element={<div>Login Page</div>} />
       </Routes>,
       {
-        initialEntries: ["/dashboard"],
+        initialEntries: ['/dashboard'],
         preloadedState: {
-          auth: {
-            token: null,
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
+          auth: { token: null, isOnboardedByUser: {}, isAnalyticsEnabledByUser: {} },
         },
       }
     );
 
-    expect(screen.getByText("Login Page")).toBeInTheDocument();
+    expect(screen.getByText('Login Page')).toBeInTheDocument();
   });
 
-  it("redirects to /onboarding when requireOnboarded but not onboarded", () => {
+  it('redirects to /onboarding when requireOnboarded but not onboarded', () => {
     renderWithProviders(
       <Routes>
         <Route
@@ -102,18 +91,14 @@ describe("ProtectedRoute", () => {
         <Route path="/onboarding" element={<div>Onboarding</div>} />
       </Routes>,
       {
-        initialEntries: ["/home"],
+        initialEntries: ['/home'],
         preloadedState: {
-          auth: {
-            token: "valid-jwt",
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
-          user: { user: { _id: "u1" }, isLoading: false, error: null },
+          auth: { token: 'valid-jwt', isOnboardedByUser: {}, isAnalyticsEnabledByUser: {} },
+          user: { user: { _id: 'u1' }, isLoading: false, error: null },
         },
       }
     );
 
-    expect(screen.getByText("Onboarding")).toBeInTheDocument();
+    expect(screen.getByText('Onboarding')).toBeInTheDocument();
   });
 });

@@ -6,15 +6,15 @@ import { deriveConnectionStatus, useSkillConnectionStatus } from '../lib/skills/
 import type { SkillConnectionStatus } from '../lib/skills/types';
 import { useAppSelector } from '../store/hooks';
 import { IS_DEV } from '../utils/config';
-import SkillSetupModal from './skills/SkillSetupModal';
 import {
   DefaultIcon,
   SKILL_ICONS,
   SkillActionButton,
+  type SkillListEntry,
   STATUS_DISPLAY,
   STATUS_PRIORITY,
-  type SkillListEntry,
 } from './skills/shared';
+import SkillSetupModal from './skills/SkillSetupModal';
 
 interface SkillRowProps {
   skillId: string;
