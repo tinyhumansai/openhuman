@@ -48,6 +48,40 @@ const SettingsHome = () => {
     //   dangerous: false,
     // },
     {
+      id: 'skills',
+      title: 'Skills',
+      description: 'Configure Slack, Discord, and other skills',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9.75 3a.75.75 0 00-1.5 0v2.25H6a2.25 2.25 0 000 4.5h2.25V12H6a2.25 2.25 0 000 4.5h2.25V18a.75.75 0 001.5 0v-1.5H12V18a.75.75 0 001.5 0v-1.5H18a2.25 2.25 0 000-4.5h-4.5V9.75H18a2.25 2.25 0 000-4.5h-4.5V3a.75.75 0 00-1.5 0v2.25H9.75V3z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('skills'),
+      dangerous: false,
+    },
+    {
+      id: 'agent-chat',
+      title: 'Agent Chat',
+      description: 'Send messages directly to your agent',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M8 10h8m-8 4h5m-6 6l-4 4V6a2 2 0 012-2h12a2 2 0 012 2v9a2 2 0 01-2 2H7z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('agent-chat'),
+      dangerous: false,
+    },
+    {
       id: 'privacy',
       title: 'Privacy & Security',
       description: 'Control your privacy and security settings',
@@ -153,6 +187,23 @@ const SettingsHome = () => {
         </svg>
       ),
       onClick: () => navigateToSettings('billing'),
+      dangerous: false,
+    },
+    {
+      id: 'tauri-commands',
+      title: 'Tauri Command Console',
+      description: 'Run Alphahuman Tauri commands for quick testing',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('tauri-commands'),
       dangerous: false,
     },
   ];

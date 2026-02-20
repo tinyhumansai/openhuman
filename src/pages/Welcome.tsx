@@ -34,9 +34,6 @@ const Welcome = ({ isWeb }: WelcomeProps) => {
         </div>
 
         {isWeb && <DownloadScreen />}
-
-        {/* Bottom text */}
-        <p className="text-center opacity-60 text-sm">Made with ❤️ by a bunch of Web3 nerds</p>
       </div>
     </div>
   );

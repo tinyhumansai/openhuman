@@ -9,7 +9,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use argon2::{self, Algorithm, Argon2, Params, Version};
-use rand::RngCore;
+use aes_gcm::aead::rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

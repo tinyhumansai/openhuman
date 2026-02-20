@@ -9,10 +9,12 @@
 //! - Native notifications
 
 mod ai;
+mod auth;
 mod commands;
 mod models;
 mod runtime;
 mod services;
+pub mod alphahuman;
 mod utils;
 
 use ai::*;
@@ -158,6 +160,19 @@ fn toggle_main_window_visibility(app: &AppHandle) {
     }
 }
 
+fn is_daemon_mode() -> bool {
+    std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
+}
+
+fn daemon_foreground_requested() -> bool {
+    matches!(
+        std::env::var("ALPHAHUMAN_DAEMON_FOREGROUND")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
+    )
+}
+
 // Setup system tray with menu
 #[cfg(desktop)]
 fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -207,6 +222,16 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(err) = rustls::crypto::ring::default_provider().install_default() {
+        log::warn!(
+            "[app] rustls crypto provider not installed (already set?): {:?}",
+            err
+        );
+    } else {
+        log::info!("[app] rustls crypto provider installed (ring)");
+    }
+
+    let daemon_mode = is_daemon_mode();
 
     // Initialize platform-appropriate logger
     #[cfg(target_os = "android")]
@@ -322,14 +347,14 @@ pub fn run() {
         builder = builder
             .plugin(tauri_plugin_autostart::init(
                 tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                Some(vec!["--minimized"]),
+                Some(vec!["--daemon"]),
             ))
             .plugin(tauri_plugin_notification::init());
     }
 
     builder
         // Setup
-        .setup(|app| {
+        .setup(move |app| {
             // Initialize socket service with app handle
             SOCKET_SERVICE.set_app_handle(app.handle().clone());
 
@@ -342,7 +367,9 @@ pub fn run() {
             // Setup system tray (desktop only)
             #[cfg(desktop)]
             {
-                setup_tray(app.handle())?;
+                if daemon_mode {
+                    setup_tray(app.handle())?;
+                }
             }
 
             // macOS-specific: Handle window close event to minimize to tray
@@ -455,6 +482,71 @@ pub fn run() {
             #[cfg(target_os = "ios")]
             {
                 log::info!("[runtime] QuickJS runtime disabled on iOS");
+            }
+
+            // Start the alphahuman daemon supervisor (desktop only)
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let data_dir = app
+                    .path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| {
+                        dirs::home_dir()
+                            .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            .join(".alphahuman")
+                    });
+                let daemon_config = alphahuman::config::DaemonConfig::from_app_data_dir(&data_dir);
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let daemon_handle = alphahuman::daemon::DaemonHandle {
+                    cancel: cancel.clone(),
+                };
+                app.manage(daemon_handle);
+
+                if cfg!(target_os = "macos")
+                    && !daemon_mode
+                    && !daemon_foreground_requested()
+                {
+                    tauri::async_runtime::spawn(async move {
+                        match alphahuman::config::Config::load_or_init().await {
+                            Ok(config) => {
+                                if let Err(e) = alphahuman::service::install(&config) {
+                                    log::warn!(
+                                        "[alphahuman] LaunchAgent install failed: {e}"
+                                    );
+                                }
+                                if let Err(e) = alphahuman::service::start(&config) {
+                                    log::warn!(
+                                        "[alphahuman] LaunchAgent start failed: {e}"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[alphahuman] Failed to load config for LaunchAgent: {e}"
+                                );
+                            }
+                        }
+                    });
+                } else {
+                    let app_handle_for_daemon = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = alphahuman::daemon::run(
+                            daemon_config,
+                            app_handle_for_daemon,
+                            cancel,
+                        )
+                        .await
+                        {
+                            log::error!("[alphahuman] Daemon supervisor error: {e}");
+                        }
+                    });
+                }
+            }
+
+            if daemon_mode {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
             }
 
             // Store SocketManager as Tauri state
@@ -571,6 +663,34 @@ pub fn run() {
                     // Model commands (backend API proxy)
                     model_summarize,
                     model_generate,
+                    // Alphahuman commands
+                    alphahuman_health_snapshot,
+                    alphahuman_security_policy_info,
+                    alphahuman_encrypt_secret,
+                    alphahuman_decrypt_secret,
+                    alphahuman_get_config,
+                    alphahuman_update_model_settings,
+                    alphahuman_update_memory_settings,
+                    alphahuman_update_gateway_settings,
+                    alphahuman_update_tunnel_settings,
+                    alphahuman_update_runtime_settings,
+                    alphahuman_update_browser_settings,
+                    alphahuman_get_runtime_flags,
+                    alphahuman_set_browser_allow_all,
+                    alphahuman_agent_chat,
+                    alphahuman_doctor_report,
+                    alphahuman_doctor_models,
+                    alphahuman_list_integrations,
+                    alphahuman_get_integration_info,
+                    alphahuman_models_refresh,
+                    alphahuman_migrate_openclaw,
+                    alphahuman_hardware_discover,
+                    alphahuman_hardware_introspect,
+                    alphahuman_service_install,
+                    alphahuman_service_start,
+                    alphahuman_service_stop,
+                    alphahuman_service_status,
+                    alphahuman_service_uninstall,
                 ]
             }
             #[cfg(not(desktop))]
@@ -655,24 +775,67 @@ pub fn run() {
                     // Model commands (backend API proxy)
                     model_summarize,
                     model_generate,
+                    // Alphahuman commands
+                    alphahuman_health_snapshot,
+                    alphahuman_security_policy_info,
+                    alphahuman_encrypt_secret,
+                    alphahuman_decrypt_secret,
+                    alphahuman_get_config,
+                    alphahuman_update_model_settings,
+                    alphahuman_update_memory_settings,
+                    alphahuman_update_gateway_settings,
+                    alphahuman_update_tunnel_settings,
+                    alphahuman_update_runtime_settings,
+                    alphahuman_update_browser_settings,
+                    alphahuman_get_runtime_flags,
+                    alphahuman_set_browser_allow_all,
+                    alphahuman_agent_chat,
+                    alphahuman_doctor_report,
+                    alphahuman_doctor_models,
+                    alphahuman_list_integrations,
+                    alphahuman_get_integration_info,
+                    alphahuman_models_refresh,
+                    alphahuman_migrate_openclaw,
+                    alphahuman_hardware_discover,
+                    alphahuman_hardware_introspect,
+                    alphahuman_service_install,
+                    alphahuman_service_start,
+                    alphahuman_service_stop,
+                    alphahuman_service_status,
+                    alphahuman_service_uninstall,
                 ]
             }
         })
-        .build(tauri::generate_context!())
+        .build({
+            let mut context = tauri::generate_context!();
+            if daemon_mode {
+                context.config_mut().app.windows.clear();
+            }
+            context
+        })
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(move |app_handle, event| {
             match event {
                 // Handle macOS Dock icon click (reopen event)
                 #[cfg(target_os = "macos")]
                 RunEvent::Reopen { .. } => {
-                    show_main_window(app_handle);
+                    if !daemon_mode {
+                        show_main_window(app_handle);
+                    }
                 }
 
                 // Gracefully shut down TDLib before process exit to prevent
                 // use-after-free crash in the blocking receive loop.
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 RunEvent::Exit => {
-                    log::info!("[app] Exit event received, shutting down TDLib");
+                    log::info!("[app] Exit event received, shutting down");
+
+                    // Cancel the alphahuman daemon supervisor
+                    if let Some(daemon) = app_handle.try_state::<alphahuman::daemon::DaemonHandle>() {
+                        daemon.cancel.cancel();
+                        log::info!("[alphahuman] Daemon shutdown signalled");
+                    }
+
                     use crate::services::tdlib::TDLIB_MANAGER;
                     // Signal the TDLib worker to stop. The blocking receive() call
                     // has a 2-second internal timeout, so we must wait long enough
