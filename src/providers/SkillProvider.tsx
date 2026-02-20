@@ -19,6 +19,10 @@ import {
   type GmailProfile,
 } from '../store/gmailSlice';
 import { setSkillError, setSkillState, setSkillStatus } from '../store/skillsSlice';
+import {
+  syncGmailMetadataToBackend,
+  type GmailStateForSync,
+} from '../lib/skills/gmailMetadataSync';
 import { DEV_AUTO_LOAD_SKILL, IS_DEV } from '../utils/config';
 
 // ---------------------------------------------------------------------------
@@ -71,7 +75,7 @@ function parseSkillStatePayload(
   return { skillId, state };
 }
 
-/** Sync profile and emails from gmail skill state into gmailSlice. */
+/** Sync profile and emails from gmail skill state into gmailSlice and send to backend via socket. */
 function syncGmailStateToSlice(
   gmailState: Record<string, unknown> | undefined,
   dispatch: ReturnType<typeof useAppDispatch>
@@ -89,6 +93,7 @@ function syncGmailStateToSlice(
       Array.isArray(gmailState.emails) ? (gmailState.emails as GmailEmailSummary[]) : []
     )
   );
+  syncGmailMetadataToBackend(gmailState as GmailStateForSync);
 }
 
 export default function SkillProvider({ children }: { children: ReactNode }) {
