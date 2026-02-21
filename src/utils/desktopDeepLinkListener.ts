@@ -30,6 +30,46 @@ const handleAuthDeepLink = async (parsed: URL) => {
 };
 
 /**
+ * Handle `alphahuman://payment/success?session_id=...` deep links.
+ * Fired when a Stripe checkout session completes and the browser redirects
+ * back to the desktop app.
+ */
+const handlePaymentDeepLink = async (parsed: URL) => {
+  const path = parsed.pathname.replace(/^\/+/, '');
+
+  try {
+    await invoke('show_window');
+  } catch {
+    // Not fatal
+  }
+
+  if (path === 'success') {
+    const sessionId = parsed.searchParams.get('session_id');
+
+    if (!sessionId) {
+      console.warn('[DeepLink] Payment success missing session_id');
+      return;
+    }
+
+    console.log('[DeepLink] Payment success, session_id:', sessionId);
+
+    // Broadcast to the app so billing components can react
+    window.dispatchEvent(
+      new CustomEvent('payment:success', { detail: { sessionId } }),
+    );
+
+    // Navigate to billing settings to show confirmation
+    window.location.hash = '/settings/billing';
+  } else if (path === 'cancel') {
+    console.log('[DeepLink] Payment cancelled');
+    window.dispatchEvent(new CustomEvent('payment:cancel', {}));
+    window.location.hash = '/settings/billing';
+  } else {
+    console.warn('[DeepLink] Unknown payment path:', path);
+  }
+};
+
+/**
  * Handle `alphahuman://oauth/success?integrationId=...&skillId=...`
  * and `alphahuman://oauth/error?error=...&provider=...` deep links.
  */
@@ -74,6 +114,8 @@ const handleOAuthDeepLink = async (parsed: URL) => {
  *   - `alphahuman://auth?token=...` → login flow
  *   - `alphahuman://oauth/success?...` → OAuth completion
  *   - `alphahuman://oauth/error?...` → OAuth failure
+ *   - `alphahuman://payment/success?session_id=...` → Stripe payment confirmation
+ *   - `alphahuman://payment/cancel` → Stripe payment cancellation
  */
 const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
   if (!urls || urls.length === 0) {
@@ -94,6 +136,9 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
         break;
       case 'oauth':
         await handleOAuthDeepLink(parsed);
+        break;
+      case 'payment':
+        await handlePaymentDeepLink(parsed);
         break;
       default:
         console.warn('[DeepLink] Unknown deep link hostname:', parsed.hostname);

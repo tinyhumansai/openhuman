@@ -21,3 +21,12 @@ export const buildDesktopDeeplink = (token: string): string => {
   const encoded = encodeURIComponent(token);
   return `${DESKTOP_SCHEME}://auth?token=${encoded}`;
 };
+
+export const buildPaymentSuccessDeeplink = (sessionId: string): string => {
+  const encoded = encodeURIComponent(sessionId);
+  return `${DESKTOP_SCHEME}://payment/success?session_id=${encoded}`;
+};
+
+export const buildPaymentCancelDeeplink = (): string => {
+  return `${DESKTOP_SCHEME}://payment/cancel`;
+};

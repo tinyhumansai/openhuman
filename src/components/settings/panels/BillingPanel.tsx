@@ -38,8 +38,10 @@ const BillingPanel = () => {
   const [paymentMethod, setPaymentMethod] = useState<'card' | 'crypto'>('card');
   const [isPurchasing, setIsPurchasing] = useState(false);
   const [purchasingTier, setPurchasingTier] = useState<PlanTier | null>(null);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollStartRef = useRef<number>(0);
+  const timeoutRef = useRef<number | null>(null);
 
   // Fetch current plan on mount
   useEffect(() => {
@@ -59,6 +61,40 @@ const BillingPanel = () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  // Handle payment:success deep link event
+  useEffect(() => {
+    const onPaymentSuccess = async () => {
+      // Stop any in-flight poll — we know checkout completed
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      setIsPurchasing(false);
+      setPurchasingTier(null);
+      setPaymentConfirmed(true);
+
+      // Fetch current plan from backend, then refresh user/teams in store
+      try {
+        await billingApi.getCurrentPlan();
+      } catch (e) {
+        console.error('Failed to fetch current plan after payment', e);
+      }
+      dispatch(fetchCurrentUser());
+
+      // Auto-hide the success banner after 5 s
+      timeoutRef.current = window.setTimeout(() => setPaymentConfirmed(false), 5_000);
+    };
+
+    window.addEventListener('payment:success', onPaymentSuccess);
+    return () => {
+      window.removeEventListener('payment:success', onPaymentSuccess);
+      if (timeoutRef.current !== null) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
+    };
+  }, [dispatch]);
 
   // ── Poll for plan change after checkout ─────────────────────────────
   const currentTierRef = useRef(currentTier);
@@ -294,6 +330,29 @@ const BillingPanel = () => {
                 );
               })}
             </div>
+
+            {/* ── Payment confirmed banner ─────────────────────────── */}
+            {paymentConfirmed && (
+              <div className="rounded-xl bg-sage-500/10 border border-sage-500/20 p-3 mx-4">
+                <div className="flex items-center gap-2">
+                  <svg
+                    className="w-4 h-4 text-sage-400 flex-shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 13l4 4L19 7"
+                    />
+                  </svg>
+                  <p className="text-xs text-sage-300 font-medium">
+                    Payment confirmed! Your plan has been updated.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* ── Purchasing overlay message ────────────────────────── */}
             {isPurchasing && (
