@@ -90,7 +90,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       }
 
       const encryptionKeyHex = state.auth.encryptionKeyByUser[userId];
-      if (!encryptionKeyHex) {
+      if (!encryptionKeyHex || typeof encryptionKeyHex !== 'string') {
         console.warn(
           '[DeepLink] Cannot fetch integration tokens: no encryption key found for user',
           userId
@@ -98,8 +98,34 @@ const handleOAuthDeepLink = async (parsed: URL) => {
         return;
       }
 
-      const keyForBackend = hexToBase64(encryptionKeyHex);
-      const response = await fetchIntegrationTokens(integrationId, keyForBackend || encryptionKeyHex);
+      const trimmedHex = encryptionKeyHex.trim().replace(/^0x/i, '');
+      if (!trimmedHex || trimmedHex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(trimmedHex)) {
+        console.error(
+          '[DeepLink] Cannot fetch integration tokens: encryption key must be non-empty hex (even length, [0-9a-fA-F])',
+          { userId, encryptionKeyHex }
+        );
+        return;
+      }
+
+      let keyForBackend: string;
+      try {
+        keyForBackend = hexToBase64(encryptionKeyHex);
+      } catch (e) {
+        console.error(
+          '[DeepLink] Cannot fetch integration tokens: encryption key conversion failed',
+          { userId, encryptionKeyHex, error: e }
+        );
+        return;
+      }
+      if (!keyForBackend) {
+        console.error(
+          '[DeepLink] Cannot fetch integration tokens: encryption key produced empty base64',
+          { userId, encryptionKeyHex }
+        );
+        return;
+      }
+
+      const response = await fetchIntegrationTokens(integrationId, keyForBackend);
       if (!response.success || !response.data?.encrypted) {
         console.warn(
           '[DeepLink] Integration tokens response missing encrypted payload for integration',

@@ -12,13 +12,23 @@ export type IntegrationTokensPayload = {
 };
 
 /** Stored value: encrypted blob only; decrypt with key when needed */
-export type StoredIntegrationTokens = {
-  encrypted: string;
-};
+export type StoredIntegrationTokens = { encrypted: string };
+
+const HEX_REGEX = /^[0-9a-fA-F]*$/;
 
 export function hexToBytes(hex: string): Uint8Array {
   const cleanHex = hex.trim().replace(/^0x/i, '');
   if (!cleanHex) return new Uint8Array();
+  if (cleanHex.length % 2 !== 0) {
+    throw new TypeError(
+      `hexToBytes: hex string must have even length (got ${cleanHex.length})`
+    );
+  }
+  if (!HEX_REGEX.test(cleanHex)) {
+    throw new TypeError(
+      'hexToBytes: hex string must contain only [0-9a-fA-F] characters'
+    );
+  }
   const bytes = new Uint8Array(cleanHex.length / 2);
   for (let i = 0; i < cleanHex.length; i += 2) {
     bytes[i / 2] = parseInt(cleanHex.slice(i, i + 2), 16);
@@ -63,8 +73,8 @@ export async function decryptIntegrationTokens(
   }
 
   const keyBytes = hexToBytes(keyHex);
-  if (keyBytes.length === 0) {
-    throw new Error('Invalid encryption key');
+  if (keyBytes.length !== 32) {
+    throw new Error('Invalid encryption key: expected 32-byte AES-GCM key');
   }
 
   const combined = base64ToBytes(encryptedPayload);
@@ -101,21 +111,36 @@ export async function decryptIntegrationTokens(
  * Matches backend: deterministic IV = first 16 bytes of SHA-256(message).
  * Returns base64(IV + AuthTag + EncryptedData).
  */
-export async function encryptIntegrationTokens(
-  plaintext: string,
-  keyHex: string
-): Promise<string> {
+export async function encryptIntegrationTokens(plaintext: string, keyHex: string): Promise<string> {
   if (typeof crypto === 'undefined' || !crypto.subtle) {
     throw new Error('Web Crypto API is not available for encryption');
   }
 
   const keyBytes = hexToBytes(keyHex);
-  if (keyBytes.length === 0) {
-    throw new Error('Invalid encryption key');
+  if (keyBytes.length !== 32) {
+    throw new Error('Invalid encryption key: expected 32-byte AES-GCM key');
+  }
+
+  try {
+    const payload = JSON.parse(plaintext) as Record<string, unknown>;
+    if (typeof payload.expiresAt !== 'string' || !payload.expiresAt.trim()) {
+      throw new Error(
+        'Payload must include a non-empty expiresAt field when using deterministic IV'
+      );
+    }
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      throw new Error(
+        'Plaintext must be JSON with a non-empty expiresAt field when using deterministic IV'
+      );
+    }
+    throw e;
   }
 
   const messageBytes = new TextEncoder().encode(plaintext);
 
+  // Deterministic IV for backend compatibility. TODO: Prefer a random 12-byte IV
+  // (crypto.getRandomValues) prepended to ciphertext; update decrypt to handle both formats.
   const hashBuffer = await crypto.subtle.digest('SHA-256', messageBytes);
   const iv = new Uint8Array(hashBuffer).slice(0, 16);
 

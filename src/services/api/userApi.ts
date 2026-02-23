@@ -22,9 +22,6 @@ export const userApi = {
    * POST /settings/onboarding-complete
    */
   onboardingComplete: async (): Promise<void> => {
-    await apiClient.post<{ success: boolean; data: unknown }>(
-      '/settings/onboarding-complete',
-      {}
-    );
+    await apiClient.post<{ success: boolean; data: unknown }>('/settings/onboarding-complete', {});
   },
 };

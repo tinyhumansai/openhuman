@@ -3,7 +3,7 @@
  * `integration:metadata-sync` socket event so the server can merge them
  * into the user's Google OAuth integration metadata.
  */
-import { emitViaRustSocket } from '../../utils/tauriSocket';
+import { emitViaRustSocket } from '../../../utils/tauriSocket';
 
 const INTEGRATION_METADATA_SYNC_EVENT = 'integration:metadata-sync';
 const PROVIDER_GOOGLE = 'gmail';

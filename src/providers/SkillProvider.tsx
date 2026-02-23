@@ -22,7 +22,7 @@ import { setSkillError, setSkillState, setSkillStatus } from '../store/skillsSli
 import {
   syncGmailMetadataToBackend,
   type GmailStateForSync,
-} from '../lib/skills/gmailMetadataSync';
+} from '../lib/gmail/services/metadataSync';
 import { DEV_AUTO_LOAD_SKILL, IS_DEV } from '../utils/config';
 
 // ---------------------------------------------------------------------------
