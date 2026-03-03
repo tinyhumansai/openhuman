@@ -14,15 +14,12 @@ import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
   addInferenceResponse,
   addOptimisticMessage,
-  clearCreateStatus,
   clearDeleteStatus,
   clearPurgeStatus,
   clearSelectedThread,
-  createThread,
-  deleteThread,
+  createThreadLocal,
+  deleteThreadLocal,
   fetchSuggestedQuestions,
-  fetchThreadMessages,
-  fetchThreads,
   purgeThreads,
   removeOptimisticMessages,
   setLastViewed,
@@ -52,13 +49,10 @@ const Conversations = () => {
   const { threadId: urlThreadId } = useParams<{ threadId?: string }>();
   const {
     threads,
-    isLoading,
-    error,
     selectedThreadId,
     messages,
     isLoadingMessages,
     messagesError,
-    createStatus,
     deleteStatus,
     purgeStatus,
     panelWidth,
@@ -157,10 +151,7 @@ const Conversations = () => {
       .finally(() => setIsLoadingModels(false));
   }, []);
 
-  // Fetch threads on mount
-  useEffect(() => {
-    dispatch(fetchThreads());
-  }, [dispatch]);
+  // Remove thread fetching - threads are now loaded from Redux persist
 
   // Sync URL → Redux: when URL has a threadId param, select that thread
   useEffect(() => {
@@ -176,12 +167,7 @@ const Conversations = () => {
     if (selectedThreadId) dispatch(setLastViewed(selectedThreadId));
   }, [selectedThreadId, dispatch]);
 
-  // Fetch messages when a thread is selected
-  useEffect(() => {
-    if (selectedThreadId) {
-      dispatch(fetchThreadMessages(selectedThreadId));
-    }
-  }, [dispatch, selectedThreadId]);
+  // Remove message fetching - messages load from local storage automatically
 
   // Fetch suggested questions when thread is empty (beginning of new thread)
   useEffect(() => {
@@ -197,12 +183,7 @@ const Conversations = () => {
     }
   }, [messages]);
 
-  // Clear transient status flags after they settle
-  useEffect(() => {
-    if (createStatus === 'success' || createStatus === 'error') {
-      dispatch(clearCreateStatus());
-    }
-  }, [createStatus, dispatch]);
+  // Remove create status handling - using local thread creation
 
   useEffect(() => {
     if (deleteStatus === 'success' || deleteStatus === 'error') {
@@ -228,17 +209,22 @@ const Conversations = () => {
     navigate(`/conversations/${threadId}`, { replace: true });
   };
 
-  const handleNewThread = async () => {
-    const result = await dispatch(createThread(undefined));
-    if (createThread.fulfilled.match(result)) {
-      navigate(`/conversations/${result.payload.id}`, { replace: true });
-    }
+  const handleNewThread = () => {
+    const threadId = crypto.randomUUID();
+    dispatch(
+      createThreadLocal({
+        id: threadId,
+        title: 'New Conversation',
+        createdAt: new Date().toISOString(),
+      })
+    );
+    navigate(`/conversations/${threadId}`, { replace: true });
   };
 
-  const handleDeleteThread = async (threadId: string) => {
-    const result = await dispatch(deleteThread(threadId));
+  const handleDeleteThread = (threadId: string) => {
+    dispatch(deleteThreadLocal(threadId));
     setConfirmDeleteId(null);
-    if (deleteThread.fulfilled.match(result) && threadId === selectedThreadId) {
+    if (threadId === selectedThreadId) {
       navigate('/conversations', { replace: true });
     }
   };
@@ -332,35 +318,16 @@ const Conversations = () => {
             <h2 className="text-sm font-semibold">Conversations</h2>
             <button
               onClick={handleNewThread}
-              disabled={createStatus === 'loading'}
-              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-stone-400 hover:text-stone-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors text-stone-400 hover:text-stone-200"
               title="New Thread">
-              {createStatus === 'loading' ? (
-                <svg className="w-4.5 h-4.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-              ) : (
-                <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-              )}
+              <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
+              </svg>
             </button>
           </div>
 
@@ -407,35 +374,7 @@ const Conversations = () => {
 
           {/* Thread list */}
           <div className="flex-1 overflow-y-auto">
-            {isLoading ? (
-              <div className="space-y-1 p-2">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <div key={i} className="h-16 bg-white/5 rounded-xl animate-pulse" />
-                ))}
-              </div>
-            ) : error ? (
-              <div className="flex-1 flex flex-col items-center justify-center py-16 px-4">
-                <svg
-                  className="w-8 h-8 text-coral-500/70 mb-3"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
-                <p className="text-sm text-stone-400 mb-1">Failed to load conversations</p>
-                <p className="text-xs text-stone-600 mb-3 text-center">{error}</p>
-                <button
-                  onClick={() => dispatch(fetchThreads())}
-                  className="text-xs text-primary-400 hover:text-primary-300 transition-colors">
-                  Retry
-                </button>
-              </div>
-            ) : filteredThreads.length > 0 ? (
+            {filteredThreads.length > 0 ? (
               <div className="py-1">
                 {filteredThreads.map(thread => (
                   <div
@@ -545,8 +484,7 @@ const Conversations = () => {
                 <p className="text-sm text-stone-500 mb-3">No conversations yet</p>
                 <button
                   onClick={handleNewThread}
-                  disabled={createStatus === 'loading'}
-                  className="text-xs text-primary-400 hover:text-primary-300 transition-colors disabled:opacity-50">
+                  className="text-xs text-primary-400 hover:text-primary-300 transition-colors">
                   Start a new conversation
                 </button>
               </div>
@@ -665,11 +603,9 @@ const Conversations = () => {
                     <p className="text-sm text-stone-400 mb-1">Failed to load messages</p>
                     <p className="text-xs text-stone-600 mb-3 text-center">{messagesError}</p>
                     <button
-                      onClick={() =>
-                        selectedThreadId && dispatch(fetchThreadMessages(selectedThreadId))
-                      }
+                      onClick={() => window.location.reload()}
                       className="text-xs text-primary-400 hover:text-primary-300 transition-colors">
-                      Retry
+                      Reload
                     </button>
                   </div>
                 ) : messages.length > 0 ? (

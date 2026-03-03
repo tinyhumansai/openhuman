@@ -11,7 +11,7 @@ const Login = () => {
   const dispatch = useAppDispatch();
   const [consumeError, setConsumeError] = useState<string | null>(null);
 
-  // Handle login token from URL (e.g. from Telegram bot "Open AlphaHuman" button)
+  // Handle login token from URL (e.g. from Telegram bot or OAuth provider callback)
   // Consume the token with the backend and store the returned JWT
   useEffect(() => {
     const loginToken = searchParams.get('token');
@@ -46,7 +46,7 @@ const Login = () => {
           <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
             <p className="opacity-90 text-coral mb-4">{consumeError}</p>
             <p className="text-sm opacity-70">
-              Get a new link by sending '/start login' to the AlphaHuman bot on Telegram.
+              Please try logging in again with your preferred method.
             </p>
           </div>
         </div>

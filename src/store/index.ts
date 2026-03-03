@@ -46,8 +46,12 @@ const aiPersistConfig = { key: 'ai', storage, whitelist: ['config'] };
 // Persist config for skills state (setupComplete per skill)
 const skillsPersistConfig = { key: 'skills', storage, whitelist: ['skills'] };
 
-// Persist config for thread UI prefs only (panel width, last viewed for unread)
-const threadPersistConfig = { key: 'thread', storage, whitelist: ['panelWidth', 'lastViewedAt'] };
+// Persist config for thread data and UI prefs (includes threads and messages)
+const threadPersistConfig = {
+  key: 'thread',
+  storage,
+  whitelist: ['panelWidth', 'lastViewedAt', 'threads', 'messagesByThreadId', 'selectedThreadId'],
+};
 
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);
 const persistedAiReducer = persistReducer(aiPersistConfig, aiReducer);

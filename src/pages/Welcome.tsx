@@ -1,5 +1,5 @@
 import DownloadScreen from '../components/DownloadScreen';
-import TelegramLoginButton from '../components/TelegramLoginButton';
+import OAuthLoginSection from '../components/oauth/OAuthLoginSection';
 import TypewriterGreeting from '../components/TypewriterGreeting';
 
 interface WelcomeProps {
@@ -25,10 +25,10 @@ const Welcome = ({ isWeb }: WelcomeProps) => {
 
           <p className="opacity-70 leading-relaxed">Are you ready for this?</p>
 
-          {/* Show Telegram login button in Tauri app, download screen on web */}
+          {/* Show OAuth login options in Tauri app, download screen on web */}
           {!isWeb && (
             <div className="mt-6">
-              <TelegramLoginButton />
+              <OAuthLoginSection />
             </div>
           )}
         </div>

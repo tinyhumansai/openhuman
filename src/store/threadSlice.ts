@@ -4,23 +4,25 @@ import { threadApi } from '../services/api/threadApi';
 import type { Thread, ThreadMessage } from '../types/thread';
 
 interface ThreadState {
+  // Existing local data (will be persisted)
   threads: Thread[];
-  isLoading: boolean;
-  error: string | null;
   selectedThreadId: string | null;
+  panelWidth: number;
+  lastViewedAt: Record<string, number>;
+
+  // NEW: Add efficient message storage
+  messagesByThreadId: Record<string, ThreadMessage[]>;
+
+  // Current messages view (not persisted)
   messages: ThreadMessage[];
-  isLoadingMessages: boolean;
-  messagesError: string | null;
-  createStatus: 'idle' | 'loading' | 'success' | 'error';
-  deleteStatus: 'idle' | 'loading' | 'success' | 'error';
-  deleteError: string | null;
-  purgeStatus: 'idle' | 'loading' | 'success' | 'error';
+
+  // Keep these API states (NOT persisted)
+  isLoadingMessages: boolean; // For AI response waiting
+  messagesError: string | null; // For send API errors
   sendStatus: 'idle' | 'loading' | 'success' | 'error';
   sendError: string | null;
-  panelWidth: number;
-  /** threadId -> timestamp when user last viewed that thread (for unread indicators) */
-  lastViewedAt: Record<string, number>;
-  /** Suggested starter questions for empty threads (from GET /chat/autocomplete) */
+  deleteStatus: 'idle' | 'loading' | 'success' | 'error';
+  purgeStatus: 'idle' | 'loading' | 'success' | 'error';
   suggestedQuestions: Array<{ text: string; confidence: number }>;
   isLoadingSuggestions: boolean;
   suggestError: string | null;
@@ -28,93 +30,29 @@ interface ThreadState {
 
 const initialState: ThreadState = {
   threads: [],
-  isLoading: false,
-  error: null,
   selectedThreadId: null,
+  panelWidth: 320,
+  lastViewedAt: {},
+  messagesByThreadId: {},
   messages: [],
   isLoadingMessages: false,
   messagesError: null,
-  createStatus: 'idle',
-  deleteStatus: 'idle',
-  deleteError: null,
-  purgeStatus: 'idle',
   sendStatus: 'idle',
   sendError: null,
-  panelWidth: 320,
-  lastViewedAt: {},
+  deleteStatus: 'idle',
+  purgeStatus: 'idle',
   suggestedQuestions: [],
   isLoadingSuggestions: false,
   suggestError: null,
 };
 
-export const fetchThreads = createAsyncThunk(
-  'thread/fetchThreads',
-  async (_, { rejectWithValue }) => {
-    try {
-      const data = await threadApi.getThreads();
-      return data.threads;
-    } catch (error) {
-      const msg =
-        error && typeof error === 'object' && 'error' in error
-          ? String(error.error)
-          : 'Failed to fetch threads';
-      return rejectWithValue(msg);
-    }
-  }
-);
+// Removed fetchThreads - threads are now managed locally
 
-export const fetchThreadMessages = createAsyncThunk(
-  'thread/fetchThreadMessages',
-  async (threadId: string, { rejectWithValue }) => {
-    try {
-      const data = await threadApi.getThreadMessages(threadId);
-      return data.messages;
-    } catch (error) {
-      const msg =
-        error && typeof error === 'object' && 'error' in error
-          ? String(error.error)
-          : 'Failed to fetch messages';
-      return rejectWithValue(msg);
-    }
-  }
-);
+// Removed fetchThreadMessages - messages are now managed locally
 
-export const createThread = createAsyncThunk(
-  'thread/createThread',
-  async (chatId: number | undefined, { dispatch, rejectWithValue }) => {
-    try {
-      const data = await threadApi.createThread(chatId);
-      dispatch(fetchThreads());
-      return data;
-    } catch (error) {
-      const msg =
-        error && typeof error === 'object' && 'error' in error
-          ? String(error.error)
-          : 'Failed to create thread';
-      return rejectWithValue(msg);
-    }
-  }
-);
+// Removed createThread - using local thread creation
 
-export const deleteThread = createAsyncThunk(
-  'thread/deleteThread',
-  async (threadId: string, { dispatch, getState, rejectWithValue }) => {
-    try {
-      await threadApi.deleteThread(threadId);
-      const state = (getState() as { thread: ThreadState }).thread;
-      if (state.selectedThreadId === threadId) {
-        dispatch(clearSelectedThread());
-      }
-      return threadId;
-    } catch (error) {
-      const msg =
-        error && typeof error === 'object' && 'error' in error
-          ? String(error.error)
-          : 'Failed to delete thread';
-      return rejectWithValue(msg);
-    }
-  }
-);
+// Removed deleteThread - using local thread deletion
 
 export const purgeThreads = createAsyncThunk(
   'thread/purgeThreads',
@@ -125,7 +63,8 @@ export const purgeThreads = createAsyncThunk(
         agentThreads: true,
         deleteEverything: true,
       });
-      dispatch(fetchThreads());
+      // Clear local threads after successful purge
+      dispatch({ type: 'thread/clearAllThreads' });
       return data;
     } catch (error) {
       const msg =
@@ -141,19 +80,38 @@ export const sendMessage = createAsyncThunk(
   'thread/sendMessage',
   async (
     { threadId, message }: { threadId: string; message: string },
-    { dispatch, rejectWithValue }
+    { dispatch, getState, rejectWithValue }
   ) => {
+    // 1. Add user message locally immediately (optimistic update)
+    const userMessage: ThreadMessage = {
+      id: `msg_${Date.now()}_${Math.random()}`,
+      content: message,
+      type: 'text',
+      extraMetadata: {},
+      sender: 'user',
+      createdAt: new Date().toISOString(),
+    };
+
     try {
+      dispatch(addMessageLocal({ threadId, message: userMessage }));
+
+      // 2. Send to API (existing logic)
       const data = await threadApi.sendMessage(message, threadId);
-      // Re-fetch messages to get the stored user message + agent response
-      dispatch(fetchThreadMessages(threadId));
-      // Re-fetch threads to update lastMessageAt / messageCount in the list
-      dispatch(fetchThreads());
+
+      // 3. For now, we'll handle AI response via the existing inference API
+      // The AI response will be added separately via addInferenceResponse
+
       return data;
     } catch (error) {
+      // Remove optimistic user message on failure
+      const state = (getState() as { thread: ThreadState }).thread;
+      const messages = state.messagesByThreadId[threadId] || [];
+      const filteredMessages = messages.filter(m => m.id !== userMessage.id);
+      dispatch(updateMessagesForThread({ threadId, messages: filteredMessages }));
+
       const msg =
         error && typeof error === 'object' && 'error' in error
-          ? String(error.error)
+          ? String((error as { error: unknown }).error)
           : 'Failed to send message';
       return rejectWithValue(msg);
     }
@@ -182,7 +140,8 @@ const threadSlice = createSlice({
   reducers: {
     setSelectedThread: (state, action: { payload: string }) => {
       state.selectedThreadId = action.payload;
-      state.messages = [];
+      // Load messages from local storage instead of clearing
+      state.messages = state.messagesByThreadId[action.payload] || [];
       state.messagesError = null;
       state.suggestedQuestions = [];
       state.suggestError = null;
@@ -198,12 +157,8 @@ const threadSlice = createSlice({
       state.suggestedQuestions = [];
       state.suggestError = null;
     },
-    clearCreateStatus: state => {
-      state.createStatus = 'idle';
-    },
     clearDeleteStatus: state => {
       state.deleteStatus = 'idle';
-      state.deleteError = null;
     },
     clearPurgeStatus: state => {
       state.purgeStatus = 'idle';
@@ -219,14 +174,48 @@ const threadSlice = createSlice({
       });
     },
     addInferenceResponse: (state, action: { payload: { content: string } }) => {
-      state.messages.push({
+      const aiMessage: ThreadMessage = {
         id: `inference-${Date.now()}`,
         content: action.payload.content,
         type: 'text',
         extraMetadata: {},
         sender: 'agent',
         createdAt: new Date().toISOString(),
-      });
+      };
+
+      // Add to current messages view
+      state.messages.push(aiMessage);
+
+      // Also add to persistent storage
+      if (state.selectedThreadId) {
+        if (!state.messagesByThreadId[state.selectedThreadId]) {
+          state.messagesByThreadId[state.selectedThreadId] = [];
+        }
+
+        // CRITICAL FIX: Ensure the preceding user message is also persisted
+        // Find the last user message that might not be in persistent storage yet
+        const lastUserMessage = state.messages.filter(m => m.sender === 'user').pop();
+
+        if (lastUserMessage) {
+          const persistedMessages = state.messagesByThreadId[state.selectedThreadId];
+          const userMessageExists = persistedMessages.some(m => m.id === lastUserMessage.id);
+
+          // If user message isn't persisted yet, add it first
+          if (!userMessageExists) {
+            persistedMessages.push(lastUserMessage);
+          }
+        }
+
+        // Now add the AI response
+        state.messagesByThreadId[state.selectedThreadId].push(aiMessage);
+
+        // Update thread metadata
+        const thread = state.threads.find(t => t.id === state.selectedThreadId);
+        if (thread) {
+          thread.messageCount = state.messagesByThreadId[state.selectedThreadId].length;
+          thread.lastMessageAt = aiMessage.createdAt;
+        }
+      }
     },
     removeOptimisticMessages: state => {
       state.messages = state.messages.filter(m => !m.id.startsWith('optimistic-'));
@@ -241,79 +230,92 @@ const threadSlice = createSlice({
       const ts = Date.now();
       state.lastViewedAt[action.payload] = ts;
     },
+    // Local thread management
+    createThreadLocal: (
+      state,
+      action: { payload: { id: string; title: string; createdAt: string } }
+    ) => {
+      const newThread: Thread = {
+        id: action.payload.id,
+        title: action.payload.title,
+        chatId: null,
+        isActive: true,
+        messageCount: 0,
+        lastMessageAt: action.payload.createdAt,
+        createdAt: action.payload.createdAt,
+      };
+      state.threads.unshift(newThread);
+      state.messagesByThreadId[action.payload.id] = [];
+    },
+    addMessageLocal: (state, action: { payload: { threadId: string; message: ThreadMessage } }) => {
+      const { threadId, message } = action.payload;
+      if (!state.messagesByThreadId[threadId]) {
+        state.messagesByThreadId[threadId] = [];
+      }
+      state.messagesByThreadId[threadId].push(message);
+
+      // Update thread metadata
+      const thread = state.threads.find(t => t.id === threadId);
+      if (thread) {
+        thread.messageCount = state.messagesByThreadId[threadId].length;
+        thread.lastMessageAt = message.createdAt;
+      }
+    },
+    deleteThreadLocal: (state, action: { payload: string }) => {
+      const threadId = action.payload;
+      state.threads = state.threads.filter(t => t.id !== threadId);
+      delete state.messagesByThreadId[threadId];
+      delete state.lastViewedAt[threadId];
+      if (state.selectedThreadId === threadId) {
+        state.selectedThreadId = null;
+      }
+    },
+    updateMessagesForThread: (
+      state,
+      action: { payload: { threadId: string; messages: ThreadMessage[] } }
+    ) => {
+      const { threadId, messages } = action.payload;
+      state.messagesByThreadId[threadId] = messages;
+
+      // Update thread metadata
+      const thread = state.threads.find(t => t.id === threadId);
+      if (thread) {
+        thread.messageCount = messages.length;
+        thread.lastMessageAt =
+          messages.length > 0 ? messages[messages.length - 1].createdAt : thread.createdAt;
+      }
+    },
+    clearAllThreads: state => {
+      state.threads = [];
+      state.messagesByThreadId = {};
+      state.selectedThreadId = null;
+      state.messages = [];
+      state.lastViewedAt = {};
+    },
   },
   extraReducers: builder => {
     builder
-      // fetchThreads — only show skeleton on initial load (stale-while-revalidate)
-      .addCase(fetchThreads.pending, state => {
-        if (state.threads.length === 0) {
-          state.isLoading = true;
-        }
-        state.error = null;
-      })
-      .addCase(fetchThreads.fulfilled, (state, action) => {
-        state.isLoading = false;
-        state.threads = action.payload;
-      })
-      .addCase(fetchThreads.rejected, (state, action) => {
-        state.isLoading = false;
-        state.error = action.payload as string;
-      })
-      // fetchThreadMessages
-      .addCase(fetchThreadMessages.pending, state => {
-        state.isLoadingMessages = true;
-        state.messagesError = null;
-      })
-      .addCase(fetchThreadMessages.fulfilled, (state, action) => {
-        state.isLoadingMessages = false;
-        state.messages = action.payload;
-        // Hide suggestions once thread has messages
-        if (action.payload.length > 0) {
-          state.suggestedQuestions = [];
-          state.suggestError = null;
-        }
-      })
-      .addCase(fetchThreadMessages.rejected, (state, action) => {
-        state.isLoadingMessages = false;
-        state.messagesError = action.payload as string;
-      })
-      // createThread
-      .addCase(createThread.pending, state => {
-        state.createStatus = 'loading';
-      })
-      .addCase(createThread.fulfilled, (state, action) => {
-        state.createStatus = 'success';
-        state.selectedThreadId = action.payload.id;
-        state.messages = [];
-        state.messagesError = null;
-      })
-      .addCase(createThread.rejected, state => {
-        state.createStatus = 'error';
-      })
-      // deleteThread
-      .addCase(deleteThread.pending, state => {
-        state.deleteStatus = 'loading';
-        state.deleteError = null;
-      })
-      .addCase(deleteThread.fulfilled, (state, action) => {
-        state.deleteStatus = 'success';
-        state.threads = state.threads.filter(t => t.id !== action.payload);
-      })
-      .addCase(deleteThread.rejected, (state, action) => {
-        state.deleteStatus = 'error';
-        state.deleteError = action.payload as string;
-      })
+      // Removed fetchThreads and fetchThreadMessages cases
+      // Removed createThread cases - using local thread creation
+      // Removed deleteThread cases - using local thread deletion
       // purgeThreads
       .addCase(purgeThreads.pending, state => {
         state.purgeStatus = 'loading';
       })
       .addCase(purgeThreads.fulfilled, state => {
         state.purgeStatus = 'success';
-        state.selectedThreadId = null;
-        state.messages = [];
+        // clearAllThreads is dispatched from the thunk
       })
       .addCase(purgeThreads.rejected, state => {
         state.purgeStatus = 'error';
+      })
+      // clearAllThreads action
+      .addCase('thread/clearAllThreads', state => {
+        state.threads = [];
+        state.messagesByThreadId = {};
+        state.selectedThreadId = null;
+        state.messages = [];
+        state.lastViewedAt = {};
       })
       // sendMessage
       .addCase(sendMessage.pending, state => {
@@ -351,7 +353,6 @@ const threadSlice = createSlice({
 export const {
   setSelectedThread,
   clearSelectedThread,
-  clearCreateStatus,
   clearDeleteStatus,
   clearPurgeStatus,
   addOptimisticMessage,
@@ -361,5 +362,10 @@ export const {
   clearSuggestedQuestions,
   setPanelWidth,
   setLastViewed,
+  createThreadLocal,
+  addMessageLocal,
+  deleteThreadLocal,
+  updateMessagesForThread,
+  clearAllThreads,
 } = threadSlice.actions;
 export default threadSlice.reducer;

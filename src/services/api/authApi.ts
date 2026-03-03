@@ -12,6 +12,7 @@ interface IntegrationTokensResponse {
 
 /**
  * Consume a verified login token and return the JWT.
+ * Works for both Telegram and OAuth login tokens.
  * POST /telegram/login-tokens/:token/consume (no auth required)
  */
 export async function consumeLoginToken(loginToken: string): Promise<string> {
