@@ -12,6 +12,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { inferenceApi, type ModelInfo } from '../services/api/inferenceApi';
 import { injectAll } from '../lib/ai/injector';
 import type { Message } from '../lib/ai/providers/interface';
+import { AgentToggle, AgentStatusIndicator, AgentExecutionPanel } from '../components/agent';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
   addInferenceResponse,
@@ -595,6 +596,9 @@ const Conversations = () => {
                     Created {formatRelativeTime(selectedThread.createdAt)}
                   </p>
                 </div>
+                <div className="flex-shrink-0">
+                  <AgentToggle threadId={selectedThread.id} size="sm" />
+                </div>
               </div>
 
               {/* Messages */}
@@ -738,6 +742,19 @@ const Conversations = () => {
                   </div>
                 </div>
               )}
+
+              {/* Agent Status and Execution Panel */}
+              <div className="flex-shrink-0">
+                <AgentStatusIndicator
+                  threadId={selectedThread.id}
+                  className="px-4 py-2 border-t border-white/10"
+                />
+                <AgentExecutionPanel
+                  threadId={selectedThread.id}
+                  className="border-t border-white/10"
+                  maxHeight="200px"
+                />
+              </div>
 
               {/* Message Input */}
               <div className="flex-shrink-0 border-t border-white/10 px-4 py-3">

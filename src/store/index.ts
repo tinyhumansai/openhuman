@@ -15,6 +15,7 @@ import storage from 'redux-persist/lib/storage';
 import { setStoreForApiClient } from '../services/apiClient';
 import { IS_DEV } from '../utils/config';
 import { storeSession } from '../utils/tauriCommands';
+import agentReducer from './agentSlice';
 import aiReducer from './aiSlice';
 import authReducer, { setOnboardedForUser, setToken } from './authSlice';
 import daemonReducer from './daemonSlice';
@@ -53,10 +54,18 @@ const threadPersistConfig = {
   whitelist: ['panelWidth', 'lastViewedAt', 'threads', 'messagesByThreadId', 'selectedThreadId'],
 };
 
+// Persist config for agent state (execution history, config, and agent mode)
+const agentPersistConfig = {
+  key: 'agent',
+  storage,
+  whitelist: ['agentModeByThreadId', 'executionHistory', 'configByThreadId'],
+};
+
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);
 const persistedAiReducer = persistReducer(aiPersistConfig, aiReducer);
 const persistedSkillsReducer = persistReducer(skillsPersistConfig, skillsReducer);
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
+const persistedAgentReducer = persistReducer(agentPersistConfig, agentReducer);
 
 /**
  * Middleware that syncs the JWT token to the Rust SESSION_SERVICE whenever
@@ -102,6 +111,7 @@ export const store = configureStore({
     thread: persistedThreadReducer,
     invite: inviteReducer,
     notion: notionReducer,
+    agent: persistedAgentReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

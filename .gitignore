@@ -20,6 +20,8 @@ dist-ssr
 .env.local
 .env.*.local
 
+my_docs/*
+
 # CI secrets for local testing (contains real tokens)
 scripts/ci-secrets.json
 scripts/ci-secrets.local.json

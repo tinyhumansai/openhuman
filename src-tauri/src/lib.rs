@@ -142,6 +142,8 @@ macro_rules! common_handlers {
         runtime_get_skill_state,
         runtime_call_tool,
         runtime_all_tools,
+        runtime_get_tool_schemas,
+        runtime_execute_tool,
         runtime_broadcast_event,
         // Runtime enable/disable + KV commands
         runtime_enable_skill,
@@ -751,6 +753,8 @@ pub fn run() {
                     runtime_get_skill_state,
                     runtime_call_tool,
                     runtime_all_tools,
+                    runtime_get_tool_schemas,
+                    runtime_execute_tool,
                     runtime_broadcast_event,
                     // Runtime enable/disable + KV commands
                     runtime_enable_skill,
@@ -870,6 +874,8 @@ pub fn run() {
                     runtime_get_skill_state,
                     runtime_call_tool,
                     runtime_all_tools,
+                    runtime_get_tool_schemas,
+                    runtime_execute_tool,
                     runtime_broadcast_event,
                     // Runtime enable/disable + KV commands
                     runtime_enable_skill,
