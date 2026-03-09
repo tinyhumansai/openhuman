@@ -284,7 +284,7 @@ const Conversations = () => {
 
       try {
         const toolSchemas = await toolRegistry.loadToolSchemas();
-        availableTools = toolSchemas.map(schema => ({
+        const allTools = toolSchemas.map(schema => ({
           type: 'function' as const,
           function: {
             name: schema.function.name,
@@ -292,7 +292,21 @@ const Conversations = () => {
             parameters: schema.function.parameters
           }
         }));
-        console.log(`🔧 Loaded ${availableTools.length} tools for transparent execution`);
+
+        // Filter to only Gmail and Notion tools
+        console.log(`🔧 All tools available:`, allTools.map(t => t.function.name));
+
+        availableTools = allTools.filter(tool => {
+          const toolName = tool.function.name.toLowerCase();
+          const isMatch = toolName.includes('gmail') || toolName.includes('notion');
+          if (isMatch) {
+            console.log(`✅ Including tool: ${tool.function.name}`);
+          }
+          return isMatch;
+        });
+
+        console.log(`🔧 Loaded ${availableTools.length} Gmail and Notion tools (from ${allTools.length} total) for transparent execution`);
+        console.log(`🔧 Filtered tools:`, availableTools.map(t => t.function.name));
       } catch (error) {
         console.warn('⚠️ Failed to load tools, continuing without tool support:', error);
       }
@@ -315,12 +329,36 @@ const Conversations = () => {
         iterations++;
         console.log(`🔄 Tool calling iteration ${iterations}`);
 
-        const response = await inferenceApi.createChatCompletion({
+        // Log the full request being sent to inference API
+        const requestPayload = {
           model: selectedModel,
           messages: currentMessages,
           tools: availableTools.length > 0 ? availableTools : undefined,
           tool_choice: availableTools.length > 0 ? 'auto' : undefined,
+        };
+
+        console.log(`📤 [INFERENCE REQUEST] Iteration ${iterations}:`, {
+          model: requestPayload.model,
+          messagesCount: requestPayload.messages.length,
+          toolsCount: requestPayload.tools?.length || 0,
+          toolChoice: requestPayload.tool_choice,
+          lastMessage: requestPayload.messages[requestPayload.messages.length - 1],
         });
+
+        console.log(`📋 [INFERENCE REQUEST FULL]`, JSON.stringify(requestPayload, null, 2));
+
+        const response = await inferenceApi.createChatCompletion(requestPayload);
+
+        console.log(`📥 [INFERENCE RESPONSE] Iteration ${iterations}:`, {
+          id: response.id,
+          model: response.model,
+          choicesCount: response.choices.length,
+          usage: response.usage,
+          assistantMessage: response.choices[0]?.message,
+          toolCallsCount: response.choices[0]?.message?.tool_calls?.length || 0,
+        });
+
+        console.log(`📋 [INFERENCE RESPONSE FULL]`, JSON.stringify(response, null, 2));
 
         const assistantMessage = response.choices[0]?.message;
         if (!assistantMessage) {
@@ -351,9 +389,24 @@ const Conversations = () => {
             const underscoreIndex = toolName.lastIndexOf('_');
             const skillId = underscoreIndex > -1 ? toolName.substring(0, underscoreIndex) : 'unknown';
 
-            console.log(`⚡ Executing tool: ${toolName} with args: ${toolArgs}`);
+            console.log(`⚡ [TOOL CALL] Processing tool call:`, {
+              id: toolCall.id,
+              name: toolName,
+              skillId,
+              arguments: toolArgs,
+              argumentsType: typeof toolArgs,
+              argumentsLength: toolArgs?.length
+            });
 
             const execution = await toolRegistry.executeTool(skillId, toolName, toolArgs);
+
+            console.log(`⚡ [TOOL RESULT] Tool execution completed:`, {
+              toolName,
+              status: execution.status,
+              executionTimeMs: execution.executionTimeMs,
+              resultLength: execution.result?.length,
+              hasError: !!execution.errorMessage
+            });
 
             // Add tool result to conversation
             currentMessages.push({
@@ -364,12 +417,22 @@ const Conversations = () => {
 
             console.log(`✅ Tool ${toolName} completed: ${execution.status}`);
           } catch (error) {
-            console.error(`❌ Tool execution failed for ${toolCall.function.name}:`, error);
+            console.error(`❌ [TOOL ERROR] Tool execution failed for ${toolCall.function.name}:`, {
+              error: error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              toolCall: {
+                id: toolCall.id,
+                name: toolCall.function.name,
+                arguments: toolCall.function.arguments
+              }
+            });
 
             // Add error result to conversation
+            const errorMessage = error instanceof Error ? error.message : String(error);
             currentMessages.push({
               role: 'tool',
-              content: `Tool execution failed: ${error}`,
+              content: `Tool execution failed: ${errorMessage}`,
               tool_call_id: toolCall.id,
             });
           }

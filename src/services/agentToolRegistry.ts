@@ -98,8 +98,20 @@ export class AgentToolRegistry implements IAgentToolRegistry {
     // Create tool ID in format expected by runtime_execute_tool
     const toolId = `${skillId}_${toolName}`;
 
-    console.log(`🚀 Executing tool: ${toolId}`);
-    console.log(`📝 Arguments:`, toolArguments);
+    console.log(`🚀 [TOOL EXECUTION START] Executing tool: ${toolId}`);
+    console.log(`📝 [ARGUMENTS] Raw arguments:`, {
+      arguments: toolArguments,
+      type: typeof toolArguments,
+      length: toolArguments?.length,
+      isString: typeof toolArguments === 'string',
+      parsed: (() => {
+        try {
+          return typeof toolArguments === 'string' ? JSON.parse(toolArguments) : toolArguments;
+        } catch (e) {
+          return 'Failed to parse: ' + e;
+        }
+      })()
+    });
 
     const execution: AgentToolExecution = {
       id: executionId,
@@ -112,10 +124,17 @@ export class AgentToolRegistry implements IAgentToolRegistry {
 
     try {
       // Call ZeroClaw format command with enhanced validation and timing
+      console.log(`🔧 [BEFORE INVOKE] Calling runtime_execute_tool with:`);
+      console.log(`   toolId: "${toolId}"`);
+      console.log(`   args: ${toolArguments}`);
+      console.log(`   args type: ${typeof toolArguments}`);
+
       const result = await invoke<ZeroClawToolResult>('runtime_execute_tool', {
-        toolId,
-        arguments: toolArguments
+        toolId: toolId,  // Use camelCase as expected by current Rust version
+        args: toolArguments  // Use "args" instead of "arguments"
       });
+
+      console.log(`🔧 [AFTER INVOKE] Tool execution result:`, result);
 
       execution.endTime = Date.now();
       // Use execution time from Rust if available, otherwise calculate locally

@@ -31,7 +31,7 @@ export class DaemonHealthService {
       console.log('[DaemonHealth] Setting up alphahuman:health event listener');
 
       this.healthEventListener = await listen<unknown>('alphahuman:health', event => {
-        console.log('[DaemonHealth] Received health event:', event.payload);
+        // console.log('[DaemonHealth] Received health event:', event.payload);
 
         const healthSnapshot = this.parseHealthSnapshot(event.payload);
         if (healthSnapshot) {
@@ -147,7 +147,7 @@ export class DaemonHealthService {
       // Update the health snapshot in Redux
       store.dispatch(updateHealthSnapshot({ userId, healthSnapshot: snapshot }));
 
-      console.log('[DaemonHealth] Updated health snapshot for user:', userId, snapshot);
+      // console.log('[DaemonHealth] Updated health snapshot for user:', userId, snapshot);
     } catch (error) {
       console.error('[DaemonHealth] Error updating Redux from health:', error);
     }

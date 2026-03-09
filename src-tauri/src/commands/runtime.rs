@@ -296,9 +296,11 @@ mod desktop {
     pub async fn runtime_get_tool_schemas(
         engine: State<'_, Arc<RuntimeEngine>>,
     ) -> Result<Vec<ZeroClawToolSchema>, String> {
-        log::info!("Generating ZeroClaw-compatible tool schemas");
+        log::info!("🔧 [RUNTIME] Generating ZeroClaw-compatible tool schemas");
 
         let tools = engine.all_tools();
+        log::info!("🔧 [RUNTIME] Found {} tools from engine", tools.len());
+
         let mut schemas = Vec::new();
 
         for (skill_id, tool) in tools {
@@ -309,13 +311,16 @@ mod desktop {
                 tool.description.clone()
             };
 
+            let tool_name = format!("{}_{}", skill_id, tool.name);
+            log::info!("🔧 [RUNTIME] Processing tool: {}", tool_name);
+
             // Convert input schema to OpenAI-compatible format
             let openai_parameters = convert_to_openai_schema(tool.input_schema)?;
 
             let schema = ZeroClawToolSchema {
                 type_field: "function".to_string(),
                 function: ZeroClawFunction {
-                    name: format!("{}_{}", skill_id, tool.name),
+                    name: tool_name,
                     description,
                     parameters: openai_parameters,
                 },
@@ -324,7 +329,15 @@ mod desktop {
             schemas.push(schema);
         }
 
-        log::info!("Generated {} ZeroClaw tool schemas", schemas.len());
+        log::info!("🔧 [RUNTIME] Generated {} ZeroClaw tool schemas", schemas.len());
+
+        // Log tools that contain 'notion' or 'gmail' for debugging
+        let gmail_notion_tools: Vec<String> = schemas.iter()
+            .map(|s| &s.function.name)
+            .filter(|name| name.to_lowercase().contains("gmail") || name.to_lowercase().contains("notion"))
+            .cloned()
+            .collect();
+        log::info!("🔧 [RUNTIME] Gmail/Notion tools found: {:?}", gmail_notion_tools);
         Ok(schemas)
     }
 
@@ -338,12 +351,16 @@ mod desktop {
     ) -> Result<ZeroClawToolResult, String> {
         let start_time = std::time::Instant::now();
 
-        log::info!("Executing ZeroClaw tool: {} with args: {}", tool_id, args);
+        log::info!("🔧 [RUNTIME] Executing ZeroClaw tool: {} with args: {}", tool_id, args);
 
         // Parse tool_id to get skill_id and tool_name (format: "skill_id_tool_name")
         let (skill_id, tool_name) = match parse_tool_id(&tool_id) {
-            Ok((skill, tool)) => (skill, tool),
+            Ok((skill, tool)) => {
+                log::info!("🔧 [RUNTIME] Parsed tool_id: skill_id='{}', tool_name='{}'", skill, tool);
+                (skill, tool)
+            }
             Err(e) => {
+                log::error!("🔧 [RUNTIME] Failed to parse tool_id '{}': {}", tool_id, e);
                 let execution_time = start_time.elapsed().as_millis() as u64;
                 return Ok(ZeroClawToolResult {
                     success: false,
@@ -354,10 +371,28 @@ mod desktop {
             }
         };
 
+        // Log runtime state before execution
+        log::info!("🔧 [RUNTIME] Attempting to call tool '{}' on skill '{}'", tool_name, skill_id);
+
+        // Get available skills for debugging
+        let skills = engine.list_skills();
+        log::info!("🔧 [RUNTIME] Available skills: {:?}", skills.iter().map(|s| &s.skill_id).collect::<Vec<_>>());
+
+        // Check if the specific skill exists
+        if let Some(skill) = skills.iter().find(|s| s.skill_id == skill_id) {
+            log::info!("🔧 [RUNTIME] Found skill '{}' with state: {:?}, tools: {:?}",
+                      skill_id, skill.state, skill.tools.iter().map(|t| &t.name).collect::<Vec<_>>());
+        } else {
+            log::error!("🔧 [RUNTIME] Skill '{}' not found in runtime!", skill_id);
+        }
+
         // Execute the tool using the existing command
+        log::info!("🔧 [RUNTIME] Calling engine.call_tool('{}', '{}', {})", skill_id, tool_name, args);
+
         match engine.call_tool(&skill_id, &tool_name, args).await {
             Ok(result) => {
                 let execution_time = start_time.elapsed().as_millis() as u64;
+                log::info!("🔧 [RUNTIME] Tool execution completed in {}ms, is_error: {}", execution_time, result.is_error);
 
                 if result.is_error {
                     let error_message = result.content
@@ -369,6 +404,8 @@ mod desktop {
                         })
                         .collect::<Vec<_>>()
                         .join("\n");
+
+                    log::error!("🔧 [RUNTIME] Tool execution failed with error: {}", error_message);
 
                     Ok(ZeroClawToolResult {
                         success: false,
@@ -400,7 +437,7 @@ mod desktop {
             }
             Err(e) => {
                 let execution_time = start_time.elapsed().as_millis() as u64;
-                log::error!("ZeroClaw tool execution failed: {}", e);
+                log::error!("🔧 [RUNTIME] Engine call_tool failed: {}", e);
 
                 Ok(ZeroClawToolResult {
                     success: false,
