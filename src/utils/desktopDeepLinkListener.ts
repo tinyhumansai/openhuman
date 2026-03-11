@@ -1,17 +1,13 @@
-import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
-import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
+import {invoke, isTauri as coreIsTauri} from '@tauri-apps/api/core';
+import {getCurrent, onOpenUrl} from '@tauri-apps/plugin-deep-link';
 
-import { skillManager } from '../lib/skills/manager';
-import { consumeLoginToken, fetchIntegrationTokens } from '../services/api/authApi';
-import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
-import { store } from '../store';
-import { setToken } from '../store/authSlice';
-import { setSkillState } from '../store/skillsSlice';
-import {
-  decryptIntegrationTokens,
-  hexToBase64,
-  type IntegrationTokensPayload,
-} from './integrationTokensCrypto';
+import {skillManager} from '../lib/skills/manager';
+import {consumeLoginToken, fetchIntegrationTokens} from '../services/api/authApi';
+import {buildManualSentryEvent, enqueueError} from '../services/errorReportQueue';
+import {store} from '../store';
+import {setToken} from '../store/authSlice';
+import {setSkillState} from '../store/skillsSlice';
+import {decryptIntegrationTokens, hexToBase64, type IntegrationTokensPayload,} from './integrationTokensCrypto';
 
 function getCurrentUserId(): string | null {
   const state = store.getState();
@@ -40,10 +36,12 @@ function getCurrentUserId(): string | null {
  */
 const handleAuthDeepLink = async (parsed: URL) => {
   const token = parsed.searchParams.get('token');
+  const key = parsed.searchParams.get('key');
   if (!token) {
     console.warn('[DeepLink] URL did not contain a token query parameter');
     return;
   }
+
 
   console.log('[DeepLink] Received auth token');
 
@@ -53,9 +51,16 @@ const handleAuthDeepLink = async (parsed: URL) => {
     console.warn('[DeepLink] Failed to show window:', err);
   }
 
-  const jwtToken = await consumeLoginToken(token);
-  store.dispatch(setToken(jwtToken));
-  window.location.hash = '/onboarding';
+  if (key === 'auth') {
+    store.dispatch(setToken(token));
+    window.location.hash = '/onboarding';
+  } else {
+    const jwtToken = await consumeLoginToken(token);
+    store.dispatch(setToken(jwtToken));
+    window.location.hash = '/onboarding';
+  }
+
+
 };
 
 /**

@@ -52,7 +52,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-white border border-gray-200',
     hoverColor: 'hover:bg-gray-50 hover:border-gray-300',
     textColor: 'text-gray-900',
-    loginUrl: `${BACKEND_URL}/auth/google/login${IS_DEV ? '?debug=true' : ''}`,
+    loginUrl: `${BACKEND_URL}/auth/google/login?${IS_DEV ? 'responseType=json' : ''}`,
   },
   {
     id: 'github',
@@ -61,7 +61,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-gray-900 border border-gray-800',
     hoverColor: 'hover:bg-gray-800 hover:border-gray-700',
     textColor: 'text-white',
-    loginUrl: `${BACKEND_URL}/auth/github/login${IS_DEV ? '?debug=true' : ''}`,
+    loginUrl: `${BACKEND_URL}/auth/github/login?${IS_DEV ? 'responseType=json' : ''}`,
   },
   {
     id: 'twitter',
@@ -70,7 +70,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-black border border-gray-800',
     hoverColor: 'hover:bg-gray-900 hover:border-gray-700',
     textColor: 'text-white',
-    loginUrl: `${BACKEND_URL}/auth/twitter/login${IS_DEV ? '?debug=true' : ''}`,
+    loginUrl: `${BACKEND_URL}/auth/twitter/login?${IS_DEV ? 'responseType=json' : ''}`,
   },
   {
     id: 'discord',
@@ -79,7 +79,7 @@ export const oauthProviderConfigs: OAuthProviderConfig[] = [
     color: 'bg-indigo-600 border border-indigo-500',
     hoverColor: 'hover:bg-indigo-700 hover:border-indigo-600',
     textColor: 'text-white',
-    loginUrl: `${BACKEND_URL}/auth/discord/login${IS_DEV ? '?debug=true' : ''}`,
+    loginUrl: `${BACKEND_URL}/auth/discord/login?${IS_DEV ? 'responseType=json' : ''}`,
   },
 ];
 
