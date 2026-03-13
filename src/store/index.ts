@@ -47,6 +47,7 @@ const aiPersistConfig = { key: 'ai', storage, whitelist: ['config'] };
 const skillsPersistConfig = { key: 'skills', storage, whitelist: ['skills'] };
 
 // Persist config for thread data and UI prefs (includes threads and messages)
+// Note: activeThreadId is intentionally excluded as it's transient state
 const threadPersistConfig = {
   key: 'thread',
   storage,

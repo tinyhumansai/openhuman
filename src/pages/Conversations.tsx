@@ -22,7 +22,7 @@ import { useAppDispatch, useAppSelector } from '../store/hooks';
 import type { NotionPageSummary, NotionSummary, NotionUserProfile } from '../store/notionSlice';
 import {
   addInferenceResponse,
-  addOptimisticMessage,
+  addMessageLocal,
   clearDeleteStatus,
   clearPurgeStatus,
   clearSelectedThread,
@@ -30,11 +30,13 @@ import {
   deleteThreadLocal,
   fetchSuggestedQuestions,
   purgeThreads,
-  removeOptimisticMessages,
+  setActiveThread,
   setLastViewed,
   setPanelWidth,
   setSelectedThread,
+  updateMessagesForThread,
 } from '../store/threadSlice';
+import type { ThreadMessage } from '../types/thread';
 
 const MIN_PANEL_WIDTH = 200;
 const MAX_PANEL_WIDTH = 480;
@@ -113,6 +115,7 @@ const Conversations = () => {
     lastViewedAt,
     suggestedQuestions,
     isLoadingSuggestions,
+    activeThreadId,
   } = useAppSelector(state => state.thread);
 
   const skillsState = useAppSelector(state => state.skills);
@@ -306,13 +309,42 @@ const Conversations = () => {
     const trimmed = text ?? inputValue.trim();
     if (!trimmed || !selectedThreadId || isSending) return;
 
-    // Snapshot history before the optimistic update (exclude stale optimistic msgs)
-    const historySnapshot = messages.filter(m => !m.id.startsWith('optimistic-'));
+    // Check if another thread is already sending
+    if (activeThreadId && activeThreadId !== selectedThreadId) {
+      return; // Block sending from non-active threads
+    }
 
-    dispatch(addOptimisticMessage({ content: trimmed }));
+    // Store the original thread ID to ensure response goes to correct thread
+    const sendingThreadId = selectedThreadId;
+
+    // Create stable user message and persist immediately
+    const userMessage: ThreadMessage = {
+      id: `msg_${Date.now()}_${Math.random()}`,
+      content: trimmed,
+      type: 'text',
+      extraMetadata: {},
+      sender: 'user',
+      createdAt: new Date().toISOString(),
+    };
+
+    // Immediately persist user message to both current view and persistent storage
+    dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
+
+    // Update current view if this is the selected thread
+    if (sendingThreadId === selectedThreadId) {
+      // Message is already added to persistent storage, reload current view
+      dispatch(setSelectedThread(sendingThreadId));
+    }
+
+    // Snapshot history for AI request (excluding the just-added user message since we'll add it manually)
+    const historySnapshot = messages.filter(m => !m.id.startsWith('optimistic-') && m.id !== userMessage.id);
+
     setInputValue('');
     setSendError(null);
     setIsSending(true);
+
+    // Set this thread as active
+    dispatch(setActiveThread(sendingThreadId));
 
     try {
       // Process user message with SOUL + TOOLS injection
@@ -491,14 +523,30 @@ const Conversations = () => {
         break;
       }
 
-      dispatch(addInferenceResponse({ content: finalContent }));
+      // Pass the original sending thread ID to ensure response goes to correct thread
+      dispatch(addInferenceResponse({ content: finalContent, threadId: sendingThreadId }));
     } catch (err) {
-      dispatch(removeOptimisticMessages());
+      // Remove the user message from persistent storage on error
+      // We'll use a thunk-like approach to access current state
+      dispatch((dispatch, getState) => {
+        const state = getState() as { thread: { messagesByThreadId: Record<string, ThreadMessage[]> } };
+        const persistedMessages = state.thread.messagesByThreadId[sendingThreadId] || [];
+        const currentMessages = persistedMessages.filter(m => m.id !== userMessage.id);
+        dispatch(updateMessagesForThread({ threadId: sendingThreadId, messages: currentMessages }));
+
+        // Also remove from current view if this is the selected thread
+        if (sendingThreadId === selectedThreadId) {
+          dispatch(setSelectedThread(sendingThreadId));
+        }
+      });
+
       const msg =
         err && typeof err === 'object' && 'error' in err
           ? String((err as { error: unknown }).error)
           : 'Failed to get response';
       setSendError(msg);
+      // Clear active thread on error
+      dispatch(setActiveThread(null));
     } finally {
       setIsSending(false);
     }
@@ -900,8 +948,8 @@ const Conversations = () => {
                         </div>
                       </div>
                     ))}
-                    {/* Typing indicator (#14) */}
-                    {isSending && (
+                    {/* Typing indicator (#14) - Only show for the active thread */}
+                    {activeThreadId === selectedThreadId && isSending && (
                       <div className="flex justify-start">
                         <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-3">
                           <div className="flex items-center gap-1">
@@ -930,7 +978,7 @@ const Conversations = () => {
                         key={i}
                         type="button"
                         onClick={() => handleSendMessage(s.text)}
-                        disabled={isSending}
+                        disabled={isSending || !!(activeThreadId && activeThreadId !== selectedThreadId)}
                         className="flex-shrink-0 px-3 py-1.5 rounded-lg text-[12px] whitespace-nowrap bg-white/5 text-stone-400 hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                         {s.text}
                       </button>
@@ -941,6 +989,14 @@ const Conversations = () => {
 
               {/* Message Input */}
               <div className="flex-shrink-0 border-t border-white/10 px-4 py-3">
+                {/* Show warning if another thread is active */}
+                {activeThreadId && activeThreadId !== selectedThreadId && (
+                  <div className="mb-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <p className="text-xs text-amber-400">
+                      Another conversation is active. Please wait for it to complete before sending messages here.
+                    </p>
+                  </div>
+                )}
                 {/* Model selector */}
                 <div className="flex items-center gap-2 mb-2">
                   {isLoadingModels ? (
@@ -983,13 +1039,14 @@ const Conversations = () => {
                     value={inputValue}
                     onChange={e => setInputValue(e.target.value)}
                     onKeyDown={handleInputKeyDown}
-                    placeholder="Type a message..."
+                    placeholder={activeThreadId && activeThreadId !== selectedThreadId ? "Another conversation is active..." : "Type a message..."}
                     rows={1}
-                    className="flex-1 resize-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all max-h-32"
+                    disabled={!!(activeThreadId && activeThreadId !== selectedThreadId)}
+                    className="flex-1 resize-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <button
                     onClick={() => handleSendMessage()}
-                    disabled={!inputValue.trim() || isSending}
+                    disabled={!inputValue.trim() || isSending || !!(activeThreadId && activeThreadId !== selectedThreadId)}
                     className="p-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                     {isSending ? (
                       <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">

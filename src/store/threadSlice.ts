@@ -11,6 +11,7 @@ interface ThreadState {
   selectedThreadId: string | null;
   panelWidth: number;
   lastViewedAt: Record<string, number>;
+  activeThreadId: string | null; // Track which thread is currently sending/receiving
 
   // NEW: Add efficient message storage
   messagesByThreadId: Record<string, ThreadMessage[]>;
@@ -35,6 +36,7 @@ const initialState: ThreadState = {
   selectedThreadId: null,
   panelWidth: 320,
   lastViewedAt: {},
+  activeThreadId: null,
   messagesByThreadId: {},
   messages: [],
   isLoadingMessages: false,
@@ -200,7 +202,7 @@ const threadSlice = createSlice({
         createdAt: new Date().toISOString(),
       });
     },
-    addInferenceResponse: (state, action: { payload: { content: string } }) => {
+    addInferenceResponse: (state, action: { payload: { content: string; threadId?: string } }) => {
       const aiMessage: ThreadMessage = {
         id: `inference-${Date.now()}`,
         content: action.payload.content,
@@ -210,52 +212,33 @@ const threadSlice = createSlice({
         createdAt: new Date().toISOString(),
       };
 
-      // Add to current messages view
-      state.messages.push(aiMessage);
+      // Use provided threadId or fall back to activeThreadId to ensure response goes to correct thread
+      const targetThreadId = action.payload.threadId || state.activeThreadId;
 
-      // Also add to persistent storage
-      if (state.selectedThreadId) {
-        if (!state.messagesByThreadId[state.selectedThreadId]) {
-          state.messagesByThreadId[state.selectedThreadId] = [];
+      if (targetThreadId) {
+        // Ensure messagesByThreadId exists for this thread
+        if (!state.messagesByThreadId[targetThreadId]) {
+          state.messagesByThreadId[targetThreadId] = [];
         }
 
-        // CRITICAL FIX: Ensure the preceding user message is also persisted
-        // Find the last user message that might not be in persistent storage yet
-        const lastUserMessage = state.messages.filter(m => m.sender === 'user').pop();
+        // Add the AI response to persistent storage
+        state.messagesByThreadId[targetThreadId].push(aiMessage);
 
-        if (lastUserMessage) {
-          const persistedMessages = state.messagesByThreadId[state.selectedThreadId];
-          const userMessageExists = persistedMessages.some(m => m.id === lastUserMessage.id);
-
-          // If user message isn't persisted yet, add it first.
-          // Replace optimistic- prefix with a stable id so historySnapshot
-          // (which filters out optimistic- ids) includes it on future sends.
-          if (!userMessageExists) {
-            const stableMessage = lastUserMessage.id.startsWith('optimistic-')
-              ? { ...lastUserMessage, id: `msg_${Date.now()}_user` }
-              : lastUserMessage;
-            persistedMessages.push(stableMessage);
-            // Keep state.messages in sync with the stable id
-            const messages = state.messages;
-            for (let i = messages.length - 1; i >= 0; i--) {
-              if (messages[i].id === lastUserMessage.id) {
-                messages[i] = stableMessage;
-                break;
-              }
-            }
-          }
+        // Add to current messages view only if it's the currently selected thread
+        if (targetThreadId === state.selectedThreadId) {
+          state.messages.push(aiMessage);
         }
-
-        // Now add the AI response
-        state.messagesByThreadId[state.selectedThreadId].push(aiMessage);
 
         // Update thread metadata
-        const thread = state.threads.find(t => t.id === state.selectedThreadId);
+        const thread = state.threads.find(t => t.id === targetThreadId);
         if (thread) {
-          thread.messageCount = state.messagesByThreadId[state.selectedThreadId].length;
+          thread.messageCount = state.messagesByThreadId[targetThreadId].length;
           thread.lastMessageAt = aiMessage.createdAt;
         }
       }
+
+      // Clear active thread when response is received
+      state.activeThreadId = null;
     },
     removeOptimisticMessages: state => {
       state.messages = state.messages.filter(m => !m.id.startsWith('optimistic-'));
@@ -331,6 +314,10 @@ const threadSlice = createSlice({
       state.selectedThreadId = null;
       state.messages = [];
       state.lastViewedAt = {};
+      state.activeThreadId = null;
+    },
+    setActiveThread: (state, action: { payload: string | null }) => {
+      state.activeThreadId = action.payload;
     },
   },
   extraReducers: builder => {
@@ -356,22 +343,28 @@ const threadSlice = createSlice({
         state.selectedThreadId = null;
         state.messages = [];
         state.lastViewedAt = {};
+        state.activeThreadId = null;
       })
       // sendMessage
-      .addCase(sendMessage.pending, state => {
+      .addCase(sendMessage.pending, (state, action) => {
         state.sendStatus = 'loading';
         state.sendError = null;
+        // Set the active thread when message sending starts
+        state.activeThreadId = action.meta.arg.threadId;
       })
       .addCase(sendMessage.fulfilled, state => {
         state.sendStatus = 'success';
         state.suggestedQuestions = [];
         state.suggestError = null;
+        // Don't clear activeThreadId here - let addInferenceResponse handle it
       })
       .addCase(sendMessage.rejected, (state, action) => {
         state.sendStatus = 'error';
         state.sendError = action.payload as string;
         // Remove optimistic messages so the user doesn't see phantom messages
         state.messages = state.messages.filter(m => !m.id.startsWith('optimistic-'));
+        // Clear active thread on error
+        state.activeThreadId = null;
       })
       // fetchSuggestedQuestions
       .addCase(fetchSuggestedQuestions.pending, state => {
@@ -407,5 +400,6 @@ export const {
   deleteThreadLocal,
   updateMessagesForThread,
   clearAllThreads,
+  setActiveThread,
 } = threadSlice.actions;
 export default threadSlice.reducer;
