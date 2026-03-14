@@ -20,7 +20,7 @@ import { skillManager } from '../lib/skills/manager';
 import type { SkillManifest } from '../lib/skills/types';
 import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
 import {
-  GmailEmailSummary,
+  GmailEmailBatch,
   type GmailProfile,
   setGmailEmails,
   setGmailProfile,
@@ -100,11 +100,7 @@ function syncGmailStateToSlice(
         : null
     )
   );
-  dispatch(
-    setGmailEmails(
-      Array.isArray(gmailState.emails) ? (gmailState.emails as GmailEmailSummary[]) : []
-    )
-  );
+  dispatch(setGmailEmails(gmailState.emails as GmailEmailBatch | null));
 
   syncGmailMetadataToBackend(gmailState as GmailStateForSync);
 }

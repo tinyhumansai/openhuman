@@ -12,7 +12,7 @@
     "compile": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "source scripts/load-dotenv.sh 2>/dev/null; (cd src-tauri && bash scripts/download-tdlib.sh) && LOCAL_TDLIB_PATH=$(pwd)/src-tauri/tdlib-cache/macos-$(uname -m | sed 's/arm64/aarch64/; s/x86_64/x86_64/') tauri dev",
+    "tauri:dev": "RUST_LOG=debug source scripts/load-dotenv.sh 2>/dev/null; (cd src-tauri && bash scripts/download-tdlib.sh) && LOCAL_TDLIB_PATH=$(pwd)/src-tauri/tdlib-cache/macos-$(uname -m | sed 's/arm64/aarch64/; s/x86_64/x86_64/') tauri dev",
     "macos:build:debug": "yarn macos:build:release --debug",
     "macos:build:release": "source scripts/load-dotenv.sh 2>/dev/null; (cd src-tauri && bash scripts/download-tdlib.sh) && LOCAL_TDLIB_PATH=$(pwd)/src-tauri/tdlib-cache/macos-$(uname -m | sed 's/arm64/aarch64/; s/x86_64/x86_64/') tauri build --bundles app dmg",
     "macos:build:sign:release": "source scripts/load-env.sh && tauri build --bundles app dmg",

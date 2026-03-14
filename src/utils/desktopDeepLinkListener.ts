@@ -240,6 +240,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       }
 
       await skillManager.notifyOAuthComplete(skillId, integrationId, undefined, extraCredential);
+      await skillManager.triggerSync(skillId);
     } catch (err) {
       console.error('[DeepLink] Failed to notify OAuth complete:', err);
     }
