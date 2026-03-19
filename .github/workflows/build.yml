@@ -3,6 +3,9 @@ name: Build
 on:
   pull_request:
     branches: ['*']
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
 
 permissions:
   contents: read

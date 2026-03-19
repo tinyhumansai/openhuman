@@ -1,5 +1,5 @@
 ---
-icon: baby-carriage
+icon: play
 ---
 
 # Getting Started

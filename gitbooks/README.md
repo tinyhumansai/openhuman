@@ -3,10 +3,10 @@ description: >-
   OpenHuman is a personal AI assistant that runs natively across desktop,
   mobile, and web that connects your communication platforms, tools, and
   workflows into a single intelligence layer you control.
-icon: hand-wave
+icon: diamond
 ---
 
-# Welcome
+# Welcome to OpenHuman
 
 OpenHuman is the first open-source AI agent with Big Data capabilities and a personalized subconscious mind. Built on the OpenClaw architecture and licensed under GNU GPL3, OpenHuman is designed to close the gap between what AI models can do and what they actually know about you.
 
@@ -37,6 +37,8 @@ It **surfaces signals** that matter: decisions, action items, risks, sentiment s
 It **thinks proactively** through its subconscious system, making connections and surfacing insights you did not explicitly ask for, based on patterns across your entire data history.
 
 It **preserves privacy** by design. Raw data stays on your device. Encryption keys never leave the device. Only compressed metadata and summaries are processed server-side.
+
+
 
 ## Who it's for
 
