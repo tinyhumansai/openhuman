@@ -16,7 +16,7 @@ OpenHuman's architecture rests on three pillars that work together:
 
 **Multi-agent orchestration** distributes work across specialized agents rather than relying on a single monolithic model. An orchestrator agent manages routing, personality, and context distribution. Specialist agents handle specific domains: communication analysis, document synthesis, task management, trading. Agents execute in parallel, not sequentially, enabling real-time responsiveness.
 
-**Privacy-preserving inference** ensures that raw data never leaves the user's device. Data is encrypted on-device with AES-256-GCM. Encryption keys never leave the device. Only compressed metadata and summaries are processed server-side. Detailed in [Privacy & Security](../product/privacy-and-security.md).
+**Privacy-preserving inference** ensures that raw data never leaves the user's device. Data is encrypted on-device with AES-256-GCM. Encryption keys never leave the device. Only compressed metadata and summaries are processed server-side. Detailed in [Privacy & Security](/broken/pages/oKJQ5qFilQ7tkpwklev1).
 
 #### How data flows
 

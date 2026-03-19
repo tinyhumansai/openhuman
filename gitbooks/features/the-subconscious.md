@@ -1,3 +1,7 @@
+---
+icon: brain-circuit
+---
+
 # Subconscious Loop
 
 OpenHuman's subconscious is what separates it from every other AI agent. Most AI systems follow the conscious mind model: they wait for instructions and execute them. They cannot think on their own. OpenHuman can.
