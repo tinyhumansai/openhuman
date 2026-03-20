@@ -5,7 +5,10 @@
 </p>
 
 <p align="center">
-[Discord](https://discord.com/invite/k23Kn8nK) • [Reddit](https://www.reddit.com/r/tinyhumansai/) • [X](https://x.com/tinyhumansai) • [Docs](https://tinyhumans.gitbook.io/openhuman/)
+  <a href="https://discord.com/invite/k23Kn8nK">Discord</a> •
+  <a href="https://www.reddit.com/r/tinyhumansai/">Reddit</a> •
+  <a href="https://x.com/tinyhumansai">X/Twitter</a> •
+  <a href="https://tinyhumans.gitbook.io/openhuman/">Docs</a>
 </p>
 
 <p align="center">
