@@ -1,16 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { platform } from '@tauri-apps/plugin-os';
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { deriveConnectionStatus, useSkillConnectionStatus } from '../lib/skills/hooks';
-import type { SkillConnectionStatus } from '../lib/skills/types';
 import { useAppSelector } from '../store/hooks';
 import { IS_DEV } from '../utils/config';
 import SelfEvolveModal from './skills/SelfEvolveModal';
 import {
   DefaultIcon,
   SKILL_ICONS,
-  SkillActionButton,
   type SkillListEntry,
   STATUS_DISPLAY,
   STATUS_PRIORITY,
@@ -109,13 +108,13 @@ function SkillRow({ skillId, name, icon, skillType, onConnect }: SkillRowProps) 
 }
 
 export default function SkillsGrid() {
+  const navigate = useNavigate();
   const [skillsList, setSkillsList] = useState<SkillListEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [selfEvolveOpen, setSelfEvolveOpen] = useState(false);
   const [setupModalOpen, setSetupModalOpen] = useState(false);
-  const [managementModalOpen, setManagementModalOpen] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [activeSkillName, setActiveSkillName] = useState<string>('');
   const [activeSkillDescription, setActiveSkillDescription] = useState<string>('');
@@ -338,7 +337,7 @@ export default function SkillsGrid() {
         </div>
         <div
           className="glass rounded-xl overflow-hidden skills-table-container relative cursor-pointer"
-          onClick={() => setManagementModalOpen(true)}>
+          onClick={() => navigate('/skills')}>
           <div className="skills-table-scroll">
             <table className="w-full">
               <thead className="skills-table-header">
@@ -375,7 +374,7 @@ export default function SkillsGrid() {
           </div>
           {/* Hover overlay */}
           <div className="skills-table-overlay absolute inset-0 bg-black/80 flex items-center justify-center rounded-xl opacity-0 transition-opacity duration-200 pointer-events-none">
-            <span className="text-sm font-medium text-white">Click to manage skills</span>
+            <span className="text-sm font-medium text-white">View all skills</span>
           </div>
         </div>
       </div>
@@ -400,81 +399,6 @@ export default function SkillsGrid() {
         <SelfEvolveModal onClose={() => setSelfEvolveOpen(false)} onSkillCreated={refreshSkills} />
       )}
 
-      {/* Skills Management Modal */}
-      {managementModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-fade-in"
-          onClick={() => setManagementModalOpen(false)}>
-          <div
-            className="bg-stone-900 rounded-2xl max-w-2xl w-full max-h-[80vh] shadow-large border border-stone-700/50 flex flex-col overflow-hidden animate-slide-up"
-            onClick={e => e.stopPropagation()}>
-            {/* Sticky Header */}
-            <div className="flex items-center justify-between p-6 pb-4 border-b border-stone-700/50 flex-shrink-0 bg-stone-900">
-              <h2 className="text-xl font-semibold text-white">Manage Skills</h2>
-              <button
-                onClick={() => setManagementModalOpen(false)}
-                className="text-stone-400 hover:text-white transition-colors">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
-            {/* Scrollable Content */}
-            <div className="overflow-y-auto flex-1 p-6 pt-4">
-              <div className="space-y-2">
-                {sortedSkillsList.map(skill => {
-                  const skillState = skillsState[skill.id];
-                  const stateData = skillStates[skill.id];
-                  const connectionStatus: SkillConnectionStatus = deriveConnectionStatus(
-                    skillState?.status,
-                    skillState?.setupComplete,
-                    stateData
-                  );
-                  const statusDisplay = STATUS_DISPLAY[connectionStatus] || STATUS_DISPLAY.offline;
-
-                  return (
-                    <div
-                      key={skill.id}
-                      className="flex items-center justify-between p-3 rounded-lg bg-stone-800/30 border border-stone-700/30 hover:bg-stone-800/50 transition-colors">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="w-8 h-8 flex items-center justify-center text-white opacity-70 flex-shrink-0">
-                          {skill.icon || <DefaultIcon />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-medium text-white">{skill.name}</div>
-                            <span className={`text-xs ${statusDisplay.color}`}>
-                              {statusDisplay.text}
-                            </span>
-                          </div>
-                          <div className="text-xs text-stone-400">{skill.description}</div>
-                        </div>
-                      </div>
-                      <SkillActionButton
-                        skill={skill}
-                        connectionStatus={connectionStatus}
-                        onOpenModal={() => {
-                          setActiveSkillId(skill.id);
-                          setActiveSkillName(skill.name);
-                          setActiveSkillDescription(skill.description);
-                          setActiveSkillHasSetup(skill.hasSetup);
-                          setActiveSkillType(skill.skill_type ?? 'alphahuman');
-                          setSetupModalOpen(true);
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }
