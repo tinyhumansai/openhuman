@@ -468,8 +468,8 @@ export default function FeedbackPage() {
     return (
         <div className="min-h-screen bg-zinc-950 text-white">
             {/* Custom Header - Mobile Responsive */}
-            <header className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm">
-                <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <header className="fixed top-0 left-1/2 z-50 w-full max-w-[1280px] -translate-x-1/2 border-x border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm">
+                <div className="px-4 sm:px-6 lg:px-8">
                     <div className="flex h-14 sm:h-16 items-center justify-between">
                         <div className="flex items-center gap-3 sm:gap-8">
                             <button
@@ -514,7 +514,7 @@ export default function FeedbackPage() {
                 </div>
             </header>
 
-            <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-20 sm:pt-24 pb-8">
+            <main className="w-full px-4 sm:px-6 lg:px-8 pt-20 sm:pt-24 pb-8">
                 <div className="flex gap-4 lg:gap-8">
                     {/* Mobile Sidebar Overlay */}
                     {sidebarOpen && (

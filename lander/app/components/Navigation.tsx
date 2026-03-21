@@ -2,8 +2,8 @@ import Link from 'next/link';
 
 export default function Navigation() {
     return (
-        <nav className="fixed top-0 left-0 right-0 z-50 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm">
-            <div className="mx-auto max-w-7xl px-6 sm:px-8">
+        <nav className="fixed top-0 left-1/2 z-50 w-full max-w-[1280px] -translate-x-1/2 border-x border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-sm">
+            <div className="px-6 sm:px-8">
                 <div className="flex h-16 items-center justify-between">
                     <Link href="/" className="text-xl font-semibold text-white">
                         OpenHuman

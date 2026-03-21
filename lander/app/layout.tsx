@@ -40,7 +40,7 @@ export default function RootLayout({
         <link rel="manifest" href="/site.webmanifest" />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased flex min-h-screen flex-col`}
+        className={`${geistSans.variable} ${geistMono.variable} bg-[#121212] antialiased text-zinc-100`}
       >
         <Script
           src="https://www.googletagmanager.com/gtag/js?id=G-VS26CY11RK"
@@ -54,10 +54,10 @@ export default function RootLayout({
             gtag('config', 'G-VS26CY11RK');
           `}
         </Script>
-        <div className="flex-grow">
-          {children}
+        <div className="mx-auto flex min-h-[100dvh] w-full max-w-[1280px] flex-col border-x border-[var(--border-subtle)] bg-[#121212]">
+          <div className="flex flex-1 flex-col">{children}</div>
+          <Footer />
         </div>
-        <Footer />
       </body>
     </html>
   );

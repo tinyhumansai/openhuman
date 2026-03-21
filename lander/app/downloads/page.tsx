@@ -55,7 +55,7 @@ export default function Downloads() {
     return (
         <div className="min-h-screen bg-zinc-950 text-white">
             <Navigation />
-            <main className="mx-auto max-w-7xl px-6 pt-24 sm:px-8 sm:pt-32 pb-16">
+            <main className="w-full px-6 pt-24 sm:px-8 sm:pt-32 pb-16">
                 <div className="mx-auto max-w-4xl">
                     <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
                         Download for Free

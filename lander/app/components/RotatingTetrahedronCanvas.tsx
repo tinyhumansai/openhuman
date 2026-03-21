@@ -2,6 +2,26 @@
 
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+
+/** Canonical vertices of a truncated tetrahedron (permutations of 0, ±1, ±1). Convex hull = Archimedean solid. */
+function truncatedTetrahedronPoints(scale: number): THREE.Vector3[] {
+  const coords: [number, number, number][] = [
+    [0, 1, 1],
+    [0, 1, -1],
+    [0, -1, 1],
+    [0, -1, -1],
+    [1, 0, 1],
+    [1, 0, -1],
+    [-1, 0, 1],
+    [-1, 0, -1],
+    [1, 1, 0],
+    [1, -1, 0],
+    [-1, 1, 0],
+    [-1, -1, 0],
+  ];
+  return coords.map(([x, y, z]) => new THREE.Vector3(x, y, z).multiplyScalar(scale));
+}
 
 export default function RotatingTetrahedronCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -18,45 +38,35 @@ export default function RotatingTetrahedronCanvas() {
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMapping = THREE.NoToneMapping;
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    camera.position.set(0, 0, 4.6);
+    camera.position.set(0, 0.15, 4.8);
 
-    // Subdivided tet + smooth normals ≈ Oblivion-style blunted / softened silhouette (not razor facets).
-    const geometry = new THREE.TetrahedronGeometry(1.35, 2);
-    geometry.computeVertexNormals();
+    const geometry = new ConvexGeometry(truncatedTetrahedronPoints(0.92));
 
-    const fillMaterial = new THREE.MeshPhysicalMaterial({
-      color: '#5b8fd9',
-      emissive: '#0d1f35',
-      emissiveIntensity: 0.45,
-      metalness: 0.42,
-      roughness: 0.18,
-      clearcoat: 0.92,
-      clearcoatRoughness: 0.12,
-      transparent: true,
-      opacity: 0.9,
-      flatShading: false,
+    // Flat, panel-like read: matte off-white / reads as light vs shadow (Oblivion-style blocking).
+    const fillMaterial = new THREE.MeshLambertMaterial({
+      color: '#e4e4e4',
+      emissive: '#080808',
+      emissiveIntensity: 0.06,
     });
 
     const fillMesh = new THREE.Mesh(geometry, fillMaterial);
+    fillMesh.rotation.x = 0.35;
+    fillMesh.rotation.y = -0.45;
     scene.add(fillMesh);
 
-    const ambientLight = new THREE.AmbientLight('#cbd5e1', 0.35);
-    const keyLight = new THREE.PointLight('#7ab4ff', 1.35, 24);
-    keyLight.position.set(2.8, 2.5, 4);
-    const rimLight = new THREE.PointLight('#4a83dd', 0.85, 18);
-    rimLight.position.set(-3.2, -1.2, 3.5);
-    const fillLight = new THREE.DirectionalLight('#e8f0ff', 0.55);
-    fillLight.position.set(-1.5, 2, 6);
+    const ambientLight = new THREE.AmbientLight('#ffffff', 0.08);
+    const sun = new THREE.DirectionalLight('#ffffff', 1.35);
+    sun.position.set(4.5, 6, 5);
+    const bounce = new THREE.DirectionalLight('#8899aa', 0.22);
+    bounce.position.set(-3, -1, -2);
 
     scene.add(ambientLight);
-    scene.add(keyLight);
-    scene.add(rimLight);
-    scene.add(fillLight);
+    scene.add(sun);
+    scene.add(bounce);
 
     let animationFrame = 0;
 
@@ -77,8 +87,8 @@ export default function RotatingTetrahedronCanvas() {
     resize();
 
     const animate = () => {
-      fillMesh.rotation.x += 0.006;
-      fillMesh.rotation.y += 0.009;
+      fillMesh.rotation.y += 0.007;
+      fillMesh.rotation.x += 0.0045;
 
       renderer.render(scene, camera);
       animationFrame = window.requestAnimationFrame(animate);

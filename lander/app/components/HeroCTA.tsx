@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import Link from 'next/link';
 import DownloadModal from './DownloadModal';
 
 export default function HeroCTA() {
@@ -9,30 +8,14 @@ export default function HeroCTA() {
 
   return (
     <>
-      <div className="mt-10 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center sm:gap-4">
+      <div className="mt-10 flex justify-center">
         <button
           type="button"
           onClick={() => setDownloadModalOpen(true)}
-          className="rounded-lg cursor-pointer bg-white px-6 py-3 text-sm font-semibold text-zinc-950 transition-colors hover:bg-zinc-200"
+          className="rounded-lg bg-[var(--accent)] px-6 py-2.5 text-sm font-semibold text-white shadow-none transition-colors hover:bg-[var(--accent-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         >
-          Download 🔥
+          Download
         </button>
-        <Link
-          href="https://x.com/tinyhumansai"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-lg border border-zinc-800 px-6 py-3 text-sm font-semibold text-white transition-colors hover:border-zinc-700"
-        >
-          Join the Community
-        </Link>
-        <Link
-          href="https://tinyhumans.gitbook.io/openhuman"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-lg border border-zinc-800 px-6 py-3 text-sm font-semibold text-white transition-colors hover:border-zinc-700"
-        >
-          Read the Docs
-        </Link>
       </div>
       <DownloadModal isOpen={downloadModalOpen} onClose={() => setDownloadModalOpen(false)} />
     </>
