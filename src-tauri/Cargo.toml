@@ -30,7 +30,7 @@ serde_json = "1"
 
 [dependencies]
 # Tauri core and plugins
-tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri = { version = "2.10", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2.0.0"
 tauri-plugin-os = "2"
