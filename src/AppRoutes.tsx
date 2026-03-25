@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import DefaultRedirect from './components/DefaultRedirect';
@@ -17,7 +16,6 @@ import Settings from './pages/Settings';
 import Welcome from './pages/Welcome';
 import { selectHasEncryptionKey, selectIsOnboarded } from './store/authSelectors';
 import { useAppSelector } from './store/hooks';
-import { isTauri } from './utils/tauriCommands';
 
 const OnboardingRoute = () => {
   const isOnboarded = useAppSelector(selectIsOnboarded);
@@ -55,15 +53,6 @@ const HomeRoute = () => {
 };
 
 const AppRoutes = () => {
-  const [isWeb, setIsWeb] = useState(false);
-
-  useEffect(() => {
-    // Check if we're running on web (not Tauri)
-    setIsWeb(!isTauri());
-  }, []);
-
-  if (isWeb) return <Welcome isWeb={isWeb} />;
-
   return (
     <>
       <Routes>
@@ -72,7 +61,7 @@ const AppRoutes = () => {
           path="/"
           element={
             <PublicRoute>
-              <Welcome isWeb={isWeb} />
+              <Welcome />
             </PublicRoute>
           }
         />

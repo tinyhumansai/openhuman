@@ -45,8 +45,8 @@ function App() {
                             <AppRoutes />
                           </div>
                           <div className="pointer-events-none flex-shrink-0 flex justify-center z-50">
-                            <div className="w-full px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-white/40 text-center">
-                              AlphaHuman is in early beta. Version 0.1.0
+                            <div className="w-full px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-white/40 text-center bg-[#000]">
+                              OpenHuman is in early beta
                             </div>
                           </div>
                         </div>
