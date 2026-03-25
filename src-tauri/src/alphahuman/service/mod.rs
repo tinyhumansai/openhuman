@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const SERVICE_LABEL: &str = "com.alphahuman.daemon";
 const LEGACY_SERVICE_LABEL: &str = "com.alphahuman.app";
@@ -73,19 +73,39 @@ pub fn install(config: &Config) -> Result<ServiceStatus> {
 pub fn start(config: &Config) -> Result<ServiceStatus> {
     if cfg!(target_os = "macos") {
         let plist = macos_service_file()?;
+        let domain = macos_gui_domain()?;
+        let primary_target = macos_target(SERVICE_LABEL)?;
 
-        // Check if service is already loaded to avoid "Input/output error"
+        // Prefer modern launchctl lifecycle commands on macOS.
         if !is_service_loaded_macos()? {
             log::info!("[service] Loading macOS LaunchAgent service");
-            run_checked(Command::new("launchctl").arg("load").arg("-w").arg(&plist))?;
+            let bootstrap_ok = run_checked(
+                Command::new("launchctl")
+                    .arg("bootstrap")
+                    .arg(&domain)
+                    .arg(&plist),
+            );
+            if let Err(err) = bootstrap_ok {
+                log::warn!(
+                    "[service] launchctl bootstrap failed, falling back to load -w: {err}"
+                );
+                run_checked(Command::new("launchctl").arg("load").arg("-w").arg(&plist))?;
+            }
         } else {
             log::info!("[service] LaunchAgent service already loaded, skipping load step");
         }
 
         // Always try to start - this is safe even if already running
         log::info!("[service] Starting macOS LaunchAgent service");
-        let start_result = run_checked(Command::new("launchctl").arg("start").arg(SERVICE_LABEL));
+        let start_result = run_checked(
+            Command::new("launchctl")
+                .arg("kickstart")
+                .arg("-k")
+                .arg(&primary_target),
+        );
         if let Err(e) = start_result {
+            log::warn!("[service] launchctl kickstart failed, trying launchctl start");
+            let _ = run_checked(Command::new("launchctl").arg("start").arg(SERVICE_LABEL));
             // Check if it's already running - that's not an error for us
             let status_check = status(config)?;
             if matches!(status_check.state, ServiceState::Running) {
@@ -163,26 +183,41 @@ pub fn start(config: &Config) -> Result<ServiceStatus> {
 pub fn stop(config: &Config) -> Result<ServiceStatus> {
     if cfg!(target_os = "macos") {
         let plist = macos_service_file()?;
-        let _ = run_checked(Command::new("launchctl").arg("stop").arg(SERVICE_LABEL));
-        let _ = run_checked(
-            Command::new("launchctl")
-                .arg("unload")
-                .arg("-w")
-                .arg(&plist),
-        );
+        let domain = macos_gui_domain()?;
+        let primary_target = macos_target(SERVICE_LABEL)?;
 
         let legacy_plist = macos_service_file_for(LEGACY_SERVICE_LABEL)?;
-        let _ = run_checked(
+        let legacy_target = macos_target(LEGACY_SERVICE_LABEL)?;
+
+        // Modern lifecycle path first.
+        run_best_effort(
             Command::new("launchctl")
-                .arg("stop")
-                .arg(LEGACY_SERVICE_LABEL),
+                .arg("bootout")
+                .arg(&domain)
+                .arg(&primary_target),
         );
-        let _ = run_checked(
+        run_best_effort(
             Command::new("launchctl")
-                .arg("unload")
-                .arg("-w")
+                .arg("bootout")
+                .arg(&domain)
+                .arg(&plist),
+        );
+        run_best_effort(
+            Command::new("launchctl")
+                .arg("bootout")
+                .arg(&domain)
+                .arg(&legacy_target),
+        );
+        run_best_effort(
+            Command::new("launchctl")
+                .arg("bootout")
+                .arg(&domain)
                 .arg(&legacy_plist),
         );
+
+        // Compatibility fallback.
+        run_best_effort(Command::new("launchctl").arg("stop").arg(SERVICE_LABEL));
+        run_best_effort(Command::new("launchctl").arg("stop").arg(LEGACY_SERVICE_LABEL));
         return status(config);
     }
 
@@ -490,6 +525,15 @@ fn macos_service_file_for(label: &str) -> Result<PathBuf> {
         .join(format!("{label}.plist")))
 }
 
+fn macos_gui_domain() -> Result<String> {
+    let uid = run_capture(Command::new("id").arg("-u"))?;
+    Ok(format!("gui/{}", uid.trim()))
+}
+
+fn macos_target(label: &str) -> Result<String> {
+    Ok(format!("{}/{}", macos_gui_domain()?, label))
+}
+
 fn linux_service_file(config: &Config) -> Result<PathBuf> {
     let config_dir = config
         .config_path
@@ -520,12 +564,36 @@ fn run_capture(cmd: &mut Command) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn run_best_effort(cmd: &mut Command) {
+    match cmd.stdout(Stdio::null()).stderr(Stdio::null()).status() {
+        Ok(status) => {
+            if !status.success() {
+                log::debug!("[service] best-effort command failed with status {status}");
+            }
+        }
+        Err(err) => {
+            log::debug!("[service] best-effort command failed to execute: {err}");
+        }
+    }
+}
+
 /// Check if the macOS LaunchAgent service is loaded (regardless of running state)
 fn is_service_loaded_macos() -> Result<bool> {
-    let out = run_capture(Command::new("launchctl").arg("list"))?;
-    Ok(out
-        .lines()
-        .any(|line| line.contains(SERVICE_LABEL) || line.contains(LEGACY_SERVICE_LABEL)))
+    if run_checked(Command::new("launchctl").arg("print").arg(macos_target(SERVICE_LABEL)?))
+        .is_ok()
+    {
+        return Ok(true);
+    }
+    if run_checked(
+        Command::new("launchctl")
+            .arg("print")
+            .arg(macos_target(LEGACY_SERVICE_LABEL)?),
+    )
+    .is_ok()
+    {
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Check if the Linux systemd service is enabled

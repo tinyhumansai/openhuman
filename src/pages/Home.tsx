@@ -1,11 +1,11 @@
+import { useNavigate } from 'react-router-dom';
 import ConnectionIndicator from '../components/ConnectionIndicator';
 import SkillsGrid from '../components/SkillsGrid';
 import { useUser } from '../hooks/useUser';
-import { TELEGRAM_BOT_USERNAME } from '../utils/config';
-import { openUrl } from '../utils/openUrl';
 
 const Home = () => {
   const { user } = useUser();
+  const navigate = useNavigate();
   const userName = user?.firstName || 'User';
 
   // Get greeting based on time
@@ -16,9 +16,9 @@ const Home = () => {
     return 'Good evening';
   };
 
-  // Handle Telegram bot link
+  // Open in-app conversations window
   const handleStartCooking = async () => {
-    await openUrl(`https://t.me/${TELEGRAM_BOT_USERNAME}`);
+    navigate('/conversations');
   };
 
   return (
