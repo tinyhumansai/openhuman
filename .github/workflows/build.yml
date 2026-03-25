@@ -2,10 +2,10 @@ name: Build
 
 on:
   pull_request:
-    branches: ['*']
+    branches: ["*"]
     paths:
-      - 'src/**'
-      - 'src-tauri/**'
+      - "src/**"
+      - "src-tauri/**"
 
 permissions:
   contents: read
@@ -25,13 +25,12 @@ jobs:
         with:
           fetch-depth: 1
           submodules: true
-          token: ${{ secrets.XGH_TOKEN_READ }}
 
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: 'yarn'
+          cache: "yarn"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
