@@ -747,25 +747,16 @@ globalThis.platform = {
 globalThis.memory = {
   /**
    * Insert a memory payload through the native memory bridge.
-   * @param {string} provider - Integration/provider ID (e.g. "notion", "google").
+   * Provider is inferred from the current skill ID on the Rust side.
    * @param {object} metadata - Memory payload metadata.
    * @returns {boolean}
    */
-  insert: function (provider, metadata) {
-    if (!provider || typeof provider !== 'string') {
-      throw new Error('memory.insert requires a provider string');
+  insert: function (metadata) {
+    if (!metadata || typeof metadata !== 'object') {
+      throw new Error('memory.insert requires an object payload');
     }
 
-    var requestId =
-      (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function')
-        ? globalThis.crypto.randomUUID()
-        : (Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
-
-    var payload = metadata && typeof metadata === 'object' ? metadata : {};
-    payload.requestId = requestId;
-    payload.provider = provider;
-
-    __ops.memory_insert(provider, JSON.stringify(payload));
+    __ops.memory_insert(JSON.stringify(metadata));
     return true;
   },
 };
