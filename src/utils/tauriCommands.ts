@@ -287,6 +287,11 @@ export interface ServiceStatus {
   details?: string | null;
 }
 
+export interface AgentServerStatus {
+  running: boolean;
+  url: string;
+}
+
 export interface ConfigSnapshot {
   config: Record<string, unknown>;
   workspace_dir: string;
@@ -562,6 +567,13 @@ export async function alphahumanServiceUninstall(): Promise<CommandResponse<Serv
     throw new Error('Not running in Tauri');
   }
   return await invoke('alphahuman_service_uninstall');
+}
+
+export async function alphahumanAgentServerStatus(): Promise<CommandResponse<AgentServerStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('alphahuman_agent_server_status');
 }
 
 export async function runtimeListSkills(): Promise<SkillSnapshot[]> {

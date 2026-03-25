@@ -4,7 +4,7 @@
  * React hook for accessing daemon health state and actions.
  * Provides convenient access to daemon status, components, and control functions.
  */
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 
 import {
   resetConnectionAttempts,
@@ -16,10 +16,12 @@ import {
   selectIsDaemonAutoStartEnabled,
   selectIsDaemonRecovering,
   setAutoStartEnabled,
+  setDaemonStatus,
   setIsRecovering,
 } from '../store/daemonSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
+  alphahumanAgentServerStatus,
   alphahumanServiceStart,
   alphahumanServiceStatus,
   alphahumanServiceStop,
@@ -38,51 +40,90 @@ export const useDaemonHealth = (userId?: string) => {
   const isAutoStartEnabled = useAppSelector(state => selectIsDaemonAutoStartEnabled(state, userId));
   const connectionAttempts = useAppSelector(state => selectDaemonConnectionAttempts(state, userId));
   const isRecovering = useAppSelector(state => selectIsDaemonRecovering(state, userId));
+  const uid = userId || '__pending__';
+
+  const probeAgentStatus = useCallback(async (): Promise<boolean> => {
+    try {
+      const result = await alphahumanAgentServerStatus();
+      const running = !!result?.result?.running;
+      dispatch(setDaemonStatus({ userId: uid, status: running ? 'running' : 'disconnected' }));
+      return running;
+    } catch (error) {
+      console.error('[useDaemonHealth] Failed to probe agent status:', error);
+      dispatch(setDaemonStatus({ userId: uid, status: 'disconnected' }));
+      return false;
+    }
+  }, [dispatch, uid]);
+
+  const waitForAgentStatus = useCallback(
+    async (targetRunning: boolean, timeoutMs = 10000): Promise<boolean> => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        const running = await probeAgentStatus();
+        if (running === targetRunning) {
+          return true;
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      return false;
+    },
+    [probeAgentStatus]
+  );
 
   // Action creators
   const startDaemon = useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
     try {
+      dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
       const result = await alphahumanServiceStart();
-      // Check if the service status indicates success
-      if (result.result && result.result.state === 'Running') {
-        dispatch(resetConnectionAttempts({ userId: userId || '__pending__' }));
+      const running = await waitForAgentStatus(true);
+      if (running) {
+        if (result?.result) {
+          (result.result as { state?: string }).state = 'Running';
+        }
+        dispatch(resetConnectionAttempts({ userId: uid }));
+      } else {
+        dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
       }
       return result;
     } catch (error) {
       console.error('[useDaemonHealth] Failed to start daemon:', error);
+      dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
       return null;
     }
-  }, [dispatch, userId]);
+  }, [dispatch, uid, waitForAgentStatus]);
 
   const stopDaemon = useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
     try {
-      return await alphahumanServiceStop();
+      dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
+      const result = await alphahumanServiceStop();
+      await waitForAgentStatus(false, 7000);
+      return result;
     } catch (error) {
       console.error('[useDaemonHealth] Failed to stop daemon:', error);
       return null;
     }
-  }, []);
+  }, [dispatch, uid, waitForAgentStatus]);
 
   const restartDaemon = useCallback(async (): Promise<boolean> => {
-    const uid = userId || '__pending__';
     try {
       dispatch(setIsRecovering({ userId: uid, isRecovering: true }));
+      dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
 
       // Stop first
-      const stopResult = await alphahumanServiceStop();
-      if (!stopResult?.result || stopResult.result.state !== 'Stopped') {
-        console.warn('[useDaemonHealth] Stop daemon failed, but continuing with start');
-      }
+      await alphahumanServiceStop();
+      await waitForAgentStatus(false, 7000);
 
       // Wait a moment for clean shutdown
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Start again
-      const startResult = await alphahumanServiceStart();
-      const success = startResult?.result && startResult.result.state === 'Running';
+      await alphahumanServiceStart();
+      const success = await waitForAgentStatus(true, 12000);
 
       if (success) {
         dispatch(resetConnectionAttempts({ userId: uid }));
+      } else {
+        dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
       }
 
       dispatch(setIsRecovering({ userId: uid, isRecovering: false }));
@@ -90,19 +131,24 @@ export const useDaemonHealth = (userId?: string) => {
     } catch (error) {
       console.error('[useDaemonHealth] Failed to restart daemon:', error);
       dispatch(setIsRecovering({ userId: uid, isRecovering: false }));
+      dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
       return false;
     }
-  }, [dispatch, userId]);
+  }, [dispatch, uid, waitForAgentStatus]);
 
   const checkDaemonStatus =
     useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
       try {
-        return await alphahumanServiceStatus();
+        const running = await probeAgentStatus();
+        if (running) {
+          return await alphahumanServiceStatus();
+        }
+        return null;
       } catch (error) {
         console.error('[useDaemonHealth] Failed to check daemon status:', error);
         return null;
       }
-    }, []);
+    }, [probeAgentStatus]);
 
   const setAutoStart = useCallback(
     (enabled: boolean) => {
@@ -123,6 +169,10 @@ export const useDaemonHealth = (userId?: string) => {
 
   // Get uptime in human readable format
   const uptimeText = healthSnapshot ? formatUptime(healthSnapshot.uptime_seconds) : 'Unknown';
+
+  useEffect(() => {
+    void probeAgentStatus();
+  }, [probeAgentStatus]);
 
   return {
     // State

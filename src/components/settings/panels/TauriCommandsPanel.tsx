@@ -974,7 +974,7 @@ const TauriCommandsPanel = () => {
                 </div>
               )}
 
-              <InputGroup title="Daemon Service Management">
+              <InputGroup title="Agent Service Management">
                 <div className="md:col-span-2">
                   <div className="space-y-4">
                     {/* Live Status Display */}
@@ -983,7 +983,7 @@ const TauriCommandsPanel = () => {
                         <DaemonHealthIndicator size="md" />
                         <div>
                           <div className="text-white font-medium">
-                            Daemon Status: {daemonHealth.status}
+                            Agent Status: {daemonHealth.status}
                           </div>
                           <div className="text-xs text-gray-400">
                             Last update:{' '}
@@ -1074,9 +1074,9 @@ const TauriCommandsPanel = () => {
                     {/* Auto-start Toggle */}
                     <div className="flex items-center justify-between p-3 rounded-lg bg-stone-800/40 border border-stone-700/60">
                       <div>
-                        <div className="text-sm font-medium text-gray-300">Auto-start Daemon</div>
+                        <div className="text-sm font-medium text-gray-300">Auto-start Agent</div>
                         <div className="text-xs text-gray-500">
-                          Automatically start daemon on app launch
+                          Automatically start agent on app launch
                         </div>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer">

@@ -178,7 +178,7 @@ const MiniSidebar = () => {
             </div>
             {/* Tooltip */}
             <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2 py-1 bg-stone-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-              Daemon Status
+              Agent Status
             </div>
           </div>
         )}

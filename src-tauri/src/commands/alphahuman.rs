@@ -9,6 +9,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+const DEFAULT_CORE_RPC_URL: &str = "http://127.0.0.1:7788/rpc";
+
 fn params_none() -> serde_json::Value {
     serde_json::json!({})
 }
@@ -28,6 +30,26 @@ async fn call_core<T: DeserializeOwned>(
 ) -> Result<T, String> {
     ensure_core(app).await?;
     crate::core_rpc::call(method, params).await
+}
+
+async fn load_config_local() -> Result<crate::alphahuman::config::Config, String> {
+    let timeout_duration = std::time::Duration::from_secs(30);
+    match tokio::time::timeout(
+        timeout_duration,
+        crate::alphahuman::config::Config::load_or_init(),
+    )
+    .await
+    {
+        Ok(Ok(config)) => Ok(config),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("Config loading timed out".to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentServerStatus {
+    pub running: bool,
+    pub url: String,
 }
 
 /// Return the current health snapshot as JSON.
@@ -322,20 +344,43 @@ pub async fn alphahuman_hardware_introspect(
     .await
 }
 
+/// Return whether the local core agent server is reachable.
+#[tauri::command]
+pub async fn alphahuman_agent_server_status() -> Result<CommandResponse<AgentServerStatus>, String> {
+    let url = std::env::var("ALPHAHUMAN_CORE_RPC_URL").unwrap_or_else(|_| DEFAULT_CORE_RPC_URL.to_string());
+    let running = crate::core_rpc::ping().await;
+    Ok(CommandResponse {
+        result: AgentServerStatus { running, url },
+        logs: vec!["agent server status checked".to_string()],
+    })
+}
+
 /// Install the Alphahuman daemon service.
 #[tauri::command]
 pub async fn alphahuman_service_install(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
 ) -> Result<CommandResponse<service::ServiceStatus>, String> {
-    call_core(&app, "alphahuman.service_install", params_none()).await
+    let config = load_config_local().await?;
+    service::install(&config)
+        .map(|status| CommandResponse {
+            result: status,
+            logs: vec!["service install completed".to_string()],
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Start the Alphahuman daemon service.
 #[tauri::command]
 pub async fn alphahuman_service_start(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
 ) -> Result<CommandResponse<service::ServiceStatus>, String> {
-    call_core(&app, "alphahuman.service_start", params_none()).await
+    let config = load_config_local().await?;
+    service::start(&config)
+        .map(|status| CommandResponse {
+            result: status,
+            logs: vec!["service start completed".to_string()],
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Stop the Alphahuman daemon service.
@@ -343,15 +388,34 @@ pub async fn alphahuman_service_start(
 pub async fn alphahuman_service_stop(
     app: tauri::AppHandle,
 ) -> Result<CommandResponse<service::ServiceStatus>, String> {
-    call_core(&app, "alphahuman.service_stop", params_none()).await
+    let config = load_config_local().await?;
+    let status = service::stop(&config)
+        .map_err(|e| e.to_string())?;
+
+    // Also stop any locally managed core process in this Tauri app.
+    if let Some(core) = app.try_state::<crate::core_process::CoreProcessHandle>() {
+        let core_handle: crate::core_process::CoreProcessHandle = (*core).clone();
+        core_handle.shutdown().await;
+    }
+
+    Ok(CommandResponse {
+        result: status,
+        logs: vec!["service stop completed".to_string()],
+    })
 }
 
 /// Get the Alphahuman daemon service status.
 #[tauri::command]
 pub async fn alphahuman_service_status(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
 ) -> Result<CommandResponse<service::ServiceStatus>, String> {
-    call_core(&app, "alphahuman.service_status", params_none()).await
+    let config = load_config_local().await?;
+    service::status(&config)
+        .map(|status| CommandResponse {
+            result: status,
+            logs: vec!["service status fetched".to_string()],
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Uninstall the Alphahuman daemon service.
@@ -359,5 +423,17 @@ pub async fn alphahuman_service_status(
 pub async fn alphahuman_service_uninstall(
     app: tauri::AppHandle,
 ) -> Result<CommandResponse<service::ServiceStatus>, String> {
-    call_core(&app, "alphahuman.service_uninstall", params_none()).await
+    let config = load_config_local().await?;
+    let status = service::uninstall(&config)
+        .map_err(|e| e.to_string())?;
+
+    if let Some(core) = app.try_state::<crate::core_process::CoreProcessHandle>() {
+        let core_handle: crate::core_process::CoreProcessHandle = (*core).clone();
+        core_handle.shutdown().await;
+    }
+
+    Ok(CommandResponse {
+        result: status,
+        logs: vec!["service uninstall completed".to_string()],
+    })
 }

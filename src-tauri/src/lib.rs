@@ -829,6 +829,7 @@ pub fn run() {
                     alphahuman_service_stop,
                     alphahuman_service_status,
                     alphahuman_service_uninstall,
+                    alphahuman_agent_server_status,
                     // Unified skill registry commands
                     unified_list_skills,
                     unified_execute_skill,
@@ -949,6 +950,7 @@ pub fn run() {
                     alphahuman_service_stop,
                     alphahuman_service_status,
                     alphahuman_service_uninstall,
+                    alphahuman_agent_server_status,
                     // Unified skill registry commands (mobile stubs)
                     unified_list_skills,
                     unified_execute_skill,
