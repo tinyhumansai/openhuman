@@ -108,10 +108,7 @@ class ApiClient {
 
       // Handle abort/timeout specifically
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw {
-          success: false,
-          error: `Request timed out after ${timeout / 1000}s`,
-        } as ApiError;
+        throw { success: false, error: `Request timed out after ${timeout / 1000}s` } as ApiError;
       }
 
       // Wrap network/other errors
@@ -174,3 +171,5 @@ class ApiClient {
 
 // Export singleton instance
 export const apiClient = new ApiClient(BACKEND_URL);
+
+console.log('[ApiClient] Backend URL', BACKEND_URL);

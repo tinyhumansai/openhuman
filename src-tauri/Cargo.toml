@@ -23,6 +23,14 @@ path = "src/main.rs"
 name = "alphahuman-tools-discovery"
 path = "src/bin/alphahuman-tools-discovery.rs"
 
+[[bin]]
+name = "alphahuman-core"
+path = "src/bin/alphahuman-core.rs"
+
+[[bin]]
+name = "alphahuman-cli"
+path = "src/bin/alphahuman-cli.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
@@ -119,6 +127,7 @@ rustls = { version = "0.23", features = ["ring"] }
 rustls-pki-types = "1.14.0"
 tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
+clap = { version = "4.5", features = ["derive"] }
 lettre = { version = "0.11.19", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
 mail-parser = "0.11.2"
 async-imap = { version = "0.11", features = ["runtime-tokio"], default-features = false }

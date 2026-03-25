@@ -46,7 +46,7 @@ const handleAuthDeepLink = async (parsed: URL) => {
     return;
   }
 
-  console.log('[DeepLink] Received auth token');
+  console.log('[DeepLink] Received auth token', token);
 
   try {
     await invoke('show_window');
@@ -271,7 +271,7 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
 
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'alphahuman:') {
+    if (parsed.protocol !== 'alphahuman:' && parsed.protocol !== 'openhuman:') {
       return;
     }
 

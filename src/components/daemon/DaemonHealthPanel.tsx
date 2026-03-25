@@ -1,8 +1,8 @@
 /**
- * Daemon Health Panel
+ * Agent Health Panel
  *
- * Detailed health breakdown component showing daemon status, component health,
- * and providing manual control buttons for daemon lifecycle management.
+ * Detailed health breakdown component showing agent status, component health,
+ * and providing manual control buttons for agent lifecycle management.
  */
 import {
   ArrowPathIcon,
@@ -29,13 +29,13 @@ const DaemonHealthPanel = ({ userId, onClose, className = '' }: Props) => {
   const daemonHealth = useDaemonHealth(userId);
   const [operationLoading, setOperationLoading] = useState<string | null>(null);
 
-  // Handle daemon operations with loading states
+  // Handle agent operations with loading states
   const handleOperation = async (operation: () => Promise<unknown>, operationName: string) => {
     setOperationLoading(operationName);
     try {
       await operation();
     } catch (error) {
-      console.error(`[DaemonHealthPanel] ${operationName} failed:`, error);
+      console.error(`[AgentHealthPanel] ${operationName} failed:`, error);
     } finally {
       setOperationLoading(null);
     }
@@ -87,7 +87,7 @@ const DaemonHealthPanel = ({ userId, onClose, className = '' }: Props) => {
     <div className={`bg-stone-900 rounded-lg border border-stone-700 p-6 space-y-6 ${className}`}>
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Daemon Health</h3>
+        <h3 className="text-lg font-semibold text-white">Agent Status</h3>
         {onClose && (
           <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
             <XMarkIcon className="w-5 h-5" />
@@ -172,8 +172,8 @@ const DaemonHealthPanel = ({ userId, onClose, className = '' }: Props) => {
       {/* Auto-start Toggle */}
       <div className="flex items-center justify-between p-3 rounded-lg bg-stone-800/40 border border-stone-700/60">
         <div>
-          <div className="text-sm font-medium text-gray-300">Auto-start Daemon</div>
-          <div className="text-xs text-gray-500">Automatically start daemon on app launch</div>
+          <div className="text-sm font-medium text-gray-300">Auto-start Agent</div>
+          <div className="text-xs text-gray-500">Automatically start agent on app launch</div>
         </div>
         <label className="relative inline-flex items-center cursor-pointer">
           <input

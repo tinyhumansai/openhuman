@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const SERVICE_LABEL: &str = "com.alphahuman.daemon";
 const LEGACY_SERVICE_LABEL: &str = "com.alphahuman.app";
@@ -13,6 +13,30 @@ const WINDOWS_TASK_NAME: &str = "AlphaHuman Daemon";
 
 fn windows_task_name() -> &'static str {
     WINDOWS_TASK_NAME
+}
+
+fn daemon_program_args(exe: &std::path::Path) -> Vec<String> {
+    let file_name = exe
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if file_name.contains("alphahuman-core") {
+        vec!["serve".to_string()]
+    } else {
+        vec!["core".to_string(), "serve".to_string()]
+    }
+}
+
+fn daemon_command_line(exe: &std::path::Path) -> String {
+    let args = daemon_program_args(exe);
+    let exe_quoted = format!("\"{}\"", exe.display());
+    if args.is_empty() {
+        exe_quoted
+    } else {
+        format!("{} {}", exe_quoted, args.join(" "))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,19 +73,39 @@ pub fn install(config: &Config) -> Result<ServiceStatus> {
 pub fn start(config: &Config) -> Result<ServiceStatus> {
     if cfg!(target_os = "macos") {
         let plist = macos_service_file()?;
+        let domain = macos_gui_domain()?;
+        let primary_target = macos_target(SERVICE_LABEL)?;
 
-        // Check if service is already loaded to avoid "Input/output error"
+        // Prefer modern launchctl lifecycle commands on macOS.
         if !is_service_loaded_macos()? {
             log::info!("[service] Loading macOS LaunchAgent service");
-            run_checked(Command::new("launchctl").arg("load").arg("-w").arg(&plist))?;
+            let bootstrap_ok = run_checked(
+                Command::new("launchctl")
+                    .arg("bootstrap")
+                    .arg(&domain)
+                    .arg(&plist),
+            );
+            if let Err(err) = bootstrap_ok {
+                log::warn!(
+                    "[service] launchctl bootstrap failed, falling back to load -w: {err}"
+                );
+                run_checked(Command::new("launchctl").arg("load").arg("-w").arg(&plist))?;
+            }
         } else {
             log::info!("[service] LaunchAgent service already loaded, skipping load step");
         }
 
         // Always try to start - this is safe even if already running
         log::info!("[service] Starting macOS LaunchAgent service");
-        let start_result = run_checked(Command::new("launchctl").arg("start").arg(SERVICE_LABEL));
+        let start_result = run_checked(
+            Command::new("launchctl")
+                .arg("kickstart")
+                .arg("-k")
+                .arg(&primary_target),
+        );
         if let Err(e) = start_result {
+            log::warn!("[service] launchctl kickstart failed, trying launchctl start");
+            let _ = run_checked(Command::new("launchctl").arg("start").arg(SERVICE_LABEL));
             // Check if it's already running - that's not an error for us
             let status_check = status(config)?;
             if matches!(status_check.state, ServiceState::Running) {
@@ -77,7 +121,11 @@ pub fn start(config: &Config) -> Result<ServiceStatus> {
         // Check if service is enabled before trying to start
         if !is_service_enabled_linux()? {
             log::info!("[service] Enabling systemd service");
-            let _ = run_checked(Command::new("systemctl").args(["--user", "enable", "alphahuman.service"]));
+            let _ = run_checked(Command::new("systemctl").args([
+                "--user",
+                "enable",
+                "alphahuman.service",
+            ]));
         } else {
             log::info!("[service] Systemd service already enabled");
         }
@@ -86,7 +134,8 @@ pub fn start(config: &Config) -> Result<ServiceStatus> {
 
         // Try to start - systemctl start is idempotent
         log::info!("[service] Starting systemd service");
-        let start_result = run_checked(Command::new("systemctl").args(["--user", "start", "alphahuman.service"]));
+        let start_result =
+            run_checked(Command::new("systemctl").args(["--user", "start", "alphahuman.service"]));
         if let Err(e) = start_result {
             // Check if it's already active - that's success for us
             let status_check = status(config)?;
@@ -134,17 +183,47 @@ pub fn start(config: &Config) -> Result<ServiceStatus> {
 pub fn stop(config: &Config) -> Result<ServiceStatus> {
     if cfg!(target_os = "macos") {
         let plist = macos_service_file()?;
-        let _ = run_checked(Command::new("launchctl").arg("stop").arg(SERVICE_LABEL));
-        let _ = run_checked(Command::new("launchctl").arg("unload").arg("-w").arg(&plist));
+        let domain = macos_gui_domain()?;
+        let primary_target = macos_target(SERVICE_LABEL)?;
 
         let legacy_plist = macos_service_file_for(LEGACY_SERVICE_LABEL)?;
-        let _ = run_checked(Command::new("launchctl").arg("stop").arg(LEGACY_SERVICE_LABEL));
-        let _ = run_checked(Command::new("launchctl").arg("unload").arg("-w").arg(&legacy_plist));
+        let legacy_target = macos_target(LEGACY_SERVICE_LABEL)?;
+
+        // Modern lifecycle path first.
+        run_best_effort(
+            Command::new("launchctl")
+                .arg("bootout")
+                .arg(&domain)
+                .arg(&primary_target),
+        );
+        run_best_effort(
+            Command::new("launchctl")
+                .arg("bootout")
+                .arg(&domain)
+                .arg(&plist),
+        );
+        run_best_effort(
+            Command::new("launchctl")
+                .arg("bootout")
+                .arg(&domain)
+                .arg(&legacy_target),
+        );
+        run_best_effort(
+            Command::new("launchctl")
+                .arg("bootout")
+                .arg(&domain)
+                .arg(&legacy_plist),
+        );
+
+        // Compatibility fallback.
+        run_best_effort(Command::new("launchctl").arg("stop").arg(SERVICE_LABEL));
+        run_best_effort(Command::new("launchctl").arg("stop").arg(LEGACY_SERVICE_LABEL));
         return status(config);
     }
 
     if cfg!(target_os = "linux") {
-        let _ = run_checked(Command::new("systemctl").args(["--user", "stop", "alphahuman.service"]));
+        let _ =
+            run_checked(Command::new("systemctl").args(["--user", "stop", "alphahuman.service"]));
         return status(config);
     }
 
@@ -161,9 +240,9 @@ pub fn stop(config: &Config) -> Result<ServiceStatus> {
 pub fn status(config: &Config) -> Result<ServiceStatus> {
     if cfg!(target_os = "macos") {
         let out = run_capture(Command::new("launchctl").arg("list"))?;
-        let running = out.lines().any(|line| {
-            line.contains(SERVICE_LABEL) || line.contains(LEGACY_SERVICE_LABEL)
-        });
+        let running = out
+            .lines()
+            .any(|line| line.contains(SERVICE_LABEL) || line.contains(LEGACY_SERVICE_LABEL));
         return Ok(ServiceStatus {
             state: if running {
                 ServiceState::Running
@@ -199,7 +278,8 @@ pub fn status(config: &Config) -> Result<ServiceStatus> {
     if cfg!(target_os = "windows") {
         let _ = config;
         let task_name = windows_task_name();
-        let out = run_capture(Command::new("schtasks").args(["/Query", "/TN", task_name, "/FO", "LIST"]));
+        let out =
+            run_capture(Command::new("schtasks").args(["/Query", "/TN", task_name, "/FO", "LIST"]));
         match out {
             Ok(text) => {
                 let running = text.contains("Running");
@@ -304,6 +384,11 @@ fn install_macos(config: &Config) -> Result<()> {
 
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
+    let daemon_args = daemon_program_args(&exe);
+    let program_args_xml = std::iter::once(exe.display().to_string())
+        .chain(daemon_args)
+        .map(|arg| format!("    <string>{}</string>\n", xml_escape(&arg)))
+        .collect::<String>();
 
     let plist = format!(
         r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -314,9 +399,7 @@ fn install_macos(config: &Config) -> Result<()> {
   <string>{label}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{exe}</string>
-    <string>daemon</string>
-  </array>
+{program_args}  </array>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -330,13 +413,25 @@ fn install_macos(config: &Config) -> Result<()> {
     <key>ALPHAHUMAN_DAEMON_INTERNAL</key>
     <string>false</string>
   </dict>
+  <key>WorkingDirectory</key>
+  <string>{workdir}</string>
+  <key>ProcessType</key>
+  <string>Background</string>
 </dict>
 </plist>
 "#,
         label = SERVICE_LABEL,
-        exe = xml_escape(&exe.display().to_string()),
+        program_args = program_args_xml,
         stdout = xml_escape(&stdout.display().to_string()),
-        stderr = xml_escape(&stderr.display().to_string())
+        stderr = xml_escape(&stderr.display().to_string()),
+        workdir = xml_escape(
+            &config
+                .config_path
+                .parent()
+                .map_or_else(|| PathBuf::from("."), PathBuf::from)
+                .display()
+                .to_string(),
+        )
     );
 
     fs::write(&file, plist)?;
@@ -359,10 +454,11 @@ fn install_linux(config: &Config) -> Result<()> {
 
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
+    let exec_start = daemon_command_line(&exe);
 
     let unit = format!(
-        "[Unit]\nDescription=Alphahuman Daemon\n\n[Service]\nExecStart={} daemon\nRestart=always\nRestartSec=3\n\nStandardOutput=append:{}\nStandardError=append:{}\n\n[Install]\nWantedBy=default.target\n",
-        exe.display(),
+        "[Unit]\nDescription=Alphahuman Daemon\n\n[Service]\nExecStart={}\nRestart=always\nRestartSec=3\n\nStandardOutput=append:{}\nStandardError=append:{}\n\n[Install]\nWantedBy=default.target\n",
+        exec_start,
         stdout.display(),
         stderr.display(),
     );
@@ -384,10 +480,11 @@ fn install_windows(config: &Config) -> Result<()> {
     let wrapper = logs_dir.join("alphahuman-daemon.cmd");
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
+    let daemon_cmd = daemon_command_line(&exe);
 
     let cmd = format!(
-        "@echo off\n\"{}\" daemon >> \"{}\" 2>> \"{}\"\n",
-        exe.display(),
+        "@echo off\n{} >> \"{}\" 2>> \"{}\"\n",
+        daemon_cmd,
         stdout.display(),
         stderr.display()
     );
@@ -428,6 +525,15 @@ fn macos_service_file_for(label: &str) -> Result<PathBuf> {
         .join(format!("{label}.plist")))
 }
 
+fn macos_gui_domain() -> Result<String> {
+    let uid = run_capture(Command::new("id").arg("-u"))?;
+    Ok(format!("gui/{}", uid.trim()))
+}
+
+fn macos_target(label: &str) -> Result<String> {
+    Ok(format!("{}/{}", macos_gui_domain()?, label))
+}
+
 fn linux_service_file(config: &Config) -> Result<PathBuf> {
     let config_dir = config
         .config_path
@@ -458,12 +564,36 @@ fn run_capture(cmd: &mut Command) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn run_best_effort(cmd: &mut Command) {
+    match cmd.stdout(Stdio::null()).stderr(Stdio::null()).status() {
+        Ok(status) => {
+            if !status.success() {
+                log::debug!("[service] best-effort command failed with status {status}");
+            }
+        }
+        Err(err) => {
+            log::debug!("[service] best-effort command failed to execute: {err}");
+        }
+    }
+}
+
 /// Check if the macOS LaunchAgent service is loaded (regardless of running state)
 fn is_service_loaded_macos() -> Result<bool> {
-    let out = run_capture(Command::new("launchctl").arg("list"))?;
-    Ok(out.lines().any(|line| {
-        line.contains(SERVICE_LABEL) || line.contains(LEGACY_SERVICE_LABEL)
-    }))
+    if run_checked(Command::new("launchctl").arg("print").arg(macos_target(SERVICE_LABEL)?))
+        .is_ok()
+    {
+        return Ok(true);
+    }
+    if run_checked(
+        Command::new("launchctl")
+            .arg("print")
+            .arg(macos_target(LEGACY_SERVICE_LABEL)?),
+    )
+    .is_ok()
+    {
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Check if the Linux systemd service is enabled

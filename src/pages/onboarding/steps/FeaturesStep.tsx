@@ -26,8 +26,8 @@ const FeaturesStep = ({ onNext }: FeaturesStepProps) => {
   return (
     <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2">Are You Ready For This?</h1>
-        <p className="opacity-70 text-sm">Here's some of the things that AlphaHuman can do</p>
+        <h1 className="text-xl font-bold mb-2">Ready to get started?</h1>
+        <p className="opacity-70 text-sm">Here's some of the things that OpenHuman can do</p>
       </div>
 
       <div className="space-y-2 mb-4">

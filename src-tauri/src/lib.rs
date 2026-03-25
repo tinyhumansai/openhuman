@@ -9,26 +9,31 @@
 //! - Native notifications
 
 mod ai;
+pub mod alphahuman;
 mod auth;
 mod commands;
+mod core_process;
+mod core_rpc;
+pub mod core_server;
 pub mod memory;
 mod models;
 mod runtime;
 mod services;
-pub mod alphahuman;
 mod unified_skills;
 mod utils;
 
 use ai::*;
 use commands::unified_skills::{
-    unified_execute_skill, unified_generate_skill, unified_list_skills,
-    unified_self_evolve_skill,
+    unified_execute_skill, unified_generate_skill, unified_list_skills, unified_self_evolve_skill,
 };
 use commands::*;
 use services::socket_service::SOCKET_SERVICE;
 use std::path::PathBuf;
-use tauri::{AppHandle, Manager, RunEvent, Emitter};
-use tokio::{fs, time::{interval, Duration}};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
+use tokio::{
+    fs,
+    time::{interval, Duration},
+};
 
 #[cfg(desktop)]
 use tauri::{
@@ -51,8 +56,8 @@ async fn write_ai_config_file(filename: String, content: String) -> Result<bool,
     use std::env;
 
     // Get the project root directory (parent of src-tauri)
-    let current_dir = env::current_dir()
-        .map_err(|e| format!("Failed to get current directory: {e}"))?;
+    let current_dir =
+        env::current_dir().map_err(|e| format!("Failed to get current directory: {e}"))?;
 
     // Go up one level to get project root (since we're in src-tauri/)
     let project_root = current_dir
@@ -74,8 +79,7 @@ async fn write_ai_config_file(filename: String, content: String) -> Result<bool,
     let file_path = ai_dir.join(&filename);
 
     // Ensure ai directory exists
-    std::fs::create_dir_all(&ai_dir)
-        .map_err(|e| format!("Failed to create ai directory: {e}"))?;
+    std::fs::create_dir_all(&ai_dir).map_err(|e| format!("Failed to create ai directory: {e}"))?;
 
     // Write the file
     std::fs::write(&file_path, content)
@@ -277,7 +281,10 @@ async fn watch_daemon_health_file(app_handle: AppHandle, data_dir: PathBuf) {
     let mut interval = interval(Duration::from_secs(2));
     let mut last_modified: Option<std::time::SystemTime> = None;
 
-    log::info!("[alphahuman] Watching daemon health file: {}", state_file.display());
+    log::info!(
+        "[alphahuman] Watching daemon health file: {}",
+        state_file.display()
+    );
 
     loop {
         interval.tick().await;
@@ -290,26 +297,44 @@ async fn watch_daemon_health_file(app_handle: AppHandle, data_dir: PathBuf) {
 
                     // Read and parse health data
                     if let Ok(content) = fs::read_to_string(&state_file).await {
-                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&content) {
-                            log::debug!("[alphahuman] Broadcasting health event from file: {:?}", json_value);
+                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&content)
+                        {
+                            log::debug!(
+                                "[alphahuman] Broadcasting health event from file: {:?}",
+                                json_value
+                            );
 
                             // Emit Tauri event to frontend (same as internal daemon)
                             if let Err(e) = app_handle.emit("alphahuman:health", &json_value) {
-                                log::error!("[alphahuman] Failed to emit health event from file: {}", e);
+                                log::error!(
+                                    "[alphahuman] Failed to emit health event from file: {}",
+                                    e
+                                );
                             } else {
-                                log::debug!("[alphahuman] Health event emitted successfully from file");
+                                log::debug!(
+                                    "[alphahuman] Health event emitted successfully from file"
+                                );
                             }
                         } else {
-                            log::debug!("[alphahuman] Failed to parse health file as JSON: {}", state_file.display());
+                            log::debug!(
+                                "[alphahuman] Failed to parse health file as JSON: {}",
+                                state_file.display()
+                            );
                         }
                     } else {
-                        log::debug!("[alphahuman] Failed to read health file: {}", state_file.display());
+                        log::debug!(
+                            "[alphahuman] Failed to read health file: {}",
+                            state_file.display()
+                        );
                     }
                 }
             }
         } else {
             // File doesn't exist yet - external daemon may not be writing yet
-            log::debug!("[alphahuman] Health file not found yet: {}", state_file.display());
+            log::debug!(
+                "[alphahuman] Health file not found yet: {}",
+                state_file.display()
+            );
         }
     }
 }
@@ -638,6 +663,21 @@ pub fn run() {
                 }
             }
 
+            // Start/ensure standalone core process for business logic RPC.
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let core_handle = core_process::CoreProcessHandle::new(core_process::default_core_port());
+                std::env::set_var("ALPHAHUMAN_CORE_RPC_URL", core_handle.rpc_url());
+                app.manage(core_handle.clone());
+                tauri::async_runtime::spawn(async move {
+                    if let Err(err) = core_handle.ensure_running().await {
+                        log::error!("[core] failed to start core process: {err}");
+                    } else {
+                        log::info!("[core] core process ready");
+                    }
+                });
+            }
+
             if daemon_mode {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
@@ -789,6 +829,7 @@ pub fn run() {
                     alphahuman_service_stop,
                     alphahuman_service_status,
                     alphahuman_service_uninstall,
+                    alphahuman_agent_server_status,
                     // Unified skill registry commands
                     unified_list_skills,
                     unified_execute_skill,
@@ -909,6 +950,7 @@ pub fn run() {
                     alphahuman_service_stop,
                     alphahuman_service_status,
                     alphahuman_service_uninstall,
+                    alphahuman_agent_server_status,
                     // Unified skill registry commands (mobile stubs)
                     unified_list_skills,
                     unified_execute_skill,
@@ -951,6 +993,13 @@ pub fn run() {
                         log::info!("[alphahuman] Daemon shutdown signalled");
                     }
 
+                    if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
+                        let core_handle: core_process::CoreProcessHandle = (*core).clone();
+                        tauri::async_runtime::spawn(async move {
+                            core_handle.shutdown().await;
+                        });
+                    }
+
                     let _ = app_handle;
                 }
 
@@ -959,4 +1008,8 @@ pub fn run() {
                 }
             }
         });
+}
+
+pub fn run_core_from_args(args: &[String]) -> anyhow::Result<()> {
+    core_server::run_from_cli_args(args)
 }

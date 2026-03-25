@@ -67,21 +67,21 @@ const navItems = [
       </svg>
     ),
   },
-  {
-    id: 'invites',
-    label: 'Invite Friends',
-    path: '/invites',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-        />
-      </svg>
-    ),
-  },
+  // {
+  //   id: 'invites',
+  //   label: 'Invite Friends',
+  //   path: '/invites',
+  //   icon: (
+  //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  //       <path
+  //         strokeLinecap="round"
+  //         strokeLinejoin="round"
+  //         strokeWidth={2}
+  //         d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
+  //       />
+  //     </svg>
+  //   ),
+  // },
   {
     id: 'settings',
     label: 'Settings',
@@ -178,7 +178,7 @@ const MiniSidebar = () => {
             </div>
             {/* Tooltip */}
             <div className="pointer-events-none absolute left-full top-1/2 -translate-y-1/2 ml-2 px-2 py-1 bg-stone-800 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-              Daemon Status
+              Agent Status
             </div>
           </div>
         )}

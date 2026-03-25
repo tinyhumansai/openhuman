@@ -1,6 +1,8 @@
-import { Link } from 'react-router-dom';
-
+import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
+import { getProviderConfig } from '../components/oauth/providerConfigs';
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
+
+const googleProvider = getProviderConfig('google');
 
 const Welcome = () => {
   return (
@@ -20,12 +22,8 @@ const Welcome = () => {
               Your AI superhuman for personal and business life.
             </p>
 
-            <div className="flex flex-wrap items-center justify-center gap-3">
-              <Link
-                className="inline-flex bg-[#201732] px-5 py-2 text-sm font-medium tracking-wide text-[#d4c8ff] transition-colors hover:bg-[#2a1d44]"
-                to="/login">
-                Get Started
-              </Link>
+            <div className="flex w-full max-w-sm flex-col items-stretch">
+              {googleProvider ? <OAuthProviderButton provider={googleProvider} /> : null}
             </div>
           </div>
         </section>
