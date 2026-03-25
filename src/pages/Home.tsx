@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
+
 import ConnectionIndicator from '../components/ConnectionIndicator';
-import SkillsGrid from '../components/SkillsGrid';
 import { useUser } from '../hooks/useUser';
 
 const Home = () => {
@@ -46,8 +46,13 @@ const Home = () => {
               </button>
             </div>
 
-            {/* Skills Grid */}
-            <SkillsGrid />
+            <div className="mt-4 mb-8">
+              <button
+                onClick={() => navigate('/skills')}
+                className="btn-secondary w-full py-2.5 text-sm font-medium rounded-xl">
+                Open Skills Page
+              </button>
+            </div>
           </div>
         </div>
       </div>
