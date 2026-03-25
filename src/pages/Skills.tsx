@@ -14,6 +14,7 @@ import SkillSetupModal from '../components/skills/SkillSetupModal';
 import { deriveConnectionStatus, useSkillConnectionStatus } from '../lib/skills/hooks';
 import { skillManager } from '../lib/skills/manager';
 import type { SkillConnectionStatus, SkillHostConnectionState } from '../lib/skills/types';
+import { deriveSkillSyncUiState } from './skillsSyncUi';
 import { useAppSelector } from '../store/hooks';
 import { IS_DEV } from '../utils/config';
 
@@ -43,7 +44,6 @@ function statusDotClass(status: SkillConnectionStatus): string {
 interface SkillCardProps {
   skill: SkillListEntry;
   onSetup: () => void;
-  onSync: () => void;
 }
 
 function SkillCard({ skill, onSetup }: SkillCardProps) {
@@ -52,17 +52,19 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
   const skillState = useAppSelector(state => state.skills.skillStates[skill.id]) as
     | (SkillHostConnectionState & Record<string, unknown>)
     | undefined;
-  const [syncing, setSyncing] = useState(false);
+  const [manualSyncing, setManualSyncing] = useState(false);
+  const syncUi = useMemo(() => deriveSkillSyncUiState(skill.id, skillState), [skill.id, skillState]);
+  const isSyncing = manualSyncing || syncUi.isSyncing;
 
   const handleSync = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    setSyncing(true);
+    setManualSyncing(true);
     try {
       await skillManager.triggerSync(skill.id);
     } catch (err) {
       console.error(`Sync failed for ${skill.id}:`, err);
     } finally {
-      setSyncing(false);
+      setManualSyncing(false);
     }
   };
 
@@ -98,6 +100,26 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
         {subtitleParts.length > 0 && (
           <p className="text-[11px] text-stone-500 truncate mt-0.5">{subtitleParts.join(' · ')}</p>
         )}
+        {isSyncing && (
+          <div className="mt-1.5">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-800">
+              {syncUi.progressPercent != null ? (
+                <div
+                  className="h-full rounded-full bg-primary-400 transition-all duration-300"
+                  style={{ width: `${syncUi.progressPercent}%` }}
+                />
+              ) : (
+                <div className="h-full w-1/2 rounded-full bg-primary-400/80 animate-pulse" />
+              )}
+            </div>
+            {syncUi.progressMessage && (
+              <p className="text-[11px] text-primary-300 truncate mt-1">{syncUi.progressMessage}</p>
+            )}
+            {syncUi.metricsText && (
+              <p className="text-[11px] text-stone-500 truncate mt-0.5">{syncUi.metricsText}</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Actions */}
@@ -106,12 +128,12 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
           <>
             {/* Sync */}
             <button
-              onClick={syncing ? undefined : handleSync}
-              disabled={syncing}
+              onClick={isSyncing ? undefined : handleSync}
+              disabled={isSyncing}
               className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
               title="Sync">
               <svg
-                className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`}
+                className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -282,9 +304,6 @@ export default function Skills() {
                       key={skill.id}
                       skill={skill}
                       onSetup={() => openSkillSetup(skill)}
-                      onSync={() => {
-                        skillManager.triggerSync(skill.id).catch(console.error);
-                      }}
                     />
                   ))}
                 </div>
