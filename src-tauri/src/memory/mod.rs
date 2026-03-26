@@ -230,7 +230,6 @@ impl MemoryClient {
                 log::warn!("[memory] recall_skill_context: exit — error (namespace={namespace}): {e}");
                 format!("Memory recall failed: {e}")
             })?;
-        log::info!("[memory] recall_skill_context: response: {res:?}");
         let response = res.data.context;
         log::info!(
             "[memory] recall_skill_context: exit — ok (namespace={namespace}, has_response={})",

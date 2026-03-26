@@ -2,19 +2,21 @@
 
 This document lists all available tools that AlphaHuman can use to interact with external services and perform actions. Tools are organized by integration and automatically updated when the app loads.
 
+> **Architecture note**: All read/query operations (get-page, list-*, query-database, search, etc.) are handled by the memory layer — data is fetched from the TinyHumans Neocortex memory system and injected into context automatically. Only write, create, update, delete, and trigger operations are exposed as tools.
+
 ## Overview
 
-AlphaHuman has access to **25 tools** across **1 integrations**.
+AlphaHuman has access to **12 tools** across **1 integrations**.
 
 **Quick Statistics:**
 
-- **Notion**: 25 tools
+- **Notion**: 12 tools
 
 ## Available Tools
 
 ### Notion Tools
 
-This skill provides 25 tools for notion integration.
+This skill provides 12 tools for notion integration. Data retrieval is handled by the memory layer, not tools.
 
 #### append-blocks
 
@@ -40,11 +42,11 @@ This skill provides 25 tools for notion integration.
 
 #### append-text
 
-**Description**: Append text content to a page or block. Use the page id (or block_id) from list-all-pages or get-page. Creates paragraph blocks with the given text.
+**Description**: Append text content to a page or block. Use the page id (or block_id) from memory context. Creates paragraph blocks with the given text.
 
 **Parameters**:
 
-- **block_id** (string): The page or block ID to append to (use page id from list-all-pages)
+- **block_id** (string): The page or block ID to append to (use page id from memory context)
 - **content** (string): Alias for text — the content to append to the page
 - **page_id** (string): Alias for block_id when appending to a page (same as block_id)
 - **text** (string) **(required)**: The text to append (required). Pass the exact content to add to the page.
@@ -190,251 +192,6 @@ This skill provides 25 tools for notion integration.
 
 ---
 
-#### get-block
-
-**Description**: Get a block by its ID. Returns the block's type and content.
-
-**Parameters**:
-
-- **block_id** (string) **(required)**: The block ID
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "get-block", "parameters": { "block_id": "example_block_id" } }
-```
-
----
-
-#### get-block-children
-
-**Description**: Get the children blocks of a block or page.
-
-**Parameters**:
-
-- **block_id** (string) **(required)**: The parent block or page ID
-- **page_size** (number): Number of blocks (default 50, max 100)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "get-block-children", "parameters": { "block_id": "example_block_id", "page_size": 10 } }
-```
-
----
-
-#### get-database
-
-**Description**: Get a database's schema and metadata. Shows all properties and their types.
-
-**Parameters**:
-
-- **database_id** (string) **(required)**: The database ID
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "get-database", "parameters": { "database_id": "example_database_id" } }
-```
-
----
-
-#### get-page
-
-**Description**: Get a page's metadata and properties by its ID. Use notion-get-page-content to get the actual content/blocks.
-
-**Parameters**:
-
-- **page_id** (string) **(required)**: The page ID (UUID format, with or without dashes)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "get-page", "parameters": { "page_id": "example_page_id" } }
-```
-
----
-
-#### get-page-content
-
-**Description**: Get the content blocks of a page. Returns the text and structure of the page. Use recursive=true to also get nested blocks.
-
-**Parameters**:
-
-- **page_id** (string) **(required)**: The page ID to get content from
-- **page_size** (number): Number of blocks to return (default 50, max 100)
-- **recursive** (string): Whether to fetch nested blocks (default: false)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{
-  "tool": "get-page-content",
-  "parameters": { "page_id": "example_page_id", "page_size": 10, "recursive": "example_recursive" }
-}
-```
-
----
-
-#### get-user
-
-**Description**: Get a user by their ID.
-
-**Parameters**:
-
-- **user_id** (string) **(required)**: The user ID
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "get-user", "parameters": { "user_id": "example_user_id" } }
-```
-
----
-
-#### list-all-databases
-
-**Description**: List all databases in the workspace that the integration has access to.
-
-**Parameters**:
-
-- **page_size** (number): Number of results (default 20, max 100)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "list-all-databases", "parameters": { "page_size": 10 } }
-```
-
----
-
-#### list-all-pages
-
-**Description**: List pages in the workspace (from last sync). Returns synced pages; run a sync in Settings to refresh.
-
-**Parameters**:
-
-- **page_size** (number): Number of results to return (default 20, max 100)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "list-all-pages", "parameters": { "page_size": 10 } }
-```
-
----
-
-#### list-comments
-
-**Description**: List comments on a block or page.
-
-**Parameters**:
-
-- **block_id** (string) **(required)**: Block or page ID to get comments for
-- **page_size** (number): Number of results (default 20, max 100)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "list-comments", "parameters": { "block_id": "example_block_id", "page_size": 10 } }
-```
-
----
-
-#### list-users
-
-**Description**: List all users in the workspace that the integration can see.
-
-**Parameters**:
-
-- **page_size** (number): Number of results (default 20, max 100)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "list-users", "parameters": { "page_size": 10 } }
-```
-
----
-
-#### query-database
-
-**Description**: Query a database with optional filters and sorts. Returns database rows/pages. Automatically handles API version compatibility.
-
-**Parameters**:
-
-- **database_id** (string) **(required)**: The database ID to query. Can be either a legacy database ID or a new data source ID - the tool will handle both automatically
-- **filter** (string): JSON string of filter object (Notion filter syntax)
-- **page_size** (number): Number of results (default 20, max 100)
-- **sorts** (string): JSON string of sorts array (Notion sort syntax)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{
-  "tool": "query-database",
-  "parameters": {
-    "database_id": "example_database_id",
-    "filter": "example_filter",
-    "page_size": 10,
-    "sorts": "example_sorts"
-  }
-}
-```
-
----
-
-#### search
-
-**Description**: Search for pages and databases in your Notion workspace. Supports query, filter by object type (page or database), and sort by last_edited_time.
-
-**Parameters**:
-
-- **filter** (string): Filter results by type: page or database
-- **page_size** (number): Number of results to return (default 20, max 100)
-- **query** (string): Search query (optional, returns recent if empty)
-- **sort_direction** (string): Sort direction (default: descending by last_edited_time)
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{
-  "tool": "search",
-  "parameters": {
-    "filter": "example_filter",
-    "page_size": 10,
-    "query": "example_query",
-    "sort_direction": "example_sort_direction"
-  }
-}
-```
-
----
-
 #### summarize-pages
 
 **Description**: AI summarization of Notion pages is now handled by the backend server. Synced page content is submitted to the server which runs summarization.
@@ -463,22 +220,6 @@ This skill provides 25 tools for notion integration.
 
 ```json
 { "tool": "sync-now", "parameters": {} }
-```
-
----
-
-#### sync-status
-
-**Description**: Get the current Notion sync status including last sync time, total synced pages/databases, sync progress, and any errors.
-
-**Parameters**: _None_
-
-**Usage Context**: Available in all environments
-
-**Example**:
-
-```json
-{ "tool": "sync-status", "parameters": {} }
 ```
 
 ---
@@ -539,7 +280,7 @@ This skill provides 25 tools for notion integration.
 
 #### update-page
 
-**Description**: Update a page's properties. Can update title and other properties. Use notion-append-text to add content blocks.
+**Description**: Update a page's properties. Can update title and other properties. Use append-text to add content blocks.
 
 **Parameters**:
 
@@ -588,9 +329,10 @@ This skill provides 25 tools for notion integration.
 
 **Tool Statistics**
 
-- Total Tools: 25
+- Total Tools: 12
 - Active Skills: 1
-- Last Updated: 2026-03-17T17:02:14.087Z
+- Read/Query Tools: 0 (handled by memory layer)
+- Last Updated: 2026-03-26
 
 _This file was automatically generated when the app loaded._
 _Tools are discovered from the running V8 skills runtime._

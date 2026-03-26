@@ -312,15 +312,26 @@ fn has_meaningful_content(content: &str) -> bool {
 
 // ─── Tool discovery (desktop only) ───────────────────────────────────────────
 
+/// Returns true for read-only tools whose data is served by the memory layer, not the LLM tool loop.
+fn is_read_tool(name: &str) -> bool {
+    name.starts_with("get-")
+        || name.starts_with("list-")
+        || name.starts_with("query-")
+        || name == "search"
+        || name == "sync-status"
+}
+
 /// Build OpenAI-format tool definitions from the Rust skill registry.
 /// Tool names are namespaced as `{skill_id}__{tool_name}`.
+/// Read-only tools are excluded — their data comes from the memory layer (Step 2 context recall).
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn discover_tools(
     engine: &crate::runtime::qjs_engine::RuntimeEngine,
 ) -> Vec<serde_json::Value> {
-    let raw_tools = engine.all_tools();
-    raw_tools
+    engine
+        .all_tools()
         .into_iter()
+        .filter(|(_, tool)| !is_read_tool(&tool.name))
         .map(|(skill_id, tool)| {
             serde_json::json!({
                 "type": "function",

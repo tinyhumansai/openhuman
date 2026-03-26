@@ -463,18 +463,28 @@ const Conversations = () => {
         { role: 'user' as const, content: processedUserContent },
       ];
 
+      // Read-only tools are excluded — their data comes from the memory layer (recalled in context above).
+      const isReadTool = (toolName: string): boolean =>
+        toolName.startsWith('get-') ||
+        toolName.startsWith('list-') ||
+        toolName.startsWith('query-') ||
+        toolName === 'search' ||
+        toolName === 'sync-status';
+
       // Build tool definitions for ALL ready skills — namespaced as {skillId}__{toolName}
       const allSkillTools: Tool[] = Object.entries(skillsState.skills)
         .filter(([, skill]) => skill.status === 'ready' && skill.tools?.length)
         .flatMap(([skillId, skill]) =>
-          (skill.tools ?? []).map(t => ({
-            type: 'function' as const,
-            function: {
-              name: `${skillId}__${t.name}`,
-              description: t.description,
-              parameters: t.inputSchema as Tool['function']['parameters'],
-            },
-          }))
+          (skill.tools ?? [])
+            .filter(t => !isReadTool(t.name))
+            .map(t => ({
+              type: 'function' as const,
+              function: {
+                name: `${skillId}__${t.name}`,
+                description: t.description,
+                parameters: t.inputSchema as Tool['function']['parameters'],
+              },
+            }))
         );
 
       console.log(
