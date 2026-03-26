@@ -101,18 +101,10 @@ export interface ConfirmationModal {
   showDontShowAgain?: boolean;
 }
 
-// Chat modal types
+// Chat message type
 export interface ChatMessage {
   id: string;
   content: string;
   sender: 'user' | 'ai';
   timestamp: Date;
-}
-
-export interface ChatModal {
-  isOpen: boolean;
-  item: ActionableItem | null;
-  messages: ChatMessage[];
-  onClose: () => void;
-  onSend: (message: string) => void;
 }

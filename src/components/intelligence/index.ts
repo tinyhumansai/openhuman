@@ -3,7 +3,6 @@
 
 export { ActionableCard } from './ActionableCard';
 export { ConfirmationModal } from './ConfirmationModal';
-export { ChatModal } from './ChatModal';
 export { Toast, ToastContainer } from './Toast';
 export { MOCK_ACTIONABLE_ITEMS } from './mockData';
 export { groupItemsByTime, filterItems, getItemStats } from './utils';
@@ -17,6 +16,4 @@ export type {
   TimeGroup,
   ToastNotification,
   ConfirmationModal as ConfirmationModalType,
-  ChatMessage,
-  ChatModal as ChatModalType,
 } from '../../types/intelligence';

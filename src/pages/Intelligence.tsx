@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { ActionableCard } from '../components/intelligence/ActionableCard';
-import { ChatModal } from '../components/intelligence/ChatModal';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import { ToastContainer } from '../components/intelligence/Toast';
 import { filterItems, getItemStats, groupItemsByTime } from '../components/intelligence/utils';
@@ -15,14 +14,12 @@ import { useIntelligenceSocket, useIntelligenceSocketManager } from '../hooks/us
 import { useIntelligenceStats } from '../hooks/useIntelligenceStats';
 import type { RootState } from '../store';
 import {
-  createChatSession,
   setSourceFilter,
   setSearchFilter,
 } from '../store/intelligenceSlice';
 import type {
   ActionableItem,
   ActionableItemStatus,
-  ChatModal as ChatModalType,
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
@@ -58,13 +55,6 @@ export default function Intelligence() {
     message: '',
     onConfirm: () => {},
     onCancel: () => {},
-  });
-  const [chatModal, setChatModalState] = useState<ChatModalType>({
-    isOpen: false,
-    item: null,
-    messages: [],
-    onClose: () => {},
-    onSend: () => {},
   });
 
   // Use API data or fallback to empty array
@@ -152,52 +142,9 @@ export default function Intelligence() {
     }
   }, [updateItemStatus]);
 
-  const handleChatComplete = useCallback(
-    async (itemId: string) => {
-      try {
-        await handleUpdateItemStatus(itemId, 'completed');
-        setChatModalState(prev => ({ ...prev, isOpen: false }));
-      } catch (error) {
-        console.error('Failed to complete task:', error);
-      }
-    },
-    [handleUpdateItemStatus]
-  );
-
   const handleComplete = useCallback(async (item: ActionableItem) => {
-    try {
-      // Create or get existing chat session
-      const chatSessionResult = await dispatch(createChatSession({ itemId: item.id }) as any);
-
-      if (createChatSession.fulfilled.match(chatSessionResult)) {
-        const { messages } = chatSessionResult.payload;
-
-        // Open ChatModal with real chat session
-        setChatModalState({
-          isOpen: true,
-          item,
-          messages,
-          onClose: () => setChatModalState(prev => ({ ...prev, isOpen: false })),
-          onSend: () => {}, // ChatModal will handle real messaging via WebSocket
-        });
-      } else {
-        // Fallback to simple completion if chat creation fails
-        addToast({
-          type: 'warning',
-          title: 'Chat Unavailable',
-          message: 'Chat system is unavailable. Marking task as completed.',
-        });
-        await handleUpdateItemStatus(item.id, 'completed');
-      }
-    } catch (error) {
-      console.error('Failed to create chat session:', error);
-      addToast({
-        type: 'error',
-        title: 'Chat Error',
-        message: 'Failed to start chat session',
-      });
-    }
-  }, [dispatch, handleUpdateItemStatus, addToast]);
+    await handleUpdateItemStatus(item.id, 'completed');
+  }, [handleUpdateItemStatus]);
 
   const handleDismiss = useCallback(
     (item: ActionableItem) => {
@@ -433,13 +380,6 @@ export default function Intelligence() {
       <ConfirmationModal
         modal={confirmationModal}
         onClose={() => setConfirmationModal(prev => ({ ...prev, isOpen: false }))}
-      />
-
-      {/* Chat modal */}
-      <ChatModal
-        modal={chatModal}
-        onClose={() => setChatModalState(prev => ({ ...prev, isOpen: false }))}
-        onComplete={handleChatComplete}
       />
     </div>
   );
