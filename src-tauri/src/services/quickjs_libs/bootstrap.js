@@ -846,7 +846,7 @@ globalThis.data = {
           body: JSON.stringify({ error: 'No OAuth credential. Complete OAuth setup first.' }),
         };
       }
-      var backendUrl = __platform.env('BACKEND_URL') || 'https://api.openhuman.xyz';
+      var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
       var jwtToken = __ops.get_session_token() || '';
       var cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
       var proxyUrl = backendUrl + '/proxy/by-id/' + globalThis.__oauthCredential.credentialId + '/' + cleanPath;
@@ -875,7 +875,7 @@ globalThis.data = {
     revoke: async function () {
       if (__oauthCredential) {
         try {
-          var backendUrl = __platform.env('BACKEND_URL') || 'https://api.openhuman.xyz';
+          var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
           var jwtToken = __ops.get_session_token() || '';
           var revokeOpts = JSON.stringify({
             method: 'DELETE',
@@ -1022,7 +1022,7 @@ globalThis.model = {
    * @returns {string}
    */
   generate: async function (prompt, options) {
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.openhuman.xyz';
+    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
     var jwtToken = __ops.get_session_token() || '';
     var body = { prompt: prompt };
     if (options && options.maxTokens) body.maxTokens = options.maxTokens;
@@ -1052,7 +1052,7 @@ globalThis.model = {
    * @returns {string}
    */
   summarize: async function (text, options) {
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.openhuman.xyz';
+    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
     var jwtToken = __ops.get_session_token() || '';
     var body = { text: text };
     if (options && options.maxTokens) body.maxTokens = options.maxTokens;
