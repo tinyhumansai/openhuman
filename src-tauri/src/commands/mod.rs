@@ -4,7 +4,7 @@ pub mod memory;
 pub mod model;
 pub mod runtime;
 pub mod socket;
-pub mod alphahuman;
+pub mod openhuman;
 pub mod unified_skills;
 
 #[cfg(desktop)]
@@ -17,7 +17,7 @@ pub use memory::*;
 pub use model::*;
 pub use runtime::*;
 pub use socket::*;
-pub use alphahuman::*;
+pub use openhuman::*;
 
 #[cfg(desktop)]
 pub use window::*;

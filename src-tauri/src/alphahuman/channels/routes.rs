@@ -5,7 +5,7 @@ use super::context::{
 };
 use super::traits;
 use super::{Channel, SendMessage};
-use crate::alphahuman::providers::{self, Provider};
+use crate::openhuman::providers::{self, Provider};
 use serde::Deserialize;
 use std::fmt::Write;
 use std::path::Path;

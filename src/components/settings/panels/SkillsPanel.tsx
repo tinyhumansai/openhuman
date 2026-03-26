@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
-  alphahumanGetConfig,
-  alphahumanGetRuntimeFlags,
-  alphahumanListIntegrations,
-  alphahumanSetBrowserAllowAll,
-  alphahumanUpdateBrowserSettings,
   type IntegrationCategory,
   type IntegrationInfo,
+  openhumanGetConfig,
+  openhumanGetRuntimeFlags,
+  openhumanListIntegrations,
+  openhumanSetBrowserAllowAll,
+  openhumanUpdateBrowserSettings,
 } from '../../../utils/tauriCommands';
 import {
   runtimeDisableSkill,
@@ -42,12 +42,12 @@ const SkillsPanel = () => {
   useEffect(() => {
     const loadIntegrations = async () => {
       try {
-        const response = await alphahumanListIntegrations();
+        const response = await openhumanListIntegrations();
         setIntegrations(response.result);
-        const configResponse = await alphahumanGetConfig();
+        const configResponse = await openhumanGetConfig();
         const config = configResponse.result.config as Record<string, unknown>;
         const browserConfig = (config.browser as Record<string, unknown>) ?? {};
-        const runtimeFlags = await alphahumanGetRuntimeFlags();
+        const runtimeFlags = await openhumanGetRuntimeFlags();
         setBrowserAllowAll(runtimeFlags.result.browser_allow_all);
         const entries = await Promise.all(
           response.result.map(async integration => {
@@ -65,7 +65,7 @@ const SkillsPanel = () => {
         );
         setEnabledMap(Object.fromEntries(entries));
       } catch (error) {
-        console.warn('Could not load integrations from Alphahuman:', error);
+        console.warn('Could not load integrations from OpenHuman:', error);
         const message = error instanceof Error ? error.message : String(error);
         setError(message);
       } finally {
@@ -113,7 +113,7 @@ const SkillsPanel = () => {
                 const next = event.target.checked;
                 setBrowserAllowAllBusy(true);
                 try {
-                  const response = await alphahumanSetBrowserAllowAll(next);
+                  const response = await openhumanSetBrowserAllowAll(next);
                   setBrowserAllowAll(response.result.browser_allow_all);
                 } catch (err) {
                   const message = err instanceof Error ? err.message : String(err);
@@ -140,7 +140,7 @@ const SkillsPanel = () => {
           {loading && <div className="p-4 text-sm text-stone-400">Loading integrations...</div>}
           {!loading && integrations.length === 0 && (
             <div className="p-4 text-sm text-stone-400">
-              No integrations registered in Alphahuman.
+              No integrations registered in OpenHuman.
             </div>
           )}
           {!loading &&
@@ -163,7 +163,7 @@ const SkillsPanel = () => {
                         setToggleBusy(prev => ({ ...prev, [key]: true }));
                         try {
                           if (integration.name === 'Browser') {
-                            await alphahumanUpdateBrowserSettings({ enabled: nextEnabled });
+                            await openhumanUpdateBrowserSettings({ enabled: nextEnabled });
                           } else {
                             const skillId = integrationSkillId(integration);
                             if (nextEnabled) {

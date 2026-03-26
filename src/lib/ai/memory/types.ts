@@ -86,7 +86,7 @@ export interface EmbeddingCacheEntry {
   updatedAt: number;
 }
 
-/** Memory file layout under ~/.alphahuman/ */
+/** Memory file layout under ~/.openhuman/ */
 export const MEMORY_PATHS = {
   CONSTITUTION: 'CONSTITUTION.md',
   MEMORY_ROOT: 'memory.md',

@@ -31,7 +31,7 @@ export function deriveAesKeyFromMnemonic(mnemonic: string): string {
   const seed = mnemonicToSeedSync(mnemonic);
 
   // Derive a 256-bit AES key using PBKDF2 with the seed
-  const salt = new TextEncoder().encode('alphahuman-aes-key-v1');
+  const salt = new TextEncoder().encode('openhuman-aes-key-v1');
   const derivedKey = pbkdf2(sha256, seed, salt, { c: 100000, dkLen: 32 });
 
   return bytesToHex(derivedKey);

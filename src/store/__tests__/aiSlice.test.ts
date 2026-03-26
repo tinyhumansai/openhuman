@@ -35,7 +35,7 @@ describe('aiSlice', () => {
     });
 
     it('should have default skills repo URL', () => {
-      expect(initialState.config.skillsRepoUrl).toBe('alphahuman/alphahuman-skills');
+      expect(initialState.config.skillsRepoUrl).toBe('openhuman/openhuman-skills');
     });
   });
 
@@ -102,7 +102,7 @@ describe('aiSlice', () => {
       );
       expect(state.config.llmEndpoint).toBe('http://localhost:8080');
       expect(state.config.llmModel).toBe('custom-v1');
-      expect(state.config.skillsRepoUrl).toBe('alphahuman/alphahuman-skills');
+      expect(state.config.skillsRepoUrl).toBe('openhuman/openhuman-skills');
     });
 
     it('should override existing config values', () => {

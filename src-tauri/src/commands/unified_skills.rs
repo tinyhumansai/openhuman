@@ -1,7 +1,7 @@
 //! Tauri commands for the unified skill registry.
 //!
 //! These commands expose a single, type-agnostic API to the frontend WebView.
-//! Internally they dispatch to the QuickJS runtime (alphahuman skills) or the
+//! Internally they dispatch to the QuickJS runtime (openhuman skills) or the
 //! file-based executor (openclaw skills) based on `skill_type`.
 //!
 //! Commands are desktop-only — mobile stubs return empty/error results.
@@ -24,7 +24,7 @@ mod desktop {
     use super::*;
     use crate::unified_skills::UnifiedSkillRegistry;
 
-    /// List all skills from the unified registry (both alphahuman and openclaw types).
+    /// List all skills from the unified registry (both openhuman and openclaw types).
     #[tauri::command]
     pub async fn unified_list_skills(
         engine: State<'_, Arc<RuntimeEngine>>,
@@ -36,7 +36,7 @@ mod desktop {
     /// Execute a named tool on any registered skill.
     ///
     /// Dispatches based on skill_type:
-    /// - `alphahuman` → QuickJS runtime
+    /// - `openhuman` → QuickJS runtime
     /// - `openclaw`   → shell/http executor or returns prompt content
     #[tauri::command]
     pub async fn unified_execute_skill(
@@ -51,7 +51,7 @@ mod desktop {
 
     /// Programmatically generate a new skill, register it, and return its entry.
     ///
-    /// For `skill_type = "alphahuman"`: writes manifest.json + index.js to the skills dir.
+    /// For `skill_type = "openhuman"`: writes manifest.json + index.js to the skills dir.
     /// For `skill_type = "openclaw"`:   writes SKILL.md or SKILL.toml to workspace/skills/.
     ///
     /// The skill is immediately available in subsequent `unified_list_skills` calls.

@@ -7,7 +7,7 @@ use super::{
     },
     Config,
 };
-use crate::alphahuman::providers::{is_glm_alias, is_zai_alias};
+use crate::openhuman::providers::{is_glm_alias, is_zai_alias};
 use anyhow::{Context, Result};
 use directories::UserDirs;
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,7 @@ fn default_config_dir() -> Result<PathBuf> {
     let home = UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .context("Could not find home directory")?;
-    Ok(home.join(".alphahuman"))
+    Ok(home.join(".openhuman"))
 }
 
 fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
@@ -151,7 +151,7 @@ fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf, PathBuf) 
 
     let legacy_config_dir = workspace_dir
         .parent()
-        .map(|parent| parent.join(".alphahuman"));
+        .map(|parent| parent.join(".openhuman"));
     if let Some(legacy_dir) = legacy_config_dir {
         if legacy_dir.join("config.toml").exists() {
             return (legacy_dir, workspace_config_dir);
@@ -181,7 +181,7 @@ enum ConfigResolutionSource {
 impl ConfigResolutionSource {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::EnvWorkspace => "ALPHAHUMAN_WORKSPACE",
+            Self::EnvWorkspace => "OPENHUMAN_WORKSPACE",
             Self::ActiveWorkspaceMarker => "active_workspace.toml",
             Self::DefaultConfigDir => "default",
         }
@@ -189,45 +189,45 @@ impl ConfigResolutionSource {
 }
 
 async fn resolve_runtime_config_dirs(
-    default_alphahuman_dir: &Path,
+    default_openhuman_dir: &Path,
     default_workspace_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
-    if let Ok(custom_workspace) = std::env::var("ALPHAHUMAN_WORKSPACE") {
+    if let Ok(custom_workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
         if !custom_workspace.is_empty() {
-            let (alphahuman_dir, workspace_dir) =
+            let (openhuman_dir, workspace_dir) =
                 resolve_config_dir_for_workspace(&PathBuf::from(custom_workspace));
             return Ok((
-                alphahuman_dir,
+                openhuman_dir,
                 workspace_dir,
                 ConfigResolutionSource::EnvWorkspace,
             ));
         }
     }
 
-    if let Some((alphahuman_dir, workspace_dir)) =
-        load_persisted_workspace_dirs(default_alphahuman_dir).await?
+    if let Some((openhuman_dir, workspace_dir)) =
+        load_persisted_workspace_dirs(default_openhuman_dir).await?
     {
         return Ok((
-            alphahuman_dir,
+            openhuman_dir,
             workspace_dir,
             ConfigResolutionSource::ActiveWorkspaceMarker,
         ));
     }
 
     Ok((
-        default_alphahuman_dir.to_path_buf(),
+        default_openhuman_dir.to_path_buf(),
         default_workspace_dir.to_path_buf(),
         ConfigResolutionSource::DefaultConfigDir,
     ))
 }
 
 fn decrypt_optional_secret(
-    store: &crate::alphahuman::security::SecretStore,
+    store: &crate::openhuman::security::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if crate::alphahuman::security::SecretStore::is_encrypted(&raw) {
+        if crate::openhuman::security::SecretStore::is_encrypted(&raw) {
             *value = Some(
                 store
                     .decrypt(&raw)
@@ -239,12 +239,12 @@ fn decrypt_optional_secret(
 }
 
 fn encrypt_optional_secret(
-    store: &crate::alphahuman::security::SecretStore,
+    store: &crate::openhuman::security::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if !crate::alphahuman::security::SecretStore::is_encrypted(&raw) {
+        if !crate::openhuman::security::SecretStore::is_encrypted(&raw) {
             *value = Some(
                 store
                     .encrypt(&raw)
@@ -273,14 +273,14 @@ async fn sync_directory(_path: &Path) -> Result<()> {
 
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
-        let (default_alphahuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
 
-        let (alphahuman_dir, workspace_dir, resolution_source) =
-            resolve_runtime_config_dirs(&default_alphahuman_dir, &default_workspace_dir).await?;
+        let (openhuman_dir, workspace_dir, resolution_source) =
+            resolve_runtime_config_dirs(&default_openhuman_dir, &default_workspace_dir).await?;
 
-        let config_path = alphahuman_dir.join("config.toml");
+        let config_path = openhuman_dir.join("config.toml");
 
-        fs::create_dir_all(&alphahuman_dir)
+        fs::create_dir_all(&openhuman_dir)
             .await
             .context("Failed to create config directory")?;
         fs::create_dir_all(&workspace_dir)
@@ -312,7 +312,7 @@ impl Config {
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
             let store =
-                crate::alphahuman::security::SecretStore::new(&alphahuman_dir, config.secrets.encrypt);
+                crate::openhuman::security::SecretStore::new(&openhuman_dir, config.secrets.encrypt);
             decrypt_optional_secret(&store, &mut config.api_key, "config.api_key")?;
             decrypt_optional_secret(
                 &store,
@@ -371,7 +371,7 @@ impl Config {
     }
 
     pub fn apply_env_overrides(&mut self) {
-        if let Ok(key) = std::env::var("ALPHAHUMAN_API_KEY").or_else(|_| std::env::var("API_KEY")) {
+        if let Ok(key) = std::env::var("OPENHUMAN_API_KEY").or_else(|_| std::env::var("API_KEY")) {
             if !key.is_empty() {
                 self.api_key = Some(key);
             }
@@ -391,7 +391,7 @@ impl Config {
             }
         }
 
-        if let Ok(provider) = std::env::var("ALPHAHUMAN_PROVIDER") {
+        if let Ok(provider) = std::env::var("OPENHUMAN_PROVIDER") {
             if !provider.is_empty() {
                 self.default_provider = Some(provider);
             }
@@ -404,13 +404,13 @@ impl Config {
             }
         }
 
-        if let Ok(model) = std::env::var("ALPHAHUMAN_MODEL").or_else(|_| std::env::var("MODEL")) {
+        if let Ok(model) = std::env::var("OPENHUMAN_MODEL").or_else(|_| std::env::var("MODEL")) {
             if !model.is_empty() {
                 self.default_model = Some(model);
             }
         }
 
-        if let Ok(workspace) = std::env::var("ALPHAHUMAN_WORKSPACE") {
+        if let Ok(workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
             if !workspace.is_empty() {
                 let (_, workspace_dir) = resolve_config_dir_for_workspace(&PathBuf::from(workspace));
                 self.workspace_dir = workspace_dir;
@@ -418,7 +418,7 @@ impl Config {
         }
 
         if let Ok(port_str) =
-            std::env::var("ALPHAHUMAN_GATEWAY_PORT").or_else(|_| std::env::var("PORT"))
+            std::env::var("OPENHUMAN_GATEWAY_PORT").or_else(|_| std::env::var("PORT"))
         {
             if let Ok(port) = port_str.parse::<u16>() {
                 self.gateway.port = port;
@@ -426,18 +426,18 @@ impl Config {
         }
 
         if let Ok(host) =
-            std::env::var("ALPHAHUMAN_GATEWAY_HOST").or_else(|_| std::env::var("HOST"))
+            std::env::var("OPENHUMAN_GATEWAY_HOST").or_else(|_| std::env::var("HOST"))
         {
             if !host.is_empty() {
                 self.gateway.host = host;
             }
         }
 
-        if let Ok(val) = std::env::var("ALPHAHUMAN_ALLOW_PUBLIC_BIND") {
+        if let Ok(val) = std::env::var("OPENHUMAN_ALLOW_PUBLIC_BIND") {
             self.gateway.allow_public_bind = val == "1" || val.eq_ignore_ascii_case("true");
         }
 
-        if let Ok(temp_str) = std::env::var("ALPHAHUMAN_TEMPERATURE") {
+        if let Ok(temp_str) = std::env::var("OPENHUMAN_TEMPERATURE") {
             if let Ok(temp) = temp_str.parse::<f64>() {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
@@ -445,7 +445,7 @@ impl Config {
             }
         }
 
-        if let Ok(flag) = std::env::var("ALPHAHUMAN_REASONING_ENABLED")
+        if let Ok(flag) = std::env::var("OPENHUMAN_REASONING_ENABLED")
             .or_else(|_| std::env::var("REASONING_ENABLED"))
         {
             let normalized = flag.trim().to_ascii_lowercase();
@@ -456,13 +456,13 @@ impl Config {
             }
         }
 
-        if let Ok(enabled) = std::env::var("ALPHAHUMAN_WEB_SEARCH_ENABLED")
+        if let Ok(enabled) = std::env::var("OPENHUMAN_WEB_SEARCH_ENABLED")
             .or_else(|_| std::env::var("WEB_SEARCH_ENABLED"))
         {
             self.web_search.enabled = enabled == "1" || enabled.eq_ignore_ascii_case("true");
         }
 
-        if let Ok(provider) = std::env::var("ALPHAHUMAN_WEB_SEARCH_PROVIDER")
+        if let Ok(provider) = std::env::var("OPENHUMAN_WEB_SEARCH_PROVIDER")
             .or_else(|_| std::env::var("WEB_SEARCH_PROVIDER"))
         {
             let provider = provider.trim();
@@ -472,7 +472,7 @@ impl Config {
         }
 
         if let Ok(api_key) =
-            std::env::var("ALPHAHUMAN_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
+            std::env::var("OPENHUMAN_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
         {
             let api_key = api_key.trim();
             if !api_key.is_empty() {
@@ -480,7 +480,7 @@ impl Config {
             }
         }
 
-        if let Ok(max_results) = std::env::var("ALPHAHUMAN_WEB_SEARCH_MAX_RESULTS")
+        if let Ok(max_results) = std::env::var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS")
             .or_else(|_| std::env::var("WEB_SEARCH_MAX_RESULTS"))
         {
             if let Ok(max_results) = max_results.parse::<usize>() {
@@ -490,7 +490,7 @@ impl Config {
             }
         }
 
-        if let Ok(timeout_secs) = std::env::var("ALPHAHUMAN_WEB_SEARCH_TIMEOUT_SECS")
+        if let Ok(timeout_secs) = std::env::var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS")
             .or_else(|_| std::env::var("WEB_SEARCH_TIMEOUT_SECS"))
         {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
@@ -500,21 +500,21 @@ impl Config {
             }
         }
 
-        if let Ok(provider) = std::env::var("ALPHAHUMAN_STORAGE_PROVIDER") {
+        if let Ok(provider) = std::env::var("OPENHUMAN_STORAGE_PROVIDER") {
             let provider = provider.trim();
             if !provider.is_empty() {
                 self.storage.provider.config.provider = provider.to_string();
             }
         }
 
-        if let Ok(db_url) = std::env::var("ALPHAHUMAN_STORAGE_DB_URL") {
+        if let Ok(db_url) = std::env::var("OPENHUMAN_STORAGE_DB_URL") {
             let db_url = db_url.trim();
             if !db_url.is_empty() {
                 self.storage.provider.config.db_url = Some(db_url.to_string());
             }
         }
 
-        if let Ok(timeout_secs) = std::env::var("ALPHAHUMAN_STORAGE_CONNECT_TIMEOUT_SECS") {
+        if let Ok(timeout_secs) = std::env::var("OPENHUMAN_STORAGE_CONNECT_TIMEOUT_SECS") {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.storage.provider.config.connect_timeout_secs = Some(timeout_secs);
@@ -522,7 +522,7 @@ impl Config {
             }
         }
 
-        let explicit_proxy_enabled = std::env::var("ALPHAHUMAN_PROXY_ENABLED")
+        let explicit_proxy_enabled = std::env::var("OPENHUMAN_PROXY_ENABLED")
             .ok()
             .as_deref()
             .and_then(parse_proxy_enabled);
@@ -532,25 +532,25 @@ impl Config {
 
         let mut proxy_url_overridden = false;
         if let Ok(proxy_url) =
-            std::env::var("ALPHAHUMAN_HTTP_PROXY").or_else(|_| std::env::var("HTTP_PROXY"))
+            std::env::var("OPENHUMAN_HTTP_PROXY").or_else(|_| std::env::var("HTTP_PROXY"))
         {
             self.proxy.http_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
         if let Ok(proxy_url) =
-            std::env::var("ALPHAHUMAN_HTTPS_PROXY").or_else(|_| std::env::var("HTTPS_PROXY"))
+            std::env::var("OPENHUMAN_HTTPS_PROXY").or_else(|_| std::env::var("HTTPS_PROXY"))
         {
             self.proxy.https_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
         if let Ok(proxy_url) =
-            std::env::var("ALPHAHUMAN_ALL_PROXY").or_else(|_| std::env::var("ALL_PROXY"))
+            std::env::var("OPENHUMAN_ALL_PROXY").or_else(|_| std::env::var("ALL_PROXY"))
         {
             self.proxy.all_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
         if let Ok(no_proxy) =
-            std::env::var("ALPHAHUMAN_NO_PROXY").or_else(|_| std::env::var("NO_PROXY"))
+            std::env::var("OPENHUMAN_NO_PROXY").or_else(|_| std::env::var("NO_PROXY"))
         {
             self.proxy.no_proxy = normalize_no_proxy_list(vec![no_proxy]);
         }
@@ -562,18 +562,18 @@ impl Config {
             self.proxy.enabled = true;
         }
 
-        if let Ok(scope_raw) = std::env::var("ALPHAHUMAN_PROXY_SCOPE") {
+        if let Ok(scope_raw) = std::env::var("OPENHUMAN_PROXY_SCOPE") {
             if let Some(scope) = parse_proxy_scope(&scope_raw) {
                 self.proxy.scope = scope;
             } else {
                 tracing::warn!(
                     scope = %scope_raw,
-                    "Ignoring invalid ALPHAHUMAN_PROXY_SCOPE (valid: environment|alphahuman|services)"
+                    "Ignoring invalid OPENHUMAN_PROXY_SCOPE (valid: environment|openhuman|services)"
                 );
             }
         }
 
-        if let Ok(services_raw) = std::env::var("ALPHAHUMAN_PROXY_SERVICES") {
+        if let Ok(services_raw) = std::env::var("OPENHUMAN_PROXY_SERVICES") {
             self.proxy.services = normalize_service_list(vec![services_raw]);
         }
 
@@ -591,12 +591,12 @@ impl Config {
 
     pub async fn save(&self) -> Result<()> {
         let mut config_to_save = self.clone();
-        let alphahuman_dir = self
+        let openhuman_dir = self
             .config_path
             .parent()
             .context("Config path must have a parent directory")?;
         let store =
-            crate::alphahuman::security::SecretStore::new(alphahuman_dir, self.secrets.encrypt);
+            crate::openhuman::security::SecretStore::new(openhuman_dir, self.secrets.encrypt);
 
         encrypt_optional_secret(&store, &mut config_to_save.api_key, "config.api_key")?;
         encrypt_optional_secret(

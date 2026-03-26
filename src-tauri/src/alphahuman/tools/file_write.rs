@@ -1,5 +1,5 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -164,7 +164,7 @@ impl Tool for FileWriteTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
@@ -206,7 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_creates_file() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
@@ -228,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_creates_parent_dirs() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write_nested");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write_nested");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
@@ -249,7 +249,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_overwrites_existing() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write_overwrite");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write_overwrite");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
         tokio::fs::write(dir.join("exist.txt"), "old")
@@ -273,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_blocks_path_traversal() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write_traversal");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write_traversal");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
@@ -315,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_empty_content() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write_empty");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write_empty");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
@@ -335,7 +335,7 @@ mod tests {
     async fn file_write_blocks_symlink_escape() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join("alphahuman_test_file_write_symlink_escape");
+        let root = std::env::temp_dir().join("openhuman_test_file_write_symlink_escape");
         let workspace = root.join("workspace");
         let outside = root.join("outside");
 
@@ -364,7 +364,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_blocks_readonly_mode() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write_readonly");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write_readonly");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
@@ -383,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_blocks_when_rate_limited() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write_rate_limited");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write_rate_limited");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
@@ -415,7 +415,7 @@ mod tests {
     async fn file_write_blocks_symlink_target_file() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join("alphahuman_test_file_write_symlink_target");
+        let root = std::env::temp_dir().join("openhuman_test_file_write_symlink_target");
         let workspace = root.join("workspace");
         let outside = root.join("outside");
 
@@ -452,7 +452,7 @@ mod tests {
 
     #[tokio::test]
     async fn file_write_blocks_null_byte_in_path() {
-        let dir = std::env::temp_dir().join("alphahuman_test_file_write_null");
+        let dir = std::env::temp_dir().join("openhuman_test_file_write_null");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 

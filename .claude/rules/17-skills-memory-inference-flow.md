@@ -31,10 +31,10 @@ Token present
 
 Two Tauri event listeners run continuously:
 
-| Event | What it does |
-|---|---|
-| `skill-state-changed` | Dispatches `setSkillState` into Redux `skillsSlice.skillStates[skillId]` |
-| `runtime:skill-status-changed` | Updates `skillsSlice.skills[skillId].status`; surfaces errors |
+| Event                          | What it does                                                             |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `skill-state-changed`          | Dispatches `setSkillState` into Redux `skillsSlice.skillStates[skillId]` |
+| `runtime:skill-status-changed` | Updates `skillsSlice.skills[skillId].status`; surfaces errors            |
 
 ---
 
@@ -48,7 +48,8 @@ It is constructed with the user's JWT (`authSlice.token`) and stored as `Arc<Mem
 in `MemoryState` (a `Mutex<Option<MemoryClientRef>>`).
 
 Base URL resolution (in priority order):
-1. `ALPHAHUMAN_BASE_URL` env var
+
+1. `OPENHUMAN_BASE_URL` env var
 2. `TINYHUMANS_BASE_URL` env var
 3. SDK default
 
@@ -109,12 +110,12 @@ Examples: `skill:gmail:user@example.com`, `skill:notion:default`.
 
 **File**: `src-tauri/src/memory/mod.rs`
 
-| Method | SDK call | When used |
-|---|---|---|
-| `store_skill_sync(...)` | `insert_memory` | OAuth complete, periodic sync |
-| `query_skill_context(...)` | `query_memory` | RAG query — fetch relevant chunks for a user question |
-| `recall_skill_context(...)` | `recall_memory` | Recall synthesised summary from Master node |
-| `clear_skill_memory(...)` | `delete_memory` | OAuth revoke / disconnect |
+| Method                      | SDK call        | When used                                             |
+| --------------------------- | --------------- | ----------------------------------------------------- |
+| `store_skill_sync(...)`     | `insert_memory` | OAuth complete, periodic sync                         |
+| `query_skill_context(...)`  | `query_memory`  | RAG query — fetch relevant chunks for a user question |
+| `recall_skill_context(...)` | `recall_memory` | Recall synthesised summary from Master node           |
+| `clear_skill_memory(...)`   | `delete_memory` | OAuth revoke / disconnect                             |
 
 ---
 
@@ -141,16 +142,17 @@ chatSend({ threadId, message, model, authToken, backendUrl, messages, notionCont
 
 Completion events flow back over Tauri events:
 
-| Event | Frontend handler |
-|---|---|
-| `chat:tool_call` | shows active tool indicator |
-| `chat:tool_result` | clears tool indicator |
-| `chat:done` | `dispatch(addInferenceResponse(...))` |
-| `chat:error` | shows error, clears loading state |
+| Event              | Frontend handler                      |
+| ------------------ | ------------------------------------- |
+| `chat:tool_call`   | shows active tool indicator           |
+| `chat:tool_result` | clears tool indicator                 |
+| `chat:done`        | `dispatch(addInferenceResponse(...))` |
+| `chat:error`       | shows error, clears loading state     |
 
 ### 5b. Web/Fallback Path
 
 Used when not running in Tauri (browser). Runs the agentic loop entirely in TypeScript:
+
 - Calls `inferenceApi.createChatCompletion(request)` directly
 - Executes tools via `skillManager.callTool(skillId, toolName, args)`
 - Both paths share the same 5-round `MAX_TOOL_ROUNDS` limit and `{skillId}__{toolName}` naming convention
@@ -215,6 +217,7 @@ Step 6: Agentic loop (max 5 rounds)
 **File**: `src-tauri/src/runtime/qjs_engine.rs` — `call_tool(skill_id, tool_name, args)`
 
 The Rust runtime routes `call_tool` into the running QuickJS/V8 skill instance:
+
 - Serialises `args` as JSON
 - Calls the JS tool handler registered by the skill
 - Returns `ToolCallResult { content: Vec<ToolContent>, is_error: bool }`
@@ -262,14 +265,14 @@ Separately (async, fire-and-forget):
 
 ## Key Files Reference
 
-| File | Role |
-|---|---|
-| `src/providers/SkillProvider.tsx` | Discovery, lifecycle, Redux state sync |
-| `src/pages/Conversations.tsx` | Message send, both code paths, Notion context |
-| `src/services/chatService.ts` | `chatSend()`, `chatCancel()`, `useRustChat()` |
-| `src-tauri/src/commands/chat.rs` | Rust agentic loop, context assembly, tool dispatch |
-| `src-tauri/src/commands/memory.rs` | `recall_memory` Tauri command |
-| `src-tauri/src/memory/mod.rs` | `MemoryClient` wrapping tinyhumansai SDK |
-| `src-tauri/src/runtime/qjs_skill_instance.rs` | Skill sync → memory write triggers |
-| `src-tauri/src/runtime/qjs_engine.rs` | `discover_skills()`, `call_tool()`, `all_tools()` |
-| `skills/skills/*/manifest.json` | Skill metadata (git submodule) |
+| File                                          | Role                                               |
+| --------------------------------------------- | -------------------------------------------------- |
+| `src/providers/SkillProvider.tsx`             | Discovery, lifecycle, Redux state sync             |
+| `src/pages/Conversations.tsx`                 | Message send, both code paths, Notion context      |
+| `src/services/chatService.ts`                 | `chatSend()`, `chatCancel()`, `useRustChat()`      |
+| `src-tauri/src/commands/chat.rs`              | Rust agentic loop, context assembly, tool dispatch |
+| `src-tauri/src/commands/memory.rs`            | `recall_memory` Tauri command                      |
+| `src-tauri/src/memory/mod.rs`                 | `MemoryClient` wrapping tinyhumansai SDK           |
+| `src-tauri/src/runtime/qjs_skill_instance.rs` | Skill sync → memory write triggers                 |
+| `src-tauri/src/runtime/qjs_engine.rs`         | `discover_skills()`, `call_tool()`, `all_tools()`  |
+| `skills/skills/*/manifest.json`               | Skill metadata (git submodule)                     |

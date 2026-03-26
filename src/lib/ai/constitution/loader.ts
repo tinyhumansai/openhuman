@@ -8,7 +8,7 @@ import type {
 } from './types';
 
 const CONSTITUTION_URL =
-  'https://raw.githubusercontent.com/alphahumanxyz/constitution/refs/heads/main/CONSTITUTION.md';
+  'https://raw.githubusercontent.com/openhumanxyz/constitution/refs/heads/main/CONSTITUTION.md';
 
 /**
  * Load the constitution from the public GitHub repository.

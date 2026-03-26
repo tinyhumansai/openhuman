@@ -22,9 +22,9 @@ export BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
 # Clean cached app data for a fresh state — Redux Persist would otherwise
 # remember the JWT from a previous run and skip the login flow.
 echo "Cleaning cached app data..."
-rm -rf ~/Library/WebKit/com.alphahuman.app
-rm -rf ~/Library/Caches/com.alphahuman.app
-rm -rf "$HOME/Library/Application Support/com.alphahuman.app"
+rm -rf ~/Library/WebKit/com.openhuman.app
+rm -rf ~/Library/Caches/com.openhuman.app
+rm -rf "$HOME/Library/Application Support/com.openhuman.app"
 
 # Verify the frontend dist has the mock server URL baked in.
 DIST_JS="$(ls dist/assets/index-*.js 2>/dev/null | head -1)"

@@ -628,7 +628,7 @@ fn zai_base_url(name: &str) -> Option<&'static str> {
 #[derive(Debug, Clone)]
 pub struct ProviderRuntimeOptions {
     pub auth_profile_override: Option<String>,
-    pub alphahuman_dir: Option<PathBuf>,
+    pub openhuman_dir: Option<PathBuf>,
     pub secrets_encrypt: bool,
     pub reasoning_enabled: Option<bool>,
 }
@@ -637,7 +637,7 @@ impl Default for ProviderRuntimeOptions {
     fn default() -> Self {
         Self {
             auth_profile_override: None,
-            alphahuman_dir: None,
+            openhuman_dir: None,
             secrets_encrypt: true,
             reasoning_enabled: None,
         }
@@ -734,7 +734,7 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
 /// Resolution order:
 /// 1. Explicitly provided `api_key` parameter (trimmed, filtered if empty)
 /// 2. Provider-specific environment variable (e.g., `ANTHROPIC_OAUTH_TOKEN`, `OPENROUTER_API_KEY`)
-/// 3. Generic fallback variables (`ALPHAHUMAN_API_KEY`, `API_KEY`)
+/// 3. Generic fallback variables (`OPENHUMAN_API_KEY`, `API_KEY`)
 ///
 /// For Anthropic, the provider-specific env var is `ANTHROPIC_OAUTH_TOKEN` (for setup-tokens)
 /// followed by `ANTHROPIC_API_KEY` (for regular API keys).
@@ -817,7 +817,7 @@ fn resolve_provider_credential(name: &str, credential_override: Option<&str>) ->
         return None;
     }
 
-    for env_var in ["ALPHAHUMAN_API_KEY", "API_KEY"] {
+    for env_var in ["OPENHUMAN_API_KEY", "API_KEY"] {
         if let Ok(value) = std::env::var(env_var) {
             let value = value.trim();
             if !value.is_empty() {
@@ -1100,7 +1100,7 @@ pub fn create_resilient_provider(
     primary_name: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,
-    reliability: &crate::alphahuman::config::ReliabilityConfig,
+    reliability: &crate::openhuman::config::ReliabilityConfig,
 ) -> anyhow::Result<Box<dyn Provider>> {
     create_resilient_provider_with_options(
         primary_name,
@@ -1116,7 +1116,7 @@ pub fn create_resilient_provider_with_options(
     primary_name: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,
-    reliability: &crate::alphahuman::config::ReliabilityConfig,
+    reliability: &crate::openhuman::config::ReliabilityConfig,
     options: &ProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn Provider>> {
     let mut providers: Vec<(String, Box<dyn Provider>)> = Vec::new();
@@ -1172,8 +1172,8 @@ pub fn create_routed_provider(
     primary_name: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,
-    reliability: &crate::alphahuman::config::ReliabilityConfig,
-    model_routes: &[crate::alphahuman::config::ModelRouteConfig],
+    reliability: &crate::openhuman::config::ReliabilityConfig,
+    model_routes: &[crate::openhuman::config::ModelRouteConfig],
     default_model: &str,
 ) -> anyhow::Result<Box<dyn Provider>> {
     create_routed_provider_with_options(
@@ -1192,8 +1192,8 @@ pub fn create_routed_provider_with_options(
     primary_name: &str,
     api_key: Option<&str>,
     api_url: Option<&str>,
-    reliability: &crate::alphahuman::config::ReliabilityConfig,
-    model_routes: &[crate::alphahuman::config::ModelRouteConfig],
+    reliability: &crate::openhuman::config::ReliabilityConfig,
+    model_routes: &[crate::openhuman::config::ModelRouteConfig],
     default_model: &str,
     options: &ProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn Provider>> {
@@ -1591,7 +1591,7 @@ mod tests {
     #[test]
     fn resolve_qwen_oauth_context_prefers_explicit_override() {
         let _env_lock = env_lock();
-        let fake_home = format!("/tmp/alphahuman-qwen-oauth-home-{}", std::process::id());
+        let fake_home = format!("/tmp/openhuman-qwen-oauth-home-{}", std::process::id());
         let _home_guard = EnvGuard::set("HOME", Some(fake_home.as_str()));
         let _token_guard = EnvGuard::set(QWEN_OAUTH_TOKEN_ENV, Some("oauth-token"));
         let _resource_guard = EnvGuard::set(
@@ -1608,7 +1608,7 @@ mod tests {
     #[test]
     fn resolve_qwen_oauth_context_uses_env_token_and_resource_url() {
         let _env_lock = env_lock();
-        let fake_home = format!("/tmp/alphahuman-qwen-oauth-home-{}-env", std::process::id());
+        let fake_home = format!("/tmp/openhuman-qwen-oauth-home-{}-env", std::process::id());
         let _home_guard = EnvGuard::set("HOME", Some(fake_home.as_str()));
         let _token_guard = EnvGuard::set(QWEN_OAUTH_TOKEN_ENV, Some("oauth-token"));
         let _refresh_guard = EnvGuard::set(QWEN_OAUTH_REFRESH_TOKEN_ENV, None);
@@ -1630,7 +1630,7 @@ mod tests {
     #[test]
     fn resolve_qwen_oauth_context_reads_cached_credentials_file() {
         let _env_lock = env_lock();
-        let fake_home = format!("/tmp/alphahuman-qwen-oauth-home-{}-file", std::process::id());
+        let fake_home = format!("/tmp/openhuman-qwen-oauth-home-{}-file", std::process::id());
         let creds_dir = PathBuf::from(&fake_home).join(".qwen");
         std::fs::create_dir_all(&creds_dir).unwrap();
         let creds_path = creds_dir.join("oauth_creds.json");
@@ -1659,7 +1659,7 @@ mod tests {
     fn resolve_qwen_oauth_context_placeholder_does_not_use_dashscope_fallback() {
         let _env_lock = env_lock();
         let fake_home = format!(
-            "/tmp/alphahuman-qwen-oauth-home-{}-placeholder",
+            "/tmp/openhuman-qwen-oauth-home-{}-placeholder",
             std::process::id()
         );
         let _home_guard = EnvGuard::set("HOME", Some(fake_home.as_str()));
@@ -2106,7 +2106,7 @@ mod tests {
 
     #[test]
     fn resilient_provider_ignores_duplicate_and_invalid_fallbacks() {
-        let reliability = crate::alphahuman::config::ReliabilityConfig {
+        let reliability = crate::openhuman::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
             fallback_providers: vec![
@@ -2134,7 +2134,7 @@ mod tests {
 
     #[test]
     fn resilient_provider_errors_for_invalid_primary() {
-        let reliability = crate::alphahuman::config::ReliabilityConfig::default();
+        let reliability = crate::openhuman::config::ReliabilityConfig::default();
         let provider = create_resilient_provider(
             "totally-invalid",
             Some("provider-test-credential"),
@@ -2150,7 +2150,7 @@ mod tests {
     /// successfully even when the primary uses a completely different key.
     #[test]
     fn resilient_fallback_resolves_own_credential() {
-        let reliability = crate::alphahuman::config::ReliabilityConfig {
+        let reliability = crate::openhuman::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
             fallback_providers: vec!["lmstudio".into(), "ollama".into()],
@@ -2172,7 +2172,7 @@ mod tests {
     /// OpenAI-compatible endpoints (e.g. local LM Studio on a Docker host).
     #[test]
     fn resilient_fallback_supports_custom_url() {
-        let reliability = crate::alphahuman::config::ReliabilityConfig {
+        let reliability = crate::openhuman::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
             fallback_providers: vec!["custom:http://host.docker.internal:1234/v1".into()],
@@ -2193,7 +2193,7 @@ mod tests {
     /// all coexist.  Invalid entries are silently ignored; valid ones initialize.
     #[test]
     fn resilient_fallback_mixed_chain() {
-        let reliability = crate::alphahuman::config::ReliabilityConfig {
+        let reliability = crate::openhuman::config::ReliabilityConfig {
             provider_retries: 1,
             provider_backoff_ms: 100,
             fallback_providers: vec![

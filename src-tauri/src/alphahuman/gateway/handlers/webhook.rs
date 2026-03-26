@@ -1,14 +1,14 @@
 //! Webhook endpoint handlers.
 
-use crate::alphahuman::gateway::client::client_key_from_request;
-use crate::alphahuman::gateway::constants::{
+use crate::openhuman::gateway::client::client_key_from_request;
+use crate::openhuman::gateway::constants::{
     hash_webhook_secret, webhook_memory_key, RATE_LIMIT_WINDOW_SECS,
 };
-use crate::alphahuman::gateway::models::WebhookBody;
-use crate::alphahuman::gateway::state::AppState;
-use crate::alphahuman::memory::MemoryCategory;
-use crate::alphahuman::providers::{self, ChatMessage, ProviderCapabilityError};
-use crate::alphahuman::security::pairing::constant_time_eq;
+use crate::openhuman::gateway::models::WebhookBody;
+use crate::openhuman::gateway::state::AppState;
+use crate::openhuman::memory::MemoryCategory;
+use crate::openhuman::providers::{self, ChatMessage, ProviderCapabilityError};
+use crate::openhuman::security::pairing::constant_time_eq;
 use axum::{
     extract::{ConnectInfo, State},
     http::{header, HeaderMap, StatusCode},
@@ -24,7 +24,7 @@ pub(crate) async fn run_gateway_chat_with_multimodal(
     message: &str,
 ) -> anyhow::Result<String> {
     let user_messages = vec![ChatMessage::user(message)];
-    let image_marker_count = crate::alphahuman::multimodal::count_image_markers(&user_messages);
+    let image_marker_count = crate::openhuman::multimodal::count_image_markers(&user_messages);
     if image_marker_count > 0 && !state.provider.supports_vision() {
         return Err(ProviderCapabilityError {
             provider: provider_label.to_string(),
@@ -40,7 +40,7 @@ pub(crate) async fn run_gateway_chat_with_multimodal(
     // workspace-aware system context before model invocation.
     let system_prompt = {
         let config_guard = state.config.lock();
-        crate::alphahuman::channels::build_system_prompt(
+        crate::openhuman::channels::build_system_prompt(
             &config_guard.workspace_dir,
             &state.model,
             &[], // tools - empty for simple chat
@@ -56,7 +56,7 @@ pub(crate) async fn run_gateway_chat_with_multimodal(
 
     let multimodal_config = state.config.lock().multimodal.clone();
     let prepared =
-        crate::alphahuman::multimodal::prepare_messages_for_provider(&messages, &multimodal_config)
+        crate::openhuman::multimodal::prepare_messages_for_provider(&messages, &multimodal_config)
             .await?;
 
     state
@@ -181,13 +181,13 @@ pub async fn handle_webhook(
 
     state
         .observer
-        .record_event(&crate::alphahuman::observability::ObserverEvent::AgentStart {
+        .record_event(&crate::openhuman::observability::ObserverEvent::AgentStart {
             provider: provider_label.clone(),
             model: model_label.clone(),
         });
     state
         .observer
-        .record_event(&crate::alphahuman::observability::ObserverEvent::LlmRequest {
+        .record_event(&crate::openhuman::observability::ObserverEvent::LlmRequest {
             provider: provider_label.clone(),
             model: model_label.clone(),
             messages_count: 1,
@@ -198,7 +198,7 @@ pub async fn handle_webhook(
             let duration = started_at.elapsed();
             state
                 .observer
-                .record_event(&crate::alphahuman::observability::ObserverEvent::LlmResponse {
+                .record_event(&crate::openhuman::observability::ObserverEvent::LlmResponse {
                     provider: provider_label.clone(),
                     model: model_label.clone(),
                     duration,
@@ -206,11 +206,11 @@ pub async fn handle_webhook(
                     error_message: None,
                 });
             state.observer.record_metric(
-                &crate::alphahuman::observability::traits::ObserverMetric::RequestLatency(duration),
+                &crate::openhuman::observability::traits::ObserverMetric::RequestLatency(duration),
             );
             state
                 .observer
-                .record_event(&crate::alphahuman::observability::ObserverEvent::AgentEnd {
+                .record_event(&crate::openhuman::observability::ObserverEvent::AgentEnd {
                     provider: provider_label,
                     model: model_label,
                     duration,
@@ -227,7 +227,7 @@ pub async fn handle_webhook(
 
             state
                 .observer
-                .record_event(&crate::alphahuman::observability::ObserverEvent::LlmResponse {
+                .record_event(&crate::openhuman::observability::ObserverEvent::LlmResponse {
                     provider: provider_label.clone(),
                     model: model_label.clone(),
                     duration,
@@ -235,17 +235,17 @@ pub async fn handle_webhook(
                     error_message: Some(sanitized.clone()),
                 });
             state.observer.record_metric(
-                &crate::alphahuman::observability::traits::ObserverMetric::RequestLatency(duration),
+                &crate::openhuman::observability::traits::ObserverMetric::RequestLatency(duration),
             );
             state
                 .observer
-                .record_event(&crate::alphahuman::observability::ObserverEvent::Error {
+                .record_event(&crate::openhuman::observability::ObserverEvent::Error {
                     component: "gateway".to_string(),
                     message: sanitized.clone(),
                 });
             state
                 .observer
-                .record_event(&crate::alphahuman::observability::ObserverEvent::AgentEnd {
+                .record_event(&crate::openhuman::observability::ObserverEvent::AgentEnd {
                     provider: provider_label,
                     model: model_label,
                     duration,

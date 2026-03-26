@@ -1,5 +1,5 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::fmt::Write;
@@ -252,7 +252,7 @@ impl Tool for ScreenshotTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_security() -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {

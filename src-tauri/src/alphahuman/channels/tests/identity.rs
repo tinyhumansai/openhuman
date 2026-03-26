@@ -3,7 +3,7 @@ use super::super::prompt::build_system_prompt;
 
 #[test]
 fn aieos_identity_from_file() {
-    use crate::alphahuman::config::IdentityConfig;
+    use crate::openhuman::config::IdentityConfig;
     use tempfile::TempDir;
 
     let tmp = TempDir::new().unwrap();
@@ -60,7 +60,7 @@ fn aieos_identity_from_file() {
 
 #[test]
 fn aieos_identity_from_inline() {
-    use crate::alphahuman::config::IdentityConfig;
+    use crate::openhuman::config::IdentityConfig;
 
     let config = IdentityConfig {
         format: "aieos".into(),
@@ -83,7 +83,7 @@ fn aieos_identity_from_inline() {
 
 #[test]
 fn aieos_fallback_to_openclaw_on_parse_error() {
-    use crate::alphahuman::config::IdentityConfig;
+    use crate::openhuman::config::IdentityConfig;
 
     let config = IdentityConfig {
         format: "aieos".into(),
@@ -101,7 +101,7 @@ fn aieos_fallback_to_openclaw_on_parse_error() {
 
 #[test]
 fn aieos_empty_uses_openclaw() {
-    use crate::alphahuman::config::IdentityConfig;
+    use crate::openhuman::config::IdentityConfig;
 
     // Format is "aieos" but neither path nor inline is set
     let config = IdentityConfig {
@@ -120,7 +120,7 @@ fn aieos_empty_uses_openclaw() {
 
 #[test]
 fn openclaw_format_uses_bootstrap_files() {
-    use crate::alphahuman::config::IdentityConfig;
+    use crate::openhuman::config::IdentityConfig;
 
     let config = IdentityConfig {
         format: "openclaw".into(),

@@ -11,27 +11,27 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { formatRelativeTime, useDaemonHealth } from '../../../hooks/useDaemonHealth';
 import {
-  alphahumanAgentChat,
-  alphahumanDecryptSecret,
-  alphahumanDoctorModels,
-  alphahumanDoctorReport,
-  alphahumanEncryptSecret,
-  alphahumanGetConfig,
-  alphahumanGetIntegrationInfo,
-  alphahumanHardwareDiscover,
-  alphahumanHardwareIntrospect,
-  alphahumanListIntegrations,
-  alphahumanMigrateOpenclaw,
-  alphahumanModelsRefresh,
-  alphahumanServiceInstall,
-  alphahumanServiceStatus,
-  alphahumanServiceUninstall,
-  alphahumanUpdateGatewaySettings,
-  alphahumanUpdateMemorySettings,
-  alphahumanUpdateModelSettings,
-  alphahumanUpdateRuntimeSettings,
-  alphahumanUpdateTunnelSettings,
   isTauri,
+  openhumanAgentChat,
+  openhumanDecryptSecret,
+  openhumanDoctorModels,
+  openhumanDoctorReport,
+  openhumanEncryptSecret,
+  openhumanGetConfig,
+  openhumanGetIntegrationInfo,
+  openhumanHardwareDiscover,
+  openhumanHardwareIntrospect,
+  openhumanListIntegrations,
+  openhumanMigrateOpenclaw,
+  openhumanModelsRefresh,
+  openhumanServiceInstall,
+  openhumanServiceStatus,
+  openhumanServiceUninstall,
+  openhumanUpdateGatewaySettings,
+  openhumanUpdateMemorySettings,
+  openhumanUpdateModelSettings,
+  openhumanUpdateRuntimeSettings,
+  openhumanUpdateTunnelSettings,
   runtimeDisableSkill,
   runtimeEnableSkill,
   runtimeIsSkillEnabled,
@@ -344,7 +344,7 @@ const TauriCommandsPanel = () => {
   };
 
   const loadConfig = async () => {
-    const response = await runWithResult(() => alphahumanGetConfig(), 'loadConfig');
+    const response = await runWithResult(() => openhumanGetConfig(), 'loadConfig');
     if (!response) {
       setError('Failed to load configuration');
       return;
@@ -440,7 +440,7 @@ const TauriCommandsPanel = () => {
     setOperationLoading('saveModelSettings');
 
     try {
-      const result = await alphahumanUpdateModelSettings({
+      const result = await openhumanUpdateModelSettings({
         api_key: apiKey.trim() ? apiKey : null,
         api_url: apiUrl.trim() ? apiUrl : null,
         default_provider: defaultProvider.trim() ? defaultProvider : null,
@@ -512,7 +512,7 @@ const TauriCommandsPanel = () => {
 
       // Test connection by attempting to refresh models with current settings
       const result = await Promise.race([
-        alphahumanModelsRefresh(defaultProvider, false),
+        openhumanModelsRefresh(defaultProvider, false),
         timeoutPromise,
       ]);
 
@@ -557,12 +557,12 @@ const TauriCommandsPanel = () => {
   };
 
   const saveTunnelSettings = () =>
-    run(() => alphahumanUpdateTunnelSettings(buildTunnelConfig()), 'saveTunnelSettings');
+    run(() => openhumanUpdateTunnelSettings(buildTunnelConfig()), 'saveTunnelSettings');
 
   const saveGatewaySettings = () =>
     run(
       () =>
-        alphahumanUpdateGatewaySettings({
+        openhumanUpdateGatewaySettings({
           host: gatewayHost.trim() ? gatewayHost : null,
           port: parseOptionalNumber(gatewayPort),
           require_pairing: gatewayPairing,
@@ -574,7 +574,7 @@ const TauriCommandsPanel = () => {
   const saveMemorySettings = () =>
     run(
       () =>
-        alphahumanUpdateMemorySettings({
+        openhumanUpdateMemorySettings({
           backend: memoryBackend.trim() ? memoryBackend : null,
           auto_save: memoryAutoSave,
           embedding_provider: embeddingProvider.trim() ? embeddingProvider : null,
@@ -587,7 +587,7 @@ const TauriCommandsPanel = () => {
   const saveRuntimeSettings = () =>
     run(
       () =>
-        alphahumanUpdateRuntimeSettings({
+        openhumanUpdateRuntimeSettings({
           kind: runtimeKind.trim() ? runtimeKind : null,
           reasoning_enabled: reasoningEnabled,
         }),
@@ -636,7 +636,7 @@ const TauriCommandsPanel = () => {
     setChatInput('');
     const response = await runWithResult(
       () =>
-        alphahumanAgentChat(
+        openhumanAgentChat(
           userMessage,
           chatProvider.trim() ? chatProvider : undefined,
           chatModel.trim() ? chatModel : undefined,
@@ -1052,19 +1052,19 @@ const TauriCommandsPanel = () => {
                         Stop
                       </PrimaryButton>
                       <PrimaryButton
-                        onClick={() => run(alphahumanServiceStatus, 'serviceStatus')}
+                        onClick={() => run(openhumanServiceStatus, 'serviceStatus')}
                         loading={operationLoading === 'serviceStatus'}
                         variant="outline">
                         Status
                       </PrimaryButton>
                       <PrimaryButton
-                        onClick={() => run(alphahumanServiceInstall, 'serviceInstall')}
+                        onClick={() => run(openhumanServiceInstall, 'serviceInstall')}
                         loading={operationLoading === 'serviceInstall'}
                         variant="outline">
                         Install
                       </PrimaryButton>
                       <PrimaryButton
-                        onClick={() => run(alphahumanServiceUninstall, 'serviceUninstall')}
+                        onClick={() => run(openhumanServiceUninstall, 'serviceUninstall')}
                         loading={operationLoading === 'serviceUninstall'}
                         variant="outline">
                         Uninstall
@@ -1180,13 +1180,13 @@ const TauriCommandsPanel = () => {
 
             <ActionPanel>
               <PrimaryButton
-                onClick={() => run(() => alphahumanEncryptSecret(encryptInput), 'encryptSecret')}
+                onClick={() => run(() => openhumanEncryptSecret(encryptInput), 'encryptSecret')}
                 loading={operationLoading === 'encryptSecret'}
                 disabled={!encryptInput.trim()}>
                 Encrypt
               </PrimaryButton>
               <PrimaryButton
-                onClick={() => run(() => alphahumanDecryptSecret(decryptInput), 'decryptSecret')}
+                onClick={() => run(() => openhumanDecryptSecret(decryptInput), 'decryptSecret')}
                 loading={operationLoading === 'decryptSecret'}
                 disabled={!decryptInput.trim()}
                 variant="outline">
@@ -1195,7 +1195,7 @@ const TauriCommandsPanel = () => {
               <PrimaryButton
                 onClick={() =>
                   run(
-                    () => alphahumanModelsRefresh(providerOverride || undefined, false),
+                    () => openhumanModelsRefresh(providerOverride || undefined, false),
                     'modelsRefresh'
                   )
                 }
@@ -1205,7 +1205,7 @@ const TauriCommandsPanel = () => {
               <PrimaryButton
                 onClick={() =>
                   run(
-                    () => alphahumanModelsRefresh(providerOverride || undefined, true),
+                    () => openhumanModelsRefresh(providerOverride || undefined, true),
                     'modelsForceRefresh'
                   )
                 }
@@ -1214,13 +1214,13 @@ const TauriCommandsPanel = () => {
                 Force Refresh
               </PrimaryButton>
               <PrimaryButton
-                onClick={() => run(alphahumanListIntegrations, 'listIntegrations')}
+                onClick={() => run(openhumanListIntegrations, 'listIntegrations')}
                 loading={operationLoading === 'listIntegrations'}>
                 List Integrations
               </PrimaryButton>
               <PrimaryButton
                 onClick={() =>
-                  run(() => alphahumanGetIntegrationInfo(integrationName), 'getIntegrationInfo')
+                  run(() => openhumanGetIntegrationInfo(integrationName), 'getIntegrationInfo')
                 }
                 loading={operationLoading === 'getIntegrationInfo'}
                 disabled={!integrationName.trim()}
@@ -1431,14 +1431,14 @@ const TauriCommandsPanel = () => {
                 <div className="md:col-span-2">
                   <ActionPanel>
                     <PrimaryButton
-                      onClick={() => run(alphahumanDoctorReport, 'doctorReport')}
+                      onClick={() => run(openhumanDoctorReport, 'doctorReport')}
                       loading={operationLoading === 'doctorReport'}>
                       Run Doctor Report
                     </PrimaryButton>
                     <PrimaryButton
                       onClick={() =>
                         run(
-                          () => alphahumanDoctorModels(providerOverride || undefined, true),
+                          () => openhumanDoctorModels(providerOverride || undefined, true),
                           'probeModels'
                         )
                       }
@@ -1481,13 +1481,13 @@ const TauriCommandsPanel = () => {
 
             <ActionPanel>
               <PrimaryButton
-                onClick={() => run(alphahumanHardwareDiscover, 'hardwareDiscover')}
+                onClick={() => run(openhumanHardwareDiscover, 'hardwareDiscover')}
                 loading={operationLoading === 'hardwareDiscover'}>
                 Discover Devices
               </PrimaryButton>
               <PrimaryButton
                 onClick={() =>
-                  run(() => alphahumanHardwareIntrospect(hardwarePath), 'hardwareIntrospect')
+                  run(() => openhumanHardwareIntrospect(hardwarePath), 'hardwareIntrospect')
                 }
                 loading={operationLoading === 'hardwareIntrospect'}
                 disabled={!hardwarePath.trim()}
@@ -1497,7 +1497,7 @@ const TauriCommandsPanel = () => {
               <PrimaryButton
                 onClick={() =>
                   run(
-                    () => alphahumanMigrateOpenclaw(migrationSource || undefined, true),
+                    () => openhumanMigrateOpenclaw(migrationSource || undefined, true),
                     'migrationDryRun'
                   )
                 }
@@ -1507,7 +1507,7 @@ const TauriCommandsPanel = () => {
               <PrimaryButton
                 onClick={() =>
                   run(
-                    () => alphahumanMigrateOpenclaw(migrationSource || undefined, false),
+                    () => openhumanMigrateOpenclaw(migrationSource || undefined, false),
                     'runMigration'
                   )
                 }

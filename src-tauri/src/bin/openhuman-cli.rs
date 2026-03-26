@@ -24,7 +24,7 @@ struct RpcError {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "alphahuman-cli")]
+#[command(name = "openhuman-cli")]
 #[command(about = "CLI for the OpenHuman core RPC server")]
 struct Cli {
     /// Core RPC endpoint URL
@@ -178,7 +178,7 @@ fn endpoint(cli: &Cli) -> String {
     if let Some(url) = &cli.rpc_url {
         return url.clone();
     }
-    std::env::var("ALPHAHUMAN_CORE_RPC_URL")
+    std::env::var("OPENHUMAN_CORE_RPC_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
 }
 
@@ -217,10 +217,10 @@ fn execute(cli: Cli) -> Result<serde_json::Value, String> {
     match cli.command {
         Command::Ping => call(&url, "core.ping", serde_json::json!({})),
         Command::Version => call(&url, "core.version", serde_json::json!({})),
-        Command::Health => call(&url, "alphahuman.health_snapshot", serde_json::json!({})),
-        Command::RuntimeFlags => call(&url, "alphahuman.get_runtime_flags", serde_json::json!({})),
+        Command::Health => call(&url, "openhuman.health_snapshot", serde_json::json!({})),
+        Command::RuntimeFlags => call(&url, "openhuman.get_runtime_flags", serde_json::json!({})),
         Command::Config { command } => match command {
-            ConfigCommand::Get => call(&url, "alphahuman.get_config", serde_json::json!({})),
+            ConfigCommand::Get => call(&url, "openhuman.get_config", serde_json::json!({})),
         },
         Command::Service { command } => match command {
             ServiceCommand::Install => local_service_install(),
@@ -234,13 +234,13 @@ fn execute(cli: Cli) -> Result<serde_json::Value, String> {
             ServiceCommand::Uninstall => local_service_uninstall(),
         },
         Command::Doctor { command } => match command {
-            DoctorCommand::Report => call(&url, "alphahuman.doctor_report", serde_json::json!({})),
+            DoctorCommand::Report => call(&url, "openhuman.doctor_report", serde_json::json!({})),
             DoctorCommand::Models {
                 provider,
                 use_cache,
             } => call(
                 &url,
-                "alphahuman.doctor_models",
+                "openhuman.doctor_models",
                 serde_json::json!({
                     "provider_override": provider,
                     "use_cache": use_cache,
@@ -249,17 +249,17 @@ fn execute(cli: Cli) -> Result<serde_json::Value, String> {
         },
         Command::Integrations { command } => match command {
             IntegrationsCommand::List => {
-                call(&url, "alphahuman.list_integrations", serde_json::json!({}))
+                call(&url, "openhuman.list_integrations", serde_json::json!({}))
             }
             IntegrationsCommand::Info { name } => call(
                 &url,
-                "alphahuman.get_integration_info",
+                "openhuman.get_integration_info",
                 serde_json::json!({ "name": name }),
             ),
         },
         Command::AgentChat(args) => call(
             &url,
-            "alphahuman.agent_chat",
+            "openhuman.agent_chat",
             serde_json::json!({
                 "message": args.message,
                 "provider_override": args.provider,
@@ -269,32 +269,32 @@ fn execute(cli: Cli) -> Result<serde_json::Value, String> {
         ),
         Command::Hardware { command } => match command {
             HardwareCommand::Discover => {
-                call(&url, "alphahuman.hardware_discover", serde_json::json!({}))
+                call(&url, "openhuman.hardware_discover", serde_json::json!({}))
             }
             HardwareCommand::Introspect { path } => call(
                 &url,
-                "alphahuman.hardware_introspect",
+                "openhuman.hardware_introspect",
                 serde_json::json!({ "path": path }),
             ),
         },
         Command::Encrypt { plaintext } => call(
             &url,
-            "alphahuman.encrypt_secret",
+            "openhuman.encrypt_secret",
             serde_json::json!({ "plaintext": plaintext }),
         ),
         Command::Decrypt { ciphertext } => call(
             &url,
-            "alphahuman.decrypt_secret",
+            "openhuman.decrypt_secret",
             serde_json::json!({ "ciphertext": ciphertext }),
         ),
         Command::BrowserAllowAll { enabled } => call(
             &url,
-            "alphahuman.set_browser_allow_all",
+            "openhuman.set_browser_allow_all",
             serde_json::json!({ "enabled": enabled }),
         ),
         Command::ModelsRefresh { provider, force } => call(
             &url,
-            "alphahuman.models_refresh",
+            "openhuman.models_refresh",
             serde_json::json!({
                 "provider_override": provider,
                 "force": force,
@@ -305,7 +305,7 @@ fn execute(cli: Cli) -> Result<serde_json::Value, String> {
             dry_run,
         } => call(
             &url,
-            "alphahuman.migrate_openclaw",
+            "openhuman.migrate_openclaw",
             serde_json::json!({
                 "source_workspace": source_workspace,
                 "dry_run": dry_run,
@@ -314,22 +314,22 @@ fn execute(cli: Cli) -> Result<serde_json::Value, String> {
     }
 }
 
-fn load_config() -> Result<alphahuman::alphahuman::config::Config, String> {
+fn load_config() -> Result<openhuman::openhuman::config::Config, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("failed to build runtime: {e}"))?;
     runtime
-        .block_on(alphahuman::alphahuman::config::Config::load_or_init())
+        .block_on(openhuman::openhuman::config::Config::load_or_init())
         .map_err(|e| format!("failed to load config: {e}"))
 }
 
-fn status_value(status: alphahuman::alphahuman::service::ServiceStatus) -> Result<serde_json::Value, String> {
+fn status_value(status: openhuman::openhuman::service::ServiceStatus) -> Result<serde_json::Value, String> {
     serde_json::to_value(status).map_err(|e| format!("failed to serialize service status: {e}"))
 }
 
 fn command_response_json(
-    status: alphahuman::alphahuman::service::ServiceStatus,
+    status: openhuman::openhuman::service::ServiceStatus,
     log: &str,
 ) -> Result<serde_json::Value, String> {
     Ok(json!({
@@ -340,35 +340,35 @@ fn command_response_json(
 
 fn local_service_install() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = alphahuman::alphahuman::service::install(&config)
+    let status = openhuman::openhuman::service::install(&config)
         .map_err(|e| format!("service install failed: {e}"))?;
     command_response_json(status, "service install completed")
 }
 
 fn local_service_start() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = alphahuman::alphahuman::service::start(&config)
+    let status = openhuman::openhuman::service::start(&config)
         .map_err(|e| format!("service start failed: {e}"))?;
     command_response_json(status, "service start completed")
 }
 
 fn local_service_stop() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = alphahuman::alphahuman::service::stop(&config)
+    let status = openhuman::openhuman::service::stop(&config)
         .map_err(|e| format!("service stop failed: {e}"))?;
     command_response_json(status, "service stop completed")
 }
 
 fn local_service_status() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = alphahuman::alphahuman::service::status(&config)
+    let status = openhuman::openhuman::service::status(&config)
         .map_err(|e| format!("service status failed: {e}"))?;
     command_response_json(status, "service status fetched")
 }
 
 fn local_service_uninstall() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = alphahuman::alphahuman::service::uninstall(&config)
+    let status = openhuman::openhuman::service::uninstall(&config)
         .map_err(|e| format!("service uninstall failed: {e}"))?;
     command_response_json(status, "service uninstall completed")
 }

@@ -1,4 +1,4 @@
-package com.alphahuman.app
+package com.openhuman.app
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -25,7 +25,7 @@ class RuntimeService : Service() {
 
     companion object {
         private const val NOTIFICATION_ID = 1
-        private const val CHANNEL_ID = "alphahuman_runtime"
+        private const val CHANNEL_ID = "openhuman_runtime"
         private const val CHANNEL_NAME = "OpenHuman Runtime"
     }
 

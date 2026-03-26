@@ -2,7 +2,7 @@
 
 pub mod registry;
 
-use crate::alphahuman::config::Config;
+use crate::openhuman::config::Config;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 

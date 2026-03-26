@@ -1,8 +1,8 @@
-use crate::alphahuman::providers::traits::{
+use crate::openhuman::providers::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     Provider, ToolCall as ProviderToolCall,
 };
-use crate::alphahuman::tools::ToolSpec;
+use crate::openhuman::tools::ToolSpec;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -250,7 +250,7 @@ impl OpenAiProvider {
     }
 
     fn http_client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.openai", 120, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.openai", 120, 10)
     }
 }
 
@@ -455,7 +455,7 @@ mod tests {
     async fn chat_with_system_fails_without_key() {
         let p = OpenAiProvider::new(None);
         let result = p
-            .chat_with_system(Some("You are Alphahuman"), "test", "gpt-4o", 0.5)
+            .chat_with_system(Some("You are OpenHuman"), "test", "gpt-4o", 0.5)
             .await;
         assert!(result.is_err());
     }
@@ -467,7 +467,7 @@ mod tests {
             messages: vec![
                 Message {
                     role: "system".to_string(),
-                    content: "You are Alphahuman".to_string(),
+                    content: "You are OpenHuman".to_string(),
                 },
                 Message {
                     role: "user".to_string(),

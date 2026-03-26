@@ -1,4 +1,4 @@
-use crate::alphahuman::config::schema::QueryClassificationConfig;
+use crate::openhuman::config::schema::QueryClassificationConfig;
 
 /// Classify a user message against the configured rules and return the
 /// matching hint string, if any.
@@ -50,7 +50,7 @@ pub fn classify(config: &QueryClassificationConfig, message: &str) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::schema::{ClassificationRule, QueryClassificationConfig};
+    use crate::openhuman::config::schema::{ClassificationRule, QueryClassificationConfig};
 
     fn make_config(enabled: bool, rules: Vec<ClassificationRule>) -> QueryClassificationConfig {
         QueryClassificationConfig { enabled, rules }

@@ -1,4 +1,4 @@
-use crate::alphahuman::channels::traits::{Channel, ChannelMessage, SendMessage};
+use crate::openhuman::channels::traits::{Channel, ChannelMessage, SendMessage};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -18,7 +18,7 @@ static MSG_SEQ: AtomicU64 = AtomicU64::new(0);
 /// IRC over TLS channel.
 ///
 /// Connects to an IRC server using TLS, joins configured channels,
-/// and forwards PRIVMSG messages to the `Alphahuman` message bus.
+/// and forwards PRIVMSG messages to the `OpenHuman` message bus.
 /// Supports both channel messages and private messages (DMs).
 pub struct IrcChannel {
     server: String,
@@ -395,7 +395,7 @@ impl Channel for IrcChannel {
         Self::send_raw(&mut writer, &format!("NICK {current_nick}")).await?;
         Self::send_raw(
             &mut writer,
-            &format!("USER {} 0 * :Alphahuman", self.username),
+            &format!("USER {} 0 * :OpenHuman", self.username),
         )
         .await?;
 
@@ -919,7 +919,7 @@ mod tests {
             server: "irc.example.com".into(),
             port: 6697,
             nickname: "zcbot".into(),
-            username: Some("alphahuman".into()),
+            username: Some("openhuman".into()),
             channels: vec!["#test".into()],
             allowed_users: vec!["alice".into()],
             server_password: Some("serverpass".into()),
@@ -930,7 +930,7 @@ mod tests {
         assert_eq!(ch.server, "irc.example.com");
         assert_eq!(ch.port, 6697);
         assert_eq!(ch.nickname, "zcbot");
-        assert_eq!(ch.username, "alphahuman");
+        assert_eq!(ch.username, "openhuman");
         assert_eq!(ch.channels, vec!["#test"]);
         assert_eq!(ch.allowed_users, vec!["alice"]);
         assert_eq!(ch.server_password.as_deref(), Some("serverpass"));
@@ -943,13 +943,13 @@ mod tests {
 
     #[test]
     fn irc_config_serde_roundtrip() {
-        use crate::alphahuman::config::schema::IrcConfig;
+        use crate::openhuman::config::schema::IrcConfig;
 
         let config = IrcConfig {
             server: "irc.example.com".into(),
             port: 6697,
             nickname: "zcbot".into(),
-            username: Some("alphahuman".into()),
+            username: Some("openhuman".into()),
             channels: vec!["#test".into(), "#dev".into()],
             allowed_users: vec!["alice".into()],
             server_password: None,
@@ -963,7 +963,7 @@ mod tests {
         assert_eq!(parsed.server, "irc.example.com");
         assert_eq!(parsed.port, 6697);
         assert_eq!(parsed.nickname, "zcbot");
-        assert_eq!(parsed.username.as_deref(), Some("alphahuman"));
+        assert_eq!(parsed.username.as_deref(), Some("openhuman"));
         assert_eq!(parsed.channels, vec!["#test", "#dev"]);
         assert_eq!(parsed.allowed_users, vec!["alice"]);
         assert!(parsed.server_password.is_none());
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn irc_config_minimal_toml() {
-        use crate::alphahuman::config::schema::IrcConfig;
+        use crate::openhuman::config::schema::IrcConfig;
 
         let toml_str = r#"
 server = "irc.example.com"
@@ -995,7 +995,7 @@ nickname = "bot"
 
     #[test]
     fn irc_config_default_port() {
-        use crate::alphahuman::config::schema::IrcConfig;
+        use crate::openhuman::config::schema::IrcConfig;
 
         let json = r#"{"server":"irc.test","nickname":"bot"}"#;
         let parsed: IrcConfig = serde_json::from_str(json).unwrap();
@@ -1010,7 +1010,7 @@ nickname = "bot"
             port: 6697,
             nickname: "zcbot".into(),
             username: None,
-            channels: vec!["#alphahuman".into()],
+            channels: vec!["#openhuman".into()],
             allowed_users: vec!["*".into()],
             server_password: None,
             nickserv_password: None,

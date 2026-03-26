@@ -12,7 +12,7 @@ pub struct ObservabilityConfig {
     #[serde(default)]
     pub otel_endpoint: Option<String>,
 
-    /// Service name reported to the OTel collector. Defaults to "alphahuman".
+    /// Service name reported to the OTel collector. Defaults to "openhuman".
     #[serde(default)]
     pub otel_service_name: Option<String>,
 }

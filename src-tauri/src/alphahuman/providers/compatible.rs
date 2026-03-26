@@ -2,7 +2,7 @@
 //! Most LLM APIs follow the same `/v1/chat/completions` format.
 //! This module provides a single implementation that works for all of them.
 
-use crate::alphahuman::providers::traits::{
+use crate::openhuman::providers::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     Provider, StreamChunk, StreamError, StreamOptions, StreamResult, ToolCall as ProviderToolCall,
 };
@@ -160,7 +160,7 @@ impl OpenAiCompatibleProvider {
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .default_headers(headers);
             let builder =
-                crate::alphahuman::config::apply_runtime_proxy_to_builder(builder, "provider.compatible");
+                crate::openhuman::config::apply_runtime_proxy_to_builder(builder, "provider.compatible");
 
             return builder.build().unwrap_or_else(|error| {
                 tracing::warn!("Failed to build proxied timeout client with user-agent: {error}");
@@ -168,7 +168,7 @@ impl OpenAiCompatibleProvider {
             });
         }
 
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.compatible", 120, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.compatible", 120, 10)
     }
 
     /// Build the full URL for chat completions, detecting if base_url already includes the path.
@@ -233,7 +233,7 @@ impl OpenAiCompatibleProvider {
         }
     }
 
-    fn tool_specs_to_openai_format(tools: &[crate::alphahuman::tools::ToolSpec]) -> Vec<serde_json::Value> {
+    fn tool_specs_to_openai_format(tools: &[crate::openhuman::tools::ToolSpec]) -> Vec<serde_json::Value> {
         tools
             .iter()
             .map(|tool| {
@@ -730,7 +730,7 @@ impl OpenAiCompatibleProvider {
     }
 
     fn convert_tool_specs(
-        tools: Option<&[crate::alphahuman::tools::ToolSpec]>,
+        tools: Option<&[crate::openhuman::tools::ToolSpec]>,
     ) -> Option<Vec<serde_json::Value>> {
         tools.map(|items| {
             items
@@ -823,7 +823,7 @@ impl OpenAiCompatibleProvider {
 
     fn with_prompt_guided_tool_instructions(
         messages: &[ChatMessage],
-        tools: Option<&[crate::alphahuman::tools::ToolSpec]>,
+        tools: Option<&[crate::openhuman::tools::ToolSpec]>,
     ) -> Vec<ChatMessage> {
         let Some(tools) = tools else {
             return messages.to_vec();
@@ -833,7 +833,7 @@ impl OpenAiCompatibleProvider {
             return messages.to_vec();
         }
 
-        let instructions = crate::alphahuman::providers::traits::build_tool_instructions_text(tools);
+        let instructions = crate::openhuman::providers::traits::build_tool_instructions_text(tools);
         let mut modified_messages = messages.to_vec();
 
         if let Some(system_message) = modified_messages.iter_mut().find(|m| m.role == "system") {
@@ -895,8 +895,8 @@ impl OpenAiCompatibleProvider {
 
 #[async_trait]
 impl Provider for OpenAiCompatibleProvider {
-    fn capabilities(&self) -> crate::alphahuman::providers::traits::ProviderCapabilities {
-        crate::alphahuman::providers::traits::ProviderCapabilities {
+    fn capabilities(&self) -> crate::openhuman::providers::traits::ProviderCapabilities {
+        crate::openhuman::providers::traits::ProviderCapabilities {
             native_tool_calling: true,
             vision: false,
         }
@@ -1520,7 +1520,7 @@ mod tests {
             messages: vec![
                 Message {
                     role: "system".to_string(),
-                    content: "You are Alphahuman".to_string(),
+                    content: "You are OpenHuman".to_string(),
                 },
                 Message {
                     role: "user".to_string(),
@@ -1980,7 +1980,7 @@ mod tests {
     #[test]
     fn prompt_guided_tool_fallback_injects_system_instruction() {
         let input = vec![ChatMessage::user("check status")];
-        let tools = vec![crate::alphahuman::tools::ToolSpec {
+        let tools = vec![crate::openhuman::tools::ToolSpec {
             name: "shell_exec".to_string(),
             description: "Execute shell command".to_string(),
             parameters: serde_json::json!({
@@ -2020,7 +2020,7 @@ mod tests {
 
     #[test]
     fn tool_specs_convert_to_openai_format() {
-        let specs = vec![crate::alphahuman::tools::ToolSpec {
+        let specs = vec![crate::openhuman::tools::ToolSpec {
             name: "shell".to_string(),
             description: "Run shell command".to_string(),
             parameters: serde_json::json!({

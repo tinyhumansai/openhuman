@@ -500,7 +500,7 @@ async function handleRequest(req, res) {
         {
           id: 'msg-1',
           subject: 'Welcome to OpenHuman',
-          from: 'team@alphahuman.com',
+          from: 'team@openhuman.com',
           date: new Date().toISOString(),
           snippet: 'Welcome to the platform!',
           hasAttachments: false,

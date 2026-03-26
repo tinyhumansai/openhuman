@@ -35,7 +35,7 @@ impl DiscordChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.discord")
+        crate::openhuman::config::build_runtime_proxy_client("channel.discord")
     }
 
     /// Check if a Discord user ID is in the allowlist.
@@ -267,8 +267,8 @@ impl Channel for DiscordChannel {
                 "intents": 37377, // GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT | DIRECT_MESSAGES
                 "properties": {
                     "os": "linux",
-                    "browser": "alphahuman",
-                    "device": "alphahuman"
+                    "browser": "openhuman",
+                    "device": "openhuman"
                 }
             }
         });

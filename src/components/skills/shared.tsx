@@ -66,7 +66,7 @@ export interface SkillListEntry {
   ignoreInProduction?: boolean;
   icon?: React.ReactElement;
   hasSetup: boolean;
-  /** Unified registry type: "alphahuman" (QuickJS) or "openclaw" (SKILL.md/TOML). */
+  /** Unified registry type: "openhuman" (QuickJS) or "openclaw" (SKILL.md/TOML). */
   skill_type?: SkillType;
 }
 

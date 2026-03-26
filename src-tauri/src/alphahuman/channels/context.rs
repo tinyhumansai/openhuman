@@ -1,10 +1,10 @@
 //! Shared channel runtime state and memory helpers.
 
-use crate::alphahuman::memory::Memory;
-use crate::alphahuman::observability::Observer;
-use crate::alphahuman::providers::{ChatMessage, Provider};
-use crate::alphahuman::tools::Tool;
-use crate::alphahuman::util::truncate_with_ellipsis;
+use crate::openhuman::memory::Memory;
+use crate::openhuman::observability::Observer;
+use crate::openhuman::providers::{ChatMessage, Provider};
+use crate::openhuman::tools::Tool;
+use crate::openhuman::util::truncate_with_ellipsis;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -62,11 +62,11 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) route_overrides: RouteSelectionMap,
     pub(crate) api_key: Option<String>,
     pub(crate) api_url: Option<String>,
-    pub(crate) reliability: Arc<crate::alphahuman::config::ReliabilityConfig>,
-    pub(crate) provider_runtime_options: crate::alphahuman::providers::ProviderRuntimeOptions,
+    pub(crate) reliability: Arc<crate::openhuman::config::ReliabilityConfig>,
+    pub(crate) provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions,
     pub(crate) workspace_dir: Arc<PathBuf>,
     pub(crate) message_timeout_secs: u64,
-    pub(crate) multimodal: crate::alphahuman::config::MultimodalConfig,
+    pub(crate) multimodal: crate::openhuman::config::MultimodalConfig,
 }
 
 pub(crate) fn conversation_memory_key(msg: &super::traits::ChannelMessage) -> String {

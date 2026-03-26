@@ -1,13 +1,13 @@
 //! WhatsApp webhook handlers and signature verification.
 
 use super::webhook::run_gateway_chat_with_multimodal;
-use crate::alphahuman::channels::SendMessage;
-use crate::alphahuman::channels::traits::Channel;
-use crate::alphahuman::gateway::models::WhatsAppVerifyQuery;
-use crate::alphahuman::gateway::state::AppState;
-use crate::alphahuman::memory::MemoryCategory;
-use crate::alphahuman::security::pairing::constant_time_eq;
-use crate::alphahuman::util::truncate_with_ellipsis;
+use crate::openhuman::channels::SendMessage;
+use crate::openhuman::channels::traits::Channel;
+use crate::openhuman::gateway::models::WhatsAppVerifyQuery;
+use crate::openhuman::gateway::state::AppState;
+use crate::openhuman::memory::MemoryCategory;
+use crate::openhuman::security::pairing::constant_time_eq;
+use crate::openhuman::util::truncate_with_ellipsis;
 use axum::{
     body::Bytes,
     extract::{Query, State},
@@ -132,7 +132,7 @@ pub async fn handle_whatsapp_message(
 
         // Auto-save to memory
         if state.auto_save {
-            let key = crate::alphahuman::gateway::constants::whatsapp_memory_key(msg);
+            let key = crate::openhuman::gateway::constants::whatsapp_memory_key(msg);
             let _ = state
                 .mem
                 .store(&key, &msg.content, MemoryCategory::Conversation, None)

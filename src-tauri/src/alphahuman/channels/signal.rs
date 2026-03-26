@@ -1,4 +1,4 @@
-use crate::alphahuman::channels::traits::{Channel, ChannelMessage, SendMessage};
+use crate::openhuman::channels::traits::{Channel, ChannelMessage, SendMessage};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::Client;
@@ -92,7 +92,7 @@ impl SignalChannel {
 
     fn http_client(&self) -> Client {
         let builder = Client::builder().connect_timeout(Duration::from_secs(10));
-        let builder = crate::alphahuman::config::apply_runtime_proxy_to_builder(builder, "channel.signal");
+        let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(builder, "channel.signal");
         builder.build().expect("Signal HTTP client should build")
     }
 

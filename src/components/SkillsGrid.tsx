@@ -36,7 +36,7 @@ function normalizeUnifiedEntry(e: Record<string, unknown>): SkillListEntry {
     icon: SKILL_ICONS[e.id as string],
     ignoreInProduction: (e.ignoreInProduction as boolean) ?? false,
     hasSetup,
-    skill_type: (e.skill_type as 'alphahuman' | 'openclaw') ?? 'alphahuman',
+    skill_type: (e.skill_type as 'openhuman' | 'openclaw') ?? 'openhuman',
   };
 }
 
@@ -44,7 +44,7 @@ interface SkillRowProps {
   skillId: string;
   name: string;
   icon?: React.ReactElement;
-  skillType?: 'alphahuman' | 'openclaw';
+  skillType?: 'openhuman' | 'openclaw';
   onConnect: (e: React.MouseEvent) => void;
 }
 
@@ -119,13 +119,13 @@ export default function SkillsGrid() {
   const [activeSkillName, setActiveSkillName] = useState<string>('');
   const [activeSkillDescription, setActiveSkillDescription] = useState<string>('');
   const [activeSkillHasSetup, setActiveSkillHasSetup] = useState(false);
-  const [activeSkillType, setActiveSkillType] = useState<'alphahuman' | 'openclaw'>('alphahuman');
+  const [activeSkillType, setActiveSkillType] = useState<'openhuman' | 'openclaw'>('openhuman');
 
   // Get Redux state for sorting
   const skillsState = useAppSelector(state => state.skills.skills);
   const skillStates = useAppSelector(state => state.skills.skillStates);
 
-  // Load skills from the unified registry (covers both alphahuman and openclaw types).
+  // Load skills from the unified registry (covers both openhuman and openclaw types).
   // Extracted so it can be called after skill creation (e.g. from SelfEvolveModal).
   const refreshSkills = async () => {
     try {
@@ -167,7 +167,7 @@ export default function SkillsGrid() {
               icon: SKILL_ICONS[m.id as string],
               ignoreInProduction: (m.ignoreInProduction as boolean) ?? false,
               hasSetup,
-              skill_type: 'alphahuman' as const,
+              skill_type: 'openhuman' as const,
             };
           })
           .filter(s => IS_DEV || !s.ignoreInProduction);
@@ -261,7 +261,7 @@ export default function SkillsGrid() {
     setActiveSkillName(skill.name);
     setActiveSkillDescription(skill.description);
     setActiveSkillHasSetup(skill.hasSetup);
-    setActiveSkillType(skill.skill_type ?? 'alphahuman');
+    setActiveSkillType(skill.skill_type ?? 'openhuman');
     setSetupModalOpen(true);
   };
 
@@ -299,7 +299,7 @@ export default function SkillsGrid() {
                     spec: {
                       name: `generated-demo-${Date.now()}`,
                       description: 'Auto-generated skill demonstrating the unified registry',
-                      skill_type: 'alphahuman',
+                      skill_type: 'openhuman',
                       tool_code:
                         'return { message: `Hello from generated skill! args=${JSON.stringify(args)}` };',
                     },
@@ -398,7 +398,6 @@ export default function SkillsGrid() {
       {selfEvolveOpen && (
         <SelfEvolveModal onClose={() => setSelfEvolveOpen(false)} onSkillCreated={refreshSkills} />
       )}
-
     </>
   );
 }

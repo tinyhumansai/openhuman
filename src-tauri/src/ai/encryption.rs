@@ -106,16 +106,16 @@ impl EncryptionKey {
     }
 }
 
-/// Get the path to the OpenHuman data directory (~/.alphahuman/).
+/// Get the path to the OpenHuman data directory (~/.openhuman/).
 pub fn get_data_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
-    let data_dir = home.join(".alphahuman");
+    let data_dir = home.join(".openhuman");
     std::fs::create_dir_all(&data_dir)
         .map_err(|e| format!("Failed to create data directory: {e}"))?;
     Ok(data_dir)
 }
 
-/// Get the path to the encryption key file (~/.alphahuman/encryption.key).
+/// Get the path to the encryption key file (~/.openhuman/encryption.key).
 fn get_key_file_path() -> Result<PathBuf, String> {
     Ok(get_data_dir()?.join("encryption.key"))
 }

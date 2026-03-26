@@ -12,7 +12,7 @@ default-run = "OpenHuman"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "alphahuman"
+name = "openhuman"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
@@ -20,16 +20,16 @@ name = "OpenHuman"
 path = "src/main.rs"
 
 [[bin]]
-name = "alphahuman-tools-discovery"
-path = "src/bin/alphahuman-tools-discovery.rs"
+name = "openhuman-tools-discovery"
+path = "src/bin/openhuman-tools-discovery.rs"
 
 [[bin]]
-name = "alphahuman-core"
-path = "src/bin/alphahuman-core.rs"
+name = "openhuman-core"
+path = "src/bin/openhuman-core.rs"
 
 [[bin]]
-name = "alphahuman-cli"
-path = "src/bin/alphahuman-cli.rs"
+name = "openhuman-cli"
+path = "src/bin/openhuman-cli.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -75,7 +75,7 @@ sha2 = "0.10"
 hmac = "0.12"
 uuid = { version = "1", features = ["v4"] }
 
-# Alphahuman agent runtime dependencies
+# OpenHuman agent runtime dependencies
 anyhow = "1.0"
 async-trait = "0.1"
 chacha20poly1305 = "0.10"
@@ -104,7 +104,7 @@ futures-util = "0.3"
 
 # Android uses a simpler approach - no persistent Socket.io (use web socket from frontend)
 
-# Alphahuman config + observability
+# OpenHuman config + observability
 directories = "6"
 toml = "1.0"
 shellexpand = "3.1"
@@ -185,7 +185,7 @@ custom-protocol = ["tauri/custom-protocol"]
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 
-# Alphahuman feature flags
+# OpenHuman feature flags
 hardware = ["dep:nusb", "dep:tokio-serial"]
 channel-matrix = ["dep:matrix-sdk"]
 peripheral-rpi = ["dep:rppal"]

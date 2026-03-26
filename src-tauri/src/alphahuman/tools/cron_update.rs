@@ -1,7 +1,7 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::cron::{self, CronJobPatch};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::config::Config;
+use crate::openhuman::cron::{self, CronJobPatch};
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -108,7 +108,7 @@ impl Tool for CronUpdateTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::Config;
+    use crate::openhuman::config::Config;
     use tempfile::TempDir;
 
     async fn test_config(tmp: &TempDir) -> Arc<Config> {

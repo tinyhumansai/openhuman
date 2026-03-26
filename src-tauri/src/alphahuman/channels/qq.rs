@@ -47,7 +47,7 @@ impl QQChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.qq")
+        crate::openhuman::config::build_runtime_proxy_client("channel.qq")
     }
 
     fn is_user_allowed(&self, user_id: &str) -> bool {
@@ -258,8 +258,8 @@ impl Channel for QQChannel {
                 "intents": intents,
                 "properties": {
                     "os": "linux",
-                    "browser": "alphahuman",
-                    "device": "alphahuman",
+                    "browser": "openhuman",
+                    "device": "openhuman",
                 }
             }
         });
@@ -500,7 +500,7 @@ app_id = "12345"
 app_secret = "secret_abc"
 allowed_users = ["user1"]
 "#;
-        let config: crate::alphahuman::config::schema::QQConfig = toml::from_str(toml_str).unwrap();
+        let config: crate::openhuman::config::schema::QQConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.app_id, "12345");
         assert_eq!(config.app_secret, "secret_abc");
         assert_eq!(config.allowed_users, vec!["user1"]);

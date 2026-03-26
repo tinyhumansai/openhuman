@@ -491,7 +491,7 @@ impl SecurityPolicy {
     ) -> Result<CommandRiskLevel, String> {
         if !self.is_command_allowed(command) {
             log::warn!(
-                "[alphahuman:policy] Command blocked by allowlist: {}",
+                "[openhuman:policy] Command blocked by allowlist: {}",
                 &command[..command.len().min(80)]
             );
             return Err(format!("Command not allowed by security policy: {command}"));
@@ -502,14 +502,14 @@ impl SecurityPolicy {
         if risk == CommandRiskLevel::High {
             if self.block_high_risk_commands {
                 log::warn!(
-                    "[alphahuman:policy] High-risk command blocked: {}",
+                    "[openhuman:policy] High-risk command blocked: {}",
                     &command[..command.len().min(80)]
                 );
                 return Err("Command blocked: high-risk command is disallowed by policy".into());
             }
             if self.autonomy == AutonomyLevel::Supervised && !approved {
                 log::warn!(
-                    "[alphahuman:policy] High-risk command needs approval: {}",
+                    "[openhuman:policy] High-risk command needs approval: {}",
                     &command[..command.len().min(80)]
                 );
                 return Err(
@@ -525,7 +525,7 @@ impl SecurityPolicy {
             && !approved
         {
             log::info!(
-                "[alphahuman:policy] Medium-risk command needs approval: {}",
+                "[openhuman:policy] Medium-risk command needs approval: {}",
                 &command[..command.len().min(80)]
             );
             return Err(
@@ -534,7 +534,7 @@ impl SecurityPolicy {
         }
 
         log::debug!(
-            "[alphahuman:policy] Command validated: risk={:?}, approved={}, cmd={}",
+            "[openhuman:policy] Command validated: risk={:?}, approved={}, cmd={}",
             risk,
             approved,
             &command[..command.len().min(80)]
@@ -739,7 +739,7 @@ impl SecurityPolicy {
             ToolOperation::Act => {
                 if !self.can_act() {
                     log::warn!(
-                        "[alphahuman:policy] Operation '{}' blocked: read-only mode",
+                        "[openhuman:policy] Operation '{}' blocked: read-only mode",
                         operation_name
                     );
                     return Err(format!(
@@ -749,14 +749,14 @@ impl SecurityPolicy {
 
                 if !self.record_action() {
                     log::warn!(
-                        "[alphahuman:policy] Operation '{}' blocked: rate limit exceeded",
+                        "[openhuman:policy] Operation '{}' blocked: rate limit exceeded",
                         operation_name
                     );
                     return Err("Rate limit exceeded: action budget exhausted".to_string());
                 }
 
                 log::debug!(
-                    "[alphahuman:policy] Operation '{}' allowed (actions: {}/{})",
+                    "[openhuman:policy] Operation '{}' allowed (actions: {}/{})",
                     operation_name,
                     self.tracker.count(),
                     self.max_actions_per_hour
@@ -780,11 +780,11 @@ impl SecurityPolicy {
 
     /// Build from config sections
     pub fn from_config(
-        autonomy_config: &crate::alphahuman::config::AutonomyConfig,
+        autonomy_config: &crate::openhuman::config::AutonomyConfig,
         workspace_dir: &Path,
     ) -> Self {
         log::info!(
-            "[alphahuman:policy] SecurityPolicy created: autonomy={:?}, workspace_only={}, allowed_cmds={}, max_actions/hr={}",
+            "[openhuman:policy] SecurityPolicy created: autonomy={:?}, workspace_only={}, allowed_cmds={}, max_actions/hr={}",
             autonomy_config.level,
             autonomy_config.workspace_only,
             autonomy_config.allowed_commands.len(),
@@ -1126,7 +1126,7 @@ mod tests {
 
     #[test]
     fn from_config_maps_all_fields() {
-        let autonomy_config = crate::alphahuman::config::AutonomyConfig {
+        let autonomy_config = crate::openhuman::config::AutonomyConfig {
             level: AutonomyLevel::Full,
             workspace_only: false,
             allowed_commands: vec!["docker".into()],
@@ -1135,7 +1135,7 @@ mod tests {
             max_cost_per_day_cents: 1000,
             require_approval_for_medium_risk: false,
             block_high_risk_commands: false,
-            ..crate::alphahuman::config::AutonomyConfig::default()
+            ..crate::openhuman::config::AutonomyConfig::default()
         };
         let workspace = PathBuf::from("/tmp/test-workspace");
         let policy = SecurityPolicy::from_config(&autonomy_config, &workspace);
@@ -1512,7 +1512,7 @@ mod tests {
 
     #[test]
     fn from_config_creates_fresh_tracker() {
-        let autonomy_config = crate::alphahuman::config::AutonomyConfig {
+        let autonomy_config = crate::openhuman::config::AutonomyConfig {
             level: AutonomyLevel::Full,
             workspace_only: false,
             allowed_commands: vec![],
@@ -1521,7 +1521,7 @@ mod tests {
             max_cost_per_day_cents: 100,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
-            ..crate::alphahuman::config::AutonomyConfig::default()
+            ..crate::openhuman::config::AutonomyConfig::default()
         };
         let workspace = PathBuf::from("/tmp/test");
         let policy = SecurityPolicy::from_config(&autonomy_config, &workspace);
@@ -1649,7 +1649,7 @@ mod tests {
 
     #[test]
     fn resolved_path_blocks_outside_workspace() {
-        let workspace = std::env::temp_dir().join("alphahuman_test_resolved_path");
+        let workspace = std::env::temp_dir().join("openhuman_test_resolved_path");
         let _ = std::fs::create_dir_all(&workspace);
 
         // Use the canonicalized workspace so starts_with checks match
@@ -1673,7 +1673,7 @@ mod tests {
         let canonical_temp = std::env::temp_dir()
             .canonicalize()
             .unwrap_or_else(|_| std::env::temp_dir());
-        let outside = canonical_temp.join("outside_workspace_alphahuman");
+        let outside = canonical_temp.join("outside_workspace_openhuman");
         assert!(
             !policy.is_resolved_path_allowed(&outside),
             "path outside workspace must be blocked"
@@ -1685,7 +1685,7 @@ mod tests {
     #[test]
     fn resolved_path_blocks_root_escape() {
         let policy = SecurityPolicy {
-            workspace_dir: PathBuf::from("/home/alphahuman_user/project"),
+            workspace_dir: PathBuf::from("/home/openhuman_user/project"),
             ..SecurityPolicy::default()
         };
 
@@ -1704,7 +1704,7 @@ mod tests {
     fn resolved_path_blocks_symlink_escape() {
         use std::os::unix::fs::symlink;
 
-        let root = std::env::temp_dir().join("alphahuman_test_symlink_escape");
+        let root = std::env::temp_dir().join("openhuman_test_symlink_escape");
         let workspace = root.join("workspace");
         let outside = root.join("outside_target");
 

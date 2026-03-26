@@ -2,9 +2,9 @@ use super::common::{HistoryCaptureProvider, NoopMemory, RecordingChannel};
 use super::super::context::{build_memory_context, conversation_memory_key, ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS, MAX_CHANNEL_HISTORY};
 use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
-use crate::alphahuman::memory::{Memory, MemoryCategory, SqliteMemory};
-use crate::alphahuman::observability::NoopObserver;
-use crate::alphahuman::providers::{self, ChatMessage, Provider};
+use crate::openhuman::memory::{Memory, MemoryCategory, SqliteMemory};
+use crate::openhuman::observability::NoopObserver;
+use crate::openhuman::providers::{self, ChatMessage, Provider};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -138,11 +138,11 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_key: None,
         api_url: None,
-        reliability: Arc::new(crate::alphahuman::config::ReliabilityConfig::default()),
+        reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
         provider_runtime_options: providers::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-        multimodal: crate::alphahuman::config::MultimodalConfig::default(),
+        multimodal: crate::openhuman::config::MultimodalConfig::default(),
     });
 
     process_channel_message(

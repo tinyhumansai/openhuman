@@ -1,4 +1,4 @@
-use crate::alphahuman::tools::ToolSpec;
+use crate::openhuman::tools::ToolSpec;
 use async_trait::async_trait;
 use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -239,7 +239,7 @@ pub enum ToolsPayload {
 
 fn should_log_prompts() -> bool {
     matches!(
-        std::env::var("ALPHAHUMAN_LOG_PROMPTS")
+        std::env::var("OPENHUMAN_LOG_PROMPTS")
             .ok()
             .as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")

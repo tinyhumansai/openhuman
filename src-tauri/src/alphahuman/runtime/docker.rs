@@ -1,5 +1,5 @@
 use super::traits::RuntimeAdapter;
-use crate::alphahuman::config::DockerRuntimeConfig;
+use crate::openhuman::config::DockerRuntimeConfig;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -67,9 +67,9 @@ impl RuntimeAdapter for DockerRuntime {
 
     fn storage_path(&self) -> PathBuf {
         if self.config.mount_workspace {
-            PathBuf::from("/workspace/.alphahuman")
+            PathBuf::from("/workspace/.openhuman")
         } else {
-            PathBuf::from("/tmp/.alphahuman")
+            PathBuf::from("/tmp/.openhuman")
         }
     }
 

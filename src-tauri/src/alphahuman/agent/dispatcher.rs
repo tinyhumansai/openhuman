@@ -1,5 +1,5 @@
-use crate::alphahuman::providers::{ChatMessage, ChatResponse, ConversationMessage, ToolResultMessage};
-use crate::alphahuman::tools::{Tool, ToolSpec};
+use crate::openhuman::providers::{ChatMessage, ChatResponse, ConversationMessage, ToolResultMessage};
+use crate::openhuman::tools::{Tool, ToolSpec};
 use serde_json::Value;
 use std::fmt::Write;
 
@@ -254,7 +254,7 @@ mod tests {
     fn native_dispatcher_roundtrip() {
         let response = ChatResponse {
             text: Some("ok".into()),
-            tool_calls: vec![crate::alphahuman::providers::ToolCall {
+            tool_calls: vec![crate::openhuman::providers::ToolCall {
                 id: "tc1".into(),
                 name: "file_read".into(),
                 arguments: "{\"path\":\"a.txt\"}".into(),

@@ -27,7 +27,7 @@ impl MemoryClient {
             log::warn!("[memory] from_token: exit — token is empty, returning None");
             return None;
         }
-        let config = if let Ok(base_url) = std::env::var("ALPHAHUMAN_BASE_URL")
+        let config = if let Ok(base_url) = std::env::var("OPENHUMAN_BASE_URL")
             .or_else(|_| std::env::var("TINYHUMANS_BASE_URL"))
         {
             log::info!("[memory] from_token: constructing client (base_url={base_url}, source=memory_env)");
@@ -345,7 +345,7 @@ mod tests {
     ///   - the account quota is the only limiting factor
     ///
     /// Run with:
-    ///   JWT_TOKEN=<your-alphahuman-jwt> \
+    ///   JWT_TOKEN=<your-openhuman-jwt> \
     ///   cargo test --manifest-path src-tauri/Cargo.toml test_memory_skill_sync_flow -- --ignored --nocapture
     #[tokio::test]
     #[ignore]
@@ -357,7 +357,7 @@ mod tests {
             .expect("client creation failed");
 
         let skill_id = "gmail";
-        let integration_id = "test@alphahuman.dev";
+        let integration_id = "test@openhuman.dev";
 
         let dummy_content = serde_json::json!({
             "integrationId": integration_id,
@@ -374,7 +374,7 @@ mod tests {
             .store_skill_sync(
                 skill_id,
                 integration_id,
-                "Gmail OAuth sync — test@alphahuman.dev",
+                "Gmail OAuth sync — test@openhuman.dev",
                 &serde_json::to_string_pretty(&dummy_content).unwrap(),
                 None,
                 None,

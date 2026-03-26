@@ -6,7 +6,7 @@ use crate::auth::openai_oauth::refresh_access_token;
 use crate::auth::profiles::{
     profile_id, AuthProfile, AuthProfileKind, AuthProfilesData, AuthProfilesStore,
 };
-use crate::alphahuman::config::Config;
+use crate::openhuman::config::Config;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

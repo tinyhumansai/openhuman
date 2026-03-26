@@ -1,7 +1,7 @@
-//! Data migration helpers for Alphahuman.
+//! Data migration helpers for OpenHuman.
 
-use crate::alphahuman::config::Config;
-use crate::alphahuman::memory::{self, Memory, MemoryCategory};
+use crate::openhuman::config::Config;
+use crate::openhuman::memory::{self, Memory, MemoryCategory};
 use anyhow::{bail, Context, Result};
 use directories::UserDirs;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
@@ -49,7 +49,7 @@ pub async fn migrate_openclaw_memory(
     }
 
     if paths_equal(&source_workspace, &config.workspace_dir) {
-        bail!("Source workspace matches current Alphahuman workspace; refusing self-migration");
+        bail!("Source workspace matches current OpenHuman workspace; refusing self-migration");
     }
 
     let mut stats = MigrationStats::default();

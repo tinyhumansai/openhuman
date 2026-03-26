@@ -2,7 +2,7 @@
 //!
 //! Pipeline: Scout → Evaluate → Integrate
 //! Discovers skills from external sources, scores them, and generates
-//! Alphahuman-compatible manifests for qualified candidates.
+//! OpenHuman-compatible manifests for qualified candidates.
 
 pub mod evaluate;
 pub mod integrate;

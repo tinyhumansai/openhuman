@@ -1,5 +1,5 @@
-use crate::alphahuman::multimodal;
-use crate::alphahuman::providers::traits::{
+use crate::openhuman::multimodal;
+use crate::openhuman::providers::traits::{
     ChatMessage, ChatResponse, Provider, ProviderCapabilities, ToolCall,
 };
 use async_trait::async_trait;
@@ -124,7 +124,7 @@ impl OllamaProvider {
     }
 
     fn http_client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.ollama", 300, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.ollama", 300, 10)
     }
 
     fn resolve_request_details(&self, model: &str) -> anyhow::Result<(String, bool)> {
@@ -515,7 +515,7 @@ impl Provider for OllamaProvider {
 
     async fn chat_with_history(
         &self,
-        messages: &[crate::alphahuman::providers::ChatMessage],
+        messages: &[crate::openhuman::providers::ChatMessage],
         model: &str,
         temperature: f64,
     ) -> anyhow::Result<String> {

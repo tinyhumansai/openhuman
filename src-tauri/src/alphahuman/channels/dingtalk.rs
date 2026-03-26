@@ -38,7 +38,7 @@ impl DingTalkChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.dingtalk")
+        crate::openhuman::config::build_runtime_proxy_client("channel.dingtalk")
     }
 
     fn is_user_allowed(&self, user_id: &str) -> bool {
@@ -121,7 +121,7 @@ impl Channel for DingTalkChannel {
             )
         })?;
 
-        let title = message.subject.as_deref().unwrap_or("Alphahuman");
+        let title = message.subject.as_deref().unwrap_or("OpenHuman");
         let body = serde_json::json!({
             "msgtype": "markdown",
             "markdown": {
@@ -330,7 +330,7 @@ client_id = "app_id_123"
 client_secret = "secret_456"
 allowed_users = ["user1", "*"]
 "#;
-        let config: crate::alphahuman::config::schema::DingTalkConfig = toml::from_str(toml_str).unwrap();
+        let config: crate::openhuman::config::schema::DingTalkConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.client_id, "app_id_123");
         assert_eq!(config.client_secret, "secret_456");
         assert_eq!(config.allowed_users, vec!["user1", "*"]);
@@ -342,7 +342,7 @@ allowed_users = ["user1", "*"]
 client_id = "id"
 client_secret = "secret"
 "#;
-        let config: crate::alphahuman::config::schema::DingTalkConfig = toml::from_str(toml_str).unwrap();
+        let config: crate::openhuman::config::schema::DingTalkConfig = toml::from_str(toml_str).unwrap();
         assert!(config.allowed_users.is_empty());
     }
 

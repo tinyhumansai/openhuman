@@ -1,6 +1,6 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::cron;
+use crate::openhuman::config::Config;
+use crate::openhuman::cron;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
@@ -104,7 +104,7 @@ impl Tool for CronRunTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::Config;
+    use crate::openhuman::config::Config;
     use tempfile::TempDir;
 
     async fn test_config(tmp: &TempDir) -> Arc<Config> {

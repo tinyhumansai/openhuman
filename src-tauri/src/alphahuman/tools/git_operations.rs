@@ -1,5 +1,5 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -569,7 +569,7 @@ impl Tool for GitOperationsTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::SecurityPolicy;
+    use crate::openhuman::security::SecurityPolicy;
     use tempfile::TempDir;
 
     fn test_tool(dir: &std::path::Path) -> GitOperationsTool {

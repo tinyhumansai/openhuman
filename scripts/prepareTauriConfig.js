@@ -8,7 +8,7 @@ export default function prepareTauriConfig() {
   const config = {
     build: { frontendDist, devUrl: null },
     bundle: { windows: {} },
-    identifier: 'com.alphahuman.app',
+    identifier: 'com.openhuman.app',
   };
 
   if (process.env.WITH_UPDATER === 'true') {

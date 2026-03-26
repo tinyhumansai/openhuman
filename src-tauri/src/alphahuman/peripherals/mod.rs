@@ -26,10 +26,10 @@ pub mod rpi;
 
 pub use traits::Peripheral;
 
-use crate::alphahuman::config::{PeripheralBoardConfig, PeripheralsConfig};
+use crate::openhuman::config::{PeripheralBoardConfig, PeripheralsConfig};
 #[cfg(feature = "hardware")]
-use crate::alphahuman::tools::HardwareMemoryMapTool;
-use crate::alphahuman::tools::Tool;
+use crate::openhuman::tools::HardwareMemoryMapTool;
+use crate::openhuman::tools::Tool;
 use anyhow::Result;
 
 /// List configured boards from config (no connection yet).
@@ -115,10 +115,10 @@ pub async fn create_peripheral_tools(config: &PeripheralsConfig) -> Result<Vec<B
     if !tools.is_empty() {
         let board_names: Vec<String> = config.boards.iter().map(|b| b.board.clone()).collect();
         tools.push(Box::new(HardwareMemoryMapTool::new(board_names.clone())));
-        tools.push(Box::new(crate::alphahuman::tools::HardwareBoardInfoTool::new(
+        tools.push(Box::new(crate::openhuman::tools::HardwareBoardInfoTool::new(
             board_names.clone(),
         )));
-        tools.push(Box::new(crate::alphahuman::tools::HardwareMemoryReadTool::new(
+        tools.push(Box::new(crate::openhuman::tools::HardwareMemoryReadTool::new(
             board_names,
         )));
     }

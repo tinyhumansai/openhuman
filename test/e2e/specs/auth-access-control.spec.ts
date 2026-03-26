@@ -133,7 +133,7 @@ async function waitForHomePage(timeout = 15_000) {
  * Returns the matched text or null.
  */
 async function waitForPublicPage(timeout = 15_000) {
-  const candidates = ['Welcome', 'Log in', 'Sign in', 'Get Started', 'alphahuman'];
+  const candidates = ['Welcome', 'Log in', 'Sign in', 'Get Started', 'openhuman'];
 
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {

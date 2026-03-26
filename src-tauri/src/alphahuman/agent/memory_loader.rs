@@ -1,4 +1,4 @@
-use crate::alphahuman::memory::Memory;
+use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
 use std::fmt::Write;
 
@@ -66,7 +66,7 @@ impl MemoryLoader for DefaultMemoryLoader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::memory::{Memory, MemoryCategory, MemoryEntry};
+    use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
 
     struct MockMemory;
 

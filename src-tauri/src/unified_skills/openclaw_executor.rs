@@ -4,7 +4,7 @@
 //! - SKILL.toml → structured tool definitions (shell/http commands)
 //! - SKILL.md   → markdown prompt content (returned as text)
 
-use crate::alphahuman::skills::{Skill, SkillTool};
+use crate::openhuman::skills::{Skill, SkillTool};
 use crate::runtime::types::{ToolContent, UnifiedSkillResult};
 use chrono::Utc;
 use std::collections::HashMap;

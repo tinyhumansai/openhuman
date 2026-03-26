@@ -1,7 +1,7 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::memory::{Memory, MemoryCategory};
-use crate::alphahuman::security::policy::ToolOperation;
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::memory::{Memory, MemoryCategory};
+use crate::openhuman::security::policy::ToolOperation;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -96,8 +96,8 @@ impl Tool for MemoryStoreTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::memory::SqliteMemory;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::memory::SqliteMemory;
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 
     fn test_security() -> Arc<SecurityPolicy> {

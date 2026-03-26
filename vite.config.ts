@@ -29,7 +29,7 @@ export default defineConfig(async () => ({
     strictPort: true,
     host: host || false,
     allowedHosts: [
-      "frontend-runner-alphahuman-git-main-vezuresxyz.vercel.app",
+      "frontend-runner-openhuman-git-main-vezuresxyz.vercel.app",
     ],
     hmr: host
       ? {

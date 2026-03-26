@@ -210,7 +210,7 @@ async function discoverToolsFromTauri() {
       '--manifest-path',
       join(PROJECT_ROOT, 'src-tauri', 'Cargo.toml'),
       '--bin',
-      'alphahuman-tools-discovery',
+      'openhuman-tools-discovery',
     ];
 
     console.log('🔧 Attempting to run tools discovery via Cargo...');

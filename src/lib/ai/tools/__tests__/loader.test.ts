@@ -234,7 +234,7 @@ describe('Tools Loader', () => {
       const result = await loadTools();
 
       expect(fetch).toHaveBeenCalledWith(
-        'https://raw.githubusercontent.com/alphahumanxyz/alphahuman/refs/heads/main/ai/TOOLS.md'
+        'https://raw.githubusercontent.com/openhumanxyz/openhuman/refs/heads/main/ai/TOOLS.md'
       );
       expect(result.raw).toBe('# Remote Tools');
       expect(result.isDefault).toBe(false);
@@ -259,7 +259,7 @@ describe('Tools Loader', () => {
       await loadTools();
 
       expect(localStorageMock.setItem).toHaveBeenCalledWith(
-        'alphahuman.tools.cache',
+        'openhuman.tools.cache',
         expect.stringContaining('"version":"1.0.0"')
       );
     });
@@ -269,7 +269,7 @@ describe('Tools Loader', () => {
     it('should clear localStorage cache', () => {
       clearToolsCache();
 
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('alphahuman.tools.cache');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('openhuman.tools.cache');
     });
 
     it('should handle localStorage errors gracefully', () => {

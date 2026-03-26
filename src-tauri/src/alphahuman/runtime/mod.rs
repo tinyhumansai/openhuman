@@ -6,7 +6,7 @@ pub use docker::DockerRuntime;
 pub use native::NativeRuntime;
 pub use traits::RuntimeAdapter;
 
-use crate::alphahuman::config::RuntimeConfig;
+use crate::openhuman::config::RuntimeConfig;
 
 /// Factory: create the right runtime from config
 pub fn create_runtime(config: &RuntimeConfig) -> anyhow::Result<Box<dyn RuntimeAdapter>> {

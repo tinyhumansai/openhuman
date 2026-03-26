@@ -270,7 +270,7 @@ pub async fn receive_loopback_code(expected_state: &str, timeout: Duration) -> R
     let code = parse_code_from_redirect(path, Some(expected_state))?;
 
     let body =
-        "<html><body><h2>Alphahuman login complete</h2><p>You can close this tab.</p></body></html>";
+        "<html><body><h2>OpenHuman login complete</h2><p>You can close this tab.</p></body></html>";
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),

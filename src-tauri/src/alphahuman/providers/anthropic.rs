@@ -1,8 +1,8 @@
-use crate::alphahuman::providers::traits::{
+use crate::openhuman::providers::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     Provider, ToolCall as ProviderToolCall,
 };
-use crate::alphahuman::tools::ToolSpec;
+use crate::openhuman::tools::ToolSpec;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -400,7 +400,7 @@ impl AnthropicProvider {
     }
 
     fn http_client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.anthropic", 120, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.anthropic", 120, 10)
     }
 }
 
@@ -645,7 +645,7 @@ mod tests {
     async fn chat_with_system_fails_without_key() {
         let p = AnthropicProvider::new(None);
         let result = p
-            .chat_with_system(Some("You are Alphahuman"), "hello", "claude-3-opus", 0.7)
+            .chat_with_system(Some("You are OpenHuman"), "hello", "claude-3-opus", 0.7)
             .await;
         assert!(result.is_err());
     }
@@ -676,7 +676,7 @@ mod tests {
         let req = ChatRequest {
             model: "claude-3-opus".to_string(),
             max_tokens: 4096,
-            system: Some("You are Alphahuman".to_string()),
+            system: Some("You are OpenHuman".to_string()),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: "hello".to_string(),
@@ -684,7 +684,7 @@ mod tests {
             temperature: 0.7,
         };
         let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"system\":\"You are Alphahuman\""));
+        assert!(json.contains("\"system\":\"You are OpenHuman\""));
     }
 
     #[test]

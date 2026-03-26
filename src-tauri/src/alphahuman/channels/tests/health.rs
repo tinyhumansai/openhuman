@@ -44,7 +44,7 @@ async fn supervised_listener_marks_error_and_restarts_on_failures() {
     handle.abort();
     let _ = handle.await;
 
-    let snapshot = crate::alphahuman::health::snapshot_json();
+    let snapshot = crate::openhuman::health::snapshot_json();
     let component = &snapshot["components"]["channel:test-supervised-fail"];
     assert_eq!(component["status"], "error");
     assert!(component["restart_count"].as_u64().unwrap_or(0) >= 1);

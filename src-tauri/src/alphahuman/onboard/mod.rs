@@ -1,4 +1,4 @@
-//! Onboarding helpers for Alphahuman.
+//! Onboarding helpers for OpenHuman.
 
 pub mod models;
 

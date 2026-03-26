@@ -1,10 +1,10 @@
 //! Arduino upload tool — agent generates code, uploads via arduino-cli.
 //!
 //! When user says "make a heart on the LED grid", the agent generates Arduino
-//! sketch code and calls this tool. Alphahuman compiles and uploads it — no
+//! sketch code and calls this tool. OpenHuman compiles and uploads it — no
 //! manual IDE or file editing.
 
-use crate::alphahuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::process::Command;
@@ -70,8 +70,8 @@ impl Tool for ArduinoUploadTool {
             });
         }
 
-        let sketch_name = "alphahuman_sketch";
-        let temp_dir = std::env::temp_dir().join(format!("alphahuman_{}", uuid::Uuid::new_v4()));
+        let sketch_name = "openhuman_sketch";
+        let temp_dir = std::env::temp_dir().join(format!("openhuman_{}", uuid::Uuid::new_v4()));
         let sketch_dir = temp_dir.join(sketch_name);
         let ino_path = sketch_dir.join(format!("{}.ino", sketch_name));
 

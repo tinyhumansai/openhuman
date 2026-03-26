@@ -83,7 +83,7 @@ impl GitHubScout {
         );
         headers.insert(
             reqwest::header::USER_AGENT,
-            "Alphahuman-SkillForge/0.1".parse().expect("valid header"),
+            "OpenHuman-SkillForge/0.1".parse().expect("valid header"),
         );
         if let Some(ref t) = token {
             if let Ok(val) = format!("Bearer {t}").parse() {
@@ -99,7 +99,7 @@ impl GitHubScout {
 
         Self {
             client,
-            queries: vec!["alphahuman skill".into(), "ai agent skill".into()],
+            queries: vec!["openhuman skill".into(), "ai agent skill".into()],
         }
     }
 

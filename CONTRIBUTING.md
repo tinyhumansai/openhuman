@@ -19,7 +19,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 ## Getting Started
 
 - Read the [README](README.md) and [ARCHITECTURE](ARCHITECTURE.md) for context.
-- Check [open issues](https://github.com/alphahumanxyz/openhuman/issues) and discussions for ideas and to avoid duplicate work.
+- Check [open issues](https://github.com/tinyhumansai/openhuman/issues) and discussions for ideas and to avoid duplicate work.
 - For security issues, see [SECURITY.md](SECURITY.md) — do not report vulnerabilities in public issues.
 
 ## Development Setup
@@ -55,7 +55,7 @@ Copy or create a `.env` from the documented template and set `VITE_BACKEND_URL`,
 
 ## Git Workflow
 
-- **Fork** the [openhuman](https://github.com/alphahumanxyz/openhuman) repository and work in your fork.
+- **Fork** the [openhuman](https://github.com/tinyhumansai/openhuman) repository and work in your fork.
 - **Base branch**: All pull requests must target the **`develop`** branch (not `main`).
 - **No direct pushes** to the organization repo; all changes come in via pull requests from forks.
 
@@ -87,7 +87,7 @@ Pre-commit/pre-push hooks (Husky) run formatting and linting; fix any failures b
 
 1. Push your branch to your fork:
    `git push origin fix/your-change`
-2. Open a **pull request** against **`develop`** in the [openhuman](https://github.com/alphahumanxyz/openhuman) repository.
+2. Open a **pull request** against **`develop`** in the [openhuman](https://github.com/tinyhumansai/openhuman) repository.
 3. Fill in the PR template (if present): describe what changed, why, and how to test.
 4. Link any related issues (e.g., “Fixes #123”).
 5. Address review feedback and keep the PR up to date with `develop` (rebase or merge as the project prefers).

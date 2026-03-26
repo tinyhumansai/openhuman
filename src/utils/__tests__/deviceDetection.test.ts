@@ -64,10 +64,10 @@ describe('parseReleaseAssetsByArchitecture', () => {
 
   it('categorizes assets by platform', () => {
     const assets = [
-      makeAsset('alphahuman-windows-x64-setup.exe'),
-      makeAsset('alphahuman-macos-aarch64.dmg'),
-      makeAsset('alphahuman-linux-x64.AppImage'),
-      makeAsset('alphahuman-android-arm64.apk'),
+      makeAsset('openhuman-windows-x64-setup.exe'),
+      makeAsset('openhuman-macos-aarch64.dmg'),
+      makeAsset('openhuman-linux-x64.AppImage'),
+      makeAsset('openhuman-android-arm64.apk'),
     ];
 
     const links = parseReleaseAssetsByArchitecture(assets);
@@ -79,8 +79,8 @@ describe('parseReleaseAssetsByArchitecture', () => {
 
   it('skips .sig signature files', () => {
     const assets = [
-      makeAsset('alphahuman-windows-x64-setup.exe'),
-      makeAsset('alphahuman-windows-x64-setup.exe.sig'),
+      makeAsset('openhuman-windows-x64-setup.exe'),
+      makeAsset('openhuman-windows-x64-setup.exe.sig'),
     ];
 
     const links = parseReleaseAssetsByArchitecture(assets);
@@ -88,10 +88,7 @@ describe('parseReleaseAssetsByArchitecture', () => {
   });
 
   it('groups multiple architectures per platform', () => {
-    const assets = [
-      makeAsset('alphahuman-macos-x64.dmg'),
-      makeAsset('alphahuman-macos-aarch64.dmg'),
-    ];
+    const assets = [makeAsset('openhuman-macos-x64.dmg'), makeAsset('openhuman-macos-aarch64.dmg')];
 
     const links = parseReleaseAssetsByArchitecture(assets);
     expect(links.macos).toHaveLength(2);
@@ -107,8 +104,8 @@ describe('parseReleaseAssetsByArchitecture', () => {
 
   it('prefers AppImage over deb/rpm for Linux', () => {
     const assets = [
-      makeAsset('alphahuman-linux-x64.rpm'),
-      makeAsset('alphahuman-linux-x64.AppImage'),
+      makeAsset('openhuman-linux-x64.rpm'),
+      makeAsset('openhuman-linux-x64.AppImage'),
     ];
 
     const links = parseReleaseAssetsByArchitecture(assets);

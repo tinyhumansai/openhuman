@@ -16,7 +16,7 @@
 //!
 //! ```toml
 //! [channels.whatsapp]
-//! session_path = "~/.alphahuman/whatsapp-session.db"  # Required for Web mode
+//! session_path = "~/.openhuman/whatsapp-session.db"  # Required for Web mode
 //! pair_phone = "15551234567"  # Optional: for pair code linking
 //! allowed_numbers = ["+1234567890", "*"]  # Same as Cloud API
 //! ```
@@ -44,7 +44,7 @@ use tokio::select;
 ///
 /// ```toml
 /// [channels.whatsapp]
-/// session_path = "~/.alphahuman/whatsapp-session.db"
+/// session_path = "~/.openhuman/whatsapp-session.db"
 /// pair_phone = "15551234567"  # Optional
 /// allowed_numbers = ["+1234567890", "*"]
 /// ```

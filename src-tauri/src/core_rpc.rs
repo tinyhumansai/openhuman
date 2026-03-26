@@ -30,7 +30,7 @@ struct RpcError {
 }
 
 fn rpc_url() -> String {
-    std::env::var("ALPHAHUMAN_CORE_RPC_URL").unwrap_or_else(|_| DEFAULT_CORE_RPC_URL.to_string())
+    std::env::var("OPENHUMAN_CORE_RPC_URL").unwrap_or_else(|_| DEFAULT_CORE_RPC_URL.to_string())
 }
 
 pub async fn call<T: DeserializeOwned>(

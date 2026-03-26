@@ -1,8 +1,8 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::config::DelegateAgentConfig;
-use crate::alphahuman::providers::{self, Provider};
-use crate::alphahuman::security::policy::ToolOperation;
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::config::DelegateAgentConfig;
+use crate::openhuman::providers::{self, Provider};
+use crate::openhuman::security::policy::ToolOperation;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
@@ -305,7 +305,7 @@ impl Tool for DelegateTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_security() -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy::default())

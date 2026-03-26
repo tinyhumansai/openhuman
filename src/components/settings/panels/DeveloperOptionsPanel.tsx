@@ -38,7 +38,7 @@ const developerItems = [
   {
     id: 'tauri-commands',
     title: 'Tauri Command Console',
-    description: 'Run Alphahuman Tauri commands for quick testing',
+    description: 'Run OpenHuman Tauri commands for quick testing',
     route: 'tauri-commands',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

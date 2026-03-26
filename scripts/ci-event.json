@@ -3,9 +3,9 @@
   "before": "0000000000000000000000000000000000000000",
   "after": "19281e16457e7c8ff8e6bda6ceda77f0880d10d2",
   "repository": {
-    "full_name": "vezuresdotxyz/alphahuman-frontend-runner",
+    "full_name": "vezuresdotxyz/openhuman-frontend-runner",
     "default_branch": "main",
-    "name": "alphahuman-frontend-runner",
+    "name": "openhuman-frontend-runner",
     "owner": { "login": "vezuresdotxyz" }
   },
   "head_commit": {

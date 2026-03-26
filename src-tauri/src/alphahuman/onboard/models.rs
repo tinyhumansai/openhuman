@@ -1,7 +1,7 @@
 //! Model catalog refresh and caching utilities.
 
-use crate::alphahuman::config::Config;
-use crate::alphahuman::providers::{canonical_china_provider_name, is_qwen_oauth_alias};
+use crate::openhuman::config::Config;
+use crate::openhuman::providers::{canonical_china_provider_name, is_qwen_oauth_alias};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

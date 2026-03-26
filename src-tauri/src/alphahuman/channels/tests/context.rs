@@ -5,8 +5,8 @@ use super::super::context::{
     CHANNEL_HISTORY_COMPACT_CONTENT_CHARS, CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES,
     CHANNEL_MESSAGE_TIMEOUT_SECS, MIN_CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
-use crate::alphahuman::observability::NoopObserver;
-use crate::alphahuman::providers::ChatMessage;
+use crate::openhuman::observability::NoopObserver;
+use crate::openhuman::providers::ChatMessage;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -80,9 +80,9 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
         route_overrides: Arc::new(Mutex::new(HashMap::new())),
         api_key: None,
         api_url: None,
-        reliability: Arc::new(crate::alphahuman::config::ReliabilityConfig::default()),
-        multimodal: crate::alphahuman::config::MultimodalConfig::default(),
-        provider_runtime_options: crate::alphahuman::providers::ProviderRuntimeOptions::default(),
+        reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
+        multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
     };

@@ -3,7 +3,7 @@
 //! - Gemini app OAuth tokens (reuse existing ~/.gemini/ authentication)
 //! - Google Cloud ADC (`GOOGLE_APPLICATION_CREDENTIALS`)
 
-use crate::alphahuman::providers::traits::{ChatMessage, Provider};
+use crate::openhuman::providers::traits::{ChatMessage, Provider};
 use async_trait::async_trait;
 use directories::UserDirs;
 use reqwest::Client;
@@ -276,7 +276,7 @@ impl GeminiProvider {
     }
 
     fn http_client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.gemini", 120, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.gemini", 120, 10)
     }
 
     fn build_generate_content_request(

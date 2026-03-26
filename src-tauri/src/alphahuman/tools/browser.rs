@@ -6,7 +6,7 @@
 //! Computer-use (OS-level) actions are supported via an optional sidecar endpoint.
 
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::SecurityPolicy;
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -420,7 +420,7 @@ impl BrowserTool {
         if self.allowed_domains.is_empty() && !allow_all_browser_domains() {
             anyhow::bail!(
                 "Browser tool enabled but no allowed_domains configured. \
-                Add [browser].allowed_domains in config.toml or set ALPHAHUMAN_BROWSER_ALLOW_ALL=1"
+                Add [browser].allowed_domains in config.toml or set OPENHUMAN_BROWSER_ALLOW_ALL=1"
             );
         }
 
@@ -747,12 +747,12 @@ impl BrowserTool {
             },
             "metadata": {
                 "session_name": self.session_name,
-                "source": "alphahuman.browser",
+                "source": "openhuman.browser",
                 "version": env!("CARGO_PKG_VERSION"),
             }
         });
 
-        let client = crate::alphahuman::config::build_runtime_proxy_client("tool.browser");
+        let client = crate::openhuman::config::build_runtime_proxy_client("tool.browser");
         let mut request = client
             .post(endpoint)
             .timeout(Duration::from_millis(self.computer_use.timeout_ms))
@@ -2077,7 +2077,7 @@ fn is_non_global_v6(v6: std::net::Ipv6Addr) -> bool {
 
 fn allow_all_browser_domains() -> bool {
     matches!(
-        std::env::var("ALPHAHUMAN_BROWSER_ALLOW_ALL")
+        std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL")
             .ok()
             .as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
@@ -2398,7 +2398,7 @@ mod tests {
     fn browser_tool_empty_allowlist_blocks() {
         let security = Arc::new(SecurityPolicy::default());
         let tool = BrowserTool::new(security, vec![], None);
-        std::env::remove_var("ALPHAHUMAN_BROWSER_ALLOW_ALL");
+        std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
         assert!(tool.validate_url("https://example.com").is_err());
     }
 
@@ -2406,9 +2406,9 @@ mod tests {
     fn browser_tool_empty_allowlist_allows_with_env_flag() {
         let security = Arc::new(SecurityPolicy::default());
         let tool = BrowserTool::new(security, vec![], None);
-        std::env::set_var("ALPHAHUMAN_BROWSER_ALLOW_ALL", "1");
+        std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", "1");
         assert!(tool.validate_url("https://example.com").is_ok());
-        std::env::remove_var("ALPHAHUMAN_BROWSER_ALLOW_ALL");
+        std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
     }
 
     #[test]

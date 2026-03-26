@@ -8,10 +8,10 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::alphahuman::config::Config;
-use crate::alphahuman::health;
-use crate::alphahuman::security::{SecretStore, SecurityPolicy};
-use crate::alphahuman::{doctor, hardware, integrations, migration, onboard, service};
+use crate::openhuman::config::Config;
+use crate::openhuman::health;
+use crate::openhuman::security::{SecretStore, SecurityPolicy};
+use crate::openhuman::{doctor, hardware, integrations, migration, onboard, service};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandResponse<T> {
@@ -160,7 +160,7 @@ struct SetBrowserAllowAllParams {
     enabled: bool,
 }
 
-async fn load_alphahuman_config() -> Result<Config, String> {
+async fn load_openhuman_config() -> Result<Config, String> {
     let timeout_duration = std::time::Duration::from_secs(30);
     match tokio::time::timeout(timeout_duration, Config::load_or_init()).await {
         Ok(Ok(config)) => Ok(config),
@@ -249,12 +249,12 @@ async fn dispatch(
         "core.ping" => to_json_value(json!({ "ok": true })),
         "core.version" => to_json_value(json!({ "version": state.core_version })),
 
-        "alphahuman.health_snapshot" => to_json_value(command_response(
+        "openhuman.health_snapshot" => to_json_value(command_response(
             health::snapshot_json(),
             vec!["health_snapshot requested".to_string()],
         )),
 
-        "alphahuman.security_policy_info" => {
+        "openhuman.security_policy_info" => {
             let policy = SecurityPolicy::default();
             let payload = json!({
                 "autonomy": policy.autonomy,
@@ -270,8 +270,8 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.get_config" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.get_config" => {
+            let config = load_openhuman_config().await?;
             let snapshot = snapshot_config(&config)?;
             to_json_value(command_response(
                 snapshot,
@@ -282,9 +282,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.update_model_settings" => {
+        "openhuman.update_model_settings" => {
             let update: ModelSettingsUpdate = parse_params(params)?;
-            let mut config = load_alphahuman_config().await?;
+            let mut config = load_openhuman_config().await?;
             if let Some(api_key) = update.api_key {
                 config.api_key = if api_key.trim().is_empty() {
                     None
@@ -327,9 +327,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.update_memory_settings" => {
+        "openhuman.update_memory_settings" => {
             let update: MemorySettingsUpdate = parse_params(params)?;
-            let mut config = load_alphahuman_config().await?;
+            let mut config = load_openhuman_config().await?;
             if let Some(backend) = update.backend {
                 config.memory.backend = backend;
             }
@@ -356,9 +356,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.update_gateway_settings" => {
+        "openhuman.update_gateway_settings" => {
             let update: GatewaySettingsUpdate = parse_params(params)?;
-            let mut config = load_alphahuman_config().await?;
+            let mut config = load_openhuman_config().await?;
             if let Some(host) = update.host {
                 config.gateway.host = host;
             }
@@ -382,9 +382,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.update_tunnel_settings" => {
-            let tunnel: crate::alphahuman::config::TunnelConfig = parse_params(params)?;
-            let mut config = load_alphahuman_config().await?;
+        "openhuman.update_tunnel_settings" => {
+            let tunnel: crate::openhuman::config::TunnelConfig = parse_params(params)?;
+            let mut config = load_openhuman_config().await?;
             config.tunnel = tunnel;
             config.save().await.map_err(|e| e.to_string())?;
             let snapshot = snapshot_config(&config)?;
@@ -397,9 +397,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.update_runtime_settings" => {
+        "openhuman.update_runtime_settings" => {
             let update: RuntimeSettingsUpdate = parse_params(params)?;
-            let mut config = load_alphahuman_config().await?;
+            let mut config = load_openhuman_config().await?;
             if let Some(kind) = update.kind {
                 config.runtime.kind = kind;
             }
@@ -417,9 +417,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.update_browser_settings" => {
+        "openhuman.update_browser_settings" => {
             let update: BrowserSettingsUpdate = parse_params(params)?;
-            let mut config = load_alphahuman_config().await?;
+            let mut config = load_openhuman_config().await?;
             if let Some(enabled) = update.enabled {
                 config.browser.enabled = enabled;
             }
@@ -434,10 +434,10 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.get_runtime_flags" => {
+        "openhuman.get_runtime_flags" => {
             let flags = RuntimeFlags {
-                browser_allow_all: env_flag_enabled("ALPHAHUMAN_BROWSER_ALLOW_ALL"),
-                log_prompts: env_flag_enabled("ALPHAHUMAN_LOG_PROMPTS"),
+                browser_allow_all: env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"),
+                log_prompts: env_flag_enabled("OPENHUMAN_LOG_PROMPTS"),
             };
             to_json_value(command_response(
                 flags,
@@ -445,16 +445,16 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.set_browser_allow_all" => {
+        "openhuman.set_browser_allow_all" => {
             let p: SetBrowserAllowAllParams = parse_params(params)?;
             if p.enabled {
-                std::env::set_var("ALPHAHUMAN_BROWSER_ALLOW_ALL", "1");
+                std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", "1");
             } else {
-                std::env::remove_var("ALPHAHUMAN_BROWSER_ALLOW_ALL");
+                std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
             }
             let flags = RuntimeFlags {
-                browser_allow_all: env_flag_enabled("ALPHAHUMAN_BROWSER_ALLOW_ALL"),
-                log_prompts: env_flag_enabled("ALPHAHUMAN_LOG_PROMPTS"),
+                browser_allow_all: env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"),
+                log_prompts: env_flag_enabled("OPENHUMAN_LOG_PROMPTS"),
             };
             to_json_value(command_response(
                 flags,
@@ -462,9 +462,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.agent_chat" => {
+        "openhuman.agent_chat" => {
             let p: AgentChatParams = parse_params(params)?;
-            let mut config = load_alphahuman_config().await?;
+            let mut config = load_openhuman_config().await?;
             if let Some(provider) = p.provider_override {
                 config.default_provider = Some(provider);
             }
@@ -475,7 +475,7 @@ async fn dispatch(
                 config.default_temperature = temp;
             }
             let mut agent =
-                crate::alphahuman::agent::Agent::from_config(&config).map_err(|e| e.to_string())?;
+                crate::openhuman::agent::Agent::from_config(&config).map_err(|e| e.to_string())?;
             let response = agent
                 .run_single(&p.message)
                 .await
@@ -486,9 +486,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.encrypt_secret" => {
+        "openhuman.encrypt_secret" => {
             let p: EncryptSecretParams = parse_params(params)?;
-            let config = load_alphahuman_config().await?;
+            let config = load_openhuman_config().await?;
             let store = secret_store_for_config(&config);
             let ciphertext = store.encrypt(&p.plaintext).map_err(|e| e.to_string())?;
             to_json_value(command_response(
@@ -497,9 +497,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.decrypt_secret" => {
+        "openhuman.decrypt_secret" => {
             let p: DecryptSecretParams = parse_params(params)?;
-            let config = load_alphahuman_config().await?;
+            let config = load_openhuman_config().await?;
             let store = secret_store_for_config(&config);
             let plaintext = store.decrypt(&p.ciphertext).map_err(|e| e.to_string())?;
             to_json_value(command_response(
@@ -508,8 +508,8 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.doctor_report" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.doctor_report" => {
+            let config = load_openhuman_config().await?;
             let report = doctor::run(&config).map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 report,
@@ -517,9 +517,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.doctor_models" => {
+        "openhuman.doctor_models" => {
             let p: DoctorModelsParams = parse_params(params)?;
-            let config = load_alphahuman_config().await?;
+            let config = load_openhuman_config().await?;
             let use_cache = p.use_cache.unwrap_or(true);
             let report = doctor::run_models(&config, p.provider_override.as_deref(), use_cache)
                 .map_err(|e| e.to_string())?;
@@ -529,17 +529,17 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.list_integrations" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.list_integrations" => {
+            let config = load_openhuman_config().await?;
             to_json_value(command_response(
                 integrations::list_integrations(&config),
                 vec!["integrations listed".to_string()],
             ))
         }
 
-        "alphahuman.get_integration_info" => {
+        "openhuman.get_integration_info" => {
             let p: IntegrationInfoParams = parse_params(params)?;
-            let config = load_alphahuman_config().await?;
+            let config = load_openhuman_config().await?;
             let info =
                 integrations::get_integration_info(&config, &p.name).map_err(|e| e.to_string())?;
             to_json_value(command_response(
@@ -548,9 +548,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.models_refresh" => {
+        "openhuman.models_refresh" => {
             let p: ModelsRefreshParams = parse_params(params)?;
-            let config = load_alphahuman_config().await?;
+            let config = load_openhuman_config().await?;
             let result = onboard::run_models_refresh(
                 &config,
                 p.provider_override.as_deref(),
@@ -563,9 +563,9 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.migrate_openclaw" => {
+        "openhuman.migrate_openclaw" => {
             let p: MigrateOpenClawParams = parse_params(params)?;
-            let config = load_alphahuman_config().await?;
+            let config = load_openhuman_config().await?;
             let source = p.source_workspace.map(std::path::PathBuf::from);
             let report =
                 migration::migrate_openclaw_memory(&config, source, p.dry_run.unwrap_or(true))
@@ -577,12 +577,12 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.hardware_discover" => to_json_value(command_response(
+        "openhuman.hardware_discover" => to_json_value(command_response(
             hardware::discover_hardware(),
             vec!["hardware discovery complete".to_string()],
         )),
 
-        "alphahuman.hardware_introspect" => {
+        "openhuman.hardware_introspect" => {
             let p: HardwareIntrospectParams = parse_params(params)?;
             let info = hardware::introspect_device(&p.path).map_err(|e| e.to_string())?;
             to_json_value(command_response(
@@ -591,8 +591,8 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.service_install" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.service_install" => {
+            let config = load_openhuman_config().await?;
             let status = service::install(&config).map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 status,
@@ -600,8 +600,8 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.service_start" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.service_start" => {
+            let config = load_openhuman_config().await?;
             let status = service::start(&config).map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 status,
@@ -609,8 +609,8 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.service_stop" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.service_stop" => {
+            let config = load_openhuman_config().await?;
             let status = service::stop(&config).map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 status,
@@ -618,8 +618,8 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.service_status" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.service_status" => {
+            let config = load_openhuman_config().await?;
             let status = service::status(&config).map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 status,
@@ -627,8 +627,8 @@ async fn dispatch(
             ))
         }
 
-        "alphahuman.service_uninstall" => {
-            let config = load_alphahuman_config().await?;
+        "openhuman.service_uninstall" => {
+            let config = load_openhuman_config().await?;
             let status = service::uninstall(&config).map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 status,
@@ -648,7 +648,7 @@ async fn root_handler() -> impl IntoResponse {
     (
         StatusCode::OK,
         Json(json!({
-            "name": "alphahuman-core",
+            "name": "openhuman-core",
             "ok": true,
             "endpoints": {
                 "health": "/health",
@@ -677,7 +677,7 @@ async fn not_found_handler() -> impl IntoResponse {
 }
 
 fn core_port() -> u16 {
-    std::env::var("ALPHAHUMAN_CORE_PORT")
+    std::env::var("OPENHUMAN_CORE_PORT")
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(7788)

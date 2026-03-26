@@ -1,4 +1,4 @@
-use crate::alphahuman::config::MemoryConfig;
+use crate::openhuman::config::MemoryConfig;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Local, NaiveDate, Utc};
 use rusqlite::{params, Connection};
@@ -379,7 +379,7 @@ fn split_name(filename: &str) -> (&str, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::memory::{Memory, MemoryCategory, SqliteMemory};
+    use crate::openhuman::memory::{Memory, MemoryCategory, SqliteMemory};
     use tempfile::TempDir;
 
     fn default_cfg() -> MemoryConfig {

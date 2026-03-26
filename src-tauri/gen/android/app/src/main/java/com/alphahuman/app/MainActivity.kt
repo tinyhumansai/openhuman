@@ -1,4 +1,4 @@
-package com.alphahuman.app
+package com.openhuman.app
 
 import android.Manifest
 import android.content.Intent

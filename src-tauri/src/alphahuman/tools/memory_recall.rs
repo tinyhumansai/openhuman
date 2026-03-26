@@ -1,5 +1,5 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::memory::Memory;
+use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
 use serde_json::json;
 use std::fmt::Write;
@@ -91,7 +91,7 @@ impl Tool for MemoryRecallTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::memory::{MemoryCategory, SqliteMemory};
+    use crate::openhuman::memory::{MemoryCategory, SqliteMemory};
     use tempfile::TempDir;
 
     fn seeded_mem() -> (TempDir, Arc<dyn Memory>) {

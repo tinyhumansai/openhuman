@@ -1,6 +1,6 @@
 //! Bubblewrap sandbox (user namespaces for Linux/macOS)
 
-use crate::alphahuman::security::traits::Sandbox;
+use crate::openhuman::security::traits::Sandbox;
 use std::process::Command;
 
 /// Bubblewrap sandbox backend

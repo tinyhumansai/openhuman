@@ -61,10 +61,10 @@ pub use traits::Tool;
 pub use traits::{ToolResult, ToolSpec};
 pub use web_search_tool::WebSearchTool;
 
-use crate::alphahuman::config::{Config, DelegateAgentConfig};
-use crate::alphahuman::memory::Memory;
-use crate::alphahuman::runtime::{NativeRuntime, RuntimeAdapter};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::config::{Config, DelegateAgentConfig};
+use crate::openhuman::memory::Memory;
+use crate::openhuman::runtime::{NativeRuntime, RuntimeAdapter};
+use crate::openhuman::security::SecurityPolicy;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -93,12 +93,12 @@ pub fn all_tools(
     memory: Arc<dyn Memory>,
     composio_key: Option<&str>,
     composio_entity_id: Option<&str>,
-    browser_config: &crate::alphahuman::config::BrowserConfig,
-    http_config: &crate::alphahuman::config::HttpRequestConfig,
+    browser_config: &crate::openhuman::config::BrowserConfig,
+    http_config: &crate::openhuman::config::HttpRequestConfig,
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     fallback_api_key: Option<&str>,
-    root_config: &crate::alphahuman::config::Config,
+    root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
     all_tools_with_runtime(
         config,
@@ -125,12 +125,12 @@ pub fn all_tools_with_runtime(
     memory: Arc<dyn Memory>,
     composio_key: Option<&str>,
     composio_entity_id: Option<&str>,
-    browser_config: &crate::alphahuman::config::BrowserConfig,
-    http_config: &crate::alphahuman::config::HttpRequestConfig,
+    browser_config: &crate::openhuman::config::BrowserConfig,
+    http_config: &crate::openhuman::config::HttpRequestConfig,
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     fallback_api_key: Option<&str>,
-    root_config: &crate::alphahuman::config::Config,
+    root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
     let mut tools: Vec<Box<dyn Tool>> = vec![
         Box::new(ShellTool::new(security.clone(), runtime)),
@@ -231,9 +231,9 @@ pub fn all_tools_with_runtime(
             delegate_agents,
             delegate_fallback_credential,
             security.clone(),
-            crate::alphahuman::providers::ProviderRuntimeOptions {
+            crate::openhuman::providers::ProviderRuntimeOptions {
                 auth_profile_override: None,
-                alphahuman_dir: root_config
+                openhuman_dir: root_config
                     .config_path
                     .parent()
                     .map(std::path::PathBuf::from),
@@ -249,7 +249,7 @@ pub fn all_tools_with_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::{BrowserConfig, Config, MemoryConfig};
+    use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
     use tempfile::TempDir;
 
     fn test_config(tmp: &TempDir) -> Config {
@@ -276,7 +276,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::alphahuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
 
         let browser = BrowserConfig {
             enabled: false,
@@ -284,7 +284,7 @@ mod tests {
             session_name: None,
             ..BrowserConfig::default()
         };
-        let http = crate::alphahuman::config::HttpRequestConfig::default();
+        let http = crate::openhuman::config::HttpRequestConfig::default();
         let cfg = test_config(&tmp);
 
         let tools = all_tools(
@@ -316,7 +316,7 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::alphahuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
 
         let browser = BrowserConfig {
             enabled: true,
@@ -324,7 +324,7 @@ mod tests {
             session_name: None,
             ..BrowserConfig::default()
         };
-        let http = crate::alphahuman::config::HttpRequestConfig::default();
+        let http = crate::openhuman::config::HttpRequestConfig::default();
         let cfg = test_config(&tmp);
 
         let tools = all_tools(
@@ -449,10 +449,10 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::alphahuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
 
         let browser = BrowserConfig::default();
-        let http = crate::alphahuman::config::HttpRequestConfig::default();
+        let http = crate::openhuman::config::HttpRequestConfig::default();
         let cfg = test_config(&tmp);
 
         let mut agents = HashMap::new();
@@ -494,10 +494,10 @@ mod tests {
             ..MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> =
-            Arc::from(crate::alphahuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
 
         let browser = BrowserConfig::default();
-        let http = crate::alphahuman::config::HttpRequestConfig::default();
+        let http = crate::openhuman::config::HttpRequestConfig::default();
         let cfg = test_config(&tmp);
 
         let tools = all_tools(

@@ -16,7 +16,7 @@ interface SkillSetupModalProps {
   skillDescription: string;
   /** Whether this skill has interactive setup hooks. */
   hasSetup?: boolean;
-  skillType?: 'alphahuman' | 'openclaw';
+  skillType?: 'openhuman' | 'openclaw';
   onClose: () => void;
 }
 
@@ -25,7 +25,7 @@ export default function SkillSetupModal({
   skillName,
   skillDescription,
   hasSetup = true,
-  skillType = 'alphahuman',
+  skillType = 'openhuman',
   onClose,
 }: SkillSetupModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);

@@ -1,7 +1,7 @@
-use crate::alphahuman::channels::{traits, Channel, SendMessage};
-use crate::alphahuman::memory::{Memory, MemoryCategory, MemoryEntry};
-use crate::alphahuman::providers::{ChatMessage, Provider};
-use crate::alphahuman::tools::{Tool, ToolResult};
+use crate::openhuman::channels::{traits, Channel, SendMessage};
+use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
+use crate::openhuman::providers::{ChatMessage, Provider};
+use crate::openhuman::tools::{Tool, ToolResult};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -11,7 +11,7 @@ pub(super) fn make_workspace() -> TempDir {
     let tmp = TempDir::new().unwrap();
     // Create minimal workspace files
     std::fs::write(tmp.path().join("SOUL.md"), "# Soul\nBe helpful.").unwrap();
-    std::fs::write(tmp.path().join("IDENTITY.md"), "# Identity\nName: Alphahuman").unwrap();
+    std::fs::write(tmp.path().join("IDENTITY.md"), "# Identity\nName: OpenHuman").unwrap();
     std::fs::write(tmp.path().join("USER.md"), "# User\nName: Test User").unwrap();
     std::fs::write(
         tmp.path().join("AGENTS.md"),

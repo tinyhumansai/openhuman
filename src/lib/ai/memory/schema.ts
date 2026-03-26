@@ -4,7 +4,7 @@
  * The memory index uses JSON files on disk (managed by Rust memory_fs.rs).
  * This file documents the schema for TypeScript reference.
  *
- * Filesystem layout under ~/.alphahuman/:
+ * Filesystem layout under ~/.openhuman/:
  *
  * ```
  * index/

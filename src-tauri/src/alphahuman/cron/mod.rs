@@ -1,5 +1,5 @@
-use crate::alphahuman::config::Config;
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::config::Config;
+use crate::openhuman::security::SecurityPolicy;
 use anyhow::Result;
 
 mod schedule;

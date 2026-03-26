@@ -1,8 +1,8 @@
 /**
  * Daemon Health Service
  *
- * Manages health monitoring for the alphahuman daemon by listening to
- * 'alphahuman:health' events emitted by the Rust backend every 5 seconds.
+ * Manages health monitoring for the openhuman daemon by listening to
+ * 'openhuman:health' events emitted by the Rust backend every 5 seconds.
  */
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
@@ -27,10 +27,10 @@ export class DaemonHealthService {
   async setupHealthListener(): Promise<UnlistenFn | null> {
     console.log('[DaemonHealth] setupHealthListener() called - starting setup process');
     try {
-      // console.log('[DaemonHealth] About to call listen() for alphahuman:health event');
-      // console.log('[DaemonHealth] Setting up alphahuman:health event listener');
+      // console.log('[DaemonHealth] About to call listen() for openhuman:health event');
+      // console.log('[DaemonHealth] Setting up openhuman:health event listener');
 
-      this.healthEventListener = await listen<unknown>('alphahuman:health', event => {
+      this.healthEventListener = await listen<unknown>('openhuman:health', event => {
         // console.log('[DaemonHealth] Received health event:', event.payload);
 
         const healthSnapshot = this.parseHealthSnapshot(event.payload);
@@ -41,7 +41,7 @@ export class DaemonHealthService {
           console.warn('[DaemonHealth] Failed to parse health snapshot:', event.payload);
         }
       });
-      console.log('[DaemonHealth] alphahuman:health listener created successfully');
+      console.log('[DaemonHealth] openhuman:health listener created successfully');
 
       // Start initial timeout
       // console.log('[DaemonHealth] Starting health timeout');

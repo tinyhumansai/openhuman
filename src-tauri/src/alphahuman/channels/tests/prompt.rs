@@ -56,7 +56,7 @@ fn prompt_injects_workspace_files() {
     assert!(prompt.contains("Be helpful"), "missing SOUL content");
     assert!(prompt.contains("### IDENTITY.md"), "missing IDENTITY.md");
     assert!(
-        prompt.contains("Name: Alphahuman"),
+        prompt.contains("Name: OpenHuman"),
         "missing IDENTITY content"
     );
     assert!(prompt.contains("### USER.md"), "missing USER.md");
@@ -142,7 +142,7 @@ fn prompt_runtime_metadata() {
 #[test]
 fn prompt_skills_compact_list() {
     let ws = make_workspace();
-    let skills = vec![crate::alphahuman::skills::Skill {
+    let skills = vec![crate::openhuman::skills::Skill {
         name: "code-review".into(),
         description: "Review code for bugs".into(),
         version: "1.0.0".into(),
@@ -202,10 +202,10 @@ fn prompt_empty_files_skipped() {
 
 #[test]
 fn channel_log_truncation_is_utf8_safe_for_multibyte_text() {
-    let msg = "Hello from Alphahuman 🌍. Current status is healthy, and café-style UTF-8 text stays safe in logs.";
+    let msg = "Hello from OpenHuman 🌍. Current status is healthy, and café-style UTF-8 text stays safe in logs.";
 
     // Reproduces the production crash path where channel logs truncate at 80 chars.
-    let result = std::panic::catch_unwind(|| crate::alphahuman::util::truncate_with_ellipsis(msg, 80));
+    let result = std::panic::catch_unwind(|| crate::openhuman::util::truncate_with_ellipsis(msg, 80));
     assert!(
         result.is_ok(),
         "truncate_with_ellipsis should never panic on UTF-8"

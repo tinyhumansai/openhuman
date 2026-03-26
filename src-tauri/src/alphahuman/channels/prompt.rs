@@ -1,6 +1,6 @@
 //! System prompt construction for channel interactions.
 
-use crate::alphahuman::identity;
+use crate::openhuman::identity;
 use std::path::Path;
 
 /// Maximum characters per injected workspace file (matches `OpenClaw` default).
@@ -52,8 +52,8 @@ pub fn build_system_prompt(
     workspace_dir: &Path,
     model_name: &str,
     tools: &[(&str, &str)],
-    skills: &[crate::alphahuman::skills::Skill],
-    identity_config: Option<&crate::alphahuman::config::IdentityConfig>,
+    skills: &[crate::openhuman::skills::Skill],
+    identity_config: Option<&crate::openhuman::config::IdentityConfig>,
     bootstrap_max_chars: Option<usize>,
 ) -> String {
     use std::fmt::Write;

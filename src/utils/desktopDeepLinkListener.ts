@@ -271,7 +271,7 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
 
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'openhuman:' && parsed.protocol !== 'alphahuman:') {
+    if (parsed.protocol !== 'openhuman:' && parsed.protocol !== 'openhuman:') {
       return;
     }
 

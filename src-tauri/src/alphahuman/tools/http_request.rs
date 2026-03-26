@@ -1,5 +1,5 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -118,7 +118,7 @@ impl HttpRequestTool {
             .timeout(Duration::from_secs(self.timeout_secs))
             .connect_timeout(Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none());
-        let builder = crate::alphahuman::config::apply_runtime_proxy_to_builder(builder, "tool.http_request");
+        let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(builder, "tool.http_request");
         let client = builder.build()?;
 
         let mut request = client.request(method, url);
@@ -437,7 +437,7 @@ fn is_non_global_v6(v6: std::net::Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_tool(allowed_domains: Vec<&str>) -> HttpRequestTool {
         let security = Arc::new(SecurityPolicy {

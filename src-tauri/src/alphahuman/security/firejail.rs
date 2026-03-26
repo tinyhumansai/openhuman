@@ -2,7 +2,7 @@
 //!
 //! Firejail is a SUID sandbox program that Linux applications use to sandbox themselves.
 
-use crate::alphahuman::security::traits::Sandbox;
+use crate::openhuman::security::traits::Sandbox;
 use std::process::Command;
 
 /// Firejail sandbox backend for Linux

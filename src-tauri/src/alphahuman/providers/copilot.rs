@@ -11,11 +11,11 @@
 //! GitHub could change or revoke this at any time, which would break all
 //! third-party integrations simultaneously.
 
-use crate::alphahuman::providers::traits::{
+use crate::openhuman::providers::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     Provider, ToolCall as ProviderToolCall,
 };
-use crate::alphahuman::tools::ToolSpec;
+use crate::openhuman::tools::ToolSpec;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -154,7 +154,7 @@ struct ResponseMessage {
 /// GitHub Copilot provider with automatic OAuth and token refresh.
 ///
 /// On first use, prompts the user to visit github.com/login/device.
-/// Tokens are cached to `~/.config/alphahuman/copilot/` and refreshed
+/// Tokens are cached to `~/.config/openhuman/copilot/` and refreshed
 /// automatically.
 pub struct CopilotProvider {
     github_token: Option<String>,
@@ -166,7 +166,7 @@ pub struct CopilotProvider {
 
 impl CopilotProvider {
     pub fn new(github_token: Option<&str>) -> Self {
-        let token_dir = directories::ProjectDirs::from("", "", "alphahuman")
+        let token_dir = directories::ProjectDirs::from("", "", "openhuman")
             .map(|dir| dir.config_dir().join("copilot"))
             .unwrap_or_else(|| {
                 // Fall back to a user-specific temp directory to avoid
@@ -174,7 +174,7 @@ impl CopilotProvider {
                 let user = std::env::var("USER")
                     .or_else(|_| std::env::var("USERNAME"))
                     .unwrap_or_else(|_| "unknown".to_string());
-                std::env::temp_dir().join(format!("alphahuman-copilot-{user}"))
+                std::env::temp_dir().join(format!("openhuman-copilot-{user}"))
             });
 
         if let Err(err) = std::fs::create_dir_all(&token_dir) {
@@ -208,7 +208,7 @@ impl CopilotProvider {
     }
 
     fn http_client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.copilot", 120, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.copilot", 120, 10)
     }
 
     /// Required headers for Copilot API requests (editor identification).

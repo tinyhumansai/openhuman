@@ -18,7 +18,7 @@ use super::whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 use super::whatsapp_web::WhatsAppWebChannel;
 use super::Channel;
-use crate::alphahuman::config::Config;
+use crate::openhuman::config::Config;
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
@@ -235,7 +235,7 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
         return Ok(());
     }
 
-    println!("🩺 Alphahuman Channel Doctor");
+    println!("🩺 OpenHuman Channel Doctor");
     println!();
 
     let mut healthy = 0_u32;

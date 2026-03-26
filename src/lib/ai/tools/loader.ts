@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 // GitHub URL removed - always use bundled file updated by auto-update system
-const TOOLS_CACHE_KEY = 'alphahuman.tools.cache';
+const TOOLS_CACHE_KEY = 'openhuman.tools.cache';
 const TOOLS_CACHE_TTL = 1000 * 60 * 30; // 30 minutes
 const CACHE_VERSION = '1.0.0';
 

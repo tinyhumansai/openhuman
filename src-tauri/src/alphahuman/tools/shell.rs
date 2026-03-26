@@ -1,6 +1,6 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::runtime::RuntimeAdapter;
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::runtime::RuntimeAdapter;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -164,8 +164,8 @@ impl Tool for ShellTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::runtime::{NativeRuntime, RuntimeAdapter};
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::runtime::{NativeRuntime, RuntimeAdapter};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_security(autonomy: AutonomyLevel) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
@@ -293,7 +293,7 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn shell_does_not_leak_api_key() {
         let _g1 = EnvGuard::set("API_KEY", "sk-test-secret-12345");
-        let _g2 = EnvGuard::set("ALPHAHUMAN_API_KEY", "sk-test-secret-67890");
+        let _g2 = EnvGuard::set("OPENHUMAN_API_KEY", "sk-test-secret-67890");
 
         let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
         let result = tool.execute(json!({"command": "env"})).await.unwrap();
@@ -304,7 +304,7 @@ mod tests {
         );
         assert!(
             !result.output.contains("sk-test-secret-67890"),
-            "ALPHAHUMAN_API_KEY leaked to shell command output"
+            "OPENHUMAN_API_KEY leaked to shell command output"
         );
     }
 
@@ -344,7 +344,7 @@ mod tests {
 
         let tool = ShellTool::new(security.clone(), test_runtime());
         let denied = tool
-            .execute(json!({"command": "touch alphahuman_shell_approval_test"}))
+            .execute(json!({"command": "touch openhuman_shell_approval_test"}))
             .await
             .unwrap();
         assert!(!denied.success);
@@ -356,7 +356,7 @@ mod tests {
 
         let allowed = tool
             .execute(json!({
-                "command": "touch alphahuman_shell_approval_test",
+                "command": "touch openhuman_shell_approval_test",
                 "approved": true
             }))
             .await
@@ -364,7 +364,7 @@ mod tests {
         assert!(allowed.success);
 
         let _ =
-            tokio::fs::remove_file(std::env::temp_dir().join("alphahuman_shell_approval_test")).await;
+            tokio::fs::remove_file(std::env::temp_dir().join("openhuman_shell_approval_test")).await;
     }
 
     // ── §5.2 Shell timeout enforcement tests ─────────────────

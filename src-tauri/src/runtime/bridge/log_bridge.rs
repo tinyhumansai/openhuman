@@ -1,4 +1,4 @@
-//! @alphahuman/log bridge — structured logging from JS skills.
+//! @openhuman/log bridge — structured logging from JS skills.
 //!
 //! Exposes log levels: debug, info, warn, error.
 //! Logs are forwarded to Rust's `log` crate AND emitted as Tauri events

@@ -1,4 +1,4 @@
-//! @alphahuman/db bridge — scoped SQLite access for each skill.
+//! @openhuman/db bridge — scoped SQLite access for each skill.
 //!
 //! Each skill gets its own SQLite database at `{app_data_dir}/skills/{skill_id}/skill.db`.
 //! The bridge exposes async functions callable from JS:

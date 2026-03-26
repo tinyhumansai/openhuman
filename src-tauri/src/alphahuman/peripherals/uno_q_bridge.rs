@@ -1,9 +1,9 @@
 //! Arduino Uno Q Bridge — GPIO via socket to Bridge app.
 //!
-//! When Alphahuman runs on Uno Q, the Bridge app (Python + MCU) exposes
+//! When OpenHuman runs on Uno Q, the Bridge app (Python + MCU) exposes
 //! digitalWrite/digitalRead over a local socket. These tools connect to it.
 
-use crate::alphahuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -40,7 +40,7 @@ impl Tool for UnoQGpioReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read GPIO pin value (0 or 1) on Arduino Uno Q. Requires alphahuman-uno-q-bridge app running."
+        "Read GPIO pin value (0 or 1) on Arduino Uno Q. Requires openhuman-uno-q-bridge app running."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -96,7 +96,7 @@ impl Tool for UnoQGpioWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Set GPIO pin high (1) or low (0) on Arduino Uno Q. Requires alphahuman-uno-q-bridge app running."
+        "Set GPIO pin high (1) or low (0) on Arduino Uno Q. Requires openhuman-uno-q-bridge app running."
     }
 
     fn parameters_schema(&self) -> Value {

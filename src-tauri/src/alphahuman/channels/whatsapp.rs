@@ -45,7 +45,7 @@ impl WhatsAppChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.whatsapp")
+        crate::openhuman::config::build_runtime_proxy_client("channel.whatsapp")
     }
 
     /// Check if a phone number is allowed (E.164 format: +1234567890)
@@ -307,7 +307,7 @@ mod tests {
                             "timestamp": "1699999999",
                             "type": "text",
                             "text": {
-                                "body": "Hello Alphahuman!"
+                                "body": "Hello OpenHuman!"
                             }
                         }]
                     },
@@ -319,7 +319,7 @@ mod tests {
         let msgs = ch.parse_webhook_payload(&payload);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].sender, "+1234567890");
-        assert_eq!(msgs[0].content, "Hello Alphahuman!");
+        assert_eq!(msgs[0].content, "Hello OpenHuman!");
         assert_eq!(msgs[0].channel, "whatsapp");
         assert_eq!(msgs[0].timestamp, 1_699_999_999);
     }

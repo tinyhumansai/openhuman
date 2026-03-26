@@ -2,7 +2,7 @@
 //!
 //! A single registry that aggregates both skill types:
 //!
-//! - `alphahuman`: JavaScript-based skills executed in the QuickJS runtime.
+//! - `openhuman`: JavaScript-based skills executed in the QuickJS runtime.
 //! - `openclaw`:   File-based skills defined in SKILL.md or SKILL.toml.
 //!
 //! All skills expose a common [`UnifiedSkillEntry`] interface and return
@@ -14,7 +14,7 @@ pub mod openclaw_executor;
 pub mod self_evolve;
 pub mod skill_tester;
 
-use crate::alphahuman::skills::{load_skills, Skill};
+use crate::openhuman::skills::{load_skills, Skill};
 use crate::runtime::qjs_engine::RuntimeEngine;
 use crate::runtime::types::{ToolDefinition, UnifiedSkillEntry, UnifiedSkillResult};
 use chrono::Utc;
@@ -30,16 +30,16 @@ pub struct GenerateSkillSpec {
     pub name: String,
     /// Human-readable description of what the skill does.
     pub description: String,
-    /// Skill type: "alphahuman" or "openclaw".
+    /// Skill type: "openhuman" or "openclaw".
     pub skill_type: String,
-    /// For alphahuman skills: the JavaScript body of the generated tool function.
+    /// For openhuman skills: the JavaScript body of the generated tool function.
     pub tool_code: Option<String>,
     /// For openclaw skills: markdown content written to SKILL.md.
     pub markdown_content: Option<String>,
     /// For openclaw skills: shell command written into SKILL.toml as a tool.
     pub shell_command: Option<String>,
     /// Complete LLM-generated `index.js` source.  When present,
-    /// `generator::generate_alphahuman` writes this directly to disk instead
+    /// `generator::generate_openhuman` writes this directly to disk instead
     /// of building from the default template.
     #[serde(default)]
     pub full_index_js: Option<String>,
@@ -55,7 +55,7 @@ impl UnifiedSkillRegistry {
         Self { engine }
     }
 
-    /// Return the resolved skills source directory (where alphahuman skill
+    /// Return the resolved skills source directory (where openhuman skill
     /// directories are stored).
     pub fn skills_dir(&self) -> Result<PathBuf, String> {
         self.engine.skills_source_dir()
@@ -68,12 +68,12 @@ impl UnifiedSkillRegistry {
 
     /// List all skills from both subsystems.
     ///
-    /// - alphahuman skills come from `RuntimeEngine::discover_skills()` (manifest.json).
-    /// - openclaw skills come from the alphahuman workspace skills directory (SKILL.md/TOML).
+    /// - openhuman skills come from `RuntimeEngine::discover_skills()` (manifest.json).
+    /// - openclaw skills come from the openhuman workspace skills directory (SKILL.md/TOML).
     pub async fn list_all(&self) -> Vec<UnifiedSkillEntry> {
         let mut entries = Vec::new();
 
-        // --- alphahuman skills (QuickJS runtime) ---
+        // --- openhuman skills (QuickJS runtime) ---
         if let Ok(manifests) = self.engine.discover_skills().await {
             let snapshots = self.engine.list_skills();
 
@@ -102,7 +102,7 @@ impl UnifiedSkillRegistry {
 
         for skill in &openclaw_skills {
             let id = skill_to_id(skill);
-            // Skip if already listed by the alphahuman runtime (avoid duplicates).
+            // Skip if already listed by the openhuman runtime (avoid duplicates).
             if entries.iter().any(|e| e.id == id) {
                 continue;
             }
@@ -148,14 +148,14 @@ impl UnifiedSkillRegistry {
             .ok_or_else(|| format!("Skill '{skill_id}' not found in unified registry"))?;
 
         match entry.skill_type.as_str() {
-            "alphahuman" => self.execute_alphahuman(skill_id, tool_name, args).await,
+            "openhuman" => self.execute_openhuman(skill_id, tool_name, args).await,
             "openclaw" => self.execute_openclaw(skill_id, tool_name, args).await,
             other => Err(format!("Unknown skill type: '{other}'")),
         }
     }
 
-    /// Dispatch to QuickJS runtime for alphahuman skills.
-    async fn execute_alphahuman(
+    /// Dispatch to QuickJS runtime for openhuman skills.
+    async fn execute_openhuman(
         &self,
         skill_id: &str,
         tool_name: &str,
@@ -192,10 +192,10 @@ impl UnifiedSkillRegistry {
     /// Generate a new skill from a spec, write it to disk, and return its registry entry.
     pub async fn generate(&self, spec: GenerateSkillSpec) -> Result<UnifiedSkillEntry, String> {
         match spec.skill_type.as_str() {
-            "alphahuman" => {
+            "openhuman" => {
                 // Find the skills source directory from the engine.
                 let skills_dir = self.engine.skills_source_dir()?;
-                generator::generate_alphahuman(&spec, &skills_dir).await?;
+                generator::generate_openhuman(&spec, &skills_dir).await?;
 
                 // Rediscover so the new skill appears in subsequent list_all() calls.
                 let _ = self.engine.discover_skills().await;
@@ -206,7 +206,7 @@ impl UnifiedSkillRegistry {
                 Ok(UnifiedSkillEntry {
                     id,
                     name: spec.name,
-                    skill_type: "alphahuman".to_string(),
+                    skill_type: "openhuman".to_string(),
                     version: "1.0.0".to_string(),
                     description: spec.description,
                     tools: vec![],
@@ -227,7 +227,7 @@ impl UnifiedSkillRegistry {
                     setup: None,
                 })
             }
-            other => Err(format!("Unknown skill_type: '{other}'. Use 'alphahuman' or 'openclaw'.")),
+            other => Err(format!("Unknown skill_type: '{other}'. Use 'openhuman' or 'openclaw'.")),
         }
     }
 }
@@ -253,9 +253,9 @@ fn sanitize_id(name: &str) -> String {
         .join("-")
 }
 
-/// Returns `~/.alphahuman/workspace` as the base for openclaw skills.
+/// Returns `~/.openhuman/workspace` as the base for openclaw skills.
 fn workspace_dir() -> PathBuf {
     UserDirs::new()
-        .map(|d| d.home_dir().join(".alphahuman").join("workspace"))
-        .unwrap_or_else(|| PathBuf::from(".alphahuman/workspace"))
+        .map(|d| d.home_dir().join(".openhuman").join("workspace"))
+        .unwrap_or_else(|| PathBuf::from(".openhuman/workspace"))
 }

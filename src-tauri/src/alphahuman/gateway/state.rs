@@ -1,11 +1,11 @@
 //! Shared gateway state for axum handlers.
 
-use crate::alphahuman::channels::{LinqChannel, WhatsAppChannel};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::memory::Memory;
-use crate::alphahuman::providers::Provider;
-use crate::alphahuman::security::pairing::PairingGuard;
-use crate::alphahuman::gateway::rate_limit::{GatewayRateLimiter, IdempotencyStore};
+use crate::openhuman::channels::{LinqChannel, WhatsAppChannel};
+use crate::openhuman::config::Config;
+use crate::openhuman::memory::Memory;
+use crate::openhuman::providers::Provider;
+use crate::openhuman::security::pairing::PairingGuard;
+use crate::openhuman::gateway::rate_limit::{GatewayRateLimiter, IdempotencyStore};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -31,5 +31,5 @@ pub struct AppState {
     /// Linq webhook signing secret for signature verification.
     pub linq_signing_secret: Option<Arc<str>>,
     /// Observability backend for metrics scraping.
-    pub observer: Arc<dyn crate::alphahuman::observability::Observer>,
+    pub observer: Arc<dyn crate::openhuman::observability::Observer>,
 }

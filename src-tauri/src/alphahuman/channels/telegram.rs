@@ -1,6 +1,6 @@
 use super::traits::{Channel, ChannelMessage, SendMessage};
-use crate::alphahuman::config::{Config, StreamMode};
-use crate::alphahuman::security::pairing::PairingGuard;
+use crate::openhuman::config::{Config, StreamMode};
+use crate::openhuman::security::pairing::PairingGuard;
 use anyhow::Context;
 use async_trait::async_trait;
 use directories::UserDirs;
@@ -364,7 +364,7 @@ impl TelegramChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.telegram")
+        crate::openhuman::config::build_runtime_proxy_client("channel.telegram")
     }
 
     fn normalize_identity(value: &str) -> String {
@@ -383,8 +383,8 @@ impl TelegramChannel {
         let home = UserDirs::new()
             .map(|u| u.home_dir().to_path_buf())
             .context("Could not find home directory")?;
-        let alphahuman_dir = home.join(".alphahuman");
-        let config_path = alphahuman_dir.join("config.toml");
+        let openhuman_dir = home.join(".openhuman");
+        let config_path = openhuman_dir.join("config.toml");
 
         let contents = fs::read_to_string(&config_path)
             .await
@@ -392,7 +392,7 @@ impl TelegramChannel {
         let mut config: Config = toml::from_str(&contents)
             .context("Failed to parse config file for Telegram binding")?;
         config.config_path = config_path;
-        config.workspace_dir = alphahuman_dir.join("workspace");
+        config.workspace_dir = openhuman_dir.join("workspace");
         Ok(config)
     }
 
@@ -645,7 +645,7 @@ impl TelegramChannel {
                                 Ok(()) => {
                                     let _ = self
                                         .send(&SendMessage::new(
-                                            "✅ Telegram account bound successfully. You can talk to Alphahuman now.",
+                                            "✅ Telegram account bound successfully. You can talk to OpenHuman now.",
                                             &chat_id,
                                         ))
                                         .await;
@@ -1725,7 +1725,7 @@ impl Channel for TelegramChannel {
                 if error_code == 409 {
                     tracing::warn!(
                         "Telegram polling conflict (409): {description}. \
-Ensure only one `alphahuman` process is using this bot token."
+Ensure only one `openhuman` process is using this bot token."
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 } else {
@@ -2037,7 +2037,7 @@ mod tests {
     #[test]
     fn telegram_extract_bind_code_supports_bot_mention() {
         assert_eq!(
-            TelegramChannel::extract_bind_code("/bind@alphahuman_bot 654321"),
+            TelegramChannel::extract_bind_code("/bind@openhuman_bot 654321"),
             Some("654321")
         );
     }

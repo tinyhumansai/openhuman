@@ -1,6 +1,6 @@
 //! Health and metrics endpoints.
 
-use crate::alphahuman::gateway::state::AppState;
+use crate::openhuman::gateway::state::AppState;
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -15,7 +15,7 @@ pub async fn handle_health(State(state): State<AppState>) -> impl IntoResponse {
     let body = serde_json::json!({
         "status": "ok",
         "paired": state.pairing.is_paired(),
-        "runtime": crate::alphahuman::health::snapshot_json(),
+        "runtime": crate::openhuman::health::snapshot_json(),
     });
     Json(body)
 }
@@ -26,7 +26,7 @@ pub async fn handle_metrics(State(state): State<AppState>) -> impl IntoResponse 
         .observer
         .as_ref()
         .as_any()
-        .downcast_ref::<crate::alphahuman::observability::PrometheusObserver>()
+        .downcast_ref::<crate::openhuman::observability::PrometheusObserver>()
     {
         prom.encode()
     } else {

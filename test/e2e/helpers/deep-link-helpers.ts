@@ -1,7 +1,7 @@
 /**
  * Deep-link trigger utilities for E2E tests.
  *
- * Uses macOS `open` command to fire the custom `alphahuman://` URL scheme,
+ * Uses macOS `open` command to fire the custom `openhuman://` URL scheme,
  * which the built .app bundle picks up via its registered CFBundleURLSchemes.
  */
 import { exec } from 'child_process';
@@ -30,5 +30,5 @@ export function triggerDeepLink(url: string): Promise<void> {
  * @returns {Promise<void>}
  */
 export function triggerAuthDeepLink(token: string): Promise<void> {
-  return triggerDeepLink(`alphahuman://auth?token=${encodeURIComponent(token)}`);
+  return triggerDeepLink(`openhuman://auth?token=${encodeURIComponent(token)}`);
 }

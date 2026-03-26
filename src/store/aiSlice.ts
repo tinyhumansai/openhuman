@@ -42,7 +42,7 @@ const initialState: AIState = {
   currentSessionId: null,
   loadedSkillsCount: 0,
   memoryInitialized: false,
-  config: { skillsRepoUrl: 'alphahuman/alphahuman-skills' },
+  config: { skillsRepoUrl: 'openhuman/openhuman-skills' },
 };
 
 const aiSlice = createSlice({

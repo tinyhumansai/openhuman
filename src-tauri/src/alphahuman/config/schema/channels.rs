@@ -1,6 +1,6 @@
 //! Channels configuration (Telegram, Discord, Slack, Matrix, etc.) and security/sandbox.
 
-use crate::alphahuman::channels::email_channel::EmailConfig;
+use crate::openhuman::channels::email_channel::EmailConfig;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -142,7 +142,7 @@ export function detectPlatform(): PlatformInfo {
  */
 export async function fetchLatestRelease(): Promise<GitHubRelease> {
   const response = await fetch(
-    'https://api.github.com/repos/alphahumanxyz/alphahuman/releases/latest'
+    'https://api.github.com/repos/openhumanxyz/openhuman/releases/latest'
   );
   if (!response.ok) {
     throw new Error(`Failed to fetch release: ${response.statusText}`);

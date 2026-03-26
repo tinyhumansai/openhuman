@@ -1,6 +1,6 @@
 //! Gateway constants and key helpers.
 
-use crate::alphahuman::channels::traits::ChannelMessage;
+use crate::openhuman::channels::traits::ChannelMessage;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 

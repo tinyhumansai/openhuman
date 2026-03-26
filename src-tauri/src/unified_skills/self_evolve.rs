@@ -154,7 +154,7 @@ impl SkillEvolver {
             skill_id = sanitize_id(&spec.name);
 
             // -- Write files to disk --
-            let written = generator::generate_alphahuman(&spec, &skills_dir)
+            let written = generator::generate_openhuman(&spec, &skills_dir)
                 .await
                 .map_err(|e| format!("File generation failed (iter {i}): {e}"))?;
 

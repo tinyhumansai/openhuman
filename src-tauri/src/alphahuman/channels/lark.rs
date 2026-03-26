@@ -147,7 +147,7 @@ pub struct LarkChannel {
     /// When true, use Feishu (CN) endpoints; when false, use Lark (international).
     use_feishu: bool,
     /// How to receive events: WebSocket long-connection or HTTP webhook.
-    receive_mode: crate::alphahuman::config::schema::LarkReceiveMode,
+    receive_mode: crate::openhuman::config::schema::LarkReceiveMode,
     /// Cached tenant access token
     tenant_token: Arc<RwLock<Option<String>>>,
     /// Dedup set: WS message_ids seen in last ~30 min to prevent double-dispatch
@@ -169,14 +169,14 @@ impl LarkChannel {
             port,
             allowed_users,
             use_feishu: true,
-            receive_mode: crate::alphahuman::config::schema::LarkReceiveMode::default(),
+            receive_mode: crate::openhuman::config::schema::LarkReceiveMode::default(),
             tenant_token: Arc::new(RwLock::new(None)),
             ws_seen_ids: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// Build from `LarkConfig` (preserves `use_feishu` and `receive_mode`).
-    pub fn from_config(config: &crate::alphahuman::config::schema::LarkConfig) -> Self {
+    pub fn from_config(config: &crate::openhuman::config::schema::LarkConfig) -> Self {
         let mut ch = Self::new(
             config.app_id.clone(),
             config.app_secret.clone(),
@@ -190,7 +190,7 @@ impl LarkChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.lark")
+        crate::openhuman::config::build_runtime_proxy_client("channel.lark")
     }
 
     fn api_base(&self) -> &'static str {
@@ -698,7 +698,7 @@ impl Channel for LarkChannel {
     }
 
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
-        use crate::alphahuman::config::schema::LarkReceiveMode;
+        use crate::openhuman::config::schema::LarkReceiveMode;
         match self.receive_mode {
             LarkReceiveMode::Websocket => self.listen_ws(tx).await,
             LarkReceiveMode::Webhook => self.listen_http(tx).await,
@@ -983,7 +983,7 @@ mod tests {
                 },
                 "message": {
                     "message_type": "text",
-                    "content": "{\"text\":\"Hello Alphahuman!\"}",
+                    "content": "{\"text\":\"Hello OpenHuman!\"}",
                     "chat_id": "oc_chat123",
                     "create_time": "1699999999000"
                 }
@@ -992,7 +992,7 @@ mod tests {
 
         let msgs = ch.parse_event_payload(&payload);
         assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].content, "Hello Alphahuman!");
+        assert_eq!(msgs[0].content, "Hello OpenHuman!");
         assert_eq!(msgs[0].sender, "oc_chat123");
         assert_eq!(msgs[0].channel, "lark");
         assert_eq!(msgs[0].timestamp, 1_699_999_999);
@@ -1169,7 +1169,7 @@ mod tests {
 
     #[test]
     fn lark_config_serde() {
-        use crate::alphahuman::config::schema::{LarkConfig, LarkReceiveMode};
+        use crate::openhuman::config::schema::{LarkConfig, LarkReceiveMode};
         let lc = LarkConfig {
             app_id: "cli_app123".into(),
             app_secret: "secret456".into(),
@@ -1190,7 +1190,7 @@ mod tests {
 
     #[test]
     fn lark_config_toml_roundtrip() {
-        use crate::alphahuman::config::schema::{LarkConfig, LarkReceiveMode};
+        use crate::openhuman::config::schema::{LarkConfig, LarkReceiveMode};
         let lc = LarkConfig {
             app_id: "app".into(),
             app_secret: "secret".into(),
@@ -1210,7 +1210,7 @@ mod tests {
 
     #[test]
     fn lark_config_defaults_optional_fields() {
-        use crate::alphahuman::config::schema::{LarkConfig, LarkReceiveMode};
+        use crate::openhuman::config::schema::{LarkConfig, LarkReceiveMode};
         let json = r#"{"app_id":"a","app_secret":"s"}"#;
         let parsed: LarkConfig = serde_json::from_str(json).unwrap();
         assert!(parsed.verification_token.is_none());
@@ -1221,7 +1221,7 @@ mod tests {
 
     #[test]
     fn lark_from_config_preserves_mode_and_region() {
-        use crate::alphahuman::config::schema::{LarkConfig, LarkReceiveMode};
+        use crate::openhuman::config::schema::{LarkConfig, LarkReceiveMode};
 
         let cfg = LarkConfig {
             app_id: "cli_app123".into(),

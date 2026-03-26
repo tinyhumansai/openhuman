@@ -163,11 +163,11 @@ impl Default for Config {
     fn default() -> Self {
         let home =
             UserDirs::new().map_or_else(|| PathBuf::from("."), |u| u.home_dir().to_path_buf());
-        let alphahuman_dir = home.join(".alphahuman");
+        let openhuman_dir = home.join(".openhuman");
 
         Self {
-            workspace_dir: alphahuman_dir.join("workspace"),
-            config_path: alphahuman_dir.join("config.toml"),
+            workspace_dir: openhuman_dir.join("workspace"),
+            config_path: openhuman_dir.join("config.toml"),
             api_key: None,
             api_url: None,
             default_provider: Some("openrouter".to_string()),

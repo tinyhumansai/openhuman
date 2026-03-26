@@ -11,7 +11,7 @@ pub use ngrok::NgrokTunnel;
 pub use none::NoneTunnel;
 pub use tailscale::TailscaleTunnel;
 
-use crate::alphahuman::config::{TailscaleTunnelConfig, TunnelConfig};
+use crate::openhuman::config::{TailscaleTunnelConfig, TunnelConfig};
 use anyhow::{bail, Result};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -130,7 +130,7 @@ pub fn create_tunnel(config: &TunnelConfig) -> Result<Option<Box<dyn Tunnel>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::{
+    use crate::openhuman::config::{
         CloudflareTunnelConfig, CustomTunnelConfig, NgrokTunnelConfig,
     };
 

@@ -350,7 +350,7 @@ describe('loadConstitution', () => {
     await loadConstitution();
 
     expect(fetch).toHaveBeenCalledWith(
-      'https://raw.githubusercontent.com/alphahumanxyz/constitution/refs/heads/main/CONSTITUTION.md'
+      'https://raw.githubusercontent.com/openhumanxyz/constitution/refs/heads/main/CONSTITUTION.md'
     );
   });
 });

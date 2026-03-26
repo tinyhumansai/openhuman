@@ -5,8 +5,8 @@
 //! Response: {"id":"1","ok":true,"result":"done"}
 
 use super::traits::Peripheral;
-use crate::alphahuman::config::PeripheralBoardConfig;
-use crate::alphahuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::config::PeripheralBoardConfig;
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};

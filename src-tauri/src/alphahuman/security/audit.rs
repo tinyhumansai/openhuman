@@ -1,6 +1,6 @@
 //! Audit logging for security events
 
-use crate::alphahuman::config::AuditConfig;
+use crate::openhuman::config::AuditConfig;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
@@ -164,10 +164,10 @@ pub struct CommandExecutionLog<'a> {
 
 impl AuditLogger {
     /// Create a new audit logger
-    pub fn new(config: AuditConfig, alphahuman_dir: PathBuf) -> Result<Self> {
-        let log_path = alphahuman_dir.join(&config.log_path);
+    pub fn new(config: AuditConfig, openhuman_dir: PathBuf) -> Result<Self> {
+        let log_path = openhuman_dir.join(&config.log_path);
         log::info!(
-            "[alphahuman:audit] Logger initialized: enabled={}, path={}",
+            "[openhuman:audit] Logger initialized: enabled={}, path={}",
             config.enabled,
             log_path.display()
         );
@@ -185,7 +185,7 @@ impl AuditLogger {
         }
 
         log::debug!(
-            "[alphahuman:audit] Logging event: type={:?}, id={}",
+            "[openhuman:audit] Logging event: type={:?}, id={}",
             event.event_type,
             event.event_id
         );
@@ -258,7 +258,7 @@ impl AuditLogger {
     /// Rotate the log file
     fn rotate(&self) -> Result<()> {
         log::info!(
-            "[alphahuman:audit] Rotating audit log: {}",
+            "[openhuman:audit] Rotating audit log: {}",
             self.log_path.display()
         );
         for i in (1..10).rev() {

@@ -2,9 +2,9 @@
 //!
 //! AIEOS (AI Entity Object Specification) is a standardization framework for
 //! portable AI identity. This module handles loading and converting AIEOS v1.1
-//! JSON to Alphahuman's system prompt format.
+//! JSON to OpenHuman's system prompt format.
 
-use crate::alphahuman::config::IdentityConfig;
+use crate::openhuman::config::IdentityConfig;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -714,7 +714,7 @@ fn non_empty_list_at(value: &Value, path: &[&str]) -> Option<Vec<String>> {
 /// Convert AIEOS identity to a system prompt string.
 ///
 /// Formats the AIEOS data into a structured markdown prompt compatible
-/// with Alphahuman's agent system.
+/// with OpenHuman's agent system.
 pub fn aieos_to_system_prompt(identity: &AieosIdentity) -> String {
     use std::fmt::Write;
     let mut prompt = String::new();
@@ -986,7 +986,7 @@ mod tests {
     use super::*;
 
     fn test_workspace_dir() -> PathBuf {
-        std::env::temp_dir().join("alphahuman-test-identity")
+        std::env::temp_dir().join("openhuman-test-identity")
     }
 
     #[test]

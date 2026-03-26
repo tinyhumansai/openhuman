@@ -3,9 +3,9 @@
 //! Only compiled when `peripheral-rpi` feature is enabled and target is Linux.
 //! Uses BCM pin numbering (e.g. GPIO 17, 27).
 
-use crate::alphahuman::config::PeripheralBoardConfig;
-use crate::alphahuman::peripherals::traits::Peripheral;
-use crate::alphahuman::tools::{Tool, ToolResult};
+use crate::openhuman::config::PeripheralBoardConfig;
+use crate::openhuman::peripherals::traits::Peripheral;
+use crate::openhuman::tools::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 

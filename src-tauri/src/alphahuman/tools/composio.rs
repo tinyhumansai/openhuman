@@ -1,14 +1,14 @@
 // Composio Tool Provider — optional managed tool surface with 1000+ OAuth integrations.
 //
-// When enabled, Alphahuman can execute actions on Gmail, Notion, GitHub, Slack, etc.
+// When enabled, OpenHuman can execute actions on Gmail, Notion, GitHub, Slack, etc.
 // through Composio's API without storing raw OAuth tokens locally.
 //
 // This is opt-in. Users who prefer sovereign/local-only mode skip this entirely.
 // The Composio API key is stored in the encrypted secret store.
 
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::policy::ToolOperation;
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::policy::ToolOperation;
+use crate::openhuman::security::SecurityPolicy;
 use anyhow::Context;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -49,7 +49,7 @@ impl ComposioTool {
     }
 
     fn client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("tool.composio", 60, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("tool.composio", 60, 10)
     }
 
     /// List available Composio apps/actions for the authenticated user.
@@ -773,7 +773,7 @@ pub struct ComposioAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_security() -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy::default())

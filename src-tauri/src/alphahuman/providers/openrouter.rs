@@ -1,8 +1,8 @@
-use crate::alphahuman::providers::traits::{
+use crate::openhuman::providers::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     Provider, ToolCall as ProviderToolCall,
 };
-use crate::alphahuman::tools::ToolSpec;
+use crate::openhuman::tools::ToolSpec;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -221,7 +221,7 @@ impl OpenRouterProvider {
     }
 
     fn http_client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.openrouter", 120, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.openrouter", 120, 10)
     }
 }
 
@@ -277,9 +277,9 @@ impl Provider for OpenRouterProvider {
             .header("Authorization", format!("Bearer {credential}"))
             .header(
                 "HTTP-Referer",
-                "https://github.com/theonlyhennygod/alphahuman",
+                "https://github.com/theonlyhennygod/openhuman",
             )
-            .header("X-Title", "Alphahuman")
+            .header("X-Title", "OpenHuman")
             .json(&request)
             .send()
             .await?;
@@ -327,9 +327,9 @@ impl Provider for OpenRouterProvider {
             .header("Authorization", format!("Bearer {credential}"))
             .header(
                 "HTTP-Referer",
-                "https://github.com/theonlyhennygod/alphahuman",
+                "https://github.com/theonlyhennygod/openhuman",
             )
-            .header("X-Title", "Alphahuman")
+            .header("X-Title", "OpenHuman")
             .json(&request)
             .send()
             .await?;
@@ -375,9 +375,9 @@ impl Provider for OpenRouterProvider {
             .header("Authorization", format!("Bearer {credential}"))
             .header(
                 "HTTP-Referer",
-                "https://github.com/theonlyhennygod/alphahuman",
+                "https://github.com/theonlyhennygod/openhuman",
             )
-            .header("X-Title", "Alphahuman")
+            .header("X-Title", "OpenHuman")
             .json(&native_request)
             .send()
             .await?;
@@ -463,9 +463,9 @@ impl Provider for OpenRouterProvider {
             .header("Authorization", format!("Bearer {credential}"))
             .header(
                 "HTTP-Referer",
-                "https://github.com/theonlyhennygod/alphahuman",
+                "https://github.com/theonlyhennygod/openhuman",
             )
-            .header("X-Title", "Alphahuman")
+            .header("X-Title", "OpenHuman")
             .json(&native_request)
             .send()
             .await?;
@@ -488,7 +488,7 @@ impl Provider for OpenRouterProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::providers::traits::{ChatMessage, Provider};
+    use crate::openhuman::providers::traits::{ChatMessage, Provider};
 
     #[test]
     fn creates_with_key() {

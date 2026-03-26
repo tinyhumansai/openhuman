@@ -175,7 +175,7 @@ impl Evaluator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::skillforge::scout::{ScoutResult, ScoutSource};
+    use crate::openhuman::skillforge::scout::{ScoutResult, ScoutSource};
 
     fn make_candidate(stars: u64, lang: Option<&str>, has_license: bool) -> ScoutResult {
         ScoutResult {

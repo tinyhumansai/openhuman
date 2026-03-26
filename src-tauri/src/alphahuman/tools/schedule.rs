@@ -1,7 +1,7 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::cron;
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::config::Config;
+use crate::openhuman::cron;
+use crate::openhuman::security::SecurityPolicy;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -365,7 +365,7 @@ impl ScheduleTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::AutonomyLevel;
+    use crate::openhuman::security::AutonomyLevel;
     use tempfile::TempDir;
 
     async fn test_setup() -> (TempDir, Config, Arc<SecurityPolicy>) {
@@ -485,7 +485,7 @@ mod tests {
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
-            autonomy: crate::alphahuman::config::AutonomyConfig {
+            autonomy: crate::openhuman::config::AutonomyConfig {
                 level: AutonomyLevel::ReadOnly,
                 ..Default::default()
             },

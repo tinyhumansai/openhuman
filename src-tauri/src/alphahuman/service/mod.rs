@@ -1,14 +1,14 @@
-//! Service management helpers for Alphahuman daemon.
+//! Service management helpers for OpenHuman daemon.
 
-use crate::alphahuman::config::Config;
+use crate::openhuman::config::Config;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const SERVICE_LABEL: &str = "com.alphahuman.daemon";
-const LEGACY_SERVICE_LABEL: &str = "com.alphahuman.app";
+const SERVICE_LABEL: &str = "com.openhuman.daemon";
+const LEGACY_SERVICE_LABEL: &str = "com.openhuman.app";
 const WINDOWS_TASK_NAME: &str = "OpenHuman Daemon";
 
 fn windows_task_name() -> &'static str {
@@ -22,7 +22,7 @@ fn daemon_program_args(exe: &std::path::Path) -> Vec<String> {
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    if file_name.contains("alphahuman-core") {
+    if file_name.contains("openhuman-core") {
         vec!["serve".to_string()]
     } else {
         vec!["core".to_string(), "serve".to_string()]
@@ -124,7 +124,7 @@ pub fn start(config: &Config) -> Result<ServiceStatus> {
             let _ = run_checked(Command::new("systemctl").args([
                 "--user",
                 "enable",
-                "alphahuman.service",
+                "openhuman.service",
             ]));
         } else {
             log::info!("[service] Systemd service already enabled");
@@ -135,7 +135,7 @@ pub fn start(config: &Config) -> Result<ServiceStatus> {
         // Try to start - systemctl start is idempotent
         log::info!("[service] Starting systemd service");
         let start_result =
-            run_checked(Command::new("systemctl").args(["--user", "start", "alphahuman.service"]));
+            run_checked(Command::new("systemctl").args(["--user", "start", "openhuman.service"]));
         if let Err(e) = start_result {
             // Check if it's already active - that's success for us
             let status_check = status(config)?;
@@ -223,7 +223,7 @@ pub fn stop(config: &Config) -> Result<ServiceStatus> {
 
     if cfg!(target_os = "linux") {
         let _ =
-            run_checked(Command::new("systemctl").args(["--user", "stop", "alphahuman.service"]));
+            run_checked(Command::new("systemctl").args(["--user", "stop", "openhuman.service"]));
         return status(config);
     }
 
@@ -259,7 +259,7 @@ pub fn status(config: &Config) -> Result<ServiceStatus> {
         let out = run_capture(Command::new("systemctl").args([
             "--user",
             "is-active",
-            "alphahuman.service",
+            "openhuman.service",
         ]))
         .unwrap_or_else(|_| "unknown".into());
         let state = match out.trim() {
@@ -270,7 +270,7 @@ pub fn status(config: &Config) -> Result<ServiceStatus> {
         return Ok(ServiceStatus {
             state,
             unit_path: Some(linux_service_file(config)?),
-            label: "alphahuman.service".to_string(),
+            label: "openhuman.service".to_string(),
             details: None,
         });
     }
@@ -339,7 +339,7 @@ pub fn uninstall(config: &Config) -> Result<ServiceStatus> {
         return Ok(ServiceStatus {
             state: ServiceState::NotInstalled,
             unit_path: Some(file),
-            label: "alphahuman.service".to_string(),
+            label: "openhuman.service".to_string(),
             details: None,
         });
     }
@@ -353,7 +353,7 @@ pub fn uninstall(config: &Config) -> Result<ServiceStatus> {
             .parent()
             .map_or_else(|| PathBuf::from("."), PathBuf::from)
             .join("logs")
-            .join("alphahuman-daemon.cmd");
+            .join("openhuman-daemon.cmd");
         if wrapper.exists() {
             fs::remove_file(&wrapper).ok();
         }
@@ -410,7 +410,7 @@ fn install_macos(config: &Config) -> Result<()> {
   <string>{stderr}</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>ALPHAHUMAN_DAEMON_INTERNAL</key>
+    <key>OPENHUMAN_DAEMON_INTERNAL</key>
     <string>false</string>
   </dict>
   <key>WorkingDirectory</key>
@@ -457,14 +457,14 @@ fn install_linux(config: &Config) -> Result<()> {
     let exec_start = daemon_command_line(&exe);
 
     let unit = format!(
-        "[Unit]\nDescription=Alphahuman Daemon\n\n[Service]\nExecStart={}\nRestart=always\nRestartSec=3\n\nStandardOutput=append:{}\nStandardError=append:{}\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=OpenHuman Daemon\n\n[Service]\nExecStart={}\nRestart=always\nRestartSec=3\n\nStandardOutput=append:{}\nStandardError=append:{}\n\n[Install]\nWantedBy=default.target\n",
         exec_start,
         stdout.display(),
         stderr.display(),
     );
 
     fs::write(&file, unit)?;
-    let _ = run_checked(Command::new("systemctl").args(["--user", "enable", "alphahuman.service"]));
+    let _ = run_checked(Command::new("systemctl").args(["--user", "enable", "openhuman.service"]));
     Ok(())
 }
 
@@ -477,7 +477,7 @@ fn install_windows(config: &Config) -> Result<()> {
         .join("logs");
     fs::create_dir_all(&logs_dir)?;
 
-    let wrapper = logs_dir.join("alphahuman-daemon.cmd");
+    let wrapper = logs_dir.join("openhuman-daemon.cmd");
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
     let daemon_cmd = daemon_command_line(&exe);
@@ -544,7 +544,7 @@ fn linux_service_file(config: &Config) -> Result<PathBuf> {
         .join(".config")
         .join("systemd")
         .join("user")
-        .join("alphahuman.service"))
+        .join("openhuman.service"))
 }
 
 fn run_checked(cmd: &mut Command) -> Result<()> {
@@ -599,7 +599,7 @@ fn is_service_loaded_macos() -> Result<bool> {
 /// Check if the Linux systemd service is enabled
 fn is_service_enabled_linux() -> Result<bool> {
     let result = Command::new("systemctl")
-        .args(["--user", "is-enabled", "alphahuman.service"])
+        .args(["--user", "is-enabled", "openhuman.service"])
         .output();
 
     match result {
@@ -641,6 +641,6 @@ mod tests {
     fn linux_service_file_uses_config_dir() {
         let config = Config::default();
         let path = linux_service_file(&config).unwrap();
-        assert!(path.ends_with(".config/systemd/user/alphahuman.service"));
+        assert!(path.ends_with(".config/systemd/user/openhuman.service"));
     }
 }

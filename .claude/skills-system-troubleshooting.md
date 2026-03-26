@@ -51,7 +51,7 @@ git submodule init
 git submodule update
 ```
 
-This downloads the skills repository from `https://github.com/alphahumanxyz/skills`.
+This downloads the skills repository from `https://github.com/openhumanxyz/skills`.
 
 #### 2. Create Python Virtual Environment
 

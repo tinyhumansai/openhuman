@@ -59,7 +59,7 @@ mod tests {
             verification_token: None,
             allowed_users: vec![],
             use_feishu: false,
-            receive_mode: crate::alphahuman::config::schema::LarkReceiveMode::Websocket,
+            receive_mode: crate::openhuman::config::schema::LarkReceiveMode::Websocket,
             port: None,
         };
 

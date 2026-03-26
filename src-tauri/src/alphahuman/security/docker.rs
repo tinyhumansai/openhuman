@@ -1,6 +1,6 @@
 //! Docker sandbox (container isolation)
 
-use crate::alphahuman::security::traits::Sandbox;
+use crate::openhuman::security::traits::Sandbox;
 use std::process::Command;
 
 /// Docker sandbox backend

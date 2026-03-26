@@ -39,7 +39,7 @@ export const config: Options.Testrunner = {
       // @ts-expect-error -- Appium capabilities are not in standard WebDriver types
       'appium:automationName': 'Mac2',
       'appium:app': getAppPath(),
-      'appium:bundleId': 'com.alphahuman.app',
+      'appium:bundleId': 'com.openhuman.app',
       'appium:showServerLogs': true,
     },
   ],

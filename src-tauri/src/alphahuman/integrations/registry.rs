@@ -1,5 +1,5 @@
 use super::{IntegrationCategory, IntegrationEntry, IntegrationStatus};
-use crate::alphahuman::providers::{
+use crate::openhuman::providers::{
     is_glm_alias, is_minimax_alias, is_moonshot_alias, is_qianfan_alias, is_qwen_alias,
     is_zai_alias,
 };
@@ -725,8 +725,8 @@ pub fn all_integrations() -> Vec<IntegrationEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::schema::{IMessageConfig, MatrixConfig, StreamMode, TelegramConfig};
-    use crate::alphahuman::config::Config;
+    use crate::openhuman::config::schema::{IMessageConfig, MatrixConfig, StreamMode, TelegramConfig};
+    use crate::openhuman::config::Config;
 
     #[test]
     fn registry_has_entries() {

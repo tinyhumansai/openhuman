@@ -1,4 +1,4 @@
-//! Integrator - generates Alphahuman-standard SKILL.toml + SKILL.md from scout results.
+//! Integrator - generates OpenHuman-standard SKILL.toml + SKILL.md from scout results.
 
 use std::fs;
 use std::path::PathBuf;
@@ -75,7 +75,7 @@ stars = {stars}
 updated_at = "{updated}"
 
 [skill.requirements]
-runtime = "alphahuman >= 0.1"
+runtime = "openhuman >= 0.1"
 
 [skill.metadata]
 auto_integrated = true
@@ -115,7 +115,7 @@ forge_timestamp = "{now}"
 ## Usage
 
 ```toml
-# Add to your Alphahuman config:
+# Add to your OpenHuman config:
 [skills.{name}]
 enabled = true
 ```
@@ -174,7 +174,7 @@ fn sanitize_path_component(name: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::skillforge::scout::{ScoutResult, ScoutSource};
+    use crate::openhuman::skillforge::scout::{ScoutResult, ScoutSource};
     use std::fs;
 
     fn sample_candidate() -> ScoutResult {
@@ -193,7 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn integrate_creates_files() {
-        let tmp = std::env::temp_dir().join("alphahuman-test-integrate");
+        let tmp = std::env::temp_dir().join("openhuman-test-integrate");
         let _ = fs::remove_dir_all(&tmp);
 
         let integrator = Integrator::new(tmp.to_string_lossy().into_owned());

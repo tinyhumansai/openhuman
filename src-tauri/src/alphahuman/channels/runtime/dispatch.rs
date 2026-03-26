@@ -1,18 +1,18 @@
 //! Channel runtime loop and message processing.
 
-use crate::alphahuman::channels::context::{
+use crate::openhuman::channels::context::{
     build_memory_context, compact_sender_history, conversation_history_key, conversation_memory_key,
     is_context_window_overflow_error, ChannelRuntimeContext, CHANNEL_TYPING_REFRESH_INTERVAL_SECS,
     MAX_CHANNEL_HISTORY,
 };
-use crate::alphahuman::channels::routes::{
+use crate::openhuman::channels::routes::{
     get_or_create_provider, get_route_selection, handle_runtime_command_if_needed,
 };
-use crate::alphahuman::channels::traits;
-use crate::alphahuman::channels::{Channel, SendMessage};
-use crate::alphahuman::agent::loop_::run_tool_call_loop;
-use crate::alphahuman::providers::{self, ChatMessage};
-use crate::alphahuman::util::truncate_with_ellipsis;
+use crate::openhuman::channels::traits;
+use crate::openhuman::channels::{Channel, SendMessage};
+use crate::openhuman::agent::loop_::run_tool_call_loop;
+use crate::openhuman::providers::{self, ChatMessage};
+use crate::openhuman::util::truncate_with_ellipsis;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -110,7 +110,7 @@ pub(crate) async fn process_channel_message(
             .store(
                 &autosave_key,
                 &msg.content,
-                crate::alphahuman::memory::MemoryCategory::Conversation,
+                crate::openhuman::memory::MemoryCategory::Conversation,
                 None,
             )
             .await;

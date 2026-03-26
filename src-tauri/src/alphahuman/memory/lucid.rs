@@ -32,32 +32,32 @@ impl LucidMemory {
     const DEFAULT_FAILURE_COOLDOWN_MS: u64 = 15_000;
 
     pub fn new(workspace_dir: &Path, local: SqliteMemory) -> Self {
-        let lucid_cmd = std::env::var("ALPHAHUMAN_LUCID_CMD")
+        let lucid_cmd = std::env::var("OPENHUMAN_LUCID_CMD")
             .unwrap_or_else(|_| Self::DEFAULT_LUCID_CMD.to_string());
 
-        let token_budget = std::env::var("ALPHAHUMAN_LUCID_BUDGET")
+        let token_budget = std::env::var("OPENHUMAN_LUCID_BUDGET")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .filter(|v| *v > 0)
             .unwrap_or(Self::DEFAULT_TOKEN_BUDGET);
 
         let recall_timeout = Self::read_env_duration_ms(
-            "ALPHAHUMAN_LUCID_RECALL_TIMEOUT_MS",
+            "OPENHUMAN_LUCID_RECALL_TIMEOUT_MS",
             Self::DEFAULT_RECALL_TIMEOUT_MS,
             20,
         );
         let store_timeout = Self::read_env_duration_ms(
-            "ALPHAHUMAN_LUCID_STORE_TIMEOUT_MS",
+            "OPENHUMAN_LUCID_STORE_TIMEOUT_MS",
             Self::DEFAULT_STORE_TIMEOUT_MS,
             50,
         );
         let local_hit_threshold = Self::read_env_usize(
-            "ALPHAHUMAN_LUCID_LOCAL_HIT_THRESHOLD",
+            "OPENHUMAN_LUCID_LOCAL_HIT_THRESHOLD",
             Self::DEFAULT_LOCAL_HIT_THRESHOLD,
             1,
         );
         let failure_cooldown = Self::read_env_duration_ms(
-            "ALPHAHUMAN_LUCID_FAILURE_COOLDOWN_MS",
+            "OPENHUMAN_LUCID_FAILURE_COOLDOWN_MS",
             Self::DEFAULT_FAILURE_COOLDOWN_MS,
             100,
         );

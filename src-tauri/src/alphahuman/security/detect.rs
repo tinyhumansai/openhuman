@@ -1,7 +1,7 @@
 //! Auto-detection of available security features
 
-use crate::alphahuman::config::{SandboxBackend, SecurityConfig};
-use crate::alphahuman::security::traits::Sandbox;
+use crate::openhuman::config::{SandboxBackend, SecurityConfig};
+use crate::openhuman::security::traits::Sandbox;
 use std::sync::Arc;
 
 /// Create a sandbox based on auto-detection or explicit config
@@ -117,7 +117,7 @@ fn detect_best_sandbox() -> Arc<dyn Sandbox> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::{SandboxConfig, SecurityConfig};
+    use crate::openhuman::config::{SandboxConfig, SecurityConfig};
 
     #[test]
     fn detect_best_sandbox_returns_something() {

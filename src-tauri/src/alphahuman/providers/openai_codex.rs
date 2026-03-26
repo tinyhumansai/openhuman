@@ -1,7 +1,7 @@
 use crate::auth::openai_oauth::extract_account_id_from_jwt;
 use crate::auth::AuthService;
-use crate::alphahuman::providers::traits::{ChatMessage, Provider};
-use crate::alphahuman::providers::ProviderRuntimeOptions;
+use crate::openhuman::providers::traits::{ChatMessage, Provider};
+use crate::openhuman::providers::ProviderRuntimeOptions;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const DEFAULT_CODEX_INSTRUCTIONS: &str =
-    "You are Alphahuman, a concise and helpful coding assistant.";
+    "You are OpenHuman, a concise and helpful coding assistant.";
 
 pub struct OpenAiCodexProvider {
     auth: AuthService,
@@ -80,9 +80,9 @@ struct ResponsesContent {
 impl OpenAiCodexProvider {
     pub fn new(options: &ProviderRuntimeOptions) -> Self {
         let state_dir = options
-            .alphahuman_dir
+            .openhuman_dir
             .clone()
-            .unwrap_or_else(default_alphahuman_dir);
+            .unwrap_or_else(default_openhuman_dir);
         let auth = AuthService::new(&state_dir, options.secrets_encrypt);
 
         Self {
@@ -97,10 +97,10 @@ impl OpenAiCodexProvider {
     }
 }
 
-fn default_alphahuman_dir() -> PathBuf {
+fn default_openhuman_dir() -> PathBuf {
     directories::UserDirs::new().map_or_else(
-        || PathBuf::from(".alphahuman"),
-        |dirs| dirs.home_dir().join(".alphahuman"),
+        || PathBuf::from(".openhuman"),
+        |dirs| dirs.home_dir().join(".openhuman"),
     )
 }
 
@@ -180,7 +180,7 @@ fn clamp_reasoning_effort(model: &str, effort: &str) -> String {
 }
 
 fn resolve_reasoning_effort(model_id: &str) -> String {
-    let raw = std::env::var("ALPHAHUMAN_CODEX_REASONING_EFFORT")
+    let raw = std::env::var("OPENHUMAN_CODEX_REASONING_EFFORT")
         .ok()
         .and_then(|value| first_nonempty(Some(&value)))
         .unwrap_or_else(|| "xhigh".to_string())
@@ -502,7 +502,7 @@ mod tests {
 
     #[test]
     fn default_state_dir_is_non_empty() {
-        let path = default_alphahuman_dir();
+        let path = default_openhuman_dir();
         assert!(!path.as_os_str().is_empty());
     }
 

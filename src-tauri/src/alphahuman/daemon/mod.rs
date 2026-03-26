@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use crate::alphahuman::config::{Config, DaemonConfig};
+use crate::openhuman::config::{Config, DaemonConfig};
 
 /// How often the state writer emits health snapshots (seconds).
 const STATUS_FLUSH_SECONDS: u64 = 5;
@@ -27,7 +27,7 @@ pub struct DaemonHandle {
 ///
 /// The supervisor:
 /// 1. Marks the "daemon" health component as OK
-/// 2. Spawns a state writer that emits `alphahuman:health` Tauri events
+/// 2. Spawns a state writer that emits `openhuman:health` Tauri events
 /// 3. Waits for the cancellation token to be triggered (on app exit)
 /// 4. Aborts all supervised tasks
 pub async fn run(
@@ -45,7 +45,7 @@ pub async fn run(
     let _ = tokio::fs::create_dir_all(&config.data_dir).await;
     let _ = tokio::fs::create_dir_all(&config.workspace_dir).await;
 
-    crate::alphahuman::health::mark_component_ok("daemon");
+    crate::openhuman::health::mark_component_ok("daemon");
 
     let mut handles: Vec<JoinHandle<()>> = vec![];
 
@@ -55,29 +55,29 @@ pub async fn run(
         let data_dir = config.data_dir.clone();
         let cancel_clone = cancel.clone();
         handles.push(tokio::spawn(async move {
-            log::info!("[alphahuman] Starting health event writer task");
+            log::info!("[openhuman] Starting health event writer task");
             spawn_state_writer(app, data_dir, cancel_clone).await;
-            log::info!("[alphahuman] Health event writer task terminated");
+            log::info!("[openhuman] Health event writer task terminated");
         }));
     }
 
-    log::info!("[alphahuman] Daemon supervisor started");
+    log::info!("[openhuman] Daemon supervisor started");
     log::info!(
-        "[alphahuman]   data_dir:  {}",
+        "[openhuman]   data_dir:  {}",
         config.data_dir.display()
     );
     log::info!(
-        "[alphahuman]   backoff:   {}s initial, {}s max",
+        "[openhuman]   backoff:   {}s initial, {}s max",
         initial_backoff,
         max_backoff
     );
-    log::info!("[alphahuman]   health:    Events will be emitted every {}s to frontend", STATUS_FLUSH_SECONDS);
+    log::info!("[openhuman]   health:    Events will be emitted every {}s to frontend", STATUS_FLUSH_SECONDS);
 
     // Wait for cancellation (Tauri exit)
     cancel.cancelled().await;
 
-    crate::alphahuman::health::mark_component_error("daemon", "shutdown requested");
-    log::info!("[alphahuman] Daemon supervisor shutting down (health events will stop)");
+    crate::openhuman::health::mark_component_error("daemon", "shutdown requested");
+    log::info!("[openhuman] Daemon supervisor shutting down (health events will stop)");
 
     for handle in &handles {
         handle.abort();
@@ -89,7 +89,7 @@ pub async fn run(
     Ok(())
 }
 
-/// Run the full Alphahuman daemon supervisor within alphahuman.
+/// Run the full OpenHuman daemon supervisor within openhuman.
 ///
 /// Uses a cancellation token for controlled shutdown inside the Tauri process.
 pub async fn run_full(
@@ -104,11 +104,11 @@ pub async fn run_full(
         .channel_max_backoff_secs
         .max(initial_backoff);
 
-    crate::alphahuman::health::mark_component_ok("daemon");
+    crate::openhuman::health::mark_component_ok("daemon");
 
     if config.heartbeat.enabled {
         let _ =
-            crate::alphahuman::heartbeat::engine::HeartbeatEngine::ensure_heartbeat_file(
+            crate::openhuman::heartbeat::engine::HeartbeatEngine::ensure_heartbeat_file(
                 &config.workspace_dir,
             )
             .await;
@@ -128,7 +128,7 @@ pub async fn run_full(
                 let cfg = gateway_cfg.clone();
                 let host = gateway_host.clone();
                 async move {
-                    crate::alphahuman::gateway::run_gateway(&host, port, cfg).await
+                    crate::openhuman::gateway::run_gateway(&host, port, cfg).await
                 }
             },
         ));
@@ -143,11 +143,11 @@ pub async fn run_full(
                 max_backoff,
                 move || {
                     let cfg = channels_cfg.clone();
-                    async move { crate::alphahuman::channels::start_channels(cfg).await }
+                    async move { crate::openhuman::channels::start_channels(cfg).await }
                 },
             ));
         } else {
-            crate::alphahuman::health::mark_component_ok("channels");
+            crate::openhuman::health::mark_component_ok("channels");
             log::info!("No real-time channels configured; channel supervisor disabled");
         }
     }
@@ -173,20 +173,20 @@ pub async fn run_full(
             max_backoff,
             move || {
                 let cfg = scheduler_cfg.clone();
-                async move { crate::alphahuman::cron::scheduler::run(cfg).await }
+                async move { crate::openhuman::cron::scheduler::run(cfg).await }
             },
         ));
     } else {
-        crate::alphahuman::health::mark_component_ok("scheduler");
+        crate::openhuman::health::mark_component_ok("scheduler");
         log::info!("Cron disabled; scheduler supervisor not started");
     }
 
-    log::info!("[alphahuman] Alphahuman daemon started");
-    log::info!("[alphahuman]   Gateway:  http://{host}:{port}");
-    log::info!("[alphahuman]   Components: gateway, channels, heartbeat, scheduler");
+    log::info!("[openhuman] OpenHuman daemon started");
+    log::info!("[openhuman]   Gateway:  http://{host}:{port}");
+    log::info!("[openhuman]   Components: gateway, channels, heartbeat, scheduler");
 
     cancel.cancelled().await;
-    crate::alphahuman::health::mark_component_error("daemon", "shutdown requested");
+    crate::openhuman::health::mark_component_error("daemon", "shutdown requested");
 
     for handle in &handles {
         handle.abort();
@@ -221,7 +221,7 @@ fn spawn_state_writer_full(config: Config, cancel: CancellationToken) -> JoinHan
                 _ = interval.tick() => {},
                 _ = cancel.cancelled() => break,
             }
-            let mut json = crate::alphahuman::health::snapshot_json();
+            let mut json = crate::openhuman::health::snapshot_json();
             if let Some(obj) = json.as_object_mut() {
                 obj.insert(
                     "written_at".into(),
@@ -235,11 +235,11 @@ fn spawn_state_writer_full(config: Config, cancel: CancellationToken) -> JoinHan
 }
 
 async fn run_heartbeat_worker(config: Config) -> Result<()> {
-    let observer: std::sync::Arc<dyn crate::alphahuman::observability::Observer> =
-        std::sync::Arc::from(crate::alphahuman::observability::create_observer(
+    let observer: std::sync::Arc<dyn crate::openhuman::observability::Observer> =
+        std::sync::Arc::from(crate::openhuman::observability::create_observer(
             &config.observability,
         ));
-    let engine = crate::alphahuman::heartbeat::engine::HeartbeatEngine::new(
+    let engine = crate::openhuman::heartbeat::engine::HeartbeatEngine::new(
         config.heartbeat.clone(),
         config.workspace_dir.clone(),
         observer,
@@ -260,7 +260,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
         for task in tasks {
             let prompt = format!("[Heartbeat Task] {task}");
             let temp = config.default_temperature;
-            if let Err(e) = crate::alphahuman::agent::run(
+            if let Err(e) = crate::openhuman::agent::run(
                 config.clone(),
                 Some(prompt),
                 None,
@@ -270,17 +270,17 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
             )
             .await
             {
-                crate::alphahuman::health::mark_component_error("heartbeat", e.to_string());
+                crate::openhuman::health::mark_component_error("heartbeat", e.to_string());
                 log::warn!("Heartbeat task failed: {e}");
             } else {
-                crate::alphahuman::health::mark_component_ok("heartbeat");
+                crate::openhuman::health::mark_component_ok("heartbeat");
             }
         }
     }
 }
 
 fn has_supervised_channels(config: &Config) -> bool {
-    let crate::alphahuman::config::ChannelsConfig {
+    let crate::openhuman::config::ChannelsConfig {
         cli: _,     // `cli` is not used in the web UI
         webhook: _, // Managed by the gateway
         telegram,
@@ -327,8 +327,8 @@ async fn spawn_state_writer(
         let _ = tokio::fs::create_dir_all(parent).await;
     }
 
-    log::info!("[alphahuman] Health state writer starting ({}s intervals)", STATUS_FLUSH_SECONDS);
-    log::info!("[alphahuman] Health state file: {}", state_path.display());
+    log::info!("[openhuman] Health state writer starting ({}s intervals)", STATUS_FLUSH_SECONDS);
+    log::info!("[openhuman] Health state file: {}", state_path.display());
 
     let mut interval = tokio::time::interval(Duration::from_secs(STATUS_FLUSH_SECONDS));
     let mut event_count = 0u64;
@@ -338,16 +338,16 @@ async fn spawn_state_writer(
             _ = interval.tick() => {
                 event_count += 1;
                 if event_count % 12 == 1 { // Log every minute (12 * 5s = 60s)
-//                     log::info!("[alphahuman] Health monitoring active (event #{})", event_count);
+//                     log::info!("[openhuman] Health monitoring active (event #{})", event_count);
                 }
             },
             _ = cancel.cancelled() => {
-                log::info!("[alphahuman] Health state writer received shutdown signal");
+                log::info!("[openhuman] Health state writer received shutdown signal");
                 break;
             }
         }
 
-        let mut json = crate::alphahuman::health::snapshot_json();
+        let mut json = crate::openhuman::health::snapshot_json();
         if let Some(obj) = json.as_object_mut() {
             obj.insert(
                 "written_at".into(),
@@ -360,17 +360,17 @@ async fn spawn_state_writer(
         }
 
         // Emit Tauri event for frontend consumption
-        // log::debug!("[alphahuman] Emitting health event #{}: {:?}", event_count, json); // Removed noisy log
-        if let Err(e) = app_handle.emit("alphahuman:health", &json) {
-            log::error!("[alphahuman] Failed to emit health event #{}: {}", event_count, e);
+        // log::debug!("[openhuman] Emitting health event #{}: {:?}", event_count, json); // Removed noisy log
+        if let Err(e) = app_handle.emit("openhuman:health", &json) {
+            log::error!("[openhuman] Failed to emit health event #{}: {}", event_count, e);
         }
-        // log::debug!("[alphahuman] Health event #{} emitted successfully", event_count); // Removed noisy log
+        // log::debug!("[openhuman] Health event #{} emitted successfully", event_count); // Removed noisy log
 
         // Also persist to disk
         let data =
             serde_json::to_vec_pretty(&json).unwrap_or_else(|_| b"{}".to_vec());
         if let Err(e) = tokio::fs::write(&state_path, data).await {
-            log::debug!("[alphahuman] Failed to write health state to disk: {}", e);
+            log::debug!("[openhuman] Failed to write health state to disk: {}", e);
         }
     }
 }
@@ -395,10 +395,10 @@ where
         let max_backoff = max_backoff_secs.max(backoff);
 
         loop {
-            crate::alphahuman::health::mark_component_ok(name);
+            crate::openhuman::health::mark_component_ok(name);
             match run_component().await {
                 Ok(()) => {
-                    crate::alphahuman::health::mark_component_error(
+                    crate::openhuman::health::mark_component_error(
                         name,
                         "component exited unexpectedly",
                     );
@@ -407,12 +407,12 @@ where
                     backoff = initial_backoff_secs.max(1);
                 }
                 Err(e) => {
-                    crate::alphahuman::health::mark_component_error(name, e.to_string());
+                    crate::openhuman::health::mark_component_error(name, e.to_string());
                     log::error!("Daemon component '{name}' failed: {e}");
                 }
             }
 
-            crate::alphahuman::health::bump_component_restart(name);
+            crate::openhuman::health::bump_component_restart(name);
             tokio::time::sleep(Duration::from_secs(backoff)).await;
             // Double backoff AFTER sleeping so first error uses initial_backoff
             backoff = backoff.saturating_mul(2).min(max_backoff);
@@ -434,7 +434,7 @@ mod tests {
         handle.abort();
         let _ = handle.await;
 
-        let snapshot = crate::alphahuman::health::snapshot_json();
+        let snapshot = crate::openhuman::health::snapshot_json();
         let component = &snapshot["components"]["th-daemon-test-fail"];
         assert_eq!(component["status"], "error");
         assert!(component["restart_count"].as_u64().unwrap_or(0) >= 1);
@@ -453,7 +453,7 @@ mod tests {
         handle.abort();
         let _ = handle.await;
 
-        let snapshot = crate::alphahuman::health::snapshot_json();
+        let snapshot = crate::openhuman::health::snapshot_json();
         let component = &snapshot["components"]["th-daemon-test-exit"];
         assert_eq!(component["status"], "error");
         assert!(component["restart_count"].as_u64().unwrap_or(0) >= 1);

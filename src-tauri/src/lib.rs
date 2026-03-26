@@ -9,7 +9,7 @@
 //! - Native notifications
 
 mod ai;
-pub mod alphahuman;
+pub mod openhuman;
 mod auth;
 mod commands;
 mod core_process;
@@ -222,7 +222,7 @@ fn is_daemon_mode() -> bool {
 
 fn daemon_foreground_requested() -> bool {
     matches!(
-        std::env::var("ALPHAHUMAN_DAEMON_FOREGROUND")
+        std::env::var("OPENHUMAN_DAEMON_FOREGROUND")
             .ok()
             .as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
@@ -283,7 +283,7 @@ async fn watch_daemon_health_file(app_handle: AppHandle, data_dir: PathBuf) {
     let mut last_modified: Option<std::time::SystemTime> = None;
 
     log::info!(
-        "[alphahuman] Watching daemon health file: {}",
+        "[openhuman] Watching daemon health file: {}",
         state_file.display()
     );
 
@@ -301,30 +301,30 @@ async fn watch_daemon_health_file(app_handle: AppHandle, data_dir: PathBuf) {
                         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&content)
                         {
                             log::debug!(
-                                "[alphahuman] Broadcasting health event from file: {:?}",
+                                "[openhuman] Broadcasting health event from file: {:?}",
                                 json_value
                             );
 
                             // Emit Tauri event to frontend (same as internal daemon)
-                            if let Err(e) = app_handle.emit("alphahuman:health", &json_value) {
+                            if let Err(e) = app_handle.emit("openhuman:health", &json_value) {
                                 log::error!(
-                                    "[alphahuman] Failed to emit health event from file: {}",
+                                    "[openhuman] Failed to emit health event from file: {}",
                                     e
                                 );
                             } else {
                                 log::debug!(
-                                    "[alphahuman] Health event emitted successfully from file"
+                                    "[openhuman] Health event emitted successfully from file"
                                 );
                             }
                         } else {
                             log::debug!(
-                                "[alphahuman] Failed to parse health file as JSON: {}",
+                                "[openhuman] Failed to parse health file as JSON: {}",
                                 state_file.display()
                             );
                         }
                     } else {
                         log::debug!(
-                            "[alphahuman] Failed to read health file: {}",
+                            "[openhuman] Failed to read health file: {}",
                             state_file.display()
                         );
                     }
@@ -333,7 +333,7 @@ async fn watch_daemon_health_file(app_handle: AppHandle, data_dir: PathBuf) {
         } else {
             // File doesn't exist yet - external daemon may not be writing yet
             log::debug!(
-                "[alphahuman] Health file not found yet: {}",
+                "[openhuman] Health file not found yet: {}",
                 state_file.display()
             );
         }
@@ -524,7 +524,7 @@ pub fn run() {
                         // Fallback for platforms where app_data_dir isn't available
                         dirs::home_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join(".alphahuman")
+                            .join(".openhuman")
                     });
                 let skills_data_dir = data_dir.join("skills");
 
@@ -583,7 +583,7 @@ pub fn run() {
                 log::info!("[runtime] QuickJS runtime disabled on iOS");
             }
 
-            // Start the alphahuman daemon supervisor (desktop only)
+            // Start the openhuman daemon supervisor (desktop only)
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let data_dir = app
@@ -592,11 +592,11 @@ pub fn run() {
                     .unwrap_or_else(|_| {
                         dirs::home_dir()
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
-                            .join(".alphahuman")
+                            .join(".openhuman")
                     });
-                let daemon_config = alphahuman::config::DaemonConfig::from_app_data_dir(&data_dir);
+                let daemon_config = openhuman::config::DaemonConfig::from_app_data_dir(&data_dir);
                 let cancel = tokio_util::sync::CancellationToken::new();
-                let daemon_handle = alphahuman::daemon::DaemonHandle {
+                let daemon_handle = openhuman::daemon::DaemonHandle {
                     cancel: cancel.clone(),
                 };
                 app.manage(daemon_handle);
@@ -605,7 +605,7 @@ pub fn run() {
                 let use_internal_daemon = daemon_mode
                     || daemon_foreground_requested()
                     || cfg!(debug_assertions)  // Always use internal supervisor in debug builds
-                    || std::env::var("ALPHAHUMAN_DAEMON_INTERNAL").unwrap_or("false".to_string()) == "true";  // Cross-platform override via env var
+                    || std::env::var("OPENHUMAN_DAEMON_INTERNAL").unwrap_or("false".to_string()) == "true";  // Cross-platform override via env var
 
                 if use_internal_daemon {
                     // Run internal daemon supervisor with health event emission
@@ -613,26 +613,26 @@ pub fn run() {
                     // - Daemon mode enabled, OR
                     // - Foreground daemon requested, OR
                     // - Debug build (for easier development), OR
-                    // - ALPHAHUMAN_DAEMON_INTERNAL=true env var (any platform)
-                    log::info!("[alphahuman] Using internal daemon supervisor (ALPHAHUMAN_DAEMON_INTERNAL=true or debug build)");
+                    // - OPENHUMAN_DAEMON_INTERNAL=true env var (any platform)
+                    log::info!("[openhuman] Using internal daemon supervisor (OPENHUMAN_DAEMON_INTERNAL=true or debug build)");
                     let app_handle_for_daemon = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
-                        log::info!("[alphahuman] Starting daemon supervisor with health monitoring");
-                        if let Err(e) = alphahuman::daemon::run(
+                        log::info!("[openhuman] Starting daemon supervisor with health monitoring");
+                        if let Err(e) = openhuman::daemon::run(
                             daemon_config,
                             app_handle_for_daemon,
                             cancel,
                         )
                         .await
                         {
-                            log::error!("[alphahuman] Daemon supervisor error: {e}");
+                            log::error!("[openhuman] Daemon supervisor error: {e}");
                         }
                     });
                 } else {
                     // Start external platform-specific service for background daemon
-                    // This path is taken on all platforms when ALPHAHUMAN_DAEMON_INTERNAL=false/unset
+                    // This path is taken on all platforms when OPENHUMAN_DAEMON_INTERNAL=false/unset
                     // and not in daemon mode, foreground mode, or debug build
-                    log::info!("[alphahuman] Using external daemon service (ALPHAHUMAN_DAEMON_INTERNAL=false/unset)");
+                    log::info!("[openhuman] Using external daemon service (OPENHUMAN_DAEMON_INTERNAL=false/unset)");
 
                     // Setup file watching to bridge external daemon health events to frontend
                     let app_handle_for_watcher = app.handle().clone();
@@ -643,20 +643,20 @@ pub fn run() {
 
                     // Start the external platform service
                     tauri::async_runtime::spawn(async move {
-                        match alphahuman::config::Config::load_or_init().await {
+                        match openhuman::config::Config::load_or_init().await {
                             Ok(config) => {
-                                match alphahuman::service::install(&config) {
-                                    Ok(status) => log::info!("[alphahuman] External daemon service installed: {:?}", status),
-                                    Err(e) => log::error!("[alphahuman] Failed to install external daemon service: {e}"),
+                                match openhuman::service::install(&config) {
+                                    Ok(status) => log::info!("[openhuman] External daemon service installed: {:?}", status),
+                                    Err(e) => log::error!("[openhuman] Failed to install external daemon service: {e}"),
                                 }
-                                match alphahuman::service::start(&config) {
-                                    Ok(status) => log::info!("[alphahuman] External daemon service started: {:?}", status),
-                                    Err(e) => log::error!("[alphahuman] Failed to start external daemon service: {e}"),
+                                match openhuman::service::start(&config) {
+                                    Ok(status) => log::info!("[openhuman] External daemon service started: {:?}", status),
+                                    Err(e) => log::error!("[openhuman] Failed to start external daemon service: {e}"),
                                 }
                             }
                             Err(e) => {
                                 log::error!(
-                                    "[alphahuman] Failed to load config for external service: {e}"
+                                    "[openhuman] Failed to load config for external service: {e}"
                                 );
                             }
                         }
@@ -668,7 +668,7 @@ pub fn run() {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let core_handle = core_process::CoreProcessHandle::new(core_process::default_core_port());
-                std::env::set_var("ALPHAHUMAN_CORE_RPC_URL", core_handle.rpc_url());
+                std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());
                 app.manage(core_handle.clone());
                 tauri::async_runtime::spawn(async move {
                     if let Err(err) = core_handle.ensure_running().await {
@@ -807,35 +807,35 @@ pub fn run() {
                     // Model commands (backend API proxy)
                     model_summarize,
                     model_generate,
-                    // Alphahuman commands
-                    alphahuman_health_snapshot,
-                    alphahuman_security_policy_info,
-                    alphahuman_encrypt_secret,
-                    alphahuman_decrypt_secret,
-                    alphahuman_get_config,
-                    alphahuman_update_model_settings,
-                    alphahuman_update_memory_settings,
-                    alphahuman_update_gateway_settings,
-                    alphahuman_update_tunnel_settings,
-                    alphahuman_update_runtime_settings,
-                    alphahuman_update_browser_settings,
-                    alphahuman_get_runtime_flags,
-                    alphahuman_set_browser_allow_all,
-                    alphahuman_agent_chat,
-                    alphahuman_doctor_report,
-                    alphahuman_doctor_models,
-                    alphahuman_list_integrations,
-                    alphahuman_get_integration_info,
-                    alphahuman_models_refresh,
-                    alphahuman_migrate_openclaw,
-                    alphahuman_hardware_discover,
-                    alphahuman_hardware_introspect,
-                    alphahuman_service_install,
-                    alphahuman_service_start,
-                    alphahuman_service_stop,
-                    alphahuman_service_status,
-                    alphahuman_service_uninstall,
-                    alphahuman_agent_server_status,
+                    // OpenHuman commands
+                    openhuman_health_snapshot,
+                    openhuman_security_policy_info,
+                    openhuman_encrypt_secret,
+                    openhuman_decrypt_secret,
+                    openhuman_get_config,
+                    openhuman_update_model_settings,
+                    openhuman_update_memory_settings,
+                    openhuman_update_gateway_settings,
+                    openhuman_update_tunnel_settings,
+                    openhuman_update_runtime_settings,
+                    openhuman_update_browser_settings,
+                    openhuman_get_runtime_flags,
+                    openhuman_set_browser_allow_all,
+                    openhuman_agent_chat,
+                    openhuman_doctor_report,
+                    openhuman_doctor_models,
+                    openhuman_list_integrations,
+                    openhuman_get_integration_info,
+                    openhuman_models_refresh,
+                    openhuman_migrate_openclaw,
+                    openhuman_hardware_discover,
+                    openhuman_hardware_introspect,
+                    openhuman_service_install,
+                    openhuman_service_start,
+                    openhuman_service_stop,
+                    openhuman_service_status,
+                    openhuman_service_uninstall,
+                    openhuman_agent_server_status,
                     // Unified skill registry commands
                     unified_list_skills,
                     unified_execute_skill,
@@ -936,35 +936,35 @@ pub fn run() {
                     // Model commands (backend API proxy)
                     model_summarize,
                     model_generate,
-                    // Alphahuman commands
-                    alphahuman_health_snapshot,
-                    alphahuman_security_policy_info,
-                    alphahuman_encrypt_secret,
-                    alphahuman_decrypt_secret,
-                    alphahuman_get_config,
-                    alphahuman_update_model_settings,
-                    alphahuman_update_memory_settings,
-                    alphahuman_update_gateway_settings,
-                    alphahuman_update_tunnel_settings,
-                    alphahuman_update_runtime_settings,
-                    alphahuman_update_browser_settings,
-                    alphahuman_get_runtime_flags,
-                    alphahuman_set_browser_allow_all,
-                    alphahuman_agent_chat,
-                    alphahuman_doctor_report,
-                    alphahuman_doctor_models,
-                    alphahuman_list_integrations,
-                    alphahuman_get_integration_info,
-                    alphahuman_models_refresh,
-                    alphahuman_migrate_openclaw,
-                    alphahuman_hardware_discover,
-                    alphahuman_hardware_introspect,
-                    alphahuman_service_install,
-                    alphahuman_service_start,
-                    alphahuman_service_stop,
-                    alphahuman_service_status,
-                    alphahuman_service_uninstall,
-                    alphahuman_agent_server_status,
+                    // OpenHuman commands
+                    openhuman_health_snapshot,
+                    openhuman_security_policy_info,
+                    openhuman_encrypt_secret,
+                    openhuman_decrypt_secret,
+                    openhuman_get_config,
+                    openhuman_update_model_settings,
+                    openhuman_update_memory_settings,
+                    openhuman_update_gateway_settings,
+                    openhuman_update_tunnel_settings,
+                    openhuman_update_runtime_settings,
+                    openhuman_update_browser_settings,
+                    openhuman_get_runtime_flags,
+                    openhuman_set_browser_allow_all,
+                    openhuman_agent_chat,
+                    openhuman_doctor_report,
+                    openhuman_doctor_models,
+                    openhuman_list_integrations,
+                    openhuman_get_integration_info,
+                    openhuman_models_refresh,
+                    openhuman_migrate_openclaw,
+                    openhuman_hardware_discover,
+                    openhuman_hardware_introspect,
+                    openhuman_service_install,
+                    openhuman_service_start,
+                    openhuman_service_stop,
+                    openhuman_service_status,
+                    openhuman_service_uninstall,
+                    openhuman_agent_server_status,
                     // Unified skill registry commands (mobile stubs)
                     unified_list_skills,
                     unified_execute_skill,
@@ -1009,10 +1009,10 @@ pub fn run() {
                 RunEvent::Exit => {
                     log::info!("[app] Exit event received, shutting down");
 
-                    // Cancel the alphahuman daemon supervisor
-                    if let Some(daemon) = app_handle.try_state::<alphahuman::daemon::DaemonHandle>() {
+                    // Cancel the openhuman daemon supervisor
+                    if let Some(daemon) = app_handle.try_state::<openhuman::daemon::DaemonHandle>() {
                         daemon.cancel.cancel();
-                        log::info!("[alphahuman] Daemon shutdown signalled");
+                        log::info!("[openhuman] Daemon shutdown signalled");
                     }
 
                     if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {

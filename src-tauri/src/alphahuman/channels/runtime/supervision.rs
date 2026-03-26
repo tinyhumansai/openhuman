@@ -21,7 +21,7 @@ pub(crate) fn spawn_supervised_listener(
         let max_backoff = max_backoff_secs.max(backoff);
 
         loop {
-            crate::alphahuman::health::mark_component_ok(&component);
+            crate::openhuman::health::mark_component_ok(&component);
             let result = ch.listen(tx.clone()).await;
 
             if tx.is_closed() {
@@ -31,7 +31,7 @@ pub(crate) fn spawn_supervised_listener(
             match result {
                 Ok(()) => {
                     tracing::warn!("Channel {} exited unexpectedly; restarting", ch.name());
-                    crate::alphahuman::health::mark_component_error(
+                    crate::openhuman::health::mark_component_error(
                         &component,
                         "listener exited unexpectedly",
                     );
@@ -40,11 +40,11 @@ pub(crate) fn spawn_supervised_listener(
                 }
                 Err(e) => {
                     tracing::error!("Channel {} error: {e}; restarting", ch.name());
-                    crate::alphahuman::health::mark_component_error(&component, e.to_string());
+                    crate::openhuman::health::mark_component_error(&component, e.to_string());
                 }
             }
 
-            crate::alphahuman::health::bump_component_restart(&component);
+            crate::openhuman::health::bump_component_restart(&component);
             tokio::time::sleep(Duration::from_secs(backoff)).await;
             // Double backoff AFTER sleeping so first error uses initial_backoff
             backoff = backoff.saturating_mul(2).min(max_backoff);

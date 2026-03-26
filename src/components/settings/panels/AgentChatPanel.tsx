@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 
-import { alphahumanAgentChat } from '../../../utils/tauriCommands';
+import { openhumanAgentChat } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 type ChatMessage = { role: 'user' | 'agent'; text: string };
 
-const STORAGE_KEY = 'alphahuman.settings.agentChat.history';
+const STORAGE_KEY = 'openhuman.settings.agentChat.history';
 
 const AgentChatPanel = () => {
   const { navigateBack } = useSettingsNavigation();
@@ -62,7 +62,7 @@ const AgentChatPanel = () => {
     setInput('');
     setMessages(prev => [...prev, { role: 'user', text }]);
     try {
-      const response = await alphahumanAgentChat(
+      const response = await openhumanAgentChat(
         text,
         providerOverride.trim() ? providerOverride : undefined,
         modelOverride.trim() ? modelOverride : undefined,

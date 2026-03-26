@@ -12,11 +12,11 @@ use super::handlers::{
 use super::models::{WebhookBody, WhatsAppVerifyQuery};
 use super::rate_limit::{GatewayRateLimiter, IdempotencyStore, SlidingWindowRateLimiter};
 use super::state::AppState;
-use crate::alphahuman::channels::traits::ChannelMessage;
-use crate::alphahuman::config::Config;
-use crate::alphahuman::memory::{Memory, MemoryCategory, MemoryEntry};
-use crate::alphahuman::providers::Provider;
-use crate::alphahuman::security::pairing::PairingGuard;
+use crate::openhuman::channels::traits::ChannelMessage;
+use crate::openhuman::config::Config;
+use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
+use crate::openhuman::providers::Provider;
+use crate::openhuman::security::pairing::PairingGuard;
 use async_trait::async_trait;
 use axum::extract::ConnectInfo;
 use axum::http::HeaderValue;
@@ -101,7 +101,7 @@ async fn metrics_endpoint_returns_hint_when_prometheus_is_disabled() {
         whatsapp_app_secret: None,
         linq: None,
         linq_signing_secret: None,
-        observer: Arc::new(crate::alphahuman::observability::NoopObserver),
+        observer: Arc::new(crate::openhuman::observability::NoopObserver),
     };
 
     let response = handle_metrics(axum::extract::State(state)).await.into_response();
@@ -121,13 +121,13 @@ async fn metrics_endpoint_returns_hint_when_prometheus_is_disabled() {
 
 #[tokio::test]
 async fn metrics_endpoint_renders_prometheus_output() {
-    let prom = Arc::new(crate::alphahuman::observability::PrometheusObserver::new());
-    crate::alphahuman::observability::Observer::record_event(
+    let prom = Arc::new(crate::openhuman::observability::PrometheusObserver::new());
+    crate::openhuman::observability::Observer::record_event(
         prom.as_ref(),
-        &crate::alphahuman::observability::ObserverEvent::HeartbeatTick,
+        &crate::openhuman::observability::ObserverEvent::HeartbeatTick,
     );
 
-    let observer: Arc<dyn crate::alphahuman::observability::Observer> = prom;
+    let observer: Arc<dyn crate::openhuman::observability::Observer> = prom;
     let state = AppState {
         config: Arc::new(Mutex::new(Config::default())),
         provider: Arc::new(MockProvider::default()),
@@ -152,7 +152,7 @@ async fn metrics_endpoint_renders_prometheus_output() {
 
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("alphahuman_heartbeat_ticks_total 1"));
+    assert!(text.contains("openhuman_heartbeat_ticks_total 1"));
 }
 
 #[test]
@@ -519,7 +519,7 @@ async fn webhook_idempotency_skips_duplicate_provider_calls() {
         whatsapp_app_secret: None,
         linq: None,
         linq_signing_secret: None,
-        observer: Arc::new(crate::alphahuman::observability::NoopObserver),
+        observer: Arc::new(crate::openhuman::observability::NoopObserver),
     };
 
     let mut headers = HeaderMap::new();
@@ -578,7 +578,7 @@ async fn webhook_autosave_stores_distinct_keys_per_request() {
         whatsapp_app_secret: None,
         linq: None,
         linq_signing_secret: None,
-        observer: Arc::new(crate::alphahuman::observability::NoopObserver),
+        observer: Arc::new(crate::openhuman::observability::NoopObserver),
     };
 
     let headers = HeaderMap::new();
@@ -649,7 +649,7 @@ async fn webhook_secret_hash_rejects_missing_header() {
         whatsapp_app_secret: None,
         linq: None,
         linq_signing_secret: None,
-        observer: Arc::new(crate::alphahuman::observability::NoopObserver),
+        observer: Arc::new(crate::openhuman::observability::NoopObserver),
     };
 
     let response = handle_webhook(
@@ -689,7 +689,7 @@ async fn webhook_secret_hash_rejects_invalid_header() {
         whatsapp_app_secret: None,
         linq: None,
         linq_signing_secret: None,
-        observer: Arc::new(crate::alphahuman::observability::NoopObserver),
+        observer: Arc::new(crate::openhuman::observability::NoopObserver),
     };
 
     let mut headers = HeaderMap::new();
@@ -734,7 +734,7 @@ async fn webhook_secret_hash_accepts_valid_header() {
         whatsapp_app_secret: None,
         linq: None,
         linq_signing_secret: None,
-        observer: Arc::new(crate::alphahuman::observability::NoopObserver),
+        observer: Arc::new(crate::openhuman::observability::NoopObserver),
     };
 
     let mut headers = HeaderMap::new();
@@ -775,7 +775,7 @@ async fn webhook_missing_message_returns_bad_request() {
         whatsapp_app_secret: None,
         linq: None,
         linq_signing_secret: None,
-        observer: Arc::new(crate::alphahuman::observability::NoopObserver),
+        observer: Arc::new(crate::openhuman::observability::NoopObserver),
     };
 
     let response = handle_webhook(

@@ -1,40 +1,40 @@
 //! Channel startup wiring.
 
-use crate::alphahuman::channels::context::{
+use crate::openhuman::channels::context::{
     effective_channel_message_timeout_secs, ChannelRuntimeContext,
     DEFAULT_CHANNEL_INITIAL_BACKOFF_SECS, DEFAULT_CHANNEL_MAX_BACKOFF_SECS,
 };
 use super::dispatch::run_message_dispatch_loop;
 use super::supervision::{compute_max_in_flight_messages, spawn_supervised_listener};
-use crate::alphahuman::agent::loop_::build_tool_instructions;
-use crate::alphahuman::channels::dingtalk::DingTalkChannel;
-use crate::alphahuman::channels::discord::DiscordChannel;
-use crate::alphahuman::channels::email_channel::EmailChannel;
-use crate::alphahuman::channels::imessage::IMessageChannel;
-use crate::alphahuman::channels::irc;
-use crate::alphahuman::channels::irc::IrcChannel;
-use crate::alphahuman::channels::lark::LarkChannel;
-use crate::alphahuman::channels::linq::LinqChannel;
+use crate::openhuman::agent::loop_::build_tool_instructions;
+use crate::openhuman::channels::dingtalk::DingTalkChannel;
+use crate::openhuman::channels::discord::DiscordChannel;
+use crate::openhuman::channels::email_channel::EmailChannel;
+use crate::openhuman::channels::imessage::IMessageChannel;
+use crate::openhuman::channels::irc;
+use crate::openhuman::channels::irc::IrcChannel;
+use crate::openhuman::channels::lark::LarkChannel;
+use crate::openhuman::channels::linq::LinqChannel;
 #[cfg(feature = "channel-matrix")]
-use crate::alphahuman::channels::matrix::MatrixChannel;
-use crate::alphahuman::channels::mattermost::MattermostChannel;
-use crate::alphahuman::channels::prompt::build_system_prompt;
-use crate::alphahuman::channels::qq::QQChannel;
-use crate::alphahuman::channels::signal::SignalChannel;
-use crate::alphahuman::channels::slack::SlackChannel;
-use crate::alphahuman::channels::telegram::TelegramChannel;
-use crate::alphahuman::channels::traits;
-use crate::alphahuman::channels::whatsapp::WhatsAppChannel;
+use crate::openhuman::channels::matrix::MatrixChannel;
+use crate::openhuman::channels::mattermost::MattermostChannel;
+use crate::openhuman::channels::prompt::build_system_prompt;
+use crate::openhuman::channels::qq::QQChannel;
+use crate::openhuman::channels::signal::SignalChannel;
+use crate::openhuman::channels::slack::SlackChannel;
+use crate::openhuman::channels::telegram::TelegramChannel;
+use crate::openhuman::channels::traits;
+use crate::openhuman::channels::whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
-use crate::alphahuman::channels::whatsapp_web::WhatsAppWebChannel;
-use crate::alphahuman::channels::Channel;
-use crate::alphahuman::config::Config;
-use crate::alphahuman::memory::{self, Memory};
-use crate::alphahuman::observability::{self, Observer};
-use crate::alphahuman::providers::{self, Provider};
-use crate::alphahuman::runtime;
-use crate::alphahuman::security::SecurityPolicy;
-use crate::alphahuman::tools;
+use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
+use crate::openhuman::channels::Channel;
+use crate::openhuman::config::Config;
+use crate::openhuman::memory::{self, Memory};
+use crate::openhuman::observability::{self, Observer};
+use crate::openhuman::providers::{self, Provider};
+use crate::openhuman::runtime;
+use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -46,7 +46,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .unwrap_or_else(|| "openrouter".into());
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
-        alphahuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
+        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
@@ -108,7 +108,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &config,
     ));
 
-    let skills = crate::alphahuman::skills::load_skills(&workspace);
+    let skills = crate::openhuman::skills::load_skills(&workspace);
 
     // Collect tool descriptions for the prompt
     let mut tool_descs: Vec<(&str, &str)> = vec![
@@ -360,7 +360,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         return Ok(());
     }
 
-    println!("🦀 Alphahuman Channel Server");
+    println!("🦀 OpenHuman Channel Server");
     println!("  🤖 Model:    {model}");
     let effective_backend = memory::effective_memory_backend_name(
         &config.memory.backend,
@@ -383,7 +383,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     println!("  Listening for messages... (Ctrl+C to stop)");
     println!();
 
-    crate::alphahuman::health::mark_component_ok("channels");
+    crate::openhuman::health::mark_component_ok("channels");
 
     let initial_backoff_secs = config
         .reliability

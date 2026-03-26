@@ -1,4 +1,4 @@
-use crate::alphahuman::channels::traits::{Channel, ChannelMessage, SendMessage};
+use crate::openhuman::channels::traits::{Channel, ChannelMessage, SendMessage};
 use async_trait::async_trait;
 use matrix_sdk::{
     authentication::matrix::MatrixSession,

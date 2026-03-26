@@ -1,22 +1,22 @@
 //! Programmatic skill generation for the unified skill registry.
 //!
 //! Supports generating both skill types:
-//! - `alphahuman`: writes manifest.json + index.js to the QuickJS skills directory.
-//! - `openclaw`:   writes SKILL.md or SKILL.toml to the alphahuman workspace skills directory.
+//! - `openhuman`: writes manifest.json + index.js to the QuickJS skills directory.
+//! - `openclaw`:   writes SKILL.md or SKILL.toml to the openhuman workspace skills directory.
 
 use crate::unified_skills::GenerateSkillSpec;
 use directories::UserDirs;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-/// Generate an alphahuman (QuickJS) skill at `<skills_dir>/<sanitized_name>/`.
+/// Generate an openhuman (QuickJS) skill at `<skills_dir>/<sanitized_name>/`.
 ///
 /// Returns the list of file paths that were written (manifest.json + index.js).
 ///
 /// When `spec.full_index_js` is `Some`, its content is written directly to
 /// `index.js` instead of using the default template.  This allows the
 /// self-evolve loop to persist LLM-generated code verbatim.
-pub async fn generate_alphahuman(
+pub async fn generate_openhuman(
     spec: &GenerateSkillSpec,
     skills_dir: &Path,
 ) -> Result<Vec<PathBuf>, String> {
@@ -37,7 +37,7 @@ pub async fn generate_alphahuman(
     let manifest = serde_json::json!({
         "id": dir_name,
         "name": spec.name,
-        "skill_type": "alphahuman",
+        "skill_type": "openhuman",
         "runtime": "quickjs",
         "entry": "index.js",
         "version": "1.0.0",
@@ -69,7 +69,7 @@ pub async fn generate_alphahuman(
     Ok(vec![manifest_path, index_path])
 }
 
-/// Generate an openclaw (SKILL.md/TOML) skill in `~/.alphahuman/workspace/skills/<name>/`.
+/// Generate an openclaw (SKILL.md/TOML) skill in `~/.openhuman/workspace/skills/<name>/`.
 /// Returns the path of the created skill directory.
 pub async fn generate_openclaw(spec: &GenerateSkillSpec) -> Result<PathBuf, String> {
     let dir_name = sanitize_id(&spec.name);
@@ -140,12 +140,12 @@ pub async fn generate_openclaw(spec: &GenerateSkillSpec) -> Result<PathBuf, Stri
     Ok(skill_dir)
 }
 
-/// Returns `~/.alphahuman/workspace/skills/`.
+/// Returns `~/.openhuman/workspace/skills/`.
 fn workspace_skills_dir() -> Result<PathBuf, String> {
     let dirs = UserDirs::new().ok_or("Cannot resolve home directory")?;
     Ok(dirs
         .home_dir()
-        .join(".alphahuman")
+        .join(".openhuman")
         .join("workspace")
         .join("skills"))
 }
@@ -159,7 +159,7 @@ fn build_index_js(tool_fn: &str, description: &str, tool_code: &str) -> String {
         .unwrap_or_else(|_| r#""unknown""#.to_string());
 
     format!(
-        r#"// Auto-generated alphahuman skill
+        r#"// Auto-generated openhuman skill
 tools = [
   {{
     name: "{tool_fn}",

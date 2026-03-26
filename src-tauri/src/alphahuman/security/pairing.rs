@@ -63,7 +63,7 @@ impl PairingGuard {
             None
         };
         log::info!(
-            "[alphahuman:pairing] Guard created: require_pairing={}, existing_tokens={}, code_generated={}",
+            "[openhuman:pairing] Guard created: require_pairing={}, existing_tokens={}, code_generated={}",
             require_pairing,
             tokens.len(),
             code.is_some()
@@ -95,7 +95,7 @@ impl PairingGuard {
                     let elapsed = locked_at.elapsed().as_secs();
                     if elapsed < PAIR_LOCKOUT_SECS {
                         log::warn!(
-                            "[alphahuman:pairing] Pairing locked out: {} failed attempts, {}s remaining",
+                            "[openhuman:pairing] Pairing locked out: {} failed attempts, {}s remaining",
                             count,
                             PAIR_LOCKOUT_SECS - elapsed
                         );
@@ -121,7 +121,7 @@ impl PairingGuard {
                     // Consume the pairing code so it cannot be reused
                     *pairing_code = None;
 
-                    log::info!("[alphahuman:pairing] Pairing successful, token issued");
+                    log::info!("[openhuman:pairing] Pairing successful, token issued");
                     return Ok(Some(token));
                 }
             }
@@ -132,13 +132,13 @@ impl PairingGuard {
             let mut attempts = self.failed_attempts.lock();
             attempts.0 += 1;
             log::warn!(
-                "[alphahuman:pairing] Pairing attempt failed ({}/{})",
+                "[openhuman:pairing] Pairing attempt failed ({}/{})",
                 attempts.0,
                 MAX_PAIR_ATTEMPTS
             );
             if attempts.0 >= MAX_PAIR_ATTEMPTS {
                 attempts.1 = Some(Instant::now());
-                log::warn!("[alphahuman:pairing] Max attempts reached, lockout activated");
+                log::warn!("[openhuman:pairing] Max attempts reached, lockout activated");
             }
         }
 

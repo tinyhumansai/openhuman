@@ -3,8 +3,8 @@
 //! Provides a pre-execution hook that prompts the user before tool calls,
 //! with session-scoped "Always" allowlists and audit logging.
 
-use crate::alphahuman::config::AutonomyConfig;
-use crate::alphahuman::security::AutonomyLevel;
+use crate::openhuman::config::AutonomyConfig;
+use crate::openhuman::security::AutonomyLevel;
 use chrono::Utc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -219,7 +219,7 @@ fn truncate_for_summary(input: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::AutonomyConfig;
+    use crate::openhuman::config::AutonomyConfig;
 
     fn supervised_config() -> AutonomyConfig {
         AutonomyConfig {

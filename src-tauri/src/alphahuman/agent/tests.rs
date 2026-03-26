@@ -24,18 +24,18 @@
 //!  19. Builder validation (missing required fields)
 //!  20. Idempotent system prompt insertion
 
-use crate::alphahuman::agent::agent::Agent;
-use crate::alphahuman::agent::dispatcher::{
+use crate::openhuman::agent::agent::Agent;
+use crate::openhuman::agent::dispatcher::{
     NativeToolDispatcher, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
-use crate::alphahuman::config::{AgentConfig, MemoryConfig};
-use crate::alphahuman::memory::{self, Memory};
-use crate::alphahuman::observability::{NoopObserver, Observer};
-use crate::alphahuman::providers::{
+use crate::openhuman::config::{AgentConfig, MemoryConfig};
+use crate::openhuman::memory::{self, Memory};
+use crate::openhuman::observability::{NoopObserver, Observer};
+use crate::openhuman::providers::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolCall,
     ToolResultMessage,
 };
-use crate::alphahuman::tools::{Tool, ToolResult};
+use crate::openhuman::tools::{Tool, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};

@@ -42,7 +42,7 @@ impl MattermostChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.mattermost")
+        crate::openhuman::config::build_runtime_proxy_client("channel.mattermost")
     }
 
     /// Check if a user ID is in the allowlist.

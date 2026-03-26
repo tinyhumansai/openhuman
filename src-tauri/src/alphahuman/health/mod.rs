@@ -60,7 +60,7 @@ where
 }
 
 pub fn mark_component_ok(component: &str) {
-    log::debug!("[alphahuman:health] Component '{}' marked OK", component);
+    log::debug!("[openhuman:health] Component '{}' marked OK", component);
     upsert_component(component, |entry| {
         entry.status = "ok".into();
         entry.last_ok = Some(now_rfc3339());
@@ -71,7 +71,7 @@ pub fn mark_component_ok(component: &str) {
 #[allow(clippy::needless_pass_by_value)]
 pub fn mark_component_error(component: &str, error: impl ToString) {
     let err = error.to_string();
-    log::warn!("[alphahuman:health] Component '{}' error: {}", component, err);
+    log::warn!("[openhuman:health] Component '{}' error: {}", component, err);
     upsert_component(component, move |entry| {
         entry.status = "error".into();
         entry.last_error = Some(err);
@@ -79,7 +79,7 @@ pub fn mark_component_error(component: &str, error: impl ToString) {
 }
 
 pub fn bump_component_restart(component: &str) {
-    log::info!("[alphahuman:health] Component '{}' restarting", component);
+    log::info!("[openhuman:health] Component '{}' restarting", component);
     upsert_component(component, |entry| {
         entry.restart_count = entry.restart_count.saturating_add(1);
     });

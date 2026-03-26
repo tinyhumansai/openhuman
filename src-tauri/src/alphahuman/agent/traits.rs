@@ -1,4 +1,4 @@
-//! Core agent traits ported from Alphahuman.
+//! Core agent traits ported from OpenHuman.
 //!
 //! Each trait defines an extension point. Noop implementations are provided
 //! as test doubles and reference implementations.

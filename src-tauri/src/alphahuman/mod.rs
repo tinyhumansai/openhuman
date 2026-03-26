@@ -1,6 +1,6 @@
-//! Alphahuman — lightweight agent runtime for OpenHuman.
+//! OpenHuman — lightweight agent runtime for OpenHuman.
 //!
-//! Ported from Alphahuman (MIT-licensed). Provides:
+//! Ported from OpenHuman (MIT-licensed). Provides:
 //! - Health registry for component monitoring
 //! - Security policy, secrets, audit, pairing, and sandboxing
 //! - Daemon supervisor with exponential backoff

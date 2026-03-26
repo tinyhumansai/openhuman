@@ -1,6 +1,6 @@
-//! Diagnostic checks for Alphahuman configuration, workspace health, and daemon state.
+//! Diagnostic checks for OpenHuman configuration, workspace health, and daemon state.
 
-use crate::alphahuman::config::Config;
+use crate::openhuman::config::Config;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -154,7 +154,7 @@ fn doctor_model_targets(provider_override: Option<&str>) -> Vec<String> {
         return vec![provider.to_string()];
     }
 
-    crate::alphahuman::providers::list_providers()
+    crate::openhuman::providers::list_providers()
         .into_iter()
         .map(|provider| provider.name.to_string())
         .collect()
@@ -178,7 +178,7 @@ pub fn run_models(
     let mut error_count = 0usize;
 
     for provider_name in &targets {
-        match crate::alphahuman::onboard::run_models_refresh(config, Some(provider_name), !use_cache)
+        match crate::openhuman::onboard::run_models_refresh(config, Some(provider_name), !use_cache)
         {
             Ok(_) => {
                 ok_count += 1;
@@ -432,7 +432,7 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagnosticItem>) {
 }
 
 fn provider_validation_error(name: &str) -> Option<String> {
-    match crate::alphahuman::providers::create_provider(name, None) {
+    match crate::openhuman::providers::create_provider(name, None) {
         Ok(_) => None,
         Err(err) => Some(
             err.to_string()
@@ -592,7 +592,7 @@ fn workspace_probe_path(workspace_dir: &Path) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
     workspace_dir.join(format!(
-        ".alphahuman_doctor_probe_{}_{}",
+        ".openhuman_doctor_probe_{}_{}",
         std::process::id(),
         nanos
     ))
@@ -602,7 +602,7 @@ fn workspace_probe_path(workspace_dir: &Path) -> std::path::PathBuf {
 
 fn check_daemon_state(config: &Config, items: &mut Vec<DiagnosticItem>) {
     let cat = "daemon";
-    let state_file = crate::alphahuman::daemon::state_file_path(config);
+    let state_file = crate::openhuman::daemon::state_file_path(config);
 
     if !state_file.exists() {
         items.push(DiagnosticItem::error(

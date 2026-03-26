@@ -1,24 +1,24 @@
 //! Gateway server bootstrap and router wiring.
 
-use crate::alphahuman::channels::{LinqChannel, WhatsAppChannel};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::gateway::client::normalize_max_keys;
-use crate::alphahuman::gateway::constants::{
+use crate::openhuman::channels::{LinqChannel, WhatsAppChannel};
+use crate::openhuman::config::Config;
+use crate::openhuman::gateway::client::normalize_max_keys;
+use crate::openhuman::gateway::constants::{
     hash_webhook_secret, IDEMPOTENCY_MAX_KEYS_DEFAULT, MAX_BODY_SIZE, RATE_LIMIT_MAX_KEYS_DEFAULT,
     REQUEST_TIMEOUT_SECS,
 };
-use crate::alphahuman::gateway::handlers::{
+use crate::openhuman::gateway::handlers::{
     handle_health, handle_linq_webhook, handle_metrics, handle_pair, handle_webhook,
     handle_whatsapp_message, handle_whatsapp_verify,
 };
-use crate::alphahuman::gateway::rate_limit::{GatewayRateLimiter, IdempotencyStore};
-use crate::alphahuman::gateway::state::AppState;
-use crate::alphahuman::memory::{self, Memory};
-use crate::alphahuman::providers::{self, Provider};
-use crate::alphahuman::runtime;
-use crate::alphahuman::security::pairing::is_public_bind;
-use crate::alphahuman::security::SecurityPolicy;
-use crate::alphahuman::tools;
+use crate::openhuman::gateway::rate_limit::{GatewayRateLimiter, IdempotencyStore};
+use crate::openhuman::gateway::state::AppState;
+use crate::openhuman::memory::{self, Memory};
+use crate::openhuman::providers::{self, Provider};
+use crate::openhuman::runtime;
+use crate::openhuman::security::pairing::is_public_bind;
+use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools;
 use anyhow::Result;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -56,7 +56,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         &config.reliability,
         &providers::ProviderRuntimeOptions {
             auth_profile_override: None,
-            alphahuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
+            openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
         },
@@ -129,7 +129,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
 
     // WhatsApp app secret for webhook signature verification
     // Priority: environment variable > config file
-    let whatsapp_app_secret: Option<Arc<str>> = std::env::var("ALPHAHUMAN_WHATSAPP_APP_SECRET")
+    let whatsapp_app_secret: Option<Arc<str>> = std::env::var("OPENHUMAN_WHATSAPP_APP_SECRET")
         .ok()
         .and_then(|secret| {
             let secret = secret.trim();
@@ -157,7 +157,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
 
     // Linq signing secret for webhook signature verification
     // Priority: environment variable > config file
-    let linq_signing_secret: Option<Arc<str>> = std::env::var("ALPHAHUMAN_LINQ_SIGNING_SECRET")
+    let linq_signing_secret: Option<Arc<str>> = std::env::var("OPENHUMAN_LINQ_SIGNING_SECRET")
         .ok()
         .and_then(|secret| {
             let secret = secret.trim();
@@ -175,7 +175,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .map(Arc::from);
 
     // ── Pairing guard ──────────────────────────────────────
-    let pairing = Arc::new(crate::alphahuman::security::pairing::PairingGuard::new(
+    let pairing = Arc::new(crate::openhuman::security::pairing::PairingGuard::new(
         config.gateway.require_pairing,
         &config.gateway.paired_tokens,
     ));
@@ -198,7 +198,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     ));
 
     // ── Tunnel ────────────────────────────────────────────────
-    let tunnel = crate::alphahuman::tunnel::create_tunnel(&config.tunnel)?;
+    let tunnel = crate::openhuman::tunnel::create_tunnel(&config.tunnel)?;
     let mut tunnel_url: Option<String> = None;
 
     if let Some(ref tun) = tunnel {
@@ -215,7 +215,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         }
     }
 
-    println!("🦀 Alphahuman Gateway listening on http://{display_addr}");
+    println!("🦀 OpenHuman Gateway listening on http://{display_addr}");
     if let Some(ref url) = tunnel_url {
         println!("  🌐 Public URL: {url}");
     }
@@ -244,11 +244,11 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     }
     println!("  Press Ctrl+C to stop.\n");
 
-    crate::alphahuman::health::mark_component_ok("gateway");
+    crate::openhuman::health::mark_component_ok("gateway");
 
     // Build shared state
-    let observer: Arc<dyn crate::alphahuman::observability::Observer> =
-        Arc::from(crate::alphahuman::observability::create_observer(&config.observability));
+    let observer: Arc<dyn crate::openhuman::observability::Observer> =
+        Arc::from(crate::openhuman::observability::create_observer(&config.observability));
 
     let state = AppState {
         config: config_state,

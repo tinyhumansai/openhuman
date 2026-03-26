@@ -2,8 +2,8 @@ use super::common::{NoopMemory, RecordingChannel, SlowProvider};
 use super::super::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
 use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
 use super::super::{traits, Channel};
-use crate::alphahuman::observability::NoopObserver;
-use crate::alphahuman::providers::{self, Provider};
+use crate::openhuman::observability::NoopObserver;
+use crate::openhuman::providers::{self, Provider};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -38,11 +38,11 @@ let runtime_ctx = Arc::new(ChannelRuntimeContext {
     route_overrides: Arc::new(Mutex::new(HashMap::new())),
     api_key: None,
     api_url: None,
-    reliability: Arc::new(crate::alphahuman::config::ReliabilityConfig::default()),
+    reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
     provider_runtime_options: providers::ProviderRuntimeOptions::default(),
     workspace_dir: Arc::new(std::env::temp_dir()),
     message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-    multimodal: crate::alphahuman::config::MultimodalConfig::default(),
+    multimodal: crate::openhuman::config::MultimodalConfig::default(),
 });
 
 let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
@@ -112,11 +112,11 @@ let runtime_ctx = Arc::new(ChannelRuntimeContext {
     route_overrides: Arc::new(Mutex::new(HashMap::new())),
     api_key: None,
     api_url: None,
-    reliability: Arc::new(crate::alphahuman::config::ReliabilityConfig::default()),
+    reliability: Arc::new(crate::openhuman::config::ReliabilityConfig::default()),
     provider_runtime_options: providers::ProviderRuntimeOptions::default(),
     workspace_dir: Arc::new(std::env::temp_dir()),
     message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-    multimodal: crate::alphahuman::config::MultimodalConfig::default(),
+    multimodal: crate::openhuman::config::MultimodalConfig::default(),
 });
 
 process_channel_message(

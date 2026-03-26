@@ -1,5 +1,5 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
@@ -173,7 +173,7 @@ impl Tool for PushoverTool {
             form = form.text("sound", sound);
         }
 
-        let client = crate::alphahuman::config::build_runtime_proxy_client_with_timeouts(
+        let client = crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
             "tool.pushover",
             PUSHOVER_REQUEST_TIMEOUT_SECS,
             10,
@@ -217,7 +217,7 @@ impl Tool for PushoverTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::AutonomyLevel;
+    use crate::openhuman::security::AutonomyLevel;
     use std::fs;
     use tempfile::TempDir;
 

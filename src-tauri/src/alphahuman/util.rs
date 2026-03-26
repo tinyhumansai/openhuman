@@ -1,4 +1,4 @@
-//! Utility functions for `Alphahuman`.
+//! Utility functions for `OpenHuman`.
 //!
 //! This module contains reusable helper functions used across the codebase.
 
@@ -17,7 +17,7 @@
 ///
 /// # Examples
 /// ```
-/// use tauri_app_lib::alphahuman::util::truncate_with_ellipsis;
+/// use tauri_app_lib::openhuman::util::truncate_with_ellipsis;
 ///
 /// // ASCII string - no truncation needed
 /// assert_eq!(truncate_with_ellipsis("hello", 10), "hello");

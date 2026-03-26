@@ -4,7 +4,7 @@
  * E2E test: Complete login → onboarding → home flow via deep link.
  *
  * Verifies the full auth + onboarding journey using mock data:
- *   1. `alphahuman://auth?token=...` deep link is triggered
+ *   1. `openhuman://auth?token=...` deep link is triggered
  *   2. App calls POST /telegram/login-tokens/:token/consume  (mock server)
  *   3. App receives JWT, dispatches to Redux, navigates to #/onboarding
  *   4. UserProvider calls GET /telegram/me  (mock server)

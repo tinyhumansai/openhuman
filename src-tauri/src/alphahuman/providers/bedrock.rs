@@ -4,11 +4,11 @@
 //! via environment variables. SigV4 signing is implemented manually
 //! using hmac/sha2 crates — no AWS SDK dependency.
 
-use crate::alphahuman::providers::traits::{
+use crate::openhuman::providers::traits::{
     ChatMessage, ChatRequest as ProviderChatRequest, ChatResponse as ProviderChatResponse,
     Provider, ProviderCapabilities, ToolCall as ProviderToolCall, ToolsPayload,
 };
-use crate::alphahuman::tools::ToolSpec;
+use crate::openhuman::tools::ToolSpec;
 use async_trait::async_trait;
 use hmac::{Hmac, Mac};
 use reqwest::Client;
@@ -349,7 +349,7 @@ impl BedrockProvider {
     }
 
     fn http_client(&self) -> Client {
-        crate::alphahuman::config::build_runtime_proxy_client_with_timeouts("provider.bedrock", 120, 10)
+        crate::openhuman::config::build_runtime_proxy_client_with_timeouts("provider.bedrock", 120, 10)
     }
 
     /// Percent-encode the model ID for URL path: only encode `:` to `%3A`.
@@ -775,7 +775,7 @@ impl Provider for BedrockProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::providers::traits::ChatMessage;
+    use crate::openhuman::providers::traits::ChatMessage;
 
     // ── SigV4 signing tests ─────────────────────────────────────
 

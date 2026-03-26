@@ -1,6 +1,6 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::cron;
+use crate::openhuman::config::Config;
+use crate::openhuman::cron;
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::json;
@@ -117,7 +117,7 @@ fn truncate(input: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::Config;
+    use crate::openhuman::config::Config;
     use chrono::{Duration as ChronoDuration, Utc};
     use tempfile::TempDir;
 

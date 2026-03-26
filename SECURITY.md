@@ -10,7 +10,7 @@ We provide security updates for the following versions of OpenHuman:
 | Previous minor | :white_check_mark: |
 | Older          | :x:                |
 
-We recommend always running the [latest release](https://github.com/alphahumanxyz/openhuman/releases/latest). OpenHuman is in early beta; older versions may not receive patches.
+We recommend always running the [latest release](https://github.com/tinyhumansai/openhuman/releases/latest). OpenHuman is in early beta; older versions may not receive patches.
 
 ## Reporting a Vulnerability
 
@@ -19,7 +19,7 @@ We take security seriously. If you believe you have found a security vulnerabili
 ### How to Report
 
 1. **Do not** open a public GitHub issue for security vulnerabilities.
-2. Email the maintainers with a clear description of the issue, steps to reproduce, and impact. You can reach us via the contact details listed in the [OpenHuman organization](https://github.com/alphahumanxyz) or repository.
+2. Email the maintainers with a clear description of the issue, steps to reproduce, and impact. You can reach us via the contact details listed in the [OpenHuman organization](https://github.com/openhumanxyz) or repository.
 3. Include as much detail as possible (platform, version, configuration) so we can reproduce and triage quickly.
 
 ### What to Expect

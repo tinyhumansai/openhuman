@@ -27,7 +27,7 @@ export function getTauriCommand() {
       '--manifest-path',
       join(PROJECT_ROOT, 'src-tauri', 'Cargo.toml'),
       '--bin',
-      'alphahuman-tools-discovery',
+      'openhuman-tools-discovery',
     ],
   };
 }

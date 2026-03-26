@@ -1,10 +1,10 @@
 //! Pairing endpoints and token persistence.
 
-use crate::alphahuman::config::Config;
-use crate::alphahuman::gateway::client::client_key_from_request;
-use crate::alphahuman::gateway::constants::RATE_LIMIT_WINDOW_SECS;
-use crate::alphahuman::gateway::state::AppState;
-use crate::alphahuman::security::pairing::PairingGuard;
+use crate::openhuman::config::Config;
+use crate::openhuman::gateway::client::client_key_from_request;
+use crate::openhuman::gateway::constants::RATE_LIMIT_WINDOW_SECS;
+use crate::openhuman::gateway::state::AppState;
+use crate::openhuman::security::pairing::PairingGuard;
 use anyhow::{Context, Result};
 use axum::{
     extract::{ConnectInfo, State},

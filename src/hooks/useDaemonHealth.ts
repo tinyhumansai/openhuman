@@ -21,11 +21,11 @@ import {
 } from '../store/daemonSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
-  alphahumanAgentServerStatus,
-  alphahumanServiceStart,
-  alphahumanServiceStatus,
-  alphahumanServiceStop,
   type CommandResponse,
+  openhumanAgentServerStatus,
+  openhumanServiceStart,
+  openhumanServiceStatus,
+  openhumanServiceStop,
   type ServiceStatus,
 } from '../utils/tauriCommands';
 
@@ -44,7 +44,7 @@ export const useDaemonHealth = (userId?: string) => {
 
   const probeAgentStatus = useCallback(async (): Promise<boolean> => {
     try {
-      const result = await alphahumanAgentServerStatus();
+      const result = await openhumanAgentServerStatus();
       const running = !!result?.result?.running;
       dispatch(setDaemonStatus({ userId: uid, status: running ? 'running' : 'disconnected' }));
       return running;
@@ -74,7 +74,7 @@ export const useDaemonHealth = (userId?: string) => {
   const startDaemon = useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
     try {
       dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
-      const result = await alphahumanServiceStart();
+      const result = await openhumanServiceStart();
       const running = await waitForAgentStatus(true);
       if (running) {
         if (result?.result) {
@@ -95,7 +95,7 @@ export const useDaemonHealth = (userId?: string) => {
   const stopDaemon = useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
     try {
       dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
-      const result = await alphahumanServiceStop();
+      const result = await openhumanServiceStop();
       await waitForAgentStatus(false, 7000);
       return result;
     } catch (error) {
@@ -110,14 +110,14 @@ export const useDaemonHealth = (userId?: string) => {
       dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
 
       // Stop first
-      await alphahumanServiceStop();
+      await openhumanServiceStop();
       await waitForAgentStatus(false, 7000);
 
       // Wait a moment for clean shutdown
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       // Start again
-      await alphahumanServiceStart();
+      await openhumanServiceStart();
       const success = await waitForAgentStatus(true, 12000);
 
       if (success) {
@@ -141,7 +141,7 @@ export const useDaemonHealth = (userId?: string) => {
       try {
         const running = await probeAgentStatus();
         if (running) {
-          return await alphahumanServiceStatus();
+          return await openhumanServiceStatus();
         }
         return null;
       } catch (error) {

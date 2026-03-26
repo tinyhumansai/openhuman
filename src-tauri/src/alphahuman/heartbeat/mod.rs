@@ -2,9 +2,9 @@ pub mod engine;
 
 #[cfg(test)]
 mod tests {
-    use crate::alphahuman::config::HeartbeatConfig;
-    use crate::alphahuman::heartbeat::engine::HeartbeatEngine;
-    use crate::alphahuman::observability::NoopObserver;
+    use crate::openhuman::config::HeartbeatConfig;
+    use crate::openhuman::heartbeat::engine::HeartbeatEngine;
+    use crate::openhuman::observability::NoopObserver;
     use std::sync::Arc;
 
     #[test]

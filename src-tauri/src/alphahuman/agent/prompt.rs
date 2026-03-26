@@ -1,7 +1,7 @@
-use crate::alphahuman::config::IdentityConfig;
-use crate::alphahuman::identity;
-use crate::alphahuman::skills::Skill;
-use crate::alphahuman::tools::Tool;
+use crate::openhuman::config::IdentityConfig;
+use crate::openhuman::identity;
+use crate::openhuman::skills::Skill;
+use crate::openhuman::tools::Tool;
 use anyhow::Result;
 use chrono::Local;
 use std::fmt::Write;
@@ -259,7 +259,7 @@ fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::tools::traits::Tool;
+    use crate::openhuman::tools::traits::Tool;
     use async_trait::async_trait;
 
     struct TestTool;
@@ -281,8 +281,8 @@ mod tests {
         async fn execute(
             &self,
             _args: serde_json::Value,
-        ) -> anyhow::Result<crate::alphahuman::tools::ToolResult> {
-            Ok(crate::alphahuman::tools::ToolResult {
+        ) -> anyhow::Result<crate::openhuman::tools::ToolResult> {
+            Ok(crate::openhuman::tools::ToolResult {
                 success: true,
                 output: "ok".into(),
                 error: None,
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn identity_section_with_aieos_includes_workspace_files() {
         let workspace =
-            std::env::temp_dir().join(format!("alphahuman_prompt_test_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("openhuman_prompt_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(
             workspace.join("AGENTS.md"),
@@ -301,7 +301,7 @@ mod tests {
         )
         .unwrap();
 
-        let identity_config = crate::alphahuman::config::IdentityConfig {
+        let identity_config = crate::openhuman::config::IdentityConfig {
             format: "aieos".into(),
             aieos_path: None,
             aieos_inline: Some(r#"{"identity":{"names":{"first":"Nova"}}}"#.into()),

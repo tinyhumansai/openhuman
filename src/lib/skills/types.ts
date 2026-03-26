@@ -10,7 +10,7 @@
 export type SkillPlatform = "windows" | "macos" | "linux" | "android" | "ios";
 
 /** Unified registry skill type discriminant. */
-export type SkillType = 'alphahuman' | 'openclaw';
+export type SkillType = 'openhuman' | 'openclaw';
 
 export interface SkillManifest {
   id: string;
@@ -36,7 +36,7 @@ export interface SkillManifest {
   platforms?: SkillPlatform[];
   /** When true, skill is hidden in production builds. */
   ignoreInProduction?: boolean;
-  /** Unified registry type: "alphahuman" (QuickJS) or "openclaw" (skill.md/TOML). */
+  /** Unified registry type: "openhuman" (QuickJS) or "openclaw" (skill.md/TOML). */
   skill_type?: SkillType;
 }
 
@@ -212,4 +212,3 @@ export interface SkillState {
   /** Persisted OAuth credential so it survives app restarts. */
   oauthCredential?: OAuthCredential;
 }
-

@@ -197,9 +197,9 @@ impl LlmGenerator {
                 .chars()
                 .take(200)
                 .collect::<String>(),
-            skill_type: "alphahuman".to_string(),
+            skill_type: "openhuman".to_string(),
             // `tool_code` holds the full source when `full_index_js` is set;
-            // this ensures the fallback path in `generate_alphahuman` also has
+            // this ensures the fallback path in `generate_openhuman` also has
             // something reasonable to log.
             tool_code: Some(full_index_js.clone()),
             markdown_content: None,

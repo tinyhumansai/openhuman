@@ -247,7 +247,7 @@ describe('Unified AI Loader', () => {
 
       expect(clearSoulCache).toHaveBeenCalled();
       expect(clearToolsCache).toHaveBeenCalled();
-      expect(localStorageMock.removeItem).toHaveBeenCalledWith('alphahuman.ai.cache');
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith('openhuman.ai.cache');
     });
   });
 });

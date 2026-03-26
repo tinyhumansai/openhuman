@@ -1,9 +1,9 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::config::{
+use crate::openhuman::config::{
     runtime_proxy_config, set_runtime_proxy_config, Config, ProxyConfig, ProxyScope,
 };
-use crate::alphahuman::security::SecurityPolicy;
-use crate::alphahuman::util::MaybeSet;
+use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::util::MaybeSet;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::fs;
@@ -61,7 +61,7 @@ impl ProxyConfigTool {
     fn parse_scope(raw: &str) -> Option<ProxyScope> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "environment" | "env" => Some(ProxyScope::Environment),
-            "alphahuman" | "internal" | "core" => Some(ProxyScope::Alphahuman),
+            "openhuman" | "internal" | "core" => Some(ProxyScope::OpenHuman),
             "services" | "service" => Some(ProxyScope::Services),
             _ => None,
         }
@@ -185,7 +185,7 @@ impl ProxyConfigTool {
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("'scope' must be a string"))?;
             proxy.scope = Self::parse_scope(scope).ok_or_else(|| {
-                anyhow::anyhow!("Invalid scope '{scope}'. Use environment|alphahuman|services")
+                anyhow::anyhow!("Invalid scope '{scope}'. Use environment|openhuman|services")
             })?;
         }
 
@@ -342,7 +342,7 @@ impl Tool for ProxyConfigTool {
     }
 
     fn description(&self) -> &str {
-        "Manage Alphahuman proxy settings (scope: environment | alphahuman | services), including runtime and process env application"
+        "Manage OpenHuman proxy settings (scope: environment | openhuman | services), including runtime and process env application"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -360,7 +360,7 @@ impl Tool for ProxyConfigTool {
                 },
                 "scope": {
                     "type": "string",
-                    "description": "Proxy scope: environment | alphahuman | services"
+                    "description": "Proxy scope: environment | openhuman | services"
                 },
                 "http_proxy": {
                     "type": ["string", "null"],
@@ -438,7 +438,7 @@ impl Tool for ProxyConfigTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 
     fn test_security() -> Arc<SecurityPolicy> {

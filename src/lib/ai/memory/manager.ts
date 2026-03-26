@@ -121,7 +121,7 @@ export class MemoryManager {
   }
 
   /**
-   * Index all memory files from the ~/.alphahuman/ directory.
+   * Index all memory files from the ~/.openhuman/ directory.
    */
   async indexAll(): Promise<number> {
     let totalIndexed = 0;

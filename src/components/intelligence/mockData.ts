@@ -222,7 +222,7 @@ export const MOCK_ACTIONABLE_ITEMS: ActionableItem[] = [
 
   {
     id: '15',
-    title: 'Renew SSL certificate for api.alphahuman.com',
+    title: 'Renew SSL certificate for api.openhuman.com',
     description:
       'Certificate expires in 5 days. Automatic renewal failed - manual intervention required.',
     source: 'system',

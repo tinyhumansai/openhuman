@@ -1,6 +1,6 @@
 //! Filesystem-based memory index for AI memory storage.
 //!
-//! Replaces the SQLite memory_db with JSON files under ~/.alphahuman/index/.
+//! Replaces the SQLite memory_db with JSON files under ~/.openhuman/index/.
 //! Chunk files, file metadata, embedding cache, and KV metadata are all
 //! stored as readable JSON. All operations are exposed as Tauri commands
 //! with the same signatures as the former SQLite implementation.
@@ -154,12 +154,12 @@ impl From<EmbeddingCacheJson> for EmbeddingCacheEntry {
 
 // --- Path helpers ---
 
-/// Get the index directory (~/.alphahuman/index/).
+/// Get the index directory (~/.openhuman/index/).
 fn get_index_dir() -> Result<PathBuf, String> {
     Ok(get_data_dir()?.join("index"))
 }
 
-/// Get the chunks subdirectory (~/.alphahuman/index/chunks/).
+/// Get the chunks subdirectory (~/.openhuman/index/chunks/).
 fn get_chunks_dir() -> Result<PathBuf, String> {
     Ok(get_index_dir()?.join("chunks"))
 }

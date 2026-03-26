@@ -1,7 +1,7 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::memory::Memory;
-use crate::alphahuman::security::policy::ToolOperation;
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::memory::Memory;
+use crate::openhuman::security::policy::ToolOperation;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -81,8 +81,8 @@ impl Tool for MemoryForgetTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::memory::{MemoryCategory, SqliteMemory};
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::memory::{MemoryCategory, SqliteMemory};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 
     fn test_security() -> Arc<SecurityPolicy> {

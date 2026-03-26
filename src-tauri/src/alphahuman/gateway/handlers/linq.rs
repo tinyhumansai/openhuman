@@ -1,11 +1,11 @@
 //! Linq webhook handlers.
 
 use super::webhook::run_gateway_chat_with_multimodal;
-use crate::alphahuman::channels::SendMessage;
-use crate::alphahuman::channels::traits::Channel;
-use crate::alphahuman::gateway::state::AppState;
-use crate::alphahuman::memory::MemoryCategory;
-use crate::alphahuman::util::truncate_with_ellipsis;
+use crate::openhuman::channels::SendMessage;
+use crate::openhuman::channels::traits::Channel;
+use crate::openhuman::gateway::state::AppState;
+use crate::openhuman::memory::MemoryCategory;
+use crate::openhuman::util::truncate_with_ellipsis;
 use axum::{
     body::Bytes,
     extract::State,
@@ -40,7 +40,7 @@ pub async fn handle_linq_webhook(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
-        if !crate::alphahuman::channels::linq::verify_linq_signature(
+        if !crate::openhuman::channels::linq::verify_linq_signature(
             signing_secret,
             &body_str,
             timestamp,
@@ -89,7 +89,7 @@ pub async fn handle_linq_webhook(
 
         // Auto-save to memory
         if state.auto_save {
-            let key = crate::alphahuman::gateway::constants::linq_memory_key(msg);
+            let key = crate::openhuman::gateway::constants::linq_memory_key(msg);
             let _ = state
                 .mem
                 .store(&key, &msg.content, MemoryCategory::Conversation, None)

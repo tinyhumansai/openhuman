@@ -9,10 +9,10 @@
 //!
 //! # Feature gate
 //! This module is only compiled when `--features runtime-wasm` is enabled.
-//! The default Alphahuman binary excludes it to maintain the 4.6 MB size target.
+//! The default OpenHuman binary excludes it to maintain the 4.6 MB size target.
 
 use super::traits::RuntimeAdapter;
-use crate::alphahuman::config::WasmRuntimeConfig;
+use crate::openhuman::config::WasmRuntimeConfig;
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 
@@ -292,7 +292,7 @@ impl RuntimeAdapter for WasmRuntime {
     fn storage_path(&self) -> PathBuf {
         self.workspace_dir
             .as_ref()
-            .map_or_else(|| PathBuf::from(".alphahuman"), |w| w.join(".alphahuman"))
+            .map_or_else(|| PathBuf::from(".openhuman"), |w| w.join(".openhuman"))
     }
 
     fn supports_long_running(&self) -> bool {
@@ -385,13 +385,13 @@ mod tests {
     #[test]
     fn wasm_storage_path_default() {
         let rt = WasmRuntime::new(default_config());
-        assert!(rt.storage_path().to_string_lossy().contains("alphahuman"));
+        assert!(rt.storage_path().to_string_lossy().contains("openhuman"));
     }
 
     #[test]
     fn wasm_storage_path_with_workspace() {
         let rt = WasmRuntime::with_workspace(default_config(), PathBuf::from("/home/user/project"));
-        assert_eq!(rt.storage_path(), PathBuf::from("/home/user/project/.alphahuman"));
+        assert_eq!(rt.storage_path(), PathBuf::from("/home/user/project/.openhuman"));
     }
 
     // ── Config validation ──────────────────────────────────────

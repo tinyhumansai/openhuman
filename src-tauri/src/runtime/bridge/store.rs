@@ -1,4 +1,4 @@
-//! @alphahuman/store bridge — persisted key-value state for skills.
+//! @openhuman/store bridge — persisted key-value state for skills.
 //!
 //! Thin wrapper around the __kv table in each skill's SQLite database.
 //! Provides a simpler API than raw SQL for common state persistence patterns.

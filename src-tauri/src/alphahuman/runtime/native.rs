@@ -25,8 +25,8 @@ impl RuntimeAdapter for NativeRuntime {
 
     fn storage_path(&self) -> PathBuf {
         directories::UserDirs::new().map_or_else(
-            || PathBuf::from(".alphahuman"),
-            |u| u.home_dir().join(".alphahuman"),
+            || PathBuf::from(".openhuman"),
+            |u| u.home_dir().join(".openhuman"),
         )
     }
 
@@ -75,9 +75,9 @@ mod tests {
     }
 
     #[test]
-    fn native_storage_path_contains_alphahuman() {
+    fn native_storage_path_contains_openhuman() {
         let path = NativeRuntime::new().storage_path();
-        assert!(path.to_string_lossy().contains("alphahuman"));
+        assert!(path.to_string_lossy().contains("openhuman"));
     }
 
     #[test]

@@ -3,14 +3,14 @@ use super::dispatcher::{
 };
 use super::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use super::prompt::{PromptContext, SystemPromptBuilder};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::memory::{self, Memory, MemoryCategory};
-use crate::alphahuman::observability::{self, Observer, ObserverEvent};
-use crate::alphahuman::providers::{self, ChatMessage, ChatRequest, ConversationMessage, Provider};
-use crate::alphahuman::runtime;
-use crate::alphahuman::security::SecurityPolicy;
-use crate::alphahuman::tools::{self, Tool, ToolSpec};
-use crate::alphahuman::util::truncate_with_ellipsis;
+use crate::openhuman::config::Config;
+use crate::openhuman::memory::{self, Memory, MemoryCategory};
+use crate::openhuman::observability::{self, Observer, ObserverEvent};
+use crate::openhuman::providers::{self, ChatMessage, ChatRequest, ConversationMessage, Provider};
+use crate::openhuman::runtime;
+use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools::{self, Tool, ToolSpec};
+use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
@@ -25,15 +25,15 @@ pub struct Agent {
     prompt_builder: SystemPromptBuilder,
     tool_dispatcher: Box<dyn ToolDispatcher>,
     memory_loader: Box<dyn MemoryLoader>,
-    config: crate::alphahuman::config::AgentConfig,
+    config: crate::openhuman::config::AgentConfig,
     model_name: String,
     temperature: f64,
     workspace_dir: std::path::PathBuf,
-    identity_config: crate::alphahuman::config::IdentityConfig,
-    skills: Vec<crate::alphahuman::skills::Skill>,
+    identity_config: crate::openhuman::config::IdentityConfig,
+    skills: Vec<crate::openhuman::skills::Skill>,
     auto_save: bool,
     history: Vec<ConversationMessage>,
-    classification_config: crate::alphahuman::config::QueryClassificationConfig,
+    classification_config: crate::openhuman::config::QueryClassificationConfig,
     available_hints: Vec<String>,
 }
 
@@ -45,14 +45,14 @@ pub struct AgentBuilder {
     prompt_builder: Option<SystemPromptBuilder>,
     tool_dispatcher: Option<Box<dyn ToolDispatcher>>,
     memory_loader: Option<Box<dyn MemoryLoader>>,
-    config: Option<crate::alphahuman::config::AgentConfig>,
+    config: Option<crate::openhuman::config::AgentConfig>,
     model_name: Option<String>,
     temperature: Option<f64>,
     workspace_dir: Option<std::path::PathBuf>,
-    identity_config: Option<crate::alphahuman::config::IdentityConfig>,
-    skills: Option<Vec<crate::alphahuman::skills::Skill>>,
+    identity_config: Option<crate::openhuman::config::IdentityConfig>,
+    skills: Option<Vec<crate::openhuman::skills::Skill>>,
     auto_save: Option<bool>,
-    classification_config: Option<crate::alphahuman::config::QueryClassificationConfig>,
+    classification_config: Option<crate::openhuman::config::QueryClassificationConfig>,
     available_hints: Option<Vec<String>>,
 }
 
@@ -113,7 +113,7 @@ impl AgentBuilder {
         self
     }
 
-    pub fn config(mut self, config: crate::alphahuman::config::AgentConfig) -> Self {
+    pub fn config(mut self, config: crate::openhuman::config::AgentConfig) -> Self {
         self.config = Some(config);
         self
     }
@@ -133,12 +133,12 @@ impl AgentBuilder {
         self
     }
 
-    pub fn identity_config(mut self, identity_config: crate::alphahuman::config::IdentityConfig) -> Self {
+    pub fn identity_config(mut self, identity_config: crate::openhuman::config::IdentityConfig) -> Self {
         self.identity_config = Some(identity_config);
         self
     }
 
-    pub fn skills(mut self, skills: Vec<crate::alphahuman::skills::Skill>) -> Self {
+    pub fn skills(mut self, skills: Vec<crate::openhuman::skills::Skill>) -> Self {
         self.skills = Some(skills);
         self
     }
@@ -150,7 +150,7 @@ impl AgentBuilder {
 
     pub fn classification_config(
         mut self,
-        classification_config: crate::alphahuman::config::QueryClassificationConfig,
+        classification_config: crate::openhuman::config::QueryClassificationConfig,
     ) -> Self {
         self.classification_config = Some(classification_config);
         self
@@ -309,7 +309,7 @@ impl Agent {
             .classification_config(config.query_classification.clone())
             .available_hints(available_hints)
             .identity_config(config.identity.clone())
-            .skills(crate::alphahuman::skills::load_skills(&config.workspace_dir))
+            .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
             .auto_save(config.memory.auto_save)
             .build()
     }
@@ -529,14 +529,14 @@ impl Agent {
     }
 
     pub async fn run_interactive(&mut self) -> Result<()> {
-        println!("🦀 Alphahuman Interactive Mode");
+        println!("🦀 OpenHuman Interactive Mode");
         println!("Type /quit to exit.\n");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-        let cli = crate::alphahuman::channels::CliChannel::new();
+        let cli = crate::openhuman::channels::CliChannel::new();
 
         let listen_handle = tokio::spawn(async move {
-            let _ = crate::alphahuman::channels::Channel::listen(&cli, tx).await;
+            let _ = crate::openhuman::channels::Channel::listen(&cli, tx).await;
         });
 
         while let Some(msg) = rx.recv().await {
@@ -616,7 +616,7 @@ mod tests {
     use parking_lot::Mutex;
 
     struct MockProvider {
-        responses: Mutex<Vec<crate::alphahuman::providers::ChatResponse>>,
+        responses: Mutex<Vec<crate::openhuman::providers::ChatResponse>>,
     }
 
     #[async_trait]
@@ -636,10 +636,10 @@ mod tests {
             _request: ChatRequest<'_>,
             _model: &str,
             _temperature: f64,
-        ) -> Result<crate::alphahuman::providers::ChatResponse> {
+        ) -> Result<crate::openhuman::providers::ChatResponse> {
             let mut guard = self.responses.lock();
             if guard.is_empty() {
-                return Ok(crate::alphahuman::providers::ChatResponse {
+                return Ok(crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
                 });
@@ -664,8 +664,8 @@ mod tests {
             serde_json::json!({"type": "object"})
         }
 
-        async fn execute(&self, _args: serde_json::Value) -> Result<crate::alphahuman::tools::ToolResult> {
-            Ok(crate::alphahuman::tools::ToolResult {
+        async fn execute(&self, _args: serde_json::Value) -> Result<crate::openhuman::tools::ToolResult> {
+            Ok(crate::openhuman::tools::ToolResult {
                 success: true,
                 output: "tool-out".into(),
                 error: None,
@@ -676,21 +676,21 @@ mod tests {
     #[tokio::test]
     async fn turn_without_tools_returns_text() {
         let provider = Box::new(MockProvider {
-            responses: Mutex::new(vec![crate::alphahuman::providers::ChatResponse {
+            responses: Mutex::new(vec![crate::openhuman::providers::ChatResponse {
                 text: Some("hello".into()),
                 tool_calls: vec![],
             }]),
         });
 
-        let memory_cfg = crate::alphahuman::config::MemoryConfig {
+        let memory_cfg = crate::openhuman::config::MemoryConfig {
             backend: "none".into(),
-            ..crate::alphahuman::config::MemoryConfig::default()
+            ..crate::openhuman::config::MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> = Arc::from(
-            crate::alphahuman::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None).unwrap(),
+            crate::openhuman::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None).unwrap(),
         );
 
-        let observer: Arc<dyn Observer> = Arc::from(crate::alphahuman::observability::NoopObserver {});
+        let observer: Arc<dyn Observer> = Arc::from(crate::openhuman::observability::NoopObserver {});
         let mut agent = Agent::builder()
             .provider(provider)
             .tools(vec![Box::new(MockTool)])
@@ -709,30 +709,30 @@ mod tests {
     async fn turn_with_native_dispatcher_handles_tool_results_variant() {
         let provider = Box::new(MockProvider {
             responses: Mutex::new(vec![
-                crate::alphahuman::providers::ChatResponse {
+                crate::openhuman::providers::ChatResponse {
                     text: Some(String::new()),
-                    tool_calls: vec![crate::alphahuman::providers::ToolCall {
+                    tool_calls: vec![crate::openhuman::providers::ToolCall {
                         id: "tc1".into(),
                         name: "echo".into(),
                         arguments: "{}".into(),
                     }],
                 },
-                crate::alphahuman::providers::ChatResponse {
+                crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
                 },
             ]),
         });
 
-        let memory_cfg = crate::alphahuman::config::MemoryConfig {
+        let memory_cfg = crate::openhuman::config::MemoryConfig {
             backend: "none".into(),
-            ..crate::alphahuman::config::MemoryConfig::default()
+            ..crate::openhuman::config::MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> = Arc::from(
-            crate::alphahuman::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None).unwrap(),
+            crate::openhuman::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None).unwrap(),
         );
 
-        let observer: Arc<dyn Observer> = Arc::from(crate::alphahuman::observability::NoopObserver {});
+        let observer: Arc<dyn Observer> = Arc::from(crate::openhuman::observability::NoopObserver {});
         let mut agent = Agent::builder()
             .provider(provider)
             .tools(vec![Box::new(MockTool)])

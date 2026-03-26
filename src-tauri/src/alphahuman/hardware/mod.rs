@@ -14,7 +14,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 // Re-export config types so UI flows can use `hardware::HardwareConfig` etc.
-pub use crate::alphahuman::config::{HardwareConfig, HardwareTransport};
+pub use crate::openhuman::config::{HardwareConfig, HardwareTransport};
 
 /// A hardware device discovered during auto-scan.
 #[derive(Debug, Clone, Serialize, Deserialize)]

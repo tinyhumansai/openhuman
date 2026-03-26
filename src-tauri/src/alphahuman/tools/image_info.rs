@@ -1,5 +1,5 @@
 use super::traits::{Tool, ToolResult};
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::SecurityPolicy;
 use async_trait::async_trait;
 use serde_json::json;
 use std::fmt::Write;
@@ -231,7 +231,7 @@ impl Tool for ImageInfoTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::security::{AutonomyLevel, SecurityPolicy};
+    use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
 
     fn test_security() -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
@@ -427,7 +427,7 @@ mod tests {
     #[tokio::test]
     async fn execute_real_file() {
         // Create a minimal valid PNG
-        let dir = std::env::temp_dir().join("alphahuman_image_info_test");
+        let dir = std::env::temp_dir().join("openhuman_image_info_test");
         let _ = tokio::fs::create_dir_all(&dir).await;
         let png_path = dir.join("test.png");
 
@@ -466,7 +466,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_with_base64() {
-        let dir = std::env::temp_dir().join("alphahuman_image_info_b64");
+        let dir = std::env::temp_dir().join("openhuman_image_info_b64");
         let _ = tokio::fs::create_dir_all(&dir).await;
         let png_path = dir.join("test_b64.png");
 

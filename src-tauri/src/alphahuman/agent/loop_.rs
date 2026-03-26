@@ -1,15 +1,15 @@
-use crate::alphahuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
-use crate::alphahuman::config::Config;
-use crate::alphahuman::memory::{self, Memory, MemoryCategory};
-use crate::alphahuman::multimodal;
-use crate::alphahuman::observability::{self, Observer, ObserverEvent};
-use crate::alphahuman::providers::{
+use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
+use crate::openhuman::config::Config;
+use crate::openhuman::memory::{self, Memory, MemoryCategory};
+use crate::openhuman::multimodal;
+use crate::openhuman::observability::{self, Observer, ObserverEvent};
+use crate::openhuman::providers::{
     self, ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ToolCall,
 };
-use crate::alphahuman::runtime;
-use crate::alphahuman::security::SecurityPolicy;
-use crate::alphahuman::tools::{self, Tool};
-use crate::alphahuman::util::truncate_with_ellipsis;
+use crate::openhuman::runtime;
+use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools::{self, Tool};
+use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
 use regex::{Regex, RegexSet};
 use std::fmt::Write;
@@ -238,7 +238,7 @@ async fn build_context(mem: &dyn Memory, user_msg: &str, min_relevance_score: f6
 /// Build hardware datasheet context from RAG when peripherals are enabled.
 /// Includes pin-alias lookup (e.g. "red_led" → 13) when query matches, plus retrieved chunks.
 fn build_hardware_context(
-    rag: &crate::alphahuman::rag::HardwareRag,
+    rag: &crate::openhuman::rag::HardwareRag,
     user_msg: &str,
     boards: &[String],
     chunk_limit: usize,
@@ -737,7 +737,7 @@ fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
     // (e.g., in emails, files, or web pages) could include JSON that mimics a
     // tool call. Tool calls MUST be explicitly wrapped in either:
     // 1. OpenAI-style JSON with a "tool_calls" array
-    // 2. Alphahuman tool-call tags (<tool_call>, <toolcall>, <tool-call>)
+    // 2. OpenHuman tool-call tags (<tool_call>, <toolcall>, <tool-call>)
     // 3. Markdown code blocks with tool_call/toolcall/tool-call language
     // 4. Explicit GLM line-based call formats (e.g. `shell/command>...`)
     // This ensures only the LLM's intentional tool calls are executed.
@@ -829,7 +829,7 @@ pub(crate) async fn agent_turn(
     model: &str,
     temperature: f64,
     silent: bool,
-    multimodal_config: &crate::alphahuman::config::MultimodalConfig,
+    multimodal_config: &crate::openhuman::config::MultimodalConfig,
     max_tool_iterations: usize,
 ) -> Result<String> {
     run_tool_call_loop(
@@ -864,7 +864,7 @@ pub(crate) async fn run_tool_call_loop(
     silent: bool,
     approval: Option<&ApprovalManager>,
     channel_name: &str,
-    multimodal_config: &crate::alphahuman::config::MultimodalConfig,
+    multimodal_config: &crate::openhuman::config::MultimodalConfig,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
 ) -> Result<String> {
@@ -874,7 +874,7 @@ pub(crate) async fn run_tool_call_loop(
         max_tool_iterations
     };
 
-    let tool_specs: Vec<crate::alphahuman::tools::ToolSpec> =
+    let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
         tools_registry.iter().map(|tool| tool.spec()).collect();
     let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
 
@@ -966,7 +966,7 @@ pub(crate) async fn run_tool_call_loop(
                         model: model.to_string(),
                         duration: llm_started_at.elapsed(),
                         success: false,
-                        error_message: Some(crate::alphahuman::providers::sanitize_api_error(&e.to_string())),
+                        error_message: Some(crate::openhuman::providers::sanitize_api_error(&e.to_string())),
                     });
                     return Err(e);
                 }
@@ -1195,7 +1195,7 @@ pub async fn run(
     );
 
     let peripheral_tools: Vec<Box<dyn Tool>> =
-        crate::alphahuman::peripherals::create_peripheral_tools(&config.peripherals).await?;
+        crate::openhuman::peripherals::create_peripheral_tools(&config.peripherals).await?;
     if !peripheral_tools.is_empty() {
         tracing::info!(count = peripheral_tools.len(), "Peripheral tools added");
         tools_registry.extend(peripheral_tools);
@@ -1214,7 +1214,7 @@ pub async fn run(
 
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
-        alphahuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
+        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
@@ -1235,14 +1235,14 @@ pub async fn run(
     });
 
     // ── Hardware RAG (datasheet retrieval when peripherals + datasheet_dir) ──
-    let hardware_rag: Option<crate::alphahuman::rag::HardwareRag> = config
+    let hardware_rag: Option<crate::openhuman::rag::HardwareRag> = config
         .peripherals
         .datasheet_dir
         .as_ref()
         .filter(|d| !d.trim().is_empty())
-        .map(|dir| crate::alphahuman::rag::HardwareRag::load(&config.workspace_dir, dir.trim()))
+        .map(|dir| crate::openhuman::rag::HardwareRag::load(&config.workspace_dir, dir.trim()))
         .and_then(Result::ok)
-        .filter(|r: &crate::alphahuman::rag::HardwareRag| !r.is_empty());
+        .filter(|r: &crate::openhuman::rag::HardwareRag| !r.is_empty());
     if let Some(ref rag) = hardware_rag {
         tracing::info!(chunks = rag.len(), "Hardware RAG loaded");
     }
@@ -1255,7 +1255,7 @@ pub async fn run(
         .collect();
 
     // ── Build system prompt from workspace MD files (OpenClaw framework) ──
-    let skills = crate::alphahuman::skills::load_skills(&config.workspace_dir);
+    let skills = crate::openhuman::skills::load_skills(&config.workspace_dir);
     let mut tool_descs: Vec<(&str, &str)> = vec![
         (
             "shell",
@@ -1341,7 +1341,7 @@ pub async fn run(
         ));
         tool_descs.push((
             "arduino_upload",
-            "Upload agent-generated Arduino sketch. Use when: user asks for 'make a heart', 'blink pattern', or custom LED behavior on Arduino. You write the full .ino code; Alphahuman compiles and uploads it. Pin 13 = built-in LED on Uno.",
+            "Upload agent-generated Arduino sketch. Use when: user asks for 'make a heart', 'blink pattern', or custom LED behavior on Arduino. You write the full .ino code; OpenHuman compiles and uploads it. Pin 13 = built-in LED on Uno.",
         ));
         tool_descs.push((
             "hardware_memory_map",
@@ -1365,7 +1365,7 @@ pub async fn run(
     } else {
         None
     };
-    let mut system_prompt = crate::alphahuman::channels::build_system_prompt(
+    let mut system_prompt = crate::openhuman::channels::build_system_prompt(
         &config.workspace_dir,
         model_name,
         &tool_descs,
@@ -1443,9 +1443,9 @@ pub async fn run(
                 .await;
         }
     } else {
-        println!("🦀 Alphahuman Interactive Mode");
+        println!("🦀 OpenHuman Interactive Mode");
         println!("Type /help for commands.\n");
-        let cli = crate::alphahuman::channels::CliChannel::new();
+        let cli = crate::openhuman::channels::CliChannel::new();
 
         // Persistent conversation history across turns
         let mut history = vec![ChatMessage::system(&system_prompt)];
@@ -1565,9 +1565,9 @@ pub async fn run(
                 }
             };
             final_output = response.clone();
-            if let Err(e) = crate::alphahuman::channels::Channel::send(
+            if let Err(e) = crate::openhuman::channels::Channel::send(
                 &cli,
-                &crate::alphahuman::channels::traits::SendMessage::new(format!("\n{response}\n"), "user"),
+                &crate::openhuman::channels::traits::SendMessage::new(format!("\n{response}\n"), "user"),
             )
             .await
             {
@@ -1655,7 +1655,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         &config,
     );
     let peripheral_tools: Vec<Box<dyn Tool>> =
-        crate::alphahuman::peripherals::create_peripheral_tools(&config.peripherals).await?;
+        crate::openhuman::peripherals::create_peripheral_tools(&config.peripherals).await?;
     tools_registry.extend(peripheral_tools);
 
     let provider_name = config.default_provider.as_deref().unwrap_or("openrouter");
@@ -1665,7 +1665,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         .unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".into());
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
-        alphahuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
+        openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
@@ -1679,14 +1679,14 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         &provider_runtime_options,
     )?;
 
-    let hardware_rag: Option<crate::alphahuman::rag::HardwareRag> = config
+    let hardware_rag: Option<crate::openhuman::rag::HardwareRag> = config
         .peripherals
         .datasheet_dir
         .as_ref()
         .filter(|d| !d.trim().is_empty())
-        .map(|dir| crate::alphahuman::rag::HardwareRag::load(&config.workspace_dir, dir.trim()))
+        .map(|dir| crate::openhuman::rag::HardwareRag::load(&config.workspace_dir, dir.trim()))
         .and_then(Result::ok)
-        .filter(|r: &crate::alphahuman::rag::HardwareRag| !r.is_empty());
+        .filter(|r: &crate::openhuman::rag::HardwareRag| !r.is_empty());
     let board_names: Vec<String> = config
         .peripherals
         .boards
@@ -1694,7 +1694,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         .map(|b| b.board.clone())
         .collect();
 
-    let skills = crate::alphahuman::skills::load_skills(&config.workspace_dir);
+    let skills = crate::openhuman::skills::load_skills(&config.workspace_dir);
     let mut tool_descs: Vec<(&str, &str)> = vec![
         ("shell", "Execute terminal commands."),
         ("file_read", "Read file contents."),
@@ -1719,7 +1719,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         ));
         tool_descs.push((
             "arduino_upload",
-            "Upload Arduino sketch. Use for 'make a heart', custom patterns. You write full .ino code; Alphahuman uploads it.",
+            "Upload Arduino sketch. Use for 'make a heart', custom patterns. You write full .ino code; OpenHuman uploads it.",
         ));
         tool_descs.push((
             "hardware_memory_map",
@@ -1743,7 +1743,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
     } else {
         None
     };
-    let mut system_prompt = crate::alphahuman::channels::build_system_prompt(
+    let mut system_prompt = crate::openhuman::channels::build_system_prompt(
         &config.workspace_dir,
         &model_name,
         &tool_descs,
@@ -1812,10 +1812,10 @@ mod tests {
         assert!(scrubbed.contains("\"api_key\": \"sk-1*[REDACTED]\""));
         assert!(scrubbed.contains("public"));
     }
-    use crate::alphahuman::memory::{Memory, MemoryCategory, SqliteMemory};
-    use crate::alphahuman::observability::NoopObserver;
-    use crate::alphahuman::providers::traits::ProviderCapabilities;
-    use crate::alphahuman::providers::ChatResponse;
+    use crate::openhuman::memory::{Memory, MemoryCategory, SqliteMemory};
+    use crate::openhuman::observability::NoopObserver;
+    use crate::openhuman::providers::traits::ProviderCapabilities;
+    use crate::openhuman::providers::ChatResponse;
     use tempfile::TempDir;
 
     struct NonVisionProvider {
@@ -1867,7 +1867,7 @@ mod tests {
             _temperature: f64,
         ) -> anyhow::Result<ChatResponse> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let marker_count = crate::alphahuman::multimodal::count_image_markers(request.messages);
+            let marker_count = crate::openhuman::multimodal::count_image_markers(request.messages);
             if marker_count == 0 {
                 anyhow::bail!("expected image markers in request messages");
             }
@@ -1907,7 +1907,7 @@ mod tests {
             true,
             None,
             "cli",
-            &crate::alphahuman::config::MultimodalConfig::default(),
+            &crate::openhuman::config::MultimodalConfig::default(),
             3,
             None,
         )
@@ -1933,7 +1933,7 @@ mod tests {
 
         let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
         let observer = NoopObserver;
-        let multimodal = crate::alphahuman::config::MultimodalConfig {
+        let multimodal = crate::openhuman::config::MultimodalConfig {
             max_images: 4,
             max_image_size_mb: 1,
             allow_remote_fetch: false,
@@ -1987,7 +1987,7 @@ mod tests {
             true,
             None,
             "cli",
-            &crate::alphahuman::config::MultimodalConfig::default(),
+            &crate::openhuman::config::MultimodalConfig::default(),
             3,
             None,
         )
@@ -2305,9 +2305,9 @@ Done."#;
 
     #[test]
     fn build_tool_instructions_includes_all_tools() {
-        use crate::alphahuman::security::SecurityPolicy;
+        use crate::openhuman::security::SecurityPolicy;
         let security = Arc::new(SecurityPolicy::from_config(
-            &crate::alphahuman::config::AutonomyConfig::default(),
+            &crate::openhuman::config::AutonomyConfig::default(),
             std::path::Path::new("/tmp"),
         ));
         let tools = tools::default_tools(security);
@@ -2322,9 +2322,9 @@ Done."#;
 
     #[test]
     fn tools_to_openai_format_produces_valid_schema() {
-        use crate::alphahuman::security::SecurityPolicy;
+        use crate::openhuman::security::SecurityPolicy;
         let security = Arc::new(SecurityPolicy::from_config(
-            &crate::alphahuman::config::AutonomyConfig::default(),
+            &crate::openhuman::config::AutonomyConfig::default(),
             std::path::Path::new("/tmp"),
         ));
         let tools = tools::default_tools(security);
@@ -2880,14 +2880,14 @@ Let me check the result."#;
 
     #[test]
     fn trim_history_empty_history() {
-        let mut history: Vec<crate::alphahuman::providers::ChatMessage> = vec![];
+        let mut history: Vec<crate::openhuman::providers::ChatMessage> = vec![];
         trim_history(&mut history, 10);
         assert!(history.is_empty());
     }
 
     #[test]
     fn trim_history_system_only() {
-        let mut history = vec![crate::alphahuman::providers::ChatMessage::system("system prompt")];
+        let mut history = vec![crate::openhuman::providers::ChatMessage::system("system prompt")];
         trim_history(&mut history, 10);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].role, "system");
@@ -2896,9 +2896,9 @@ Let me check the result."#;
     #[test]
     fn trim_history_exactly_at_limit() {
         let mut history = vec![
-            crate::alphahuman::providers::ChatMessage::system("system"),
-            crate::alphahuman::providers::ChatMessage::user("msg 1"),
-            crate::alphahuman::providers::ChatMessage::assistant("reply 1"),
+            crate::openhuman::providers::ChatMessage::system("system"),
+            crate::openhuman::providers::ChatMessage::user("msg 1"),
+            crate::openhuman::providers::ChatMessage::assistant("reply 1"),
         ];
         trim_history(&mut history, 2); // 2 non-system messages = exactly at limit
         assert_eq!(history.len(), 3, "should not trim when exactly at limit");
@@ -2907,11 +2907,11 @@ Let me check the result."#;
     #[test]
     fn trim_history_removes_oldest_non_system() {
         let mut history = vec![
-            crate::alphahuman::providers::ChatMessage::system("system"),
-            crate::alphahuman::providers::ChatMessage::user("old msg"),
-            crate::alphahuman::providers::ChatMessage::assistant("old reply"),
-            crate::alphahuman::providers::ChatMessage::user("new msg"),
-            crate::alphahuman::providers::ChatMessage::assistant("new reply"),
+            crate::openhuman::providers::ChatMessage::system("system"),
+            crate::openhuman::providers::ChatMessage::user("old msg"),
+            crate::openhuman::providers::ChatMessage::assistant("old reply"),
+            crate::openhuman::providers::ChatMessage::user("new msg"),
+            crate::openhuman::providers::ChatMessage::assistant("new reply"),
         ];
         trim_history(&mut history, 2);
         assert_eq!(history.len(), 3); // system + 2 kept

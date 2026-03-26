@@ -123,7 +123,7 @@ impl Tunnel for CustomTunnel {
     async fn health_check(&self) -> bool {
         // If a health URL is configured, try to reach it
         if let Some(ref url) = self.health_url {
-            return crate::alphahuman::config::build_runtime_proxy_client("tunnel.custom")
+            return crate::openhuman::config::build_runtime_proxy_client("tunnel.custom")
                 .get(url)
                 .timeout(std::time::Duration::from_secs(5))
                 .send()

@@ -1,7 +1,7 @@
 //! Hardware capabilities tool — Phase C: query device for reported GPIO pins.
 
 use super::serial::SerialTransport;
-use crate::alphahuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;

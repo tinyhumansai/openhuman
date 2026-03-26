@@ -170,14 +170,14 @@ fn default_memory_limit() -> usize {
     256 * 1024 * 1024 // 256 MB
 }
 
-/// A skill entry in the unified registry (covers both alphahuman and openclaw types).
+/// A skill entry in the unified registry (covers both openhuman and openclaw types).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedSkillEntry {
     /// Unique skill identifier.
     pub id: String,
     /// Human-readable name.
     pub name: String,
-    /// Skill type: "alphahuman" (QuickJS) or "openclaw" (SKILL.md/TOML).
+    /// Skill type: "openhuman" (QuickJS) or "openclaw" (SKILL.md/TOML).
     pub skill_type: String,
     /// Version string.
     pub version: String,

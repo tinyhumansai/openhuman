@@ -17,7 +17,7 @@ on:
 env:
   IS_PR: ${{ github.event_name == 'pull_request' }}
   SHOULD_PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
-  PUBLISH_REPO: alphahumanxyz/alphahuman
+  PUBLISH_REPO: openhumanxyz/openhuman
   XGH_TOKEN: ${{ secrets.XGH_TOKEN }}
   UPDATER_GIST_URL: ${{ secrets.UPDATER_GIST_URL }}
   UPDATER_GIST_ID: ${{ secrets.UPDATER_GIST_ID }}
@@ -313,8 +313,8 @@ jobs:
           # TDLib dylibs are now bundled natively via build.rs + tauri.conf.json macOS.frameworks
           # No post-build scripts needed - Tauri bundler handles copying and signing
           releaseId: ${{ needs.create-release.outputs.releaseId }}
-          owner: alphahumanxyz
-          repo: alphahuman
+          owner: openhumanxyz
+          repo: openhuman
 
       - name: Get file info
         id: file-info

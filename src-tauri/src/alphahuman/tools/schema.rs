@@ -17,7 +17,7 @@
 //!
 //! ```rust
 //! use serde_json::json;
-//! use tauri_app_lib::alphahuman::tools::schema::SchemaCleanr;
+//! use tauri_app_lib::openhuman::tools::schema::SchemaCleanr;
 //!
 //! let dirty_schema = json!({
 //!     "type": "object",

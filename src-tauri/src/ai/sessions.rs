@@ -30,14 +30,14 @@ pub struct SessionIndexEntry {
     pub channel: Option<String>,
 }
 
-/// Get the sessions directory path (~/.alphahuman/sessions/).
+/// Get the sessions directory path (~/.openhuman/sessions/).
 fn get_sessions_dir() -> Result<PathBuf, String> {
     let dir = get_data_dir()?.join("sessions");
     std::fs::create_dir_all(&dir).map_err(|e| format!("Create sessions dir: {e}"))?;
     Ok(dir)
 }
 
-/// Get the session index file path (~/.alphahuman/sessions/sessions.json).
+/// Get the session index file path (~/.openhuman/sessions/sessions.json).
 fn get_session_index_path() -> Result<PathBuf, String> {
     Ok(get_sessions_dir()?.join("sessions.json"))
 }
@@ -180,7 +180,7 @@ pub async fn ai_sessions_list() -> Result<Vec<String>, String> {
     Ok(sessions)
 }
 
-/// Read a memory file from ~/.alphahuman/.
+/// Read a memory file from ~/.openhuman/.
 #[tauri::command]
 pub async fn ai_read_memory_file(relative_path: String) -> Result<String, String> {
     let data_dir = get_data_dir()?;
@@ -201,7 +201,7 @@ pub async fn ai_read_memory_file(relative_path: String) -> Result<String, String
     std::fs::read_to_string(&canonical).map_err(|e| format!("Read file: {e}"))
 }
 
-/// Write a memory file to ~/.alphahuman/.
+/// Write a memory file to ~/.openhuman/.
 #[tauri::command]
 pub async fn ai_write_memory_file(relative_path: String, content: String) -> Result<bool, String> {
     let data_dir = get_data_dir()?;
@@ -240,7 +240,7 @@ pub async fn ai_write_memory_file(relative_path: String, content: String) -> Res
     Ok(true)
 }
 
-/// List memory files in a directory under ~/.alphahuman/.
+/// List memory files in a directory under ~/.openhuman/.
 #[tauri::command]
 pub async fn ai_list_memory_files(relative_dir: String) -> Result<Vec<String>, String> {
     let data_dir = get_data_dir()?;

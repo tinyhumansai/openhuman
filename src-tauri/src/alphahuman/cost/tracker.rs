@@ -1,5 +1,5 @@
 use super::types::{BudgetCheck, CostRecord, CostSummary, ModelStats, TokenUsage, UsagePeriod};
-use crate::alphahuman::config::CostConfig;
+use crate::openhuman::config::CostConfig;
 use anyhow::{anyhow, Context, Result};
 use chrono::{Datelike, NaiveDate, Utc};
 use parking_lot::{Mutex, MutexGuard};
@@ -177,7 +177,7 @@ impl CostTracker {
 
 fn resolve_storage_path(workspace_dir: &Path) -> Result<PathBuf> {
     let storage_path = workspace_dir.join("state").join("costs.jsonl");
-    let legacy_path = workspace_dir.join(".alphahuman").join("costs.db");
+    let legacy_path = workspace_dir.join(".openhuman").join("costs.db");
 
     if !storage_path.exists() && legacy_path.exists() {
         if let Some(parent) = storage_path.parent() {

@@ -18,7 +18,7 @@ impl SlackChannel {
     }
 
     fn http_client(&self) -> reqwest::Client {
-        crate::alphahuman::config::build_runtime_proxy_client("channel.slack")
+        crate::openhuman::config::build_runtime_proxy_client("channel.slack")
     }
 
     /// Check if a Slack user ID is in the allowlist.

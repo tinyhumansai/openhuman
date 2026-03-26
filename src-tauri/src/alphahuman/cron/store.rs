@@ -1,5 +1,5 @@
-use crate::alphahuman::config::Config;
-use crate::alphahuman::cron::{
+use crate::openhuman::config::Config;
+use crate::openhuman::cron::{
     next_run_for_schedule, schedule_cron_expression, validate_schedule, CronJob, CronJobPatch,
     CronRun, DeliveryConfig, JobType, Schedule, SessionTarget,
 };
@@ -567,7 +567,7 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::Config;
+    use crate::openhuman::config::Config;
     use chrono::Duration as ChronoDuration;
     use tempfile::TempDir;
 

@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 
-use crate::alphahuman::tools::Tool;
+use crate::openhuman::tools::Tool;
 
 /// A hardware peripheral that exposes capabilities as tools.
 ///

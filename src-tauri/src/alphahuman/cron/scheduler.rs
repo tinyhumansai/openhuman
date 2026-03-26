@@ -1,12 +1,12 @@
-use crate::alphahuman::channels::{
+use crate::openhuman::channels::{
     Channel, DiscordChannel, MattermostChannel, SendMessage, SlackChannel, TelegramChannel,
 };
-use crate::alphahuman::config::Config;
-use crate::alphahuman::cron::{
+use crate::openhuman::config::Config;
+use crate::openhuman::cron::{
     due_jobs, next_run_for_schedule, record_last_run, record_run, remove_job, reschedule_after_run,
     update_job, CronJob, CronJobPatch, DeliveryConfig, JobType, Schedule, SessionTarget,
 };
-use crate::alphahuman::security::SecurityPolicy;
+use crate::openhuman::security::SecurityPolicy;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use futures_util::{stream, StreamExt};
@@ -26,7 +26,7 @@ pub async fn run(config: Config) -> Result<()> {
         &config.workspace_dir,
     ));
 
-    crate::alphahuman::health::mark_component_ok("scheduler");
+    crate::openhuman::health::mark_component_ok("scheduler");
 
     loop {
         interval.tick().await;
@@ -34,7 +34,7 @@ pub async fn run(config: Config) -> Result<()> {
         let jobs = match due_jobs(&config, Utc::now()) {
             Ok(jobs) => jobs,
             Err(e) => {
-                crate::alphahuman::health::mark_component_error("scheduler", e.to_string());
+                crate::openhuman::health::mark_component_error("scheduler", e.to_string());
                 tracing::warn!("Scheduler query failed: {e}");
                 continue;
             }
@@ -95,7 +95,7 @@ async fn process_due_jobs(config: &Config, security: &Arc<SecurityPolicy>, jobs:
 
     while let Some((job_id, success)) = in_flight.next().await {
         if !success {
-            crate::alphahuman::health::mark_component_error("scheduler", format!("job {job_id} failed"));
+            crate::openhuman::health::mark_component_error("scheduler", format!("job {job_id} failed"));
         }
     }
 }
@@ -105,7 +105,7 @@ async fn execute_and_persist_job(
     security: &SecurityPolicy,
     job: &CronJob,
 ) -> (String, bool) {
-    crate::alphahuman::health::mark_component_ok("scheduler");
+    crate::openhuman::health::mark_component_ok("scheduler");
     warn_if_high_frequency_agent_job(job);
 
     let started_at = Utc::now();
@@ -124,7 +124,7 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String) {
 
     let run_result = match job.session_target {
         SessionTarget::Main | SessionTarget::Isolated => {
-            crate::alphahuman::agent::run(
+            crate::openhuman::agent::run(
                 config.clone(),
                 Some(prefixed_prompt),
                 None,
@@ -469,9 +469,9 @@ async fn run_job_command_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::Config;
-    use crate::alphahuman::cron::{self, DeliveryConfig};
-    use crate::alphahuman::security::SecurityPolicy;
+    use crate::openhuman::config::Config;
+    use crate::openhuman::cron::{self, DeliveryConfig};
+    use crate::openhuman::security::SecurityPolicy;
     use chrono::{Duration as ChronoDuration, Utc};
     use tempfile::TempDir;
 
@@ -491,7 +491,7 @@ mod tests {
         CronJob {
             id: "test-job".into(),
             expression: "* * * * *".into(),
-            schedule: crate::alphahuman::cron::Schedule::Cron {
+            schedule: crate::openhuman::cron::Schedule::Cron {
                 expr: "* * * * *".into(),
                 tz: None,
             },
@@ -585,7 +585,7 @@ mod tests {
     async fn run_job_command_blocks_readonly_mode() {
         let tmp = TempDir::new().unwrap();
         let mut config = test_config(&tmp).await;
-        config.autonomy.level = crate::alphahuman::security::AutonomyLevel::ReadOnly;
+        config.autonomy.level = crate::openhuman::security::AutonomyLevel::ReadOnly;
         let job = test_job("echo should-not-run");
         let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
 
@@ -687,7 +687,7 @@ mod tests {
         let job = cron::add_agent_job(
             &config,
             Some("one-shot".into()),
-            crate::alphahuman::cron::Schedule::At { at },
+            crate::openhuman::cron::Schedule::At { at },
             "Hello",
             SessionTarget::Isolated,
             None,
@@ -712,7 +712,7 @@ mod tests {
         let job = cron::add_agent_job(
             &config,
             Some("one-shot".into()),
-            crate::alphahuman::cron::Schedule::At { at },
+            crate::openhuman::cron::Schedule::At { at },
             "Hello",
             SessionTarget::Isolated,
             None,

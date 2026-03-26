@@ -7,11 +7,11 @@ use std::process::Command;
 use std::time::{Duration, SystemTime};
 
 const OPEN_SKILLS_REPO_URL: &str = "https://github.com/besoeasy/open-skills";
-const OPEN_SKILLS_SYNC_MARKER: &str = ".alphahuman-open-skills-sync";
+const OPEN_SKILLS_SYNC_MARKER: &str = ".openhuman-open-skills-sync";
 const OPEN_SKILLS_SYNC_INTERVAL_SECS: u64 = 60 * 60 * 24 * 7;
 
 /// A skill is a user-defined or community-built capability.
-/// Skills live in `~/.alphahuman/workspace/skills/<name>/SKILL.md`
+/// Skills live in `~/.openhuman/workspace/skills/<name>/SKILL.md`
 /// and can include tool definitions, prompts, and automation scripts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
@@ -159,7 +159,7 @@ fn load_open_skills(repo_dir: &Path) -> Vec<Skill> {
 }
 
 fn open_skills_enabled() -> bool {
-    if let Ok(raw) = std::env::var("ALPHAHUMAN_OPEN_SKILLS_ENABLED") {
+    if let Ok(raw) = std::env::var("OPENHUMAN_OPEN_SKILLS_ENABLED") {
         let value = raw.trim().to_ascii_lowercase();
         return !matches!(value.as_str(), "0" | "false" | "off" | "no");
     }
@@ -169,7 +169,7 @@ fn open_skills_enabled() -> bool {
 }
 
 fn resolve_open_skills_dir() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("ALPHAHUMAN_OPEN_SKILLS_DIR") {
+    if let Ok(path) = std::env::var("OPENHUMAN_OPEN_SKILLS_DIR") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             return Some(PathBuf::from(trimmed));
@@ -404,7 +404,7 @@ pub fn init_skills_dir(workspace_dir: &Path) -> Result<()> {
     if !readme.exists() {
         std::fs::write(
             &readme,
-            "# Alphahuman Skills\n\n\
+            "# OpenHuman Skills\n\n\
              Each subdirectory is a skill. Create a `SKILL.toml` or `SKILL.md` file inside.\n\n\
              ## SKILL.toml format\n\n\
              ```toml\n\
@@ -425,8 +425,8 @@ pub fn init_skills_dir(workspace_dir: &Path) -> Result<()> {
              The agent will read it and follow the instructions.\n\n\
              ## Installing community skills\n\n\
              ```bash\n\
-             alphahuman skills install <github-url>\n\
-             alphahuman skills list\n\
+             openhuman skills install <github-url>\n\
+             openhuman skills list\n\
              ```\n",
         )?;
     }
@@ -732,9 +732,9 @@ description = "Bare minimum"
 
     #[test]
     fn skills_dir_path() {
-        let base = std::path::Path::new("/home/user/.alphahuman");
+        let base = std::path::Path::new("/home/user/.openhuman");
         let dir = skills_dir(base);
-        assert_eq!(dir, PathBuf::from("/home/user/.alphahuman/skills"));
+        assert_eq!(dir, PathBuf::from("/home/user/.openhuman/skills"));
     }
 
     #[test]

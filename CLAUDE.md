@@ -209,12 +209,12 @@ Advanced JavaScript execution engine for skills using V8 (via deno_core):
 
 Set in `.env` (Vite exposes `VITE_*` prefixed vars):
 
-| Variable                     | Purpose                                                             |
-| ---------------------------- | ------------------------------------------------------------------- |
-| `VITE_BACKEND_URL`           | Backend API URL (default: `http://localhost:5005`)                  |
-| `VITE_SENTRY_DSN`            | Sentry DSN for error reporting (optional)                           |
-| `VITE_DEBUG`                 | Debug mode flag                                                     |
-| `ALPHAHUMAN_DAEMON_INTERNAL` | Force internal daemon mode (default: false, uses external services) |
+| Variable                    | Purpose                                                             |
+| --------------------------- | ------------------------------------------------------------------- |
+| `VITE_BACKEND_URL`          | Backend API URL (default: `http://localhost:5005`)                  |
+| `VITE_SENTRY_DSN`           | Sentry DSN for error reporting (optional)                           |
+| `VITE_DEBUG`                | Debug mode flag                                                     |
+| `OPENHUMAN_DAEMON_INTERNAL` | Force internal daemon mode (default: false, uses external services) |
 
 Production defaults are in `src/utils/config.ts`.
 
@@ -406,7 +406,7 @@ Key updates from recent commits (cd9ebcd to current):
   - Session capture and transcript management
   - Memory chunking and context formatting
 - **Enhanced CI/CD Pipeline** (`b1d7bce`): Production-ready deployment
-  - XGH_TOKEN authentication for alphahumanxyz/openhuman releases
+  - XGH_TOKEN authentication for openhumanxyz/openhuman releases
   - Python sidecar setup and caching for cross-platform builds
   - Tauri configuration updates (com.openhuman.app identifier)
   - GitHub Pages deployment with optimized workflows

@@ -27,7 +27,7 @@ pub use traits::Memory;
 #[allow(unused_imports)]
 pub use traits::{MemoryCategory, MemoryEntry};
 
-use crate::alphahuman::config::{EmbeddingRouteConfig, MemoryConfig, StorageProviderConfig};
+use crate::openhuman::config::{EmbeddingRouteConfig, MemoryConfig, StorageProviderConfig};
 use anyhow::Context;
 use std::path::Path;
 use std::sync::Arc;
@@ -329,7 +329,7 @@ pub fn create_response_cache(config: &MemoryConfig, workspace_dir: &Path) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::alphahuman::config::{EmbeddingRouteConfig, StorageProviderConfig};
+    use crate::openhuman::config::{EmbeddingRouteConfig, StorageProviderConfig};
     use tempfile::TempDir;
 
     #[test]

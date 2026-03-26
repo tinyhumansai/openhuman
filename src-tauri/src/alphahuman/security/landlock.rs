@@ -6,7 +6,7 @@
 #[cfg(all(feature = "sandbox-landlock", target_os = "linux"))]
 use landlock::{AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
 
-use crate::alphahuman::security::traits::Sandbox;
+use crate::openhuman::security::traits::Sandbox;
 use std::path::Path;
 
 /// Landlock sandbox backend for Linux

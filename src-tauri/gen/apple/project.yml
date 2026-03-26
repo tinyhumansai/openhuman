@@ -1,6 +1,6 @@
 name: tauri-app
 options:
-  bundleIdPrefix: com.alphahuman.app
+  bundleIdPrefix: com.openhuman.app
   deploymentTarget:
     iOS: 14.0
 fileGroups: [../../src]
@@ -11,7 +11,7 @@ settingGroups:
   app:
     base:
       PRODUCT_NAME: tauri-app
-      PRODUCT_BUNDLE_IDENTIFIER: com.alphahuman.app
+      PRODUCT_BUNDLE_IDENTIFIER: com.openhuman.app
 targetTemplates:
   app:
     type: application

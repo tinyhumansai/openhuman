@@ -81,7 +81,7 @@ impl CoreProcessHandle {
 }
 
 pub fn default_core_port() -> u16 {
-    std::env::var("ALPHAHUMAN_CORE_PORT")
+    std::env::var("OPENHUMAN_CORE_PORT")
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(7788)
