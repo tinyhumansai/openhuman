@@ -535,12 +535,9 @@ async fn chat_send_inner(
                 log::info!(
                     "[chat] Conversation memory recall: has_data={}, len={}",
                     ctx.is_some(),
-                    ctx.as_deref().map(|s| s.len()).unwrap_or(0)
+                    ctx.as_ref().map(|ctx| ctx.to_string().len()).unwrap_or(0)
                 );
-                if let Some(ref data) = ctx {
-                    log::debug!("[chat] Conversation memory content:\n{}", data);
-                }
-                ctx
+                ctx.map(|ctx| ctx.to_string())
             }
             Err(e) => {
                 log::warn!("[chat] Conversation memory recall failed: {}", e);
@@ -567,10 +564,6 @@ async fn chat_send_inner(
             log::info!("[chat] Recalling memory for skill={sid}");
             match mem.recall_skill_context(sid, sid, 10).await {
                 Ok(Some(ctx)) => {
-                    log::info!(
-                        "[chat] Skill memory recall ok: skill={sid}, len={}",
-                        ctx.len()
-                    );
                     log::debug!("[chat] Skill memory content (skill={sid}):\n{}", ctx);
                     skill_contexts.push(format!(
                         "[{}_CONTEXT]\n{}\n[/{}_CONTEXT]",

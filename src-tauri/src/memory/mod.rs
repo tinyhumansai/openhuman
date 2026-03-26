@@ -214,7 +214,7 @@ impl MemoryClient {
         skill_id: &str,
         _integration_id: &str,
         max_chunks: u32,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<serde_json::Value>, String> {
         let namespace = skill_id.to_string();
         log::info!(
             "[memory] recall_skill_context: entry (namespace={namespace}, max_chunks={max_chunks})"
@@ -230,7 +230,8 @@ impl MemoryClient {
                 log::warn!("[memory] recall_skill_context: exit — error (namespace={namespace}): {e}");
                 format!("Memory recall failed: {e}")
             })?;
-        let response = res.data.response;
+        log::info!("[memory] recall_skill_context: response: {res:?}");
+        let response = res.data.context;
         log::info!(
             "[memory] recall_skill_context: exit — ok (namespace={namespace}, has_response={})",
             response.is_some()

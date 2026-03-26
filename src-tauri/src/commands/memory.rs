@@ -122,7 +122,7 @@ pub async fn recall_memory(
                 ),
                 Err(e) => log::warn!("[memory] recall_memory: exit — error: {e}"),
             }
-            result
+            result.map(|ctx| ctx.map(|ctx| ctx.to_string()))
         }
         None => {
             log::warn!("[memory] recall_memory: exit — client not initialised (no JWT set)");
