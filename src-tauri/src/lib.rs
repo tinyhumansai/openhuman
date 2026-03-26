@@ -1,4 +1,4 @@
-//! AlphaHuman Desktop Application
+//! OpenHuman Desktop Application
 //!
 //! This is the Rust backend for the cross-platform crypto community platform.
 //! It provides:
@@ -241,7 +241,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let _tray = TrayIconBuilder::with_id("main-tray")
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
-        .tooltip("AlphaHuman")
+        .tooltip("OpenHuman")
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "show_hide" => {
                 toggle_main_window_visibility(app);
@@ -359,7 +359,7 @@ pub fn run() {
         android_logger::init_once(
             android_logger::Config::default()
                 .with_max_level(log::LevelFilter::Debug)
-                .with_tag("AlphaHuman"),
+                .with_tag("OpenHuman"),
         );
     }
     #[cfg(not(target_os = "android"))]

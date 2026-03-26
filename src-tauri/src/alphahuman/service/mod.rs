@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 
 const SERVICE_LABEL: &str = "com.alphahuman.daemon";
 const LEGACY_SERVICE_LABEL: &str = "com.alphahuman.app";
-const WINDOWS_TASK_NAME: &str = "AlphaHuman Daemon";
+const WINDOWS_TASK_NAME: &str = "OpenHuman Daemon";
 
 fn windows_task_name() -> &'static str {
     WINDOWS_TASK_NAME

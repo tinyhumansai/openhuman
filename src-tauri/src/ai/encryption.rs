@@ -106,7 +106,7 @@ impl EncryptionKey {
     }
 }
 
-/// Get the path to the AlphaHuman data directory (~/.alphahuman/).
+/// Get the path to the OpenHuman data directory (~/.alphahuman/).
 pub fn get_data_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
     let data_dir = home.join(".alphahuman");

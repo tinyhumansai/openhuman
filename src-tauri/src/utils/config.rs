@@ -11,7 +11,7 @@ pub const DEFAULT_BACKEND_URL: &str = "https://api.alphahuman.xyz";
 pub const APP_IDENTIFIER: &str = "com.alphahuman.app";
 
 /// Service name for keychain
-pub const KEYCHAIN_SERVICE: &str = "AlphaHuman";
+pub const KEYCHAIN_SERVICE: &str = "OpenHuman";
 
 /// Get the backend URL from environment or use default
 /// Checks VITE_BACKEND_URL first, then BACKEND_URL, then defaults

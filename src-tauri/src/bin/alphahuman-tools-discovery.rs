@@ -1,4 +1,4 @@
-//! AlphaHuman Tools Discovery Binary
+//! OpenHuman Tools Discovery Binary
 //!
 //! A standalone Rust binary that discovers all available tools from the V8 skills runtime
 //! and outputs them as JSON for consumption by the build system.

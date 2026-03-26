@@ -8,7 +8,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 /// System prompt embedded at compile time.
-const SYSTEM_PROMPT: &str = "You are a skill generator for the AlphaHuman platform.
+const SYSTEM_PROMPT: &str = "You are a skill generator for the OpenHuman platform.
 Generate a complete QuickJS skill as a single index.js file.
 
 CRITICAL CONSTRAINTS:

@@ -210,7 +210,7 @@ pub fn build_system_prompt(
     prompt.push_str("- If a tool output contains credentials, they have already been redacted — do not mention them.\n\n");
 
     if prompt.is_empty() {
-        "You are AlphaHuman, a fast and efficient AI assistant built in Rust. Be helpful, concise, and direct.".to_string()
+        "You are OpenHuman, a fast and efficient AI assistant built in Rust. Be helpful, concise, and direct.".to_string()
     } else {
         prompt
     }

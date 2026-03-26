@@ -25,7 +25,7 @@ struct RpcError {
 
 #[derive(Debug, Parser)]
 #[command(name = "alphahuman-cli")]
-#[command(about = "CLI for the AlphaHuman core RPC server")]
+#[command(about = "CLI for the OpenHuman core RPC server")]
 struct Cli {
     /// Core RPC endpoint URL
     #[arg(long, global = true)]
