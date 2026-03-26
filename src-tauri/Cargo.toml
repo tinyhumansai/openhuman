@@ -1,6 +1,6 @@
 [package]
 name = "AlphaHuman"
-version = "0.49.1"
+version = "0.49.2"
 description = "AlphaHuman - AI-powered Super Assistant"
 authors = ["AlphaHuman"]
 edition = "2021"
