@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import AdvancedPanel from '../components/settings/panels/AdvancedPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
+import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
@@ -37,6 +38,7 @@ const Settings = () => {
         <Route path="team/manage/:teamId/invites" element={<TeamInvitesPanel />} />
         <Route path="team/members" element={<TeamMembersPanel />} />
         <Route path="team/invites" element={<TeamInvitesPanel />} />
+        <Route path="developer-options" element={<DeveloperOptionsPanel />} />
         <Route path="tauri-commands" element={<TauriCommandsPanel />} />
         <Route path="memory-debug" element={<MemoryDebugPanel />} />
       </Routes>

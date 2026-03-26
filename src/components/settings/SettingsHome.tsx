@@ -4,7 +4,6 @@ import { skillManager } from '../../lib/skills/manager';
 import { persistor } from '../../store';
 import { clearToken } from '../../store/authSlice';
 import { useAppDispatch } from '../../store/hooks';
-import { IS_DEV } from '../../utils/config';
 import { logout as tauriLogout } from '../../utils/tauriCommands';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
@@ -96,47 +95,10 @@ const SettingsHome = () => {
     //   onClick: () => navigateToSettings("messaging"),
     //   dangerous: false,
     // },
-    {
-      id: 'skills',
-      title: 'Skills',
-      description: 'Configure Slack, Discord, and other skills',
-      devOnly: true,
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9.75 3a.75.75 0 00-1.5 0v2.25H6a2.25 2.25 0 000 4.5h2.25V12H6a2.25 2.25 0 000 4.5h2.25V18a.75.75 0 001.5 0v-1.5H12V18a.75.75 0 001.5 0v-1.5H18a2.25 2.25 0 000-4.5h-4.5V9.75H18a2.25 2.25 0 000-4.5h-4.5V3a.75.75 0 00-1.5 0v2.25H9.75V3z"
-          />
-        </svg>
-      ),
-      onClick: () => navigateToSettings('skills'),
-      dangerous: false,
-    },
-    {
-      id: 'ai',
-      title: 'AI Configuration',
-      description: 'Configure SOUL persona and AI behavior',
-      devOnly: true,
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9.75 3a.75.75 0 00-1.5 0v2.25H6a2.25 2.25 0 000 4.5h2.25V12H6a2.25 2.25 0 000 4.5h2.25V18a.75.75 0 001.5 0v-1.5H12V18a.75.75 0 001.5 0v-1.5H18a2.25 2.25 0 000-4.5h-4.5V9.75H18a2.25 2.25 0 000-4.5h-4.5V3a.75.75 0 00-1.5 0v2.25H9.75V3z"
-          />
-        </svg>
-      ),
-      onClick: () => navigateToSettings('ai'),
-      dangerous: false,
-    },
     // {
     //   id: 'agent-chat',
     //   title: 'Agent Chat',
     //   description: 'Send messages directly to your agent',
-    //   devOnly: true,
     //   icon: (
     //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     //       <path
@@ -259,39 +221,20 @@ const SettingsHome = () => {
       dangerous: false,
     },
     {
-      id: 'tauri-commands',
-      title: 'Tauri Command Console',
-      description: 'Run Alphahuman Tauri commands for quick testing',
-      devOnly: true,
+      id: 'developer-options',
+      title: 'Developer Options',
+      description: 'Skills, AI config, Tauri console, and memory debug tools',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
+            d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
           />
         </svg>
       ),
-      onClick: () => navigateToSettings('tauri-commands'),
-      dangerous: false,
-    },
-    {
-      id: 'memory-debug',
-      title: 'Memory Debug',
-      description: 'Inspect memory documents, namespaces, and test query/recall',
-      devOnly: true,
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
-          />
-        </svg>
-      ),
-      onClick: () => navigateToSettings('memory-debug'),
+      onClick: () => navigateToSettings('developer-options'),
       dangerous: false,
     },
   ];
@@ -359,9 +302,7 @@ const SettingsHome = () => {
         <div className="p-4 space-y-6">
           {/* Main Settings */}
           <div>
-            {mainMenuItems
-              .filter(item => !item.devOnly || IS_DEV)
-              .map((item, index, filtered) => (
+            {mainMenuItems.map((item, index) => (
                 <SettingsMenuItem
                   key={item.id}
                   icon={item.icon}
@@ -370,7 +311,7 @@ const SettingsHome = () => {
                   onClick={item.onClick}
                   dangerous={item.dangerous}
                   isFirst={index === 0}
-                  isLast={index === filtered.length - 1}
+                  isLast={index === mainMenuItems.length - 1}
                 />
               ))}
           </div>

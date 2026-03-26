@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { IS_DEV } from '../../../utils/config';
 import {
   memoryDeleteDocument,
   memoryListDocuments,
@@ -82,7 +81,6 @@ const MemoryDebugPanel = () => {
   }, [loadDocuments, loadNamespaces]);
 
   useEffect(() => {
-    if (!IS_DEV) return;
     void refreshAll();
   }, [refreshAll]);
 
@@ -133,17 +131,6 @@ const MemoryDebugPanel = () => {
       setRecallLoading(false);
     }
   }, [maxChunks, namespaceInput]);
-
-  if (!IS_DEV) {
-    return (
-      <div className="overflow-hidden h-full flex flex-col">
-        <SettingsHeader title="Memory Debug" showBackButton={true} onBack={navigateBack} />
-        <div className="flex-1 overflow-y-auto p-4 text-sm text-stone-400">
-          Memory debug is available only in development mode.
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="overflow-hidden h-full flex flex-col">

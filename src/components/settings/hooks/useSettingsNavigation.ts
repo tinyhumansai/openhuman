@@ -12,6 +12,8 @@ export type SettingsRoute =
   | 'team'
   | 'team-members'
   | 'team-invites'
+  | 'developer-options'
+  | 'skills'
   | 'ai'
   | 'tauri-commands'
   | 'memory-debug';
@@ -45,6 +47,8 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/profile')) return 'profile';
     if (path.includes('/settings/advanced')) return 'advanced';
     if (path.includes('/settings/billing')) return 'billing';
+    if (path.includes('/settings/developer-options')) return 'developer-options';
+    if (path.includes('/settings/skills')) return 'skills';
     if (path.includes('/settings/ai')) return 'ai';
     if (path.includes('/settings/tauri-commands')) return 'tauri-commands';
     if (path.includes('/settings/memory-debug')) return 'memory-debug';
@@ -71,6 +75,8 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     [navigate]
   );
 
+  const developerSubRoutes: SettingsRoute[] = ['skills', 'ai', 'tauri-commands', 'memory-debug'];
+
   const navigateBack = useCallback(() => {
     if (currentRoute === 'home') {
       navigate('/home');
@@ -85,6 +91,8 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       }
     } else if (location.pathname.includes('/team/manage/')) {
       navigate('/settings/team');
+    } else if (developerSubRoutes.includes(currentRoute as SettingsRoute)) {
+      navigate('/settings/developer-options');
     } else {
       navigate('/settings');
     }
