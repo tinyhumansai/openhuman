@@ -48,7 +48,7 @@ jobs:
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
           TAG_NAME="v${PACKAGE_VERSION}"
-          RELEASE_NAME="AlphaHuman v${PACKAGE_VERSION}"
+          RELEASE_NAME="OpenHuman v${PACKAGE_VERSION}"
           echo "package-version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT
           echo "tag-name=$TAG_NAME" >> $GITHUB_OUTPUT
           echo "release-name=$RELEASE_NAME" >> $GITHUB_OUTPUT

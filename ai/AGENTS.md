@@ -1,10 +1,11 @@
-# AlphaHuman Agents
+# OpenHuman Agents
 
-## Primary Agent: AlphaHuman Core
+## Primary Agent: OpenHuman Core
 
 The default agent for all interactions. Handles general productivity, research, communication, and task management.
 
 **Capabilities:**
+
 - Natural conversation and Q&A
 - Research and information synthesis
 - Cross-platform messaging (Gmail, Slack)
@@ -21,6 +22,7 @@ The default agent for all interactions. Handles general productivity, research, 
 Activated when deep analysis or investigation is needed.
 
 **Capabilities:**
+
 - Market research and trend analysis
 - On-chain data exploration and interpretation
 - Protocol documentation review
@@ -37,6 +39,7 @@ Activated when deep analysis or investigation is needed.
 Activated for cross-platform messaging tasks.
 
 **Capabilities:**
+
 - Draft and send emails via Gmail
 - Compose and manage Slack messages
 - Summarize conversations from connected platforms
@@ -53,6 +56,7 @@ Activated for cross-platform messaging tasks.
 Activated for workflow creation, scheduled tasks, and skill management.
 
 **Capabilities:**
+
 - Create and manage automated workflows
 - Schedule recurring tasks (cron-based)
 - Configure and manage skills

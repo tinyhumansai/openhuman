@@ -26,7 +26,7 @@ class RuntimeService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "alphahuman_runtime"
-        private const val CHANNEL_NAME = "AlphaHuman Runtime"
+        private const val CHANNEL_NAME = "OpenHuman Runtime"
     }
 
     override fun onCreate() {
@@ -80,7 +80,7 @@ class RuntimeService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("AlphaHuman")
+            .setContentTitle("OpenHuman")
             .setContentText("Running in background")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)

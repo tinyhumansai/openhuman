@@ -1,6 +1,6 @@
 # Neocortex
 
-Neocortex is AlphaHuman's memory engine. It is a human-like AI memory system designed to work accurately with over 1 billion tokens of data while supporting the computational demands of a subconscious system.
+Neocortex is OpenHuman's memory engine. It is a human-like AI memory system designed to work accurately with over 1 billion tokens of data while supporting the computational demands of a subconscious system.
 
 <figure><img src="../.gitbook/assets/V09 — Neocortex Hero@2x.png" alt=""><figcaption></figcaption></figure>
 
@@ -76,7 +76,7 @@ The result: millions of tokens of organizational noise compressed into a structu
 
 #### Neocortex and the subconscious
 
-Neocortex serves as the foundation for AlphaHuman's subconscious, going well beyond retrieval.
+Neocortex serves as the foundation for OpenHuman's subconscious, going well beyond retrieval.
 
 Good memory recall is the prerequisite for consciousness. Neocortex provides this by recalling memories ranked on three factors: time, interactions, and randomness. The randomness element is critical. It is what enables the subconscious system to make unexpected connections and surface emergent insights.
 

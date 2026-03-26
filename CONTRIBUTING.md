@@ -1,4 +1,4 @@
-# Contributing to AlphaHuman
+# Contributing to OpenHuman
 
 Thank you for your interest in contributing. This document explains how to get set up, follow our workflow, and submit changes.
 
@@ -19,7 +19,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 ## Getting Started
 
 - Read the [README](README.md) and [ARCHITECTURE](ARCHITECTURE.md) for context.
-- Check [open issues](https://github.com/alphahumanxyz/alphahuman/issues) and discussions for ideas and to avoid duplicate work.
+- Check [open issues](https://github.com/alphahumanxyz/openhuman/issues) and discussions for ideas and to avoid duplicate work.
 - For security issues, see [SECURITY.md](SECURITY.md) — do not report vulnerabilities in public issues.
 
 ## Development Setup
@@ -33,8 +33,8 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 ### Clone and Install
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/alphahuman.git
-cd alphahuman
+git clone https://github.com/YOUR_USERNAME/openhuman.git
+cd openhuman
 yarn install
 ```
 
@@ -55,7 +55,7 @@ Copy or create a `.env` from the documented template and set `VITE_BACKEND_URL`,
 
 ## Git Workflow
 
-- **Fork** the [alphahuman](https://github.com/alphahumanxyz/alphahuman) repository and work in your fork.
+- **Fork** the [openhuman](https://github.com/alphahumanxyz/openhuman) repository and work in your fork.
 - **Base branch**: All pull requests must target the **`develop`** branch (not `main`).
 - **No direct pushes** to the organization repo; all changes come in via pull requests from forks.
 
@@ -69,7 +69,7 @@ Use short, descriptive branches, e.g.:
 
 ## Making Changes
 
-1. Create a branch from `develop`:  
+1. Create a branch from `develop`:
    `git checkout develop && git pull origin develop && git checkout -b fix/your-change`
 2. Make your changes. Keep commits focused and messages clear (e.g., “Fix socket reconnect on network drop”).
 3. Follow our [project conventions](#project-conventions) and run checks before pushing.
@@ -85,9 +85,9 @@ Pre-commit/pre-push hooks (Husky) run formatting and linting; fix any failures b
 
 ## Submitting Changes
 
-1. Push your branch to your fork:  
+1. Push your branch to your fork:
    `git push origin fix/your-change`
-2. Open a **pull request** against **`develop`** in the [alphahuman](https://github.com/alphahumanxyz/alphahuman) repository.
+2. Open a **pull request** against **`develop`** in the [openhuman](https://github.com/alphahumanxyz/openhuman) repository.
 3. Fill in the PR template (if present): describe what changed, why, and how to test.
 4. Link any related issues (e.g., “Fixes #123”).
 5. Address review feedback and keep the PR up to date with `develop` (rebase or merge as the project prefers).
@@ -108,4 +108,4 @@ For more detail on architecture, patterns, and platform notes, see the project�
 
 ---
 
-Thank you for contributing to AlphaHuman.
+Thank you for contributing to OpenHuman.

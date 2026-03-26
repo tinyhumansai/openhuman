@@ -4,7 +4,7 @@
  * The mac2 driver uses Apple's XCUITest to automate macOS apps.
  * It sees the WKWebView content through the accessibility tree.
  *
- * NOTE: The AlphaHuman app starts with visible:false (tray app).
+ * NOTE: The OpenHuman app starts with visible:false (tray app).
  * The window is hidden by default — only the menu bar is visible.
  * Tests should account for this.
  */

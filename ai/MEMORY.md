@@ -1,10 +1,11 @@
-# AlphaHuman Curated Knowledge
+# OpenHuman Curated Knowledge
 
 ## Platform Capabilities
 
-AlphaHuman is a cross-platform crypto community platform built with Tauri (React + Rust). It runs on Windows, macOS, Android, and iOS.
+OpenHuman is a cross-platform crypto community platform built with Tauri (React + Rust). It runs on Windows, macOS, Android, and iOS.
 
 **Core features:**
+
 - AI-powered chat with tool execution (skills system)
 - Notion integration for workspace and knowledge management
 - Gmail integration for email management and drafting
@@ -18,6 +19,7 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 - MCP (Model Context Protocol) for AI-driven tool interactions
 
 **Available integrations:**
+
 - Notion (pages, databases, blocks, search)
 - Gmail (read, compose, reply, manage labels)
 - Slack (send messages, read channels, manage conversations)
@@ -29,6 +31,7 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 ## Crypto Domain Knowledge
 
 ### Key Terminology
+
 - **DeFi:** Decentralized Finance — financial services built on blockchain without intermediaries
 - **TVL:** Total Value Locked — the total capital deposited in a DeFi protocol
 - **APY/APR:** Annual Percentage Yield/Rate — yield metrics for DeFi positions
@@ -41,6 +44,7 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 - **Whale:** An entity holding large amounts of a cryptocurrency
 
 ### Market Mechanics
+
 - Crypto markets trade 24/7/365 — there is no market close
 - Token prices are determined by supply/demand across decentralized and centralized exchanges
 - Liquidity varies dramatically between assets — top 20 tokens vs. long-tail tokens
@@ -48,6 +52,7 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 - On-chain data is public and verifiable — a key difference from traditional finance
 
 ### Common User Workflows
+
 1. **Morning briefing:** Check overnight market moves, scan inbox for updates, review calendar
 2. **Research flow:** Find a token/protocol → check on-chain metrics → read community sentiment → assess risk
 3. **Communication flow:** Draft updates for teams → send across Gmail/Slack → track responses
@@ -57,6 +62,7 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 ## Integration Quirks
 
 ### Notion
+
 - API rate limits: 3 requests per second for most endpoints
 - Page content is block-based — each paragraph, heading, list item is a separate block
 - Database queries support filtering, sorting, and pagination
@@ -64,6 +70,7 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 - Parent-child relationships: pages can contain sub-pages and databases
 
 ### Gmail
+
 - Uses OAuth2 for authentication — tokens need periodic refresh
 - Labels are the primary organizational mechanism (not folders)
 - Thread-based conversation model — replies are grouped automatically
@@ -71,6 +78,7 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 - HTML email formatting requires careful sanitization
 
 ### Slack
+
 - Channel-based messaging — each workspace has multiple channels
 - Thread replies vs. channel messages are distinct concepts
 - Bot tokens have different permissions than user tokens
@@ -78,12 +86,14 @@ AlphaHuman is a cross-platform crypto community platform built with Tauri (React
 - Rich message formatting uses Block Kit
 
 ### Google Calendar
+
 - Events can have multiple attendees with RSVP status
 - Recurring events use RRULE format
 - Timezone handling is critical — always confirm user timezone
 - Free/busy information can be queried across calendars
 
 ### GitHub
+
 - Rate limits: 5,000 requests per hour for authenticated requests
 - Repository content access requires appropriate permissions
 - Issues and PRs are separate entities but share a numbering space

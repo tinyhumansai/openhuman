@@ -1,10 +1,10 @@
 [package]
-name = "AlphaHuman"
+name = "OpenHuman"
 version = "0.49.3"
-description = "AlphaHuman - AI-powered Super Assistant"
-authors = ["AlphaHuman"]
+description = "OpenHuman - AI-powered Super Assistant"
+authors = ["OpenHuman"]
 edition = "2021"
-default-run = "AlphaHuman"
+default-run = "OpenHuman"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -16,7 +16,7 @@ name = "alphahuman"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "AlphaHuman"
+name = "OpenHuman"
 path = "src/main.rs"
 
 [[bin]]

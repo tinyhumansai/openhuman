@@ -1,12 +1,12 @@
-# AlphaHuman Tools
+# OpenHuman Tools
 
-This document lists all available tools that AlphaHuman can use to interact with external services and perform actions. Tools are organized by integration and automatically updated when the app loads.
+This document lists all available tools that OpenHuman can use to interact with external services and perform actions. Tools are organized by integration and automatically updated when the app loads.
 
-> **Architecture note**: All read/query operations (get-page, list-*, query-database, search, etc.) are handled by the memory layer — data is fetched from the TinyHumans Neocortex memory system and injected into context automatically. Only write, create, update, delete, and trigger operations are exposed as tools.
+> **Architecture note**: All read/query operations (get-page, list-\*, query-database, search, etc.) are handled by the memory layer — data is fetched from the TinyHumans Neocortex memory system and injected into context automatically. Only write, create, update, delete, and trigger operations are exposed as tools.
 
 ## Overview
 
-AlphaHuman has access to **12 tools** across **1 integrations**.
+OpenHuman has access to **12 tools** across **1 integrations**.
 
 **Quick Statistics:**
 

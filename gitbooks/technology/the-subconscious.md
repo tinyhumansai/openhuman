@@ -1,6 +1,6 @@
 # The Subconscious
 
-AlphaHuman's subconscious is what separates it from every other AI agent. Most AI systems follow the conscious mind model: they wait for instructions and execute them. They cannot think on their own. AlphaHuman can.
+OpenHuman's subconscious is what separates it from every other AI agent. Most AI systems follow the conscious mind model: they wait for instructions and execute them. They cannot think on their own. OpenHuman can.
 
 #### The Purkinje cell inspiration
 
@@ -8,11 +8,11 @@ In the human brain, there is a specialized neuron called the Purkinje cell. It i
 
 The human brain operates with both a conscious and subconscious mind. The conscious mind handles deliberate, focused tasks. The subconscious processes information in the background, making connections, surfacing memories, and generating the "random" thoughts that often turn out to be the most important ones. Most agentic AI systems only model the conscious mind. They are reactive. They wait for input.
 
-AlphaHuman models both.
+OpenHuman models both.
 
 #### How the subconscious works
 
-Inspired by the Purkinje cell, AlphaHuman uses Neocortex to periodically trigger global memory recalls. Rather than targeted retrievals in response to a specific query, these are broad, semi-random sweeps across the knowledge graph, pulling up memories based on a mix of recency, relevance, and randomness.
+Inspired by the Purkinje cell, OpenHuman uses Neocortex to periodically trigger global memory recalls. Rather than targeted retrievals in response to a specific query, these are broad, semi-random sweeps across the knowledge graph, pulling up memories based on a mix of recency, relevance, and randomness.
 
 These recalls feed into a self-learning loop. The subconscious processes the recalled memories, looks for patterns, contradictions, and connections, and produces one of several outputs: a proactive insight, an action recommendation, a confirmation of an existing pattern, or a new connection between previously unrelated information.
 
@@ -24,7 +24,7 @@ The subconscious does not generate generic AI outputs. It produces context-speci
 
 It might surface a risk you had not noticed: two team members making contradictory commitments in separate conversations. It might connect a trend in your trading data to a discussion from three weeks ago. It might remind you of a commitment you made that is approaching its deadline, before you think to ask.
 
-The outputs are proactive. You do not need to prompt AlphaHuman to get value from the subconscious. It works in the background, feeding insights into the system that are available when you interact.
+The outputs are proactive. You do not need to prompt OpenHuman to get value from the subconscious. It works in the background, feeding insights into the system that are available when you interact.
 
 #### The mirror test
 

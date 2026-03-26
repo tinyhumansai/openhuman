@@ -1,6 +1,6 @@
 # Telegram Login (Web → Desktop Handoff)
 
-This app implements **Telegram login for the desktop (Tauri) client** using a **system-browser auth flow** plus a **custom URL scheme deep link** (`alphahuman://`) to return control back to the desktop app.
+This app implements **Telegram login for the desktop (Tauri) client** using a **system-browser auth flow** plus a **custom URL scheme deep link** (`openhuman://`) to return control back to the desktop app.
 
 ---
 
@@ -8,10 +8,10 @@ This app implements **Telegram login for the desktop (Tauri) client** using a **
 
 1. **User clicks “Continue with Telegram”** inside the desktop app.
 2. The app opens the system browser to the backend:
-   - `GET ${BACKEND_URL}/auth/telegram-widget?redirect=alphahuman://auth`
+   - `GET ${BACKEND_URL}/auth/telegram-widget?redirect=openhuman://auth`
 3. The backend performs Telegram authentication (bot-based login / OAuth-like flow).
 4. On success, the backend generates a **short-lived single-use `loginToken`** and redirects the browser to:
-   - `alphahuman://auth?token=<loginToken>`
+   - `openhuman://auth?token=<loginToken>`
 5. The OS routes that deep link to the installed desktop app.
 6. The desktop app extracts the `token` from the deep link and exchanges it for a **long-lived `sessionToken`** by calling a Rust Tauri command (bypassing CORS):
    - `POST ${BACKEND_URL}/auth/desktop-exchange` with `{ token }`
@@ -41,7 +41,7 @@ export const BACKEND_URL =
 The URL scheme is declared in `src-tauri/tauri.conf.json`:
 
 ```json
-{ "plugins": { "deep-link": { "desktop": { "schemes": ["alphahuman"] } } } }
+{ "plugins": { "deep-link": { "desktop": { "schemes": ["openhuman"] } } } }
 ```
 
 The deep-link plugin is initialized in `src-tauri/src/lib.rs`:
@@ -78,8 +78,8 @@ import('./utils/desktopDeepLinkListener').then(m => {
 
 The deep link handler:
 
-- Accepts only the `alphahuman:` scheme
-- Requires `alphahuman://auth?token=...`
+- Accepts only the `openhuman:` scheme
+- Requires `openhuman://auth?token=...`
 - Calls the Rust command `exchange_token`
 - Stores `sessionToken` in Redux auth state
 - Redirects to `#/onboarding` (HashRouter)
@@ -92,7 +92,7 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
   try {
     const parsed = new URL(url);
 <<<<<<< HEAD
-    if (parsed.protocol !== 'alphahuman:') return;
+    if (parsed.protocol !== 'openhuman:') return;
     if (parsed.hostname !== 'auth') return;
 =======
     if (parsed.protocol !== "outsourced:") return;
@@ -141,13 +141,13 @@ async fn exchange_token(backend_url: String, token: String) -> Result<serde_json
 
 Your backend must implement **both**:
 
-### A) `GET /auth/telegram-widget?redirect=alphahuman://auth`
+### A) `GET /auth/telegram-widget?redirect=openhuman://auth`
 
 - **Purpose**: start Telegram auth in the user’s browser.
 - **On success**:
   - create/find user
   - mint a **short-lived** `loginToken` (single-use, recommended TTL \(\le 5\) minutes)
-  - redirect to: `alphahuman://auth?token=<loginToken>`
+  - redirect to: `openhuman://auth?token=<loginToken>`
 
 ### B) `POST /auth/desktop-exchange`
 
@@ -180,7 +180,7 @@ Your backend must implement **both**:
 
 ### Backend (required)
 
-- **Implement `GET /auth/telegram?platform=desktop`** and ensure it redirects to `alphahuman://auth?token=...` on success.
+- **Implement `GET /auth/telegram?platform=desktop`** and ensure it redirects to `openhuman://auth?token=...` on success.
 - **Implement `POST /auth/desktop-exchange`** to exchange the login token for a session token.
 - **Enforce security**:
   - `loginToken` is **single-use**
@@ -190,7 +190,7 @@ Your backend must implement **both**:
 ### Desktop app (required for reliable behavior)
 
 - **Ensure the deep-link plugin is configured and permitted**:
-  - `src-tauri/tauri.conf.json` includes `"schemes": ["alphahuman"]`
+  - `src-tauri/tauri.conf.json` includes `"schemes": ["openhuman"]`
   - `src-tauri/capabilities/default.json` includes `"deep-link:default"`
 - **Use a real backend URL**:
   - set `VITE_BACKEND_URL` for dev/prod so `Login.tsx` opens the correct domain
@@ -198,7 +198,7 @@ Your backend must implement **both**:
 ### Desktop app (recommended hardening / cleanup)
 
 - **Validate the deep link target more strictly** in `src/utils/desktopDeepLinkListener.ts`:
-  - today it checks only `parsed.protocol === 'alphahuman:'`
+  - today it checks only `parsed.protocol === 'openhuman:'`
   - recommended: also require `parsed.hostname === 'auth'` (and optionally a known path)
 - **Don’t skip Telegram auth in onboarding**:
   - `src/pages/onboarding/Step1Phone.tsx` currently has a “Continue with Telegram” button that _only navigates_ and does not authenticate.

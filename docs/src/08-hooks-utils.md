@@ -208,7 +208,7 @@ import { buildAuthDeepLink } from '../utils/deeplink';
 
 // Build URL for browser redirect
 const deepLink = buildAuthDeepLink(loginToken);
-// → "alphahuman://auth?token=abc123"
+// → "openhuman://auth?token=abc123"
 
 // In web frontend after auth:
 window.location.href = deepLink;
@@ -235,7 +235,7 @@ import('./utils/desktopDeepLinkListener').then(m => {
 **What it does:**
 
 1. Listens for `onOpenUrl` events from Tauri deep-link plugin
-2. Parses `alphahuman://auth?token=...` URLs
+2. Parses `openhuman://auth?token=...` URLs
 3. Calls Rust `exchange_token` command (bypasses CORS)
 4. Stores session in Redux
 5. Navigates to `/onboarding` or `/home`

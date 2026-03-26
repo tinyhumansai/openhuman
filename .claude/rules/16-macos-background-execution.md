@@ -213,8 +213,8 @@ npm run tauri build -- --debug --bundles app
 Clear WebKit cache if needed:
 
 ```bash
-rm -rf ~/Library/WebKit/com.alphahuman.app
-rm -rf ~/Library/Caches/com.alphahuman.app
+rm -rf ~/Library/WebKit/com.openhuman.app
+rm -rf ~/Library/Caches/com.openhuman.app
 ```
 
 ## Configuration Options

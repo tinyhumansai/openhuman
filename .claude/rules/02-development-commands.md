@@ -116,7 +116,7 @@ adb kill-server                  # Stop ADB server
 adb start-server                 # Restart ADB server
 
 # Force stop app on device:
-adb shell am force-stop com.alphahuman.app
+adb shell am force-stop com.openhuman.app
 
 # Kill Gradle daemon if stuck:
 # macOS/Linux:

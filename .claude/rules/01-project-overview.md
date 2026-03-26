@@ -58,7 +58,7 @@ This project is a **crypto-focused communication platform** built with Tauri v2,
 ## Project Structure
 
 ```
-frontend-runner-alphahuman/
+frontend-runner-openhuman/
 ├── .claude/                # Claude AI configuration
 │   ├── rules/              # Modular documentation
 │   └── agents/             # Subagent configurations
@@ -86,7 +86,7 @@ frontend-runner-alphahuman/
 
 ## Key Configuration Files
 
-- `tauri.conf.json` - Tauri configuration (app identifier: com.alphahuman.app)
+- `tauri.conf.json` - Tauri configuration (app identifier: com.openhuman.app)
 - `Cargo.toml` - Rust dependencies and workspace configuration
 - `package.json` - Node.js dependencies and scripts
 - `vite.config.ts` - Vite build configuration with Node.js polyfills

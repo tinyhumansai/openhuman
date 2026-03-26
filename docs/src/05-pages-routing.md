@@ -366,7 +366,7 @@ import('./utils/desktopDeepLinkListener').then(m => {
 });
 ```
 
-The listener intercepts `alphahuman://auth?token=...` and:
+The listener intercepts `openhuman://auth?token=...` and:
 
 1. Exchanges token via Rust command
 2. Stores session in Redux

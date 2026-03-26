@@ -1,10 +1,10 @@
 # Architecture
 
-AlphaHuman is built on the OpenClaw architecture and open-sourced under the GNU GPL3 license. This page explains how the major components connect.
+OpenHuman is built on the OpenClaw architecture and open-sourced under the GNU GPL3 license. This page explains how the major components connect.
 
 #### The three pillars
 
-AlphaHuman's architecture rests on three pillars that work together:
+OpenHuman's architecture rests on three pillars that work together:
 
 <figure><img src="../.gitbook/assets/V15 — Three Pillars@2x.png" alt=""><figcaption></figcaption></figure>
 
@@ -27,14 +27,14 @@ AlphaHuman's architecture rests on three pillars that work together:
 
 #### Model-agnostic design
 
-AlphaHuman is not locked to any single AI model. The compression engine and memory layer sit on top of the AI infrastructure, not inside it. Today the system works with specific models. Tomorrow it could feed context to any model: GPT, Claude, Gemini, Llama, Mistral, or whatever comes next.
+OpenHuman is not locked to any single AI model. The compression engine and memory layer sit on top of the AI infrastructure, not inside it. Today the system works with specific models. Tomorrow it could feed context to any model: GPT, Claude, Gemini, Llama, Mistral, or whatever comes next.
 
-This is a deliberate architectural choice. AI models are commoditizing. Performance is converging. The real differentiator is the context you feed the model, and AlphaHuman owns the context layer.
+This is a deliberate architectural choice. AI models are commoditizing. Performance is converging. The real differentiator is the context you feed the model, and OpenHuman owns the context layer.
 
 #### Open source
 
-AlphaHuman is publicly available on GitHub under the GNU GPL3 license.
+OpenHuman is publicly available on GitHub under the GNU GPL3 license.
 
-**GitHub:** [github.com/tinyhumansai/alphahuman](https://github.com/tinyhumansai/alphahuman) **Neocortex benchmarks:** [github.com/tinyhumansai/neocortex/tree/main/benchmarks](https://github.com/tinyhumansai/neocortex/tree/main/benchmarks)
+**GitHub:** [github.com/tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman) **Neocortex benchmarks:** [github.com/tinyhumansai/neocortex/tree/main/benchmarks](https://github.com/tinyhumansai/neocortex/tree/main/benchmarks)
 
 Contributions, feedback, and issues are welcomed. The project is in early alpha.

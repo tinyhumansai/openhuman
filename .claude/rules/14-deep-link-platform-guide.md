@@ -2,14 +2,14 @@
 
 ## Overview
 
-The `alphahuman://` custom URL scheme is used to hand off authentication from a web browser to the Tauri desktop app. This document covers platform-specific behavior, gotchas, and build requirements discovered during development.
+The `openhuman://` custom URL scheme is used to hand off authentication from a web browser to the Tauri desktop app. This document covers platform-specific behavior, gotchas, and build requirements discovered during development.
 
 ## Scheme Registration
 
 Configured in `src-tauri/tauri.conf.json`:
 
 ```json
-{ "plugins": { "deep-link": { "desktop": { "schemes": ["alphahuman"] } } } }
+{ "plugins": { "deep-link": { "desktop": { "schemes": ["openhuman"] } } } }
 ```
 
 ## macOS
@@ -50,7 +50,7 @@ cp -R src-tauri/target/debug/bundle/macos/tauri-app.app /Applications/
 open /Applications/tauri-app.app
 
 # Test deep link
-open "alphahuman://auth?token=YOUR_TOKEN"
+open "openhuman://auth?token=YOUR_TOKEN"
 ```
 
 ### Cargo Caching Gotcha
@@ -68,9 +68,9 @@ open "alphahuman://auth?token=YOUR_TOKEN"
 - The macOS WebView (WKWebView) caches aggressively
 - Clear caches when debugging stale content:
   ```bash
-  rm -rf ~/Library/WebKit/com.alphahuman.app
-  rm -rf ~/Library/Caches/com.alphahuman.app
-  rm -rf ~/Library/Application\ Support/com.alphahuman.app
+  rm -rf ~/Library/WebKit/com.openhuman.app
+  rm -rf ~/Library/Caches/com.openhuman.app
+  rm -rf ~/Library/Application\ Support/com.openhuman.app
   ```
 
 ### Debug Builds: Secondary Instance Behavior

@@ -499,7 +499,7 @@ async function handleRequest(req, res) {
       data: [
         {
           id: 'msg-1',
-          subject: 'Welcome to AlphaHuman',
+          subject: 'Welcome to OpenHuman',
           from: 'team@alphahuman.com',
           date: new Date().toISOString(),
           snippet: 'Welcome to the platform!',

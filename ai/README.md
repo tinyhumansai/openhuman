@@ -1,12 +1,12 @@
-# AlphaHuman AI Configuration
+# OpenHuman AI Configuration
 
-This directory contains the AI configuration files that define AlphaHuman's personality, behavior, and capabilities. These files follow the OpenClaw framework pattern for AI agent configuration.
+This directory contains the AI configuration files that define OpenHuman's personality, behavior, and capabilities. These files follow the OpenClaw framework pattern for AI agent configuration.
 
 ## 📁 Configuration Files
 
 ### **SOUL.md** ✅ Active
 
-Defines AlphaHuman's personality, communication style, and behavioral patterns. This is the core file that shapes how the AI interacts with users.
+Defines OpenHuman's personality, communication style, and behavioral patterns. This is the core file that shapes how the AI interacts with users.
 
 - **Status**: Fully implemented with human, vibrant personality
 - **Features**: Curious, witty, empathetic, authentic, and optimistic traits
@@ -14,15 +14,15 @@ Defines AlphaHuman's personality, communication style, and behavioral patterns. 
 
 ### **TOOLS.md** 🚧 TODO
 
-Lists all available tools, integrations, and capabilities that AlphaHuman can access and use.
+Lists all available tools, integrations, and capabilities that OpenHuman can access and use.
 
 - **Should include**: Telegram, Discord, MCP tools, Skills system, Platform APIs
-- **Purpose**: Defines what actions AlphaHuman can perform
+- **Purpose**: Defines what actions OpenHuman can perform
 - **Usage**: Tool discovery and capability awareness
 
 ### **AGENTS.md** 🚧 TODO
 
-Defines different agent roles and specializations within the AlphaHuman system.
+Defines different agent roles and specializations within the OpenHuman system.
 
 - **Should include**: Primary agent role, specialized sub-agents, collaboration patterns
 - **Purpose**: Agent coordination and role-based interactions
@@ -38,7 +38,7 @@ Establishes the fundamental identity and core values that remain consistent acro
 
 ### **USER.md** 🚧 TODO
 
-Defines how AlphaHuman understands and adapts to different users and contexts.
+Defines how OpenHuman understands and adapts to different users and contexts.
 
 - **Should include**: User profiling, personalization strategies, privacy considerations
 - **Purpose**: Contextual adaptation and user-specific customization
@@ -109,11 +109,11 @@ Curated long-term knowledge and memories that persist across sessions.
 
 ## 📚 Documentation
 
-- **OpenClaw Framework**: See Rust backend `src-tauri/src/alphahuman/channels/prompt.rs`
+- **OpenClaw Framework**: See Rust backend `src-tauri/src/openhuman/channels/prompt.rs`
 - **SOUL Injection**: See `src/lib/ai/soul/` for implementation details
 - **Settings UI**: See `src/components/settings/panels/AIPanel.tsx`
 - **Message Flow**: See conversation injection in `src/pages/Conversations.tsx`
 
 ---
 
-**Note**: This is a living configuration system. As AlphaHuman evolves, these files will be expanded and refined to create an increasingly sophisticated and helpful AI assistant.
+**Note**: This is a living configuration system. As OpenHuman evolves, these files will be expanded and refined to create an increasingly sophisticated and helpful AI assistant.

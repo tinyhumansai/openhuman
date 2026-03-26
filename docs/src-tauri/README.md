@@ -2,7 +2,7 @@
 
 ## Overview
 
-This documentation covers the Tauri Rust backend for the AlphaHuman desktop application.
+This documentation covers the Tauri Rust backend for the OpenHuman desktop application.
 
 ## Quick Reference
 
@@ -26,7 +26,7 @@ This documentation covers the Tauri Rust backend for the AlphaHuman desktop appl
 ### Existing Implementation (`lib.rs`)
 
 - ✅ System tray with show/hide/quit
-- ✅ Deep link handling (`alphahuman://` scheme)
+- ✅ Deep link handling (`openhuman://` scheme)
 - ✅ Token exchange command (CORS bypass)
 - ✅ Autostart plugin (macOS LaunchAgent)
 - ✅ Window minimize-to-tray on close (macOS)
@@ -120,7 +120,7 @@ impl SocketService {
 1. User clicks "Login with Telegram" in desktop app
    ↓
 2. App opens system browser to:
-   ${BACKEND_URL}/auth/telegram-widget?redirect=alphahuman://auth
+   ${BACKEND_URL}/auth/telegram-widget?redirect=openhuman://auth
    ↓
 3. Backend serves Telegram Login Widget HTML page
    ↓
@@ -128,7 +128,7 @@ impl SocketService {
    ↓
 5. Telegram callback → Backend validates → Creates loginToken
    ↓
-6. Backend redirects to: alphahuman://auth?token={loginToken}
+6. Backend redirects to: openhuman://auth?token={loginToken}
    ↓
 7. Desktop app catches deep link
    ↓
@@ -153,7 +153,7 @@ Returns HTML page with Telegram Login Widget that redirects to the specified sch
 #[tauri::command]
 async fn start_telegram_login(app: AppHandle) -> Result<(), String> {
     // Open browser to Telegram widget page
-    let url = format!("{}/auth/telegram-widget?redirect=alphahuman://auth", BACKEND_URL);
+    let url = format!("{}/auth/telegram-widget?redirect=openhuman://auth", BACKEND_URL);
     opener::open(&url)?;
     Ok(())
 }
@@ -189,7 +189,7 @@ pub struct SessionService {
 }
 
 impl SessionService {
-    const SERVICE: &'static str = "com.alphahuman.app";
+    const SERVICE: &'static str = "com.openhuman.app";
 
     pub fn store_token(&self, token: &str) -> Result<(), Error>;
     pub fn get_token(&self) -> Result<Option<String>, Error>;

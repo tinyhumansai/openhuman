@@ -4,7 +4,7 @@
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="#FFFFFF">
-    <!-- Simple "A" monogram icon for AlphaHuman notification -->
+    <!-- Simple "A" monogram icon for OpenHuman notification -->
     <path
         android:fillColor="#FFFFFF"
         android:pathData="M12,2L4,20h3.5l1.5,-4h6l1.5,4H20L12,2zM10,14l2,-5.5L14,14h-4z" />

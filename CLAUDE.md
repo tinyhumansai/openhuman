@@ -51,7 +51,7 @@ yarn dev:app
 yarn tauri build
 
 # Debug build with .app bundle (required for deep link testing on macOS)
-# On macOS, alphahuman:// only works when running the .app, not `tauri dev`
+# On macOS, openhuman:// only works when running the .app, not `tauri dev`
 yarn tauri build --debug --bundles app
 yarn macos:dev
 
@@ -133,10 +133,10 @@ Model Context Protocol implementation for AI tool execution over Socket.io:
 
 ### Deep Link Auth Flow
 
-Web-to-desktop handoff using `alphahuman://` URL scheme:
+Web-to-desktop handoff using `openhuman://` URL scheme:
 
 1. User authenticates in browser
-2. Browser redirects to `alphahuman://auth?token=<loginToken>`
+2. Browser redirects to `openhuman://auth?token=<loginToken>`
 3. Tauri catches the deep link, Rust `exchange_token` command calls backend via `reqwest` (bypasses CORS)
 4. Backend returns `sessionToken` + user object
 5. App stores session in Redux, navigates to onboarding/home
@@ -220,7 +220,7 @@ Production defaults are in `src/utils/config.ts`.
 
 ## AI Configuration System
 
-AlphaHuman uses an OpenClaw-compliant AI configuration system that automatically injects persona and tool context into every user message for consistent AI behavior.
+OpenHumanuses an OpenClaw-compliant AI configuration system that automatically injects persona and tool context into every user message for consistent AI behavior.
 
 ### Configuration Files
 
@@ -279,7 +279,7 @@ const toolsMessage = await injectTools(userMessage);
 
 ```
 [PERSONA_CONTEXT]
-I am AlphaHuman: that incredibly smart, funny friend who loves helping people get stuff done
+I am OpenHuman that incredibly smart, funny friend who loves helping people get stuff done
 Personality: Curious & Enthusiastic, Witty & Engaging, Empathetic
 Voice: Conversational, Use humor naturally but don't force it
 [/PERSONA_CONTEXT]
@@ -406,9 +406,9 @@ Key updates from recent commits (cd9ebcd to current):
   - Session capture and transcript management
   - Memory chunking and context formatting
 - **Enhanced CI/CD Pipeline** (`b1d7bce`): Production-ready deployment
-  - XGH_TOKEN authentication for alphahumanxyz/alphahuman releases
+  - XGH_TOKEN authentication for alphahumanxyz/openhuman releases
   - Python sidecar setup and caching for cross-platform builds
-  - Tauri configuration updates (com.alphahuman.app identifier)
+  - Tauri configuration updates (com.openhuman.app identifier)
   - GitHub Pages deployment with optimized workflows
   - Version tagging and environment variable management
 - **Device Detection & Download System** (`9d74721`, `b5bccd2`): Enhanced multi-architecture download support
@@ -496,7 +496,7 @@ Key updates from recent commits (cd9ebcd to current):
 
 ## Platform Gotchas
 
-- **macOS deep links**: Require `.app` bundle (not `tauri dev`). Clear WebKit caches when debugging stale content: `rm -rf ~/Library/WebKit/com.alphahuman.app ~/Library/Caches/com.alphahuman.app`
+- **macOS deep links**: Require `.app` bundle (not `tauri dev`). Clear WebKit caches when debugging stale content: `rm -rf ~/Library/WebKit/com.openhuman.app ~/Library/Caches/com.openhuman.app`
 - **Cargo caching**: May serve stale frontend assets on incremental builds. Run `cargo clean --manifest-path src-tauri/Cargo.toml` if the app shows outdated UI.
 - **`window.__TAURI__`**: Not available at module load time. Use static imports and try/catch around Tauri API calls (not around imports).
 - **Android background services**: RuntimeService requires notification permissions (API 33+) and foreground service type specification (API 34+). Use Android logging (`android_logger`) for debug output in logcat.

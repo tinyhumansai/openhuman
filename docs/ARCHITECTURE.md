@@ -1,8 +1,8 @@
-# AlphaHuman Architecture
+# OpenHuman Architecture
 
 **AI-powered super assistant for crypto communities, built on Rust.**
 
-AlphaHuman is a cross-platform communication and automation platform purpose-built for the cryptocurrency ecosystem. A single React + Rust (Tauri) codebase can target multiple platforms; **what we document and ship for users today is desktop only** — **Windows, macOS, and Linux**. Android, iOS, and web are **not** supported in current docs or releases. The stack includes a sandboxed JavaScript skills engine, persistent Rust-native WebSocket infrastructure, and an AI tool protocol that lets language models invoke any connected service in real time.
+OpenHuman is a cross-platform communication and automation platform purpose-built for the cryptocurrency ecosystem. A single React + Rust (Tauri) codebase can target multiple platforms; **what we document and ship for users today is desktop only** — **Windows, macOS, and Linux**. Android, iOS, and web are **not** supported in current docs or releases. The stack includes a sandboxed JavaScript skills engine, persistent Rust-native WebSocket infrastructure, and an AI tool protocol that lets language models invoke any connected service in real time.
 
 ---
 
@@ -13,7 +13,7 @@ AlphaHuman is a cross-platform communication and automation platform purpose-bui
 **Not supported yet:** Android, iOS, standalone web client (may exist as experimental targets in the repo; do not treat as product-ready).
 
 ```
-                        AlphaHuman (shipping)
+                        OpenHuman (shipping)
                             |
                          Desktop
                     /      |      \
@@ -65,9 +65,9 @@ The frontend communicates with the Rust core through Tauri's IPC bridge — 47+ 
 
 ## Rust-Powered Performance
 
-AlphaHuman chose Tauri + Rust over Electron for fundamental performance and security reasons:
+OpenHuman chose Tauri + Rust over Electron for fundamental performance and security reasons:
 
-| Metric                    | AlphaHuman (Tauri + Rust)      | Typical Electron App         |
+| Metric                    | OpenHuman (Tauri + Rust)       | Typical Electron App         |
 | ------------------------- | ------------------------------ | ---------------------------- |
 | Binary size               | ~30 MB                         | ~150 MB+                     |
 | Memory per skill context  | ~1-2 MB (QuickJS)              | ~150 MB+ (Chromium renderer) |
@@ -76,7 +76,7 @@ AlphaHuman chose Tauri + Rust over Electron for fundamental performance and secu
 | Memory safety             | Compile-time guaranteed        | Runtime exceptions           |
 | TLS implementation        | rustls (no OpenSSL dependency) | Chromium's BoringSSL         |
 
-**Why this matters for a crypto platform**: Traders and analysts run AlphaHuman alongside resource-intensive tools — charting software, multiple browser tabs, trading terminals. A 30 MB footprint with sub-500ms startup means the app feels native and stays out of the way. Zero GC pauses means real-time price feeds and alerts are never delayed by memory management.
+**Why this matters for a crypto platform**: Traders and analysts run OpenHuman alongside resource-intensive tools — charting software, multiple browser tabs, trading terminals. A 30 MB footprint with sub-500ms startup means the app feels native and stays out of the way. Zero GC pauses means real-time price feeds and alerts are never delayed by memory management.
 
 The **Tokio async runtime** drives all I/O — WebSocket connections, HTTP requests, file operations, and inter-skill communication — as non-blocking tasks on a thread pool. Thousands of concurrent operations (skill executions, cron jobs, socket events) share a small fixed set of OS threads.
 
@@ -84,7 +84,7 @@ The **Tokio async runtime** drives all I/O — WebSocket connections, HTTP reque
 
 ## Real-Time Socket Infrastructure
 
-AlphaHuman implements a **dual-socket architecture**: a Rust-native WebSocket client on desktop and a JavaScript Socket.io client on web. The Rust implementation survives app backgrounding, operates independently of the WebView, and handles TLS via rustls.
+OpenHuman implements a **dual-socket architecture**: a Rust-native WebSocket client on desktop and a JavaScript Socket.io client on web. The Rust implementation survives app backgrounding, operates independently of the WebView, and handles TLS via rustls.
 
 ```
 Desktop Mode:                          Web Mode:
@@ -119,7 +119,7 @@ The socket connection is **shared across all skills**. When events arrive, the s
 
 ## Skills Runtime Engine
 
-AlphaHuman's defining capability is its **sandboxed JavaScript execution engine** running inside the Rust process. Skills are lightweight automation scripts that extend the platform with custom tools, integrations, and scheduled tasks.
+OpenHuman's defining capability is its **sandboxed JavaScript execution engine** running inside the Rust process. Skills are lightweight automation scripts that extend the platform with custom tools, integrations, and scheduled tasks.
 
 ```
 +---------------------------------------------------------------+
@@ -188,7 +188,7 @@ Skills are synced from a GitHub repository and discovered at runtime. Platform f
 
 ## AI & Tool Protocol (MCP)
 
-AlphaHuman implements the **Model Context Protocol** — a JSON-RPC 2.0 layer over Socket.io that lets AI models discover and invoke tools exposed by skills.
+OpenHuman implements the **Model Context Protocol** — a JSON-RPC 2.0 layer over Socket.io that lets AI models discover and invoke tools exposed by skills.
 
 ```
 User Prompt

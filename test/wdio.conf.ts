@@ -17,9 +17,9 @@ function getAppPath(): string {
 
   switch (process.platform) {
     case 'darwin':
-      return path.join(base, 'macos', 'AlphaHuman.app');
+      return path.join(base, 'macos', 'OpenHuman.app');
     case 'win32':
-      return path.join('src-tauri', 'target', 'debug', 'AlphaHuman.exe');
+      return path.join('src-tauri', 'target', 'debug', 'OpenHuman.exe');
     case 'linux':
       return path.join('src-tauri', 'target', 'debug', 'alpha-human');
     default:

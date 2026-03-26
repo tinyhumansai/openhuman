@@ -105,7 +105,7 @@ MCP System:
 ### Authentication Flow (Deep Link)
 
 1. User authenticates in browser → receives `loginToken`
-2. Browser redirects to `alphahuman://auth?token=<loginToken>`
+2. Browser redirects to `openhuman://auth?token=<loginToken>`
 3. Desktop app catches deep link via Tauri plugin
 4. `desktopDeepLinkListener` invokes Rust `exchange_token` command
 5. Rust calls backend `POST /auth/desktop-exchange` (CORS-free)

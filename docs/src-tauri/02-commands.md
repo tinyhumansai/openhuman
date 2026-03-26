@@ -151,7 +151,7 @@ Open Telegram login widget in browser.
 
 ```typescript
 await invoke("start_telegram_login");
-// Opens ${DEFAULT_BACKEND_URL}/auth/telegram-widget?redirect=alphahuman://auth
+// Opens ${DEFAULT_BACKEND_URL}/auth/telegram-widget?redirect=openhuman://auth
 ```
 
 ### `start_telegram_login_with_url`

@@ -262,7 +262,7 @@ describe('Login flow — complete with mock data', () => {
       'Good morning',
       'Good afternoon',
       'Good evening',
-      'Message AlphaHuman',
+      'Message OpenHuman',
       'Upgrade to Premium',
     ];
 

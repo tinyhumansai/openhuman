@@ -183,7 +183,7 @@ describe('OpenClaw Formatter', () => {
       const result = generateOpenClawMarkdown(tools);
 
       // Check main sections
-      expect(result).toContain('# AlphaHuman Tools');
+      expect(result).toContain('# OpenHuman Tools');
       expect(result).toContain('## Overview');
       expect(result).toContain('## Environment Configuration');
       expect(result).toContain('## Tool Categories');
