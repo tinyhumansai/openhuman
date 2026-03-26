@@ -7,13 +7,13 @@
  * Matches the Rust backend's `build_system_prompt()` approach exactly:
  * each file is injected as a `### FILENAME` section within `## Project Context`.
  */
-import agentsMd from '../../../ai/AGENTS.md?raw';
-import bootstrapMd from '../../../ai/BOOTSTRAP.md?raw';
-import identityMd from '../../../ai/IDENTITY.md?raw';
-import memoryMd from '../../../ai/MEMORY.md?raw';
-import soulMd from '../../../ai/SOUL.md?raw';
-import toolsMd from '../../../ai/TOOLS.md?raw';
-import userMd from '../../../ai/USER.md?raw';
+import agentsMd from '../../../src-tauri/ai/AGENTS.md?raw';
+import bootstrapMd from '../../../src-tauri/ai/BOOTSTRAP.md?raw';
+import identityMd from '../../../src-tauri/ai/IDENTITY.md?raw';
+import memoryMd from '../../../src-tauri/ai/MEMORY.md?raw';
+import soulMd from '../../../src-tauri/ai/SOUL.md?raw';
+import toolsMd from '../../../src-tauri/ai/TOOLS.md?raw';
+import userMd from '../../../src-tauri/ai/USER.md?raw';
 
 const MAX_CHARS = 20_000;
 

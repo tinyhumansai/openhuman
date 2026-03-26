@@ -1,4 +1,4 @@
-import toolsMd from '../../../../ai/TOOLS.md?raw';
+import toolsMd from '../../../../src-tauri/ai/TOOLS.md?raw';
 import type {
   SkillGroup,
   ToolCategory,

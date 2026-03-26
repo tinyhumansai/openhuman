@@ -32,7 +32,7 @@ export default defineConfig({
     mockReset: true,
     restoreMocks: true,
     setupFiles: ["src/test/setup.ts"],
-    include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.{js,ts}"],
+    include: ["src/**/*.test.{ts,tsx}"],
     hookTimeout: 30000,
     testTimeout: 30000,
     coverage: {

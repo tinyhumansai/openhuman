@@ -21,7 +21,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '../..');
-const AI_DIR = join(PROJECT_ROOT, 'ai');
+const AI_DIR = join(PROJECT_ROOT, 'src-tauri', 'ai');
 const TOOLS_OUTPUT = join(AI_DIR, 'TOOLS.md');
 
 // Environment categories for OpenClaw compatibility
