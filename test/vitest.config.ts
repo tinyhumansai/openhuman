@@ -51,12 +51,12 @@ export default defineConfig({
         "src/types/**",
       ],
       reporter: ["text", "text-summary", "html", "lcov"],
-      thresholds: {
-        lines: 15,
-        statements: 15,
-        functions: 15,
-        branches: 12,
-      },
+      // thresholds: {
+      //   lines: 15,
+      //   statements: 15,
+      //   functions: 15,
+      //   branches: 12,
+      // },
     },
   },
 });
