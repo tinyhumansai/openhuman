@@ -27,17 +27,17 @@ impl MemoryClient {
             log::warn!("[memory] from_token: exit — token is empty, returning None");
             return None;
         }
-        let config = match std::env::var("ALPHAHUMAN_BASE_URL")
+        let config = if let Ok(base_url) = std::env::var("ALPHAHUMAN_BASE_URL")
             .or_else(|_| std::env::var("TINYHUMANS_BASE_URL"))
         {
-            Ok(base_url) => {
-                log::info!("[memory] from_token: constructing client (base_url={base_url})");
-                TinyHumanConfig::new(jwt_token).with_base_url(base_url)
-            }
-            Err(_) => {
-                log::warn!("[memory] from_token: constructing client (base_url=<sdk default>)");
-                TinyHumanConfig::new(jwt_token)
-            }
+            log::info!("[memory] from_token: constructing client (base_url={base_url}, source=memory_env)");
+            TinyHumanConfig::new(jwt_token).with_base_url(base_url)
+        } else {
+            let backend_url = crate::utils::config::get_backend_url();
+            log::info!(
+                "[memory] from_token: constructing client (base_url={backend_url}, source=app_backend_url)"
+            );
+            TinyHumanConfig::new(jwt_token).with_base_url(backend_url)
         };
         match TinyHumansMemoryClient::new(config) {
             Ok(inner) => {
@@ -236,6 +236,59 @@ impl MemoryClient {
             response.is_some()
         );
         Ok(response)
+    }
+
+    /// List all ingested memory documents as returned by the API.
+    pub async fn list_documents(&self) -> Result<serde_json::Value, String> {
+        self.inner
+            .list_documents()
+            .await
+            .map_err(|e| format!("Memory list documents failed: {e}"))
+    }
+
+    /// Delete a specific document from a namespace.
+    pub async fn delete_document(&self, document_id: &str, namespace: &str) -> Result<serde_json::Value, String> {
+        self.inner
+            .delete_document(document_id, namespace)
+            .await
+            .map_err(|e| format!("Memory delete document failed: {e}"))
+    }
+
+    /// Query memory context by namespace directly.
+    pub async fn query_namespace_context(
+        &self,
+        namespace: &str,
+        query: &str,
+        max_chunks: u32,
+    ) -> Result<String, String> {
+        let res = self
+            .inner
+            .query_memory(QueryMemoryParams {
+                query: query.to_string(),
+                namespace: Some(namespace.to_string()),
+                max_chunks: Some(f64::from(max_chunks)),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("Memory query failed: {e}"))?;
+        Ok(res.data.response.unwrap_or_default())
+    }
+
+    /// Recall memory context by namespace directly.
+    pub async fn recall_namespace_context(
+        &self,
+        namespace: &str,
+        max_chunks: u32,
+    ) -> Result<Option<String>, String> {
+        let res = self
+            .inner
+            .recall_memory(RecallMemoryParams {
+                namespace: Some(namespace.to_string()),
+                max_chunks: Some(f64::from(max_chunks)),
+            })
+            .await
+            .map_err(|e| format!("Memory recall failed: {e}"))?;
+        Ok(res.data.response)
     }
 
     /// Delete all memories for a skill integration (e.g. on OAuth revoke).

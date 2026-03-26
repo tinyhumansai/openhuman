@@ -189,6 +189,58 @@ export async function syncMemoryClientToken(token: string): Promise<void> {
   }
 }
 
+export interface MemoryDebugDocument {
+  documentId: string;
+  namespace: string;
+  title?: string;
+  raw: unknown;
+}
+
+export async function memoryListDocuments(namespace?: string): Promise<unknown> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('memory_list_documents', { namespace });
+}
+
+export async function memoryListNamespaces(): Promise<string[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('memory_list_namespaces');
+}
+
+export async function memoryDeleteDocument(
+  documentId: string,
+  namespace: string
+): Promise<unknown> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('memory_delete_document', { documentId, namespace });
+}
+
+export async function memoryQueryNamespace(
+  namespace: string,
+  query: string,
+  maxChunks?: number
+): Promise<string> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('memory_query_namespace', { namespace, query, maxChunks });
+}
+
+export async function memoryRecallNamespace(
+  namespace: string,
+  maxChunks?: number
+): Promise<string | null> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('memory_recall_namespace', { namespace, maxChunks });
+}
+
 // --- Alphahuman Commands ---
 
 export type DoctorSeverity = 'Ok' | 'Warn' | 'Error';

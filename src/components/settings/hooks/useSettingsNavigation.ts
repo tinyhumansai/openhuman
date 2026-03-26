@@ -12,7 +12,9 @@ export type SettingsRoute =
   | 'team'
   | 'team-members'
   | 'team-invites'
-  | 'ai';
+  | 'ai'
+  | 'tauri-commands'
+  | 'memory-debug';
 
 interface SettingsNavigationHook {
   currentRoute: SettingsRoute;
@@ -44,6 +46,8 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/advanced')) return 'advanced';
     if (path.includes('/settings/billing')) return 'billing';
     if (path.includes('/settings/ai')) return 'ai';
+    if (path.includes('/settings/tauri-commands')) return 'tauri-commands';
+    if (path.includes('/settings/memory-debug')) return 'memory-debug';
     return 'home';
   };
 

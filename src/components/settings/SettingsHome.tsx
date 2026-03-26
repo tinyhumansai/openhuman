@@ -2,23 +2,39 @@ import { useState } from 'react';
 
 import { skillManager } from '../../lib/skills/manager';
 import { persistor } from '../../store';
+import { clearToken } from '../../store/authSlice';
+import { useAppDispatch } from '../../store/hooks';
 import { IS_DEV } from '../../utils/config';
+import { logout as tauriLogout } from '../../utils/tauriCommands';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
 import { useSettingsNavigation } from './hooks/useSettingsNavigation';
 
 const SettingsHome = () => {
   const { navigateToSettings } = useSettingsNavigation();
+  const dispatch = useAppDispatch();
   const [showLogoutAndClearModal, setShowLogoutAndClearModal] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleLogout = async () => {
-    // Simple logout without clearing data - redirect to login
-    window.location.href = '/login';
+    await dispatch(clearToken());
+    try {
+      await tauriLogout();
+    } catch (err) {
+      console.warn('[Settings] Rust logout failed:', err);
+    }
+    window.location.hash = '/login';
   };
 
   const clearAllAppData = async () => {
+    await dispatch(clearToken());
+    try {
+      await tauriLogout();
+    } catch (err) {
+      console.warn('[Settings] Rust logout failed during clearAllAppData:', err);
+    }
+
     await persistor.purge();
     window.localStorage.clear();
     window.sessionStorage.clear();
@@ -32,7 +48,7 @@ const SettingsHome = () => {
     }
 
     // Complete reset - redirect to login for fresh start
-    window.location.href = '/login';
+    window.location.hash = '/login';
   };
 
   const handleLogoutAndClearData = async () => {
@@ -258,6 +274,24 @@ const SettingsHome = () => {
         </svg>
       ),
       onClick: () => navigateToSettings('tauri-commands'),
+      dangerous: false,
+    },
+    {
+      id: 'memory-debug',
+      title: 'Memory Debug',
+      description: 'Inspect memory documents, namespaces, and test query/recall',
+      devOnly: true,
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('memory-debug'),
       dangerous: false,
     },
   ];

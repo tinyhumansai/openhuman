@@ -845,6 +845,11 @@ pub fn run() {
                     init_memory_client,
                     memory_query,
                     recall_memory,
+                    memory_list_documents,
+                    memory_list_namespaces,
+                    memory_delete_document,
+                    memory_query_namespace,
+                    memory_recall_namespace,
                     // Chat commands (agentic conversation loop)
                     chat_send,
                     chat_cancel,
@@ -969,6 +974,11 @@ pub fn run() {
                     init_memory_client,
                     memory_query,
                     recall_memory,
+                    memory_list_documents,
+                    memory_list_namespaces,
+                    memory_delete_document,
+                    memory_query_namespace,
+                    memory_recall_namespace,
                     // Chat commands (agentic conversation loop)
                     chat_send,
                     chat_cancel,

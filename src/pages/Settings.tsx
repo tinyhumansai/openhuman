@@ -6,6 +6,7 @@ import AIPanel from '../components/settings/panels/AIPanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
+import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
 import ProfilePanel from '../components/settings/panels/ProfilePanel';
 import SkillsPanel from '../components/settings/panels/SkillsPanel';
@@ -37,6 +38,7 @@ const Settings = () => {
         <Route path="team/members" element={<TeamMembersPanel />} />
         <Route path="team/invites" element={<TeamInvitesPanel />} />
         <Route path="tauri-commands" element={<TauriCommandsPanel />} />
+        <Route path="memory-debug" element={<MemoryDebugPanel />} />
       </Routes>
     </div>
   );

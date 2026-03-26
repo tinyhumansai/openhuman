@@ -14,7 +14,7 @@ import storage from 'redux-persist/lib/storage';
 
 import { setStoreForApiClient } from '../services/apiClient';
 import { IS_DEV } from '../utils/config';
-import { storeSession } from '../utils/tauriCommands';
+import { storeSession, syncMemoryClientToken } from '../utils/tauriCommands';
 import aiReducer from './aiSlice';
 import authReducer, { setOnboardedForUser, setToken } from './authSlice';
 import daemonReducer from './daemonSlice';
@@ -70,6 +70,9 @@ const syncTokenToRust: Middleware = () => next => action => {
     // Pass a minimal user object — the token is what matters for SESSION_SERVICE
     storeSession(token, { id: '' }).catch(err =>
       console.warn('[syncTokenToRust] Failed to sync token:', err)
+    );
+    syncMemoryClientToken(token).catch(err =>
+      console.warn('[syncTokenToRust] Failed to sync memory token:', err)
     );
   };
 
