@@ -73,6 +73,6 @@ jobs:
         run: cd skills && yarn install --frozen-lockfile
 
       - name: Build Tauri app
-        run: yarn tauri build -c '{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}' -- --target x86_64-unknown-linux-gnu
+        run: yarn tauri build --bundles none -- --target x86_64-unknown-linux-gnu
         env:
           NODE_ENV: production
