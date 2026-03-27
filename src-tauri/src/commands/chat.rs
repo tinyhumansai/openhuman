@@ -209,6 +209,11 @@ impl ChatState {
 static AI_CONFIG_CACHE: once_cell::sync::Lazy<parking_lot::RwLock<Option<String>>> =
     once_cell::sync::Lazy::new(|| parking_lot::RwLock::new(None));
 
+/// Clear cached OpenClaw context (used after AI config file updates).
+pub fn clear_openclaw_context_cache() {
+    *AI_CONFIG_CACHE.write() = None;
+}
+
 /// Load all AI config files and build the OpenClaw context string.
 ///
 /// Tries these locations in order:

@@ -317,9 +317,38 @@ const Conversations = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rustChat]);
 
-  const selectedThreadToolTimeline = selectedThreadId
-    ? (toolTimelineByThread[selectedThreadId] ?? [])
-    : [];
+  const handleSelectThread = (threadId: string) => {
+    if (threadId === selectedThreadId) return;
+    navigate(`/conversations/${threadId}`, { replace: true });
+  };
+
+  const handleNewThread = () => {
+    const threadId = crypto.randomUUID();
+    dispatch(
+      createThreadLocal({
+        id: threadId,
+        title: 'New Conversation',
+        createdAt: new Date().toISOString(),
+      })
+    );
+    navigate(`/conversations/${threadId}`, { replace: true });
+  };
+
+  const handleDeleteThread = (threadId: string) => {
+    dispatch(deleteThreadLocal(threadId));
+    setConfirmDeleteId(null);
+    if (threadId === selectedThreadId) {
+      navigate('/conversations', { replace: true });
+    }
+  };
+
+  const handlePurge = async () => {
+    const result = await dispatch(purgeThreads());
+    if (purgeThreads.fulfilled.match(result)) {
+      setShowPurgeConfirm(false);
+      navigate('/conversations', { replace: true });
+    }
+  };
 
   const handleSendMessage = async (text?: string) => {
     const normalized = text ?? inputValue;
@@ -359,6 +388,14 @@ const Conversations = () => {
     setToolTimelineByThread(prev => ({ ...prev, [sendingThreadId]: [] }));
     dispatch(setActiveThread(sendingThreadId));
 
+    if (!rustChat) {
+      setSendError('Chat is only available in the Tauri runtime.');
+      setIsSending(false);
+      dispatch(setActiveThread(null));
+      return;
+    }
+
+    // ── Rust path ────────────────────────────────────────────────────────
     try {
       const chatMessages = historySnapshot.map(m => ({
         role: m.sender === 'user' ? 'user' : 'assistant',
@@ -389,7 +426,10 @@ const Conversations = () => {
         messages: chatMessages,
         notionContext: notionCtx,
       });
+
+      // setIsSending(false) and setActiveThread(null) happen in the onDone/onError event handlers
     } catch (err) {
+      // invoke() itself failed (the chat loop reports errors via events)
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(msg);
       setIsSending(false);

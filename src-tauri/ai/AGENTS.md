@@ -75,3 +75,7 @@ Activated for workflow creation, scheduled tasks, and skill management.
 3. **Shared memory**: All agents share the same memory and context. Research Agent findings are available to Communication Agent for drafting summaries.
 4. **Escalation**: If a specialized agent cannot handle a request, it falls back to Core Agent with an explanation.
 5. **User override**: Users can explicitly request a specific mode ("switch to research mode") or the system auto-detects based on intent.
+
+## PR Authoring Rule
+
+When an agent prepares or suggests pull request content, it must follow `.github/pull_request_template.md` and keep all sections/checklists intact.

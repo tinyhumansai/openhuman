@@ -1,6 +1,5 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 
-import { injectOpenClawContext } from '../lib/ai/openclaw-injector';
 import { threadApi } from '../services/api/threadApi';
 import type { Thread, ThreadMessage } from '../types/thread';
 
@@ -98,18 +97,10 @@ export const sendMessage = createAsyncThunk(
     try {
       dispatch(addMessageLocal({ threadId, message: userMessage }));
 
-      // 2. Inject OpenClaw context (all 7 workspace files as raw markdown)
-      let processedMessage = message;
-      try {
-        processedMessage = injectOpenClawContext(message);
-      } catch (injectionError) {
-        console.warn('[OpenClaw] Injection failed in sendMessage thunk:', injectionError);
-      }
+      // 2. Send plain message - orchestration and context injection happen in Rust.
+      const data = await threadApi.sendMessage(message, threadId);
 
-      // 3. Send to API with processed message (injection already done above)
-      const data = await threadApi.sendMessage(processedMessage, threadId);
-
-      // 4. For now, we'll handle AI response via the existing inference API
+      // 3. For now, we'll handle AI response via the existing inference API
       // The AI response will be added separately via addInferenceResponse
 
       return data;

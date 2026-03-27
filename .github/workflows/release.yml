@@ -326,7 +326,9 @@ jobs:
           # to copy/sign inside release app bundles.
           # Build/package only the app binary to keep standalone CLI bins
           # out of the signed macOS app bundle.
-          args: -c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }} -- --bin OpenHuman
+          # Yarn v1 strips one "--" layer when invoking scripts.
+          # Keep a second separator so `--bin OpenHuman` reaches cargo.
+          args: -c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }} -- -- --bin OpenHuman
           includeDebug: false
           includeRelease: true
           releaseId: ${{ needs.create-release.outputs.release_id }}

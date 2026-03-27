@@ -5,8 +5,6 @@
  */
 import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 
-import { injectOpenClawContext } from '../lib/ai/openclaw-injector';
-
 // Check if we're running in Tauri
 export const isTauri = (): boolean => {
   // Tauri v2: prefer the official runtime check over window globals.
@@ -258,6 +256,31 @@ export type IntegrationCategory =
   | 'Platform';
 export type ModelRefreshSource = 'Live' | 'CacheFresh' | 'CacheStaleFallback';
 export type ServiceState = 'Running' | 'Stopped' | 'NotInstalled' | { Unknown: string };
+
+export interface AIPreview {
+  soul: {
+    raw: string;
+    name: string;
+    description: string;
+    personalityPreview: string[];
+    safetyRulesPreview: string[];
+    loadedAt: number;
+  };
+  tools: {
+    raw: string;
+    totalTools: number;
+    activeSkills: number;
+    skillsPreview: string[];
+    loadedAt: number;
+  };
+  metadata: {
+    loadedAt: number;
+    loadingDuration: number;
+    hasFallbacks: boolean;
+    sources: { soul: string; tools: string };
+    errors: string[];
+  };
+}
 export type HardwareTransport = 'Native' | 'Serial' | 'Probe' | 'None';
 
 export interface CommandResponse<T> {
@@ -486,19 +509,26 @@ export async function openhumanAgentChat(
     throw new Error('Not running in Tauri');
   }
 
-  let processedMessage = message;
-  try {
-    processedMessage = injectOpenClawContext(message);
-  } catch (error) {
-    console.warn('[OpenClaw] Injection failed in agentChat:', error);
-  }
-
   return await invoke('openhuman_agent_chat', {
-    message: processedMessage,
+    message,
     providerOverride,
     modelOverride,
     temperature,
   });
+}
+
+export async function aiGetConfig(): Promise<AIPreview> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('ai_get_config');
+}
+
+export async function aiRefreshConfig(): Promise<AIPreview> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('ai_refresh_config');
 }
 
 export async function openhumanEncryptSecret(plaintext: string): Promise<CommandResponse<string>> {

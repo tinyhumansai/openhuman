@@ -5,7 +5,6 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import ErrorReportNotification from './components/ErrorReportNotification';
 import './index.css';
-import { startToolsFileWatcher } from './lib/tools/file-watcher';
 import './polyfills';
 import { initSentry } from './services/analytics';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
@@ -17,9 +16,6 @@ initSentry();
 setupDesktopDeepLinkListener().catch(err => {
   console.error('[DeepLink] setup error:', err);
 });
-
-// Start file watcher for automatic TOOLS.md cache invalidation
-startToolsFileWatcher();
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
