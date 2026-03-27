@@ -3,8 +3,7 @@
 //! These commands expose the RuntimeEngine to the frontend WebView
 //! and serve as the bridge between the ephemeral UI and the persistent runtime.
 //!
-//! Note: V8 runtime is only available on desktop platforms.
-//! On mobile, these commands return appropriate errors or empty results.
+//! Note: V8 runtime is desktop-only in this host.
 
 use crate::models::socket::SocketState;
 use crate::runtime::socket_manager::SocketManager;
@@ -14,33 +13,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
 
-// Desktop-only imports
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::runtime::qjs_engine::RuntimeEngine;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::runtime::types::{SkillSnapshot, ToolResult};
-
-// Mobile stub types
-#[cfg(any(target_os = "android", target_os = "ios"))]
-use serde::{Deserialize, Serialize};
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillSnapshot {
-    pub id: String,
-    pub name: String,
-    pub state: String,
-    pub tools: Vec<serde_json::Value>,
-    pub error: Option<String>,
-}
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub content: Vec<serde_json::Value>,
-    #[serde(rename = "isError")]
-    pub is_error: bool,
-}
 
 // =============================================================================
 // ZeroClaw Format Compatibility Types
@@ -69,10 +43,9 @@ pub struct ZeroClawToolResult {
 }
 
 // =============================================================================
-// Desktop implementations (V8 available)
+// Runtime command implementations
 // =============================================================================
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod desktop {
     use super::*;
 
@@ -528,149 +501,6 @@ mod desktop {
 }
 
 // =============================================================================
-// Mobile stub implementations (V8 not available)
-// =============================================================================
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-mod mobile {
-    use super::*;
-
-    const MOBILE_ERROR: &str = "V8 skill runtime is not available on mobile platforms";
-
-    #[tauri::command]
-    pub async fn runtime_discover_skills() -> Result<Vec<serde_json::Value>, String> {
-        // Return empty list on mobile
-        Ok(vec![])
-    }
-
-    #[tauri::command]
-    pub async fn runtime_list_skills() -> Result<Vec<SkillSnapshot>, String> {
-        Ok(vec![])
-    }
-
-    #[tauri::command]
-    pub async fn runtime_start_skill(_skill_id: String) -> Result<SkillSnapshot, String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_stop_skill(_skill_id: String) -> Result<(), String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_get_skill_state(
-        _skill_id: String,
-    ) -> Result<Option<SkillSnapshot>, String> {
-        Ok(None)
-    }
-
-    #[tauri::command]
-    pub async fn runtime_call_tool(
-        _skill_id: String,
-        _tool_name: String,
-        _arguments: serde_json::Value,
-    ) -> Result<ToolResult, String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_all_tools() -> Result<Vec<serde_json::Value>, String> {
-        Ok(vec![])
-    }
-
-    #[tauri::command]
-    pub async fn runtime_broadcast_event(
-        _event: String,
-        _data: serde_json::Value,
-    ) -> Result<(), String> {
-        // Silent no-op on mobile
-        Ok(())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_enable_skill(_skill_id: String) -> Result<(), String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_disable_skill(_skill_id: String) -> Result<(), String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_is_skill_enabled(_skill_id: String) -> Result<bool, String> {
-        Ok(false)
-    }
-
-    #[tauri::command]
-    pub async fn runtime_get_skill_preferences() -> Result<serde_json::Value, String> {
-        Ok(serde_json::json!({}))
-    }
-
-    #[tauri::command]
-    pub async fn runtime_skill_kv_get(
-        _skill_id: String,
-        _key: String,
-    ) -> Result<serde_json::Value, String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_skill_kv_set(
-        _skill_id: String,
-        _key: String,
-        _value: serde_json::Value,
-    ) -> Result<(), String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_rpc(
-        _skill_id: String,
-        _method: String,
-        _params: serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_skill_data_read(
-        _skill_id: String,
-        _filename: String,
-    ) -> Result<String, String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_skill_data_write(
-        _skill_id: String,
-        _filename: String,
-        _content: String,
-    ) -> Result<(), String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_skill_data_dir(_skill_id: String) -> Result<String, String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn runtime_get_tool_schemas() -> Result<Vec<ZeroClawToolSchema>, String> {
-        Ok(vec![])
-    }
-
-    #[tauri::command]
-    pub async fn runtime_execute_tool(
-        _tool_id: String,
-        _args: serde_json::Value,
-    ) -> Result<ZeroClawToolResult, String> {
-        Err(MOBILE_ERROR.to_string())
-    }
-}
-
-// =============================================================================
 // Socket.io commands (available on all platforms)
 // =============================================================================
 
@@ -713,14 +543,10 @@ pub async fn runtime_socket_emit(
 }
 
 // =============================================================================
-// Re-exports based on platform
+// Re-exports
 // =============================================================================
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use desktop::*;
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub use mobile::*;
 
 // =============================================================================
 // Tests
@@ -731,7 +557,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     mod desktop_tests {
         use super::*;
         use crate::runtime::qjs_engine::RuntimeEngine;
@@ -907,30 +732,6 @@ mod tests {
             assert_eq!(params["type"], "object");
             assert!(params["properties"].is_object());
             assert!(params["required"].is_array());
-        }
-    }
-
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    mod mobile_tests {
-        use super::*;
-
-        #[tokio::test]
-        async fn test_mobile_stub_runtime_get_tool_schemas() {
-            let result = mobile::runtime_get_tool_schemas().await;
-
-            // Mobile should return empty list with helpful error
-            assert!(result.is_err());
-            assert!(result.unwrap_err().contains("not available on mobile"));
-        }
-
-        #[tokio::test]
-        async fn test_mobile_stub_runtime_execute_tool() {
-            let result =
-                mobile::runtime_execute_tool("test_tool".to_string(), "{}".to_string()).await;
-
-            // Mobile should return error
-            assert!(result.is_err());
-            assert!(result.unwrap_err().contains("not available on mobile"));
         }
     }
 

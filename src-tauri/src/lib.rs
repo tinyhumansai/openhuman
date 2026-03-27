@@ -591,7 +591,6 @@ async fn watch_daemon_health_file(app_handle: AppHandle, data_dir: PathBuf) {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(err) = rustls::crypto::ring::default_provider().install_default() {
         log::warn!(
@@ -604,16 +603,7 @@ pub fn run() {
 
     let daemon_mode = is_daemon_mode();
 
-    // Initialize platform-appropriate logger
-    #[cfg(target_os = "android")]
-    {
-        android_logger::init_once(
-            android_logger::Config::default()
-                .with_max_level(log::LevelFilter::Debug)
-                .with_tag("OpenHuman"),
-        );
-    }
-    #[cfg(not(target_os = "android"))]
+    // Initialize logger
     {
         use env_logger::fmt::style::{AnsiColor, Style};
         use std::io::Write;
@@ -765,8 +755,7 @@ pub fn run() {
             );
             socket_mgr.set_app_handle(app.handle().clone());
 
-            // Initialize QuickJS Runtime Engine (desktop only - not available on Android/iOS)
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            // Initialize QuickJS Runtime Engine
             {
                 let data_dir = app
                     .path()
@@ -824,18 +813,7 @@ pub fn run() {
                 }
             }
 
-            #[cfg(target_os = "android")]
-            {
-                log::info!("[runtime] QuickJS runtime disabled on Android");
-            }
-
-            #[cfg(target_os = "ios")]
-            {
-                log::info!("[runtime] QuickJS runtime disabled on iOS");
-            }
-
-            // Start the openhuman daemon supervisor (desktop only)
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            // Start the openhuman daemon supervisor
             {
                 let data_dir = app
                     .path()
@@ -915,7 +893,6 @@ pub fn run() {
             }
 
             // Start/ensure standalone core process for business logic RPC.
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let core_handle = core_process::CoreProcessHandle::new(
                     core_process::default_core_port(),
@@ -942,7 +919,7 @@ pub fn run() {
             app.manage(crate::memory::MemoryState(std::sync::Mutex::new(None)));
             log::info!("[memory] Memory state registered — awaiting JWT from frontend");
 
-            // Spawn conscious loop periodic timer (desktop only; mobile skips inside the fn)
+            // Spawn conscious loop periodic timer
             let app_for_conscious = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 commands::conscious_loop::conscious_loop_timer(app_for_conscious).await;
@@ -1118,139 +1095,6 @@ pub fn run() {
                     conscious_loop_run,
                 ]
             }
-            #[cfg(not(desktop))]
-            {
-                tauri::generate_handler![
-                    // Common handlers (expanded from common_handlers! macro)
-                    greet,
-                    // AI config file writing
-                    write_ai_config_file,
-                    ai_get_config,
-                    ai_refresh_config,
-                    get_auth_state,
-                    get_session_token,
-                    get_current_user,
-                    is_authenticated,
-                    logout,
-                    store_session,
-                    socket_connect,
-                    socket_disconnect,
-                    get_socket_state,
-                    is_socket_connected,
-                    report_socket_connected,
-                    report_socket_disconnected,
-                    report_socket_error,
-                    update_socket_status,
-                    // AI encryption commands
-                    ai_init_encryption,
-                    ai_encrypt,
-                    ai_decrypt,
-                    // AI memory filesystem commands
-                    ai_memory_init,
-                    ai_memory_upsert_file,
-                    ai_memory_get_file,
-                    ai_memory_upsert_chunk,
-                    ai_memory_delete_chunks_by_path,
-                    ai_memory_fts_search,
-                    ai_memory_get_chunks,
-                    ai_memory_get_all_embeddings,
-                    ai_memory_cache_embedding,
-                    ai_memory_get_cached_embedding,
-                    ai_memory_set_meta,
-                    ai_memory_get_meta,
-                    // AI session commands
-                    ai_sessions_init,
-                    ai_sessions_load_index,
-                    ai_sessions_update_index,
-                    ai_sessions_append_transcript,
-                    ai_sessions_read_transcript,
-                    ai_sessions_delete,
-                    ai_sessions_list,
-                    ai_read_memory_file,
-                    ai_write_memory_file,
-                    ai_list_memory_files,
-                    // Runtime commands
-                    runtime_discover_skills,
-                    runtime_list_skills,
-                    runtime_start_skill,
-                    runtime_stop_skill,
-                    runtime_get_skill_state,
-                    runtime_call_tool,
-                    runtime_all_tools,
-                    runtime_get_tool_schemas,
-                    runtime_execute_tool,
-                    runtime_broadcast_event,
-                    // Runtime enable/disable + KV commands
-                    runtime_enable_skill,
-                    runtime_disable_skill,
-                    runtime_is_skill_enabled,
-                    runtime_get_skill_preferences,
-                    runtime_skill_kv_get,
-                    runtime_skill_kv_set,
-                    // Runtime JSON-RPC + data commands
-                    runtime_rpc,
-                    runtime_skill_data_read,
-                    runtime_skill_data_write,
-                    runtime_skill_data_dir,
-                    // Socket.io commands (Rust-native persistent connection)
-                    runtime_socket_connect,
-                    runtime_socket_disconnect,
-                    runtime_socket_state,
-                    runtime_socket_emit,
-                    // Telegram commands removed (unified system eliminated as per user request)
-                    // Model commands (backend API proxy)
-                    model_summarize,
-                    model_generate,
-                    // OpenHuman commands
-                    openhuman_health_snapshot,
-                    openhuman_security_policy_info,
-                    openhuman_encrypt_secret,
-                    openhuman_decrypt_secret,
-                    openhuman_get_config,
-                    openhuman_update_model_settings,
-                    openhuman_update_memory_settings,
-                    openhuman_update_gateway_settings,
-                    openhuman_update_tunnel_settings,
-                    openhuman_update_runtime_settings,
-                    openhuman_update_browser_settings,
-                    openhuman_get_runtime_flags,
-                    openhuman_set_browser_allow_all,
-                    openhuman_agent_chat,
-                    openhuman_doctor_report,
-                    openhuman_doctor_models,
-                    openhuman_list_integrations,
-                    openhuman_get_integration_info,
-                    openhuman_models_refresh,
-                    openhuman_migrate_openclaw,
-                    openhuman_hardware_discover,
-                    openhuman_hardware_introspect,
-                    openhuman_service_install,
-                    openhuman_service_start,
-                    openhuman_service_stop,
-                    openhuman_service_status,
-                    openhuman_service_uninstall,
-                    openhuman_agent_server_status,
-                    // Unified skill registry commands (mobile stubs)
-                    unified_list_skills,
-                    unified_execute_skill,
-                    unified_generate_skill,
-                    unified_self_evolve_skill,
-                    // Memory commands (TinyHumans Neocortex)
-                    init_memory_client,
-                    memory_query,
-                    recall_memory,
-                    memory_list_documents,
-                    memory_list_namespaces,
-                    memory_delete_document,
-                    memory_query_namespace,
-                    memory_recall_namespace,
-                    // Chat commands (agentic conversation loop)
-                    chat_send,
-                    chat_cancel,
-                    // Conscious loop (mobile stub — returns error)
-                    conscious_loop_run,
-                ]
-            }
         })
         .build({
             let mut context = tauri::generate_context!();
@@ -1271,7 +1115,6 @@ pub fn run() {
                 }
 
                 // Gracefully shut down background services before process exit.
-                #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 RunEvent::Exit => {
                     log::info!("[app] Exit event received, shutting down");
 

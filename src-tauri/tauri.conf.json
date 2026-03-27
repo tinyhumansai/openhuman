@@ -41,6 +41,9 @@
       "../skills/skills",
       "../rust-core/ai"
     ],
+    "externalBin": [
+      "binaries/openhuman-core"
+    ],
     "createUpdaterArtifacts": true,
     "macOS": {
       "minimumSystemVersion": "10.15",

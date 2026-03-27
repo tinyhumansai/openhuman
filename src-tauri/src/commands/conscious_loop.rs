@@ -151,7 +151,6 @@ fn load_conscious_prompt(app: &tauri::AppHandle) -> String {
 // ─── Core logic ───────────────────────────────────────────────────────────────
 
 /// Inner implementation — runs one conscious loop pass.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub async fn conscious_loop_run_inner(
     app: tauri::AppHandle,
     auth_token: String,
@@ -473,7 +472,6 @@ pub async fn conscious_loop_run_inner(
 // ─── Tauri command ────────────────────────────────────────────────────────────
 
 /// Manually trigger a conscious loop run from the frontend.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 pub async fn conscious_loop_run(
     app: tauri::AppHandle,
@@ -503,19 +501,6 @@ pub async fn conscious_loop_run(
     });
 
     Ok(())
-}
-
-/// Mobile stub — conscious loop is desktop-only (requires V8 runtime for skill IDs).
-#[cfg(any(target_os = "android", target_os = "ios"))]
-#[tauri::command]
-pub async fn conscious_loop_run(
-    _app: tauri::AppHandle,
-    _auth_token: String,
-    _backend_url: String,
-    _model: Option<String>,
-    _memory_state: tauri::State<'_, MemoryState>,
-) -> Result<(), String> {
-    Err("Conscious loop is not supported on mobile".to_string())
 }
 
 // ─── Periodic timer ───────────────────────────────────────────────────────────
@@ -578,16 +563,7 @@ pub async fn conscious_loop_timer(app: tauri::AppHandle) {
         let model = std::env::var("OPENHUMAN_CONSCIOUS_MODEL")
             .unwrap_or_else(|_| DEFAULT_MODEL.to_string());
 
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            log::info!("[conscious_loop] Timer: firing periodic run");
-            conscious_loop_run_inner(app.clone(), auth_token, backend_url, model, memory_client)
-                .await;
-        }
-
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        {
-            log::info!("[conscious_loop] Timer: skipping on mobile platform");
-        }
+        log::info!("[conscious_loop] Timer: firing periodic run");
+        conscious_loop_run_inner(app.clone(), auth_token, backend_url, model, memory_client).await;
     }
 }

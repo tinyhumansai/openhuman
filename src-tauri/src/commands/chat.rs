@@ -362,7 +362,6 @@ fn is_read_tool(name: &str) -> bool {
 /// Build OpenAI-format tool definitions from the Rust skill registry.
 /// Tool names are namespaced as `{skill_id}__{tool_name}`.
 /// Read-only tools are excluded — their data comes from the memory layer (Step 2 context recall).
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn discover_tools(engine: &crate::runtime::qjs_engine::RuntimeEngine) -> Vec<serde_json::Value> {
     engine
         .all_tools()
@@ -401,7 +400,6 @@ fn parse_tool_name(full_name: &str) -> (String, String) {
 ///
 /// Returns `Ok(())` immediately after spawning; the result is delivered via
 /// `chat:done` or `chat:error` Tauri events.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[tauri::command]
 pub async fn chat_send(
     app: tauri::AppHandle,
@@ -465,64 +463,6 @@ pub async fn chat_send(
     Ok(())
 }
 
-/// Mobile stub — tool execution is not supported on Android/iOS.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-#[tauri::command]
-pub async fn chat_send(
-    app: tauri::AppHandle,
-    thread_id: String,
-    message: String,
-    model: String,
-    auth_token: String,
-    backend_url: String,
-    messages: Vec<ChatMessagePayload>,
-    notion_context: Option<String>,
-    memory_state: tauri::State<'_, MemoryState>,
-    chat_state: tauri::State<'_, Arc<ChatState>>,
-) -> Result<(), String> {
-    // Register cancellation token for this thread
-    let cancel = chat_state.register(&thread_id);
-
-    let app_clone = app.clone();
-    let thread_id_clone = thread_id.clone();
-    let chat_state_arc = chat_state.inner().clone();
-
-    let memory_client: Option<crate::memory::MemoryClientRef> = {
-        match memory_state.0.lock() {
-            Ok(guard) => guard.clone(),
-            Err(e) => {
-                log::warn!("[chat] Failed to lock memory state: {e}");
-                None
-            }
-        }
-    };
-
-    tauri::async_runtime::spawn(async move {
-        let result = chat_send_mobile(
-            &app_clone,
-            &thread_id_clone,
-            &message,
-            &model,
-            &auth_token,
-            &backend_url,
-            messages,
-            notion_context,
-            memory_client,
-            &cancel,
-        )
-        .await;
-
-        chat_state_arc.remove(&thread_id_clone);
-
-        if let Err(e) = result {
-            // chat_send_mobile already emits chat:error for known error paths.
-            // Only log here to avoid duplicate error events.
-            log::error!("[chat] chat_send_mobile failed: {e}");
-        }
-    });
-
-    Ok(())
-}
 
 /// Cancel an in-flight `chat_send` request by thread ID.
 /// Returns `true` if a request was found and cancelled, `false` otherwise.
@@ -535,7 +475,6 @@ pub fn chat_cancel(thread_id: String, chat_state: tauri::State<'_, Arc<ChatState
 // ─── Inner implementation (desktop) ──────────────────────────────────────────
 
 /// Agentic loop — runs in a background task on desktop.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn chat_send_inner(
     app: &tauri::AppHandle,
     thread_id: &str,
@@ -1175,227 +1114,3 @@ async fn chat_send_inner(
     Ok(())
 }
 
-// ─── Inner implementation (mobile) ───────────────────────────────────────────
-
-/// Simplified agentic loop for mobile — no tool execution, just a single inference call.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-async fn chat_send_mobile(
-    app: &tauri::AppHandle,
-    thread_id: &str,
-    user_message: &str,
-    model: &str,
-    auth_token: &str,
-    backend_url: &str,
-    history: Vec<ChatMessagePayload>,
-    notion_context: Option<String>,
-    memory_client: Option<crate::memory::MemoryClientRef>,
-    cancel: &CancellationToken,
-) -> Result<(), String> {
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .build()
-        .map_err(|e| {
-            let msg = format!("Failed to build HTTP client: {}", e);
-            let _ = app.emit(
-                "chat:error",
-                ChatErrorEvent {
-                    thread_id: thread_id.to_string(),
-                    message: msg.clone(),
-                    error_type: "network".to_string(),
-                    round: None,
-                },
-            );
-            msg
-        })?;
-
-    // ── Step 1: Load AI context ─────────────────────────────────────────
-    let openclaw_context = load_openclaw_context(app);
-
-    // ── Step 2: Recall memory context ───────────────────────────────────
-    let memory_context: Option<String> = if let Some(ref mem) = memory_client {
-        match mem
-            .recall_skill_context("conversations", thread_id, 10)
-            .await
-        {
-            Ok(ctx) => ctx,
-            Err(e) => {
-                log::warn!("[chat] Memory recall failed: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // ── Step 3: Build processed user message ────────────────────────────
-    let mut processed = user_message.to_string();
-
-    if !openclaw_context.is_empty() {
-        processed = format!("{}\n\nUser message: {}", openclaw_context, processed);
-    }
-
-    if let Some(ref mem) = memory_context {
-        processed = format!(
-            "[MEMORY_CONTEXT]\n{}\n[/MEMORY_CONTEXT]\n\n{}",
-            mem, processed
-        );
-    }
-
-    if let Some(ref notion) = notion_context {
-        processed = format!("{}\n\n{}", notion, processed);
-    }
-
-    // ── Step 4: Build messages array ─────────────────────────────────────
-    let mut messages: Vec<serde_json::Value> = history
-        .iter()
-        .map(|m| {
-            let mut obj = serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-            });
-            if let Some(ref tc) = m.tool_calls {
-                obj["tool_calls"] = serde_json::to_value(tc).unwrap_or_default();
-            }
-            if let Some(ref id) = m.tool_call_id {
-                obj["tool_call_id"] = serde_json::Value::String(id.clone());
-            }
-            obj
-        })
-        .collect();
-
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": processed,
-    }));
-
-    if cancel.is_cancelled() {
-        return Err("Request cancelled".to_string());
-    }
-
-    let request_body = serde_json::json!({
-        "model": model,
-        "messages": messages,
-    });
-
-    log::info!(
-        "[chat] Mobile inference: model={}, msgs={}",
-        model,
-        messages.len()
-    );
-    log::info!(
-        "[chat] Request body: {}",
-        serde_json::to_string_pretty(&request_body).unwrap_or_default()
-    );
-
-    let response = tokio::select! {
-        _ = cancel.cancelled() => {
-            let _ = app.emit("chat:error", ChatErrorEvent {
-                thread_id: thread_id.to_string(),
-                message: "Request cancelled".to_string(),
-                error_type: "cancelled".to_string(),
-                round: Some(0),
-            });
-            return Err("Request cancelled".to_string());
-        }
-        result = tokio::time::timeout(
-            std::time::Duration::from_secs(INFERENCE_TIMEOUT_SECS),
-            client
-                .post(format!("{}/openai/v1/chat/completions", backend_url))
-                .header("Authorization", format!("Bearer {}", auth_token))
-                .header("Content-Type", "application/json")
-                .json(&request_body)
-                .send()
-        ) => {
-            match result {
-                Ok(Ok(resp)) => resp,
-                Ok(Err(e)) => {
-                    let msg = format!("Network error: {}", e);
-                    let _ = app.emit("chat:error", ChatErrorEvent {
-                        thread_id: thread_id.to_string(),
-                        message: msg.clone(),
-                        error_type: "network".to_string(),
-                        round: Some(0),
-                    });
-                    return Err(msg);
-                }
-                Err(_) => {
-                    let msg = format!(
-                        "Inference request timed out after {}s",
-                        INFERENCE_TIMEOUT_SECS
-                    );
-                    let _ = app.emit("chat:error", ChatErrorEvent {
-                        thread_id: thread_id.to_string(),
-                        message: msg.clone(),
-                        error_type: "timeout".to_string(),
-                        round: Some(0),
-                    });
-                    return Err(msg);
-                }
-            }
-        }
-    };
-
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        let msg = format!("Backend returned HTTP {}: {}", status, body);
-        let _ = app.emit(
-            "chat:error",
-            ChatErrorEvent {
-                thread_id: thread_id.to_string(),
-                message: msg.clone(),
-                error_type: "inference".to_string(),
-                round: Some(0),
-            },
-        );
-        return Err(msg);
-    }
-
-    let completion: ChatCompletionResponse = response.json().await.map_err(|e| {
-        let msg = format!("Failed to parse inference response: {}", e);
-        let _ = app.emit(
-            "chat:error",
-            ChatErrorEvent {
-                thread_id: thread_id.to_string(),
-                message: msg.clone(),
-                error_type: "inference".to_string(),
-                round: None,
-            },
-        );
-        msg
-    })?;
-
-    let (total_input_tokens, total_output_tokens) = completion
-        .usage
-        .map(|u| (u.prompt_tokens, u.completion_tokens))
-        .unwrap_or((0, 0));
-
-    let choice = completion.choices.first().ok_or_else(|| {
-        let msg = "No choices in inference response".to_string();
-        let _ = app.emit(
-            "chat:error",
-            ChatErrorEvent {
-                thread_id: thread_id.to_string(),
-                message: msg.clone(),
-                error_type: "inference".to_string(),
-                round: None,
-            },
-        );
-        msg
-    })?;
-
-    let full_response = choice.message.content.clone().unwrap_or_default();
-
-    let _ = app.emit(
-        "chat:done",
-        ChatDoneEvent {
-            thread_id: thread_id.to_string(),
-            full_response,
-            rounds_used: 1,
-            total_input_tokens,
-            total_output_tokens,
-        },
-    );
-
-    Ok(())
-}
