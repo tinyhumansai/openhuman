@@ -110,7 +110,7 @@ const TauriCommandsPanel = () => {
 
   // Enhanced System Configuration state management
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [originalConfig, setOriginalConfig] = useState<Record<string, any>>({});
+  const [originalConfig, setOriginalConfig] = useState<Record<string, unknown>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
   const [validationLoading, setValidationLoading] = useState(false);

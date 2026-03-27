@@ -20,7 +20,7 @@ export interface ChatMessage {
 export interface ToolFunction {
   name: string;
   description: string;
-  parameters: any;
+  parameters: Record<string, unknown>;
 }
 
 export interface Tool {

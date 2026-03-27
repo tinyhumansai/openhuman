@@ -1,6 +1,6 @@
 import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
-import { intelligenceApi } from '../services/intelligenceApi';
+import { intelligenceApi, type ConnectedTool } from '../services/intelligenceApi';
 import type {
   ActionableItem,
   ActionableItemSource,
@@ -38,7 +38,7 @@ export interface ExecutionState {
     status: 'pending' | 'in_progress' | 'completed' | 'failed';
     timestamp?: Date;
   }>;
-  result?: any;
+  result?: unknown;
   error?: string;
 }
 
@@ -182,7 +182,7 @@ export const createChatSession = createAsyncThunk(
 export const executeTask = createAsyncThunk(
   'intelligence/executeTask',
   async (
-    { itemId, connectedTools }: { itemId: string; connectedTools: any[] },
+    { itemId, connectedTools }: { itemId: string; connectedTools: ConnectedTool[] },
     { rejectWithValue }
   ) => {
     try {
@@ -324,7 +324,7 @@ export const intelligenceSlice = createSlice({
       state,
       action: PayloadAction<{
         executionId: string;
-        result: any;
+        result: unknown;
         status: 'completed' | 'failed';
         error?: string;
       }>

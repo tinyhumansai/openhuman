@@ -8,12 +8,16 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 
-import type { AgentToolExecution, AgentToolSchema, IAgentToolRegistry } from '../types/agent';
+import type {
+  AgentToolExecution,
+  AgentToolSchema,
+  IAgentToolRegistry,
+} from '../types/agent';
 
 // ZeroClaw format types from Rust
 interface ZeroClawToolSchema {
   type: string;
-  function: { name: string; description: string; parameters: any };
+  function: { name: string; description: string; parameters: Record<string, unknown> };
 }
 
 interface ZeroClawToolResult {
@@ -75,7 +79,7 @@ export class AgentToolRegistry implements IAgentToolRegistry {
           function: {
             name: tool.function.name,
             description: tool.function.description,
-            parameters: tool.function.parameters,
+            parameters: tool.function.parameters as AgentToolSchema['function']['parameters'],
           },
         }));
 

@@ -17,7 +17,7 @@ interface RuntimeToolResponse {
   tool: {
     name: string;
     description: string;
-    input_schema: { type: string; properties: Record<string, any>; required?: string[] };
+    input_schema: { type: string; properties: Record<string, unknown>; required?: string[] };
   };
 }
 
@@ -175,8 +175,9 @@ ${Object.entries(toolsBySkill)
         for (const [paramName, paramDef] of Object.entries(properties)) {
           const isRequired = required.includes(paramName);
           const requiredText = isRequired ? ' **(required)**' : '';
-          const type = (paramDef as any).type || 'any';
-          const description = (paramDef as any).description || 'No description';
+          const def = paramDef as { type?: string; description?: string };
+          const type = def.type || 'any';
+          const description = def.description || 'No description';
           content.push(`- **${paramName}** (${type})${requiredText}: ${description}`);
         }
       } else {
@@ -186,9 +187,9 @@ ${Object.entries(toolsBySkill)
       content.push('\n**Usage Context**: Available in all environments\n');
 
       // Generate example usage
-      const exampleParams: Record<string, any> = {};
+      const exampleParams: Record<string, unknown> = {};
       for (const [paramName, paramDef] of Object.entries(properties)) {
-        const type = (paramDef as any).type;
+        const type = (paramDef as { type?: string }).type;
         exampleParams[paramName] = getExampleValue(paramName, type);
       }
 
@@ -244,7 +245,7 @@ function formatSkillName(skillId: string): string {
 /**
  * Generate example value for a parameter
  */
-function getExampleValue(paramName: string, type: string): any {
+function getExampleValue(paramName: string, type: string | undefined): unknown {
   switch (type) {
     case 'string':
       return `example_${paramName}`;

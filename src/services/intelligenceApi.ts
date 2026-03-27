@@ -49,7 +49,7 @@ export interface BackendExecutionResponse {
 export interface ConnectedTool {
   name: string;
   description: string;
-  parameters: Record<string, any>;
+  parameters: Record<string, unknown>;
   skillId: string;
   enabled: boolean;
 }
@@ -151,13 +151,17 @@ export class IntelligenceApiService {
    */
   async getExecutionStatus(
     executionId: string
-  ): Promise<{ status: 'running' | 'completed' | 'failed'; progress?: any[]; result?: any }> {
+  ): Promise<{
+    status: 'running' | 'completed' | 'failed';
+    progress?: Array<Record<string, unknown>>;
+    result?: unknown;
+  }> {
     try {
       const response = await apiClient.get(`/executions/${executionId}/status`);
       return response as {
         status: 'running' | 'completed' | 'failed';
-        progress?: any[];
-        result?: any;
+        progress?: Array<Record<string, unknown>>;
+        result?: unknown;
       };
     } catch (error) {
       console.error('Failed to get execution status:', error);

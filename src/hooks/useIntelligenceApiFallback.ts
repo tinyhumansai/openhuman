@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { MOCK_ACTIONABLE_ITEMS } from '../components/intelligence/mockData';
 import { type ConnectedTool, intelligenceApi } from '../services/intelligenceApi';
-import type { ActionableItem, ActionableItemStatus } from '../types/intelligence';
+import type { ActionableItem, ActionableItemStatus, ChatMessage } from '../types/intelligence';
 import {
   transformBackendItemsToFrontend,
   transformBackendMessagesToFrontend,
@@ -140,7 +140,7 @@ export const useSnoozeActionableItem = (): UseSnoozeActionableItemResult => {
 };
 
 interface UseChatSessionResult {
-  data: { threadId: string; messages: any[] } | null;
+  data: { threadId: string; messages: ChatMessage[] } | null;
   loading: boolean;
   error: string | null;
 }
@@ -149,7 +149,7 @@ interface UseChatSessionResult {
  * Hook for creating or getting chat session (fallback version)
  */
 export const useChatSession = (itemId: string | null): UseChatSessionResult => {
-  const [data, setData] = useState<{ threadId: string; messages: any[] } | null>(null);
+  const [data, setData] = useState<{ threadId: string; messages: ChatMessage[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

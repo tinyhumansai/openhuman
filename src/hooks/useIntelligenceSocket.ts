@@ -19,7 +19,7 @@ interface ProcessMessagePayload {
   message: string;
   threadId: string;
   sessionId?: string;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 interface AgentResponsePayload {
@@ -27,8 +27,8 @@ interface AgentResponsePayload {
   threadId: string;
   sessionId?: string;
   shouldExecute?: boolean;
-  executionPlan?: any;
-  metadata?: Record<string, any>;
+  executionPlan?: unknown;
+  metadata?: Record<string, unknown>;
 }
 
 interface ExecutionProgressPayload {
@@ -52,16 +52,16 @@ interface ExecutionCompletePayload {
   executionId: string;
   sessionId: string;
   status: 'completed' | 'failed';
-  result?: any;
+  result?: unknown;
   error?: string;
   artifacts?: Array<{ type: string; url: string; title: string; description?: string }>;
 }
 
 interface ChatInitPayload {
-  tools: any[];
+  tools: Record<string, unknown>[];
   threadId: string;
   sessionId?: string;
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -69,7 +69,7 @@ interface ChatInitPayload {
  */
 function isTauri(): boolean {
   try {
-    return (window as any)?.__TAURI__ !== undefined;
+    return typeof window !== 'undefined' && '__TAURI__' in window;
   } catch {
     return false;
   }

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- intentional global polyfill assignments */
 // Polyfill Node.js globals for browser (required by telegram package)
 // This must be imported FIRST before any other imports that use Node.js APIs
 import * as util from 'util';

@@ -2,7 +2,7 @@
  * Test utilities — provides a renderWithProviders helper that wraps
  * components in a fresh Redux store + MemoryRouter for isolated testing.
  */
-import { configureStore } from '@reduxjs/toolkit';
+import { combineReducers, configureStore } from '@reduxjs/toolkit';
 import { render, type RenderOptions } from '@testing-library/react';
 import type { PropsWithChildren, ReactElement } from 'react';
 import { Provider } from 'react-redux';
@@ -17,16 +17,16 @@ import userReducer from '../store/userSlice';
  * Creates a fresh Redux store for testing.
  * Uses raw (non-persisted) reducers to avoid persist complexity in tests.
  */
+const testRootReducer = combineReducers({
+  auth: authReducer,
+  socket: socketReducer,
+  user: userReducer,
+  team: teamReducer,
+});
+
 export function createTestStore(preloadedState?: Record<string, unknown>) {
   return configureStore({
-    // Cast reducer map to any to avoid strict typing issues in the test environment.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    reducer: {
-      auth: authReducer,
-      socket: socketReducer,
-      user: userReducer,
-      team: teamReducer,
-    } as unknown as any,
+    reducer: testRootReducer,
     preloadedState: preloadedState as never,
   });
 }

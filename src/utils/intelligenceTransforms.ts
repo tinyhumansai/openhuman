@@ -95,7 +95,7 @@ export function transformMCPToConnectedTools(mcpTools: MCPTool[]): ConnectedTool
     return {
       name: toolName || tool.name,
       description: tool.description,
-      parameters: tool.inputSchema || {},
+      parameters: (tool.inputSchema || {}) as unknown as Record<string, unknown>,
       skillId: skillId || 'unknown',
       enabled: true,
     };
@@ -116,18 +116,18 @@ export function transformConnectedToolsToMCP(connectedTools: ConnectedTool[]): M
 /**
  * Validate actionable item data from backend
  */
-export function validateBackendItem(item: any): item is BackendActionableItem {
+export function validateBackendItem(item: unknown): item is BackendActionableItem {
+  if (typeof item !== 'object' || item === null) return false;
+  const o = item as Record<string, unknown>;
   return (
-    typeof item === 'object' &&
-    item !== null &&
-    typeof item.id === 'string' &&
-    typeof item.title === 'string' &&
-    typeof item.source === 'string' &&
-    typeof item.priority === 'string' &&
-    typeof item.status === 'string' &&
-    typeof item.createdAt === 'string' &&
-    typeof item.updatedAt === 'string' &&
-    typeof item.actionable === 'boolean'
+    typeof o.id === 'string' &&
+    typeof o.title === 'string' &&
+    typeof o.source === 'string' &&
+    typeof o.priority === 'string' &&
+    typeof o.status === 'string' &&
+    typeof o.createdAt === 'string' &&
+    typeof o.updatedAt === 'string' &&
+    typeof o.actionable === 'boolean'
   );
 }
 

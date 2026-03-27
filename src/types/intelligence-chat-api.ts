@@ -39,7 +39,7 @@ export type WorkflowType =
 export interface CreateChatSessionRequest {
   actionable_item_id: string;
   user_id: string;
-  context: { item_type: WorkflowType; metadata: Record<string, any> };
+  context: { item_type: WorkflowType; metadata: Record<string, unknown> };
 }
 
 export interface CreateChatSessionResponse {
@@ -50,7 +50,7 @@ export interface CreateChatSessionResponse {
       content: string;
       type: MessageType;
       options: string[];
-      context: Record<string, any>;
+      context: Record<string, unknown>;
     };
     expected_flow: ConversationFlow[];
   };
@@ -62,7 +62,7 @@ export interface ChatMessage {
   sender: 'ai' | 'user';
   timestamp: string; // ISO 8601
   type: MessageType;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ChatSessionDetails {
@@ -70,7 +70,7 @@ export interface ChatSessionDetails {
   status: SessionStatus;
   current_flow: ConversationFlow;
   messages: ChatMessage[];
-  context: Record<string, any>;
+  context: Record<string, unknown>;
   execution_id?: string;
 }
 
@@ -78,7 +78,7 @@ export interface SendMessageRequest {
   content: string;
   sender: 'user';
   current_flow: ConversationFlow;
-  context: Record<string, any>;
+  context: Record<string, unknown>;
 }
 
 export interface SendMessageResponse {
@@ -89,7 +89,7 @@ export interface SendMessageResponse {
       type: MessageType;
       next_flow: ConversationFlow;
       options: string[];
-      metadata: Record<string, any>;
+      metadata: Record<string, unknown>;
     };
     should_execute: boolean;
     execution_plan?: ExecutionPlan;
@@ -107,7 +107,7 @@ export interface ExecutionStep {
   started_at?: string; // ISO 8601
   completed_at?: string; // ISO 8601
   progress_percentage?: number;
-  result?: Record<string, any>;
+  result?: Record<string, unknown>;
 }
 
 export interface ExecutionPlan {
@@ -120,7 +120,7 @@ export interface ExecutionPlan {
 export interface StartExecutionRequest {
   execution_plan_id: string;
   confirmed: true;
-  modifications?: Record<string, any>;
+  modifications?: Record<string, unknown>;
 }
 
 export interface StartExecutionResponse {
@@ -160,12 +160,12 @@ export interface Artifact {
   title: string;
   url: string;
   created_at: string; // ISO 8601
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
 }
 
 // ===== WebSocket Event Types =====
 
-export interface WebSocketMessage<T = any> {
+export interface WebSocketMessage<T = unknown> {
   type: string;
   data: T;
   timestamp?: string; // ISO 8601
@@ -175,7 +175,7 @@ export interface WebSocketMessage<T = any> {
 export interface ChatTool {
   name: string;
   description: string;
-  inputSchema: { type: 'object'; properties: Record<string, any>; required?: string[] };
+  inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] };
 }
 
 // Client → Server Events
@@ -234,7 +234,7 @@ export interface ErrorEvent {
     session_id: string;
     error_code: ErrorCode;
     message: string;
-    details: Record<string, any>;
+    details: Record<string, unknown>;
     retry_after?: number;
   };
 }
@@ -256,12 +256,12 @@ export type ErrorCode =
 export interface APIError {
   code: ErrorCode;
   message: string;
-  details: Record<string, any>;
+  details: Record<string, unknown>;
 }
 
 // ===== Standard API Response Envelope =====
 
-export interface APIResponse<T = any> {
+export interface APIResponse<T = unknown> {
   success: boolean;
   data: T | null;
   error: APIError | null;
@@ -292,7 +292,7 @@ export interface MeetingPrepWorkflow {
 export interface MeetingPrepStep {
   step: 'fetch_gmail' | 'access_notion' | 'analyze_context' | 'consolidate_docs' | 'generate_link';
   action: string;
-  params: Record<string, any>;
+  params: Record<string, unknown>;
 }
 
 // ===== Service Integration Types =====
@@ -332,34 +332,36 @@ export interface SessionMetrics {
 
 // ===== Type Guards =====
 
-export function isWebSocketMessage<T>(obj: any): obj is WebSocketMessage<T> {
-  return typeof obj === 'object' && obj !== null && typeof obj.type === 'string' && 'data' in obj;
+export function isWebSocketMessage<T>(obj: unknown): obj is WebSocketMessage<T> {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return typeof o.type === 'string' && 'data' in o;
 }
 
-export function isAPIResponse<T>(obj: any): obj is APIResponse<T> {
+export function isAPIResponse<T>(obj: unknown): obj is APIResponse<T> {
   return (
     typeof obj === 'object' &&
     obj !== null &&
-    typeof obj.success === 'boolean' &&
-    ('data' in obj || 'error' in obj) &&
-    'meta' in obj
+    typeof (obj as { success?: unknown }).success === 'boolean' &&
+    ('data' in (obj as object) || 'error' in (obj as object)) &&
+    'meta' in (obj as object)
   );
 }
 
-export function isExecutionStepProgressEvent(obj: any): obj is ExecutionStepProgressEvent {
+export function isExecutionStepProgressEvent(obj: unknown): obj is ExecutionStepProgressEvent {
+  if (!isWebSocketMessage(obj) || obj.type !== 'execution_step_progress') return false;
+  const d = obj.data;
   return (
-    isWebSocketMessage(obj) &&
-    obj.type === 'execution_step_progress' &&
-    typeof obj.data === 'object' &&
-    obj.data !== null &&
-    'step_id' in obj.data &&
-    'progress_percentage' in obj.data
+    typeof d === 'object' &&
+    d !== null &&
+    'step_id' in d &&
+    'progress_percentage' in d
   );
 }
 
 // ===== Utility Types =====
 
-export type ChatEventHandler<T = any> = (event: WebSocketMessage<T>) => void;
+export type ChatEventHandler<T = unknown> = (event: WebSocketMessage<T>) => void;
 
 export interface ChatClientConfig {
   websocket_url: string;

@@ -56,7 +56,9 @@ const SectionCard: React.FC<SectionCardProps> = ({
             {loading ? (
               <div className="h-5 w-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
             ) : (
-              React.cloneElement(icon, { className: 'h-5 w-5' } as any)
+              React.cloneElement(icon as React.ReactElement<{ className?: string }>, {
+                className: 'h-5 w-5',
+              })
             )}
           </div>
           <div className="flex items-center gap-2">
