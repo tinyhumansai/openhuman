@@ -466,6 +466,8 @@ Key updates from recent commits (cd9ebcd to current):
 - **Repository visibility**: The project is public.
 - **Push target**: Pushes should go to your working branch in the public repository (or your fork if your access model requires it).
 - **PR target**: Open pull requests against the public upstream repository, targeting the **`main`** branch.
+- **PR template required**: Use `.github/pull_request_template.md` for all pull requests.
+- **AI tooling rule**: Any AI-generated PR description must follow the template sections in order and keep all checklist items.
 
 ## Key Patterns
 
