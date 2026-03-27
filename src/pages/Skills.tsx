@@ -202,7 +202,6 @@ export default function Skills() {
   useEffect(() => {
     const loadSkills = async () => {
       try {
-
         const manifests = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
         const ALLOWED_SKILLS = new Set(['gmail', 'notion']);
         const validManifests = manifests.filter(m => {
