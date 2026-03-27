@@ -26,7 +26,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: 'yarn'
 
       - name: Cache node modules
         id: yarn-cache
@@ -112,7 +112,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: "yarn"
+          cache: 'yarn'
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -134,7 +134,7 @@ jobs:
       - name: Build E2E app bundle
         run: yarn test:e2e:build
         env:
-          E2E_SKIP_CARGO_CLEAN: "1"
+          E2E_SKIP_CARGO_CLEAN: '1'
 
       - name: Run all E2E flows
         run: yarn test:e2e:all:flows
