@@ -305,7 +305,7 @@ jobs:
           # macOS 10.15+ required for std::filesystem used by llama.cpp
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
         with:
-          args: '-c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }} -- -- --bin OpenHuman'
+          args: '-c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}'
           includeDebug: ${{ needs.get-version.outputs.should-publish == '' && inputs.forceRelease != 'true' }}
           includeRelease: ${{ needs.get-version.outputs.should-publish != '' || inputs.forceRelease == 'true' }}
           # TDLib dylibs are now bundled natively via build.rs + tauri.conf.json macOS.frameworks

@@ -5,6 +5,7 @@ description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
 default-run = "OpenHuman"
+autobins = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -19,15 +20,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 name = "OpenHuman"
 path = "src/main.rs"
 
-[[bin]]
-name = "openhuman-core"
-path = "src/bin/openhuman-core.rs"
-required-features = ["standalone-bins"]
-
-[[bin]]
-name = "openhuman-cli"
-path = "src/bin/openhuman-cli.rs"
-required-features = ["standalone-bins"]
+# NOTE: openhuman-core and openhuman-cli bin entries are NOT declared here.
+# Tauri's bundler and Cargo auto-discover src/bin/*.rs as binary targets,
+# so the standalone sources live in src/standalone/ to avoid bundling.
+# The standalone bins are built separately in release.yml by temporarily
+# injecting [[bin]] entries before `cargo build --features standalone-bins`.
+# Source files: src/standalone/openhuman-core.rs, src/standalone/openhuman-cli.rs
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -328,7 +328,7 @@ jobs:
           # the desktop UI app binary is packaged.
           # Yarn v1 strips one "--" layer when invoking scripts, hence the
           # double-separator when forwarding flags to Cargo.
-          args: -c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }} -- -- --bin OpenHuman
+          args: -c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}
           includeDebug: false
           includeRelease: true
           releaseId: ${{ needs.create-release.outputs.release_id }}
@@ -350,6 +350,10 @@ jobs:
       - name: Build standalone CLI binaries
         shell: bash
         run: |
+          # Temporarily inject [[bin]] entries that were removed from Cargo.toml
+          # to prevent Tauri's bundler from trying to copy them into app bundles.
+          printf '\n[[bin]]\nname = "openhuman-core"\npath = "src/standalone/openhuman-core.rs"\n\n[[bin]]\nname = "openhuman-cli"\npath = "src/standalone/openhuman-cli.rs"\n' >> src-tauri/Cargo.toml
+
           CARGO_TARGET=""
           if [ -n "$MATRIX_TARGET" ]; then
             CARGO_TARGET="--target $MATRIX_TARGET"
