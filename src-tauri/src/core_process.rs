@@ -117,16 +117,25 @@ pub fn default_core_bin() -> Option<PathBuf> {
     let exe_dir = exe.parent()?;
 
     #[cfg(windows)]
-    let standalone = exe_dir.join("openhuman-core.exe");
+    let standalone = exe_dir.join("openhuman.exe");
     #[cfg(not(windows))]
-    let standalone = exe_dir.join("openhuman-core");
+    let standalone = exe_dir.join("openhuman");
 
     if standalone.exists() {
         return Some(standalone);
     }
 
-    // Sidecar layout: bundle.externalBin("binaries/openhuman-core") is emitted as
-    // openhuman-core-<target-triple>(.exe) under app resources.
+    #[cfg(windows)]
+    let legacy_standalone = exe_dir.join("openhuman-core.exe");
+    #[cfg(not(windows))]
+    let legacy_standalone = exe_dir.join("openhuman-core");
+
+    if legacy_standalone.exists() {
+        return Some(legacy_standalone);
+    }
+
+    // Sidecar layout: bundle.externalBin("binaries/openhuman") is emitted as
+    // openhuman-<target-triple>(.exe) under app resources.
     let mut search_dirs = vec![exe_dir.to_path_buf()];
     #[cfg(target_os = "macos")]
     {
@@ -149,9 +158,11 @@ pub fn default_core_bin() -> Option<PathBuf> {
             };
 
             #[cfg(windows)]
-            let matches = file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe");
+            let matches = (file_name.starts_with("openhuman-") && file_name.ends_with(".exe"))
+                || (file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe"));
             #[cfg(not(windows))]
-            let matches = file_name.starts_with("openhuman-core-");
+            let matches =
+                file_name.starts_with("openhuman-") || file_name.starts_with("openhuman-core-");
 
             if matches {
                 return Some(path);

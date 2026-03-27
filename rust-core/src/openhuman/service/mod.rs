@@ -16,13 +16,17 @@ fn windows_task_name() -> &'static str {
 }
 
 fn daemon_program_args(exe: &std::path::Path) -> Vec<String> {
-    let file_name = exe
+    let raw_file_name = exe
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+        .unwrap_or_default();
+    let file_name = raw_file_name.to_ascii_lowercase();
+    let standalone_core_binary = file_name.contains("openhuman-core")
+        || file_name.starts_with("openhuman-")
+        || raw_file_name == "openhuman"
+        || raw_file_name == "openhuman.exe";
 
-    if file_name.contains("openhuman-core") {
+    if standalone_core_binary {
         vec!["serve".to_string()]
     } else {
         vec!["core".to_string(), "serve".to_string()]

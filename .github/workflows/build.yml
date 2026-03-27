@@ -73,13 +73,13 @@ jobs:
         run: cd skills && yarn install --frozen-lockfile
 
       - name: Build sidecar core binary
-        run: cargo build --manifest-path rust-core/Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman-core
+        run: cargo build --manifest-path rust-core/Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman
 
       - name: Stage sidecar for Tauri bundler
         run: |
           mkdir -p src-tauri/binaries
-          cp rust-core/target/x86_64-unknown-linux-gnu/release/openhuman-core src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
-          chmod +x src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+          cp rust-core/target/x86_64-unknown-linux-gnu/release/openhuman src-tauri/binaries/openhuman-x86_64-unknown-linux-gnu
+          chmod +x src-tauri/binaries/openhuman-x86_64-unknown-linux-gnu
 
       - name: Build Tauri app
         run: |

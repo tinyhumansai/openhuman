@@ -312,7 +312,7 @@ jobs:
             --manifest-path rust-core/Cargo.toml \
             --release \
             --target "$MATRIX_TARGET" \
-            --bin openhuman-core
+            --bin openhuman
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
 
@@ -320,8 +320,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p src-tauri/binaries
-          SOURCE="rust-core/target/$MATRIX_TARGET/release/openhuman-core"
-          DEST="src-tauri/binaries/openhuman-core-$MATRIX_TARGET"
+          SOURCE="rust-core/target/$MATRIX_TARGET/release/openhuman"
+          DEST="src-tauri/binaries/openhuman-$MATRIX_TARGET"
           cp "$SOURCE" "$DEST"
           chmod +x "$DEST"
         env:
@@ -364,30 +364,30 @@ jobs:
           APP_PATH="src-tauri/target/${{ matrix.settings.target }}/release/bundle/macos/OpenHuman.app"
           echo "Inspecting bundle at: $APP_PATH"
           ls -la "$APP_PATH/Contents/MacOS"
-          ls -la "$APP_PATH/Contents/Resources" | grep openhuman-core || true
-          if [ -f "$APP_PATH/Contents/MacOS/openhuman-core" ]; then
+          ls -la "$APP_PATH/Contents/Resources" | grep openhuman || true
+          if [ -f "$APP_PATH/Contents/MacOS/openhuman" ]; then
             echo "Unexpected standalone core binary found in MacOS dir"
             exit 1
           fi
-          if ! ls "$APP_PATH/Contents/Resources"/openhuman-core-* >/dev/null 2>&1; then
+          if ! ls "$APP_PATH/Contents/Resources"/openhuman-* >/dev/null 2>&1; then
             echo "Sidecar core binary missing from app resources"
             exit 1
           fi
 
-      - name: Build standalone CLI binary
+      - name: Build standalone core CLI binary
         shell: bash
         run: |
-          cargo build --manifest-path rust-core/Cargo.toml --release --target "$MATRIX_TARGET" --bin openhuman-cli
+          cargo build --manifest-path rust-core/Cargo.toml --release --target "$MATRIX_TARGET" --bin openhuman
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
 
-      - name: Resolve standalone CLI artifact path
+      - name: Resolve standalone core CLI artifact path
         id: cli-paths
         shell: bash
         run: |
           BASE_DIR="rust-core/target/$MATRIX_TARGET/release"
           echo "base_dir=$BASE_DIR" >> "$GITHUB_OUTPUT"
-          echo "cli_path=$BASE_DIR/openhuman-cli" >> "$GITHUB_OUTPUT"
+          echo "cli_path=$BASE_DIR/openhuman" >> "$GITHUB_OUTPUT"
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
 

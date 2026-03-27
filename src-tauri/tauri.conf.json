@@ -42,7 +42,7 @@
       "../rust-core/ai"
     ],
     "externalBin": [
-      "binaries/openhuman-core"
+      "binaries/openhuman"
     ],
     "createUpdaterArtifacts": true,
     "macOS": {

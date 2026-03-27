@@ -7,6 +7,12 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  root: "src",
+  publicDir: "../public",
+  build: {
+    outDir: "../dist",
+    emptyOutDir: true,
+  },
   plugins: [
     nodePolyfills({
       include: ["buffer", "process", "util", "os", "crypto", "stream"],

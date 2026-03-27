@@ -640,6 +640,17 @@ async fn dispatch(
     }
 }
 
+pub async fn call_method(method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    dispatch(
+        AppState {
+            core_version: env!("CARGO_PKG_VERSION").to_string(),
+        },
+        method,
+        params,
+    )
+    .await
+}
+
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "ok": true })))
 }
