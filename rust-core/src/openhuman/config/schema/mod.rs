@@ -11,6 +11,7 @@ mod hardware;
 mod heartbeat_cron;
 mod identity_cost;
 mod load;
+mod local_ai;
 mod observability;
 mod proxy;
 mod routes;
@@ -33,6 +34,7 @@ pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{
     CostConfig, IdentityConfig, ModelPricing, PeripheralBoardConfig, PeripheralsConfig,
 };
+pub use local_ai::LocalAiConfig;
 pub use observability::ObservabilityConfig;
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
@@ -157,6 +159,9 @@ pub struct Config {
 
     #[serde(default)]
     pub hardware: HardwareConfig,
+
+    #[serde(default)]
+    pub local_ai: LocalAiConfig,
 }
 
 impl Default for Config {
@@ -200,6 +205,7 @@ impl Default for Config {
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             hardware: HardwareConfig::default(),
+            local_ai: LocalAiConfig::default(),
             query_classification: QueryClassificationConfig::default(),
         }
     }

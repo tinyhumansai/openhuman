@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 
-import { aiGetConfig, type AIPreview, aiRefreshConfig } from '../../../utils/tauriCommands';
+import {
+  aiGetConfig,
+  type AIPreview,
+  aiRefreshConfig,
+  openhumanLocalAiDownload,
+  openhumanLocalAiStatus,
+  type LocalAiStatus,
+} from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -12,9 +19,15 @@ const AIPanel = () => {
     null
   );
   const [error, setError] = useState<string>('');
+  const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
 
   useEffect(() => {
     loadAIPreview();
+    void loadLocalAiStatus();
+    const timer = setInterval(() => {
+      void loadLocalAiStatus();
+    }, 5000);
+    return () => clearInterval(timer);
   }, []);
 
   const loadAIPreview = async () => {
@@ -31,6 +44,15 @@ const AIPanel = () => {
       setError(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadLocalAiStatus = async () => {
+    try {
+      const result = await openhumanLocalAiStatus();
+      setLocalAiStatus(result.result);
+    } catch {
+      setLocalAiStatus(null);
     }
   };
 
@@ -83,6 +105,42 @@ const AIPanel = () => {
                 </div>
               </div>
             </div>
+          )}
+        </section>
+
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-white">Local Model Runtime</h3>
+            <button
+              onClick={async () => {
+                await openhumanLocalAiDownload(true);
+                await loadLocalAiStatus();
+              }}
+              className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+              Retry Download
+            </button>
+          </div>
+          {localAiStatus ? (
+            <div className="bg-gray-900 rounded-lg p-4 border border-gray-700 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400">State</span>
+                <span className="text-blue-300 font-medium">{localAiStatus.state}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400">Target Model</span>
+                <span className="text-green-300 font-medium">{localAiStatus.model_id}</span>
+              </div>
+              {localAiStatus.download_progress != null && (
+                <div className="text-xs text-gray-300">
+                  Download: {(localAiStatus.download_progress * 100).toFixed(0)}%
+                </div>
+              )}
+              {localAiStatus.warning && (
+                <div className="text-xs text-amber-300">{localAiStatus.warning}</div>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-gray-500">Local model status unavailable.</div>
           )}
         </section>
 

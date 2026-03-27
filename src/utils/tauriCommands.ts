@@ -426,6 +426,20 @@ export interface RuntimeFlags {
   log_prompts: boolean;
 }
 
+export interface LocalAiStatus {
+  state: string;
+  model_id: string;
+  provider: string;
+  download_progress?: number | null;
+  warning?: string | null;
+  model_path?: string | null;
+}
+
+export interface LocalAiSuggestion {
+  text: string;
+  confidence: number;
+}
+
 export interface TunnelConfig {
   provider: string;
   cloudflare?: { token: string } | null;
@@ -531,6 +545,42 @@ export async function openhumanAgentChat(
     modelOverride,
     temperature,
   });
+}
+
+export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_status');
+}
+
+export async function openhumanLocalAiDownload(
+  force?: boolean
+): Promise<CommandResponse<LocalAiStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_download', { force: force ?? false });
+}
+
+export async function openhumanLocalAiSummarize(
+  text: string,
+  maxTokens?: number
+): Promise<CommandResponse<string>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_summarize', { text, maxTokens });
+}
+
+export async function openhumanLocalAiSuggestQuestions(
+  context?: string,
+  lines?: string[]
+): Promise<CommandResponse<LocalAiSuggestion[]>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_suggest_questions', { context, lines });
 }
 
 export async function aiGetConfig(): Promise<AIPreview> {
