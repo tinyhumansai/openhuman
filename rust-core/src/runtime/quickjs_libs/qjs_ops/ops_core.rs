@@ -92,18 +92,13 @@ pub fn register<'js>(
     ops.set(
         "platform_os",
         Function::new(ctx.clone(), || -> &'static str {
-            if cfg!(target_os = "windows") {
-                "windows"
-            } else if cfg!(target_os = "macos") {
-                "macos"
-            } else if cfg!(target_os = "linux") {
-                "linux"
-            } else if cfg!(target_os = "android") {
-                "android"
-            } else if cfg!(target_os = "ios") {
-                "ios"
-            } else {
-                "unknown"
+            match std::env::consts::OS {
+                "windows" => "windows",
+                "macos" => "macos",
+                "linux" => "linux",
+                "android" => "android",
+                "ios" => "ios",
+                _ => "unknown",
             }
         }),
     )?;

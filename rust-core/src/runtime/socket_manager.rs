@@ -21,7 +21,6 @@ use tauri::{AppHandle, Emitter};
 use crate::models::socket::{ConnectionStatus, SocketState};
 
 // WebSocket-based Socket.IO client (desktop + iOS)
-#[cfg(not(target_os = "android"))]
 use {
     futures_util::{SinkExt, StreamExt},
     tokio::sync::{mpsc, watch},
@@ -30,9 +29,7 @@ use {
 };
 
 // SkillRegistry only available on desktop
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::runtime::skill_registry::SkillRegistry;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::runtime::types::{SkillSnapshot, SkillStatus};
 
 /// Events emitted to the frontend via Tauri.
@@ -50,7 +47,6 @@ pub mod events {
 
 struct SharedState {
     app_handle: RwLock<Option<AppHandle>>,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     registry: RwLock<Option<Arc<SkillRegistry>>>,
     status: RwLock<ConnectionStatus>,
     socket_id: RwLock<Option<String>>,
@@ -59,16 +55,12 @@ struct SharedState {
 // ---------------------------------------------------------------------------
 // WebSocket stream type alias (desktop + iOS)
 // ---------------------------------------------------------------------------
-
-#[cfg(not(target_os = "android"))]
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 // ---------------------------------------------------------------------------
 // Connection outcome (desktop + iOS)
 // ---------------------------------------------------------------------------
-
-#[cfg(not(target_os = "android"))]
 enum ConnectionOutcome {
     /// Clean shutdown requested.
     Shutdown,
@@ -84,11 +76,8 @@ enum ConnectionOutcome {
 
 pub struct SocketManager {
     shared: Arc<SharedState>,
-    #[cfg(not(target_os = "android"))]
     emit_tx: tokio::sync::Mutex<Option<mpsc::UnboundedSender<String>>>,
-    #[cfg(not(target_os = "android"))]
     shutdown_tx: tokio::sync::Mutex<Option<watch::Sender<bool>>>,
-    #[cfg(not(target_os = "android"))]
     loop_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
@@ -97,16 +86,12 @@ impl SocketManager {
         Self {
             shared: Arc::new(SharedState {
                 app_handle: RwLock::new(None),
-                #[cfg(not(any(target_os = "android", target_os = "ios")))]
                 registry: RwLock::new(None),
                 status: RwLock::new(ConnectionStatus::Disconnected),
                 socket_id: RwLock::new(None),
             }),
-            #[cfg(not(target_os = "android"))]
             emit_tx: tokio::sync::Mutex::new(None),
-            #[cfg(not(target_os = "android"))]
             shutdown_tx: tokio::sync::Mutex::new(None),
-            #[cfg(not(target_os = "android"))]
             loop_handle: tokio::sync::Mutex::new(None),
         }
     }
@@ -117,7 +102,6 @@ impl SocketManager {
     }
 
     /// Set the skill registry for MCP tool handling (desktop only).
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn set_registry(&self, registry: Arc<SkillRegistry>) {
         *self.shared.registry.write() = Some(registry);
     }
@@ -140,8 +124,6 @@ impl SocketManager {
     // -----------------------------------------------------------------------
     // Connection lifecycle (desktop + iOS)
     // -----------------------------------------------------------------------
-
-    #[cfg(not(target_os = "android"))]
     pub async fn connect(&self, url: &str, token: &str) -> Result<(), String> {
         self.disconnect().await?;
 
@@ -168,8 +150,6 @@ impl SocketManager {
         *self.loop_handle.lock().await = Some(handle);
         Ok(())
     }
-
-    #[cfg(not(target_os = "android"))]
     pub async fn disconnect(&self) -> Result<(), String> {
         if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(true);
@@ -183,8 +163,6 @@ impl SocketManager {
         Self::emit_state_change(&self.shared);
         Ok(())
     }
-
-    #[cfg(not(target_os = "android"))]
     pub async fn emit(&self, event: &str, data: serde_json::Value) -> Result<(), String> {
         if let Some(ref tx) = *self.emit_tx.lock().await {
             let payload =
@@ -197,40 +175,11 @@ impl SocketManager {
     }
 
     // -----------------------------------------------------------------------
-    // Android stubs
-    // -----------------------------------------------------------------------
-
-    #[cfg(target_os = "android")]
-    pub async fn connect(&self, url: &str, _token: &str) -> Result<(), String> {
-        log::info!(
-            "[socket-mgr] Android stub — frontend handles socket. URL: {}",
-            url
-        );
-        *self.shared.status.write() = ConnectionStatus::Disconnected;
-        Self::emit_state_change(&self.shared);
-        Ok(())
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn disconnect(&self) -> Result<(), String> {
-        *self.shared.status.write() = ConnectionStatus::Disconnected;
-        *self.shared.socket_id.write() = None;
-        Self::emit_state_change(&self.shared);
-        Ok(())
-    }
-
-    #[cfg(target_os = "android")]
-    pub async fn emit(&self, _event: &str, _data: serde_json::Value) -> Result<(), String> {
-        Err("Rust Socket.io not available on Android".to_string())
-    }
-
-    // -----------------------------------------------------------------------
     // Tool sync — notify backend of current skill/tool state
     // -----------------------------------------------------------------------
 
     /// Emit `tool:sync` with the current skill/tool state.
     /// Called on socket reconnect and after skill lifecycle changes.
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub async fn sync_tools(&self) {
         let payload = build_tool_sync_payload(&self.shared);
         if let Some(payload) = payload {
@@ -239,12 +188,6 @@ impl SocketManager {
             }
         }
     }
-
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    pub async fn sync_tools(&self) {
-        // No-op on mobile — skill runtime not available
-    }
-
     // -----------------------------------------------------------------------
     // Tauri event helpers
     // -----------------------------------------------------------------------
@@ -279,8 +222,6 @@ impl Default for SocketManager {
 // ===========================================================================
 // WebSocket Engine.IO/Socket.IO implementation (desktop + iOS)
 // ===========================================================================
-
-#[cfg(not(target_os = "android"))]
 async fn ws_loop(
     url: String,
     token: String,
@@ -351,7 +292,6 @@ async fn ws_loop(
 }
 
 /// Run a single WebSocket connection through handshake and event loop.
-#[cfg(not(target_os = "android"))]
 async fn run_connection(
     url: &str,
     token: &str,
@@ -494,7 +434,6 @@ async fn run_connection(
 
 /// Read the Engine.IO OPEN packet (type 0) from the WebSocket.
 /// Format: `0{"sid":"...","upgrades":[],"pingInterval":25000,"pingTimeout":20000}`
-#[cfg(not(target_os = "android"))]
 async fn read_eio_open(
     ws_read: &mut futures_util::stream::SplitStream<WsStream>,
 ) -> Result<serde_json::Value, String> {
@@ -520,7 +459,6 @@ async fn read_eio_open(
 
 /// Read the Socket.IO CONNECT ACK (type 40) from the WebSocket.
 /// Format: `40{"sid":"..."}` or `44{"message":"error"}` for connect error.
-#[cfg(not(target_os = "android"))]
 async fn read_sio_connect_ack(
     ws_read: &mut futures_util::stream::SplitStream<WsStream>,
 ) -> Result<serde_json::Value, String> {
@@ -568,7 +506,6 @@ async fn read_sio_connect_ack(
 // ---------------------------------------------------------------------------
 
 /// Handle an incoming Engine.IO text message.
-#[cfg(not(target_os = "android"))]
 fn handle_eio_message(
     text: &str,
     emit_tx: &mpsc::UnboundedSender<String>,
@@ -608,7 +545,6 @@ fn handle_eio_message(
 }
 
 /// Handle a Socket.IO packet (after stripping the Engine.IO '4' prefix).
-#[cfg(not(target_os = "android"))]
 fn handle_sio_packet(
     text: &str,
     emit_tx: &mpsc::UnboundedSender<String>,
@@ -669,7 +605,6 @@ fn handle_sio_packet(
 }
 
 /// Handle a Socket.IO event by name.
-#[cfg(not(target_os = "android"))]
 fn handle_sio_event(
     event_name: &str,
     data: serde_json::Value,
@@ -683,7 +618,6 @@ fn handle_sio_event(
             SocketManager::emit_state_change(shared);
 
             // Sync current tool state to backend on connect/reconnect
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             sync_tools_via_channel(emit_tx, shared);
         }
         "error" => {
@@ -692,7 +626,6 @@ fn handle_sio_event(
             SocketManager::emit_state_change(shared);
         }
         // MCP handlers — desktop only
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         "mcp:listTools" => {
             let shared = Arc::clone(shared);
             let tx = emit_tx.clone();
@@ -700,7 +633,6 @@ fn handle_sio_event(
                 handle_mcp_list_tools(&shared, data, &tx).await;
             });
         }
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         "mcp:toolCall" => {
             let shared = Arc::clone(shared);
             let tx = emit_tx.clone();
@@ -710,7 +642,6 @@ fn handle_sio_event(
         }
         _ => {
             // Forward to skills (desktop only) and frontend
-            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let shared_clone = Arc::clone(shared);
                 let event_owned = event_name.to_string();
@@ -731,8 +662,6 @@ fn handle_sio_event(
 // ---------------------------------------------------------------------------
 // MCP protocol handlers (desktop only)
 // ---------------------------------------------------------------------------
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn handle_mcp_list_tools(
     shared: &SharedState,
     data: serde_json::Value,
@@ -773,8 +702,6 @@ async fn handle_mcp_list_tools(
         json!({ "requestId": request_id, "tools": tools }),
     );
 }
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn handle_mcp_tool_call(
     shared: &SharedState,
     data: serde_json::Value,
@@ -860,7 +787,6 @@ async fn handle_mcp_tool_call(
 // ---------------------------------------------------------------------------
 
 /// Convert an HTTP(S) URL to a WebSocket URL with Engine.IO parameters.
-#[cfg(not(target_os = "android"))]
 fn build_ws_url(url: &str) -> String {
     let base = url.trim_end_matches('/');
     let ws_base = if base.starts_with("https://") {
@@ -875,7 +801,6 @@ fn build_ws_url(url: &str) -> String {
 
 /// Send a Socket.IO event through the emit channel.
 /// Formats: `42["eventName", data]`
-#[cfg(not(target_os = "android"))]
 fn emit_via_channel(tx: &mpsc::UnboundedSender<String>, event: &str, data: serde_json::Value) {
     let payload = serde_json::to_string(&json!([event, data])).unwrap_or_default();
     let msg = format!("42{}", payload);
@@ -890,7 +815,6 @@ fn emit_via_channel(tx: &mpsc::UnboundedSender<String>, event: &str, data: serde
 
 /// Derive a unified connection status string from a Rust-side SkillSnapshot.
 /// Mirrors the frontend's `deriveConnectionStatus()` logic in `src/lib/skills/hooks.ts`.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn derive_connection_status(snap: &SkillSnapshot) -> &'static str {
     match snap.status {
         SkillStatus::Error => "error",
@@ -916,7 +840,6 @@ fn derive_connection_status(snap: &SkillSnapshot) -> &'static str {
 }
 
 /// Build the `tool:sync` payload from the current registry state.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn build_tool_sync_payload(shared: &SharedState) -> Option<serde_json::Value> {
     let registry = shared.registry.read().clone()?;
     let skills = registry.list_skills();
@@ -937,7 +860,6 @@ fn build_tool_sync_payload(shared: &SharedState) -> Option<serde_json::Value> {
 }
 
 /// Emit `tool:sync` synchronously via the emit channel (for use from event handlers).
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn sync_tools_via_channel(emit_tx: &mpsc::UnboundedSender<String>, shared: &SharedState) {
     if let Some(payload) = build_tool_sync_payload(shared) {
         emit_via_channel(emit_tx, "tool:sync", payload);
@@ -949,7 +871,6 @@ fn sync_tools_via_channel(emit_tx: &mpsc::UnboundedSender<String>, shared: &Shar
 // ---------------------------------------------------------------------------
 
 /// Parse a Socket.IO EVENT payload: `["eventName", data]` or `<ackId>["eventName", data]`.
-#[cfg(not(target_os = "android"))]
 fn parse_sio_event(text: &str) -> Option<(String, serde_json::Value)> {
     // Find the start of the JSON array (skip optional ACK id digits)
     let json_start = text.find('[')?;
