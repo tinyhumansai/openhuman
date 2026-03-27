@@ -10,6 +10,7 @@ name = "rust_core"
 crate-type = ["rlib"]
 
 [dependencies]
+tauri = { version = "2.10", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "native-tls", "stream", "http2", "multipart", "socks"] }
@@ -74,6 +75,7 @@ opentelemetry-otlp = { version = "0.31", default-features = false, features = ["
 tokio-stream = { version = "0.1.18", features = ["full"] }
 url = "2"
 tinyhumansai = "0.1.6"
+rquickjs = { version = "0.11", features = ["futures", "macro", "loader", "parallel"], optional = true }
 
 matrix-sdk = { version = "0.16", optional = true, default-features = false, features = ["e2e-encryption", "rustls-tls", "markdown"] }
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }
@@ -96,6 +98,7 @@ rppal = { version = "0.22", optional = true }
 tempfile = "3"
 
 [features]
+tauri-host = ["dep:tauri", "dep:rquickjs"]
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 hardware = ["dep:nusb", "dep:tokio-serial"]

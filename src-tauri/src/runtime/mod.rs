@@ -6,20 +6,11 @@
 //! Note: The skill runtime is only available on desktop platforms.
 //! On mobile (Android/iOS), the skill runtime is disabled.
 
-// Portable runtime modules now live in rust-core.
+// Runtime implementation now lives fully in rust-core.
 pub use rust_core::runtime::{loader, manifest, preferences, types, utils};
-pub mod socket_manager;
 
-// QuickJS modules - desktop only (not available on Android/iOS)
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub mod bridge;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub mod cron_scheduler;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub mod ping_scheduler;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub mod qjs_engine;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub mod qjs_skill_instance;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub mod skill_registry;
+pub use rust_core::runtime::{
+    bridge, cron_scheduler, ping_scheduler, qjs_engine, qjs_skill_instance, skill_registry,
+    socket_manager,
+};

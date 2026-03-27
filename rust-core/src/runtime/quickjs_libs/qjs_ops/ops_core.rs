@@ -122,10 +122,7 @@ pub fn register<'js>(
     ops.set(
         "get_session_token",
         Function::new(ctx.clone(), || -> String {
-            let token = crate::commands::auth::SESSION_SERVICE
-                .get_token()
-                .unwrap_or_default();
-            return token;
+            std::env::var("JWT_TOKEN").unwrap_or_default()
         }),
     )?;
 

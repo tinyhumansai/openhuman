@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [dependencies]
-rust-core = { path = "../rust-core" }
+rust-core = { path = "../rust-core", features = ["tauri-host"] }
 # Tauri core and plugins
 tauri = { version = "2.10", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"

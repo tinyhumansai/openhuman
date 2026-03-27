@@ -21,7 +21,7 @@ use crate::runtime::skill_registry::SkillRegistry;
 use crate::runtime::types::{
     SkillConfig, SkillMessage, SkillSnapshot, SkillStatus, ToolContent, ToolDefinition, ToolResult,
 };
-use crate::services::quickjs_libs::{qjs_ops, IdbStorage};
+use crate::runtime::quickjs_libs::{qjs_ops, IdbStorage};
 use tauri::Manager;
 
 /// Dependencies passed to a skill instance for bridge installation.
@@ -200,7 +200,7 @@ impl QjsSkillInstance {
                     }
 
                     // Load bootstrap
-                    let bootstrap_code = include_str!("../services/quickjs_libs/bootstrap.js");
+                    let bootstrap_code = include_str!("quickjs_libs/bootstrap.js");
                     if let Err(e) = js_ctx.eval::<rquickjs::Value, _>(bootstrap_code) {
                         let detail = format_js_exception(&js_ctx, &e);
                         return Err(format!("Bootstrap failed: {detail}"));
@@ -618,7 +618,7 @@ async fn handle_message(
             // State is registered as MemoryState(Mutex<Option<MemoryClientRef>>), not
             // Option<MemoryClientRef> directly, so we must use the newtype wrapper.
             let memory_client_opt = app_handle.and_then(|ah| {
-                ah.try_state::<crate::commands::memory::MemoryState>()
+                ah.try_state::<crate::memory::MemoryState>()
                     .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()))
             });
 

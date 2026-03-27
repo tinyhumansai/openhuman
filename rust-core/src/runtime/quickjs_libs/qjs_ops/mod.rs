@@ -20,7 +20,7 @@ use parking_lot::RwLock;
 use rquickjs::{Ctx, Object, Result as JsResult};
 use std::sync::Arc;
 
-use crate::services::quickjs_libs::storage::IdbStorage;
+use crate::runtime::quickjs_libs::storage::IdbStorage;
 use types::SkillContext as SC;
 
 /// Register all ops on `globalThis.__ops`.

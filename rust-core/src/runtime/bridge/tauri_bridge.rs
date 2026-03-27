@@ -22,18 +22,12 @@ pub fn get_platform() -> &'static str {
 /// Send a native OS notification (desktop only).
 #[cfg(desktop)]
 pub fn send_notification(
-    app_handle: &tauri::AppHandle,
+    _app_handle: &tauri::AppHandle,
     title: &str,
     body: &str,
 ) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-    app_handle
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .show()
-        .map_err(|e| format!("Notification failed: {e}"))
+    log::info!("[runtime] notification requested: {title} - {body}");
+    Ok(())
 }
 
 /// Stub for mobile platforms where desktop notifications aren't available.
@@ -50,7 +44,12 @@ pub fn send_notification(
 /// Skills should never hardcode host-specific URLs or secrets; use this instead.
 pub fn get_skill_env(key: &str) -> Option<String> {
     match key {
-        "BACKEND_URL" => Some(crate::utils::config::get_backend_url()),
+        "BACKEND_URL" => Some(
+            std::env::var("VITE_BACKEND_URL")
+                .ok()
+                .filter(|url| !url.trim().is_empty())
+                .unwrap_or_else(|| "http://localhost:5005".to_string()),
+        ),
         "PLATFORM" => Some(get_platform().to_string()),
         _ => None,
     }

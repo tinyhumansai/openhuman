@@ -14,6 +14,9 @@ use uuid::Uuid;
 /// Shared, cloneable handle to the memory client.
 pub type MemoryClientRef = Arc<MemoryClient>;
 
+/// Shared app-state slot for the memory client.
+pub struct MemoryState(pub std::sync::Mutex<Option<MemoryClientRef>>);
+
 pub struct MemoryClient {
     inner: TinyHumansMemoryClient,
 }

@@ -147,7 +147,7 @@ pub fn register<'js>(
                         .ok_or_else(|| js_err("App handle not available for memory insert"))?;
 
                     let memory_state = app_handle
-                        .try_state::<crate::commands::memory::MemoryState>()
+                        .try_state::<crate::memory::MemoryState>()
                         .ok_or_else(|| js_err("Memory state not available"))?;
 
                     let client_opt = memory_state

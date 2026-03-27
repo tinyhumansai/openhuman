@@ -1,14 +1,9 @@
 //! Tauri commands for the TinyHumans memory layer.
 
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use crate::memory::{MemoryClient, MemoryClientRef};
-
-/// App-state slot for the memory client.
-/// Starts as `None`; populated by `init_memory_client` when the frontend
-/// provides the user's JWT token from `authSlice.token`.
-pub struct MemoryState(pub Mutex<Option<MemoryClientRef>>);
+use crate::memory::{MemoryClient, MemoryClientRef, MemoryState};
 
 fn extract_namespaces_from_documents(payload: &serde_json::Value) -> Vec<String> {
     fn collect_from_value(value: &serde_json::Value, out: &mut BTreeSet<String>) {
