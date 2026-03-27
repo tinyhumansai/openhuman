@@ -308,11 +308,15 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           BASE_URL: ${{ vars.BASE_URL }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           WITH_UPDATER: 'true'
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
         with:
+          # Keep only the app binary in the .app bundle by default.
+          # Helper bins (openhuman-tools-discovery/openhuman-core/openhuman-cli)
+          # are feature-gated in Cargo.toml to prevent unsigned subcomponents
+          # from breaking macOS codesign during release packaging.
           args: -c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}
           includeDebug: false
           includeRelease: true

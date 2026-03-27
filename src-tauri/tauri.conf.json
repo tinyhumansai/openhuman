@@ -51,7 +51,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBMjYzN0QxNjE4MjYzQzgKUldUSVk0SmgwVGNtNnJnNkFrZnloeDVUME1CczNDS3lMQ1hWVkxlVldCdjRCUFozYjFSekpVNWwK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA1NkI1NEQzNjVDMjA0NDgKUldSSUJNSmwwMVJyQmJCTnQrQWxPSmhZQmVyWU1NMXdwRlRCSHR0ZEdlbkRncCtpQnhaZU5rUEQK",
       "endpoints": [
         "https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json"
       ]
