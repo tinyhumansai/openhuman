@@ -28,9 +28,9 @@ use crate::commands::memory::MemoryState;
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const MAX_TOOL_ROUNDS: u32 = 5;
-const INFERENCE_TIMEOUT_SECS: u64 = 120;
-const TOOL_TIMEOUT_SECS: u64 = 60;
+const MAX_TOOL_ROUNDS: u32 = 20;
+const INFERENCE_TIMEOUT_SECS: u64 = 240;
+const TOOL_TIMEOUT_SECS: u64 = 120;
 const MAX_CONTEXT_CHARS: usize = 20_000;
 
 /// Names and order of the OpenClaw workspace files.
@@ -684,8 +684,7 @@ async fn chat_send_inner(
 
                         match serde_json::from_str::<serde_json::Value>(content) {
                             Ok(parsed) => {
-                                if parsed.get("needs_query").and_then(|v| v.as_bool())
-                                    == Some(true)
+                                if parsed.get("needs_query").and_then(|v| v.as_bool()) == Some(true)
                                 {
                                     if let Some(query) =
                                         parsed.get("query").and_then(|v| v.as_str())
@@ -698,12 +697,7 @@ async fn chat_send_inner(
                                             "[chat] Sufficiency check: needs_query=true, skill_id={skill_id:?}, query={query:?}"
                                         );
                                         match mem
-                                            .query_skill_context(
-                                                skill_id,
-                                                thread_id,
-                                                query,
-                                                10,
-                                            )
+                                            .query_skill_context(skill_id, thread_id, query, 10)
                                             .await
                                         {
                                             Ok(result) if !result.is_empty() => {
@@ -746,7 +740,9 @@ async fn chat_send_inner(
                         }
                     }
                     Err(e) => {
-                        log::warn!("[chat] Sufficiency check: failed to parse inference response: {e}");
+                        log::warn!(
+                            "[chat] Sufficiency check: failed to parse inference response: {e}"
+                        );
                         None
                     }
                 }
@@ -790,9 +786,8 @@ async fn chat_send_inner(
     }
 
     if let Some(ref qctx) = query_memory_context {
-        processed = format!(
-            "[QUERY_MEMORY_CONTEXT]\n{qctx}\n[/QUERY_MEMORY_CONTEXT]\n\n{processed}"
-        );
+        processed =
+            format!("[QUERY_MEMORY_CONTEXT]\n{qctx}\n[/QUERY_MEMORY_CONTEXT]\n\n{processed}");
     }
 
     if let Some(ref notion) = notion_context {

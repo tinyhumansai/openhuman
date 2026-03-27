@@ -239,6 +239,22 @@ export async function memoryRecallNamespace(
   return await invoke('memory_recall_namespace', { namespace, maxChunks });
 }
 
+/**
+ * Trigger a conscious loop run manually.
+ * The loop recalls all skill memory, extracts actionable items via LLM,
+ * and stores them in the `conscious` namespace.
+ */
+export async function consciousLoopRun(
+  authToken: string,
+  backendUrl: string,
+  model?: string
+): Promise<void> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  await invoke('conscious_loop_run', { authToken, backendUrl, model });
+}
+
 // --- OpenHuman Commands ---
 
 export type DoctorSeverity = 'Ok' | 'Warn' | 'Error';

@@ -922,6 +922,12 @@ pub fn run() {
             app.manage(commands::memory::MemoryState(std::sync::Mutex::new(None)));
             log::info!("[memory] Memory state registered — awaiting JWT from frontend");
 
+            // Spawn conscious loop periodic timer (desktop only; mobile skips inside the fn)
+            let app_for_conscious = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                commands::conscious_loop::conscious_loop_timer(app_for_conscious).await;
+            });
+
             // Initialize ChatState for managing in-flight conversation requests
             let chat_state = std::sync::Arc::new(ChatState::new());
             app.manage(chat_state);
@@ -1088,6 +1094,8 @@ pub fn run() {
                     // Chat commands (agentic conversation loop)
                     chat_send,
                     chat_cancel,
+                    // Conscious loop (periodic background intelligence)
+                    conscious_loop_run,
                 ]
             }
             #[cfg(not(desktop))]
@@ -1219,6 +1227,8 @@ pub fn run() {
                     // Chat commands (agentic conversation loop)
                     chat_send,
                     chat_cancel,
+                    // Conscious loop (mobile stub — returns error)
+                    conscious_loop_run,
                 ]
             }
         })
