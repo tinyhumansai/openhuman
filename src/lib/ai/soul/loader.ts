@@ -1,3 +1,4 @@
+import { invoke, isTauri as coreIsTauri } from '@tauri-apps/api/core';
 import soulMd from '../../../../rust-core/ai/SOUL.md?raw';
 import type {
   BehaviorPattern,
@@ -49,10 +50,16 @@ export async function loadSoul(): Promise<SoulConfig> {
   let isDefault = false;
 
   try {
-    // 3. GitHub remote
-    const response = await fetch(SOUL_GITHUB_URL);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    raw = await response.text();
+    if (coreIsTauri()) {
+      // 3a. Tauri command is the source of truth in desktop app mode.
+      const aiConfig = await invoke<{ soul: { raw: string } }>('ai_get_config');
+      raw = aiConfig.soul.raw;
+    } else {
+      // 3b. Web fallback (non-Tauri contexts)
+      const response = await fetch(SOUL_GITHUB_URL);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      raw = await response.text();
+    }
   } catch {
     // 4. Fallback to bundled
     raw = soulMd;

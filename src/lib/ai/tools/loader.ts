@@ -1,3 +1,4 @@
+import { invoke, isTauri as coreIsTauri } from '@tauri-apps/api/core';
 import toolsMd from '../../../../rust-core/ai/TOOLS.md?raw';
 import type {
   SkillGroup,
@@ -43,8 +44,16 @@ export async function loadTools(): Promise<ToolsConfig> {
     // Ignore cache errors
   }
 
-  // 3. Always use bundled TOOLS.md (updated by auto-update system)
-  const raw = toolsMd;
+  // 3. Prefer Tauri command in desktop mode; fallback to bundled for web/test.
+  let raw = toolsMd;
+  if (coreIsTauri()) {
+    try {
+      const aiConfig = await invoke<{ tools: { raw: string } }>('ai_get_config');
+      raw = aiConfig.tools.raw;
+    } catch {
+      // Keep bundled fallback.
+    }
+  }
   const isDefault = false; // Not a fallback since it's the auto-generated file
 
   const config = parseTools(raw, isDefault);

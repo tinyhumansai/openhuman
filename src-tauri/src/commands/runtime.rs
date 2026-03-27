@@ -467,6 +467,10 @@ mod desktop {
 
     // Helper function to parse tool_id format: "skill_id_tool_name"
     pub fn parse_tool_id(tool_id: &str) -> Result<(String, String), String> {
+        if tool_id.is_empty() || tool_id.starts_with('_') || tool_id.ends_with('_') {
+            return Err("Tool ID must be in format 'skill_id_tool_name'".to_string());
+        }
+
         // Find the first underscore to separate skill_id from tool_name
         if let Some(underscore_pos) = tool_id.find('_') {
             let skill_id = tool_id[..underscore_pos].to_string();

@@ -463,7 +463,6 @@ pub async fn chat_send(
     Ok(())
 }
 
-
 /// Cancel an in-flight `chat_send` request by thread ID.
 /// Returns `true` if a request was found and cancelled, `false` otherwise.
 #[tauri::command]
@@ -1113,4 +1112,3 @@ async fn chat_send_inner(
 
     Ok(())
 }
-

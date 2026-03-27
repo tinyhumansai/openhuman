@@ -117,13 +117,47 @@ pub fn default_core_bin() -> Option<PathBuf> {
     let exe_dir = exe.parent()?;
 
     #[cfg(windows)]
-    let candidate = exe_dir.join("openhuman-core.exe");
+    let standalone = exe_dir.join("openhuman-core.exe");
     #[cfg(not(windows))]
-    let candidate = exe_dir.join("openhuman-core");
+    let standalone = exe_dir.join("openhuman-core");
 
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        None
+    if standalone.exists() {
+        return Some(standalone);
     }
+
+    // Sidecar layout: bundle.externalBin("binaries/openhuman-core") is emitted as
+    // openhuman-core-<target-triple>(.exe) under app resources.
+    let mut search_dirs = vec![exe_dir.to_path_buf()];
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(resources_dir) = exe_dir.parent().map(|p| p.join("Resources")) {
+            search_dirs.push(resources_dir);
+        }
+    }
+
+    for dir in search_dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+
+            #[cfg(windows)]
+            let matches = file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe");
+            #[cfg(not(windows))]
+            let matches = file_name.starts_with("openhuman-core-");
+
+            if matches {
+                return Some(path);
+            }
+        }
+    }
+
+    None
 }

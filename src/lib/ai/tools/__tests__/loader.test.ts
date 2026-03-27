@@ -8,7 +8,7 @@ import { clearToolsCache, loadTools, parseTools } from '../loader';
 import type { ToolsConfig } from '../types';
 
 // Mock the bundled tools markdown
-vi.mock('../../../../../src-tauri/ai/TOOLS.md?raw', () => ({
+vi.mock('../../../../../rust-core/ai/TOOLS.md?raw', () => ({
   default: `# OpenHuman Tools
 
 ## Overview

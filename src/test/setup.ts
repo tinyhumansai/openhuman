@@ -20,7 +20,7 @@ vi.stubEnv('DEV', true);
 vi.stubEnv('MODE', 'test');
 
 // Mock Tauri APIs (not available in test env)
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(), emit: vi.fn() }));
 

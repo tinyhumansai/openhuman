@@ -152,7 +152,6 @@ impl SessionService {
 
         Ok(())
     }
-
 }
 
 impl Default for SessionService {
