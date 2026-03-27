@@ -242,7 +242,10 @@ impl AccessibilityEngine {
                     stop_reason: session.stop_reason.clone(),
                     frames_in_memory: session.frames.len(),
                     last_capture_at_ms: session.last_capture_at_ms,
-                    last_context: session.last_context.as_ref().and_then(|c| c.app_name.clone()),
+                    last_context: session
+                        .last_context
+                        .as_ref()
+                        .and_then(|c| c.app_name.clone()),
                 },
                 None => SessionStatus {
                     active: false,
@@ -290,10 +293,14 @@ impl AccessibilityEngine {
         #[cfg(target_os = "macos")]
         {
             let _ = std::process::Command::new("open")
-                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+                .arg(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+                )
                 .status();
             let _ = std::process::Command::new("open")
-                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                .arg(
+                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+                )
                 .status();
             let _ = std::process::Command::new("open")
                 .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
@@ -306,7 +313,10 @@ impl AccessibilityEngine {
         Ok(state.permissions.clone())
     }
 
-    pub async fn start_session(self: &Arc<Self>, params: StartSessionParams) -> Result<SessionStatus, String> {
+    pub async fn start_session(
+        self: &Arc<Self>,
+        params: StartSessionParams,
+    ) -> Result<SessionStatus, String> {
         if !params.consent {
             return Err("explicit consent is required to start accessibility session".to_string());
         }
@@ -405,7 +415,10 @@ impl AccessibilityEngine {
         })
     }
 
-    pub async fn input_action(&self, action: InputActionParams) -> Result<InputActionResult, String> {
+    pub async fn input_action(
+        &self,
+        action: InputActionParams,
+    ) -> Result<InputActionResult, String> {
         let mut state = self.inner.lock().await;
 
         if action.action == "panic_stop" {
@@ -453,7 +466,8 @@ impl AccessibilityEngine {
                     state.autocomplete_context.push(' ');
                 }
                 state.autocomplete_context.push_str(text);
-                state.autocomplete_context = truncate_tail(&state.autocomplete_context, MAX_CONTEXT_CHARS);
+                state.autocomplete_context =
+                    truncate_tail(&state.autocomplete_context, MAX_CONTEXT_CHARS);
             }
         }
 

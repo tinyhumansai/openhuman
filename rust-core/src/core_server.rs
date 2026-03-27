@@ -662,7 +662,9 @@ async fn dispatch(
 
         "openhuman.accessibility_start_session" => {
             let payload: StartSessionParams = parse_params(params)?;
-            let session = accessibility::global_engine().start_session(payload).await?;
+            let session = accessibility::global_engine()
+                .start_session(payload)
+                .await?;
             to_json_value(command_response(
                 session,
                 vec!["accessibility session started".to_string()],
@@ -710,7 +712,9 @@ async fn dispatch(
 
         "openhuman.accessibility_autocomplete_commit" => {
             let payload: AutocompleteCommitParams = parse_params(params)?;
-            let result = accessibility::global_engine().autocomplete_commit(payload).await?;
+            let result = accessibility::global_engine()
+                .autocomplete_commit(payload)
+                .await?;
             to_json_value(command_response(
                 result,
                 vec!["accessibility autocomplete suggestion committed".to_string()],

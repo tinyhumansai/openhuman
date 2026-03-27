@@ -11,8 +11,8 @@
 // Many types/functions are not yet consumed but are intentionally exported.
 #![allow(dead_code)]
 
-pub mod agent;
 pub mod accessibility;
+pub mod agent;
 pub mod approval;
 pub mod channels;
 pub mod config;

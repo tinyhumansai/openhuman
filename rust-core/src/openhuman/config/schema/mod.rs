@@ -2,8 +2,8 @@
 //!
 //! Split into submodules; this module re-exports the main `Config` and all public types.
 
-mod agent;
 mod accessibility;
+mod agent;
 mod autonomy;
 mod channels;
 mod defaults;
@@ -20,8 +20,8 @@ mod storage_memory;
 mod tools;
 mod tunnel;
 
-pub use agent::{AgentConfig, DelegateAgentConfig};
 pub use accessibility::AccessibilityAutomationConfig;
+pub use agent::{AgentConfig, DelegateAgentConfig};
 pub use autonomy::AutonomyConfig;
 pub use channels::{
     AuditConfig, ChannelsConfig, DingTalkConfig, DiscordConfig, IMessageConfig, IrcConfig,
