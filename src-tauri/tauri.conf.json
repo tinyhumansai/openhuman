@@ -39,7 +39,7 @@
     ],
     "resources": [
       "../skills/skills",
-      "ai"
+      "../rust-core/ai"
     ],
     "createUpdaterArtifacts": true,
     "macOS": {

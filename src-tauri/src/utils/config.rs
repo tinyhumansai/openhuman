@@ -8,7 +8,7 @@ use std::env;
 pub const DEFAULT_BACKEND_URL: &str = "https://api.tinyhumans.ai";
 
 /// Application identifier for keychain storage
-pub const APP_IDENTIFIER: &str = "com.openhuman.app";
+pub const APP_IDENTIFIER: &str = "com.tinyhumansai.openhuman";
 
 /// Service name for keychain
 pub const KEYCHAIN_SERVICE: &str = "OpenHuman";

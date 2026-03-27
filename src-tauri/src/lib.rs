@@ -317,6 +317,7 @@ async fn write_ai_config_file(filename: String, content: String) -> Result<bool,
         current_dir.join("rust-core").join("ai")
     } else if current_dir
         .file_name()
+        .and_then(|name| name.to_str())
         .is_some_and(|name| name == "src-tauri")
     {
         current_dir

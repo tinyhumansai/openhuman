@@ -32,8 +32,7 @@ tauri = { version = "2.10", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-deep-link = "2.0.0"
 tauri-plugin-os = "2"
-# tauri-plugin-autostart moved to desktop-only target section
-# tauri-plugin-notification moved to desktop-only target section
+# Desktop host plugins
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -146,25 +145,15 @@ wa-rs-binary = { version = "0.2", optional = true, default-features = false }
 wa-rs-proto = { version = "0.2", optional = true, default-features = false }
 wa-rs-ureq-http = { version = "0.2", optional = true }
 wa-rs-tokio-transport = { version = "0.2", optional = true, default-features = false }
+keyring = "3"
+tauri-plugin-autostart = "2"
+tauri-plugin-notification = "2"
+# QuickJS JavaScript runtime (desktop-only host)
+rquickjs = { version = "0.11", features = ["futures", "macro", "loader", "parallel"] }
 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rppal = { version = "0.22", optional = true }
-
-[target.'cfg(target_os = "android")'.dependencies]
-# Android logging (routes Rust `log` crate to logcat)
-android_logger = "0.14"
-
-[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-keyring = "3"
-tauri-plugin-autostart = "2"
-tauri-plugin-notification = "2"
-
-# QuickJS JavaScript runtime (via quickjs-rs)
-# Only available on desktop - prebuilt binaries don't exist for Android/iOS
-rquickjs = { version = "0.11", features = ["futures", "macro", "loader", "parallel"] }
-
-
 
 [dev-dependencies]
 tempfile = "3"
