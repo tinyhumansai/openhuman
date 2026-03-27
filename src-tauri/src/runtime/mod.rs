@@ -8,7 +8,4 @@
 // Runtime implementation now lives fully in rust-core.
 pub use openhuman_core::runtime::types;
 
-pub use openhuman_core::runtime::{
-    qjs_engine,
-    socket_manager,
-};
+pub use openhuman_core::runtime::{qjs_engine, socket_manager};
