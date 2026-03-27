@@ -9,7 +9,7 @@ import { clearToolsCache } from '../ai/tools/loader';
 
 // Track file modification time to detect changes
 let lastModifiedTime: number | null = null;
-let watcherInterval: NodeJS.Timeout | null = null;
+let watcherInterval: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Start watching TOOLS.md file for changes
@@ -77,7 +77,7 @@ async function checkForToolsChanges(): Promise<void> {
         console.error('❌ Failed to reload AI config after file change:', error);
       }
     }
-  } catch (error) {
+  } catch (_err) {
     // Silently ignore errors (file not found, network issues, etc.)
     // This prevents console spam during development
   }

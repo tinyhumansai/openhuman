@@ -57,8 +57,16 @@ export default function Intelligence() {
     onCancel: () => {},
   });
 
-  // Use API data or fallback to empty array
-  const items = apiItems || [];
+  const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
+    const newToast: ToastNotification = { ...toast, id: `toast-${Date.now()}-${Math.random()}` };
+    setToasts(prev => [...prev, newToast]);
+  }, []);
+
+  const removeToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(toast => toast.id !== id));
+  }, []);
+
+  const items = useMemo(() => apiItems ?? [], [apiItems]);
 
   // Initialize socket connection
   useEffect(() => {
@@ -76,7 +84,7 @@ export default function Intelligence() {
         message: typeof itemsError === 'string' ? itemsError : 'Unable to fetch actionable items',
       });
     }
-  }, [itemsError]);
+  }, [itemsError, addToast]);
 
   // Filter and group items
   const filteredItems = useMemo(() => {
@@ -95,16 +103,6 @@ export default function Intelligence() {
   const stats = useMemo(() => {
     return getItemStats(filteredItems);
   }, [filteredItems]);
-
-  // Toast utilities
-  const addToast = useCallback((toast: Omit<ToastNotification, 'id'>) => {
-    const newToast: ToastNotification = { ...toast, id: `toast-${Date.now()}-${Math.random()}` };
-    setToasts(prev => [...prev, newToast]);
-  }, []);
-
-  const removeToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(toast => toast.id !== id));
-  }, []);
 
   // Item action handlers with real backend integration
   const handleUpdateItemStatus = useCallback(
@@ -138,7 +136,7 @@ export default function Intelligence() {
         });
       }
     },
-    [updateItemStatus]
+    [updateItemStatus, addToast]
   );
 
   const handleComplete = useCallback(

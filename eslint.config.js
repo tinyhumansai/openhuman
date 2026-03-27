@@ -42,6 +42,8 @@ export default [
       globals: {
         // Browser globals
         window: 'readonly',
+        localStorage: 'readonly',
+        sessionStorage: 'readonly',
         document: 'readonly',
         navigator: 'readonly',
         console: 'readonly',

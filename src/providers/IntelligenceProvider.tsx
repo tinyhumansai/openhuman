@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react';
-import { createContext, useContext, useEffect } from 'react';
+import { createContext, type ReactNode, useContext, useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 
 import { useIntelligenceSocketManager } from '../hooks/useIntelligenceSocket';

@@ -160,7 +160,7 @@ export class AgentToolRegistry implements IAgentToolRegistry {
         console.log(`   args type: ${typeof toolArguments}`);
 
         result = await invoke<ZeroClawToolResult>('runtime_execute_tool', {
-          toolId: toolId,
+          toolId,
           args: toolArguments,
         });
       }
