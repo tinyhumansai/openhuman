@@ -19,6 +19,7 @@ import type { RootState } from '../store';
 import { setSearchFilter, setSourceFilter } from '../store/intelligenceSlice';
 import type {
   ActionableItem,
+  ActionableItemSource,
   ActionableItemStatus,
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
@@ -75,15 +76,17 @@ export default function Intelligence() {
     }
   }, [socketConnected, socketManager]);
 
-  // Handle API errors with toast notifications
+  // Handle API errors with toast notifications (defer to avoid setState-in-effect)
   useEffect(() => {
-    if (itemsError) {
+    if (!itemsError) return;
+    const t = window.setTimeout(() => {
       addToast({
         type: 'error',
         title: 'Failed to load items',
         message: typeof itemsError === 'string' ? itemsError : 'Unable to fetch actionable items',
       });
-    }
+    }, 0);
+    return () => clearTimeout(t);
   }, [itemsError, addToast]);
 
   // Filter and group items
@@ -272,7 +275,9 @@ export default function Intelligence() {
               </div>
               <select
                 value={filters.source}
-                onChange={e => dispatch(setSourceFilter(e.target.value as any))}
+                onChange={e =>
+                  dispatch(setSourceFilter(e.target.value as ActionableItemSource | 'all'))
+                }
                 className="px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-primary-500/50 transition-colors">
                 <option value="all">All Sources</option>
                 <option value="email">Email</option>
