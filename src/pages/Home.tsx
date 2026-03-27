@@ -23,10 +23,33 @@ const progressFromStatus = (status: LocalAiStatus | null): number => {
     case 'downloading':
       return 0.25;
     case 'idle':
-      return 0.05;
+      return 0;
     default:
       return 0;
   }
+};
+
+const formatBytes = (bytes?: number | null): string => {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '0 B';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && value >= 1024; i += 1) {
+    value /= 1024;
+    unit = units[i];
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`;
+};
+
+const formatEta = (etaSeconds?: number | null): string => {
+  if (typeof etaSeconds !== 'number' || !Number.isFinite(etaSeconds) || etaSeconds <= 0) {
+    return '';
+  }
+  const mins = Math.floor(etaSeconds / 60);
+  const secs = etaSeconds % 60;
+  if (mins <= 0) return `${secs}s`;
+  return `${mins}m ${secs.toString().padStart(2, '0')}s`;
 };
 
 const Home = () => {
@@ -61,7 +84,7 @@ const Home = () => {
       }
     };
     void load();
-    const timer = setInterval(() => void load(), 7000);
+    const timer = setInterval(() => void load(), 2000);
     return () => {
       mounted = false;
       clearInterval(timer);
@@ -69,6 +92,17 @@ const Home = () => {
   }, []);
 
   const modelProgress = useMemo(() => progressFromStatus(localAiStatus), [localAiStatus]);
+  const indeterminateDownload =
+    localAiStatus?.state === 'downloading' && typeof localAiStatus.download_progress !== 'number';
+  const downloadedText =
+    typeof localAiStatus?.downloaded_bytes === 'number'
+      ? `${formatBytes(localAiStatus.downloaded_bytes)}${typeof localAiStatus?.total_bytes === 'number' ? ` / ${formatBytes(localAiStatus.total_bytes)}` : ''}`
+      : '';
+  const speedText =
+    typeof localAiStatus?.download_speed_bps === 'number' && localAiStatus.download_speed_bps > 0
+      ? `${formatBytes(localAiStatus.download_speed_bps)}/s`
+      : '';
+  const etaText = formatEta(localAiStatus?.eta_seconds);
 
   return (
     <div className="min-h-full relative">
@@ -108,7 +142,7 @@ const Home = () => {
                 </div>
 
                 <div className="mt-2 flex items-center justify-between text-xs">
-                  <span className="text-stone-300">{localAiStatus?.model_id ?? 'qwen3.5-1b'}</span>
+                  <span className="text-stone-300">{localAiStatus?.model_id ?? 'qwen3-1.7b'}</span>
                   <span className="text-stone-200 capitalize">
                     {localAiStatus?.state ?? 'starting'}
                   </span>
@@ -116,13 +150,28 @@ const Home = () => {
 
                 <div className="mt-2 h-2 rounded-full bg-stone-800 overflow-hidden">
                   <div
-                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500"
-                    style={{ width: `${Math.round(modelProgress * 100)}%` }}
+                    className={`h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500 ${
+                      indeterminateDownload ? 'animate-pulse' : ''
+                    }`}
+                    style={{
+                      width: `${Math.round((indeterminateDownload ? 1 : modelProgress) * 100)}%`,
+                    }}
                   />
                 </div>
 
-                <div className="mt-2 flex items-center justify-between text-[11px] text-stone-400">
-                  <span>{Math.round(modelProgress * 100)}%</span>
+                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-stone-400">
+                  <span>
+                    {indeterminateDownload
+                      ? 'Downloading...'
+                      : `${Math.round(modelProgress * 100)}%`}
+                  </span>
+                  {downloadedText && (
+                    <span className="truncate text-stone-300" title={downloadedText}>
+                      {downloadedText}
+                    </span>
+                  )}
+                  {speedText && <span className="text-blue-300">{speedText}</span>}
+                  {etaText && <span className="text-cyan-300">ETA {etaText}</span>}
                   {localAiStatus?.warning && (
                     <span className="max-w-[72%] truncate text-amber-300">
                       {localAiStatus.warning}

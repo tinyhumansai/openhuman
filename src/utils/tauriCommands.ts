@@ -431,6 +431,10 @@ export interface LocalAiStatus {
   model_id: string;
   provider: string;
   download_progress?: number | null;
+  downloaded_bytes?: number | null;
+  total_bytes?: number | null;
+  download_speed_bps?: number | null;
+  eta_seconds?: number | null;
   warning?: string | null;
   model_path?: string | null;
 }

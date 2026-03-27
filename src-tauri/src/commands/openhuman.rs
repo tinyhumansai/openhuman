@@ -58,6 +58,10 @@ pub struct LocalAiStatus {
     pub model_id: String,
     pub provider: String,
     pub download_progress: Option<f32>,
+    pub downloaded_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub download_speed_bps: Option<u64>,
+    pub eta_seconds: Option<u64>,
     pub warning: Option<String>,
     pub model_path: Option<String>,
 }

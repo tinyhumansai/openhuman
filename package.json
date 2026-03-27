@@ -6,6 +6,7 @@
     "dev": "vite",
     "dev:web": "vite",
     "dev:app": "source scripts/load-dotenv.sh && tauri dev",
+    "core:stage": "node scripts/stage-core-sidecar.mjs",
     "build": "tsc && vite build",
     "build:app": "yarn skills:build && tsc && vite build",
     "compile": "tsc --noEmit",

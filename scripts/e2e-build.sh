@@ -29,6 +29,9 @@ fi
 
 export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
 
+# Stage rust-core sidecar for bundle.externalBin (see src-tauri/tauri.conf.json).
+node scripts/stage-core-sidecar.mjs
+
 # Use npx so CI does not require a global Tauri CLI
 npx tauri build --bundles app --debug
 

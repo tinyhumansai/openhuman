@@ -11,7 +11,7 @@ pub struct LocalAiConfig {
     pub provider: String,
     #[serde(default = "default_model_id")]
     pub model_id: String,
-    #[serde(default)]
+    #[serde(default = "default_download_url")]
     pub download_url: Option<String>,
     #[serde(default)]
     pub checksum_sha256: Option<String>,
@@ -34,11 +34,15 @@ fn default_provider() -> String {
 }
 
 fn default_model_id() -> String {
-    "qwen3.5-1b".to_string()
+    "qwen3-1.7b".to_string()
+}
+
+fn default_download_url() -> Option<String> {
+    Some("https://huggingface.co/Qwen/Qwen3-1.7B".to_string())
 }
 
 fn default_artifact_name() -> String {
-    "qwen3.5-1b.gguf".to_string()
+    "qwen3-1.7b.gguf".to_string()
 }
 
 fn default_autosummary_debounce_ms() -> u64 {
@@ -59,7 +63,7 @@ impl Default for LocalAiConfig {
             enabled: default_enabled(),
             provider: default_provider(),
             model_id: default_model_id(),
-            download_url: None,
+            download_url: default_download_url(),
             checksum_sha256: None,
             artifact_name: default_artifact_name(),
             autosummary_debounce_ms: default_autosummary_debounce_ms(),

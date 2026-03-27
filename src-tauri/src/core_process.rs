@@ -37,6 +37,11 @@ impl CoreProcessHandle {
         if guard.is_none() {
             let mut cmd = if let Some(core_bin) = &self.core_bin {
                 let mut cmd = Command::new(core_bin);
+                if is_current_exe_path(core_bin) {
+                    // Safety: if core_bin resolves to this GUI executable, force the
+                    // explicit subcommand path so we don't accidentally relaunch clients.
+                    cmd.arg("core");
+                }
                 cmd.arg("serve").arg("--port").arg(self.port.to_string());
                 log::info!(
                     "[core] spawning dedicated core binary: {:?} serve --port {}",
@@ -98,6 +103,23 @@ impl CoreProcessHandle {
     }
 }
 
+fn is_current_exe_path(candidate: &std::path::Path) -> bool {
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    same_executable_path(candidate, &current)
+}
+
+fn same_executable_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a_real), Ok(b_real)) => a_real == b_real,
+        _ => false,
+    }
+}
+
 pub fn default_core_port() -> u16 {
     std::env::var("OPENHUMAN_CORE_PORT")
         .ok()
@@ -113,6 +135,13 @@ pub fn default_core_bin() -> Option<PathBuf> {
         }
     }
 
+    // Dev ergonomics: in debug builds, prefer spawning this same executable with
+    // `core serve` so Cargo recompiles core logic changes as part of tauri dev.
+    // Sidecar discovery remains enabled for packaged/release builds.
+    if cfg!(debug_assertions) {
+        return None;
+    }
+
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
 
@@ -121,7 +150,7 @@ pub fn default_core_bin() -> Option<PathBuf> {
     #[cfg(not(windows))]
     let standalone = exe_dir.join("openhuman");
 
-    if standalone.exists() {
+    if standalone.exists() && !same_executable_path(&standalone, &exe) {
         return Some(standalone);
     }
 
@@ -130,7 +159,7 @@ pub fn default_core_bin() -> Option<PathBuf> {
     #[cfg(not(windows))]
     let legacy_standalone = exe_dir.join("openhuman-core");
 
-    if legacy_standalone.exists() {
+    if legacy_standalone.exists() && !same_executable_path(&legacy_standalone, &exe) {
         return Some(legacy_standalone);
     }
 
@@ -164,7 +193,7 @@ pub fn default_core_bin() -> Option<PathBuf> {
             let matches =
                 file_name.starts_with("openhuman-") || file_name.starts_with("openhuman-core-");
 
-            if matches {
+            if matches && !same_executable_path(&path, &exe) {
                 return Some(path);
             }
         }

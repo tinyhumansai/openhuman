@@ -60,10 +60,33 @@ const progressFromStatus = (status: LocalAiStatus | null): number => {
     case 'downloading':
       return 0.25;
     case 'idle':
-      return 0.05;
+      return 0;
     default:
       return 0;
   }
+};
+
+const formatBytes = (bytes?: number | null): string => {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '0 B';
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (let i = 1; i < units.length && value >= 1024; i += 1) {
+    value /= 1024;
+    unit = units[i];
+  }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`;
+};
+
+const formatEta = (etaSeconds?: number | null): string => {
+  if (typeof etaSeconds !== 'number' || !Number.isFinite(etaSeconds) || etaSeconds <= 0) {
+    return '';
+  }
+  const mins = Math.floor(etaSeconds / 60);
+  const secs = etaSeconds % 60;
+  if (mins <= 0) return `${secs}s`;
+  return `${mins}m ${secs.toString().padStart(2, '0')}s`;
 };
 
 const LocalModelPanel = () => {
@@ -81,6 +104,17 @@ const LocalModelPanel = () => {
   const [isSuggestLoading, setIsSuggestLoading] = useState(false);
 
   const progress = useMemo(() => progressFromStatus(status), [status]);
+  const isIndeterminateDownload =
+    status?.state === 'downloading' && typeof status.download_progress !== 'number';
+  const downloadedText =
+    typeof status?.downloaded_bytes === 'number'
+      ? `${formatBytes(status.downloaded_bytes)}${typeof status?.total_bytes === 'number' ? ` / ${formatBytes(status.total_bytes)}` : ''}`
+      : '';
+  const speedText =
+    typeof status?.download_speed_bps === 'number' && status.download_speed_bps > 0
+      ? `${formatBytes(status.download_speed_bps)}/s`
+      : '';
+  const etaText = formatEta(status?.eta_seconds);
 
   const loadStatus = async () => {
     if (!isTauri()) {
@@ -104,7 +138,7 @@ const LocalModelPanel = () => {
     void loadStatus();
     const timer = setInterval(() => {
       void loadStatus();
-    }, 4000);
+    }, 1500);
     return () => clearInterval(timer);
   }, []);
 
@@ -183,12 +217,24 @@ const LocalModelPanel = () => {
 
             <div className="h-2 rounded-full bg-stone-800 overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500"
-                style={{ width: `${Math.round(progress * 100)}%` }}
+                className={`h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500 ${
+                  isIndeterminateDownload ? 'animate-pulse' : ''
+                }`}
+                style={{ width: `${Math.round((isIndeterminateDownload ? 1 : progress) * 100)}%` }}
               />
             </div>
 
-            <div className="text-xs text-stone-400">Progress: {Math.round(progress * 100)}%</div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-400">
+              <span>
+                Progress:{' '}
+                {isIndeterminateDownload
+                  ? 'Downloading (size unknown)'
+                  : `${Math.round(progress * 100)}%`}
+              </span>
+              {downloadedText && <span className="text-stone-300">{downloadedText}</span>}
+              {speedText && <span className="text-blue-300">{speedText}</span>}
+              {etaText && <span className="text-cyan-300">ETA {etaText}</span>}
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               <div className="rounded-md border border-gray-700 p-2">
