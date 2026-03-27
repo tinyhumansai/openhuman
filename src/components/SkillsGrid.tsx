@@ -16,30 +16,6 @@ import {
 } from './skills/shared';
 import SkillSetupModal from './skills/SkillSetupModal';
 
-/** Normalize a raw unified registry entry into a SkillListEntry for display. */
-function normalizeUnifiedEntry(e: Record<string, unknown>): SkillListEntry {
-  const setup = e.setup as { required?: boolean; oauth?: unknown } | undefined;
-  // Treat both interactive setup steps and OAuth-only flows as "has setup"
-  // so that clicking a skill (e.g. Gmail) opens the connection/setup wizard
-  // instead of jumping straight to the management panel.
-  const hasSetup =
-    !!setup &&
-    (setup.required === true ||
-      // OAuth config means we still need a connection step in the wizard
-      !!setup.oauth);
-
-  return {
-    id: e.id as string,
-    name:
-      (e.name as string) || (e.id as string).charAt(0).toUpperCase() + (e.id as string).slice(1),
-    description: (e.description as string) || '',
-    icon: SKILL_ICONS[e.id as string],
-    ignoreInProduction: (e.ignoreInProduction as boolean) ?? false,
-    hasSetup,
-    skill_type: (e.skill_type as 'openhuman' | 'openclaw') ?? 'openhuman',
-  };
-}
-
 interface SkillRowProps {
   skillId: string;
   name: string;
@@ -129,26 +105,33 @@ export default function SkillsGrid() {
   // Extracted so it can be called after skill creation (e.g. from SelfEvolveModal).
   const refreshSkills = async () => {
     try {
-      // Try unified registry first — it merges both skill types.
-      const entries = await invoke<Array<Record<string, unknown>>>('unified_list_skills');
-
-      const processed: SkillListEntry[] = entries
-        .filter(e => {
-          const id = e.id as string;
-          if (id.includes('_')) {
-            console.warn(
-              `Skill "${id}" contains underscore and will be skipped. Skill IDs cannot contain underscores.`
-            );
-            return false;
-          }
-          return true;
+      const catalog = await invoke<Array<Record<string, unknown>>>('registry_list_catalog');
+      const installedIds = new Set(
+        catalog.filter(entry => entry.installed === true).map(entry => entry.id as string)
+      );
+      const manifests = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
+      const processed: SkillListEntry[] = manifests
+        .filter(m => {
+          const id = m.id as string;
+          if (id.includes('_')) return false;
+          return installedIds.size === 0 || installedIds.has(id);
         })
-        .map(normalizeUnifiedEntry)
+        .map(m => {
+          const setup = m.setup as { required?: boolean; oauth?: unknown } | undefined;
+          const hasSetup = !!setup && (setup.required === true || !!setup.oauth);
+          return {
+            id: m.id as string,
+            name: (m.name as string) || (m.id as string),
+            description: (m.description as string) || '',
+            icon: SKILL_ICONS[m.id as string],
+            ignoreInProduction: (m.ignoreInProduction as boolean) ?? false,
+            hasSetup,
+            skill_type: 'openhuman' as const,
+          };
+        })
         .filter(s => IS_DEV || !s.ignoreInProduction);
-
       setSkillsList(processed);
     } catch {
-      // Fallback to legacy runtime_discover_skills if unified registry isn't available.
       try {
         const manifests = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
         const processed: SkillListEntry[] = manifests

@@ -20,6 +20,12 @@ import { DEV_AUTO_LOAD_SKILL, IS_DEV } from '../utils/config';
 // ---------------------------------------------------------------------------
 
 async function discoverSkills(): Promise<SkillManifest[]> {
+  try {
+    await invoke('registry_sync_core');
+  } catch (err) {
+    console.warn('[SkillProvider] registry_sync_core failed:', err);
+  }
+
   const raw = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
 
   const manifests: SkillManifest[] = raw.map(m => ({

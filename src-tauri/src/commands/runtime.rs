@@ -10,7 +10,6 @@ use crate::models::socket::SocketState;
 use crate::runtime::socket_manager::SocketManager;
 use crate::utils::config::get_backend_url;
 use std::sync::Arc;
-use std::collections::HashMap;
 use tauri::State;
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +74,10 @@ pub struct ZeroClawToolResult {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod desktop {
     use super::*;
+    use crate::runtime::registry::{
+        install_or_update_skill, list_catalog, sync_core_skills, uninstall_skill,
+        RegistryCatalogEntry, RegistrySyncResult,
+    };
 
     /// List all skills discovered from the skills directory (including not-yet-started).
     #[tauri::command]
@@ -109,6 +112,44 @@ mod desktop {
             })
             .collect();
         Ok(result)
+    }
+
+    #[tauri::command]
+    pub async fn registry_sync_core(
+        engine: State<'_, Arc<RuntimeEngine>>,
+    ) -> Result<RegistrySyncResult, String> {
+        sync_core_skills(&engine)
+    }
+
+    #[tauri::command]
+    pub async fn registry_list_catalog(
+        engine: State<'_, Arc<RuntimeEngine>>,
+    ) -> Result<Vec<RegistryCatalogEntry>, String> {
+        list_catalog(&engine)
+    }
+
+    #[tauri::command]
+    pub async fn registry_install_skill(
+        engine: State<'_, Arc<RuntimeEngine>>,
+        skill_id: String,
+    ) -> Result<(), String> {
+        install_or_update_skill(&engine, &skill_id)
+    }
+
+    #[tauri::command]
+    pub async fn registry_update_skill(
+        engine: State<'_, Arc<RuntimeEngine>>,
+        skill_id: String,
+    ) -> Result<(), String> {
+        install_or_update_skill(&engine, &skill_id)
+    }
+
+    #[tauri::command]
+    pub async fn registry_uninstall_skill(
+        engine: State<'_, Arc<RuntimeEngine>>,
+        skill_id: String,
+    ) -> Result<(), String> {
+        uninstall_skill(&engine, &skill_id)
     }
 
     /// List all currently registered (running/stopped/error) skill instances.
@@ -496,6 +537,36 @@ mod mobile {
     pub async fn runtime_discover_skills() -> Result<Vec<serde_json::Value>, String> {
         // Return empty list on mobile
         Ok(vec![])
+    }
+
+    #[tauri::command]
+    pub async fn registry_sync_core() -> Result<serde_json::Value, String> {
+        Ok(serde_json::json!({
+            "repo_path": "",
+            "updated_core": [],
+            "skipped_core": [],
+            "errors": []
+        }))
+    }
+
+    #[tauri::command]
+    pub async fn registry_list_catalog() -> Result<Vec<serde_json::Value>, String> {
+        Ok(vec![])
+    }
+
+    #[tauri::command]
+    pub async fn registry_install_skill(_skill_id: String) -> Result<(), String> {
+        Err(MOBILE_ERROR.to_string())
+    }
+
+    #[tauri::command]
+    pub async fn registry_update_skill(_skill_id: String) -> Result<(), String> {
+        Err(MOBILE_ERROR.to_string())
+    }
+
+    #[tauri::command]
+    pub async fn registry_uninstall_skill(_skill_id: String) -> Result<(), String> {
+        Err(MOBILE_ERROR.to_string())
     }
 
     #[tauri::command]

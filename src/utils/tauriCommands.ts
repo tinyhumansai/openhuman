@@ -410,6 +410,26 @@ export interface RuntimeFlags {
   log_prompts: boolean;
 }
 
+export interface RegistrySyncResult {
+  repo_path: string;
+  updated_core: string[];
+  skipped_core: string[];
+  errors: string[];
+}
+
+export interface RegistryCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  core: boolean;
+  installed: boolean;
+  update_available: boolean;
+  can_uninstall: boolean;
+  commit?: string | null;
+  sha256?: string | null;
+}
+
 export interface TunnelConfig {
   provider: string;
   cloudflare?: { token: string } | null;
@@ -682,4 +702,39 @@ export async function runtimeDisableSkill(skillId: string): Promise<void> {
     throw new Error('Not running in Tauri');
   }
   await invoke('runtime_disable_skill', { skill_id: skillId });
+}
+
+export async function registrySyncCore(): Promise<RegistrySyncResult> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('registry_sync_core');
+}
+
+export async function registryListCatalog(): Promise<RegistryCatalogEntry[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('registry_list_catalog');
+}
+
+export async function registryInstallSkill(skillId: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  await invoke('registry_install_skill', { skill_id: skillId });
+}
+
+export async function registryUpdateSkill(skillId: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  await invoke('registry_update_skill', { skill_id: skillId });
+}
+
+export async function registryUninstallSkill(skillId: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  await invoke('registry_uninstall_skill', { skill_id: skillId });
 }

@@ -15,7 +15,7 @@ use crate::runtime::ping_scheduler::PingScheduler;
 use crate::runtime::preferences::PreferencesStore;
 use crate::runtime::skill_registry::SkillRegistry;
 use crate::runtime::socket_manager::SocketManager;
-use crate::runtime::types::{events, SkillMessage, SkillSnapshot, SkillStatus, ToolResult};
+use crate::runtime::types::{events, SkillSnapshot, SkillStatus, ToolResult};
 use crate::runtime::qjs_skill_instance::{BridgeDeps, QjsSkillInstance};
 // IdbStorage removed during runtime cleanup
 
@@ -119,60 +119,15 @@ impl RuntimeEngine {
             log::info!("[runtime] Using explicit skills source dir: {:?}", dir);
             return Ok(dir.clone());
         }
-
-        let current =
-            std::env::current_dir().map_err(|e| format!("Failed to get current dir: {e}"))?;
-
-        // 2. Dev: cwd/skills/skills
-        let dev_skills = current.join("skills").join("skills");
-        if dev_skills.exists() {
-            log::info!("[runtime] Using dev skills dir: {:?}", dev_skills);
-            return Ok(dev_skills);
-        }
-
-        // 3. Dev: ../skills/skills
-        if let Some(parent) = current.parent() {
-            let parent_skills = parent.join("skills").join("skills");
-            if parent_skills.exists() {
-                log::info!("[runtime] Using parent dev skills dir: {:?}", parent_skills);
-                return Ok(parent_skills);
-            }
-        }
-
-        // 4. Production: bundled resources
-        if let Some(resource_dir) = self.resource_dir.read().as_ref() {
-            let bundled_skills = resource_dir.join("_up_").join("skills").join("skills");
-            if bundled_skills.exists() {
-                log::info!(
-                    "[runtime] Using bundled skills from resources: {:?}",
-                    bundled_skills
-                );
-                return Ok(bundled_skills);
-            }
-
-            let bundled_skills_alt = resource_dir.join("skills");
-            if bundled_skills_alt.exists() {
-                log::info!(
-                    "[runtime] Using bundled skills from resources (alt): {:?}",
-                    bundled_skills_alt
-                );
-                return Ok(bundled_skills_alt);
-            }
-
-            log::warn!(
-                "[runtime] Resource dir set but skills not found. Checked: {:?} and {:?}",
-                bundled_skills,
-                bundled_skills_alt
-            );
-        }
-
-        // 5. Final fallback: app data dir
-        let prod_dir = self.skills_data_dir.clone();
+        // Runtime-managed install directory fallback.
+        let install_dir = self.skills_data_dir.join("installed");
+        std::fs::create_dir_all(&install_dir)
+            .map_err(|e| format!("Failed to create install dir {}: {e}", install_dir.display()))?;
         log::info!(
-            "[runtime] Skills source dir (data dir fallback): {:?}",
-            prod_dir
+            "[runtime] Skills source dir (runtime install fallback): {:?}",
+            install_dir
         );
-        Ok(prod_dir)
+        Ok(install_dir)
     }
 
     /// Expose the resolved skills source directory (for external callers like unified registry).

@@ -13,6 +13,7 @@ yarn.lock
 node_modules
 dist
 dist-ssr
+/skills/
 *.local
 
 # Environment variables

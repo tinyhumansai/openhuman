@@ -38,7 +38,6 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../skills/skills",
       "ai"
     ],
     "createUpdaterArtifacts": true,

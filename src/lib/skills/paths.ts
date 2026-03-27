@@ -10,14 +10,14 @@ import { IS_DEV } from "../../utils/config";
 
 /**
  * Get the root directory for discovering skills.
- * In dev, skills are in the submodule `skills/skills/` dir.
- * In production, paths are resolved by the Rust engine.
+ * Skills are installed at runtime by the Rust registry service.
+ * Client-side path helpers are informational only.
  */
 export function getSkillsBaseDir(): string {
   if (IS_DEV) {
-    return "skills";
+    return "skills/installed";
   }
-  return "";
+  return "skills/installed";
 }
 
 /**
@@ -32,8 +32,5 @@ export function getSkillModulePath(skillId: string): string {
  * Get the manifest path for a skill.
  */
 export function getSkillManifestPath(skillId: string): string {
-  if (IS_DEV) {
-    return `skills/skills/${skillId}/manifest.json`;
-  }
-  return `skills/${skillId}/manifest.json`;
+  return `skills/installed/${skillId}/manifest.json`;
 }

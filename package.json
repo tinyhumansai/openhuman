@@ -7,7 +7,7 @@
     "dev:web": "vite",
     "dev:app": "source scripts/load-dotenv.sh && tauri dev",
     "build": "tsc && vite build",
-    "build:app": "yarn skills:build && tsc && vite build",
+    "build:app": "tsc && vite build",
     "compile": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "tauri",
@@ -37,8 +37,8 @@
     "format:check": "prettier --check .",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
-    "skills:build": "cd skills && yarn build",
-    "skills:watch": "cd skills && yarn build:watch",
+    "skills:build": "echo \"skills are runtime-installed from registry\"",
+    "skills:watch": "echo \"skills are runtime-installed from registry\"",
     "prepare": "husky"
   },
   "dependencies": {

@@ -766,6 +766,7 @@ pub fn run() {
                 match runtime::qjs_engine::RuntimeEngine::new(skills_data_dir) {
                     Ok(engine) => {
                         engine.set_app_handle(app.handle().clone());
+                        engine.set_skills_source_dir(data_dir.join("skills").join("installed"));
 
                         // Set resource directory for bundled skills (production builds)
                         if let Ok(resource_dir) = app.path().resource_dir() {
@@ -797,6 +798,22 @@ pub fn run() {
                         // lightweight contexts don't have V8's memory reservation issue)
                         let engine_clone = engine.clone();
                         tauri::async_runtime::spawn(async move {
+                            match runtime::registry::sync_core_skills(&engine_clone) {
+                                Ok(sync) => {
+                                    log::info!(
+                                        "[registry] core sync complete: updated={}, skipped={}, errors={}",
+                                        sync.updated_core.len(),
+                                        sync.skipped_core.len(),
+                                        sync.errors.len()
+                                    );
+                                    for error in sync.errors {
+                                        log::error!("[registry] core sync error: {}", error);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("[registry] core sync failed: {}", e);
+                                }
+                            }
                             engine_clone.auto_start_skills().await;
                         });
 
@@ -1013,6 +1030,11 @@ pub fn run() {
                     ai_write_memory_file,
                     ai_list_memory_files,
                     // Runtime commands
+                    registry_sync_core,
+                    registry_list_catalog,
+                    registry_install_skill,
+                    registry_update_skill,
+                    registry_uninstall_skill,
                     runtime_discover_skills,
                     runtime_list_skills,
                     runtime_start_skill,
@@ -1144,6 +1166,11 @@ pub fn run() {
                     ai_write_memory_file,
                     ai_list_memory_files,
                     // Runtime commands
+                    registry_sync_core,
+                    registry_list_catalog,
+                    registry_install_skill,
+                    registry_update_skill,
+                    registry_uninstall_skill,
                     runtime_discover_skills,
                     runtime_list_skills,
                     runtime_start_skill,

@@ -18,6 +18,17 @@ import { useAppSelector } from '../store/hooks';
 import { IS_DEV } from '../utils/config';
 import { deriveSkillSyncUiState } from './skillsSyncUi';
 
+interface RegistryCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  core: boolean;
+  installed: boolean;
+  update_available: boolean;
+  can_uninstall: boolean;
+}
+
 /** Format large numbers: 1200 → "1.2K", 1200000 → "1.2M" */
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -188,6 +199,8 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
 export default function Skills() {
   // Skills state
   const [skillsList, setSkillsList] = useState<SkillListEntry[]>([]);
+  const [catalog, setCatalog] = useState<RegistryCatalogEntry[]>([]);
+  const [catalogBusy, setCatalogBusy] = useState<Record<string, boolean>>({});
   const [skillsLoading, setSkillsLoading] = useState(true);
   const skillsState = useAppSelector(state => state.skills.skills);
   const skillStates = useAppSelector(state => state.skills.skillStates);
@@ -214,12 +227,20 @@ export default function Skills() {
           // not Tauri env
         }
 
+        let catalogEntries: RegistryCatalogEntry[] = [];
+        try {
+          catalogEntries = await invoke<RegistryCatalogEntry[]>('registry_list_catalog');
+        } catch (err) {
+          console.warn('[Skills] failed to load registry catalog', err);
+        }
+        setCatalog(catalogEntries);
+
         const manifests = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
-        const ALLOWED_SKILLS = new Set(['gmail', 'notion']);
         const validManifests = manifests.filter(m => {
           const id = m.id as string;
           if (id.includes('_')) return false;
-          return ALLOWED_SKILLS.has(id);
+          if (catalogEntries.length === 0) return true;
+          return catalogEntries.some(c => c.id === id && c.installed);
         });
 
         const processed: SkillListEntry[] = validManifests
@@ -233,7 +254,7 @@ export default function Skills() {
               description: (m.description as string) || '',
               icon: SKILL_ICONS[m.id as string],
               ignoreInProduction: (m.ignoreInProduction as boolean) ?? false,
-              hasSetup: !!(setup && setup.required),
+              hasSetup: !!(setup && (setup.required || setup.oauth)),
             };
           })
           .filter(s => IS_DEV || !s.ignoreInProduction);
@@ -247,6 +268,43 @@ export default function Skills() {
     };
     loadSkills();
   }, []);
+
+  const refreshSkills = async () => {
+    setSkillsLoading(true);
+    try {
+      const catalogEntries = await invoke<RegistryCatalogEntry[]>('registry_list_catalog');
+      setCatalog(catalogEntries);
+      const manifests = await invoke<Array<Record<string, unknown>>>('runtime_discover_skills');
+      const validManifests = manifests.filter(m => {
+        const id = m.id as string;
+        if (id.includes('_')) return false;
+        if (catalogEntries.length === 0) return true;
+        return catalogEntries.some(c => c.id === id && c.installed);
+      });
+
+      const processed: SkillListEntry[] = validManifests
+        .map(m => {
+          const setup = m.setup as Record<string, unknown> | undefined;
+          return {
+            id: m.id as string,
+            name:
+              (m.name as string) ||
+              (m.id as string).charAt(0).toUpperCase() + (m.id as string).slice(1),
+            description: (m.description as string) || '',
+            icon: SKILL_ICONS[m.id as string],
+            ignoreInProduction: (m.ignoreInProduction as boolean) ?? false,
+            hasSetup: !!(setup && (setup.required || setup.oauth)),
+          };
+        })
+        .filter(s => IS_DEV || !s.ignoreInProduction);
+
+      setSkillsList(processed);
+    } catch (err) {
+      console.warn('[Skills] refresh failed', err);
+    } finally {
+      setSkillsLoading(false);
+    }
+  };
 
   // Sort skills by connection status
   const sortedSkillsList = useMemo(() => {
@@ -275,6 +333,27 @@ export default function Skills() {
     setActiveSkillDescription(skill.description);
     setActiveSkillHasSetup(skill.hasSetup);
     setSetupModalOpen(true);
+  };
+
+  const handleRegistryAction = async (
+    skillId: string,
+    action: 'install' | 'update' | 'uninstall'
+  ) => {
+    setCatalogBusy(prev => ({ ...prev, [skillId]: true }));
+    try {
+      if (action === 'install') {
+        await invoke('registry_install_skill', { skill_id: skillId });
+      } else if (action === 'update') {
+        await invoke('registry_update_skill', { skill_id: skillId });
+      } else {
+        await invoke('registry_uninstall_skill', { skill_id: skillId });
+      }
+      await refreshSkills();
+    } catch (err) {
+      console.warn(`[Skills] registry ${action} failed for ${skillId}:`, err);
+    } finally {
+      setCatalogBusy(prev => ({ ...prev, [skillId]: false }));
+    }
   };
 
   return (
@@ -306,6 +385,79 @@ export default function Skills() {
                   {sortedSkillsList.map(skill => (
                     <SkillCard key={skill.id} skill={skill} onSetup={() => openSkillSetup(skill)} />
                   ))}
+                </div>
+              )}
+            </div>
+
+            <div className="animate-fade-up mt-8" style={{ animationDelay: '150ms' }}>
+              <div className="mb-3">
+                <h2 className="text-sm font-semibold text-white opacity-80">Skills Registry</h2>
+              </div>
+              {catalog.length === 0 ? (
+                <div className="glass rounded-2xl p-6 text-center">
+                  <p className="text-sm text-stone-500">No registry entries found</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {catalog.map(entry => {
+                    const busy = !!catalogBusy[entry.id];
+                    return (
+                      <div
+                        key={entry.id}
+                        className="flex items-center justify-between gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-white">{entry.name}</span>
+                            <span
+                              className={`text-[10px] px-1.5 py-0.5 rounded-md ${
+                                entry.core
+                                  ? 'bg-primary-500/15 text-primary-300'
+                                  : 'bg-stone-700/50 text-stone-300'
+                              }`}>
+                              {entry.core ? 'Core' : 'Contributor'}
+                            </span>
+                            {entry.update_available && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300">
+                                Update Available
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-stone-400 truncate">
+                            {entry.description || 'No description'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {!entry.installed ? (
+                            <button
+                              disabled={busy}
+                              onClick={() => handleRegistryAction(entry.id, 'install')}
+                              className="px-3 py-1.5 text-xs font-medium text-sage-300 bg-sage-500/10 border border-sage-500/30 rounded-lg hover:bg-sage-500/20 disabled:opacity-50">
+                              {busy ? 'Installing…' : 'Install'}
+                            </button>
+                          ) : (
+                            <>
+                              {entry.update_available && (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => handleRegistryAction(entry.id, 'update')}
+                                  className="px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg hover:bg-amber-500/20 disabled:opacity-50">
+                                  {busy ? 'Updating…' : 'Update'}
+                                </button>
+                              )}
+                              {entry.can_uninstall && (
+                                <button
+                                  disabled={busy}
+                                  onClick={() => handleRegistryAction(entry.id, 'uninstall')}
+                                  className="px-3 py-1.5 text-xs font-medium text-coral-300 bg-coral-500/10 border border-coral-500/30 rounded-lg hover:bg-coral-500/20 disabled:opacity-50">
+                                  {busy ? 'Removing…' : 'Uninstall'}
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
