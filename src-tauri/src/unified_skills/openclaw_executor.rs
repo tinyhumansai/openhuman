@@ -6,7 +6,7 @@
 
 use crate::runtime::types::{ToolContent, UnifiedSkillResult};
 use chrono::Utc;
-use rust_core::openhuman::skills::{Skill, SkillTool};
+use openhuman_core::openhuman::skills::{Skill, SkillTool};
 use std::collections::HashMap;
 use std::net::IpAddr;
 

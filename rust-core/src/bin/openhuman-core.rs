@@ -1,6 +1,6 @@
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Err(err) = rust_core::core_server::run_from_cli_args(&args) {
+    if let Err(err) = openhuman_core::core_server::run_from_cli_args(&args) {
         eprintln!("openhuman-core failed: {err}");
         std::process::exit(1);
     }

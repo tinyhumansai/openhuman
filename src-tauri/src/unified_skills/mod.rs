@@ -18,7 +18,7 @@ use crate::runtime::qjs_engine::RuntimeEngine;
 use crate::runtime::types::{ToolDefinition, UnifiedSkillEntry, UnifiedSkillResult};
 use chrono::Utc;
 use directories::UserDirs;
-use rust_core::openhuman::skills::{load_skills, Skill};
+use openhuman_core::openhuman::skills::{load_skills, Skill};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;

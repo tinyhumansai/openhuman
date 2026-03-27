@@ -1,2 +1,2 @@
-pub use rust_core::models::auth;
-pub use rust_core::models::socket;
+pub use openhuman_core::models::auth;
+pub use openhuman_core::models::socket;

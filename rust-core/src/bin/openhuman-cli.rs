@@ -310,24 +310,24 @@ fn execute(cli: Cli) -> Result<serde_json::Value, String> {
     }
 }
 
-fn load_config() -> Result<rust_core::openhuman::config::Config, String> {
+fn load_config() -> Result<openhuman_core::openhuman::config::Config, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("failed to build runtime: {e}"))?;
     runtime
-        .block_on(rust_core::openhuman::config::Config::load_or_init())
+        .block_on(openhuman_core::openhuman::config::Config::load_or_init())
         .map_err(|e| format!("failed to load config: {e}"))
 }
 
 fn status_value(
-    status: rust_core::openhuman::service::ServiceStatus,
+    status: openhuman_core::openhuman::service::ServiceStatus,
 ) -> Result<serde_json::Value, String> {
     serde_json::to_value(status).map_err(|e| format!("failed to serialize service status: {e}"))
 }
 
 fn command_response_json(
-    status: rust_core::openhuman::service::ServiceStatus,
+    status: openhuman_core::openhuman::service::ServiceStatus,
     log: &str,
 ) -> Result<serde_json::Value, String> {
     Ok(json!({
@@ -338,35 +338,35 @@ fn command_response_json(
 
 fn local_service_install() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = rust_core::openhuman::service::install(&config)
+    let status = openhuman_core::openhuman::service::install(&config)
         .map_err(|e| format!("service install failed: {e}"))?;
     command_response_json(status, "service install completed")
 }
 
 fn local_service_start() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = rust_core::openhuman::service::start(&config)
+    let status = openhuman_core::openhuman::service::start(&config)
         .map_err(|e| format!("service start failed: {e}"))?;
     command_response_json(status, "service start completed")
 }
 
 fn local_service_stop() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = rust_core::openhuman::service::stop(&config)
+    let status = openhuman_core::openhuman::service::stop(&config)
         .map_err(|e| format!("service stop failed: {e}"))?;
     command_response_json(status, "service stop completed")
 }
 
 fn local_service_status() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = rust_core::openhuman::service::status(&config)
+    let status = openhuman_core::openhuman::service::status(&config)
         .map_err(|e| format!("service status failed: {e}"))?;
     command_response_json(status, "service status fetched")
 }
 
 fn local_service_uninstall() -> Result<serde_json::Value, String> {
     let config = load_config()?;
-    let status = rust_core::openhuman::service::uninstall(&config)
+    let status = openhuman_core::openhuman::service::uninstall(&config)
         .map_err(|e| format!("service uninstall failed: {e}"))?;
     command_response_json(status, "service uninstall completed")
 }

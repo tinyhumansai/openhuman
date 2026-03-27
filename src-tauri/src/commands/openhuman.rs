@@ -1,10 +1,10 @@
 //! Tauri command proxies for the standalone openhuman core process.
 
-use rust_core::core_server::{
+use openhuman_core::core_server::{
     BrowserSettingsUpdate, CommandResponse, ConfigSnapshot, GatewaySettingsUpdate,
     MemorySettingsUpdate, ModelSettingsUpdate, RuntimeFlags, RuntimeSettingsUpdate,
 };
-use rust_core::openhuman::{doctor, hardware, integrations, migration, onboard, service};
+use openhuman_core::openhuman::{doctor, hardware, integrations, migration, onboard, service};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -32,11 +32,11 @@ async fn call_core<T: DeserializeOwned>(
     crate::core_rpc::call(method, params).await
 }
 
-async fn load_config_local() -> Result<rust_core::openhuman::config::Config, String> {
+async fn load_config_local() -> Result<openhuman_core::openhuman::config::Config, String> {
     let timeout_duration = std::time::Duration::from_secs(30);
     match tokio::time::timeout(
         timeout_duration,
-        rust_core::openhuman::config::Config::load_or_init(),
+        openhuman_core::openhuman::config::Config::load_or_init(),
     )
     .await
     {
@@ -150,7 +150,7 @@ pub async fn openhuman_update_gateway_settings(
 #[tauri::command]
 pub async fn openhuman_update_tunnel_settings(
     app: tauri::AppHandle,
-    tunnel: rust_core::openhuman::config::TunnelConfig,
+    tunnel: openhuman_core::openhuman::config::TunnelConfig,
 ) -> Result<CommandResponse<ConfigSnapshot>, String> {
     call_core(
         &app,

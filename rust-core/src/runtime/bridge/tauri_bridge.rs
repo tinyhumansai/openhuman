@@ -20,7 +20,7 @@ pub fn get_platform() -> &'static str {
 }
 
 /// Send a native OS notification (desktop only).
-#[cfg(desktop)]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn send_notification(
     _app_handle: &tauri::AppHandle,
     title: &str,
@@ -31,7 +31,7 @@ pub fn send_notification(
 }
 
 /// Stub for mobile platforms where desktop notifications aren't available.
-#[cfg(not(desktop))]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 pub fn send_notification(
     _app_handle: &tauri::AppHandle,
     _title: &str,

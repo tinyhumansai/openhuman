@@ -825,7 +825,7 @@ pub fn run() {
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
                             .join(".openhuman")
                     });
-                let daemon_config = rust_core::openhuman::config::DaemonConfig::from_app_data_dir(
+                let daemon_config = openhuman_core::openhuman::config::DaemonConfig::from_app_data_dir(
                     &data_dir,
                 );
                 let cancel = tokio_util::sync::CancellationToken::new();
@@ -873,13 +873,13 @@ pub fn run() {
 
                     // Start the external platform service
                     tauri::async_runtime::spawn(async move {
-                        match rust_core::openhuman::config::Config::load_or_init().await {
+                        match openhuman_core::openhuman::config::Config::load_or_init().await {
                             Ok(config) => {
-                                match rust_core::openhuman::service::install(&config) {
+                                match openhuman_core::openhuman::service::install(&config) {
                                     Ok(status) => log::info!("[openhuman] External daemon service installed: {:?}", status),
                                     Err(e) => log::error!("[openhuman] Failed to install external daemon service: {e}"),
                                 }
-                                match rust_core::openhuman::service::start(&config) {
+                                match openhuman_core::openhuman::service::start(&config) {
                                     Ok(status) => log::info!("[openhuman] External daemon service started: {:?}", status),
                                     Err(e) => log::error!("[openhuman] Failed to start external daemon service: {e}"),
                                 }
@@ -1280,5 +1280,5 @@ pub fn run() {
 }
 
 pub fn run_core_from_args(args: &[String]) -> anyhow::Result<()> {
-    rust_core::run_core_from_args(args)
+    openhuman_core::run_core_from_args(args)
 }

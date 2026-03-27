@@ -1,12 +1,12 @@
 [package]
-name = "rust-core"
+name = "openhuman-core"
 version = "0.49.16"
 edition = "2021"
-description = "OpenHuman Rust core business logic and RPC server"
+description = "OpenHuman core business logic and RPC server"
 autobins = true
 
 [lib]
-name = "rust_core"
+name = "openhuman_core"
 crate-type = ["rlib"]
 
 [dependencies]

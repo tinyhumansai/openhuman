@@ -1,1 +1,1 @@
-pub use rust_core::memory::*;
+pub use openhuman_core::memory::*;

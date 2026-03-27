@@ -13,7 +13,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use rust_core::openhuman::config::{Config, DaemonConfig};
+use openhuman_core::openhuman::config::{Config, DaemonConfig};
 
 /// How often the state writer emits health snapshots (seconds).
 const STATUS_FLUSH_SECONDS: u64 = 5;
@@ -45,7 +45,7 @@ pub async fn run(
     let _ = tokio::fs::create_dir_all(&config.data_dir).await;
     let _ = tokio::fs::create_dir_all(&config.workspace_dir).await;
 
-    rust_core::openhuman::health::mark_component_ok("daemon");
+    openhuman_core::openhuman::health::mark_component_ok("daemon");
 
     let mut handles: Vec<JoinHandle<()>> = vec![];
 
@@ -76,7 +76,7 @@ pub async fn run(
     // Wait for cancellation (Tauri exit)
     cancel.cancelled().await;
 
-    rust_core::openhuman::health::mark_component_error("daemon", "shutdown requested");
+    openhuman_core::openhuman::health::mark_component_error("daemon", "shutdown requested");
     log::info!("[openhuman] Daemon supervisor shutting down (health events will stop)");
 
     for handle in &handles {
@@ -104,10 +104,10 @@ pub async fn run_full(
         .channel_max_backoff_secs
         .max(initial_backoff);
 
-    rust_core::openhuman::health::mark_component_ok("daemon");
+    openhuman_core::openhuman::health::mark_component_ok("daemon");
 
     if config.heartbeat.enabled {
-        let _ = rust_core::openhuman::heartbeat::engine::HeartbeatEngine::ensure_heartbeat_file(
+        let _ = openhuman_core::openhuman::heartbeat::engine::HeartbeatEngine::ensure_heartbeat_file(
             &config.workspace_dir,
         )
         .await;
@@ -126,7 +126,7 @@ pub async fn run_full(
             move || {
                 let cfg = gateway_cfg.clone();
                 let host = gateway_host.clone();
-                async move { rust_core::openhuman::gateway::run_gateway(&host, port, cfg).await }
+                async move { openhuman_core::openhuman::gateway::run_gateway(&host, port, cfg).await }
             },
         ));
     }
@@ -140,11 +140,11 @@ pub async fn run_full(
                 max_backoff,
                 move || {
                     let cfg = channels_cfg.clone();
-                    async move { rust_core::openhuman::channels::start_channels(cfg).await }
+                    async move { openhuman_core::openhuman::channels::start_channels(cfg).await }
                 },
             ));
         } else {
-            rust_core::openhuman::health::mark_component_ok("channels");
+            openhuman_core::openhuman::health::mark_component_ok("channels");
             log::info!("No real-time channels configured; channel supervisor disabled");
         }
     }
@@ -170,11 +170,11 @@ pub async fn run_full(
             max_backoff,
             move || {
                 let cfg = scheduler_cfg.clone();
-                async move { rust_core::openhuman::cron::scheduler::run(cfg).await }
+                async move { openhuman_core::openhuman::cron::scheduler::run(cfg).await }
             },
         ));
     } else {
-        rust_core::openhuman::health::mark_component_ok("scheduler");
+        openhuman_core::openhuman::health::mark_component_ok("scheduler");
         log::info!("Cron disabled; scheduler supervisor not started");
     }
 
@@ -183,7 +183,7 @@ pub async fn run_full(
     log::info!("[openhuman]   Components: gateway, channels, heartbeat, scheduler");
 
     cancel.cancelled().await;
-    rust_core::openhuman::health::mark_component_error("daemon", "shutdown requested");
+    openhuman_core::openhuman::health::mark_component_error("daemon", "shutdown requested");
 
     for handle in &handles {
         handle.abort();
@@ -217,7 +217,7 @@ fn spawn_state_writer_full(config: Config, cancel: CancellationToken) -> JoinHan
                 _ = interval.tick() => {},
                 _ = cancel.cancelled() => break,
             }
-            let mut json = rust_core::openhuman::health::snapshot_json();
+            let mut json = openhuman_core::openhuman::health::snapshot_json();
             if let Some(obj) = json.as_object_mut() {
                 obj.insert(
                     "written_at".into(),
@@ -231,11 +231,11 @@ fn spawn_state_writer_full(config: Config, cancel: CancellationToken) -> JoinHan
 }
 
 async fn run_heartbeat_worker(config: Config) -> Result<()> {
-    let observer: std::sync::Arc<dyn rust_core::openhuman::observability::Observer> =
-        std::sync::Arc::from(rust_core::openhuman::observability::create_observer(
+    let observer: std::sync::Arc<dyn openhuman_core::openhuman::observability::Observer> =
+        std::sync::Arc::from(openhuman_core::openhuman::observability::create_observer(
             &config.observability,
         ));
-    let engine = rust_core::openhuman::heartbeat::engine::HeartbeatEngine::new(
+    let engine = openhuman_core::openhuman::heartbeat::engine::HeartbeatEngine::new(
         config.heartbeat.clone(),
         config.workspace_dir.clone(),
         observer,
@@ -255,7 +255,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
         for task in tasks {
             let prompt = format!("[Heartbeat Task] {task}");
             let temp = config.default_temperature;
-            if let Err(e) = rust_core::openhuman::agent::run(
+            if let Err(e) = openhuman_core::openhuman::agent::run(
                 config.clone(),
                 Some(prompt),
                 None,
@@ -265,17 +265,17 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
             )
             .await
             {
-                rust_core::openhuman::health::mark_component_error("heartbeat", e.to_string());
+                openhuman_core::openhuman::health::mark_component_error("heartbeat", e.to_string());
                 log::warn!("Heartbeat task failed: {e}");
             } else {
-                rust_core::openhuman::health::mark_component_ok("heartbeat");
+                openhuman_core::openhuman::health::mark_component_ok("heartbeat");
             }
         }
     }
 }
 
 fn has_supervised_channels(config: &Config) -> bool {
-    let rust_core::openhuman::config::ChannelsConfig {
+    let openhuman_core::openhuman::config::ChannelsConfig {
         cli: _,     // `cli` is not used in the web UI
         webhook: _, // Managed by the gateway
         telegram,
@@ -345,7 +345,7 @@ async fn spawn_state_writer(
                     }
                 }
 
-        let mut json = rust_core::openhuman::health::snapshot_json();
+        let mut json = openhuman_core::openhuman::health::snapshot_json();
         if let Some(obj) = json.as_object_mut() {
             obj.insert(
                 "written_at".into(),
@@ -393,10 +393,10 @@ where
         let max_backoff = max_backoff_secs.max(backoff);
 
         loop {
-            rust_core::openhuman::health::mark_component_ok(name);
+            openhuman_core::openhuman::health::mark_component_ok(name);
             match run_component().await {
                 Ok(()) => {
-                    rust_core::openhuman::health::mark_component_error(
+                    openhuman_core::openhuman::health::mark_component_error(
                         name,
                         "component exited unexpectedly",
                     );
@@ -405,12 +405,12 @@ where
                     backoff = initial_backoff_secs.max(1);
                 }
                 Err(e) => {
-                    rust_core::openhuman::health::mark_component_error(name, e.to_string());
+                    openhuman_core::openhuman::health::mark_component_error(name, e.to_string());
                     log::error!("Daemon component '{name}' failed: {e}");
                 }
             }
 
-            rust_core::openhuman::health::bump_component_restart(name);
+            openhuman_core::openhuman::health::bump_component_restart(name);
             tokio::time::sleep(Duration::from_secs(backoff)).await;
             // Double backoff AFTER sleeping so first error uses initial_backoff
             backoff = backoff.saturating_mul(2).min(max_backoff);
@@ -432,7 +432,7 @@ mod tests {
         handle.abort();
         let _ = handle.await;
 
-        let snapshot = rust_core::openhuman::health::snapshot_json();
+        let snapshot = openhuman_core::openhuman::health::snapshot_json();
         let component = &snapshot["components"]["th-daemon-test-fail"];
         assert_eq!(component["status"], "error");
         assert!(component["restart_count"].as_u64().unwrap_or(0) >= 1);
@@ -450,7 +450,7 @@ mod tests {
         handle.abort();
         let _ = handle.await;
 
-        let snapshot = rust_core::openhuman::health::snapshot_json();
+        let snapshot = openhuman_core::openhuman::health::snapshot_json();
         let component = &snapshot["components"]["th-daemon-test-exit"];
         assert_eq!(component["status"], "error");
         assert!(component["restart_count"].as_u64().unwrap_or(0) >= 1);
