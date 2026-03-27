@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import ConnectionIndicator from '../components/ConnectionIndicator';
 import { useUser } from '../hooks/useUser';
-import { isTauri, openhumanLocalAiStatus, type LocalAiStatus } from '../utils/tauriCommands';
+import { isTauri, type LocalAiStatus, openhumanLocalAiStatus } from '../utils/tauriCommands';
 
 const Home = () => {
   const { user } = useUser();

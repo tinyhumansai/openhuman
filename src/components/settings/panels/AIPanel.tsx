@@ -4,9 +4,9 @@ import {
   aiGetConfig,
   type AIPreview,
   aiRefreshConfig,
+  type LocalAiStatus,
   openhumanLocalAiDownload,
   openhumanLocalAiStatus,
-  type LocalAiStatus,
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';

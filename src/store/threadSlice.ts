@@ -1,8 +1,8 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 
 import { threadApi } from '../services/api/threadApi';
-import { isTauri, openhumanLocalAiSuggestQuestions } from '../utils/tauriCommands';
 import type { Thread, ThreadMessage } from '../types/thread';
+import { isTauri, openhumanLocalAiSuggestQuestions } from '../utils/tauriCommands';
 
 interface ThreadState {
   // Existing local data (will be persisted)
