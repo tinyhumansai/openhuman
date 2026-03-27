@@ -12,6 +12,7 @@
 #![allow(dead_code)]
 
 pub mod agent;
+pub mod accessibility;
 pub mod approval;
 pub mod channels;
 pub mod config;

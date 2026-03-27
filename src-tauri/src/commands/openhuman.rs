@@ -1,15 +1,49 @@
 //! Tauri command proxies for the standalone openhuman core process.
 
 use openhuman_core::core_server::{
-    BrowserSettingsUpdate, CommandResponse, ConfigSnapshot, GatewaySettingsUpdate,
-    MemorySettingsUpdate, ModelSettingsUpdate, RuntimeFlags, RuntimeSettingsUpdate,
+    AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
+    AutocompleteSuggestParams, AutocompleteSuggestResult, BrowserSettingsUpdate, CaptureNowResult,
+    CommandResponse, ConfigSnapshot, GatewaySettingsUpdate, InputActionParams, InputActionResult,
+    MemorySettingsUpdate, ModelSettingsUpdate, PermissionStatus, RuntimeFlags,
+    RuntimeSettingsUpdate, SessionStatus, StartSessionParams, StopSessionParams,
 };
 use openhuman_core::openhuman::{doctor, hardware, integrations, migration, onboard, service};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+#[cfg(desktop)]
+use crate::services::notification_service::NotificationService;
 
 const DEFAULT_CORE_RPC_URL: &str = "http://127.0.0.1:7788/rpc";
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccessibilityBridgeEvent {
+    event: String,
+    timestamp_ms: i64,
+    details: serde_json::Value,
+}
+
+fn emit_accessibility_event(app: &tauri::AppHandle, event: &str, details: serde_json::Value) {
+    let payload = AccessibilityBridgeEvent {
+        event: event.to_string(),
+        timestamp_ms: chrono::Utc::now().timestamp_millis(),
+        details,
+    };
+    let _ = app.emit("openhuman:accessibility", &payload);
+
+    #[cfg(desktop)]
+    {
+        let body = match event {
+            "session_started" => "Accessibility session started",
+            "session_stopped" => "Accessibility session stopped",
+            "permissions_requested" => "Accessibility permission request opened",
+            _ => "Accessibility automation event",
+        };
+        let _ = NotificationService::show(app, "Accessibility Automation", body);
+    }
+}
 
 fn params_none() -> serde_json::Value {
     serde_json::json!({})
@@ -228,6 +262,122 @@ pub async fn openhuman_agent_chat(
             "model_override": model_override,
             "temperature": temperature,
         }),
+    )
+    .await
+}
+
+/// Fetch accessibility automation status.
+#[tauri::command]
+pub async fn openhuman_accessibility_status(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<AccessibilityStatus>, String> {
+    call_core(&app, "openhuman.accessibility_status", params_none()).await
+}
+
+/// Request accessibility-related permissions on macOS.
+#[tauri::command]
+pub async fn openhuman_accessibility_request_permissions(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<PermissionStatus>, String> {
+    let response: CommandResponse<PermissionStatus> = call_core(
+        &app,
+        "openhuman.accessibility_request_permissions",
+        params_none(),
+    )
+    .await?;
+    emit_accessibility_event(
+        &app,
+        "permissions_requested",
+        serde_json::json!(response.result),
+    );
+    Ok(response)
+}
+
+/// Start a bounded accessibility session with explicit consent.
+#[tauri::command]
+pub async fn openhuman_accessibility_start_session(
+    app: tauri::AppHandle,
+    params: StartSessionParams,
+) -> Result<CommandResponse<SessionStatus>, String> {
+    let response: CommandResponse<SessionStatus> = call_core(
+        &app,
+        "openhuman.accessibility_start_session",
+        serde_json::json!(params),
+    )
+    .await?;
+    emit_accessibility_event(&app, "session_started", serde_json::json!(response.result));
+    Ok(response)
+}
+
+/// Stop the active accessibility session.
+#[tauri::command]
+pub async fn openhuman_accessibility_stop_session(
+    app: tauri::AppHandle,
+    params: Option<StopSessionParams>,
+) -> Result<CommandResponse<SessionStatus>, String> {
+    let response: CommandResponse<SessionStatus> = call_core(
+        &app,
+        "openhuman.accessibility_stop_session",
+        serde_json::json!(params.unwrap_or(StopSessionParams { reason: None })),
+    )
+    .await?;
+    emit_accessibility_event(&app, "session_stopped", serde_json::json!(response.result));
+    Ok(response)
+}
+
+/// Force an immediate capture sample from the accessibility runtime.
+#[tauri::command]
+pub async fn openhuman_accessibility_capture_now(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<CaptureNowResult>, String> {
+    call_core(&app, "openhuman.accessibility_capture_now", params_none()).await
+}
+
+/// Execute a validated input action in an active accessibility session.
+#[tauri::command]
+pub async fn openhuman_accessibility_input_action(
+    app: tauri::AppHandle,
+    params: InputActionParams,
+) -> Result<CommandResponse<InputActionResult>, String> {
+    let response: CommandResponse<InputActionResult> = call_core(
+        &app,
+        "openhuman.accessibility_input_action",
+        serde_json::json!(params),
+    )
+    .await?;
+    if response.result.accepted {
+        emit_accessibility_event(&app, "input_action", serde_json::json!(response.result));
+    }
+    Ok(response)
+}
+
+/// Generate autocomplete suggestions from captured typing context.
+#[tauri::command]
+pub async fn openhuman_accessibility_autocomplete_suggest(
+    app: tauri::AppHandle,
+    params: Option<AutocompleteSuggestParams>,
+) -> Result<CommandResponse<AutocompleteSuggestResult>, String> {
+    call_core(
+        &app,
+        "openhuman.accessibility_autocomplete_suggest",
+        serde_json::json!(params.unwrap_or(AutocompleteSuggestParams {
+            context: None,
+            max_results: None,
+        })),
+    )
+    .await
+}
+
+/// Commit an autocomplete suggestion into the runtime context.
+#[tauri::command]
+pub async fn openhuman_accessibility_autocomplete_commit(
+    app: tauri::AppHandle,
+    params: AutocompleteCommitParams,
+) -> Result<CommandResponse<AutocompleteCommitResult>, String> {
+    call_core(
+        &app,
+        "openhuman.accessibility_autocomplete_commit",
+        serde_json::json!(params),
     )
     .await
 }

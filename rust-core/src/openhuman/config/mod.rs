@@ -8,7 +8,8 @@ pub use daemon::DaemonConfig;
 pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
-    AgentConfig, AuditConfig, AutonomyConfig, BrowserComputerUseConfig, BrowserConfig,
+    AccessibilityAutomationConfig, AgentConfig, AuditConfig, AutonomyConfig,
+    BrowserComputerUseConfig, BrowserConfig,
     ChannelsConfig, ClassificationRule, CloudflareTunnelConfig, ComposioConfig, Config, CostConfig,
     CronConfig, CustomTunnelConfig, DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig,
     EmbeddingRouteConfig, GatewayConfig, HardwareConfig, HardwareTransport, HeartbeatConfig,

@@ -3,6 +3,7 @@
 //! Split into submodules; this module re-exports the main `Config` and all public types.
 
 mod agent;
+mod accessibility;
 mod autonomy;
 mod channels;
 mod defaults;
@@ -20,6 +21,7 @@ mod tools;
 mod tunnel;
 
 pub use agent::{AgentConfig, DelegateAgentConfig};
+pub use accessibility::AccessibilityAutomationConfig;
 pub use autonomy::AutonomyConfig;
 pub use channels::{
     AuditConfig, ChannelsConfig, DingTalkConfig, DiscordConfig, IMessageConfig, IrcConfig,
@@ -82,6 +84,9 @@ pub struct Config {
 
     #[serde(default)]
     pub runtime: RuntimeConfig,
+
+    #[serde(default)]
+    pub accessibility: AccessibilityAutomationConfig,
 
     #[serde(default)]
     pub reliability: ReliabilityConfig,
@@ -176,6 +181,7 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             autonomy: AutonomyConfig::default(),
             runtime: RuntimeConfig::default(),
+            accessibility: AccessibilityAutomationConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             agent: AgentConfig::default(),

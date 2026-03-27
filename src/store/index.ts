@@ -15,6 +15,7 @@ import storage from 'redux-persist/lib/storage';
 import { setStoreForApiClient } from '../services/apiClient';
 import { IS_DEV } from '../utils/config';
 import { storeSession, syncMemoryClientToken } from '../utils/tauriCommands';
+import accessibilityReducer from './accessibilitySlice';
 import aiReducer from './aiSlice';
 import authReducer, { setOnboardedForUser, setToken } from './authSlice';
 import daemonReducer from './daemonSlice';
@@ -108,6 +109,7 @@ export const store = configureStore({
     intelligence: intelligenceReducer,
     invite: inviteReducer,
     notion: notionReducer,
+    accessibility: accessibilityReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

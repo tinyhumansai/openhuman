@@ -73,6 +73,23 @@ const SettingsHome = () => {
 
   // Main settings menu items
   const mainMenuItems = [
+    {
+      id: 'accessibility',
+      title: 'Accessibility Automation',
+      description: 'Screen monitoring, device control, and predictive input',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 12h6m-7 9h8a2 2 0 002-2V7a2 2 0 00-2-2h-1l-.707-.707A1 1 0 0013.586 4h-3.172a1 1 0 00-.707.293L9 5H8a2 2 0 00-2 2v12a2 2 0 002 2z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('accessibility'),
+      dangerous: false,
+    },
     // {
     //   id: "messaging",
     //   title: "Messaging",
