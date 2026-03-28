@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import DefaultRedirect from './components/DefaultRedirect';
@@ -15,12 +16,27 @@ import Skills from './pages/Skills';
 import Welcome from './pages/Welcome';
 import { selectHasEncryptionKey, selectIsOnboarded } from './store/authSelectors';
 import { useAppSelector } from './store/hooks';
+import {
+  DEFAULT_WORKSPACE_ONBOARDING_FLAG,
+  openhumanWorkspaceOnboardingFlagExists,
+} from './utils/tauriCommands';
 
-const OnboardingRoute = () => {
+interface OnboardingRouteProps {
+  hasWorkspaceOnboardingFlag: boolean;
+  isWorkspaceFlagLoading: boolean;
+}
+
+const OnboardingRoute = ({
+  hasWorkspaceOnboardingFlag,
+  isWorkspaceFlagLoading,
+}: OnboardingRouteProps) => {
   const isOnboarded = useAppSelector(selectIsOnboarded);
   const hasEncryptionKey = useAppSelector(selectHasEncryptionKey);
-  if (isOnboarded && !hasEncryptionKey) return <Navigate to="/mnemonic" replace />;
-  if (isOnboarded) return <Navigate to="/home" replace />;
+  const shouldSkipOnboarding = isOnboarded || hasWorkspaceOnboardingFlag;
+
+  if (isWorkspaceFlagLoading) return null;
+  if (shouldSkipOnboarding && !hasEncryptionKey) return <Navigate to="/mnemonic" replace />;
+  if (shouldSkipOnboarding) return <Navigate to="/home" replace />;
   return <Onboarding />;
 };
 
@@ -30,20 +46,30 @@ const MnemonicRoute = () => {
   return <Mnemonic />;
 };
 
+interface HomeRouteProps {
+  hasWorkspaceOnboardingFlag: boolean;
+  isWorkspaceFlagLoading: boolean;
+}
+
 /**
  * Home route wrapper: shows Home by default.
  * Only redirects to onboarding when user profile is loaded and onboarding is not done.
  */
-const HomeRoute = () => {
+const HomeRoute = ({ hasWorkspaceOnboardingFlag, isWorkspaceFlagLoading }: HomeRouteProps) => {
   const user = useAppSelector(state => state.user.user);
   const isOnboarded = useAppSelector(selectIsOnboarded);
   const hasEncryptionKey = useAppSelector(selectHasEncryptionKey);
 
+  const shouldSkipOnboarding = isOnboarded || hasWorkspaceOnboardingFlag;
+
   // While user profile is still loading, show Home (avoid flash to onboarding)
   if (!user) return <Home />;
 
+  // Keep Home mounted while workspace onboarding bypass check resolves
+  if (isWorkspaceFlagLoading) return <Home />;
+
   // User loaded but onboarding not done → redirect to onboarding
-  if (!isOnboarded) return <Navigate to="/onboarding" replace />;
+  if (!shouldSkipOnboarding) return <Navigate to="/onboarding" replace />;
 
   // Onboarded but no encryption key → redirect to mnemonic page
   if (!hasEncryptionKey) return <Navigate to="/mnemonic" replace />;
@@ -52,6 +78,31 @@ const HomeRoute = () => {
 };
 
 const AppRoutes = () => {
+  const [hasWorkspaceOnboardingFlag, setHasWorkspaceOnboardingFlag] = useState(false);
+  const [isWorkspaceFlagLoading, setIsWorkspaceFlagLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadWorkspaceFlag = async () => {
+      try {
+        const hasFlag = await openhumanWorkspaceOnboardingFlagExists(
+          DEFAULT_WORKSPACE_ONBOARDING_FLAG
+        );
+        if (mounted) setHasWorkspaceOnboardingFlag(hasFlag);
+      } catch (error) {
+        console.warn('[routing] failed to read workspace onboarding flag:', error);
+        if (mounted) setHasWorkspaceOnboardingFlag(false);
+      } finally {
+        if (mounted) setIsWorkspaceFlagLoading(false);
+      }
+    };
+    void loadWorkspaceFlag();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   return (
     <>
       <Routes>
@@ -70,7 +121,10 @@ const AppRoutes = () => {
           path="/onboarding"
           element={
             <ProtectedRoute requireAuth={true} requireOnboarded={false}>
-              <OnboardingRoute />
+              <OnboardingRoute
+                hasWorkspaceOnboardingFlag={hasWorkspaceOnboardingFlag}
+                isWorkspaceFlagLoading={isWorkspaceFlagLoading}
+              />
             </ProtectedRoute>
           }
         />
@@ -86,7 +140,10 @@ const AppRoutes = () => {
           path="/home"
           element={
             <ProtectedRoute requireAuth={true}>
-              <HomeRoute />
+              <HomeRoute
+                hasWorkspaceOnboardingFlag={hasWorkspaceOnboardingFlag}
+                isWorkspaceFlagLoading={isWorkspaceFlagLoading}
+              />
             </ProtectedRoute>
           }
         />

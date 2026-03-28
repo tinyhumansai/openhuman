@@ -22,8 +22,8 @@ use crate::openhuman::{
 pub use crate::openhuman::accessibility::{
     AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
     AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureNowResult, InputActionParams,
-    InputActionResult, PermissionStatus, SessionStatus, StartSessionParams, StopSessionParams,
-    VisionFlushResult, VisionRecentResult,
+    InputActionResult, PermissionRequestParams, PermissionStatus, SessionStatus,
+    StartSessionParams, StopSessionParams, VisionFlushResult, VisionRecentResult,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -888,6 +888,17 @@ async fn dispatch(
             to_json_value(command_response(
                 permissions,
                 vec!["accessibility permissions requested".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_request_permission" => {
+            let payload: PermissionRequestParams = parse_params(params)?;
+            let permissions = accessibility::global_engine()
+                .request_permission(payload.permission)
+                .await?;
+            to_json_value(command_response(
+                permissions,
+                vec!["accessibility permission requested".to_string()],
             ))
         }
 

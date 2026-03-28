@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { ActionableCard } from '../components/intelligence/ActionableCard';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
+import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
 import { filterItems, getItemStats, groupItemsByTime } from '../components/intelligence/utils';
 import { useConsciousItems } from '../hooks/useConsciousItems';
@@ -235,7 +236,7 @@ export default function Intelligence() {
     <div className="min-h-full relative">
       <div className="relative z-10 min-h-full flex flex-col">
         <div className="flex-1 p-6">
-          <div className="max-w-2xl mx-auto">
+          <div className="max-w-6xl mx-auto">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
@@ -278,8 +279,10 @@ export default function Intelligence() {
               </div>
             </div>
 
+            <MemoryWorkspace onToast={addToast} />
+
             {/* Filters */}
-            <div className="flex items-center gap-3 mb-6 animate-fade-up">
+            <div className="flex items-center gap-3 mt-6 mb-6 animate-fade-up">
               <div className="flex-1">
                 <input
                   type="text"

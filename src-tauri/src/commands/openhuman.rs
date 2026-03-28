@@ -4,19 +4,28 @@ use openhuman_core::core_server::{
     AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
     AutocompleteSuggestParams, AutocompleteSuggestResult, BrowserSettingsUpdate, CaptureNowResult,
     CommandResponse, ConfigSnapshot, GatewaySettingsUpdate, InputActionParams, InputActionResult,
-    MemorySettingsUpdate, ModelSettingsUpdate, PermissionStatus, RuntimeFlags,
-    RuntimeSettingsUpdate, SessionStatus, StartSessionParams, StopSessionParams, VisionFlushResult,
-    VisionRecentResult,
+    MemorySettingsUpdate, ModelSettingsUpdate, PermissionRequestParams, PermissionStatus,
+    RuntimeFlags, RuntimeSettingsUpdate, SessionStatus, StartSessionParams, StopSessionParams,
+    VisionFlushResult, VisionRecentResult,
 };
 use openhuman_core::openhuman::{doctor, hardware, integrations, migration, onboard, service};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tauri::{Emitter, Manager};
 
 #[cfg(desktop)]
 use crate::services::notification_service::NotificationService;
 
 const DEFAULT_CORE_RPC_URL: &str = "http://127.0.0.1:7788/rpc";
+const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
+
+fn workspace_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openhuman")
+        .join("workspace")
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -304,6 +313,24 @@ pub async fn openhuman_get_runtime_flags(
     call_core(&app, "openhuman.get_runtime_flags", params_none()).await
 }
 
+/// Check whether a workspace onboarding bypass flag file exists.
+#[tauri::command]
+pub async fn openhuman_workspace_onboarding_flag_exists(
+    flag_name: Option<String>,
+) -> Result<bool, String> {
+    let name = flag_name.unwrap_or_else(|| DEFAULT_ONBOARDING_FLAG_NAME.to_string());
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+    {
+        return Err("Invalid onboarding flag name".to_string());
+    }
+
+    Ok(workspace_dir().join(trimmed).is_file())
+}
+
 /// Set browser allow-all flag for the current process.
 #[tauri::command]
 pub async fn openhuman_set_browser_allow_all(
@@ -362,6 +389,26 @@ pub async fn openhuman_accessibility_request_permissions(
     emit_accessibility_event(
         &app,
         "permissions_requested",
+        serde_json::json!(response.result),
+    );
+    Ok(response)
+}
+
+/// Request one accessibility-related permission on macOS.
+#[tauri::command]
+pub async fn openhuman_accessibility_request_permission(
+    app: tauri::AppHandle,
+    params: PermissionRequestParams,
+) -> Result<CommandResponse<PermissionStatus>, String> {
+    let response: CommandResponse<PermissionStatus> = call_core(
+        &app,
+        "openhuman.accessibility_request_permission",
+        serde_json::json!(params),
+    )
+    .await?;
+    emit_accessibility_event(
+        &app,
+        "permission_requested",
         serde_json::json!(response.result),
     );
     Ok(response)

@@ -239,6 +239,27 @@ export async function memoryRecallNamespace(
   return await invoke('memory_recall_namespace', { namespace, maxChunks });
 }
 
+export async function aiListMemoryFiles(relativeDir = 'memory'): Promise<string[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('ai_list_memory_files', { relativeDir });
+}
+
+export async function aiReadMemoryFile(relativePath: string): Promise<string> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('ai_read_memory_file', { relativePath });
+}
+
+export async function aiWriteMemoryFile(relativePath: string, content: string): Promise<void> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  await invoke('ai_write_memory_file', { relativePath, content });
+}
+
 /**
  * Trigger a conscious loop run manually.
  * The loop recalls all skill memory, extracts actionable items via LLM,
@@ -384,6 +405,7 @@ export interface AgentServerStatus {
 }
 
 export type AccessibilityPermissionState = 'granted' | 'denied' | 'unknown' | 'unsupported';
+export type AccessibilityPermissionKind = 'screen_recording' | 'accessibility' | 'input_monitoring';
 
 export interface AccessibilityPermissionStatus {
   screen_recording: AccessibilityPermissionState;
@@ -560,6 +582,8 @@ export interface RuntimeFlags {
   log_prompts: boolean;
 }
 
+export const DEFAULT_WORKSPACE_ONBOARDING_FLAG = '.skip_onboarding';
+
 export interface LocalAiStatus {
   state: string;
   model_id: string;
@@ -724,6 +748,15 @@ export async function openhumanGetRuntimeFlags(): Promise<CommandResponse<Runtim
     throw new Error('Not running in Tauri');
   }
   return await invoke('openhuman_get_runtime_flags');
+}
+
+export async function openhumanWorkspaceOnboardingFlagExists(
+  flagName = DEFAULT_WORKSPACE_ONBOARDING_FLAG
+): Promise<boolean> {
+  if (!isTauri()) {
+    return false;
+  }
+  return await invoke('openhuman_workspace_onboarding_flag_exists', { flagName });
 }
 
 export async function openhumanSetBrowserAllowAll(
@@ -1040,6 +1073,15 @@ export async function openhumanAccessibilityRequestPermissions(): Promise<
     throw new Error('Not running in Tauri');
   }
   return await invoke('openhuman_accessibility_request_permissions');
+}
+
+export async function openhumanAccessibilityRequestPermission(
+  permission: AccessibilityPermissionKind
+): Promise<CommandResponse<AccessibilityPermissionStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_request_permission', { params: { permission } });
 }
 
 export async function openhumanAccessibilityStartSession(

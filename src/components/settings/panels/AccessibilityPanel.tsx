@@ -4,7 +4,7 @@ import {
   fetchAccessibilityStatus,
   fetchAccessibilityVisionRecent,
   flushAccessibilityVision,
-  requestAccessibilityPermissions,
+  requestAccessibilityPermission,
   startAccessibilitySession,
   stopAccessibilitySession,
 } from '../../../store/accessibilitySlice';
@@ -127,10 +127,31 @@ const AccessibilityPanel = () => {
 
           <button
             type="button"
-            onClick={() => void dispatch(requestAccessibilityPermissions())}
+            onClick={() => void dispatch(requestAccessibilityPermission('screen_recording'))}
             disabled={isRequestingPermissions}
             className="mt-1 rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
-            {isRequestingPermissions ? 'Requesting…' : 'Check / Request Permissions'}
+            {isRequestingPermissions ? 'Requesting…' : 'Request Screen Recording'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
+            disabled={isRequestingPermissions}
+            className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
+            {isRequestingPermissions ? 'Requesting…' : 'Request Accessibility'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void dispatch(requestAccessibilityPermission('input_monitoring'))}
+            disabled={isRequestingPermissions}
+            className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
+            {isRequestingPermissions ? 'Requesting…' : 'Open Input Monitoring'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void dispatch(fetchAccessibilityStatus())}
+            disabled={isLoading}
+            className="rounded-lg border border-stone-600 bg-stone-800/60 px-3 py-2 text-sm text-stone-200 disabled:opacity-50">
+            {isLoading ? 'Refreshing…' : 'Refresh Status'}
           </button>
         </section>
 

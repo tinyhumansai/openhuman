@@ -2,10 +2,12 @@ import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/tool
 
 import {
   type AccessibilityInputActionParams,
+  type AccessibilityPermissionKind,
   type AccessibilitySessionStatus,
   type AccessibilityStatus,
   type AccessibilityVisionSummary,
   openhumanAccessibilityInputAction,
+  openhumanAccessibilityRequestPermission,
   openhumanAccessibilityRequestPermissions,
   openhumanAccessibilityStartSession,
   openhumanAccessibilityStatus,
@@ -66,6 +68,19 @@ export const requestAccessibilityPermissions = createAsyncThunk(
       return response.result;
     } catch (error) {
       return rejectWithValue(extractError(error, 'Failed to request accessibility permissions'));
+    }
+  }
+);
+
+export const requestAccessibilityPermission = createAsyncThunk(
+  'accessibility/requestPermission',
+  async (permission: AccessibilityPermissionKind, { rejectWithValue }) => {
+    try {
+      await openhumanAccessibilityRequestPermission(permission);
+      const response = await openhumanAccessibilityStatus();
+      return response.result;
+    } catch (error) {
+      return rejectWithValue(extractError(error, 'Failed to request accessibility permission'));
     }
   }
 );
@@ -186,6 +201,19 @@ const accessibilitySlice = createSlice({
         state.isRequestingPermissions = false;
         state.lastError =
           (action.payload as string) ?? 'Failed to request accessibility permissions';
+      })
+      .addCase(requestAccessibilityPermission.pending, state => {
+        state.isRequestingPermissions = true;
+        state.lastError = null;
+      })
+      .addCase(requestAccessibilityPermission.fulfilled, (state, action) => {
+        state.isRequestingPermissions = false;
+        state.status = action.payload;
+      })
+      .addCase(requestAccessibilityPermission.rejected, (state, action) => {
+        state.isRequestingPermissions = false;
+        state.lastError =
+          (action.payload as string) ?? 'Failed to request accessibility permission';
       })
       .addCase(startAccessibilitySession.pending, state => {
         state.isStartingSession = true;

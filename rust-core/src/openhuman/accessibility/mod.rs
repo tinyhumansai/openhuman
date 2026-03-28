@@ -6,6 +6,8 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use std::ffi::c_void;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -33,6 +35,14 @@ pub struct PermissionStatus {
     pub screen_recording: PermissionState,
     pub accessibility: PermissionState,
     pub input_monitoring: PermissionState,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionKind {
+    ScreenRecording,
+    Accessibility,
+    InputMonitoring,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +95,11 @@ pub struct StartSessionParams {
     pub screen_monitoring: Option<bool>,
     pub device_control: Option<bool>,
     pub predictive_input: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionRequestParams {
+    pub permission: PermissionKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -344,26 +359,53 @@ impl AccessibilityEngine {
             });
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            let _ = std::process::Command::new("open")
-                .arg(
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-                )
-                .status();
-            let _ = std::process::Command::new("open")
-                .arg(
-                    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-                )
-                .status();
-            let _ = std::process::Command::new("open")
-                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
-                .status();
-        }
+        self.request_permission(PermissionKind::ScreenRecording)
+            .await?;
+        self.request_permission(PermissionKind::Accessibility).await?;
+        self.request_permission(PermissionKind::InputMonitoring)
+            .await?;
 
         let mut state = self.inner.lock().await;
         state.permissions = detect_permissions();
         state.last_event = Some("permissions_requested".to_string());
+        Ok(state.permissions.clone())
+    }
+
+    pub async fn request_permission(
+        &self,
+        permission: PermissionKind,
+    ) -> Result<PermissionStatus, String> {
+        if !cfg!(target_os = "macos") {
+            return Ok(PermissionStatus {
+                screen_recording: PermissionState::Unsupported,
+                accessibility: PermissionState::Unsupported,
+                input_monitoring: PermissionState::Unsupported,
+            });
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            match permission {
+                PermissionKind::ScreenRecording => {
+                    request_screen_recording_access();
+                    open_macos_privacy_pane("Privacy_ScreenCapture");
+                }
+                PermissionKind::Accessibility => {
+                    request_accessibility_access();
+                    open_macos_privacy_pane("Privacy_Accessibility");
+                }
+                PermissionKind::InputMonitoring => {
+                    open_macos_privacy_pane("Privacy_ListenEvent");
+                }
+            }
+        }
+
+        let mut state = self.inner.lock().await;
+        state.permissions = detect_permissions();
+        state.last_event = Some(format!(
+            "permission_requested:{}",
+            permission_to_str(permission)
+        ));
         Ok(state.permissions.clone())
     }
 
@@ -1099,29 +1141,135 @@ fn foreground_context() -> Option<AppContext> {
 }
 
 #[cfg(target_os = "macos")]
-fn detect_permissions() -> PermissionStatus {
-    let accessibility = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg("tell application \"System Events\" to return UI elements enabled")
-        .output()
-        .map(|o| {
-            if o.status.success() {
-                let value = String::from_utf8_lossy(&o.stdout).to_lowercase();
-                if value.contains("true") {
-                    PermissionState::Granted
-                } else {
-                    PermissionState::Denied
-                }
-            } else {
-                PermissionState::Denied
-            }
-        })
-        .unwrap_or(PermissionState::Unknown);
+type CFAllocatorRef = *const c_void;
+#[cfg(target_os = "macos")]
+type CFDictionaryRef = *const c_void;
+#[cfg(target_os = "macos")]
+type CFBooleanRef = *const c_void;
+#[cfg(target_os = "macos")]
+type CFStringRef = *const c_void;
 
+#[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+    static kAXTrustedCheckOptionPrompt: CFStringRef;
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFAllocatorDefault: CFAllocatorRef;
+    static kCFBooleanTrue: CFBooleanRef;
+    fn CFDictionaryCreate(
+        allocator: CFAllocatorRef,
+        keys: *const *const c_void,
+        values: *const *const c_void,
+        num_values: isize,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> CFDictionaryRef;
+    fn CFRelease(cf: *const c_void);
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOHIDCheckAccess(request_type: i32) -> isize;
+}
+
+#[cfg(target_os = "macos")]
+const IOHID_REQUEST_TYPE_LISTEN_EVENT: i32 = 1;
+#[cfg(target_os = "macos")]
+const IOHID_ACCESS_GRANTED: isize = 0;
+#[cfg(target_os = "macos")]
+const IOHID_ACCESS_DENIED: isize = 1;
+#[cfg(target_os = "macos")]
+const IOHID_ACCESS_UNKNOWN: isize = 2;
+
+fn permission_to_str(permission: PermissionKind) -> &'static str {
+    match permission {
+        PermissionKind::ScreenRecording => "screen_recording",
+        PermissionKind::Accessibility => "accessibility",
+        PermissionKind::InputMonitoring => "input_monitoring",
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn open_macos_privacy_pane(pane: &str) {
+    let url = format!("x-apple.systempreferences:com.apple.preference.security?{pane}");
+    let _ = std::process::Command::new("open").arg(url).status();
+}
+
+#[cfg(target_os = "macos")]
+fn request_accessibility_access() {
+    unsafe {
+        let keys = [kAXTrustedCheckOptionPrompt as *const c_void];
+        let values = [kCFBooleanTrue as *const c_void];
+        let options = CFDictionaryCreate(
+            kCFAllocatorDefault,
+            keys.as_ptr(),
+            values.as_ptr(),
+            1,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
+        let _ = AXIsProcessTrustedWithOptions(options);
+        if !options.is_null() {
+            CFRelease(options);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn request_screen_recording_access() {
+    unsafe {
+        let _ = CGRequestScreenCaptureAccess();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn detect_accessibility_permission() -> PermissionState {
+    unsafe {
+        if AXIsProcessTrusted() {
+            PermissionState::Granted
+        } else {
+            PermissionState::Denied
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn detect_screen_recording_permission() -> PermissionState {
+    unsafe {
+        if CGPreflightScreenCaptureAccess() {
+            PermissionState::Granted
+        } else {
+            PermissionState::Denied
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn detect_input_monitoring_permission() -> PermissionState {
+    let access = unsafe { IOHIDCheckAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) };
+    match access {
+        IOHID_ACCESS_GRANTED => PermissionState::Granted,
+        IOHID_ACCESS_DENIED => PermissionState::Denied,
+        IOHID_ACCESS_UNKNOWN => PermissionState::Unknown,
+        _ => PermissionState::Unknown,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn detect_permissions() -> PermissionStatus {
     PermissionStatus {
-        screen_recording: PermissionState::Unknown,
-        accessibility,
-        input_monitoring: PermissionState::Unknown,
+        screen_recording: detect_screen_recording_permission(),
+        accessibility: detect_accessibility_permission(),
+        input_monitoring: detect_input_monitoring_permission(),
     }
 }
 

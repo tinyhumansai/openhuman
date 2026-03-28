@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import {
   fetchAccessibilityStatus,
-  requestAccessibilityPermissions,
+  requestAccessibilityPermission,
 } from '../../../store/accessibilitySlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 
@@ -52,7 +52,7 @@ const FeaturesStep = ({ onNext }: FeaturesStepProps) => {
 
       <div className="space-y-2 mb-4">
         <button
-          onClick={() => void dispatch(requestAccessibilityPermissions())}
+          onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
           disabled={isRequestingPermissions || isLoading}
           className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
           {isRequestingPermissions ? 'Requesting…' : 'Request Permission'}
