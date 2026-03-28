@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::core_server::helpers::load_openhuman_config;
 use crate::core_server::types::{command_response, CommandResponse, ConfigSnapshot};
 use crate::core_server::{call_method, run_server, APP_SESSION_PROVIDER};
-use crate::openhuman::heartbeat::HeartbeatEngine;
+use crate::openhuman::heartbeat::engine::HeartbeatEngine;
 use crate::openhuman::screen_intelligence::{
     AccessibilityStatus, CaptureImageRefResult, PermissionState,
 };

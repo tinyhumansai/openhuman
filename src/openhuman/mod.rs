@@ -20,6 +20,8 @@ pub mod config;
 pub mod cost;
 pub mod cron;
 pub mod daemon;
+pub mod daemon_host;
+pub mod dev_paths;
 pub mod doctor;
 pub mod gateway;
 pub mod hardware;

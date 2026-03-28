@@ -23,6 +23,52 @@ pub fn core_socket_manager() -> Arc<crate::runtime::socket_manager::SocketManage
         .clone()
 }
 
+#[cfg(feature = "tauri-host")]
+static RUNTIME_ENGINE: OnceLock<Arc<crate::runtime::qjs_engine::RuntimeEngine>> = OnceLock::new();
+
+#[cfg(feature = "tauri-host")]
+static DESKTOP_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+#[cfg(feature = "tauri-host")]
+static DESKTOP_RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Register the QuickJS runtime engine for JSON-RPC `runtime.*` handlers (same OS process as the host).
+#[cfg(feature = "tauri-host")]
+pub fn init_core_runtime(engine: Arc<crate::runtime::qjs_engine::RuntimeEngine>) {
+    let _ = RUNTIME_ENGINE.set(engine);
+}
+
+#[cfg(feature = "tauri-host")]
+pub fn core_runtime_engine() -> Result<Arc<crate::runtime::qjs_engine::RuntimeEngine>, String> {
+    RUNTIME_ENGINE
+        .get()
+        .cloned()
+        .ok_or_else(|| "runtime engine not initialized".to_string())
+}
+
+#[cfg(feature = "tauri-host")]
+pub fn init_desktop_app_handle(handle: tauri::AppHandle) {
+    let _ = DESKTOP_APP_HANDLE.set(handle);
+}
+
+#[cfg(feature = "tauri-host")]
+pub fn desktop_app_handle() -> Result<tauri::AppHandle, String> {
+    DESKTOP_APP_HANDLE
+        .get()
+        .cloned()
+        .ok_or_else(|| "desktop app handle not set".to_string())
+}
+
+#[cfg(feature = "tauri-host")]
+pub fn init_desktop_resource_dir(dir: PathBuf) {
+    let _ = DESKTOP_RESOURCE_DIR.set(dir);
+}
+
+#[cfg(feature = "tauri-host")]
+pub fn desktop_resource_dir() -> Option<PathBuf> {
+    DESKTOP_RESOURCE_DIR.get().cloned()
+}
+
 pub async fn load_openhuman_config() -> Result<Config, String> {
     let timeout_duration = std::time::Duration::from_secs(30);
     match tokio::time::timeout(timeout_duration, Config::load_or_init()).await {
