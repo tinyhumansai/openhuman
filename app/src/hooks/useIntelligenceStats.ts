@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../services/apiClient';
 import type { AIStatus } from '../store/aiSlice';
 import { useAppSelector } from '../store/hooks';
+import { aiListMemoryFiles } from '../utils/tauriCommands';
 
 interface SessionEntry {
   sessionId: string;
@@ -60,7 +61,7 @@ export function useIntelligenceStats(): IntelligenceStats {
     }
 
     try {
-      const files = await invoke<string[]>('ai_list_memory_files', { relativeDir: 'memory' });
+      const files = await aiListMemoryFiles('memory');
       setMemoryFiles(files.length);
     } catch {
       setMemoryFiles(null);

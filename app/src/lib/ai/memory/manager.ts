@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import {
+  aiListMemoryFiles,
+  aiReadMemoryFile,
+  aiWriteMemoryFile,
+} from '../../../utils/tauriCommands';
 import type { EmbeddingProvider } from '../providers/embeddings';
 import { chunkMarkdown, sha256 } from './chunker';
 import { deduplicateAppend } from './dedup';
@@ -128,9 +133,7 @@ export class MemoryManager {
 
     // Index memory.md (core durable facts)
     try {
-      const memoryRoot = await invoke<string>('ai_read_memory_file', {
-        relativePath: MEMORY_PATHS.MEMORY_ROOT,
-      });
+      const memoryRoot = await aiReadMemoryFile(MEMORY_PATHS.MEMORY_ROOT);
       totalIndexed += await this.indexFile(MEMORY_PATHS.MEMORY_ROOT, memoryRoot);
     } catch {
       // memory.md doesn't exist yet — that's fine
@@ -138,15 +141,13 @@ export class MemoryManager {
 
     // Index memory directory files
     try {
-      const memoryFiles = await invoke<string[]>('ai_list_memory_files', {
-        relativeDir: MEMORY_PATHS.MEMORY_DIR,
-      });
+      const memoryFiles = await aiListMemoryFiles(MEMORY_PATHS.MEMORY_DIR);
 
       for (const fileName of memoryFiles) {
         if (!fileName.endsWith('.md')) continue;
         const relativePath = `${MEMORY_PATHS.MEMORY_DIR}/${fileName}`;
         try {
-          const content = await invoke<string>('ai_read_memory_file', { relativePath });
+          const content = await aiReadMemoryFile(relativePath);
           totalIndexed += await this.indexFile(relativePath, content);
         } catch {
           // Skip unreadable files
@@ -171,14 +172,14 @@ export class MemoryManager {
    * Read a specific memory file.
    */
   async readFile(relativePath: string): Promise<string> {
-    return invoke<string>('ai_read_memory_file', { relativePath });
+    return aiReadMemoryFile(relativePath);
   }
 
   /**
    * Write to a memory file.
    */
   async writeFile(relativePath: string, content: string): Promise<void> {
-    await invoke('ai_write_memory_file', { relativePath, content });
+    await aiWriteMemoryFile(relativePath, content);
     // Re-index the file
     await this.indexFile(relativePath, content);
   }

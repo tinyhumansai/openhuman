@@ -249,6 +249,12 @@ struct LocalAiTranscribeParams {
 }
 
 #[derive(Debug, Deserialize)]
+struct LocalAiTranscribeBytesParams {
+    audio_bytes: Vec<u8>,
+    extension: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct LocalAiTtsParams {
     text: String,
     output_path: Option<String>,
@@ -910,6 +916,49 @@ async fn dispatch(
             ))
         }
 
+        "openhuman.local_ai_transcribe_bytes" => {
+            let p: LocalAiTranscribeBytesParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+
+            let ext = p
+                .extension
+                .unwrap_or_else(|| "webm".to_string())
+                .trim()
+                .trim_start_matches('.')
+                .to_ascii_lowercase();
+            if ext.is_empty() || !ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Err("Invalid audio extension".to_string());
+            }
+
+            let voice_dir = std::env::temp_dir().join("openhuman_voice_input");
+            tokio::fs::create_dir_all(&voice_dir)
+                .await
+                .map_err(|e| format!("Failed to create voice input directory: {e}"))?;
+
+            let filename = format!(
+                "voice-{}-{}.{}",
+                Utc::now().timestamp_millis(),
+                uuid::Uuid::new_v4(),
+                ext
+            );
+            let file_path = voice_dir.join(filename);
+            tokio::fs::write(&file_path, &p.audio_bytes)
+                .await
+                .map_err(|e| format!("Failed to write audio file: {e}"))?;
+
+            let output = service
+                .transcribe(&config, file_path.to_string_lossy().as_ref())
+                .await;
+            let _ = tokio::fs::remove_file(&file_path).await;
+
+            let output = output?;
+            to_json_value(command_response(
+                output,
+                vec!["local ai transcription completed".to_string()],
+            ))
+        }
+
         "openhuman.local_ai_tts" => {
             let p: LocalAiTtsParams = parse_params(params)?;
             let config = load_openhuman_config().await?;
@@ -943,6 +992,43 @@ async fn dispatch(
                 output,
                 vec!["local ai asset download triggered".to_string()],
             ))
+        }
+
+        "ai.list_memory_files" => {
+            #[derive(Debug, Deserialize)]
+            struct ListMemoryFilesParams {
+                relative_dir: Option<String>,
+            }
+
+            let payload: ListMemoryFilesParams = parse_params(params)?;
+            let relative_dir = payload.relative_dir.unwrap_or_else(|| "memory".to_string());
+            let files = crate::ai::sessions::ai_list_memory_files(relative_dir).await?;
+            to_json_value(files)
+        }
+
+        "ai.read_memory_file" => {
+            #[derive(Debug, Deserialize)]
+            struct ReadMemoryFileParams {
+                relative_path: String,
+            }
+
+            let payload: ReadMemoryFileParams = parse_params(params)?;
+            let content = crate::ai::sessions::ai_read_memory_file(payload.relative_path).await?;
+            to_json_value(content)
+        }
+
+        "ai.write_memory_file" => {
+            #[derive(Debug, Deserialize)]
+            struct WriteMemoryFileParams {
+                relative_path: String,
+                content: String,
+            }
+
+            let payload: WriteMemoryFileParams = parse_params(params)?;
+            let wrote =
+                crate::ai::sessions::ai_write_memory_file(payload.relative_path, payload.content)
+                    .await?;
+            to_json_value(wrote)
         }
 
         "openhuman.encrypt_secret" => {

@@ -150,21 +150,6 @@ impl CoreProcessHandle {
 
         Err("core process did not become ready".to_string())
     }
-
-    pub async fn shutdown(&self) {
-        let mut child_guard = self.child.lock().await;
-        if let Some(child) = child_guard.as_mut() {
-            let _ = child.kill().await;
-        }
-        *child_guard = None;
-        drop(child_guard);
-
-        let mut task_guard = self.task.lock().await;
-        if let Some(task) = task_guard.take() {
-            task.abort();
-            let _ = task.await;
-        }
-    }
 }
 
 fn is_current_exe_path(candidate: &std::path::Path) -> bool {

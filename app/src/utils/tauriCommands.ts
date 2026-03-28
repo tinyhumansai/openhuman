@@ -245,21 +245,30 @@ export async function aiListMemoryFiles(relativeDir = 'memory'): Promise<string[
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await invoke('ai_list_memory_files', { relativeDir });
+  return await callCoreRpc<string[]>({
+    method: 'ai.list_memory_files',
+    params: { relative_dir: relativeDir },
+  });
 }
 
 export async function aiReadMemoryFile(relativePath: string): Promise<string> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await invoke('ai_read_memory_file', { relativePath });
+  return await callCoreRpc<string>({
+    method: 'ai.read_memory_file',
+    params: { relative_path: relativePath },
+  });
 }
 
 export async function aiWriteMemoryFile(relativePath: string, content: string): Promise<void> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  await invoke('ai_write_memory_file', { relativePath, content });
+  await callCoreRpc<boolean>({
+    method: 'ai.write_memory_file',
+    params: { relative_path: relativePath, content },
+  });
 }
 
 /**
@@ -1211,8 +1220,10 @@ export async function openhumanLocalAiTranscribeBytes(
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  // Native bridge stays in Tauri for byte→temp-file orchestration.
-  return await invoke('openhuman_local_ai_transcribe_bytes', { audioBytes, extension });
+  return await callCoreRpc<CommandResponse<LocalAiSpeechResult>>({
+    method: 'openhuman.local_ai_transcribe_bytes',
+    params: { audio_bytes: audioBytes, extension },
+  });
 }
 
 export async function openhumanLocalAiTts(
