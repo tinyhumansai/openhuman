@@ -35,7 +35,11 @@ export async function getAuthState(): Promise<{ is_authenticated: boolean; user:
     return { is_authenticated: false, user: null };
   }
 
-  return await invoke('get_auth_state');
+  const response = await callCoreRpc<{ result: { isAuthenticated: boolean; user: object | null } }>(
+    { method: 'openhuman.auth.get_state' }
+  );
+
+  return { is_authenticated: response.result.isAuthenticated, user: response.result.user };
 }
 
 /**
@@ -46,7 +50,10 @@ export async function getSessionToken(): Promise<string | null> {
     return null;
   }
 
-  return await invoke('get_session_token');
+  const response = await callCoreRpc<{ result: { token: string | null } }>({
+    method: 'openhuman.auth.get_session_token',
+  });
+  return response.result.token;
 }
 
 /**
@@ -57,7 +64,7 @@ export async function logout(): Promise<void> {
     return;
   }
 
-  await invoke('logout');
+  await callCoreRpc({ method: 'openhuman.auth.clear_session' });
 }
 
 /**
@@ -68,7 +75,7 @@ export async function storeSession(token: string, user: object): Promise<void> {
     return;
   }
 
-  await invoke('store_session', { token, user });
+  await callCoreRpc({ method: 'openhuman.auth.store_session', params: { token, user } });
 }
 
 /**

@@ -18,6 +18,8 @@ use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 use crate::memory::MemoryState;
+use openhuman_core::auth::AuthService;
+use openhuman_core::openhuman::config::Config;
 
 // ─── Event types (Rust → frontend) ──────────────────────────────────────────
 
@@ -499,6 +501,13 @@ pub async fn conscious_loop_run(
 
 // ─── Periodic timer ───────────────────────────────────────────────────────────
 
+async fn load_auth_token_from_core() -> Option<String> {
+    let config = Config::load_or_init().await.ok()?;
+    let auth_service = AuthService::from_config(&config);
+    let profile = auth_service.get_profile("app-session", None).ok()??;
+    profile.token.filter(|token| !token.trim().is_empty())
+}
+
 /// Periodic timer spawned from `lib.rs` setup. Runs every 5 minutes.
 /// Does nothing if the memory client is not yet initialized or no auth token is present.
 pub async fn conscious_loop_timer(app: tauri::AppHandle) {
@@ -544,8 +553,8 @@ pub async fn conscious_loop_timer(app: tauri::AppHandle) {
             continue;
         };
 
-        // Get auth token from session service
-        let auth_token = match crate::commands::auth::SESSION_SERVICE.get_token() {
+        // Get auth token from core auth storage
+        let auth_token = match load_auth_token_from_core().await {
             Some(token) => token,
             None => {
                 log::info!("[conscious_loop] Timer: no auth token — skipping tick");

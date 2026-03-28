@@ -17,6 +17,7 @@ import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 
 import { syncToolsToBackend } from '../lib/skills/sync';
+import { callCoreRpc } from '../services/coreRpcClient';
 import { daemonHealthService } from '../services/daemonHealthService';
 import { store } from '../store';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
@@ -296,39 +297,21 @@ export function cleanupTauriSocketListeners(): void {
  * Report socket connected status to Rust (legacy — used in web mode).
  */
 export async function reportSocketConnected(socketId?: string): Promise<void> {
-  if (!isTauri()) return;
-
-  try {
-    await invoke('report_socket_connected', { socketId: socketId ?? null });
-  } catch (error) {
-    console.error('[TauriSocket] Failed to report connected:', error);
-  }
+  void socketId;
 }
 
 /**
  * Report socket disconnected status to Rust (legacy — used in web mode).
  */
 export async function reportSocketDisconnected(): Promise<void> {
-  if (!isTauri()) return;
-
-  try {
-    await invoke('report_socket_disconnected');
-  } catch (error) {
-    console.error('[TauriSocket] Failed to report disconnected:', error);
-  }
+  // Legacy no-op: socket status is now sourced from runtime:socket-state-changed events.
 }
 
 /**
  * Report socket error to Rust (legacy — used in web mode).
  */
 export async function reportSocketError(error: string): Promise<void> {
-  if (!isTauri()) return;
-
-  try {
-    await invoke('report_socket_error', { error });
-  } catch (error) {
-    console.error('[TauriSocket] Failed to report error:', error);
-  }
+  console.warn('[TauriSocket] Legacy reportSocketError no-op:', error);
 }
 
 /**
@@ -338,13 +321,8 @@ export async function updateSocketStatus(
   status: 'connected' | 'connecting' | 'disconnected' | 'reconnecting' | 'error',
   socketId?: string
 ): Promise<void> {
-  if (!isTauri()) return;
-
-  try {
-    await invoke('update_socket_status', { status, socketId: socketId ?? null });
-  } catch (error) {
-    console.error('[TauriSocket] Failed to update status:', error);
-  }
+  void status;
+  void socketId;
 }
 
 /**
@@ -354,7 +332,10 @@ export async function getSecureToken(): Promise<string | null> {
   if (!isTauri()) return null;
 
   try {
-    return await invoke<string | null>('get_session_token');
+    const response = await callCoreRpc<{ result: { token: string | null } }>({
+      method: 'openhuman.auth.get_session_token',
+    });
+    return response.result.token;
   } catch (error) {
     console.error('[TauriSocket] Failed to get secure token:', error);
     return null;
@@ -368,7 +349,10 @@ export async function isAuthenticatedFromRust(): Promise<boolean> {
   if (!isTauri()) return false;
 
   try {
-    return await invoke<boolean>('is_authenticated');
+    const response = await callCoreRpc<{ result: { isAuthenticated: boolean } }>({
+      method: 'openhuman.auth.get_state',
+    });
+    return response.result.isAuthenticated;
   } catch (error) {
     console.error('[TauriSocket] Failed to check auth:', error);
     return false;

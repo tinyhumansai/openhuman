@@ -26,7 +26,6 @@ use commands::chat::ChatState;
 use commands::*;
 use openhuman_core::ai::*;
 use serde::Serialize;
-use services::socket_service::SOCKET_SERVICE;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager, RunEvent};
@@ -372,8 +371,6 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 toggle_main_window_visibility(app);
             }
             "quit" => {
-                // Cleanup before exit - request frontend to disconnect
-                let _ = SOCKET_SERVICE.request_disconnect();
                 app.exit(0);
             }
             _ => {}
@@ -588,9 +585,6 @@ pub fn run() {
     builder
         // Setup
         .setup(move |app| {
-            // Initialize socket service with app handle
-            SOCKET_SERVICE.set_app_handle(app.handle().clone());
-
             // Register deep link handlers (Windows/Linux)
             #[cfg(any(windows, target_os = "linux"))]
             {
@@ -828,21 +822,6 @@ pub fn run() {
             // Store SocketManager as Tauri state
             app.manage(socket_mgr.clone());
 
-            // Auto-connect socket if there's an existing session
-            let socket_mgr_clone = socket_mgr.clone();
-            tauri::async_runtime::spawn(async move {
-                use commands::auth::SESSION_SERVICE;
-                if let Some(token) = SESSION_SERVICE.get_token() {
-                    let url = utils::config::get_backend_url();
-                    log::info!("[socket-mgr] Auto-connecting with stored session");
-                    if let Err(e) = socket_mgr_clone.connect(&url, &token).await {
-                        log::error!("[socket-mgr] Auto-connect failed: {e}");
-                    }
-                } else {
-                    log::info!("[socket-mgr] No stored session — waiting for login");
-                }
-            });
-
             Ok(())
         })
         // Register all commands (desktop build lists handlers explicitly below).
@@ -856,20 +835,6 @@ pub fn run() {
                     ai_get_config,
                     ai_refresh_config,
                     core_rpc_relay,
-                    get_auth_state,
-                    get_session_token,
-                    get_current_user,
-                    is_authenticated,
-                    logout,
-                    store_session,
-                    socket_connect,
-                    socket_disconnect,
-                    get_socket_state,
-                    is_socket_connected,
-                    report_socket_connected,
-                    report_socket_disconnected,
-                    report_socket_error,
-                    update_socket_status,
                     show_window,
                     hide_window,
                     toggle_window,

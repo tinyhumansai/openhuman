@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use crate::auth::AuthService;
+use crate::auth::profiles::{AuthProfileKind, TokenSet};
 use crate::openhuman::autocomplete;
 use crate::openhuman::config::Config;
 use crate::openhuman::cron;
@@ -31,6 +33,12 @@ use chrono::Utc;
 
 const DEFAULT_CORE_RPC_URL: &str = "http://127.0.0.1:7788/rpc";
 const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
+const APP_SESSION_PROVIDER: &str = "app-session";
+const DEFAULT_AUTH_PROFILE_NAME: &str = "default";
+
+#[cfg(feature = "tauri-host")]
+static SOCKET_MANAGER: OnceLock<Arc<crate::runtime::socket_manager::SocketManager>> =
+    OnceLock::new();
 
 pub use crate::openhuman::autocomplete::{
     AutocompleteAcceptParams, AutocompleteAcceptResult, AutocompleteCurrentParams,
@@ -152,6 +160,84 @@ pub struct ScreenIntelligenceSettingsUpdate {
 pub struct RuntimeFlags {
     pub browser_allow_all: bool,
     pub log_prompts: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthStateResponse {
+    is_authenticated: bool,
+    user_id: Option<String>,
+    user: Option<serde_json::Value>,
+    profile_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthProfileSummary {
+    id: String,
+    provider: String,
+    profile_name: String,
+    kind: String,
+    account_id: Option<String>,
+    workspace_id: Option<String>,
+    metadata_keys: Vec<String>,
+    updated_at: String,
+    has_token: bool,
+    has_token_set: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthStoreSessionParams {
+    token: String,
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    user: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthStoreProviderCredentialsParams {
+    provider: String,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    fields: Option<serde_json::Value>,
+    #[serde(default)]
+    set_active: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthRemoveProviderCredentialsParams {
+    provider: String,
+    #[serde(default)]
+    profile: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthListProviderCredentialsParams {
+    #[serde(default)]
+    provider: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SocketConnectParams {
+    url: String,
+    token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SocketEmitParams {
+    event: String,
+    #[serde(default)]
+    data: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -434,6 +520,126 @@ fn to_rpc_success(id: serde_json::Value, value: serde_json::Value) -> Response {
 
 fn to_json_value<T: Serialize>(value: T) -> Result<serde_json::Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
+}
+
+fn auth_service_from_config(config: &Config) -> AuthService {
+    AuthService::from_config(config)
+}
+
+fn profile_name_or_default(value: Option<&str>) -> &str {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(DEFAULT_AUTH_PROFILE_NAME)
+}
+
+fn parse_fields_value(input: Option<serde_json::Value>) -> Result<std::collections::HashMap<String, String>, String> {
+    let Some(value) = input else {
+        return Ok(std::collections::HashMap::new());
+    };
+
+    let Some(map) = value.as_object() else {
+        return Err("fields must be a JSON object".to_string());
+    };
+
+    let mut out = std::collections::HashMap::new();
+    for (key, raw) in map {
+        if key.trim().is_empty() {
+            return Err("fields cannot contain empty keys".to_string());
+        }
+        let rendered = match raw {
+            serde_json::Value::Null => String::new(),
+            serde_json::Value::String(s) => s.clone(),
+            _ => raw.to_string(),
+        };
+        out.insert(key.clone(), rendered);
+    }
+
+    Ok(out)
+}
+
+fn profile_kind_label(kind: AuthProfileKind) -> String {
+    match kind {
+        AuthProfileKind::OAuth => "oauth".to_string(),
+        AuthProfileKind::Token => "token".to_string(),
+    }
+}
+
+fn summarize_auth_profile(profile: &crate::auth::profiles::AuthProfile) -> AuthProfileSummary {
+    let mut metadata_keys = profile
+        .metadata
+        .keys()
+        .map(std::string::ToString::to_string)
+        .collect::<Vec<_>>();
+    metadata_keys.sort();
+
+    AuthProfileSummary {
+        id: profile.id.clone(),
+        provider: profile.provider.clone(),
+        profile_name: profile.profile_name.clone(),
+        kind: profile_kind_label(profile.kind),
+        account_id: profile.account_id.clone(),
+        workspace_id: profile.workspace_id.clone(),
+        metadata_keys,
+        updated_at: profile.updated_at.to_rfc3339(),
+        has_token: profile.token.as_ref().is_some_and(|v| !v.trim().is_empty()),
+        has_token_set: profile
+            .token_set
+            .as_ref()
+            .map(|TokenSet { access_token, .. }| !access_token.trim().is_empty())
+            .unwrap_or(false),
+    }
+}
+
+fn session_user_value(profile: &crate::auth::profiles::AuthProfile) -> Option<serde_json::Value> {
+    profile
+        .metadata
+        .get("user_json")
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+}
+
+fn build_session_state(config: &Config) -> Result<AuthStateResponse, String> {
+    let auth_service = auth_service_from_config(config);
+    let profile = auth_service
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .map_err(|e| e.to_string())?;
+
+    let Some(profile) = profile else {
+        return Ok(AuthStateResponse {
+            is_authenticated: false,
+            user_id: None,
+            user: None,
+            profile_id: None,
+        });
+    };
+
+    let is_authenticated = profile
+        .token
+        .as_ref()
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false);
+
+    Ok(AuthStateResponse {
+        is_authenticated,
+        user_id: profile.metadata.get("user_id").cloned(),
+        user: session_user_value(&profile),
+        profile_id: Some(profile.id),
+    })
+}
+
+fn get_session_token(config: &Config) -> Result<Option<String>, String> {
+    let auth_service = auth_service_from_config(config);
+    let profile = auth_service
+        .get_profile(APP_SESSION_PROVIDER, None)
+        .map_err(|e| e.to_string())?;
+    Ok(profile.and_then(|entry| entry.token))
+}
+
+#[cfg(feature = "tauri-host")]
+fn core_socket_manager() -> Arc<crate::runtime::socket_manager::SocketManager> {
+    SOCKET_MANAGER
+        .get_or_init(|| Arc::new(crate::runtime::socket_manager::SocketManager::new()))
+        .clone()
 }
 
 async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
@@ -1705,6 +1911,225 @@ async fn dispatch(
             ))
         }
 
+        "openhuman.auth.store_session" => {
+            let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+            let payload: AuthStoreSessionParams = parse_params(params)?;
+            let trimmed_token = payload.token.trim();
+            if trimmed_token.is_empty() {
+                return Err("token is required".to_string());
+            }
+
+            let mut metadata = std::collections::HashMap::new();
+            if let Some(user_id) = payload.user_id.and_then(|v| {
+                let t = v.trim().to_string();
+                (!t.is_empty()).then_some(t)
+            }) {
+                metadata.insert("user_id".to_string(), user_id);
+            }
+            if let Some(user) = payload.user {
+                metadata.insert("user_json".to_string(), user.to_string());
+            }
+
+            let auth = auth_service_from_config(&config);
+            let profile = auth
+                .store_provider_token(
+                    APP_SESSION_PROVIDER,
+                    DEFAULT_AUTH_PROFILE_NAME,
+                    trimmed_token,
+                    metadata,
+                    true,
+                )
+                .map_err(|e| e.to_string())?;
+
+            to_json_value(command_response(
+                summarize_auth_profile(&profile),
+                vec!["session stored".to_string()],
+            ))
+        }
+
+        "openhuman.auth.clear_session" => {
+            let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+            let auth = auth_service_from_config(&config);
+            let removed = auth
+                .remove_profile(APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME)
+                .map_err(|e| e.to_string())?;
+            to_json_value(command_response(
+                json!({ "removed": removed }),
+                vec!["session cleared".to_string()],
+            ))
+        }
+
+        "openhuman.auth.get_state" => {
+            let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+            let state = build_session_state(&config)?;
+            to_json_value(command_response(state, vec!["session state fetched".to_string()]))
+        }
+
+        "openhuman.auth.get_session_token" => {
+            let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+            let token = get_session_token(&config)?;
+            to_json_value(command_response(
+                json!({ "token": token }),
+                vec!["session token fetched".to_string()],
+            ))
+        }
+
+        "openhuman.auth.store_provider_credentials" => {
+            let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+            let payload: AuthStoreProviderCredentialsParams = parse_params(params)?;
+            let provider = payload.provider.trim().to_string();
+            if provider.is_empty() {
+                return Err("provider is required".to_string());
+            }
+
+            let profile_name = profile_name_or_default(payload.profile.as_deref());
+            let mut metadata = parse_fields_value(payload.fields)?;
+            let token = payload
+                .token
+                .as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .or_else(|| metadata.get("token").cloned())
+                .or_else(|| metadata.get("api_key").cloned())
+                .unwrap_or_default();
+            if token.is_empty() && metadata.is_empty() {
+                return Err("provide at least one credential via token or fields".to_string());
+            }
+            metadata.remove("token");
+
+            let auth = auth_service_from_config(&config);
+            let profile = auth
+                .store_provider_token(
+                    &provider,
+                    profile_name,
+                    &token,
+                    metadata,
+                    payload.set_active.unwrap_or(true),
+                )
+                .map_err(|e| e.to_string())?;
+            to_json_value(command_response(
+                summarize_auth_profile(&profile),
+                vec!["provider credentials stored".to_string()],
+            ))
+        }
+
+        "openhuman.auth.remove_provider_credentials" => {
+            let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+            let payload: AuthRemoveProviderCredentialsParams = parse_params(params)?;
+            let profile_name = profile_name_or_default(payload.profile.as_deref());
+            let auth = auth_service_from_config(&config);
+            let removed = auth
+                .remove_profile(&payload.provider, profile_name)
+                .map_err(|e| e.to_string())?;
+            to_json_value(command_response(
+                json!({ "removed": removed, "provider": payload.provider, "profile": profile_name }),
+                vec!["provider credentials removed".to_string()],
+            ))
+        }
+
+        "openhuman.auth.list_provider_credentials" => {
+            let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+            let payload: AuthListProviderCredentialsParams = if params.is_null() {
+                AuthListProviderCredentialsParams { provider: None }
+            } else {
+                parse_params(params)?
+            };
+            let provider_filter = payload
+                .provider
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string);
+
+            let auth = auth_service_from_config(&config);
+            let profiles = auth.load_profiles().map_err(|e| e.to_string())?;
+            let mut items = profiles
+                .profiles
+                .values()
+                .filter(|profile| profile.provider != APP_SESSION_PROVIDER)
+                .filter(|profile| {
+                    provider_filter
+                        .as_ref()
+                        .is_none_or(|provider| profile.provider == *provider)
+                })
+                .map(summarize_auth_profile)
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| a.provider.cmp(&b.provider).then_with(|| a.profile_name.cmp(&b.profile_name)));
+
+            to_json_value(command_response(
+                items,
+                vec!["provider credentials listed".to_string()],
+            ))
+        }
+
+        "openhuman.socket.connect" => {
+            let payload: SocketConnectParams = parse_params(params)?;
+            #[cfg(feature = "tauri-host")]
+            {
+                let mgr = core_socket_manager();
+                mgr.connect(&payload.url, &payload.token).await?;
+                return to_json_value(command_response(
+                    mgr.get_state(),
+                    vec!["socket connect requested".to_string()],
+                ));
+            }
+            #[cfg(not(feature = "tauri-host"))]
+            {
+                let _ = payload;
+                return Err("socket runtime is unavailable in this build".to_string());
+            }
+        }
+
+        "openhuman.socket.disconnect" => {
+            #[cfg(feature = "tauri-host")]
+            {
+                let mgr = core_socket_manager();
+                mgr.disconnect().await?;
+                return to_json_value(command_response(
+                    mgr.get_state(),
+                    vec!["socket disconnected".to_string()],
+                ));
+            }
+            #[cfg(not(feature = "tauri-host"))]
+            {
+                return Err("socket runtime is unavailable in this build".to_string());
+            }
+        }
+
+        "openhuman.socket.state" => {
+            #[cfg(feature = "tauri-host")]
+            {
+                let mgr = core_socket_manager();
+                return to_json_value(command_response(
+                    mgr.get_state(),
+                    vec!["socket state fetched".to_string()],
+                ));
+            }
+            #[cfg(not(feature = "tauri-host"))]
+            {
+                return Err("socket runtime is unavailable in this build".to_string());
+            }
+        }
+
+        "openhuman.socket.emit" => {
+            let payload: SocketEmitParams = parse_params(params)?;
+            #[cfg(feature = "tauri-host")]
+            {
+                let mgr = core_socket_manager();
+                mgr.emit(&payload.event, payload.data.unwrap_or(serde_json::Value::Null))
+                    .await?;
+                return to_json_value(command_response(
+                    mgr.get_state(),
+                    vec!["socket event emitted".to_string()],
+                ));
+            }
+            #[cfg(not(feature = "tauri-host"))]
+            {
+                let _ = payload;
+                return Err("socket runtime is unavailable in this build".to_string());
+            }
+        }
+
         _ => Err(format!("unknown method: {method}")),
     }
 }
@@ -1857,6 +2282,16 @@ enum CoreCommand {
     Tools {
         #[command(subcommand)]
         command: ToolsCommand,
+    },
+    /// Authentication and credential management commands
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
+    /// Socket lifecycle and messaging commands
+    Socket {
+        #[command(subcommand)]
+        command: SocketCommand,
     },
     /// Legacy config operations
     Config {
@@ -2143,6 +2578,98 @@ enum ConfigCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum AuthCommand {
+    /// Store session or provider credentials
+    Login(AuthLoginArgs),
+    /// Remove stored session or provider credentials
+    Logout(AuthLogoutArgs),
+    /// Show auth/session state
+    Status(AuthStatusArgs),
+    /// List stored provider credentials (excluding app session)
+    List(AuthListArgs),
+}
+
+#[derive(Debug, Args)]
+struct AuthLoginArgs {
+    /// Provider identifier (`app-session`, `google`, `discord`, etc.)
+    #[arg(long, default_value = APP_SESSION_PROVIDER)]
+    provider: String,
+    /// Profile name (default: "default")
+    #[arg(long)]
+    profile: Option<String>,
+    /// Main token/api-key field for this provider
+    #[arg(long)]
+    token: Option<String>,
+    /// Optional user id for app session flows
+    #[arg(long)]
+    user_id: Option<String>,
+    /// Optional user payload JSON for app session flows
+    #[arg(long)]
+    user_json: Option<String>,
+    /// Additional credential fields (`key=value`, repeatable)
+    #[arg(long = "field")]
+    field: Vec<String>,
+    /// Mark this profile as active
+    #[arg(long, default_value_t = true)]
+    set_active: bool,
+}
+
+#[derive(Debug, Args)]
+struct AuthLogoutArgs {
+    /// Provider identifier
+    #[arg(long, default_value = APP_SESSION_PROVIDER)]
+    provider: String,
+    /// Profile name (default: "default")
+    #[arg(long)]
+    profile: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct AuthStatusArgs {
+    /// Provider identifier (defaults to `app-session`)
+    #[arg(long, default_value = APP_SESSION_PROVIDER)]
+    provider: String,
+    /// Optional profile override
+    #[arg(long)]
+    profile: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct AuthListArgs {
+    /// Optional provider filter
+    #[arg(long)]
+    provider: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum SocketCommand {
+    /// Connect to socket backend
+    Connect(SocketConnectCliArgs),
+    /// Disconnect socket backend
+    Disconnect,
+    /// Fetch current socket state
+    Status,
+    /// Emit a socket event
+    Emit(SocketEmitCliArgs),
+}
+
+#[derive(Debug, Args)]
+struct SocketConnectCliArgs {
+    #[arg(long)]
+    url: String,
+    #[arg(long)]
+    token: String,
+}
+
+#[derive(Debug, Args)]
+struct SocketEmitCliArgs {
+    #[arg(long)]
+    event: String,
+    #[arg(long, default_value = "null")]
+    data: String,
+}
+
+#[derive(Debug, Subcommand)]
 enum ToolsCommand {
     /// List tool wrappers exposed by this CLI
     List,
@@ -2192,6 +2719,23 @@ struct ToolsRunArgs {
 
 fn parse_json_arg(raw: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(raw).map_err(|e| format!("invalid JSON for --json/--params: {e}"))
+}
+
+fn parse_key_value_flags(entries: &[String]) -> Result<serde_json::Value, String> {
+    let mut fields = serde_json::Map::new();
+    for entry in entries {
+        let Some((raw_key, raw_value)) = entry.split_once('=') else {
+            return Err(format!(
+                "invalid --field value '{entry}', expected key=value format"
+            ));
+        };
+        let key = raw_key.trim();
+        if key.is_empty() {
+            return Err("invalid --field value with empty key".to_string());
+        }
+        fields.insert(key.to_string(), serde_json::Value::String(raw_value.to_string()));
+    }
+    Ok(serde_json::Value::Object(fields))
 }
 
 fn ensure_non_empty_payload(payload: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
@@ -2720,6 +3264,104 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                         "style_examples": style_examples,
                         "disabled_apps": disabled_apps,
                         "accept_with_tab": args.accept_with_tab,
+                    }),
+                )
+                .await
+            }
+        },
+        CoreCommand::Auth { command } => match command {
+            AuthCommand::Login(args) => {
+                let provider = args.provider.trim().to_string();
+                let token = args.token.clone().unwrap_or_default();
+                let fields = parse_key_value_flags(&args.field)?;
+
+                if provider == APP_SESSION_PROVIDER {
+                    let user = match args.user_json {
+                        Some(raw) => Some(parse_json_arg(&raw)?),
+                        None => None,
+                    };
+                    call_method(
+                        "openhuman.auth.store_session",
+                        json!({
+                            "token": token,
+                            "userId": args.user_id,
+                            "user": user
+                        }),
+                    )
+                    .await
+                } else {
+                    call_method(
+                        "openhuman.auth.store_provider_credentials",
+                        json!({
+                            "provider": provider,
+                            "profile": args.profile,
+                            "token": token,
+                            "fields": fields,
+                            "setActive": args.set_active
+                        }),
+                    )
+                    .await
+                }
+            }
+            AuthCommand::Logout(args) => {
+                let provider = args.provider.trim().to_string();
+                if provider == APP_SESSION_PROVIDER {
+                    call_method("openhuman.auth.clear_session", json!({})).await
+                } else {
+                    call_method(
+                        "openhuman.auth.remove_provider_credentials",
+                        json!({
+                            "provider": provider,
+                            "profile": args.profile
+                        }),
+                    )
+                    .await
+                }
+            }
+            AuthCommand::Status(args) => {
+                let provider = args.provider.trim().to_string();
+                if provider == APP_SESSION_PROVIDER {
+                    call_method("openhuman.auth.get_state", json!({})).await
+                } else {
+                    call_method(
+                        "openhuman.auth.list_provider_credentials",
+                        json!({
+                            "provider": provider,
+                            "profile": args.profile
+                        }),
+                    )
+                    .await
+                }
+            }
+            AuthCommand::List(args) => {
+                call_method(
+                    "openhuman.auth.list_provider_credentials",
+                    json!({
+                        "provider": args.provider
+                    }),
+                )
+                .await
+            }
+        },
+        CoreCommand::Socket { command } => match command {
+            SocketCommand::Connect(args) => {
+                call_method(
+                    "openhuman.socket.connect",
+                    json!({
+                        "url": args.url,
+                        "token": args.token
+                    }),
+                )
+                .await
+            }
+            SocketCommand::Disconnect => call_method("openhuman.socket.disconnect", json!({})).await,
+            SocketCommand::Status => call_method("openhuman.socket.state", json!({})).await,
+            SocketCommand::Emit(args) => {
+                call_method(
+                    "openhuman.socket.emit",
+                    json!({
+                        "event": args.event,
+                        "data": parse_json_arg(&args.data)?
                     }),
                 )
                 .await
