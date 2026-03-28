@@ -1,6 +1,7 @@
 node_modules
 dist
 coverage
+app
 src-tauri
 rust-core
 skills
