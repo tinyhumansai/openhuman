@@ -173,6 +173,55 @@ pub async fn try_dispatch(
             .await,
         ),
 
+        "ai.memory_get_chunks" => Some(
+            async move {
+                #[derive(Debug, Deserialize)]
+                struct MemoryGetChunksParams {
+                    path: String,
+                }
+
+                let payload: MemoryGetChunksParams = parse_params(params)?;
+                let chunks = crate::ai::ai_memory_get_chunks(payload.path).await?;
+                InvocationResult::ok(chunks)
+            }
+            .await,
+        ),
+
+        "ai.memory_cache_embedding" => Some(
+            async move {
+                #[derive(Debug, Deserialize)]
+                struct MemoryCacheEmbeddingParams {
+                    entry: crate::ai::EmbeddingCacheEntry,
+                }
+
+                let payload: MemoryCacheEmbeddingParams = parse_params(params)?;
+                let ok = crate::ai::ai_memory_cache_embedding(payload.entry).await?;
+                InvocationResult::ok(ok)
+            }
+            .await,
+        ),
+
+        "ai.memory_get_cached_embedding" => Some(
+            async move {
+                #[derive(Debug, Deserialize)]
+                struct MemoryGetCachedEmbeddingParams {
+                    provider: String,
+                    model: String,
+                    hash: String,
+                }
+
+                let payload: MemoryGetCachedEmbeddingParams = parse_params(params)?;
+                let bytes = crate::ai::ai_memory_get_cached_embedding(
+                    payload.provider,
+                    payload.model,
+                    payload.hash,
+                )
+                .await?;
+                InvocationResult::ok(bytes)
+            }
+            .await,
+        ),
+
         "ai.sessions_init" => Some(
             async move {
                 let initialized = crate::ai::sessions::ai_sessions_init().await?;

@@ -882,15 +882,7 @@ pub fn run() {
                     // OpenHuman local host commands (core RPC uses core_rpc_relay)
                     openhuman_get_daemon_host_config,
                     openhuman_set_daemon_host_config,
-                    // Memory commands (TinyHumans Neocortex)
-                    init_memory_client,
-                    memory_query,
-                    recall_memory,
-                    memory_list_documents,
-                    memory_list_namespaces,
-                    memory_delete_document,
-                    memory_query_namespace,
-                    memory_recall_namespace,
+                    // Neocortex memory: use callCoreRpc / memory.* on openhuman-core (see coreRpcClient)
                     // Chat commands (agentic conversation loop)
                     chat_send,
                     chat_cancel,

@@ -28,10 +28,11 @@ todo
 [ ] install the linux philosophy of few modules that do their own thing really well sort of..
 [x] Remove android / ios support from the codebase.
 [ ] e2e test to check if daemon and sidecar loading works properly
-[ ] Find a better way to structure the cargo files
-[ ] fix all the rust and cargo issues
+[x] Find a better way to structure the cargo files
+[x] fix all the rust and cargo issues
 [ ] Add icon and app name to the various permission settings
-[ ] add self updated based on github release
+[ ] add self update based on github release. create a update action on the cli
 [ ] for each skill show information on how much data has been synced locally and information on how much syncs have happened so far etc..
 [ ] redo the docs once everything is done.
 [ ] remove unwanted feature flags from the rust binary
+[ ] fix the config properly
