@@ -97,6 +97,9 @@ tempfile = "3"
 
 [features]
 tauri-host = ["dep:tauri", "dep:rquickjs"]
+local-ai-metal = ["mistralrs/metal"]
+local-ai-cuda = ["mistralrs/cuda"]
+local-ai-vulkan = []
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 hardware = ["dep:nusb", "dep:tokio-serial"]

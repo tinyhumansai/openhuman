@@ -1,5 +1,8 @@
 use crate::openhuman::config::Config;
-use mistralrs::{GgufModelBuilder, Model, RequestBuilder, TextMessageRole, TextModelBuilder};
+use mistralrs::{
+    GgufModelBuilder, Model, PagedAttentionMetaBuilder, RequestBuilder, TextMessageRole,
+    TextModelBuilder,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -18,6 +21,11 @@ pub struct LocalAiStatus {
     pub eta_seconds: Option<u64>,
     pub warning: Option<String>,
     pub model_path: Option<String>,
+    pub active_backend: String,
+    pub backend_reason: Option<String>,
+    pub last_latency_ms: Option<u64>,
+    pub prompt_toks_per_sec: Option<f32>,
+    pub gen_toks_per_sec: Option<f32>,
 }
 
 impl LocalAiStatus {
@@ -33,6 +41,11 @@ impl LocalAiStatus {
             eta_seconds: None,
             warning: None,
             model_path: None,
+            active_backend: "cpu".to_string(),
+            backend_reason: None,
+            last_latency_ms: None,
+            prompt_toks_per_sec: None,
+            gen_toks_per_sec: None,
         }
     }
 }
@@ -41,6 +54,78 @@ impl LocalAiStatus {
 pub struct Suggestion {
     pub text: String,
     pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RuntimeBackend {
+    Cpu,
+    Metal,
+    Cuda,
+    Vulkan,
+}
+
+impl RuntimeBackend {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Metal => "metal",
+            Self::Cuda => "cuda",
+            Self::Vulkan => "vulkan",
+        }
+    }
+}
+
+fn supports_backend(backend: RuntimeBackend) -> bool {
+    match backend {
+        RuntimeBackend::Cpu => true,
+        RuntimeBackend::Metal => cfg!(feature = "local-ai-metal"),
+        RuntimeBackend::Cuda => cfg!(feature = "local-ai-cuda"),
+        // mistralrs v0.7 does not expose a vulkan feature in this workspace yet.
+        RuntimeBackend::Vulkan => false,
+    }
+}
+
+fn resolve_backend(config: &Config) -> (RuntimeBackend, Option<String>) {
+    let preference = config
+        .local_ai
+        .backend_preference
+        .trim()
+        .to_ascii_lowercase();
+    let requested = match preference.as_str() {
+        "metal" => RuntimeBackend::Metal,
+        "cuda" => RuntimeBackend::Cuda,
+        "vulkan" => RuntimeBackend::Vulkan,
+        "cpu" => RuntimeBackend::Cpu,
+        _ => RuntimeBackend::Cpu,
+    };
+
+    if preference == "auto" || preference.is_empty() {
+        if supports_backend(RuntimeBackend::Metal) {
+            return (RuntimeBackend::Metal, None);
+        }
+        if supports_backend(RuntimeBackend::Cuda) {
+            return (RuntimeBackend::Cuda, None);
+        }
+        if supports_backend(RuntimeBackend::Vulkan) {
+            return (RuntimeBackend::Vulkan, None);
+        }
+        return (
+            RuntimeBackend::Cpu,
+            Some("No GPU runtime is compiled in this build; using CPU.".to_string()),
+        );
+    }
+
+    if supports_backend(requested) {
+        return (requested, None);
+    }
+
+    (
+        RuntimeBackend::Cpu,
+        Some(format!(
+            "Requested backend `{}` is unavailable in this build; using CPU.",
+            preference
+        )),
+    )
 }
 
 pub struct LocalAiService {
@@ -64,6 +149,11 @@ impl LocalAiService {
                 eta_seconds: None,
                 warning: None,
                 model_path: Some(model_artifact_path(config).display().to_string()),
+                active_backend: "cpu".to_string(),
+                backend_reason: None,
+                last_latency_ms: None,
+                prompt_toks_per_sec: None,
+                gen_toks_per_sec: None,
             }),
             model: parking_lot::RwLock::new(None),
             bootstrap_lock: tokio::sync::Mutex::new(()),
@@ -86,6 +176,11 @@ impl LocalAiService {
         status.download_speed_bps = None;
         status.eta_seconds = None;
         status.warning = None;
+        status.active_backend = "cpu".to_string();
+        status.backend_reason = None;
+        status.last_latency_ms = None;
+        status.prompt_toks_per_sec = None;
+        status.gen_toks_per_sec = None;
         *self.model.write() = None;
     }
 

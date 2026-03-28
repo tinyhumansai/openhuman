@@ -23,6 +23,8 @@ pub struct LocalAiConfig {
     pub context_compaction_threshold_tokens: usize,
     #[serde(default = "default_max_suggestions")]
     pub max_suggestions: usize,
+    #[serde(default = "default_backend_preference")]
+    pub backend_preference: String,
 }
 
 fn default_enabled() -> bool {
@@ -57,6 +59,10 @@ fn default_max_suggestions() -> usize {
     5
 }
 
+fn default_backend_preference() -> String {
+    "auto".to_string()
+}
+
 impl Default for LocalAiConfig {
     fn default() -> Self {
         Self {
@@ -69,6 +75,7 @@ impl Default for LocalAiConfig {
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
             context_compaction_threshold_tokens: default_context_compaction_threshold_tokens(),
             max_suggestions: default_max_suggestions(),
+            backend_preference: default_backend_preference(),
         }
     }
 }
