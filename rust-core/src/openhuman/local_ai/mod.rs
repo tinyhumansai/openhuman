@@ -227,6 +227,11 @@ impl LocalAiService {
                             status.total_bytes = None;
                             status.download_speed_bps = None;
                             status.eta_seconds = None;
+                            status.active_backend = "cpu".to_string();
+                            status.backend_reason = Some(
+                                "Running HF fallback model path without local GGUF runtime acceleration."
+                                    .to_string(),
+                            );
                         }
 
                         let loaded_model = self.load_hf_text_model(&repo).await;
@@ -316,6 +321,7 @@ impl LocalAiService {
         }
 
         {
+            let (backend, backend_reason) = resolve_backend(config);
             let mut status = self.status.lock();
             status.state = "loading".to_string();
             status.warning = Some("Loading model with mistral.rs".to_string());
@@ -324,6 +330,8 @@ impl LocalAiService {
             status.total_bytes = None;
             status.download_speed_bps = None;
             status.eta_seconds = None;
+            status.active_backend = backend.as_str().to_string();
+            status.backend_reason = backend_reason;
         }
 
         match self.load_mistral_model(config, &artifact_path).await {
