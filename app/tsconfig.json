@@ -15,7 +15,8 @@
     "jsx": "react-jsx",
 
     /* Path aliases */
-    "paths": { "@openhuman/skill-types": ["app/src/lib/skills/types.ts"] },
+    "baseUrl": ".",
+    "paths": { "@openhuman/skill-types": ["src/lib/skills/types.ts"] },
 
     /* Linting */
     "strict": true,
@@ -23,7 +24,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["app/src"],
+  "include": ["src"],
   "exclude": ["skills"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

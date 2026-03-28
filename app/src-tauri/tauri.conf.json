@@ -22,9 +22,7 @@
         "center": true
       }
     ],
-    "security": {
-      "csp": null
-    },
+    "security": { "csp": null },
     "macOSPrivateApi": true
   },
   "bundle": {
@@ -37,19 +35,12 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../skills/skills",
-      "../rust-core/ai"
-    ],
-    "externalBin": [
-      "binaries/openhuman"
-    ],
+    "resources": ["../../skills/skills", "../../rust-core/ai"],
+    "externalBin": ["binaries/openhuman"],
     "createUpdaterArtifacts": true,
     "macOS": {
       "minimumSystemVersion": "10.15",
-      "dmg": {
-        "background": "./images/background-dmg.png"
-      }
+      "dmg": { "background": "./images/background-dmg.png" }
     }
   },
   "plugins": {
@@ -59,12 +50,6 @@
         "https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json"
       ]
     },
-    "deep-link": {
-      "desktop": {
-        "schemes": [
-          "openhuman"
-        ]
-      }
-    }
+    "deep-link": { "desktop": { "schemes": ["openhuman"] } }
   }
 }

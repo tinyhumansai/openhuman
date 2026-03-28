@@ -283,29 +283,17 @@ fn find_ai_directory(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
         }
     }
 
-    // 2. Try cwd/rust-core/ai/ (dev mode; cwd is project root)
+    // 2. Dev: resolve rust-core/ai from cwd (repo root, app/, app/src-tauri/, etc.)
     if let Ok(cwd) = std::env::current_dir() {
-        let root_dev_dir = cwd.join("rust-core").join("ai");
-        if root_dev_dir.is_dir() {
+        if let Some(dev_dir) = crate::utils::dev_paths::rust_core_ai_dir(&cwd) {
             log::info!(
-                "[chat] Using AI config from root dev dir: {}",
-                root_dev_dir.display()
+                "[chat] Using AI config from rust-core dev dir: {}",
+                dev_dir.display()
             );
-            return Some(root_dev_dir);
+            return Some(dev_dir);
         }
 
-        // 3. Try cwd/../rust-core/ai/ (dev mode; cwd is src-tauri/)
-        if let Some(src_tauri_dev) = cwd.parent().map(|p| p.join("rust-core").join("ai")) {
-            if src_tauri_dev.is_dir() {
-                log::info!(
-                    "[chat] Using AI config from src-tauri dev dir: {}",
-                    src_tauri_dev.display()
-                );
-                return Some(src_tauri_dev);
-            }
-        }
-
-        // 4. Try cwd/ai/ (legacy fallback)
+        // 3. Try cwd/ai/ (legacy fallback)
         let fallback = cwd.join("ai");
         if fallback.is_dir() {
             log::info!(
@@ -315,7 +303,7 @@ fn find_ai_directory(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
             return Some(fallback);
         }
 
-        // 5. Legacy fallback: cwd/src-tauri/ai/
+        // 4. Legacy fallback: cwd/src-tauri/ai/
         let src_tauri_legacy = cwd.join("src-tauri").join("ai");
         if src_tauri_legacy.is_dir() {
             log::info!(
@@ -325,7 +313,7 @@ fn find_ai_directory(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
             return Some(src_tauri_legacy);
         }
 
-        // 6. Legacy fallback: cwd/../ai/
+        // 5. Legacy fallback: cwd/../ai/
         if let Some(legacy_dir) = cwd.parent().map(|p| p.join("ai")) {
             if legacy_dir.is_dir() {
                 log::info!(

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(configDir, '..');
+const repoRoot = path.resolve(projectRoot, '..');
 const tsconfigE2ePath = path.join(projectRoot, 'test', 'tsconfig.e2e.json');
 
 /**
@@ -13,16 +14,15 @@ const tsconfigE2ePath = path.join(projectRoot, 'test', 'tsconfig.e2e.json');
  * On Windows/Linux, tauri-driver would be used instead (not covered here).
  */
 function getAppPath(): string {
-  // Workspace root Cargo workspace: bundles land under repo root `target/`, not `src-tauri/target/`.
-  const base = path.resolve('target/debug/bundle');
+  const bundleBase = path.join(repoRoot, 'target', 'debug', 'bundle');
 
   switch (process.platform) {
     case 'darwin':
-      return path.join(base, 'macos', 'OpenHuman.app');
+      return path.join(bundleBase, 'macos', 'OpenHuman.app');
     case 'win32':
-      return path.join('src-tauri', 'target', 'debug', 'OpenHuman.exe');
+      return path.join(repoRoot, 'target', 'debug', 'OpenHuman.exe');
     case 'linux':
-      return path.join('src-tauri', 'target', 'debug', 'alpha-human');
+      return path.join(repoRoot, 'target', 'debug', 'alpha-human');
     default:
       throw new Error(`Unsupported platform: ${process.platform}`);
   }

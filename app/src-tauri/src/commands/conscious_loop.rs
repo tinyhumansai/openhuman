@@ -103,14 +103,8 @@ fn find_ai_directory(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
         }
     }
     if let Ok(cwd) = std::env::current_dir() {
-        let root_dev = cwd.join("rust-core").join("ai");
-        if root_dev.is_dir() {
-            return Some(root_dev);
-        }
-        if let Some(src_tauri_dev) = cwd.parent().map(|p| p.join("rust-core").join("ai")) {
-            if src_tauri_dev.is_dir() {
-                return Some(src_tauri_dev);
-            }
+        if let Some(dev_dir) = crate::utils::dev_paths::rust_core_ai_dir(&cwd) {
+            return Some(dev_dir);
         }
         let fallback = cwd.join("ai");
         if fallback.is_dir() {

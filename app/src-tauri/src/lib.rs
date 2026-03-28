@@ -214,16 +214,7 @@ fn resolve_ai_directory(app: &tauri::AppHandle) -> Option<(PathBuf, &'static str
     }
 
     if let Ok(cwd) = std::env::current_dir() {
-        let root_dev_dir = cwd.join("rust-core").join("ai");
-        if root_dev_dir.is_dir() {
-            return Some((root_dev_dir, "bundled"));
-        }
-
-        let src_tauri_dev_dir = cwd
-            .parent()
-            .map(|p| p.join("rust-core").join("ai"))
-            .filter(|p| p.is_dir());
-        if let Some(path) = src_tauri_dev_dir {
+        if let Some(path) = utils::dev_paths::rust_core_ai_dir(&cwd) {
             return Some((path, "bundled"));
         }
 
@@ -310,24 +301,8 @@ async fn write_ai_config_file(filename: String, content: String) -> Result<bool,
         return Err("Invalid filename: path traversal not allowed".to_string());
     }
 
-    // Resolve ai directory for common dev cwd variants:
-    // 1) repo root       -> {cwd}/rust-core/ai
-    // 2) src-tauri dir   -> {cwd}/../rust-core/ai
-    // 3) rust-core dir   -> {cwd}/ai
-    let ai_dir = if current_dir.join("rust-core").is_dir() {
-        current_dir.join("rust-core").join("ai")
-    } else if current_dir
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "src-tauri")
-    {
-        current_dir
-            .parent()
-            .map(|p| p.join("rust-core").join("ai"))
-            .unwrap_or_else(|| current_dir.join("ai"))
-    } else {
-        current_dir.join("ai")
-    };
+    let ai_dir =
+        utils::dev_paths::rust_core_ai_dir(&current_dir).unwrap_or_else(|| current_dir.join("ai"));
     let file_path = ai_dir.join(&filename);
 
     // Ensure ai directory exists
