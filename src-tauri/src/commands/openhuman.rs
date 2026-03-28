@@ -98,6 +98,11 @@ pub struct LocalAiStatus {
     pub eta_seconds: Option<u64>,
     pub warning: Option<String>,
     pub model_path: Option<String>,
+    pub active_backend: String,
+    pub backend_reason: Option<String>,
+    pub last_latency_ms: Option<u64>,
+    pub prompt_toks_per_sec: Option<f32>,
+    pub gen_toks_per_sec: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

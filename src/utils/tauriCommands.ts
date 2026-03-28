@@ -545,6 +545,11 @@ export interface LocalAiStatus {
   eta_seconds?: number | null;
   warning?: string | null;
   model_path?: string | null;
+  active_backend: string;
+  backend_reason?: string | null;
+  last_latency_ms?: number | null;
+  prompt_toks_per_sec?: number | null;
+  gen_toks_per_sec?: number | null;
 }
 
 export interface LocalAiSuggestion {

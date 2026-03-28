@@ -270,10 +270,36 @@ const LocalModelPanel = () => {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <div className="rounded-md border border-gray-700 p-2">
+                <div className="text-stone-400 text-xs uppercase tracking-wide">Backend</div>
+                <div className="text-stone-100 mt-1">{status?.active_backend ?? 'cpu'}</div>
+              </div>
+              <div className="rounded-md border border-gray-700 p-2">
+                <div className="text-stone-400 text-xs uppercase tracking-wide">Last Latency</div>
+                <div className="text-stone-100 mt-1">
+                  {typeof status?.last_latency_ms === 'number'
+                    ? `${status.last_latency_ms} ms`
+                    : 'n/a'}
+                </div>
+              </div>
+              <div className="rounded-md border border-gray-700 p-2">
+                <div className="text-stone-400 text-xs uppercase tracking-wide">Generation TPS</div>
+                <div className="text-stone-100 mt-1">
+                  {typeof status?.gen_toks_per_sec === 'number'
+                    ? `${status.gen_toks_per_sec.toFixed(1)} tok/s`
+                    : 'n/a'}
+                </div>
+              </div>
+            </div>
+
             {status?.model_path && (
               <div className="text-xs text-stone-400 break-all">Artifact: {status.model_path}</div>
             )}
 
+            {status?.backend_reason && (
+              <div className="text-xs text-blue-300">{status.backend_reason}</div>
+            )}
             {status?.warning && <div className="text-xs text-amber-300">{status.warning}</div>}
             {statusError && <div className="text-xs text-red-300">{statusError}</div>}
 

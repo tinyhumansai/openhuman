@@ -606,7 +606,7 @@ async fn dispatch(
                     &config,
                     p.prompt.trim(),
                     p.max_tokens,
-                    p.no_think.unwrap_or(false),
+                    p.no_think.unwrap_or(true),
                 )
                 .await?;
             to_json_value(command_response(

@@ -244,6 +244,7 @@ impl LocalAiService {
                                         "You are a local model warmup assistant.",
                                         "Reply with exactly: ok",
                                         Some(8),
+                                        true,
                                     )
                                     .await
                                 {
@@ -345,6 +346,7 @@ impl LocalAiService {
                         "You are a local model warmup assistant.",
                         "Reply with exactly: ok",
                         Some(8),
+                        true,
                     )
                     .await
                 {
@@ -401,7 +403,8 @@ impl LocalAiService {
             "Summarize this text in concise bullet points. Preserve decisions and commitments.\n\n{}",
             text
         );
-        self.inference(config, system, &prompt, max_tokens).await
+        self.inference(config, system, &prompt, max_tokens.or(Some(128)), true)
+            .await
     }
 
     pub async fn prompt(
@@ -419,7 +422,8 @@ impl LocalAiService {
         } else {
             "You are a helpful assistant."
         };
-        self.inference(config, system, prompt, max_tokens).await
+        self.inference(config, system, prompt, max_tokens.or(Some(160)), no_think)
+            .await
     }
 
     pub async fn suggest_questions(
@@ -437,7 +441,9 @@ Return one prompt per line with no numbering.\n\n{}",
             config.local_ai.max_suggestions.max(1),
             context
         );
-        let raw = self.inference(config, system, &prompt, Some(128)).await?;
+        let raw = self
+            .inference(config, system, &prompt, Some(96), true)
+            .await?;
         Ok(parse_suggestions(
             &raw,
             config.local_ai.max_suggestions.max(1),
@@ -467,6 +473,7 @@ Return one prompt per line with no numbering.\n\n{}",
         system: &str,
         prompt: &str,
         max_tokens: Option<u32>,
+        no_think: bool,
     ) -> Result<String, String> {
         if self.model.read().is_none() {
             self.bootstrap(config).await;
@@ -477,7 +484,8 @@ Return one prompt per line with no numbering.\n\n{}",
             .as_ref()
             .cloned()
             .ok_or_else(|| "local model not ready".to_string())?;
-        self.run_request(&model, system, prompt, max_tokens).await
+        self.run_request(&model, system, prompt, max_tokens, no_think)
+            .await
     }
 
     async fn run_request(
@@ -486,11 +494,16 @@ Return one prompt per line with no numbering.\n\n{}",
         system: &str,
         prompt: &str,
         max_tokens: Option<u32>,
+        no_think: bool,
     ) -> Result<String, String> {
+        let started = std::time::Instant::now();
         let mut request = RequestBuilder::new()
             .add_message(TextMessageRole::System, system)
             .add_message(TextMessageRole::User, prompt)
             .set_sampler_temperature(0.2)
+            .set_sampler_topk(40)
+            .set_sampler_topp(0.9)
+            .enable_thinking(!no_think)
             .with_truncate_sequence(true);
         if let Some(limit) = max_tokens {
             request = request.set_sampler_max_len(limit as usize);
@@ -505,6 +518,13 @@ Return one prompt per line with no numbering.\n\n{}",
             .first()
             .and_then(|choice| choice.message.content.clone())
             .unwrap_or_default();
+        let elapsed_s = started.elapsed().as_secs_f32().max(0.001);
+        let prompt_tokens = prompt.split_whitespace().count() as f32;
+        let output_tokens = content.split_whitespace().count() as f32;
+        let mut status = self.status.lock();
+        status.last_latency_ms = Some(started.elapsed().as_millis() as u64);
+        status.prompt_toks_per_sec = Some(prompt_tokens / elapsed_s);
+        status.gen_toks_per_sec = Some(output_tokens / elapsed_s);
         if content.trim().is_empty() {
             Err("mistral.rs returned empty content".to_string())
         } else {
@@ -525,8 +545,17 @@ Return one prompt per line with no numbering.\n\n{}",
             .and_then(|f| f.to_str())
             .ok_or_else(|| "invalid model filename".to_string())?;
 
-        let mut builder =
-            GgufModelBuilder::new(model_dir.to_string_lossy().to_string(), vec![file_name]);
+        let (backend, backend_reason) = resolve_backend(config);
+        let mut builder = GgufModelBuilder::new(model_dir.to_string_lossy().to_string(), vec![file_name])
+            .with_max_num_seqs(4)
+            .with_prefix_cache_n(Some(8));
+        if !matches!(backend, RuntimeBackend::Cpu) {
+            builder = builder
+                .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())
+                .map_err(|e| format!("failed to configure paged attention: {e}"))?;
+        } else {
+            builder = builder.with_force_cpu();
+        }
         if log::log_enabled!(log::Level::Debug) {
             builder = builder.with_logging();
         }
@@ -537,6 +566,11 @@ Return one prompt per line with no numbering.\n\n{}",
                 config.local_ai.model_id
             )
         })?;
+        {
+            let mut status = self.status.lock();
+            status.active_backend = backend.as_str().to_string();
+            status.backend_reason = backend_reason;
+        }
         Ok(Arc::new(model))
     }
 
