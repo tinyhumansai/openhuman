@@ -31,9 +31,9 @@ use chrono::Utc;
 
 pub use crate::openhuman::autocomplete::{
     AutocompleteAcceptParams, AutocompleteAcceptResult, AutocompleteCurrentParams,
-    AutocompleteCurrentResult, AutocompleteSetStyleParams, AutocompleteSetStyleResult,
-    AutocompleteStartParams, AutocompleteStartResult, AutocompleteStatus, AutocompleteStopParams,
-    AutocompleteStopResult,
+    AutocompleteCurrentResult, AutocompleteDebugFocusResult, AutocompleteSetStyleParams,
+    AutocompleteSetStyleResult, AutocompleteStartParams, AutocompleteStartResult,
+    AutocompleteStatus, AutocompleteStopParams, AutocompleteStopResult,
 };
 pub use crate::openhuman::screen_intelligence::{
     AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
@@ -1206,6 +1206,15 @@ async fn dispatch(
             to_json_value(command_response(
                 result,
                 vec!["autocomplete suggestion fetched".to_string()],
+            ))
+        }
+
+        "openhuman.autocomplete_debug_focus" => {
+            let result: AutocompleteDebugFocusResult =
+                autocomplete::global_engine().debug_focus().await?;
+            to_json_value(command_response(
+                result,
+                vec!["autocomplete focus debug fetched".to_string()],
             ))
         }
 

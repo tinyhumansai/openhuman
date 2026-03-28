@@ -62,6 +62,15 @@ pub struct AutocompleteCurrentResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutocompleteDebugFocusResult {
+    pub app_name: Option<String>,
+    pub role: Option<String>,
+    pub context: String,
+    pub selected_text: Option<String>,
+    pub raw_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutocompleteAcceptParams {
     pub suggestion: Option<String>,
 }
@@ -94,7 +103,17 @@ pub struct AutocompleteSetStyleResult {
 #[derive(Debug, Clone)]
 struct FocusedTextContext {
     app_name: Option<String>,
+    role: Option<String>,
     text: String,
+    selected_text: Option<String>,
+    raw_error: Option<String>,
+}
+
+fn is_text_role(role: Option<&str>) -> bool {
+    matches!(
+        role.unwrap_or_default(),
+        "AXTextArea" | "AXTextField" | "AXSearchField" | "AXComboBox" | "AXEditableText"
+    )
 }
 
 struct EngineState {
@@ -195,7 +214,14 @@ impl AutocompleteEngine {
                 }
                 let _ = engine.try_accept_via_tab().await;
                 if last_refresh.elapsed() >= Duration::from_millis(debounce_ms) {
-                    let _ = engine.refresh(None).await;
+                    if let Err(err) = engine.refresh(None).await {
+                        let mut state = engine.inner.lock().await;
+                        state.last_error = Some(err);
+                        state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                    } else {
+                        let mut state = engine.inner.lock().await;
+                        state.last_error = None;
+                    }
                     last_refresh = Instant::now();
                 }
                 time::sleep(Duration::from_millis(24)).await;
@@ -227,6 +253,17 @@ impl AutocompleteEngine {
             app_name: state.app_name.clone(),
             context: state.context.clone(),
             suggestion: state.suggestion.clone(),
+        })
+    }
+
+    pub async fn debug_focus(&self) -> Result<AutocompleteDebugFocusResult, String> {
+        let focused = focused_text_context_verbose()?;
+        Ok(AutocompleteDebugFocusResult {
+            app_name: focused.app_name,
+            role: focused.role,
+            context: focused.text,
+            selected_text: focused.selected_text,
+            raw_error: focused.raw_error,
         })
     }
 
@@ -343,7 +380,10 @@ impl AutocompleteEngine {
         let focused = if let Some(context) = context_override {
             FocusedTextContext {
                 app_name: None,
+                role: None,
                 text: context,
+                selected_text: None,
+                raw_error: None,
             }
         } else {
             focused_text_context()?
@@ -474,16 +514,85 @@ fn sanitize_suggestion(text: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn focused_text_context() -> Result<FocusedTextContext, String> {
+    let ctx = focused_text_context_verbose()?;
+    if let Some(err) = ctx.raw_error.as_ref() {
+        return Err(format!(
+            "focused text unavailable via accessibility api: {err}"
+        ));
+    }
+    Ok(ctx)
+}
+
+#[cfg(target_os = "macos")]
+fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
     let script = r#"
       tell application "System Events"
         set frontApp to first application process whose frontmost is true
         set appName to name of frontApp
+        set roleValue to "unknown"
         set textValue to ""
+        set selectedValue to ""
+        set errValue to ""
+        set targetRoles to {"AXTextArea", "AXTextField", "AXSearchField", "AXComboBox", "AXEditableText"}
+
         try
           set focusedElement to value of attribute "AXFocusedUIElement" of frontApp
-          set textValue to value of attribute "AXValue" of focusedElement
+          try
+            set roleValue to value of attribute "AXRole" of focusedElement as text
+          end try
+          try
+            set textValue to value of attribute "AXValue" of focusedElement as text
+          end try
+          if textValue is "missing value" then set textValue to ""
+          if textValue is "" then
+            try
+              set selectedValue to value of attribute "AXSelectedText" of focusedElement as text
+            end try
+            if selectedValue is "missing value" then set selectedValue to ""
+            if selectedValue is not "" then set textValue to selectedValue
+          end if
+          if textValue is "" then
+            try
+              set textValue to value of attribute "AXTitle" of focusedElement as text
+            end try
+            if textValue is "missing value" then set textValue to ""
+          end if
+        on error errMsg number errNum
+          set errValue to "ERROR:" & errNum & ":" & errMsg
         end try
-        return appName & "\n" & textValue
+
+        if textValue is "" then
+          try
+            set focusedWindow to value of attribute "AXFocusedWindow" of frontApp
+            set childElems to value of attribute "AXChildren" of focusedWindow
+            repeat with childElem in childElems
+              set childRole to ""
+              set childValue to ""
+              try
+                set childRole to value of attribute "AXRole" of childElem as text
+              end try
+              if childRole is in targetRoles then
+                try
+                  set childValue to value of attribute "AXValue" of childElem as text
+                end try
+                if childValue is "missing value" then set childValue to ""
+                if childValue is not "" then
+                  set roleValue to childRole
+                  set textValue to childValue
+                  exit repeat
+                end if
+              end if
+            end repeat
+          on error errMsg2 number errNum2
+            if errValue is "" then set errValue to "ERROR:" & errNum2 & ":" & errMsg2
+          end try
+        end if
+
+        if textValue is "" and errValue is "" then
+          set errValue to "ERROR:no_text_candidate_found"
+        end if
+
+        return appName & "\n" & roleValue & "\n" & textValue & "\n" & selectedValue & "\n" & errValue
       end tell
     "#;
 
@@ -493,7 +602,11 @@ fn focused_text_context() -> Result<FocusedTextContext, String> {
         .output()
         .map_err(|e| format!("failed to run osascript: {e}"))?;
     if !output.status.success() {
-        return Err("unable to read focused text context".to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err("unable to query focused text context".to_string());
+        }
+        return Err(format!("unable to query focused text context: {stderr}"));
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
@@ -502,17 +615,57 @@ fn focused_text_context() -> Result<FocusedTextContext, String> {
         .next()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let value = lines.collect::<Vec<_>>().join("\n");
+    let role = lines
+        .next()
+        .map(|s| normalize_ax_value(s.trim()))
+        .filter(|s| !s.is_empty());
+    let mut value = lines
+        .next()
+        .map(|s| normalize_ax_value(s.trim()))
+        .unwrap_or_default();
+    let mut selected_text = lines
+        .next()
+        .map(|s| normalize_ax_value(s.trim()))
+        .filter(|s| !s.is_empty());
+    let mut raw_error = lines
+        .next()
+        .map(|s| normalize_ax_value(s.trim()))
+        .filter(|s| !s.is_empty());
+
+    if !is_text_role(role.as_deref()) {
+        value.clear();
+        selected_text = None;
+        if raw_error.is_none() {
+            raw_error = Some("ERROR:no_text_candidate_found".to_string());
+        }
+    }
 
     Ok(FocusedTextContext {
         app_name,
+        role,
         text: value,
+        selected_text,
+        raw_error,
     })
 }
 
 #[cfg(not(target_os = "macos"))]
 fn focused_text_context() -> Result<FocusedTextContext, String> {
     Err("autocomplete is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
+    Err("autocomplete is only supported on macOS".to_string())
+}
+
+fn normalize_ax_value(raw: &str) -> String {
+    let v = raw.trim();
+    if v.eq_ignore_ascii_case("missing value") {
+        String::new()
+    } else {
+        v.to_string()
+    }
 }
 
 #[cfg(target_os = "macos")]
