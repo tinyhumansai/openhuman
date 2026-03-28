@@ -8,16 +8,14 @@ use clap_complete::{generate, Shell};
 use serde_json::json;
 
 use crate::core_server::helpers::load_openhuman_config;
-use crate::core_server::types::{
-    command_response, CaptureImageRefResult, CommandResponse, ConfigSnapshot,
-};
+use crate::core_server::types::{command_response, CommandResponse, ConfigSnapshot};
 use crate::core_server::{
     call_method, run_server, APP_SESSION_PROVIDER,
 };
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::{ScreenshotTool, Tool};
 use crate::openhuman::screen_intelligence::{
-    AccessibilityStatus, PermissionState,
+    AccessibilityStatus, CaptureImageRefResult, PermissionState,
 };
 
 #[derive(Debug, Parser)]

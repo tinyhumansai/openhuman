@@ -1,4 +1,4 @@
-mod ai;
+mod ai_rpc;
 mod core;
 mod memory;
 mod openhuman;
@@ -16,7 +16,7 @@ pub async fn dispatch(
     if let Some(result) = memory::try_dispatch(method, params.clone()).await {
         return result.map(invocation_to_rpc_json);
     }
-    if let Some(result) = ai::try_dispatch(method, params.clone()).await {
+    if let Some(result) = ai_rpc::try_dispatch(method, params.clone()).await {
         return result.map(invocation_to_rpc_json);
     }
     if let Some(result) = openhuman::try_dispatch(&state, method, params).await {
