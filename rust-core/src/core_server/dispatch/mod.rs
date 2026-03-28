@@ -3,7 +3,7 @@ mod core;
 mod memory;
 mod openhuman;
 
-use crate::core_server::types::{invocation_to_rpc_json, AppState, InvocationResult};
+use crate::core_server::types::{invocation_to_rpc_json, AppState};
 
 pub async fn dispatch(
     state: AppState,
@@ -24,6 +24,3 @@ pub async fn dispatch(
     }
     Err(format!("unknown method: {method}"))
 }
-
-pub(super) use invocation_to_rpc_json;
-pub(super) type DispatchInvocationResult = InvocationResult;
