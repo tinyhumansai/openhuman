@@ -639,7 +639,12 @@ impl AccessibilityEngine {
                 });
             };
 
-            let latest = session.frames.iter().rev().find(|f| f.image_ref.is_some()).cloned();
+            let latest = session
+                .frames
+                .iter()
+                .rev()
+                .find(|f| f.image_ref.is_some())
+                .cloned();
             if let Some(frame) = latest.clone() {
                 session.vision_state = "queued".to_string();
                 session.vision_queue_depth = session.vision_queue_depth.saturating_add(1);
@@ -737,7 +742,8 @@ impl AccessibilityEngine {
                 if frame.image_ref.is_some() && session.vision_enabled {
                     if let Some(tx) = session.vision_tx.as_ref() {
                         if tx.send(frame).is_ok() {
-                            session.vision_queue_depth = session.vision_queue_depth.saturating_add(1);
+                            session.vision_queue_depth =
+                                session.vision_queue_depth.saturating_add(1);
                             session.vision_state = "queued".to_string();
                         }
                     }
@@ -787,7 +793,10 @@ impl AccessibilityEngine {
         }
     }
 
-    async fn analyze_frame_with_vision(&self, frame: CaptureFrame) -> Result<VisionSummary, String> {
+    async fn analyze_frame_with_vision(
+        &self,
+        frame: CaptureFrame,
+    ) -> Result<VisionSummary, String> {
         let image_ref = frame
             .image_ref
             .clone()
@@ -1018,7 +1027,8 @@ fn now_ms() -> i64 {
 fn capture_screen_image_ref() -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let tmp_path = std::env::temp_dir().join(format!("openhuman_accessibility_{}.png", Uuid::new_v4()));
+        let tmp_path =
+            std::env::temp_dir().join(format!("openhuman_accessibility_{}.png", Uuid::new_v4()));
         let status = std::process::Command::new("screencapture")
             .arg("-x")
             .arg("-t")
@@ -1029,7 +1039,8 @@ fn capture_screen_image_ref() -> Result<String, String> {
         if !status.success() {
             return Err("screencapture returned non-zero status".to_string());
         }
-        let bytes = std::fs::read(&tmp_path).map_err(|e| format!("failed to read screenshot: {e}"))?;
+        let bytes =
+            std::fs::read(&tmp_path).map_err(|e| format!("failed to read screenshot: {e}"))?;
         let _ = std::fs::remove_file(&tmp_path);
         if bytes.len() > MAX_SCREENSHOT_BYTES {
             return Err("captured screenshot exceeds size limit".to_string());
