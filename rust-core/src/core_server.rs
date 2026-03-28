@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::health;
+use crate::openhuman::local_ai::{self, Suggestion};
 use crate::openhuman::security::{SecretStore, SecurityPolicy};
 use crate::openhuman::{doctor, hardware, integrations, migration, onboard, service};
 
@@ -158,6 +159,25 @@ struct DecryptSecretParams {
 #[derive(Debug, Deserialize)]
 struct SetBrowserAllowAllParams {
     enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiDownloadParams {
+    force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiSummarizeParams {
+    text: String,
+    max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiSuggestParams {
+    #[serde(default)]
+    context: Option<String>,
+    #[serde(default)]
+    lines: Option<Vec<String>>,
 }
 
 async fn load_openhuman_config() -> Result<Config, String> {
@@ -486,6 +506,78 @@ async fn dispatch(
             ))
         }
 
+        "openhuman.local_ai_status" => {
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let status = service.status();
+            if matches!(status.state.as_str(), "idle" | "degraded") {
+                let service_clone = service.clone();
+                let config_clone = config.clone();
+                tokio::spawn(async move {
+                    service_clone.bootstrap(&config_clone).await;
+                });
+            }
+            to_json_value(command_response(
+                service.status(),
+                vec!["local ai status fetched".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_download" => {
+            let p: LocalAiDownloadParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let force = p.force.unwrap_or(false);
+            if force {
+                service.reset_to_idle(&config);
+            }
+            let service_clone = service.clone();
+            let config_clone = config.clone();
+            tokio::spawn(async move {
+                service_clone.bootstrap(&config_clone).await;
+            });
+            to_json_value(command_response(
+                service.status(),
+                vec!["local ai bootstrap triggered".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_summarize" => {
+            let p: LocalAiSummarizeParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let status = service.status();
+            if !matches!(status.state.as_str(), "ready") {
+                service.bootstrap(&config).await;
+            }
+            let summary = service.summarize(&config, &p.text, p.max_tokens).await?;
+            to_json_value(command_response(
+                summary,
+                vec!["local ai summarize completed".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_suggest_questions" => {
+            let p: LocalAiSuggestParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let status = service.status();
+            if !matches!(status.state.as_str(), "ready") {
+                service.bootstrap(&config).await;
+            }
+            let mut context = p.context.unwrap_or_default();
+            if context.trim().is_empty() {
+                if let Some(lines) = p.lines {
+                    context = lines.join("\n");
+                }
+            }
+            let suggestions: Vec<Suggestion> = service.suggest_questions(&config, &context).await?;
+            to_json_value(command_response(
+                suggestions,
+                vec!["local ai suggestions generated".to_string()],
+            ))
+        }
+
         "openhuman.encrypt_secret" => {
             let p: EncryptSecretParams = parse_params(params)?;
             let config = load_openhuman_config().await?;
@@ -712,6 +804,20 @@ pub async fn run_server(port: Option<u16>) -> Result<()> {
         });
 
     log::info!("[core] listening on http://{bind_addr}");
+
+    tokio::spawn(async {
+        match Config::load_or_init().await {
+            Ok(config) if config.local_ai.enabled => {
+                let service = local_ai::global(&config);
+                service.bootstrap(&config).await;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                log::warn!("[core] local-ai bootstrap skipped: {err}");
+            }
+        }
+    });
+
     axum::serve(listener, app).await?;
     Ok(())
 }

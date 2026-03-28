@@ -894,9 +894,17 @@ pub fn run() {
 
             // Start/ensure standalone core process for business logic RPC.
             {
+                let core_run_mode = core_process::default_core_run_mode(daemon_mode);
+                let core_bin = if matches!(core_run_mode, core_process::CoreRunMode::ChildProcess)
+                {
+                    core_process::default_core_bin()
+                } else {
+                    None
+                };
                 let core_handle = core_process::CoreProcessHandle::new(
                     core_process::default_core_port(),
-                    core_process::default_core_bin(),
+                    core_bin,
+                    core_run_mode,
                 );
                 std::env::set_var("OPENHUMAN_CORE_RPC_URL", core_handle.rpc_url());
                 app.manage(core_handle.clone());
@@ -1065,6 +1073,10 @@ pub fn run() {
                     openhuman_get_runtime_flags,
                     openhuman_set_browser_allow_all,
                     openhuman_agent_chat,
+                    openhuman_local_ai_status,
+                    openhuman_local_ai_download,
+                    openhuman_local_ai_summarize,
+                    openhuman_local_ai_suggest_questions,
                     openhuman_doctor_report,
                     openhuman_doctor_models,
                     openhuman_list_integrations,

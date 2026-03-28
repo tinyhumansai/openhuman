@@ -18,15 +18,33 @@ fn windows_task_name() -> &'static str {
 fn daemon_program_args(exe: &std::path::Path) -> Vec<String> {
     let raw_file_name = exe.file_name().and_then(|n| n.to_str()).unwrap_or_default();
     let file_name = raw_file_name.to_ascii_lowercase();
-    let standalone_core_binary = file_name.contains("openhuman-core")
-        || file_name.starts_with("openhuman-")
-        || raw_file_name == "openhuman"
-        || raw_file_name == "openhuman.exe";
+    let standalone_core_binary = !is_current_executable(exe)
+        && (file_name.contains("openhuman-core")
+            || file_name.starts_with("openhuman-core-")
+            || raw_file_name == "openhuman"
+            || raw_file_name == "openhuman.exe");
 
     if standalone_core_binary {
         vec!["serve".to_string()]
     } else {
         vec!["core".to_string(), "serve".to_string()]
+    }
+}
+
+fn is_current_executable(candidate: &std::path::Path) -> bool {
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    same_executable_path(candidate, &current)
+}
+
+fn same_executable_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a_real), Ok(b_real)) => a_real == b_real,
+        _ => false,
     }
 }
 

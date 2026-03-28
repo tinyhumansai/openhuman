@@ -6,6 +6,7 @@ import AIPanel from '../components/settings/panels/AIPanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
+import LocalModelPanel from '../components/settings/panels/LocalModelPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
@@ -30,6 +31,7 @@ const Settings = () => {
         <Route path="advanced" element={<AdvancedPanel />} />
         <Route path="agent-chat" element={<AgentChatPanel />} />
         <Route path="ai" element={<AIPanel />} />
+        <Route path="local-model" element={<LocalModelPanel />} />
         <Route path="billing" element={<BillingPanel />} />
         <Route path="skills" element={<SkillsPanel />} />
         <Route path="team" element={<TeamPanel />} />

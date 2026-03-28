@@ -36,6 +36,22 @@ const developerItems = [
     ),
   },
   {
+    id: 'local-model',
+    title: 'Local Model Runtime',
+    description: 'Monitor download/load status and test local model calls',
+    route: 'local-model',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 17v-6m3 6V7m3 10v-4m5 6H4a2 2 0 01-2-2V7a2 2 0 012-2h16a2 2 0 012 2v10a2 2 0 01-2 2z"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'tauri-commands',
     title: 'Tauri Command Console',
     description: 'Run OpenHuman Tauri commands for quick testing',

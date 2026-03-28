@@ -52,6 +52,26 @@ pub struct AgentServerStatus {
     pub url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiStatus {
+    pub state: String,
+    pub model_id: String,
+    pub provider: String,
+    pub download_progress: Option<f32>,
+    pub downloaded_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub download_speed_bps: Option<u64>,
+    pub eta_seconds: Option<u64>,
+    pub warning: Option<String>,
+    pub model_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiSuggestion {
+    pub text: String,
+    pub confidence: f32,
+}
+
 /// Return the current health snapshot as JSON.
 #[tauri::command]
 pub async fn openhuman_health_snapshot(
@@ -227,6 +247,60 @@ pub async fn openhuman_agent_chat(
             "provider_override": provider_override,
             "model_override": model_override,
             "temperature": temperature,
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_status(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<LocalAiStatus>, String> {
+    call_core(&app, "openhuman.local_ai_status", params_none()).await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_download(
+    app: tauri::AppHandle,
+    force: Option<bool>,
+) -> Result<CommandResponse<LocalAiStatus>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_download",
+        serde_json::json!({ "force": force }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_summarize(
+    app: tauri::AppHandle,
+    text: String,
+    max_tokens: Option<u32>,
+) -> Result<CommandResponse<String>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_summarize",
+        serde_json::json!({
+            "text": text,
+            "max_tokens": max_tokens
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_suggest_questions(
+    app: tauri::AppHandle,
+    context: Option<String>,
+    lines: Option<Vec<String>>,
+) -> Result<CommandResponse<Vec<LocalAiSuggestion>>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_suggest_questions",
+        serde_json::json!({
+            "context": context,
+            "lines": lines
         }),
     )
     .await

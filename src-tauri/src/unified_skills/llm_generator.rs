@@ -177,7 +177,7 @@ impl LlmGenerator {
 
     /// Build a `GenerateSkillSpec` from raw LLM-generated JS source.
     fn build_spec(&self, task_description: &str, full_index_js: String) -> GenerateSkillSpec {
-        let id = sanitize_id(task_description);
+        let _id = sanitize_id(task_description);
 
         let name = smart_name(task_description);
 

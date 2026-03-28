@@ -9,7 +9,6 @@ use crate::models::socket::SocketState;
 use crate::runtime::socket_manager::SocketManager;
 use crate::utils::config::get_backend_url;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::State;
 

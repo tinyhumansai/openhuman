@@ -13,7 +13,8 @@ const tsconfigE2ePath = path.join(projectRoot, 'test', 'tsconfig.e2e.json');
  * On Windows/Linux, tauri-driver would be used instead (not covered here).
  */
 function getAppPath(): string {
-  const base = path.resolve('src-tauri/target/debug/bundle');
+  // Workspace root Cargo workspace: bundles land under repo root `target/`, not `src-tauri/target/`.
+  const base = path.resolve('target/debug/bundle');
 
   switch (process.platform) {
     case 'darwin':

@@ -426,6 +426,44 @@ export interface RuntimeFlags {
   log_prompts: boolean;
 }
 
+export interface LocalAiStatus {
+  state: string;
+  model_id: string;
+  provider: string;
+  download_progress?: number | null;
+  downloaded_bytes?: number | null;
+  total_bytes?: number | null;
+  download_speed_bps?: number | null;
+  eta_seconds?: number | null;
+  warning?: string | null;
+  model_path?: string | null;
+}
+
+export interface LocalAiSuggestion {
+  text: string;
+  confidence: number;
+}
+
+function tauriErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  if (typeof err === 'string') {
+    return err;
+  }
+  if (err && typeof err === 'object') {
+    const maybeMessage = (err as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string' && maybeMessage.trim().length > 0) {
+      return maybeMessage;
+    }
+    const maybeError = (err as { error?: unknown }).error;
+    if (typeof maybeError === 'string' && maybeError.trim().length > 0) {
+      return maybeError;
+    }
+  }
+  return 'Unknown Tauri invoke error';
+}
+
 export interface TunnelConfig {
   provider: string;
   cloudflare?: { token: string } | null;
@@ -531,6 +569,60 @@ export async function openhumanAgentChat(
     modelOverride,
     temperature,
   });
+}
+
+export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  try {
+    return await invoke('openhuman_local_ai_status');
+  } catch (err) {
+    const message = tauriErrorMessage(err);
+    if (message.includes('unknown method: openhuman.local_ai_status')) {
+      throw new Error(
+        'Local model runtime is unavailable in this core build. Restart app after updating to the latest build.'
+      );
+    }
+    throw new Error(message);
+  }
+}
+
+export async function openhumanLocalAiDownload(
+  force?: boolean
+): Promise<CommandResponse<LocalAiStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  try {
+    return await invoke('openhuman_local_ai_download', { force: force ?? false });
+  } catch (err) {
+    const message = tauriErrorMessage(err);
+    if (message.includes('unknown method: openhuman.local_ai_download')) {
+      return await openhumanLocalAiStatus();
+    }
+    throw new Error(message);
+  }
+}
+
+export async function openhumanLocalAiSummarize(
+  text: string,
+  maxTokens?: number
+): Promise<CommandResponse<string>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_summarize', { text, maxTokens });
+}
+
+export async function openhumanLocalAiSuggestQuestions(
+  context?: string,
+  lines?: string[]
+): Promise<CommandResponse<LocalAiSuggestion[]>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_suggest_questions', { context, lines });
 }
 
 export async function aiGetConfig(): Promise<AIPreview> {

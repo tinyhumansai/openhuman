@@ -163,6 +163,7 @@ async fn auto_compact_history(
     provider: &dyn Provider,
     model: &str,
     max_history: usize,
+    config: &Config,
 ) -> Result<bool> {
     let has_system = history.first().map_or(false, |m| m.role == "system");
     let non_system_count = if has_system {
@@ -193,13 +194,34 @@ async fn auto_compact_history(
         transcript
     );
 
-    let summary_raw = provider
-        .chat_with_system(Some(summarizer_system), &summarizer_user, model, 0.2)
-        .await
-        .unwrap_or_else(|_| {
-            // Fallback to deterministic local truncation when summarization fails.
-            truncate_with_ellipsis(&transcript, COMPACTION_MAX_SUMMARY_CHARS)
-        });
+    let summary_raw = if config.local_ai.enabled {
+        let service = crate::openhuman::local_ai::global(config);
+        match service
+            .summarize(
+                config,
+                &transcript,
+                Some((COMPACTION_MAX_SUMMARY_CHARS / 6) as u32),
+            )
+            .await
+        {
+            Ok(summary) => summary,
+            Err(_) => provider
+                .chat_with_system(Some(summarizer_system), &summarizer_user, model, 0.2)
+                .await
+                .unwrap_or_else(|_| {
+                    // Fallback to deterministic local truncation when summarization fails.
+                    truncate_with_ellipsis(&transcript, COMPACTION_MAX_SUMMARY_CHARS)
+                }),
+        }
+    } else {
+        provider
+            .chat_with_system(Some(summarizer_system), &summarizer_user, model, 0.2)
+            .await
+            .unwrap_or_else(|_| {
+                // Fallback to deterministic local truncation when summarization fails.
+                truncate_with_ellipsis(&transcript, COMPACTION_MAX_SUMMARY_CHARS)
+            })
+    };
 
     let summary = truncate_with_ellipsis(&summary_raw, COMPACTION_MAX_SUMMARY_CHARS);
     apply_compaction_summary(history, start, compact_end, &summary);
@@ -1586,6 +1608,7 @@ pub async fn run(
                 provider.as_ref(),
                 model_name,
                 config.agent.max_history_messages,
+                &config,
             )
             .await
             {

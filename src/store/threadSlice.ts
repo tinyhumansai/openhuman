@@ -2,6 +2,7 @@ import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 
 import { threadApi } from '../services/api/threadApi';
 import type { Thread, ThreadMessage } from '../types/thread';
+import { isTauri, openhumanLocalAiSuggestQuestions } from '../utils/tauriCommands';
 
 interface ThreadState {
   // Existing local data (will be persisted)
@@ -121,8 +122,25 @@ export const sendMessage = createAsyncThunk(
 
 export const fetchSuggestedQuestions = createAsyncThunk(
   'thread/fetchSuggestedQuestions',
-  async (conversationId: string | undefined, { rejectWithValue }) => {
+  async (conversationId: string | undefined, { getState, rejectWithValue }) => {
     try {
+      if (isTauri()) {
+        const state = getState() as {
+          thread?: {
+            selectedThreadId?: string | null;
+            messagesByThreadId?: Record<string, ThreadMessage[]>;
+          };
+        };
+        const selectedThreadId = conversationId ?? state.thread?.selectedThreadId ?? undefined;
+        const threadMessages = selectedThreadId
+          ? (state.thread?.messagesByThreadId?.[selectedThreadId] ?? [])
+          : [];
+        const lines = threadMessages
+          .slice(-24)
+          .map(msg => `${msg.sender === 'user' ? 'User' : 'Assistant'}: ${msg.content}`);
+        const local = await openhumanLocalAiSuggestQuestions(undefined, lines);
+        return local.result;
+      }
       const data = await threadApi.getSuggestQuestions(conversationId);
       return data.suggestions;
     } catch (error) {
