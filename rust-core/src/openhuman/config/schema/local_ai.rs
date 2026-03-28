@@ -19,8 +19,14 @@ pub struct LocalAiConfig {
     pub embedding_model_id: String,
     #[serde(default = "default_stt_model_id")]
     pub stt_model_id: String,
+    #[serde(default = "default_stt_download_url")]
+    pub stt_download_url: Option<String>,
     #[serde(default = "default_tts_voice_id")]
     pub tts_voice_id: String,
+    #[serde(default = "default_tts_download_url")]
+    pub tts_download_url: Option<String>,
+    #[serde(default = "default_tts_config_download_url")]
+    pub tts_config_download_url: Option<String>,
     #[serde(default = "default_quantization")]
     pub quantization: String,
     #[serde(default = "default_preload_vision_model")]
@@ -77,6 +83,27 @@ fn default_tts_voice_id() -> String {
     "en_US-lessac-medium".to_string()
 }
 
+fn default_stt_download_url() -> Option<String> {
+    Some(
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true"
+            .to_string(),
+    )
+}
+
+fn default_tts_download_url() -> Option<String> {
+    Some(
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx?download=true"
+            .to_string(),
+    )
+}
+
+fn default_tts_config_download_url() -> Option<String> {
+    Some(
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json?download=true"
+            .to_string(),
+    )
+}
+
 fn default_quantization() -> String {
     "q4".to_string()
 }
@@ -127,7 +154,10 @@ impl Default for LocalAiConfig {
             vision_model_id: default_vision_model_id(),
             embedding_model_id: default_embedding_model_id(),
             stt_model_id: default_stt_model_id(),
+            stt_download_url: default_stt_download_url(),
             tts_voice_id: default_tts_voice_id(),
+            tts_download_url: default_tts_download_url(),
+            tts_config_download_url: default_tts_config_download_url(),
             quantization: default_quantization(),
             preload_vision_model: default_preload_vision_model(),
             preload_embedding_model: default_preload_embedding_model(),

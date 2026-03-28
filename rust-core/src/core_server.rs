@@ -580,11 +580,13 @@ async fn dispatch(
             let service_clone = service.clone();
             let config_clone = config.clone();
             tokio::spawn(async move {
-                service_clone.bootstrap(&config_clone).await;
+                if let Err(err) = service_clone.download_all_models(&config_clone).await {
+                    service_clone.mark_degraded(err);
+                }
             });
             to_json_value(command_response(
                 service.status(),
-                vec!["local ai bootstrap triggered".to_string()],
+                vec!["local ai full model download triggered".to_string()],
             ))
         }
 
