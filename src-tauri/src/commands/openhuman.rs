@@ -76,6 +76,32 @@ async fn call_core<T: DeserializeOwned>(
     crate::core_rpc::call(method, params).await
 }
 
+async fn ensure_service_managed_core_running() -> Result<(), String> {
+    let config = load_config_local().await?;
+    let _ = service::install(&config);
+    let _ = service::start(&config);
+
+    for _ in 0..40 {
+        if crate::core_rpc::ping().await {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+
+    Err(
+        "OpenHuman Core daemon did not become ready. Confirm the background service is running."
+            .to_string(),
+    )
+}
+
+async fn call_core_service_managed<T: DeserializeOwned>(
+    method: &str,
+    params: serde_json::Value,
+) -> Result<T, String> {
+    ensure_service_managed_core_running().await?;
+    crate::core_rpc::call(method, params).await
+}
+
 async fn load_config_local() -> Result<openhuman_core::openhuman::config::Config, String> {
     let timeout_duration = std::time::Duration::from_secs(30);
     match tokio::time::timeout(
@@ -444,7 +470,8 @@ pub async fn openhuman_agent_chat(
 pub async fn openhuman_accessibility_status(
     app: tauri::AppHandle,
 ) -> Result<CommandResponse<AccessibilityStatus>, String> {
-    call_core(&app, "openhuman.accessibility_status", params_none()).await
+    let _ = app;
+    call_core_service_managed("openhuman.accessibility_status", params_none()).await
 }
 
 /// Request accessibility-related permissions on macOS.
@@ -452,12 +479,9 @@ pub async fn openhuman_accessibility_status(
 pub async fn openhuman_accessibility_request_permissions(
     app: tauri::AppHandle,
 ) -> Result<CommandResponse<PermissionStatus>, String> {
-    let response: CommandResponse<PermissionStatus> = call_core(
-        &app,
-        "openhuman.accessibility_request_permissions",
-        params_none(),
-    )
-    .await?;
+    let response: CommandResponse<PermissionStatus> =
+        call_core_service_managed("openhuman.accessibility_request_permissions", params_none())
+            .await?;
     emit_accessibility_event(
         &app,
         "permissions_requested",
@@ -472,8 +496,7 @@ pub async fn openhuman_accessibility_request_permission(
     app: tauri::AppHandle,
     params: PermissionRequestParams,
 ) -> Result<CommandResponse<PermissionStatus>, String> {
-    let response: CommandResponse<PermissionStatus> = call_core(
-        &app,
+    let response: CommandResponse<PermissionStatus> = call_core_service_managed(
         "openhuman.accessibility_request_permission",
         serde_json::json!(params),
     )
@@ -492,8 +515,7 @@ pub async fn openhuman_accessibility_start_session(
     app: tauri::AppHandle,
     params: StartSessionParams,
 ) -> Result<CommandResponse<SessionStatus>, String> {
-    let response: CommandResponse<SessionStatus> = call_core(
-        &app,
+    let response: CommandResponse<SessionStatus> = call_core_service_managed(
         "openhuman.accessibility_start_session",
         serde_json::json!(params),
     )
@@ -508,8 +530,7 @@ pub async fn openhuman_accessibility_stop_session(
     app: tauri::AppHandle,
     params: Option<StopSessionParams>,
 ) -> Result<CommandResponse<SessionStatus>, String> {
-    let response: CommandResponse<SessionStatus> = call_core(
-        &app,
+    let response: CommandResponse<SessionStatus> = call_core_service_managed(
         "openhuman.accessibility_stop_session",
         serde_json::json!(params.unwrap_or(StopSessionParams { reason: None })),
     )
@@ -523,7 +544,8 @@ pub async fn openhuman_accessibility_stop_session(
 pub async fn openhuman_accessibility_capture_now(
     app: tauri::AppHandle,
 ) -> Result<CommandResponse<CaptureNowResult>, String> {
-    call_core(&app, "openhuman.accessibility_capture_now", params_none()).await
+    let _ = app;
+    call_core_service_managed("openhuman.accessibility_capture_now", params_none()).await
 }
 
 /// Execute a validated input action in an active accessibility session.
@@ -532,8 +554,7 @@ pub async fn openhuman_accessibility_input_action(
     app: tauri::AppHandle,
     params: InputActionParams,
 ) -> Result<CommandResponse<InputActionResult>, String> {
-    let response: CommandResponse<InputActionResult> = call_core(
-        &app,
+    let response: CommandResponse<InputActionResult> = call_core_service_managed(
         "openhuman.accessibility_input_action",
         serde_json::json!(params),
     )
@@ -550,8 +571,8 @@ pub async fn openhuman_accessibility_autocomplete_suggest(
     app: tauri::AppHandle,
     params: Option<AutocompleteSuggestParams>,
 ) -> Result<CommandResponse<AutocompleteSuggestResult>, String> {
-    call_core(
-        &app,
+    let _ = app;
+    call_core_service_managed(
         "openhuman.accessibility_autocomplete_suggest",
         serde_json::json!(params.unwrap_or(AutocompleteSuggestParams {
             context: None,
@@ -567,8 +588,8 @@ pub async fn openhuman_accessibility_autocomplete_commit(
     app: tauri::AppHandle,
     params: AutocompleteCommitParams,
 ) -> Result<CommandResponse<AutocompleteCommitResult>, String> {
-    call_core(
-        &app,
+    let _ = app;
+    call_core_service_managed(
         "openhuman.accessibility_autocomplete_commit",
         serde_json::json!(params),
     )
@@ -580,8 +601,8 @@ pub async fn openhuman_accessibility_vision_recent(
     app: tauri::AppHandle,
     limit: Option<usize>,
 ) -> Result<CommandResponse<VisionRecentResult>, String> {
-    call_core(
-        &app,
+    let _ = app;
+    call_core_service_managed(
         "openhuman.accessibility_vision_recent",
         serde_json::json!({ "limit": limit }),
     )
@@ -592,7 +613,8 @@ pub async fn openhuman_accessibility_vision_recent(
 pub async fn openhuman_accessibility_vision_flush(
     app: tauri::AppHandle,
 ) -> Result<CommandResponse<VisionFlushResult>, String> {
-    call_core(&app, "openhuman.accessibility_vision_flush", params_none()).await
+    let _ = app;
+    call_core_service_managed("openhuman.accessibility_vision_flush", params_none()).await
 }
 
 #[tauri::command]
