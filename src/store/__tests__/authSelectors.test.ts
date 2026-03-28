@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { selectIsOnboarded } from '../authSelectors';
+import { selectHasIncompleteOnboarding, selectIsOnboarded } from '../authSelectors';
 import type { RootState } from '../index';
 
 function makeState(
@@ -13,7 +13,15 @@ function makeState(
   const { token = null, userId, isOnboardedByUser = {} } = overrides;
 
   return {
-    auth: { token, isOnboardedByUser, isAnalyticsEnabledByUser: {} },
+    auth: {
+      token,
+      isOnboardedByUser,
+      onboardingTasksByUser: {},
+      hasIncompleteOnboardingByUser: {},
+      isAnalyticsEnabledByUser: {},
+      encryptionKeyByUser: {},
+      primaryWalletAddressByUser: {},
+    },
     user: {
       user: userId ? ({ _id: userId } as RootState['user']['user']) : null,
       isLoading: false,
@@ -23,6 +31,13 @@ function makeState(
     team: {} as RootState['team'],
     ai: {} as RootState['ai'],
     skills: {} as RootState['skills'],
+    daemon: {} as RootState['daemon'],
+    gmail: {} as RootState['gmail'],
+    thread: {} as RootState['thread'],
+    intelligence: {} as RootState['intelligence'],
+    invite: {} as RootState['invite'],
+    notion: {} as RootState['notion'],
+    accessibility: {} as RootState['accessibility'],
   } as RootState;
 }
 
@@ -45,5 +60,18 @@ describe('selectIsOnboarded', () => {
   it('returns false for a different user id', () => {
     const state = makeState({ userId: 'u2', isOnboardedByUser: { u1: true } });
     expect(selectIsOnboarded(state)).toBe(false);
+  });
+});
+
+describe('selectHasIncompleteOnboarding', () => {
+  it('returns false when no user is loaded', () => {
+    const state = makeState();
+    expect(selectHasIncompleteOnboarding(state)).toBe(false);
+  });
+
+  it('returns true when current user has incomplete tasks', () => {
+    const state = makeState({ userId: 'u1' });
+    state.auth.hasIncompleteOnboardingByUser = { u1: true };
+    expect(selectHasIncompleteOnboarding(state)).toBe(true);
   });
 });

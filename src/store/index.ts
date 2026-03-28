@@ -36,6 +36,8 @@ const authPersistConfig = {
   whitelist: [
     'token',
     'isOnboardedByUser',
+    'onboardingTasksByUser',
+    'hasIncompleteOnboardingByUser',
     'isAnalyticsEnabledByUser',
     'encryptionKeyByUser',
     'primaryWalletAddressByUser',

@@ -5,7 +5,8 @@ use openhuman_core::core_server::{
     AutocompleteSuggestParams, AutocompleteSuggestResult, BrowserSettingsUpdate, CaptureNowResult,
     CommandResponse, ConfigSnapshot, GatewaySettingsUpdate, InputActionParams, InputActionResult,
     MemorySettingsUpdate, ModelSettingsUpdate, PermissionStatus, RuntimeFlags,
-    RuntimeSettingsUpdate, SessionStatus, StartSessionParams, StopSessionParams,
+    RuntimeSettingsUpdate, SessionStatus, StartSessionParams, StopSessionParams, VisionFlushResult,
+    VisionRecentResult,
 };
 use openhuman_core::openhuman::{doctor, hardware, integrations, migration, onboard, service};
 use serde::de::DeserializeOwned;
@@ -453,6 +454,26 @@ pub async fn openhuman_accessibility_autocomplete_commit(
         serde_json::json!(params),
     )
     .await
+}
+
+#[tauri::command]
+pub async fn openhuman_accessibility_vision_recent(
+    app: tauri::AppHandle,
+    limit: Option<usize>,
+) -> Result<CommandResponse<VisionRecentResult>, String> {
+    call_core(
+        &app,
+        "openhuman.accessibility_vision_recent",
+        serde_json::json!({ "limit": limit }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_accessibility_vision_flush(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<VisionFlushResult>, String> {
+    call_core(&app, "openhuman.accessibility_vision_flush", params_none()).await
 }
 
 #[tauri::command]

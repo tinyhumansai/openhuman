@@ -1081,6 +1081,8 @@ pub fn run() {
                     openhuman_accessibility_input_action,
                     openhuman_accessibility_autocomplete_suggest,
                     openhuman_accessibility_autocomplete_commit,
+                    openhuman_accessibility_vision_recent,
+                    openhuman_accessibility_vision_flush,
                     openhuman_local_ai_status,
                     openhuman_local_ai_download,
                     openhuman_local_ai_summarize,

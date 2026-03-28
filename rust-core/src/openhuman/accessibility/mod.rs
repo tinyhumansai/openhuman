@@ -1,4 +1,8 @@
 use crate::openhuman::config::AccessibilityAutomationConfig;
+use crate::openhuman::config::Config;
+use crate::openhuman::local_ai;
+use crate::openhuman::memory::{self, MemoryCategory};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -7,8 +11,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
+use uuid::Uuid;
 
 const MAX_EPHEMERAL_FRAMES: usize = 120;
+const MAX_EPHEMERAL_VISION_SUMMARIES: usize = 120;
+const MAX_SCREENSHOT_BYTES: usize = 1_500_000;
 const MAX_CONTEXT_CHARS: usize = 256;
 const MAX_SUGGESTION_CHARS: usize = 128;
 
@@ -47,6 +54,11 @@ pub struct SessionStatus {
     pub frames_in_memory: usize,
     pub last_capture_at_ms: Option<i64>,
     pub last_context: Option<String>,
+    pub vision_enabled: bool,
+    pub vision_state: String,
+    pub vision_queue_depth: usize,
+    pub last_vision_at_ms: Option<i64>,
+    pub last_vision_summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,12 +98,36 @@ pub struct CaptureFrame {
     pub reason: String,
     pub app_name: Option<String>,
     pub window_title: Option<String>,
+    pub image_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureNowResult {
     pub accepted: bool,
     pub frame: Option<CaptureFrame>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisionSummary {
+    pub id: String,
+    pub captured_at_ms: i64,
+    pub app_name: Option<String>,
+    pub window_title: Option<String>,
+    pub ui_state: String,
+    pub key_text: String,
+    pub actionable_notes: String,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisionRecentResult {
+    pub summaries: Vec<VisionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisionFlushResult {
+    pub accepted: bool,
+    pub summary: Option<VisionSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +206,14 @@ struct SessionRuntime {
     frames: VecDeque<CaptureFrame>,
     last_context: Option<AppContext>,
     task: Option<JoinHandle<()>>,
+    vision_enabled: bool,
+    vision_state: String,
+    vision_queue_depth: usize,
+    last_vision_at_ms: Option<i64>,
+    last_vision_summary: Option<String>,
+    vision_summaries: VecDeque<VisionSummary>,
+    vision_task: Option<JoinHandle<()>>,
+    vision_tx: Option<tokio::sync::mpsc::UnboundedSender<CaptureFrame>>,
 }
 
 struct EngineState {
@@ -246,6 +290,11 @@ impl AccessibilityEngine {
                         .last_context
                         .as_ref()
                         .and_then(|c| c.app_name.clone()),
+                    vision_enabled: session.vision_enabled,
+                    vision_state: session.vision_state.clone(),
+                    vision_queue_depth: session.vision_queue_depth,
+                    last_vision_at_ms: session.last_vision_at_ms,
+                    last_vision_summary: session.last_vision_summary.clone(),
                 },
                 None => SessionStatus {
                     active: false,
@@ -258,6 +307,11 @@ impl AccessibilityEngine {
                     frames_in_memory: 0,
                     last_capture_at_ms: None,
                     last_context: None,
+                    vision_enabled: true,
+                    vision_state: "idle".to_string(),
+                    vision_queue_depth: 0,
+                    last_vision_at_ms: None,
+                    last_vision_summary: None,
                 },
             };
 
@@ -359,20 +413,35 @@ impl AccessibilityEngine {
                 frames: VecDeque::new(),
                 last_context: None,
                 task: None,
+                vision_enabled: true,
+                vision_state: "idle".to_string(),
+                vision_queue_depth: 0,
+                last_vision_at_ms: None,
+                last_vision_summary: None,
+                vision_summaries: VecDeque::new(),
+                vision_task: None,
+                vision_tx: None,
             });
             state.last_event = Some("session_started".to_string());
             state.last_error = None;
         }
 
+        let (vision_tx, vision_rx) = tokio::sync::mpsc::unbounded_channel::<CaptureFrame>();
         let engine = self.clone();
         let handle = tokio::spawn(async move {
             engine.run_capture_worker().await;
+        });
+        let vision_engine = self.clone();
+        let vision_handle = tokio::spawn(async move {
+            vision_engine.run_vision_worker(vision_rx).await;
         });
 
         {
             let mut state = self.inner.lock().await;
             if let Some(session) = state.session.as_mut() {
                 session.task = Some(handle);
+                session.vision_task = Some(vision_handle);
+                session.vision_tx = Some(vision_tx);
             }
         }
 
@@ -402,11 +471,19 @@ impl AccessibilityEngine {
             reason,
             app_name: context.as_ref().and_then(|c| c.app_name.clone()),
             window_title: context.as_ref().and_then(|c| c.window_title.clone()),
+            image_ref: capture_screen_image_ref().ok(),
         };
 
         push_ephemeral_frame(&mut session.frames, frame.clone());
         session.last_capture_at_ms = Some(frame.captured_at_ms);
         session.last_context = context;
+        if frame.image_ref.is_some() && session.vision_enabled {
+            if let Some(tx) = session.vision_tx.as_ref() {
+                if tx.send(frame.clone()).is_ok() {
+                    session.vision_queue_depth = session.vision_queue_depth.saturating_add(1);
+                }
+            }
+        }
         state.last_event = Some("capture_now".to_string());
 
         Ok(CaptureNowResult {
@@ -531,6 +608,64 @@ impl AccessibilityEngine {
         Ok(AutocompleteCommitResult { committed: true })
     }
 
+    pub async fn vision_recent(&self, limit: Option<usize>) -> VisionRecentResult {
+        let state = self.inner.lock().await;
+        let max_items = limit.unwrap_or(10).clamp(1, 120);
+
+        let summaries = state
+            .session
+            .as_ref()
+            .map(|session| {
+                session
+                    .vision_summaries
+                    .iter()
+                    .rev()
+                    .take(max_items)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        VisionRecentResult { summaries }
+    }
+
+    pub async fn vision_flush(&self) -> Result<VisionFlushResult, String> {
+        let candidate = {
+            let mut state = self.inner.lock().await;
+            let Some(session) = state.session.as_mut() else {
+                return Ok(VisionFlushResult {
+                    accepted: false,
+                    summary: None,
+                });
+            };
+
+            let latest = session.frames.iter().rev().find(|f| f.image_ref.is_some()).cloned();
+            if let Some(frame) = latest.clone() {
+                session.vision_state = "queued".to_string();
+                session.vision_queue_depth = session.vision_queue_depth.saturating_add(1);
+                Some(frame)
+            } else {
+                None
+            }
+        };
+
+        let Some(frame) = candidate else {
+            return Ok(VisionFlushResult {
+                accepted: false,
+                summary: None,
+            });
+        };
+
+        let summary = self
+            .analyze_frame_with_vision(frame)
+            .await
+            .map_err(|e| format!("vision flush failed: {e}"))?;
+        Ok(VisionFlushResult {
+            accepted: true,
+            summary: Some(summary),
+        })
+    }
+
     async fn run_capture_worker(self: Arc<Self>) {
         let mut tick = time::interval(Duration::from_millis(250));
 
@@ -594,13 +729,78 @@ impl AccessibilityEngine {
                     reason: reason.to_string(),
                     app_name: context.as_ref().and_then(|c| c.app_name.clone()),
                     window_title: context.as_ref().and_then(|c| c.window_title.clone()),
+                    image_ref: capture_screen_image_ref().ok(),
                 };
-                push_ephemeral_frame(&mut session.frames, frame);
+                push_ephemeral_frame(&mut session.frames, frame.clone());
                 session.last_capture_at_ms = Some(now);
                 session.last_context = context;
+                if frame.image_ref.is_some() && session.vision_enabled {
+                    if let Some(tx) = session.vision_tx.as_ref() {
+                        if tx.send(frame).is_ok() {
+                            session.vision_queue_depth = session.vision_queue_depth.saturating_add(1);
+                            session.vision_state = "queued".to_string();
+                        }
+                    }
+                }
                 state.last_event = Some(reason.to_string());
             }
         }
+    }
+
+    async fn run_vision_worker(
+        self: Arc<Self>,
+        mut rx: tokio::sync::mpsc::UnboundedReceiver<CaptureFrame>,
+    ) {
+        while let Some(frame) = rx.recv().await {
+            {
+                let mut state = self.inner.lock().await;
+                if let Some(session) = state.session.as_mut() {
+                    session.vision_state = "processing".to_string();
+                } else {
+                    break;
+                }
+            }
+
+            let result = self.analyze_frame_with_vision(frame).await;
+
+            let mut state = self.inner.lock().await;
+            let Some(session) = state.session.as_mut() else {
+                break;
+            };
+            session.vision_queue_depth = session.vision_queue_depth.saturating_sub(1);
+            match result {
+                Ok(summary) => {
+                    push_ephemeral_vision_summary(&mut session.vision_summaries, summary.clone());
+                    session.last_vision_at_ms = Some(summary.captured_at_ms);
+                    session.last_vision_summary = Some(summary.actionable_notes.clone());
+                    session.vision_state = "ready".to_string();
+                    let summary_for_store = summary.clone();
+                    tokio::spawn(async move {
+                        persist_vision_summary(summary_for_store).await;
+                    });
+                }
+                Err(err) => {
+                    session.vision_state = "error".to_string();
+                    state.last_error = Some(err);
+                }
+            }
+        }
+    }
+
+    async fn analyze_frame_with_vision(&self, frame: CaptureFrame) -> Result<VisionSummary, String> {
+        let image_ref = frame
+            .image_ref
+            .clone()
+            .ok_or_else(|| "frame has no image payload".to_string())?;
+        let config = Config::load_or_init()
+            .await
+            .map_err(|e| format!("failed to load config: {e}"))?;
+        let service = local_ai::global(&config);
+        let prompt = "Analyze this UI screenshot. Return strict JSON with keys: ui_state, key_text, actionable_notes, confidence (0..1). Keep actionable_notes concise.";
+        let raw = service
+            .vision_prompt(&config, prompt, &[image_ref], Some(180))
+            .await?;
+        Ok(parse_vision_summary_output(frame, &raw))
     }
 
     async fn stop_session_internal(&self, reason: String) {
@@ -614,6 +814,10 @@ impl AccessibilityEngine {
         if let Some(task) = session.task.take() {
             task.abort();
         }
+        if let Some(task) = session.vision_task.take() {
+            task.abort();
+        }
+        session.vision_tx = None;
 
         state.last_event = Some(format!("session_stopped:{reason}"));
     }
@@ -672,6 +876,98 @@ fn push_ephemeral_frame(frames: &mut VecDeque<CaptureFrame>, frame: CaptureFrame
     }
 }
 
+fn push_ephemeral_vision_summary(summaries: &mut VecDeque<VisionSummary>, summary: VisionSummary) {
+    summaries.push_back(summary);
+    while summaries.len() > MAX_EPHEMERAL_VISION_SUMMARIES {
+        let _ = summaries.pop_front();
+    }
+}
+
+fn parse_vision_summary_output(frame: CaptureFrame, raw: &str) -> VisionSummary {
+    let fallback = truncate_tail(raw.trim(), 512);
+    let value = serde_json::from_str::<serde_json::Value>(raw).ok();
+    let ui_state = value
+        .as_ref()
+        .and_then(|v| v.get("ui_state"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("UI state unavailable");
+    let key_text = value
+        .as_ref()
+        .and_then(|v| v.get("key_text"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    let actionable_notes = value
+        .as_ref()
+        .and_then(|v| v.get("actionable_notes"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or(&fallback);
+    let confidence = value
+        .as_ref()
+        .and_then(|v| v.get("confidence"))
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .unwrap_or(0.66)
+        .clamp(0.0, 1.0);
+
+    VisionSummary {
+        id: format!("vision-{}-{}", frame.captured_at_ms, Uuid::new_v4()),
+        captured_at_ms: frame.captured_at_ms,
+        app_name: frame.app_name,
+        window_title: frame.window_title,
+        ui_state: truncate_tail(ui_state, 220),
+        key_text: truncate_tail(key_text, 280),
+        actionable_notes: truncate_tail(actionable_notes, 560),
+        confidence,
+    }
+}
+
+async fn persist_vision_summary(summary: VisionSummary) {
+    let config = match Config::load_or_init().await {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            tracing::debug!("vision summary persistence skipped: config load failed: {err}");
+            return;
+        }
+    };
+
+    let mem = match memory::create_memory_with_storage_and_routes(
+        &config.memory,
+        &config.embedding_routes,
+        Some(&config.storage.provider.config),
+        &config.workspace_dir,
+        config.api_key.as_deref(),
+    ) {
+        Ok(mem) => mem,
+        Err(err) => {
+            tracing::debug!("vision summary persistence skipped: memory init failed: {err}");
+            return;
+        }
+    };
+
+    let content = match serde_json::to_string(&summary) {
+        Ok(content) => content,
+        Err(err) => {
+            tracing::debug!("vision summary persistence skipped: serialization failed: {err}");
+            return;
+        }
+    };
+
+    let key = format!("accessibility_vision_{}", summary.id);
+    let _ = mem
+        .store(
+            &key,
+            &content,
+            MemoryCategory::Custom("accessibility_vision".to_string()),
+            None,
+        )
+        .await;
+}
+
 fn truncate_tail(text: &str, max_chars: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
     if chars.len() <= max_chars {
@@ -717,6 +1013,35 @@ fn generate_suggestions(context: &str, max_results: usize) -> Vec<AutocompleteSu
 
 fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
+}
+
+fn capture_screen_image_ref() -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let tmp_path = std::env::temp_dir().join(format!("openhuman_accessibility_{}.png", Uuid::new_v4()));
+        let status = std::process::Command::new("screencapture")
+            .arg("-x")
+            .arg("-t")
+            .arg("png")
+            .arg(&tmp_path)
+            .status()
+            .map_err(|e| format!("screencapture failed to start: {e}"))?;
+        if !status.success() {
+            return Err("screencapture returned non-zero status".to_string());
+        }
+        let bytes = std::fs::read(&tmp_path).map_err(|e| format!("failed to read screenshot: {e}"))?;
+        let _ = std::fs::remove_file(&tmp_path);
+        if bytes.len() > MAX_SCREENSHOT_BYTES {
+            return Err("captured screenshot exceeds size limit".to_string());
+        }
+        let encoded = BASE64_STANDARD.encode(bytes);
+        return Ok(format!("data:image/png;base64,{encoded}"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("screen capture is unsupported on this platform".to_string())
+    }
 }
 
 #[cfg(target_os = "macos")]

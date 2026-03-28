@@ -31,6 +31,11 @@ const status: AccessibilityStatus = {
     frames_in_memory: 0,
     last_capture_at_ms: null,
     last_context: null,
+    vision_enabled: true,
+    vision_state: 'idle',
+    vision_queue_depth: 0,
+    last_vision_at_ms: null,
+    last_vision_summary: null,
   },
   config: {
     capture_policy: 'hybrid',
@@ -56,10 +61,13 @@ const createStore = () =>
     preloadedState: {
       accessibility: {
         status,
+        recentVisionSummaries: [],
         isLoading: false,
         isRequestingPermissions: false,
         isStartingSession: false,
         isStoppingSession: false,
+        isLoadingVision: false,
+        isFlushingVision: false,
         lastError: null,
       },
     },

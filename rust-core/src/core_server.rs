@@ -23,6 +23,7 @@ pub use crate::openhuman::accessibility::{
     AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
     AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureNowResult, InputActionParams,
     InputActionResult, PermissionStatus, SessionStatus, StartSessionParams, StopSessionParams,
+    VisionFlushResult, VisionRecentResult,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +220,11 @@ struct LocalAiTranscribeParams {
 struct LocalAiTtsParams {
     text: String,
     output_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccessibilityVisionRecentParams {
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -943,6 +949,25 @@ async fn dispatch(
             to_json_value(command_response(
                 result,
                 vec!["accessibility autocomplete suggestion committed".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_vision_recent" => {
+            let payload: AccessibilityVisionRecentParams = parse_params(params)?;
+            let result: VisionRecentResult = accessibility::global_engine()
+                .vision_recent(payload.limit)
+                .await;
+            to_json_value(command_response(
+                result,
+                vec!["accessibility vision summaries fetched".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_vision_flush" => {
+            let result: VisionFlushResult = accessibility::global_engine().vision_flush().await?;
+            to_json_value(command_response(
+                result,
+                vec!["accessibility vision flush completed".to_string()],
             ))
         }
 

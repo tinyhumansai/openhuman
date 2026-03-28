@@ -11,3 +11,9 @@ export const selectHasEncryptionKey = (state: RootState): boolean => {
   if (!userId) return false;
   return !!state.auth.encryptionKeyByUser[userId];
 };
+
+export const selectHasIncompleteOnboarding = (state: RootState): boolean => {
+  const userId = state.user.user?._id;
+  if (!userId) return false;
+  return state.auth.hasIncompleteOnboardingByUser[userId] ?? false;
+};

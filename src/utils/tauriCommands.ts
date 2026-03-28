@@ -408,6 +408,11 @@ export interface AccessibilitySessionStatus {
   frames_in_memory: number;
   last_capture_at_ms: number | null;
   last_context: string | null;
+  vision_enabled: boolean;
+  vision_state: string;
+  vision_queue_depth: number;
+  last_vision_at_ms: number | null;
+  last_vision_summary: string | null;
 }
 
 export interface AccessibilityConfig {
@@ -446,6 +451,7 @@ export interface AccessibilityCaptureFrame {
   reason: string;
   app_name: string | null;
   window_title: string | null;
+  image_ref?: string | null;
 }
 
 export interface AccessibilityCaptureNowResult {
@@ -489,6 +495,26 @@ export interface AccessibilityAutocompleteCommitParams {
 
 export interface AccessibilityAutocompleteCommitResult {
   committed: boolean;
+}
+
+export interface AccessibilityVisionSummary {
+  id: string;
+  captured_at_ms: number;
+  app_name: string | null;
+  window_title: string | null;
+  ui_state: string;
+  key_text: string;
+  actionable_notes: string;
+  confidence: number;
+}
+
+export interface AccessibilityVisionRecentResult {
+  summaries: AccessibilityVisionSummary[];
+}
+
+export interface AccessibilityVisionFlushResult {
+  accepted: boolean;
+  summary: AccessibilityVisionSummary | null;
 }
 
 export interface ConfigSnapshot {
@@ -1058,6 +1084,24 @@ export async function openhumanAccessibilityAutocompleteCommit(
     throw new Error('Not running in Tauri');
   }
   return await invoke('openhuman_accessibility_autocomplete_commit', { params });
+}
+
+export async function openhumanAccessibilityVisionRecent(
+  limit?: number
+): Promise<CommandResponse<AccessibilityVisionRecentResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_vision_recent', { limit });
+}
+
+export async function openhumanAccessibilityVisionFlush(): Promise<
+  CommandResponse<AccessibilityVisionFlushResult>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_vision_flush');
 }
 
 export async function runtimeListSkills(): Promise<SkillSnapshot[]> {

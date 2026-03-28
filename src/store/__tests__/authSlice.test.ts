@@ -1,7 +1,12 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { describe, expect, it } from 'vitest';
 
-import authReducer, { setAnalyticsForUser, setOnboardedForUser, setToken } from '../authSlice';
+import authReducer, {
+  setAnalyticsForUser,
+  setOnboardedForUser,
+  setOnboardingTasksForUser,
+  setToken,
+} from '../authSlice';
 import teamReducer from '../teamSlice';
 import userReducer from '../userSlice';
 
@@ -19,6 +24,8 @@ describe('authSlice', () => {
     const state = store.getState().auth;
     expect(state.token).toBeNull();
     expect(state.isOnboardedByUser).toEqual({});
+    expect(state.onboardingTasksByUser).toEqual({});
+    expect(state.hasIncompleteOnboardingByUser).toEqual({});
     expect(state.isAnalyticsEnabledByUser).toEqual({});
   });
 
@@ -46,5 +53,34 @@ describe('authSlice', () => {
 
     store.dispatch(setAnalyticsForUser({ userId: 'u1', enabled: false }));
     expect(store.getState().auth.isAnalyticsEnabledByUser.u1).toBe(false);
+  });
+
+  it('tracks onboarding tasks and incomplete flag per user', () => {
+    const store = createStore();
+    store.dispatch(
+      setOnboardingTasksForUser({
+        userId: 'u1',
+        tasks: {
+          accessibilityPermissionGranted: false,
+          localModelConsentGiven: true,
+          connectedSources: [],
+        },
+      })
+    );
+
+    expect(store.getState().auth.hasIncompleteOnboardingByUser.u1).toBe(true);
+    expect(store.getState().auth.onboardingTasksByUser.u1.localModelConsentGiven).toBe(true);
+
+    store.dispatch(
+      setOnboardingTasksForUser({
+        userId: 'u1',
+        tasks: {
+          accessibilityPermissionGranted: true,
+          localModelConsentGiven: true,
+          connectedSources: ['telegram'],
+        },
+      })
+    );
+    expect(store.getState().auth.hasIncompleteOnboardingByUser.u1).toBe(false);
   });
 });

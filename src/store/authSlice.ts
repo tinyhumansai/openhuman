@@ -7,6 +7,10 @@ export interface AuthState {
   token: string | null;
   /** Onboarding completion per user id */
   isOnboardedByUser: Record<string, boolean>;
+  /** Additional onboarding task progress per user id */
+  onboardingTasksByUser: Record<string, UserOnboardingTasks>;
+  /** True when user completed onboarding route but skipped some optional setup tasks */
+  hasIncompleteOnboardingByUser: Record<string, boolean>;
   /** Analytics consent per user id (opt-in during onboarding) */
   isAnalyticsEnabledByUser: Record<string, boolean>;
   /** AES encryption key (hex) derived from mnemonic, per user id */
@@ -15,9 +19,18 @@ export interface AuthState {
   primaryWalletAddressByUser: Record<string, string>;
 }
 
+export interface UserOnboardingTasks {
+  accessibilityPermissionGranted: boolean;
+  localModelConsentGiven: boolean;
+  connectedSources: string[];
+  updatedAtMs: number;
+}
+
 const initialState: AuthState = {
   token: null,
   isOnboardedByUser: {},
+  onboardingTasksByUser: {},
+  hasIncompleteOnboardingByUser: {},
   isAnalyticsEnabledByUser: {},
   encryptionKeyByUser: {},
   primaryWalletAddressByUser: {},
@@ -32,6 +45,8 @@ const authSlice = createSlice({
     },
     _clearToken: state => {
       state.token = null;
+      state.onboardingTasksByUser = {};
+      state.hasIncompleteOnboardingByUser = {};
       state.encryptionKeyByUser = {};
       state.primaryWalletAddressByUser = {};
     },
@@ -42,6 +57,17 @@ const authSlice = createSlice({
     setAnalyticsForUser: (state, action: PayloadAction<{ userId: string; enabled: boolean }>) => {
       const { userId, enabled } = action.payload;
       state.isAnalyticsEnabledByUser[userId] = enabled;
+    },
+    setOnboardingTasksForUser: (
+      state,
+      action: PayloadAction<{ userId: string; tasks: Omit<UserOnboardingTasks, 'updatedAtMs'> }>
+    ) => {
+      const { userId, tasks } = action.payload;
+      state.onboardingTasksByUser[userId] = { ...tasks, updatedAtMs: Date.now() };
+
+      const hasIncomplete =
+        !tasks.accessibilityPermissionGranted || tasks.connectedSources.length === 0;
+      state.hasIncompleteOnboardingByUser[userId] = hasIncomplete;
     },
     setEncryptionKeyForUser: (state, action: PayloadAction<{ userId: string; key: string }>) => {
       const { userId, key } = action.payload;
@@ -68,6 +94,7 @@ export const {
   setToken,
   setOnboardedForUser,
   setAnalyticsForUser,
+  setOnboardingTasksForUser,
   setEncryptionKeyForUser,
   setPrimaryWalletAddressForUser,
 } = authSlice.actions;

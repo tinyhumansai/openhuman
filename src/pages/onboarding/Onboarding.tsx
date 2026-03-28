@@ -3,26 +3,58 @@ import { useNavigate } from 'react-router-dom';
 
 import ProgressIndicator from '../../components/ProgressIndicator';
 import { userApi } from '../../services/api/userApi';
-import { setOnboardedForUser } from '../../store/authSlice';
+import { setOnboardedForUser, setOnboardingTasksForUser } from '../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import FeaturesStep from './steps/FeaturesStep';
 import GetStartedStep from './steps/GetStartedStep';
 import PrivacyStep from './steps/PrivacyStep';
+
+interface OnboardingDraft {
+  accessibilityPermissionGranted: boolean;
+  localModelConsentGiven: boolean;
+}
 
 const Onboarding = () => {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.user.user);
   const [currentStep, setCurrentStep] = useState(0);
+  const [draft, setDraft] = useState<OnboardingDraft>({
+    accessibilityPermissionGranted: false,
+    localModelConsentGiven: false,
+  });
   const totalSteps = 3;
 
   const handleNext = () => {
-    if (currentStep < totalSteps) {
+    if (currentStep < totalSteps - 1) {
       setCurrentStep(currentStep + 1);
     }
   };
 
-  const handleComplete = async () => {
+  const handleAccessibilityNext = (accessibilityPermissionGranted: boolean) => {
+    setDraft(prev => ({ ...prev, accessibilityPermissionGranted }));
+    handleNext();
+  };
+
+  const handleLocalModelNext = (localModelConsentGiven: boolean) => {
+    setDraft(prev => ({ ...prev, localModelConsentGiven }));
+    handleNext();
+  };
+
+  const handleComplete = async (connectedSources: string[]) => {
+    if (user?._id) {
+      dispatch(
+        setOnboardingTasksForUser({
+          userId: user._id,
+          tasks: {
+            accessibilityPermissionGranted: draft.accessibilityPermissionGranted,
+            localModelConsentGiven: draft.localModelConsentGiven,
+            connectedSources,
+          },
+        })
+      );
+    }
+
     try {
       await userApi.onboardingComplete();
     } catch (e) {
@@ -44,11 +76,11 @@ const Onboarding = () => {
   const renderStep = () => {
     switch (currentStep) {
       case 1:
-        return <PrivacyStep onNext={handleNext} />;
+        return <PrivacyStep onNext={handleLocalModelNext} />;
       case 2:
         return <GetStartedStep onComplete={handleComplete} />;
       default:
-        return <FeaturesStep onNext={handleNext} />;
+        return <FeaturesStep onNext={handleAccessibilityNext} />;
     }
   };
 
