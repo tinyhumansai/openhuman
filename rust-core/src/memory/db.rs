@@ -2,7 +2,8 @@ use rusqlite::Connection;
 use std::path::PathBuf;
 
 pub(super) fn default_db_path() -> Result<PathBuf, String> {
-    let mut base = dirs::home_dir().ok_or_else(|| "Failed to resolve home directory".to_string())?;
+    let mut base =
+        dirs::home_dir().ok_or_else(|| "Failed to resolve home directory".to_string())?;
     base.push(".openhuman");
     base.push("memory");
     base.push("local_memory.db");

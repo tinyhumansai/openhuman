@@ -403,7 +403,9 @@ impl LocalAiService {
             config.local_ai.max_suggestions.max(1),
             context
         );
-        let raw = self.inference(config, system, &prompt, Some(96), true).await?;
+        let raw = self
+            .inference(config, system, &prompt, Some(96), true)
+            .await?;
         Ok(parse_suggestions(
             &raw,
             config.local_ai.max_suggestions.max(1),
@@ -425,7 +427,8 @@ impl LocalAiService {
         }
         self.bootstrap(config).await;
         let vision_model = Self::effective_vision_model_id(config);
-        self.ensure_ollama_model_available(&vision_model, "vision").await?;
+        self.ensure_ollama_model_available(&vision_model, "vision")
+            .await?;
 
         let images: Vec<String> = image_refs
             .iter()
@@ -539,8 +542,9 @@ impl LocalAiService {
         if !config.local_ai.enabled {
             return Err("local ai is disabled".to_string());
         }
-        let whisper_bin = resolve_whisper_binary()
-            .ok_or_else(|| "whisper.cpp binary not found. Set WHISPER_BIN or install whisper-cli.".to_string())?;
+        let whisper_bin = resolve_whisper_binary().ok_or_else(|| {
+            "whisper.cpp binary not found. Set WHISPER_BIN or install whisper-cli.".to_string()
+        })?;
         let model_path = resolve_stt_model_path(config)?;
         let output = tokio::process::Command::new(whisper_bin)
             .args(["-m", &model_path, "-f", audio_path])
@@ -662,14 +666,24 @@ impl LocalAiService {
                 warning: None,
             },
             stt: LocalAiAssetStatus {
-                state: if stt_path.is_some() { "ready" } else { "missing" }.to_string(),
+                state: if stt_path.is_some() {
+                    "ready"
+                } else {
+                    "missing"
+                }
+                .to_string(),
                 id: stt_model,
                 provider: "whisper.cpp".to_string(),
                 path: stt_path,
                 warning: None,
             },
             tts: LocalAiAssetStatus {
-                state: if tts_path.is_some() { "ready" } else { "missing" }.to_string(),
+                state: if tts_path.is_some() {
+                    "ready"
+                } else {
+                    "missing"
+                }
+                .to_string(),
                 id: tts_voice,
                 provider: "piper".to_string(),
                 path: tts_path,
@@ -968,7 +982,10 @@ impl LocalAiService {
             .await
             .map_err(|e| format!("ollama request failed: {e}"))?;
         if !response.status().is_success() {
-            return Err(format!("ollama request failed with status {}", response.status()));
+            return Err(format!(
+                "ollama request failed with status {}",
+                response.status()
+            ));
         }
 
         let payload: OllamaGenerateResponse = response
@@ -1133,11 +1150,13 @@ impl LocalAiService {
 
     async fn ensure_models_available(&self, config: &Config) -> Result<(), String> {
         let chat_model = Self::effective_chat_model_id(config);
-        self.ensure_ollama_model_available(&chat_model, "chat").await?;
+        self.ensure_ollama_model_available(&chat_model, "chat")
+            .await?;
 
         let vision_model = Self::effective_vision_model_id(config);
         if config.local_ai.preload_vision_model {
-            self.ensure_ollama_model_available(&vision_model, "vision").await?;
+            self.ensure_ollama_model_available(&vision_model, "vision")
+                .await?;
             self.status.lock().vision_state = "ready".to_string();
         }
 
@@ -1202,7 +1221,10 @@ impl LocalAiService {
             .await
             .map_err(|e| format!("ollama pull request failed: {e}"))?;
         if !response.status().is_success() {
-            return Err(format!("ollama pull failed with status {}", response.status()));
+            return Err(format!(
+                "ollama pull failed with status {}",
+                response.status()
+            ));
         }
 
         let mut stream = response.bytes_stream();
@@ -1277,7 +1299,10 @@ impl LocalAiService {
             .await
             .map_err(|e| format!("ollama tags request failed: {e}"))?;
         if !response.status().is_success() {
-            return Err(format!("ollama tags failed with status {}", response.status()));
+            return Err(format!(
+                "ollama tags failed with status {}",
+                response.status()
+            ));
         }
         let payload: OllamaTagsResponse = response
             .json()
@@ -1305,7 +1330,11 @@ fn workspace_ollama_dir(config: &Config) -> PathBuf {
 }
 
 fn workspace_ollama_binary(config: &Config) -> PathBuf {
-    let name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     workspace_ollama_dir(config).join(name)
 }
 
@@ -1384,7 +1413,9 @@ fn resolve_tts_voice_path(config: &Config) -> Result<String, String> {
     } else {
         format!("{voice_id}.onnx")
     };
-    let candidate = workspace_local_models_dir(config).join("tts").join(filename);
+    let candidate = workspace_local_models_dir(config)
+        .join("tts")
+        .join(filename);
     if candidate.is_file() {
         Ok(candidate.display().to_string())
     } else {
@@ -1417,7 +1448,9 @@ fn tts_model_target_path(config: &Config) -> PathBuf {
     } else {
         format!("{voice_id}.onnx")
     };
-    workspace_local_models_dir(config).join("tts").join(filename)
+    workspace_local_models_dir(config)
+        .join("tts")
+        .join(filename)
 }
 
 async fn run_ollama_install_script() -> Result<std::process::ExitStatus, String> {
@@ -1476,7 +1509,11 @@ fn find_system_ollama_binary() -> Option<PathBuf> {
         }
     }
 
-    let binary_name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    let binary_name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
     if let Some(path_var) = std::env::var_os("PATH") {
         for entry in std::env::split_paths(&path_var) {
             let candidate = entry.join(binary_name);

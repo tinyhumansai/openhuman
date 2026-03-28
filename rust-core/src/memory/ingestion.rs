@@ -98,7 +98,10 @@ pub(super) async fn store_skill_sync(
     .map_err(|e| format!("Join error in store_skill_sync: {e}"))?
 }
 
-pub(super) async fn clear_skill_memory(client: &MemoryClient, skill_id: &str) -> Result<(), String> {
+pub(super) async fn clear_skill_memory(
+    client: &MemoryClient,
+    skill_id: &str,
+) -> Result<(), String> {
     let this = client.clone();
     let namespace = skill_id.to_string();
     tokio::task::spawn_blocking(move || {

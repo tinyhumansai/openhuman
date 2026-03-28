@@ -1,7 +1,7 @@
 //! Tauri commands for the TinyHumans memory layer.
 
-use std::collections::BTreeSet;
 use crate::memory::{MemoryClient, MemoryState};
+use std::collections::BTreeSet;
 
 fn extract_namespaces_from_documents(payload: &serde_json::Value) -> Vec<String> {
     fn collect_from_value(value: &serde_json::Value, out: &mut BTreeSet<String>) {

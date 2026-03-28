@@ -676,7 +676,8 @@ async fn dispatch(
             let p: LocalAiTranscribeParams = parse_params(params)?;
             let config = load_openhuman_config().await?;
             let service = local_ai::global(&config);
-            let output: LocalAiSpeechResult = service.transcribe(&config, p.audio_path.trim()).await?;
+            let output: LocalAiSpeechResult =
+                service.transcribe(&config, p.audio_path.trim()).await?;
             to_json_value(command_response(
                 output,
                 vec!["local ai transcription completed".to_string()],

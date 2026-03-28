@@ -831,7 +831,9 @@ export async function openhumanLocalAiTts(
   return await invoke('openhuman_local_ai_tts', { text, outputPath });
 }
 
-export async function openhumanLocalAiAssetsStatus(): Promise<CommandResponse<LocalAiAssetsStatus>> {
+export async function openhumanLocalAiAssetsStatus(): Promise<
+  CommandResponse<LocalAiAssetsStatus>
+> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }

@@ -1,11 +1,11 @@
 //! State and data ops: published state get/set, filesystem data read/write.
 
+use crate::memory::{Priority, SourceType};
 use parking_lot::RwLock;
 use rquickjs::{Ctx, Function, Object};
 use serde::Deserialize;
 use std::sync::Arc;
 use tauri::Manager;
-use crate::memory::{Priority, SourceType};
 
 use super::types::{js_err, SkillContext, SkillState};
 

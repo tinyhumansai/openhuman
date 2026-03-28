@@ -9,13 +9,13 @@ import {
   type LocalAiSuggestion,
   type LocalAiTtsResult,
   openhumanLocalAiAssetsStatus,
-  openhumanLocalAiDownloadAsset,
   openhumanLocalAiDownload,
+  openhumanLocalAiDownloadAsset,
   openhumanLocalAiEmbed,
   openhumanLocalAiPrompt,
-  openhumanLocalAiSummarize,
-  openhumanLocalAiSuggestQuestions,
   openhumanLocalAiStatus,
+  openhumanLocalAiSuggestQuestions,
+  openhumanLocalAiSummarize,
   openhumanLocalAiTranscribe,
   openhumanLocalAiTts,
   openhumanLocalAiVisionPrompt,
@@ -327,7 +327,9 @@ const LocalModelPanel = () => {
     }
   };
 
-  const triggerAssetDownload = async (capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts') => {
+  const triggerAssetDownload = async (
+    capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
+  ) => {
     if (!isTauri()) return;
     setAssetDownloadBusy(prev => ({ ...prev, [capability]: true }));
     setStatusError('');
@@ -451,7 +453,9 @@ const LocalModelPanel = () => {
         <section className="space-y-3">
           <h3 className="text-lg font-semibold text-white">Capability Assets</h3>
           <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <div className="text-xs text-stone-400">Quantization preference: {assets?.quantization ?? 'q4'}</div>
+            <div className="text-xs text-stone-400">
+              Quantization preference: {assets?.quantization ?? 'q4'}
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
               {[
                 { label: 'Chat', key: 'chat' as const, item: assets?.chat },
@@ -466,7 +470,9 @@ const LocalModelPanel = () => {
                   <div className={`text-xs mt-1 ${statusTone(item?.state ?? 'idle')}`}>
                     {statusLabel(item?.state ?? 'idle')}
                   </div>
-                  {item?.path && <div className="text-[10px] text-stone-500 mt-1 break-all">{item.path}</div>}
+                  {item?.path && (
+                    <div className="text-[10px] text-stone-500 mt-1 break-all">{item.path}</div>
+                  )}
                   <button
                     onClick={() => void triggerAssetDownload(key)}
                     disabled={assetDownloadBusy[key] || !isTauri()}
@@ -571,7 +577,9 @@ const LocalModelPanel = () => {
                 {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
               </button>
             </div>
-            <div className="text-xs text-stone-400">Calls `openhuman.local_ai_prompt` via Rust core</div>
+            <div className="text-xs text-stone-400">
+              Calls `openhuman.local_ai_prompt` via Rust core
+            </div>
             {promptOutput && (
               <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
                 {promptOutput}
@@ -597,7 +605,12 @@ const LocalModelPanel = () => {
             />
             <button
               onClick={() => void runVisionTest()}
-              disabled={isVisionLoading || !visionPromptInput.trim() || !visionImageInput.trim() || !isTauri()}
+              disabled={
+                isVisionLoading ||
+                !visionPromptInput.trim() ||
+                !visionImageInput.trim() ||
+                !isTauri()
+              }
               className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
               {isVisionLoading ? 'Running...' : 'Run Vision Test'}
             </button>

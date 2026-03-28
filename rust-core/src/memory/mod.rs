@@ -114,7 +114,8 @@ impl MemoryClient {
         query: &str,
         max_chunks: u32,
     ) -> Result<String, String> {
-        self.query_namespace_context(skill_id, query, max_chunks).await
+        self.query_namespace_context(skill_id, query, max_chunks)
+            .await
     }
 
     /// Recall most recent context from a namespace.
