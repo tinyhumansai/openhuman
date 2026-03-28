@@ -108,6 +108,23 @@ const SettingsHome = () => {
       dangerous: false,
     },
     {
+      id: 'autocomplete',
+      title: 'Inline Autocomplete',
+      description: 'Manage predictive text style, app filters, and live completion controls',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M4 7h16M4 12h10m-10 5h7m10 0l3 3m0 0l3-3m-3 3v-8"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('autocomplete'),
+      dangerous: false,
+    },
+    {
       id: 'messaging',
       title: 'Messaging Channels',
       description: 'Configure Telegram/Discord auth modes and default channel routing',

@@ -4,6 +4,7 @@ import AccessibilityPanel from '../components/settings/panels/AccessibilityPanel
 import AdvancedPanel from '../components/settings/panels/AdvancedPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
+import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import BillingPanel from '../components/settings/panels/BillingPanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
@@ -31,6 +32,7 @@ const Settings = () => {
         <Route path="messaging" element={<MessagingPanel />} />
         <Route path="cron-jobs" element={<CronJobsPanel />} />
         <Route path="screen-intelligence" element={<ScreenIntelligencePanel />} />
+        <Route path="autocomplete" element={<AutocompletePanel />} />
         <Route path="privacy" element={<PrivacyPanel />} />
         <Route path="profile" element={<ProfilePanel />} />
         <Route path="advanced" element={<AdvancedPanel />} />

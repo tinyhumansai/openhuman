@@ -705,17 +705,6 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             sender_id_str.as_deref().unwrap_or("unknown")
         );
 
-        let suggested_identity = normalized_sender_id
-            .clone()
-            .or_else(|| {
-                if normalized_username.is_empty() || normalized_username == "unknown" {
-                    None
-                } else {
-                    Some(normalized_username.clone())
-                }
-            })
-            .unwrap_or_else(|| "YOUR_TELEGRAM_ID".to_string());
-
         let _ = self
             .send(&SendMessage::new(
                 format!(

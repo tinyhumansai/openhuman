@@ -16,7 +16,7 @@ use crate::runtime::preferences::PreferencesStore;
 use crate::runtime::qjs_skill_instance::{BridgeDeps, QjsSkillInstance};
 use crate::runtime::skill_registry::SkillRegistry;
 use crate::runtime::socket_manager::SocketManager;
-use crate::runtime::types::{events, SkillMessage, SkillSnapshot, SkillStatus, ToolResult};
+use crate::runtime::types::{events, SkillSnapshot, SkillStatus, ToolResult};
 // IdbStorage removed during runtime cleanup
 
 /// The central runtime engine using QuickJS.

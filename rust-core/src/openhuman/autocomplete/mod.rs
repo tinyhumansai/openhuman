@@ -21,6 +21,7 @@ pub struct AutocompleteStatus {
     pub platform_supported: bool,
     pub enabled: bool,
     pub running: bool,
+    pub phase: String,
     pub debounce_ms: u64,
     pub model_id: String,
     pub app_name: Option<String>,
@@ -118,6 +119,7 @@ fn is_text_role(role: Option<&str>) -> bool {
 
 struct EngineState {
     running: bool,
+    phase: String,
     debounce_ms: u64,
     app_name: Option<String>,
     context: String,
@@ -132,6 +134,7 @@ impl Default for EngineState {
     fn default() -> Self {
         Self {
             running: false,
+            phase: "idle".to_string(),
             debounce_ms: 120,
             app_name: None,
             context: String::new(),
@@ -165,6 +168,7 @@ impl AutocompleteEngine {
             platform_supported: cfg!(target_os = "macos"),
             enabled: config.autocomplete.enabled,
             running: state.running,
+            phase: state.phase.clone(),
             debounce_ms: state.debounce_ms,
             model_id: config.local_ai.chat_model_id,
             app_name: state.app_name.clone(),
@@ -199,6 +203,7 @@ impl AutocompleteEngine {
             return Ok(AutocompleteStartResult { started: false });
         }
         state.running = true;
+        state.phase = "idle".to_string();
         state.debounce_ms = debounce_ms;
         state.last_error = None;
 
@@ -216,10 +221,14 @@ impl AutocompleteEngine {
                 if last_refresh.elapsed() >= Duration::from_millis(debounce_ms) {
                     if let Err(err) = engine.refresh(None).await {
                         let mut state = engine.inner.lock().await;
+                        state.phase = "error".to_string();
                         state.last_error = Some(err);
                         state.updated_at_ms = Some(Utc::now().timestamp_millis());
                     } else {
                         let mut state = engine.inner.lock().await;
+                        if state.phase == "error" {
+                            state.phase = "idle".to_string();
+                        }
                         state.last_error = None;
                     }
                     last_refresh = Instant::now();
@@ -234,6 +243,7 @@ impl AutocompleteEngine {
     pub async fn stop(&self, _params: Option<AutocompleteStopParams>) -> AutocompleteStopResult {
         let mut state = self.inner.lock().await;
         state.running = false;
+        state.phase = "idle".to_string();
         if let Some(task) = state.task.take() {
             task.abort();
         }
@@ -292,9 +302,14 @@ impl AutocompleteEngine {
             });
         }
 
+        {
+            let mut state = self.inner.lock().await;
+            state.phase = "accepting".to_string();
+        }
         apply_text_to_focused_field(&cleaned)?;
         let mut state = self.inner.lock().await;
         state.suggestion = None;
+        state.phase = "idle".to_string();
         state.updated_at_ms = Some(Utc::now().timestamp_millis());
 
         Ok(AutocompleteAcceptResult {
@@ -374,7 +389,12 @@ impl AutocompleteEngine {
         if !config.autocomplete.enabled {
             let mut state = self.inner.lock().await;
             state.suggestion = None;
+            state.phase = "disabled".to_string();
             return Ok(());
+        }
+        {
+            let mut state = self.inner.lock().await;
+            state.phase = "capturing_context".to_string();
         }
 
         let focused = if let Some(context) = context_override {
@@ -400,6 +420,7 @@ impl AutocompleteEngine {
             state.app_name = focused.app_name;
             state.context = truncate_tail(&focused.text, config.autocomplete.max_chars);
             state.suggestion = None;
+            state.phase = "blocked_app".to_string();
             state.last_error = None;
             state.updated_at_ms = Some(Utc::now().timestamp_millis());
             return Ok(());
@@ -411,10 +432,15 @@ impl AutocompleteEngine {
             state.app_name = focused.app_name;
             state.context = context;
             state.suggestion = None;
+            state.phase = "idle".to_string();
             state.updated_at_ms = Some(Utc::now().timestamp_millis());
             return Ok(());
         }
 
+        {
+            let mut state = self.inner.lock().await;
+            state.phase = "generating".to_string();
+        }
         let service = local_ai::global(&config);
         let generated = service
             .inline_complete(
@@ -435,6 +461,7 @@ impl AutocompleteEngine {
         state.updated_at_ms = Some(Utc::now().timestamp_millis());
         if suggestion.is_empty() {
             state.suggestion = None;
+            state.phase = "idle".to_string();
             state.last_error = None;
             return Ok(());
         }
@@ -442,6 +469,7 @@ impl AutocompleteEngine {
             value: suggestion,
             confidence: 0.72,
         });
+        state.phase = "ready".to_string();
         state.last_error = None;
         Ok(())
     }
@@ -472,9 +500,14 @@ impl AutocompleteEngine {
         if let Some(suggestion) = pending {
             let cleaned = sanitize_suggestion(&suggestion);
             if !cleaned.is_empty() {
+                {
+                    let mut state = self.inner.lock().await;
+                    state.phase = "accepting".to_string();
+                }
                 apply_text_to_focused_field(&cleaned)?;
                 let mut state = self.inner.lock().await;
                 state.suggestion = None;
+                state.phase = "idle".to_string();
                 state.updated_at_ms = Some(Utc::now().timestamp_millis());
             }
         }

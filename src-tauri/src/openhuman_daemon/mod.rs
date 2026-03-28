@@ -92,6 +92,7 @@ pub async fn run(
 /// Run the full OpenHuman daemon supervisor within openhuman.
 ///
 /// Uses a cancellation token for controlled shutdown inside the Tauri process.
+#[allow(dead_code)] // Reserved for standalone daemon wiring; not used by the desktop shell yet.
 pub async fn run_full(
     config: Config,
     host: String,
@@ -197,6 +198,7 @@ pub async fn run_full(
 }
 
 /// Get the path to the daemon state file shared between internal and external processes.
+#[allow(dead_code)]
 pub fn state_file_path(config: &Config) -> PathBuf {
     config
         .config_path
@@ -205,6 +207,7 @@ pub fn state_file_path(config: &Config) -> PathBuf {
         .join("daemon_state.json")
 }
 
+#[allow(dead_code)]
 fn spawn_state_writer_full(config: Config, cancel: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let path = state_file_path(&config);
@@ -231,6 +234,7 @@ fn spawn_state_writer_full(config: Config, cancel: CancellationToken) -> JoinHan
     })
 }
 
+#[allow(dead_code)]
 async fn run_heartbeat_worker(config: Config) -> Result<()> {
     let observer: std::sync::Arc<dyn openhuman_core::openhuman::observability::Observer> =
         std::sync::Arc::from(openhuman_core::openhuman::observability::create_observer(
@@ -275,6 +279,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 fn has_supervised_channels(config: &Config) -> bool {
     let openhuman_core::openhuman::config::ChannelsConfig {
         cli: _,     // `cli` is not used in the web UI
@@ -379,6 +384,7 @@ async fn spawn_state_writer(
 /// The component function is called repeatedly. On failure, the supervisor
 /// waits with exponential backoff before restarting. On clean exit, it
 /// resets backoff and restarts immediately (unexpected exit is still an error).
+#[allow(dead_code)] // Used by `run_full` (future) and unit tests below.
 pub fn spawn_component_supervisor<F, Fut>(
     name: &'static str,
     initial_backoff_secs: u64,

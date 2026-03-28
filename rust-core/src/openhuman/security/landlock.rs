@@ -5,9 +5,10 @@
 
 #[cfg(feature = "sandbox-landlock")]
 use landlock::{AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
+#[cfg(feature = "sandbox-landlock")]
+use std::path::Path;
 
 use crate::openhuman::security::traits::Sandbox;
-use std::path::Path;
 
 /// Landlock sandbox backend for Linux
 #[cfg(feature = "sandbox-landlock")]

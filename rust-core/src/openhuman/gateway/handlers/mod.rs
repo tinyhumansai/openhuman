@@ -6,8 +6,14 @@ mod pair;
 mod webhook;
 mod whatsapp;
 
-pub use health::{handle_health, handle_metrics, PROMETHEUS_CONTENT_TYPE};
+#[cfg(test)]
+pub use health::PROMETHEUS_CONTENT_TYPE;
+pub use health::{handle_health, handle_metrics};
 pub use linq::handle_linq_webhook;
-pub use pair::{handle_pair, persist_pairing_tokens};
+pub use pair::handle_pair;
+#[cfg(test)]
+pub use pair::persist_pairing_tokens;
 pub use webhook::handle_webhook;
-pub use whatsapp::{handle_whatsapp_message, handle_whatsapp_verify, verify_whatsapp_signature};
+#[cfg(test)]
+pub use whatsapp::verify_whatsapp_signature;
+pub use whatsapp::{handle_whatsapp_message, handle_whatsapp_verify};

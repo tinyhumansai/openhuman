@@ -17,8 +17,6 @@ enum EscapeContext {
     Shell,
     /// Values are percent-encoded for use as URL components.
     Url,
-    /// Values are inserted verbatim (no escaping).
-    None,
 }
 
 /// Execute a named tool from an openclaw skill, or return prompt content if no tools.
@@ -212,7 +210,6 @@ fn interpolate_args(
         match ctx {
             EscapeContext::Shell => shell_escape(val),
             EscapeContext::Url => urlencoding::encode(val).into_owned(),
-            EscapeContext::None => val.to_string(),
         }
     };
 

@@ -341,104 +341,6 @@ async fn write_ai_config_file(filename: String, content: String) -> Result<bool,
     Ok(true)
 }
 
-// Macro to define common handlers shared across all platforms
-macro_rules! common_handlers {
-    () => {
-        // Demo
-        greet,
-        // AI config file writing
-        write_ai_config_file,
-        ai_get_config,
-        ai_refresh_config,
-        // Auth commands
-        get_auth_state,
-        get_session_token,
-        get_current_user,
-        is_authenticated,
-        logout,
-        store_session,
-        // Socket commands
-        socket_connect,
-        socket_disconnect,
-        get_socket_state,
-        is_socket_connected,
-        report_socket_connected,
-        report_socket_disconnected,
-        report_socket_error,
-        update_socket_status,
-        // AI encryption commands
-        ai_init_encryption,
-        ai_encrypt,
-        ai_decrypt,
-        // AI memory filesystem commands
-        ai_memory_init,
-        ai_memory_upsert_file,
-        ai_memory_get_file,
-        ai_memory_upsert_chunk,
-        ai_memory_delete_chunks_by_path,
-        ai_memory_fts_search,
-        ai_memory_get_chunks,
-        ai_memory_get_all_embeddings,
-        ai_memory_cache_embedding,
-        ai_memory_get_cached_embedding,
-        ai_memory_set_meta,
-        ai_memory_get_meta,
-        // AI session commands
-        ai_sessions_init,
-        ai_sessions_load_index,
-        ai_sessions_update_index,
-        ai_sessions_append_transcript,
-        ai_sessions_read_transcript,
-        ai_sessions_delete,
-        ai_sessions_list,
-        ai_read_memory_file,
-        ai_write_memory_file,
-        ai_list_memory_files,
-        // Runtime commands
-        runtime_discover_skills,
-        runtime_list_skills,
-        runtime_start_skill,
-        runtime_stop_skill,
-        runtime_get_skill_state,
-        runtime_call_tool,
-        runtime_all_tools,
-        runtime_get_tool_schemas,
-        runtime_execute_tool,
-        runtime_broadcast_event,
-        // Runtime enable/disable + KV commands
-        runtime_enable_skill,
-        runtime_disable_skill,
-        runtime_is_skill_enabled,
-        runtime_get_skill_preferences,
-        runtime_skill_kv_get,
-        runtime_skill_kv_set,
-        // Runtime JSON-RPC + data commands
-        runtime_rpc,
-        runtime_skill_data_read,
-        runtime_skill_data_write,
-        runtime_skill_data_dir,
-        // Socket.io commands (Rust-native persistent connection)
-        runtime_socket_connect,
-        runtime_socket_disconnect,
-        runtime_socket_state,
-        runtime_socket_emit,
-    };
-}
-
-// Macro to define desktop-only window handlers
-macro_rules! desktop_window_handlers {
-    () => {
-        show_window,
-        hide_window,
-        toggle_window,
-        is_window_visible,
-        minimize_window,
-        maximize_window,
-        close_window,
-        set_window_title,
-    };
-}
-
 // Helper function to show the window (used by tray and macOS reopen)
 #[cfg(desktop)]
 fn show_main_window(app: &AppHandle) {
@@ -972,13 +874,11 @@ pub fn run() {
 
             Ok(())
         })
-        // Register all commands
-        // Common handlers are defined via macros above, conditionally include desktop window handlers
+        // Register all commands (desktop build lists handlers explicitly below).
         .invoke_handler({
             #[cfg(desktop)]
             {
                 tauri::generate_handler![
-                    // Common handlers (expanded from common_handlers! macro)
                     greet,
                     // AI config file writing
                     write_ai_config_file,
@@ -998,7 +898,6 @@ pub fn run() {
                     report_socket_disconnected,
                     report_socket_error,
                     update_socket_status,
-                    // Desktop-only window handlers (expanded from desktop_window_handlers! macro)
                     show_window,
                     hide_window,
                     toggle_window,
@@ -1101,6 +1000,13 @@ pub fn run() {
                     openhuman_accessibility_autocomplete_commit,
                     openhuman_accessibility_vision_recent,
                     openhuman_accessibility_vision_flush,
+                    openhuman_autocomplete_status,
+                    openhuman_autocomplete_start,
+                    openhuman_autocomplete_stop,
+                    openhuman_autocomplete_current,
+                    openhuman_autocomplete_debug_focus,
+                    openhuman_autocomplete_accept,
+                    openhuman_autocomplete_set_style,
                     openhuman_local_ai_status,
                     openhuman_local_ai_download,
                     openhuman_local_ai_summarize,

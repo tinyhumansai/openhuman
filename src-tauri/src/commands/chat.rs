@@ -71,19 +71,6 @@ pub struct ToolCallFunction {
     pub arguments: String, // JSON string
 }
 
-/// Parameters for the `chat_send` Tauri command.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ChatSendParams {
-    pub thread_id: String,
-    pub message: String,
-    pub model: String,
-    pub auth_token: String,
-    pub backend_url: String,
-    pub messages: Vec<ChatMessagePayload>,
-    #[serde(default)]
-    pub notion_context: Option<String>,
-}
-
 // ─── Event payload types (Rust → frontend) ───────────────────────────────────
 
 /// Emitted when the agent invokes a tool.

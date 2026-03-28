@@ -1,9 +1,13 @@
 //! Tauri command proxies for the standalone openhuman core process.
 
 use openhuman_core::core_server::{
-    AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
-    AutocompleteSuggestParams, AutocompleteSuggestResult, BrowserSettingsUpdate, CaptureNowResult,
-    CommandResponse, ConfigSnapshot, GatewaySettingsUpdate, InputActionParams, InputActionResult,
+    AccessibilityStatus, AutocompleteAcceptParams, AutocompleteAcceptResult,
+    AutocompleteCommitParams, AutocompleteCommitResult, AutocompleteCurrentParams,
+    AutocompleteCurrentResult, AutocompleteDebugFocusResult, AutocompleteSetStyleParams,
+    AutocompleteSetStyleResult, AutocompleteStartParams, AutocompleteStartResult,
+    AutocompleteStatus, AutocompleteStopParams, AutocompleteStopResult, AutocompleteSuggestParams,
+    AutocompleteSuggestResult, BrowserSettingsUpdate, CaptureNowResult, CommandResponse,
+    ConfigSnapshot, GatewaySettingsUpdate, InputActionParams, InputActionResult,
     MemorySettingsUpdate, ModelSettingsUpdate, PermissionRequestParams, PermissionStatus,
     RuntimeFlags, RuntimeSettingsUpdate, ScreenIntelligenceSettingsUpdate, SessionStatus,
     StartSessionParams, StopSessionParams, VisionFlushResult, VisionRecentResult,
@@ -629,6 +633,85 @@ pub async fn openhuman_accessibility_vision_flush(
 ) -> Result<CommandResponse<VisionFlushResult>, String> {
     let _ = app;
     call_core_service_managed("openhuman.accessibility_vision_flush", params_none()).await
+}
+
+#[tauri::command]
+pub async fn openhuman_autocomplete_status(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<AutocompleteStatus>, String> {
+    call_core(&app, "openhuman.autocomplete_status", params_none()).await
+}
+
+#[tauri::command]
+pub async fn openhuman_autocomplete_start(
+    app: tauri::AppHandle,
+    params: Option<AutocompleteStartParams>,
+) -> Result<CommandResponse<AutocompleteStartResult>, String> {
+    call_core(
+        &app,
+        "openhuman.autocomplete_start",
+        serde_json::json!(params.unwrap_or(AutocompleteStartParams { debounce_ms: None })),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_autocomplete_stop(
+    app: tauri::AppHandle,
+    params: Option<AutocompleteStopParams>,
+) -> Result<CommandResponse<AutocompleteStopResult>, String> {
+    call_core(
+        &app,
+        "openhuman.autocomplete_stop",
+        serde_json::json!(params.unwrap_or(AutocompleteStopParams { reason: None })),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_autocomplete_current(
+    app: tauri::AppHandle,
+    params: Option<AutocompleteCurrentParams>,
+) -> Result<CommandResponse<AutocompleteCurrentResult>, String> {
+    call_core(
+        &app,
+        "openhuman.autocomplete_current",
+        serde_json::json!(params.unwrap_or(AutocompleteCurrentParams { context: None })),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_autocomplete_debug_focus(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<AutocompleteDebugFocusResult>, String> {
+    call_core(&app, "openhuman.autocomplete_debug_focus", params_none()).await
+}
+
+#[tauri::command]
+pub async fn openhuman_autocomplete_accept(
+    app: tauri::AppHandle,
+    params: Option<AutocompleteAcceptParams>,
+) -> Result<CommandResponse<AutocompleteAcceptResult>, String> {
+    call_core(
+        &app,
+        "openhuman.autocomplete_accept",
+        serde_json::json!(params.unwrap_or(AutocompleteAcceptParams { suggestion: None })),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_autocomplete_set_style(
+    app: tauri::AppHandle,
+    params: AutocompleteSetStyleParams,
+) -> Result<CommandResponse<AutocompleteSetStyleResult>, String> {
+    call_core(
+        &app,
+        "openhuman.autocomplete_set_style",
+        serde_json::json!(params),
+    )
+    .await
 }
 
 #[tauri::command]

@@ -550,6 +550,95 @@ export interface AccessibilityAutocompleteCommitResult {
   committed: boolean;
 }
 
+export interface AutocompleteSuggestion {
+  value: string;
+  confidence: number;
+}
+
+export interface AutocompleteStatus {
+  platform_supported: boolean;
+  enabled: boolean;
+  running: boolean;
+  phase: string;
+  debounce_ms: number;
+  model_id: string;
+  app_name?: string | null;
+  last_error?: string | null;
+  updated_at_ms?: number | null;
+  suggestion?: AutocompleteSuggestion | null;
+}
+
+export interface AutocompleteStartParams {
+  debounce_ms?: number;
+}
+
+export interface AutocompleteStartResult {
+  started: boolean;
+}
+
+export interface AutocompleteStopParams {
+  reason?: string;
+}
+
+export interface AutocompleteStopResult {
+  stopped: boolean;
+}
+
+export interface AutocompleteCurrentParams {
+  context?: string;
+}
+
+export interface AutocompleteCurrentResult {
+  app_name?: string | null;
+  context: string;
+  suggestion?: AutocompleteSuggestion | null;
+}
+
+export interface AutocompleteDebugFocusResult {
+  app_name?: string | null;
+  role?: string | null;
+  context: string;
+  selected_text?: string | null;
+  raw_error?: string | null;
+}
+
+export interface AutocompleteAcceptParams {
+  suggestion?: string;
+}
+
+export interface AutocompleteAcceptResult {
+  accepted: boolean;
+  applied: boolean;
+  value?: string | null;
+  reason?: string | null;
+}
+
+export interface AutocompleteSetStyleParams {
+  enabled?: boolean;
+  debounce_ms?: number;
+  max_chars?: number;
+  style_preset?: string;
+  style_instructions?: string;
+  style_examples?: string[];
+  disabled_apps?: string[];
+  accept_with_tab?: boolean;
+}
+
+export interface AutocompleteConfig {
+  enabled: boolean;
+  debounce_ms: number;
+  max_chars: number;
+  style_preset: string;
+  style_instructions?: string | null;
+  style_examples: string[];
+  disabled_apps: string[];
+  accept_with_tab: boolean;
+}
+
+export interface AutocompleteSetStyleResult {
+  config: AutocompleteConfig;
+}
+
 export interface AccessibilityVisionSummary {
   id: string;
   captured_at_ms: number;
@@ -1328,6 +1417,67 @@ export async function openhumanAccessibilityVisionFlush(): Promise<
     throw new Error('Not running in Tauri');
   }
   return await invoke('openhuman_accessibility_vision_flush');
+}
+
+export async function openhumanAutocompleteStatus(): Promise<CommandResponse<AutocompleteStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_autocomplete_status');
+}
+
+export async function openhumanAutocompleteStart(
+  params?: AutocompleteStartParams
+): Promise<CommandResponse<AutocompleteStartResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_autocomplete_start', { params: params ?? null });
+}
+
+export async function openhumanAutocompleteStop(
+  params?: AutocompleteStopParams
+): Promise<CommandResponse<AutocompleteStopResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_autocomplete_stop', { params: params ?? null });
+}
+
+export async function openhumanAutocompleteCurrent(
+  params?: AutocompleteCurrentParams
+): Promise<CommandResponse<AutocompleteCurrentResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_autocomplete_current', { params: params ?? null });
+}
+
+export async function openhumanAutocompleteDebugFocus(): Promise<
+  CommandResponse<AutocompleteDebugFocusResult>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_autocomplete_debug_focus');
+}
+
+export async function openhumanAutocompleteAccept(
+  params?: AutocompleteAcceptParams
+): Promise<CommandResponse<AutocompleteAcceptResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_autocomplete_accept', { params: params ?? null });
+}
+
+export async function openhumanAutocompleteSetStyle(
+  params: AutocompleteSetStyleParams
+): Promise<CommandResponse<AutocompleteSetStyleResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_autocomplete_set_style', { params });
 }
 
 export async function runtimeListSkills(): Promise<SkillSnapshot[]> {

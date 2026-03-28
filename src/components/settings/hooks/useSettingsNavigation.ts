@@ -7,6 +7,7 @@ export type SettingsRoute =
   | 'messaging'
   | 'cron-jobs'
   | 'screen-intelligence'
+  | 'autocomplete'
   | 'privacy'
   | 'profile'
   | 'advanced'
@@ -49,6 +50,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/messaging')) return 'messaging';
     if (path.includes('/settings/cron-jobs')) return 'cron-jobs';
     if (path.includes('/settings/screen-intelligence')) return 'screen-intelligence';
+    if (path.includes('/settings/autocomplete')) return 'autocomplete';
     if (path.includes('/settings/privacy')) return 'privacy';
     if (path.includes('/settings/profile')) return 'profile';
     if (path.includes('/settings/advanced')) return 'advanced';
