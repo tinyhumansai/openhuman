@@ -484,6 +484,7 @@ Key updates from recent commits (cd9ebcd to current):
   4. `cargo fmt --manifest-path src-tauri/Cargo.toml` (Rust formatting, if Rust files were changed)
   5. `cargo check --manifest-path src-tauri/Cargo.toml` (Rust compilation, if Rust files were changed)
 - **Code Quality**: ESLint and Prettier enforce code standards with Husky hooks. Use type-only imports (`import type`) and consolidate imports from same modules.
+- **Core feature exposure**: Any new feature added in `rust-core/` must be exposed through both the CLI and a REST API so it can be integrated into the UI without backend rewrites.
 - **No dynamic imports**: All imports must be static `import` statements at the top of the file. Do not use `await import()` or `import().then()` inside functions or code blocks. Use try/catch around Tauri API calls for non-Tauri environments instead.
 - **No localStorage**: Avoid `localStorage` and `sessionStorage`; use Redux (and persist) for app state. Remove any direct usage when working on affected code.
 - **AI System Integration**: Use `src/lib/ai/` for memory management, constitution loading, entity queries, and session capture. AI providers abstracted through interface pattern.

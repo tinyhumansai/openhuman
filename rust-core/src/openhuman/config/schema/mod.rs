@@ -21,7 +21,7 @@ mod storage_memory;
 mod tools;
 mod tunnel;
 
-pub use accessibility::AccessibilityAutomationConfig;
+pub use accessibility::ScreenIntelligenceConfig;
 pub use agent::{AgentConfig, DelegateAgentConfig};
 pub use autonomy::AutonomyConfig;
 pub use channels::{
@@ -88,7 +88,7 @@ pub struct Config {
     pub runtime: RuntimeConfig,
 
     #[serde(default)]
-    pub accessibility: AccessibilityAutomationConfig,
+    pub screen_intelligence: ScreenIntelligenceConfig,
 
     #[serde(default)]
     pub reliability: ReliabilityConfig,
@@ -186,7 +186,7 @@ impl Default for Config {
             observability: ObservabilityConfig::default(),
             autonomy: AutonomyConfig::default(),
             runtime: RuntimeConfig::default(),
-            accessibility: AccessibilityAutomationConfig::default(),
+            screen_intelligence: ScreenIntelligenceConfig::default(),
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             agent: AgentConfig::default(),

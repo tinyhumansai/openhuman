@@ -1,4 +1,4 @@
-use crate::openhuman::config::AccessibilityAutomationConfig;
+use crate::openhuman::config::ScreenIntelligenceConfig;
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai;
 use crate::openhuman::memory::{self, MemoryCategory};
@@ -83,7 +83,7 @@ pub struct AccessibilityStatus {
     pub permissions: PermissionStatus,
     pub features: AccessibilityFeatures,
     pub session: SessionStatus,
-    pub config: AccessibilityAutomationConfig,
+    pub config: ScreenIntelligenceConfig,
     pub denylist: Vec<String>,
     pub is_context_blocked: bool,
 }
@@ -200,14 +200,32 @@ pub struct AutocompleteCommitResult {
 }
 
 #[derive(Debug, Clone)]
+struct WindowBounds {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+#[derive(Debug, Clone)]
 struct AppContext {
     app_name: Option<String>,
     window_title: Option<String>,
+    bounds: Option<WindowBounds>,
 }
 
 impl AppContext {
     fn same_as(&self, other: &AppContext) -> bool {
-        self.app_name == other.app_name && self.window_title == other.window_title
+        self.app_name == other.app_name
+            && self.window_title == other.window_title
+            && self
+                .bounds
+                .as_ref()
+                .map(|b| (b.x, b.y, b.width, b.height))
+                == other
+                    .bounds
+                    .as_ref()
+                    .map(|b| (b.x, b.y, b.width, b.height))
     }
 
     fn as_compound_text(&self) -> String {
@@ -241,7 +259,7 @@ struct SessionRuntime {
 }
 
 struct EngineState {
-    config: AccessibilityAutomationConfig,
+    config: ScreenIntelligenceConfig,
     permissions: PermissionStatus,
     features: AccessibilityFeatures,
     session: Option<SessionRuntime>,
@@ -251,7 +269,7 @@ struct EngineState {
 }
 
 impl EngineState {
-    fn new(config: AccessibilityAutomationConfig) -> Self {
+    fn new(config: ScreenIntelligenceConfig) -> Self {
         Self {
             permissions: PermissionStatus {
                 screen_recording: PermissionState::Unknown,
@@ -278,7 +296,7 @@ pub struct AccessibilityEngine {
 
 static ACCESSIBILITY_ENGINE: Lazy<Arc<AccessibilityEngine>> = Lazy::new(|| {
     Arc::new(AccessibilityEngine {
-        inner: Mutex::new(EngineState::new(AccessibilityAutomationConfig::default())),
+        inner: Mutex::new(EngineState::new(ScreenIntelligenceConfig::default())),
     })
 });
 
@@ -433,7 +451,7 @@ impl AccessibilityEngine {
 
         let ttl_secs = params
             .ttl_secs
-            .unwrap_or(AccessibilityAutomationConfig::default().session_ttl_secs)
+            .unwrap_or(ScreenIntelligenceConfig::default().session_ttl_secs)
             .clamp(30, 3600);
 
         {
@@ -1042,12 +1060,12 @@ async fn persist_vision_summary(summary: VisionSummary) {
         }
     };
 
-    let key = format!("accessibility_vision_{}", summary.id);
+    let key = format!("screen_intelligence_{}", summary.id);
     let _ = mem
         .store(
             &key,
             &content,
-            MemoryCategory::Custom("accessibility_vision".to_string()),
+            MemoryCategory::Custom("screen_intelligence".to_string()),
             None,
         )
         .await;
@@ -1359,7 +1377,7 @@ mod tests {
     #[tokio::test]
     async fn session_lifecycle_transitions_and_ttl_expiry() {
         let engine = Arc::new(AccessibilityEngine {
-            inner: Mutex::new(EngineState::new(AccessibilityAutomationConfig {
+            inner: Mutex::new(EngineState::new(ScreenIntelligenceConfig {
                 capture_policy: "hybrid".to_string(),
                 baseline_fps: 8.0,
                 session_ttl_secs: 1,
@@ -1440,7 +1458,7 @@ mod tests {
         }
 
         let engine = Arc::new(AccessibilityEngine {
-            inner: Mutex::new(EngineState::new(AccessibilityAutomationConfig {
+            inner: Mutex::new(EngineState::new(ScreenIntelligenceConfig {
                 capture_policy: "hybrid".to_string(),
                 baseline_fps: 6.0,
                 session_ttl_secs: 2,
