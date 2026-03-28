@@ -160,9 +160,6 @@ tempfile = "3"
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
-local-ai-metal = ["openhuman-core/local-ai-metal"]
-local-ai-cuda = ["openhuman-core/local-ai-cuda"]
-local-ai-vulkan = ["openhuman-core/local-ai-vulkan"]
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
 

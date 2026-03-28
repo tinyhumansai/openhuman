@@ -1,13 +1,11 @@
 use crate::openhuman::config::Config;
-use mistralrs::{
-    GgufModelBuilder, Model, PagedAttentionMetaBuilder, RequestBuilder, TextMessageRole,
-    TextModelBuilder,
-};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+
+const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:1.5b";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalAiStatus {
@@ -32,8 +30,8 @@ impl LocalAiStatus {
     fn disabled(config: &Config) -> Self {
         Self {
             state: "disabled".to_string(),
-            model_id: config.local_ai.model_id.clone(),
-            provider: config.local_ai.provider.clone(),
+            model_id: LocalAiService::effective_model_id(config),
+            provider: "ollama".to_string(),
             download_progress: None,
             downloaded_bytes: None,
             total_bytes: None,
@@ -41,7 +39,7 @@ impl LocalAiStatus {
             eta_seconds: None,
             warning: None,
             model_path: None,
-            active_backend: "cpu".to_string(),
+            active_backend: "ollama".to_string(),
             backend_reason: None,
             last_latency_ms: None,
             prompt_toks_per_sec: None,
@@ -56,108 +54,53 @@ pub struct Suggestion {
     pub confidence: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum RuntimeBackend {
-    Cpu,
-    Metal,
-    Cuda,
-    Vulkan,
-}
-
-impl RuntimeBackend {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Cpu => "cpu",
-            Self::Metal => "metal",
-            Self::Cuda => "cuda",
-            Self::Vulkan => "vulkan",
-        }
-    }
-}
-
-fn supports_backend(backend: RuntimeBackend) -> bool {
-    match backend {
-        RuntimeBackend::Cpu => true,
-        RuntimeBackend::Metal => cfg!(feature = "local-ai-metal"),
-        RuntimeBackend::Cuda => cfg!(feature = "local-ai-cuda"),
-        // mistralrs v0.7 does not expose a vulkan feature in this workspace yet.
-        RuntimeBackend::Vulkan => false,
-    }
-}
-
-fn resolve_backend(config: &Config) -> (RuntimeBackend, Option<String>) {
-    let preference = config
-        .local_ai
-        .backend_preference
-        .trim()
-        .to_ascii_lowercase();
-    let requested = match preference.as_str() {
-        "metal" => RuntimeBackend::Metal,
-        "cuda" => RuntimeBackend::Cuda,
-        "vulkan" => RuntimeBackend::Vulkan,
-        "cpu" => RuntimeBackend::Cpu,
-        _ => RuntimeBackend::Cpu,
-    };
-
-    if preference == "auto" || preference.is_empty() {
-        if supports_backend(RuntimeBackend::Metal) {
-            return (RuntimeBackend::Metal, None);
-        }
-        if supports_backend(RuntimeBackend::Cuda) {
-            return (RuntimeBackend::Cuda, None);
-        }
-        if supports_backend(RuntimeBackend::Vulkan) {
-            return (RuntimeBackend::Vulkan, None);
-        }
-        return (
-            RuntimeBackend::Cpu,
-            Some("No GPU runtime is compiled in this build; using CPU.".to_string()),
-        );
-    }
-
-    if supports_backend(requested) {
-        return (requested, None);
-    }
-
-    (
-        RuntimeBackend::Cpu,
-        Some(format!(
-            "Requested backend `{}` is unavailable in this build; using CPU.",
-            preference
-        )),
-    )
-}
-
 pub struct LocalAiService {
     status: parking_lot::Mutex<LocalAiStatus>,
-    model: parking_lot::RwLock<Option<Arc<Model>>>,
     bootstrap_lock: tokio::sync::Mutex<()>,
     last_memory_summary_at: parking_lot::Mutex<Option<std::time::Instant>>,
+    http: reqwest::Client,
 }
 
 impl LocalAiService {
+    fn effective_model_id(config: &Config) -> String {
+        let raw = config.local_ai.model_id.trim();
+        if raw.is_empty() {
+            return DEFAULT_OLLAMA_MODEL.to_string();
+        }
+        let lower = raw.to_ascii_lowercase();
+        if lower.ends_with(".gguf")
+            || lower.contains("huggingface.co/")
+            || lower == "qwen3-1.7b"
+            || lower == "qwen2.5-1.5b-instruct"
+        {
+            return DEFAULT_OLLAMA_MODEL.to_string();
+        }
+        raw.to_string()
+    }
+
     fn new(config: &Config) -> Self {
+        let model_id = Self::effective_model_id(config);
         Self {
             status: parking_lot::Mutex::new(LocalAiStatus {
                 state: "idle".to_string(),
-                model_id: config.local_ai.model_id.clone(),
-                provider: config.local_ai.provider.clone(),
+                model_id: model_id.clone(),
+                provider: "ollama".to_string(),
                 download_progress: None,
                 downloaded_bytes: None,
                 total_bytes: None,
                 download_speed_bps: None,
                 eta_seconds: None,
                 warning: None,
-                model_path: Some(model_artifact_path(config).display().to_string()),
-                active_backend: "cpu".to_string(),
+                model_path: Some(format!("ollama://{}", model_id)),
+                active_backend: "ollama".to_string(),
                 backend_reason: None,
                 last_latency_ms: None,
                 prompt_toks_per_sec: None,
                 gen_toks_per_sec: None,
             }),
-            model: parking_lot::RwLock::new(None),
             bootstrap_lock: tokio::sync::Mutex::new(()),
             last_memory_summary_at: parking_lot::Mutex::new(None),
+            http: reqwest::Client::new(),
         }
     }
 
@@ -166,22 +109,23 @@ impl LocalAiService {
     }
 
     pub fn reset_to_idle(&self, config: &Config) {
+        let model_id = Self::effective_model_id(config);
         let mut status = self.status.lock();
         status.state = "idle".to_string();
-        status.model_id = config.local_ai.model_id.clone();
-        status.provider = config.local_ai.provider.clone();
+        status.model_id = model_id.clone();
+        status.provider = "ollama".to_string();
         status.download_progress = None;
         status.downloaded_bytes = None;
         status.total_bytes = None;
         status.download_speed_bps = None;
         status.eta_seconds = None;
         status.warning = None;
-        status.active_backend = "cpu".to_string();
+        status.model_path = Some(format!("ollama://{}", model_id));
+        status.active_backend = "ollama".to_string();
         status.backend_reason = None;
         status.last_latency_ms = None;
         status.prompt_toks_per_sec = None;
         status.gen_toks_per_sec = None;
-        *self.model.write() = None;
     }
 
     pub async fn bootstrap(&self, config: &Config) {
@@ -191,202 +135,47 @@ impl LocalAiService {
             return;
         }
 
-        if matches!(self.status.lock().state.as_str(), "ready") && self.model.read().is_some() {
+        if matches!(self.status.lock().state.as_str(), "ready") {
             return;
         }
 
-        let artifact_path = model_artifact_path(config);
-        if !artifact_path.exists() {
-            if self.effective_download_url(config).is_some() {
-                {
-                    let mut status = self.status.lock();
-                    status.state = "downloading".to_string();
-                    status.warning =
-                        Some("Downloading local model in background (mistral.rs)".to_string());
-                    status.download_progress = Some(0.0);
-                    status.downloaded_bytes = Some(0);
-                    status.total_bytes = None;
-                    status.download_speed_bps = None;
-                    status.eta_seconds = None;
-                }
-                let download_result = self.download_model(config, &artifact_path).await;
-                if let Err(err) = download_result {
-                    if let Some(repo) = self
-                        .effective_download_url(config)
-                        .and_then(|url| parse_huggingface_repo(&url))
-                    {
-                        {
-                            let mut status = self.status.lock();
-                            status.state = "loading".to_string();
-                            status.warning = Some(
-                                "GGUF unavailable; loading model directly from Hugging Face"
-                                    .to_string(),
-                            );
-                            status.download_progress = None;
-                            status.downloaded_bytes = None;
-                            status.total_bytes = None;
-                            status.download_speed_bps = None;
-                            status.eta_seconds = None;
-                            status.active_backend = "cpu".to_string();
-                            status.backend_reason = Some(
-                                "Running HF fallback model path without local GGUF runtime acceleration."
-                                    .to_string(),
-                            );
-                        }
-
-                        let loaded_model = self.load_hf_text_model(&repo).await;
-                        match loaded_model {
-                            Ok(model) => {
-                                *self.model.write() = Some(model.clone());
-                                match self
-                                    .run_request(
-                                        &model,
-                                        "You are a local model warmup assistant.",
-                                        "Reply with exactly: ok",
-                                        Some(8),
-                                        true,
-                                    )
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        let mut status = self.status.lock();
-                                        status.state = "ready".to_string();
-                                        status.warning = Some(format!(
-                                            "Loaded from Hugging Face repo: {}",
-                                            repo
-                                        ));
-                                        status.download_progress = None;
-                                        status.downloaded_bytes = None;
-                                        status.total_bytes = None;
-                                        status.download_speed_bps = None;
-                                        status.eta_seconds = None;
-                                        status.model_path = Some(format!("hf://{repo}"));
-                                        return;
-                                    }
-                                    Err(warmup_err) => {
-                                        let mut status = self.status.lock();
-                                        status.state = "degraded".to_string();
-                                        status.warning = Some(format!(
-                                            "HF model warmup failed after GGUF download failure ({err}): {warmup_err}"
-                                        ));
-                                        status.download_progress = None;
-                                        status.downloaded_bytes = None;
-                                        status.total_bytes = None;
-                                        status.download_speed_bps = None;
-                                        status.eta_seconds = None;
-                                        *self.model.write() = None;
-                                        return;
-                                    }
-                                }
-                            }
-                            Err(load_err) => {
-                                let mut status = self.status.lock();
-                                status.state = "degraded".to_string();
-                                status.warning = Some(format!(
-                                    "Local model download failed ({err}); HF fallback failed: {load_err}"
-                                ));
-                                status.download_progress = None;
-                                status.downloaded_bytes = None;
-                                status.total_bytes = None;
-                                status.download_speed_bps = None;
-                                status.eta_seconds = None;
-                                return;
-                            }
-                        }
-                    } else {
-                        let mut status = self.status.lock();
-                        status.state = "degraded".to_string();
-                        status.warning = Some(format!("Local model download failed: {err}"));
-                        status.download_progress = None;
-                        status.downloaded_bytes = None;
-                        status.total_bytes = None;
-                        status.download_speed_bps = None;
-                        status.eta_seconds = None;
-                        return;
-                    }
-                }
-            } else {
-                let mut status = self.status.lock();
-                status.state = "degraded".to_string();
-                status.warning = Some(
-                    "Local model artifact missing. Configure local_ai.download_url or place GGUF file."
-                        .to_string(),
-                );
-                status.download_progress = None;
-                status.downloaded_bytes = None;
-                status.total_bytes = None;
-                status.download_speed_bps = None;
-                status.eta_seconds = None;
-                return;
-            }
-        }
-
         {
-            let (backend, backend_reason) = resolve_backend(config);
             let mut status = self.status.lock();
             status.state = "loading".to_string();
-            status.warning = Some("Loading model with mistral.rs".to_string());
+            status.warning = Some("Connecting to local Ollama runtime".to_string());
             status.download_progress = None;
             status.downloaded_bytes = None;
             status.total_bytes = None;
             status.download_speed_bps = None;
             status.eta_seconds = None;
-            status.active_backend = backend.as_str().to_string();
-            status.backend_reason = backend_reason;
+            status.active_backend = "ollama".to_string();
+            status.backend_reason = Some("Inference delegated to Ollama runtime".to_string());
+            status.model_path = Some(format!("ollama://{}", Self::effective_model_id(config)));
         }
 
-        match self.load_mistral_model(config, &artifact_path).await {
-            Ok(model) => {
-                *self.model.write() = Some(model.clone());
-
-                // Warmup generation once so the runtime is fully initialized.
-                match self
-                    .run_request(
-                        &model,
-                        "You are a local model warmup assistant.",
-                        "Reply with exactly: ok",
-                        Some(8),
-                        true,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        let mut status = self.status.lock();
-                        status.state = "ready".to_string();
-                        status.warning = None;
-                        status.download_progress = None;
-                        status.downloaded_bytes = None;
-                        status.total_bytes = None;
-                        status.download_speed_bps = None;
-                        status.eta_seconds = None;
-                        status.model_path = Some(artifact_path.display().to_string());
-                    }
-                    Err(err) => {
-                        let mut status = self.status.lock();
-                        status.state = "degraded".to_string();
-                        status.warning = Some(format!("Local model warmup failed: {err}"));
-                        status.download_progress = None;
-                        status.downloaded_bytes = None;
-                        status.total_bytes = None;
-                        status.download_speed_bps = None;
-                        status.eta_seconds = None;
-                        status.model_path = Some(artifact_path.display().to_string());
-                        *self.model.write() = None;
-                    }
-                }
-            }
-            Err(err) => {
-                let mut status = self.status.lock();
-                status.state = "degraded".to_string();
-                status.warning = Some(format!("Local model load failed: {err}"));
-                status.download_progress = None;
-                status.downloaded_bytes = None;
-                status.total_bytes = None;
-                status.download_speed_bps = None;
-                status.eta_seconds = None;
-                status.model_path = Some(artifact_path.display().to_string());
-            }
+        if let Err(err) = self.ensure_ollama_server().await {
+            let mut status = self.status.lock();
+            status.state = "degraded".to_string();
+            status.warning = Some(err);
+            return;
         }
+
+        if let Err(err) = self.ensure_model_available(config).await {
+            let mut status = self.status.lock();
+            status.state = "degraded".to_string();
+            status.warning = Some(err);
+            return;
+        }
+
+        let mut status = self.status.lock();
+        status.state = "ready".to_string();
+        status.warning = None;
+        status.download_progress = None;
+        status.downloaded_bytes = None;
+        status.total_bytes = None;
+        status.download_speed_bps = None;
+        status.eta_seconds = None;
+        status.model_path = Some(format!("ollama://{}", Self::effective_model_id(config)));
     }
 
     pub async fn summarize(
@@ -400,7 +189,7 @@ impl LocalAiService {
         }
         let system = "You summarize internal assistant context. Keep concise bullet points.";
         let prompt = format!(
-            "Summarize this text in concise bullet points. Preserve decisions and commitments.\n\n{}",
+            "Summarize this text in concise bullet points. Preserve decisions and commitments.\\n\\n{}",
             text
         );
         self.inference(config, system, &prompt, max_tokens.or(Some(128)), true)
@@ -436,14 +225,11 @@ impl LocalAiService {
         }
         let system = "You create short suggested user prompts.";
         let prompt = format!(
-            "Given this conversation context, produce up to {} short suggested next user prompts. \
-Return one prompt per line with no numbering.\n\n{}",
+            "Given this conversation context, produce up to {} short suggested next user prompts. Return one prompt per line with no numbering.\\n\\n{}",
             config.local_ai.max_suggestions.max(1),
             context
         );
-        let raw = self
-            .inference(config, system, &prompt, Some(96), true)
-            .await?;
+        let raw = self.inference(config, system, &prompt, Some(96), true).await?;
         Ok(parse_suggestions(
             &raw,
             config.local_ai.max_suggestions.max(1),
@@ -475,304 +261,291 @@ Return one prompt per line with no numbering.\n\n{}",
         max_tokens: Option<u32>,
         no_think: bool,
     ) -> Result<String, String> {
-        if self.model.read().is_none() {
+        if !matches!(self.status.lock().state.as_str(), "ready") {
             self.bootstrap(config).await;
         }
-        let model = self
-            .model
-            .read()
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| "local model not ready".to_string())?;
-        self.run_request(&model, system, prompt, max_tokens, no_think)
-            .await
-    }
 
-    async fn run_request(
-        &self,
-        model: &Model,
-        system: &str,
-        prompt: &str,
-        max_tokens: Option<u32>,
-        no_think: bool,
-    ) -> Result<String, String> {
         let started = std::time::Instant::now();
-        let mut request = RequestBuilder::new()
-            .add_message(TextMessageRole::System, system)
-            .add_message(TextMessageRole::User, prompt)
-            .set_sampler_temperature(0.2)
-            .set_sampler_topk(40)
-            .set_sampler_topp(0.9)
-            .enable_thinking(!no_think)
-            .with_truncate_sequence(true);
-        if let Some(limit) = max_tokens {
-            request = request.set_sampler_max_len(limit as usize);
+        let mut combined_prompt = String::new();
+        if no_think {
+            combined_prompt.push_str("Respond with only the final answer. No reasoning.\\n\\n");
         }
+        combined_prompt.push_str(prompt);
 
-        let response = model
-            .send_chat_request(request)
-            .await
-            .map_err(|e| format!("mistral.rs request failed: {e}"))?;
-        let content = response
-            .choices
-            .first()
-            .and_then(|choice| choice.message.content.clone())
-            .unwrap_or_default();
-        let elapsed_s = started.elapsed().as_secs_f32().max(0.001);
-        let prompt_tokens = prompt.split_whitespace().count() as f32;
-        let output_tokens = content.split_whitespace().count() as f32;
-        let mut status = self.status.lock();
-        status.last_latency_ms = Some(started.elapsed().as_millis() as u64);
-        status.prompt_toks_per_sec = Some(prompt_tokens / elapsed_s);
-        status.gen_toks_per_sec = Some(output_tokens / elapsed_s);
-        if content.trim().is_empty() {
-            Err("mistral.rs returned empty content".to_string())
-        } else {
-            Ok(content)
-        }
-    }
+        let body = OllamaGenerateRequest {
+            model: Self::effective_model_id(config),
+            prompt: combined_prompt,
+            system: Some(system.to_string()),
+            stream: false,
+            options: Some(OllamaGenerateOptions {
+                temperature: Some(0.2),
+                top_k: Some(40),
+                top_p: Some(0.9),
+                num_predict: max_tokens.map(|v| v as i32),
+            }),
+        };
 
-    async fn load_mistral_model(
-        &self,
-        config: &Config,
-        artifact_path: &Path,
-    ) -> Result<Arc<Model>, String> {
-        let model_dir = artifact_path
-            .parent()
-            .ok_or_else(|| "model path missing parent directory".to_string())?;
-        let file_name = artifact_path
-            .file_name()
-            .and_then(|f| f.to_str())
-            .ok_or_else(|| "invalid model filename".to_string())?;
-
-        let (backend, backend_reason) = resolve_backend(config);
-        let mut builder = GgufModelBuilder::new(model_dir.to_string_lossy().to_string(), vec![file_name])
-            .with_max_num_seqs(4)
-            .with_prefix_cache_n(Some(8));
-        if !matches!(backend, RuntimeBackend::Cpu) {
-            builder = builder
-                .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())
-                .map_err(|e| format!("failed to configure paged attention: {e}"))?;
-        } else {
-            builder = builder.with_force_cpu();
-        }
-        if log::log_enabled!(log::Level::Debug) {
-            builder = builder.with_logging();
-        }
-
-        let model = builder.build().await.map_err(|e| {
-            format!(
-                "mistral.rs GGUF load failed ({}): {e}",
-                config.local_ai.model_id
-            )
-        })?;
-        {
-            let mut status = self.status.lock();
-            status.active_backend = backend.as_str().to_string();
-            status.backend_reason = backend_reason;
-        }
-        Ok(Arc::new(model))
-    }
-
-    async fn download_model(&self, config: &Config, artifact_path: &Path) -> Result<(), String> {
-        let raw_url = self
-            .effective_download_url(config)
-            .ok_or_else(|| "download url not configured".to_string())?;
-        let url = self.resolve_download_url(&raw_url).await?;
-
-        if let Some(parent) = artifact_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| format!("failed to create model directory: {e}"))?;
-        }
-
-        let tmp_path = artifact_path.with_extension("part");
-        let client = reqwest::Client::new();
-        let mut response = client
-            .get(&url)
+        let response = self
+            .http
+            .post(format!("{OLLAMA_BASE_URL}/api/generate"))
+            .json(&body)
             .send()
             .await
-            .map_err(|e| format!("download request failed: {e}"))?;
+            .map_err(|e| format!("ollama request failed: {e}"))?;
         if !response.status().is_success() {
-            return Err(format!("download failed with status {}", response.status()));
+            return Err(format!("ollama request failed with status {}", response.status()));
         }
 
-        let total = response.content_length();
+        let payload: OllamaGenerateResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("ollama response parse failed: {e}"))?;
+
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let prompt_tps = payload
+            .prompt_eval_count
+            .zip(payload.prompt_eval_duration)
+            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
+        let gen_tps = payload
+            .eval_count
+            .zip(payload.eval_duration)
+            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
+
         {
             let mut status = self.status.lock();
+            status.state = "ready".to_string();
+            status.last_latency_ms = Some(elapsed_ms);
+            status.prompt_toks_per_sec = prompt_tps;
+            status.gen_toks_per_sec = gen_tps;
+            status.warning = None;
+        }
+
+        if payload.response.trim().is_empty() {
+            Err("ollama returned empty content".to_string())
+        } else {
+            Ok(payload.response)
+        }
+    }
+
+    async fn ensure_ollama_server(&self) -> Result<(), String> {
+        if self.ollama_healthy().await {
+            return Ok(());
+        }
+
+        if let Err(err) = tokio::process::Command::new("ollama")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+        {
+            return Err(format!(
+                "Ollama is not installed or not on PATH ({err}). Install Ollama to use local models."
+            ));
+        }
+
+        let _ = tokio::process::Command::new("ollama")
+            .arg("serve")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        for _ in 0..20 {
+            if self.ollama_healthy().await {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+
+        Err("Ollama runtime is not reachable at http://127.0.0.1:11434. Start `ollama serve` and retry.".to_string())
+    }
+
+    async fn ollama_healthy(&self) -> bool {
+        self.http
+            .get(format!("{OLLAMA_BASE_URL}/api/tags"))
+            .timeout(std::time::Duration::from_secs(2))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+
+    async fn ensure_model_available(&self, config: &Config) -> Result<(), String> {
+        let model_id = Self::effective_model_id(config);
+        if self.has_model(&model_id).await? {
+            return Ok(());
+        }
+
+        {
+            let mut status = self.status.lock();
+            status.state = "downloading".to_string();
+            status.warning = Some(format!(
+                "Pulling model `{}` from Ollama library",
+                model_id
+            ));
+            status.download_progress = Some(0.0);
             status.downloaded_bytes = Some(0);
-            status.total_bytes = total;
+            status.total_bytes = None;
             status.download_speed_bps = Some(0);
             status.eta_seconds = None;
-            status.download_progress = total.map(|_| 0.0);
         }
-        let mut downloaded: u64 = 0;
+
         let started_at = std::time::Instant::now();
-        let mut file = tokio::fs::File::create(&tmp_path)
+        let response = self
+            .http
+            .post(format!("{OLLAMA_BASE_URL}/api/pull"))
+            .json(&OllamaPullRequest {
+                name: model_id.clone(),
+                stream: true,
+            })
+            .send()
             .await
-            .map_err(|e| format!("failed to create temporary model file: {e}"))?;
+            .map_err(|e| format!("ollama pull request failed: {e}"))?;
+        if !response.status().is_success() {
+            return Err(format!("ollama pull failed with status {}", response.status()));
+        }
 
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|e| format!("download stream error: {e}"))?
-        {
-            file.write_all(&chunk)
-                .await
-                .map_err(|e| format!("failed to write model chunk: {e}"))?;
-            downloaded = downloaded.saturating_add(chunk.len() as u64);
-            let elapsed = started_at.elapsed().as_secs_f64().max(0.001);
-            let speed_bps = (downloaded as f64 / elapsed).round().max(0.0) as u64;
-            let eta_seconds = total.and_then(|total_bytes| {
-                if speed_bps == 0 || downloaded >= total_bytes {
-                    None
-                } else {
-                    Some((total_bytes.saturating_sub(downloaded)) / speed_bps.max(1))
+        let mut stream = response.bytes_stream();
+        let mut pending = String::new();
+        while let Some(item) = stream.next().await {
+            let chunk = item.map_err(|e| format!("ollama pull stream error: {e}"))?;
+            pending.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(pos) = pending.find('\n') {
+                let line = pending[..pos].trim().to_string();
+                pending = pending[pos + 1..].to_string();
+                if line.is_empty() {
+                    continue;
                 }
-            });
-            let mut status = self.status.lock();
-            status.downloaded_bytes = Some(downloaded);
-            status.total_bytes = total;
-            status.download_speed_bps = Some(speed_bps);
-            status.eta_seconds = eta_seconds;
-            status.download_progress =
-                total.map(|total_bytes| (downloaded as f32 / total_bytes as f32).clamp(0.0, 1.0));
-        }
+                let event: OllamaPullEvent = match serde_json::from_str(&line) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Some(err) = event.error {
+                    return Err(format!("ollama pull error: {err}"));
+                }
 
-        file.flush()
-            .await
-            .map_err(|e| format!("failed to flush model file: {e}"))?;
+                let completed = event.completed.unwrap_or(0);
+                let total = event.total;
+                let elapsed = started_at.elapsed().as_secs_f64().max(0.001);
+                let speed_bps = (completed as f64 / elapsed).round().max(0.0) as u64;
+                let eta_seconds = total.and_then(|t| {
+                    if completed >= t || speed_bps == 0 {
+                        None
+                    } else {
+                        Some((t.saturating_sub(completed)) / speed_bps.max(1))
+                    }
+                });
 
-        if let Some(expected) = config.local_ai.checksum_sha256.as_deref() {
-            verify_sha256(&tmp_path, expected).await?;
-        }
-
-        tokio::fs::rename(&tmp_path, artifact_path)
-            .await
-            .map_err(|e| format!("failed to finalize model file: {e}"))?;
-        Ok(())
-    }
-
-    async fn load_hf_text_model(&self, repo: &str) -> Result<Arc<Model>, String> {
-        let mut builder = TextModelBuilder::new(repo.to_string());
-        if log::log_enabled!(log::Level::Debug) {
-            builder = builder.with_logging();
-        }
-
-        let model = builder
-            .build()
-            .await
-            .map_err(|e| format!("mistral.rs HF model load failed ({repo}): {e}"))?;
-        Ok(Arc::new(model))
-    }
-
-    fn effective_download_url(&self, config: &Config) -> Option<String> {
-        if let Some(url) = config.local_ai.download_url.as_deref() {
-            if !url.trim().is_empty() {
-                return Some(url.to_string());
+                let mut status = self.status.lock();
+                status.downloaded_bytes = Some(completed);
+                status.total_bytes = total;
+                status.download_speed_bps = Some(speed_bps);
+                status.eta_seconds = eta_seconds;
+                status.download_progress = total
+                    .map(|t| (completed as f32 / t as f32).clamp(0.0, 1.0))
+                    .or(Some(0.0));
             }
         }
 
-        // Backward-compatible fallback for older configs that persisted `download_url = null`.
-        if config
-            .local_ai
-            .model_id
-            .trim()
-            .eq_ignore_ascii_case("qwen3-1.7b")
-        {
-            return Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=true".to_string());
-        }
-        None
-    }
-
-    async fn resolve_download_url(&self, raw_url: &str) -> Result<String, String> {
-        let repo = parse_huggingface_repo(raw_url);
-        if repo.is_none() {
-            return Ok(raw_url.to_string());
-        }
-        let repo = repo.expect("checked is_some");
-
-        let client = reqwest::Client::new();
-        let api_url = format!("https://huggingface.co/api/models/{repo}");
-        let payload = client
-            .get(&api_url)
-            .send()
-            .await
-            .map_err(|e| format!("huggingface model metadata request failed: {e}"))?;
-        if !payload.status().is_success() {
+        if !self.has_model(&model_id).await? {
             return Err(format!(
-                "huggingface model metadata request failed with status {}",
-                payload.status()
+                "ollama pull finished but model `{}` was not found",
+                model_id
             ));
         }
-        let model: HuggingFaceModel = payload
+
+        Ok(())
+    }
+
+    async fn has_model(&self, model: &str) -> Result<bool, String> {
+        let response = self
+            .http
+            .get(format!("{OLLAMA_BASE_URL}/api/tags"))
+            .send()
+            .await
+            .map_err(|e| format!("ollama tags request failed: {e}"))?;
+        if !response.status().is_success() {
+            return Err(format!("ollama tags failed with status {}", response.status()));
+        }
+        let payload: OllamaTagsResponse = response
             .json()
             .await
-            .map_err(|e| format!("huggingface model metadata parse failed: {e}"))?;
+            .map_err(|e| format!("ollama tags parse failed: {e}"))?;
 
-        let filename = select_best_gguf_file(&model.siblings)
-            .ok_or_else(|| "no .gguf artifact found in huggingface repository".to_string())?;
-
-        Ok(format!(
-            "https://huggingface.co/{repo}/resolve/main/{}",
-            urlencoding::encode(&filename)
-        ))
+        let target = model.to_ascii_lowercase();
+        Ok(payload.models.iter().any(|m| {
+            let name = m.name.to_ascii_lowercase();
+            name == target || name.starts_with(&(target.clone() + ":"))
+        }))
     }
 }
 
+#[derive(Debug, Serialize)]
+struct OllamaPullRequest {
+    name: String,
+    stream: bool,
+}
+
 #[derive(Debug, Deserialize)]
-struct HuggingFaceModel {
+struct OllamaPullEvent {
+    #[allow(dead_code)]
+    status: Option<String>,
+    total: Option<u64>,
+    completed: Option<u64>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaTagsResponse {
     #[serde(default)]
-    siblings: Vec<HuggingFaceSibling>,
+    models: Vec<OllamaModelTag>,
 }
 
 #[derive(Debug, Deserialize)]
-struct HuggingFaceSibling {
-    rfilename: String,
+struct OllamaModelTag {
+    name: String,
 }
 
-fn parse_huggingface_repo(url: &str) -> Option<String> {
-    let trimmed = url.trim();
-    let without_prefix = trimmed
-        .strip_prefix("https://huggingface.co/")
-        .or_else(|| trimmed.strip_prefix("http://huggingface.co/"))?;
-
-    if without_prefix.contains("/resolve/") || without_prefix.contains("/blob/") {
-        return None;
-    }
-    if without_prefix.to_ascii_lowercase().ends_with(".gguf") {
-        return None;
-    }
-
-    let mut parts = without_prefix.split('/').filter(|p| !p.is_empty());
-    let owner = parts.next()?;
-    let repo = parts.next()?;
-    Some(format!("{owner}/{repo}"))
+#[derive(Debug, Serialize)]
+struct OllamaGenerateRequest {
+    model: String,
+    prompt: String,
+    system: Option<String>,
+    stream: bool,
+    options: Option<OllamaGenerateOptions>,
 }
 
-fn select_best_gguf_file(siblings: &[HuggingFaceSibling]) -> Option<String> {
-    fn score(name: &str) -> i32 {
-        let lower = name.to_ascii_lowercase();
-        let mut s = 0;
-        if lower.ends_with(".gguf") {
-            s += 100;
-        }
-        if lower.contains("q4_k_m") {
-            s += 40;
-        } else if lower.contains("q4") {
-            s += 20;
-        }
-        if lower.contains("instruct") {
-            s += 10;
-        }
-        s
-    }
+#[derive(Debug, Serialize)]
+struct OllamaGenerateOptions {
+    temperature: Option<f32>,
+    top_k: Option<u32>,
+    top_p: Option<f32>,
+    num_predict: Option<i32>,
+}
 
-    siblings
-        .iter()
-        .filter(|f| f.rfilename.to_ascii_lowercase().ends_with(".gguf"))
-        .max_by_key(|f| score(&f.rfilename))
-        .map(|f| f.rfilename.clone())
+#[derive(Debug, Deserialize)]
+struct OllamaGenerateResponse {
+    response: String,
+    #[allow(dead_code)]
+    done: Option<bool>,
+    #[allow(dead_code)]
+    total_duration: Option<u64>,
+    prompt_eval_count: Option<u32>,
+    prompt_eval_duration: Option<u64>,
+    eval_count: Option<u32>,
+    eval_duration: Option<u64>,
+}
+
+fn ns_to_tps(tokens: f32, duration_ns: u64) -> Option<f32> {
+    if duration_ns == 0 || tokens <= 0.0 {
+        return None;
+    }
+    let seconds = duration_ns as f32 / 1_000_000_000.0;
+    if seconds <= 0.0 {
+        None
+    } else {
+        Some(tokens / seconds)
+    }
 }
 
 static LOCAL_AI: once_cell::sync::OnceCell<Arc<LocalAiService>> = once_cell::sync::OnceCell::new();
@@ -791,7 +564,7 @@ pub fn model_artifact_path(config: &Config) -> PathBuf {
         .unwrap_or_else(|| config.workspace_dir.clone());
     root.join("models")
         .join("local-ai")
-        .join(&config.local_ai.artifact_name)
+        .join(LocalAiService::effective_model_id(config).replace(':', "-") + ".ollama")
 }
 
 fn parse_suggestions(raw: &str, limit: usize) -> Vec<Suggestion> {
@@ -807,21 +580,4 @@ fn parse_suggestions(raw: &str, limit: usize) -> Vec<Suggestion> {
             confidence: 0.65,
         })
         .collect()
-}
-
-async fn verify_sha256(path: &Path, expected_hex: &str) -> Result<(), String> {
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|e| format!("failed to read downloaded model for checksum: {e}"))?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let actual = hex::encode(hasher.finalize());
-    if actual.eq_ignore_ascii_case(expected_hex) {
-        Ok(())
-    } else {
-        Err(format!(
-            "checksum mismatch: expected {}, got {}",
-            expected_hex, actual
-        ))
-    }
 }

@@ -23,8 +23,6 @@ pub struct LocalAiConfig {
     pub context_compaction_threshold_tokens: usize,
     #[serde(default = "default_max_suggestions")]
     pub max_suggestions: usize,
-    #[serde(default = "default_backend_preference")]
-    pub backend_preference: String,
 }
 
 fn default_enabled() -> bool {
@@ -32,19 +30,19 @@ fn default_enabled() -> bool {
 }
 
 fn default_provider() -> String {
-    "mistralrs".to_string()
+    "ollama".to_string()
 }
 
 fn default_model_id() -> String {
-    "qwen3-1.7b".to_string()
+    "qwen2.5:1.5b".to_string()
 }
 
 fn default_download_url() -> Option<String> {
-    Some("https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=true".to_string())
+    None
 }
 
 fn default_artifact_name() -> String {
-    "Qwen3-1.7B-Q8_0.gguf".to_string()
+    "ollama-managed".to_string()
 }
 
 fn default_autosummary_debounce_ms() -> u64 {
@@ -59,10 +57,6 @@ fn default_max_suggestions() -> usize {
     5
 }
 
-fn default_backend_preference() -> String {
-    "auto".to_string()
-}
-
 impl Default for LocalAiConfig {
     fn default() -> Self {
         Self {
@@ -75,7 +69,6 @@ impl Default for LocalAiConfig {
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
             context_compaction_threshold_tokens: default_context_compaction_threshold_tokens(),
             max_suggestions: default_max_suggestions(),
-            backend_preference: default_backend_preference(),
         }
     }
 }
