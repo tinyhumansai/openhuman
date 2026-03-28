@@ -517,12 +517,18 @@ async fn chat_send_inner(
             .await
         {
             Ok(ctx) => {
+                let rendered = ctx.as_ref().map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| value.to_string())
+                });
                 log::info!(
                     "[chat] Conversation memory recall: has_data={}, len={}",
                     ctx.is_some(),
-                    ctx.as_ref().map(|ctx| ctx.to_string().len()).unwrap_or(0)
+                    rendered.as_ref().map(|text| text.len()).unwrap_or(0)
                 );
-                ctx.map(|ctx| ctx.to_string())
+                rendered
             }
             Err(e) => {
                 log::warn!("[chat] Conversation memory recall failed: {}", e);

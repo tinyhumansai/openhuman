@@ -915,9 +915,14 @@ pub fn run() {
                 }
             }
 
-            // Initialize TinyHumans memory state (empty until the frontend provides the JWT)
-            app.manage(crate::memory::MemoryState(std::sync::Mutex::new(None)));
-            log::info!("[memory] Memory state registered — awaiting JWT from frontend");
+            // Initialize local memory state at startup (token-independent).
+            let memory_client = crate::memory::MemoryClient::new_local()
+                .map(std::sync::Arc::new)
+                .ok();
+            app.manage(crate::memory::MemoryState(std::sync::Mutex::new(
+                memory_client,
+            )));
+            log::info!("[memory] Local memory state registered");
 
             // Spawn conscious loop periodic timer
             let app_for_conscious = app.handle().clone();

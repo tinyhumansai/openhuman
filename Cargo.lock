@@ -73,7 +73,6 @@ dependencies = [
  "tauri-plugin-os",
  "tempfile",
  "thiserror 2.0.18",
- "tinyhumansai",
  "tokio",
  "tokio-rustls",
  "tokio-serial",
@@ -5490,7 +5489,6 @@ dependencies = [
  "tauri",
  "tempfile",
  "thiserror 2.0.18",
- "tinyhumansai",
  "tokio",
  "tokio-rustls",
  "tokio-serial",
@@ -8702,20 +8700,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
 dependencies = [
  "crunchy",
-]
-
-[[package]]
-name = "tinyhumansai"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c731df99d616c1918cab54ee749e51f1e181675e2df1f30be3f46f1e9d9d727"
-dependencies = [
- "log",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
 ]
 
 [[package]]

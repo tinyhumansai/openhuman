@@ -1,8 +1,6 @@
 //! Tauri commands for the TinyHumans memory layer.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
-
 use crate::memory::{MemoryClient, MemoryState};
 
 fn extract_namespaces_from_documents(payload: &serde_json::Value) -> Vec<String> {
@@ -74,24 +72,20 @@ fn filter_documents_payload_by_namespace(
     }
 }
 
-/// Called by the frontend with the JWT from `authSlice.token`.
-/// (Re-)initialises the TinyHumans memory client for the current session.
+/// (Re-)initialises the local memory client for the current session.
 #[tauri::command]
 pub async fn init_memory_client(
     jwt_token: String,
     state: tauri::State<'_, MemoryState>,
 ) -> Result<(), String> {
     log::info!(
-        "[memory] init_memory_client: entry (token_present={})",
+        "[memory] init_memory_client: entry (token_present={}, mode=local)",
         !jwt_token.trim().is_empty()
     );
-    let client = MemoryClient::from_token(jwt_token).map(Arc::new);
-    if client.is_none() {
-        log::warn!("[memory] init_memory_client: exit — empty token, memory layer disabled");
-    } else {
-        log::info!("[memory] init_memory_client: exit — client ready");
-    }
-    *state.0.lock().map_err(|e| e.to_string())? = client;
+    let client = MemoryClient::from_token(jwt_token)
+        .ok_or_else(|| "Failed to initialize local memory client".to_string())?;
+    *state.0.lock().map_err(|e| e.to_string())? = Some(std::sync::Arc::new(client));
+    log::info!("[memory] init_memory_client: exit — local client ready");
     Ok(())
 }
 
@@ -120,11 +114,18 @@ pub async fn recall_memory(
                 ),
                 Err(e) => log::warn!("[memory] recall_memory: exit — error: {e}"),
             }
-            result.map(|ctx| ctx.map(|ctx| ctx.to_string()))
+            result.map(|ctx| {
+                ctx.map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| value.to_string())
+                })
+            })
         }
         None => {
-            log::warn!("[memory] recall_memory: exit — client not initialised (no JWT set)");
-            Err("Memory layer not configured — JWT token not yet set".into())
+            log::warn!("[memory] recall_memory: exit — client not initialised");
+            Err("Memory layer not configured — local client not initialized".into())
         }
     }
 }
@@ -156,8 +157,8 @@ pub async fn memory_query(
             result
         }
         None => {
-            log::warn!("[memory] memory_query: exit — client not initialised (no JWT set)");
-            Err("Memory layer not configured — JWT token not yet set".into())
+            log::warn!("[memory] memory_query: exit — client not initialised");
+            Err("Memory layer not configured — local client not initialized".into())
         }
     }
 }
@@ -179,7 +180,7 @@ pub async fn memory_list_documents(
                 .unwrap_or(docs);
             Ok(filtered)
         }
-        None => Err("Memory layer not configured — JWT token not yet set".into()),
+        None => Err("Memory layer not configured — local client not initialized".into()),
     }
 }
 
@@ -193,7 +194,7 @@ pub async fn memory_list_namespaces(
             let docs = c.list_documents().await?;
             Ok(extract_namespaces_from_documents(&docs))
         }
-        None => Err("Memory layer not configured — JWT token not yet set".into()),
+        None => Err("Memory layer not configured — local client not initialized".into()),
     }
 }
 
@@ -206,7 +207,7 @@ pub async fn memory_delete_document(
     let client = state.0.lock().map_err(|e| e.to_string())?.clone();
     match client {
         Some(c) => c.delete_document(&document_id, &namespace).await,
-        None => Err("Memory layer not configured — JWT token not yet set".into()),
+        None => Err("Memory layer not configured — local client not initialized".into()),
     }
 }
 
@@ -223,7 +224,7 @@ pub async fn memory_query_namespace(
             c.query_namespace_context(&namespace, &query, max_chunks.unwrap_or(10))
                 .await
         }
-        None => Err("Memory layer not configured — JWT token not yet set".into()),
+        None => Err("Memory layer not configured — local client not initialized".into()),
     }
 }
 
@@ -239,6 +240,6 @@ pub async fn memory_recall_namespace(
             c.recall_namespace_context(&namespace, max_chunks.unwrap_or(10))
                 .await
         }
-        None => Err("Memory layer not configured — JWT token not yet set".into()),
+        None => Err("Memory layer not configured — local client not initialized".into()),
     }
 }

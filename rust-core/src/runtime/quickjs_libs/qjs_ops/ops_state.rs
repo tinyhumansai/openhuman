@@ -5,7 +5,7 @@ use rquickjs::{Ctx, Function, Object};
 use serde::Deserialize;
 use std::sync::Arc;
 use tauri::Manager;
-use tinyhumansai::{Priority, SourceType};
+use crate::memory::{Priority, SourceType};
 
 use super::types::{js_err, SkillContext, SkillState};
 
