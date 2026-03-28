@@ -12,7 +12,15 @@ use crate::openhuman::config::Config;
 use crate::openhuman::health;
 use crate::openhuman::local_ai::{self, Suggestion};
 use crate::openhuman::security::{SecretStore, SecurityPolicy};
-use crate::openhuman::{doctor, hardware, integrations, migration, onboard, service};
+use crate::openhuman::{
+    accessibility, doctor, hardware, integrations, migration, onboard, service,
+};
+
+pub use crate::openhuman::accessibility::{
+    AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
+    AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureNowResult, InputActionParams,
+    InputActionResult, PermissionStatus, SessionStatus, StartSessionParams, StopSessionParams,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandResponse<T> {
@@ -728,6 +736,83 @@ async fn dispatch(
             ))
         }
 
+        "openhuman.accessibility_status" => {
+            let status = accessibility::global_engine().status().await;
+            to_json_value(command_response(
+                status,
+                vec!["accessibility status fetched".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_request_permissions" => {
+            let permissions = accessibility::global_engine().request_permissions().await?;
+            to_json_value(command_response(
+                permissions,
+                vec!["accessibility permissions requested".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_start_session" => {
+            let payload: StartSessionParams = parse_params(params)?;
+            let session = accessibility::global_engine()
+                .start_session(payload)
+                .await?;
+            to_json_value(command_response(
+                session,
+                vec!["accessibility session started".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_stop_session" => {
+            let payload: StopSessionParams = parse_params(params)?;
+            let session = accessibility::global_engine()
+                .stop_session(payload.reason)
+                .await;
+            to_json_value(command_response(
+                session,
+                vec!["accessibility session stopped".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_capture_now" => {
+            let result = accessibility::global_engine().capture_now().await?;
+            to_json_value(command_response(
+                result,
+                vec!["accessibility manual capture requested".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_input_action" => {
+            let payload: InputActionParams = parse_params(params)?;
+            let result = accessibility::global_engine().input_action(payload).await?;
+            to_json_value(command_response(
+                result,
+                vec!["accessibility input action processed".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_autocomplete_suggest" => {
+            let payload: AutocompleteSuggestParams = parse_params(params)?;
+            let result = accessibility::global_engine()
+                .autocomplete_suggest(payload)
+                .await?;
+            to_json_value(command_response(
+                result,
+                vec!["accessibility autocomplete suggestions generated".to_string()],
+            ))
+        }
+
+        "openhuman.accessibility_autocomplete_commit" => {
+            let payload: AutocompleteCommitParams = parse_params(params)?;
+            let result = accessibility::global_engine()
+                .autocomplete_commit(payload)
+                .await?;
+            to_json_value(command_response(
+                result,
+                vec!["accessibility autocomplete suggestion committed".to_string()],
+            ))
+        }
+
         _ => Err(format!("unknown method: {method}")),
     }
 }
@@ -845,4 +930,51 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         .enable_all()
         .build()?;
     runtime.block_on(run_server(port))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn accessibility_status_rpc_returns_valid_schema() {
+        let raw = call_method("openhuman.accessibility_status", json!({}))
+            .await
+            .expect("status rpc should return");
+        let payload: CommandResponse<AccessibilityStatus> =
+            serde_json::from_value(raw).expect("status payload should decode");
+
+        assert!(!payload.logs.is_empty());
+        assert!(!payload.result.config.capture_policy.is_empty());
+    }
+
+    #[tokio::test]
+    async fn accessibility_start_session_requires_consent() {
+        let err = call_method(
+            "openhuman.accessibility_start_session",
+            json!({
+                "consent": false,
+                "ttl_secs": 60
+            }),
+        )
+        .await
+        .expect_err("session start without consent should fail");
+
+        assert!(err.contains("consent"));
+    }
+
+    #[tokio::test]
+    async fn accessibility_input_action_rejects_invalid_envelope() {
+        let err = call_method(
+            "openhuman.accessibility_input_action",
+            json!({
+                "x": 10,
+                "y": 20
+            }),
+        )
+        .await
+        .expect_err("missing action should fail envelope validation");
+
+        assert!(err.contains("invalid params"));
+    }
 }

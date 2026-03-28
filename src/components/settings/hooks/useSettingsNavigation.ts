@@ -13,6 +13,7 @@ export type SettingsRoute =
   | 'team-members'
   | 'team-invites'
   | 'developer-options'
+  | 'accessibility'
   | 'skills'
   | 'ai'
   | 'local-model'
@@ -49,6 +50,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/advanced')) return 'advanced';
     if (path.includes('/settings/billing')) return 'billing';
     if (path.includes('/settings/developer-options')) return 'developer-options';
+    if (path.includes('/settings/accessibility')) return 'accessibility';
     if (path.includes('/settings/skills')) return 'skills';
     if (path.includes('/settings/ai')) return 'ai';
     if (path.includes('/settings/local-model')) return 'local-model';

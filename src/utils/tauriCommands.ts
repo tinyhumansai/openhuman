@@ -383,6 +383,114 @@ export interface AgentServerStatus {
   url: string;
 }
 
+export type AccessibilityPermissionState = 'granted' | 'denied' | 'unknown' | 'unsupported';
+
+export interface AccessibilityPermissionStatus {
+  screen_recording: AccessibilityPermissionState;
+  accessibility: AccessibilityPermissionState;
+  input_monitoring: AccessibilityPermissionState;
+}
+
+export interface AccessibilityFeatures {
+  screen_monitoring: boolean;
+  device_control: boolean;
+  predictive_input: boolean;
+}
+
+export interface AccessibilitySessionStatus {
+  active: boolean;
+  started_at_ms: number | null;
+  expires_at_ms: number | null;
+  remaining_ms: number | null;
+  ttl_secs: number;
+  panic_hotkey: string;
+  stop_reason: string | null;
+  frames_in_memory: number;
+  last_capture_at_ms: number | null;
+  last_context: string | null;
+}
+
+export interface AccessibilityConfig {
+  capture_policy: string;
+  baseline_fps: number;
+  session_ttl_secs: number;
+  panic_stop_hotkey: string;
+  autocomplete_enabled: boolean;
+  denylist: string[];
+}
+
+export interface AccessibilityStatus {
+  platform_supported: boolean;
+  permissions: AccessibilityPermissionStatus;
+  features: AccessibilityFeatures;
+  session: AccessibilitySessionStatus;
+  config: AccessibilityConfig;
+  denylist: string[];
+  is_context_blocked: boolean;
+}
+
+export interface AccessibilityStartSessionParams {
+  consent: boolean;
+  ttl_secs?: number;
+  screen_monitoring?: boolean;
+  device_control?: boolean;
+  predictive_input?: boolean;
+}
+
+export interface AccessibilityStopSessionParams {
+  reason?: string;
+}
+
+export interface AccessibilityCaptureFrame {
+  captured_at_ms: number;
+  reason: string;
+  app_name: string | null;
+  window_title: string | null;
+}
+
+export interface AccessibilityCaptureNowResult {
+  accepted: boolean;
+  frame: AccessibilityCaptureFrame | null;
+}
+
+export interface AccessibilityInputActionParams {
+  action: string;
+  x?: number;
+  y?: number;
+  button?: string;
+  text?: string;
+  key?: string;
+  modifiers?: string[];
+}
+
+export interface AccessibilityInputActionResult {
+  accepted: boolean;
+  blocked: boolean;
+  reason: string | null;
+}
+
+export interface AccessibilityAutocompleteSuggestion {
+  value: string;
+  confidence: number;
+}
+
+export interface AccessibilityAutocompleteSuggestParams {
+  context?: string;
+  max_results?: number;
+}
+
+export interface AccessibilityAutocompleteSuggestResult {
+  suggestions: AccessibilityAutocompleteSuggestion[];
+}
+
+export interface AccessibilityAutocompleteCommitParams {
+  suggestion: string;
+}
+
+export interface AccessibilityAutocompleteCommitResult {
+  committed: boolean;
+}
+
 export interface ConfigSnapshot {
   config: Record<string, unknown>;
   workspace_dir: string;
@@ -762,6 +870,78 @@ export async function openhumanAgentServerStatus(): Promise<CommandResponse<Agen
     throw new Error('Not running in Tauri');
   }
   return await invoke('openhuman_agent_server_status');
+}
+
+export async function openhumanAccessibilityStatus(): Promise<
+  CommandResponse<AccessibilityStatus>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_status');
+}
+
+export async function openhumanAccessibilityRequestPermissions(): Promise<
+  CommandResponse<AccessibilityPermissionStatus>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_request_permissions');
+}
+
+export async function openhumanAccessibilityStartSession(
+  params: AccessibilityStartSessionParams
+): Promise<CommandResponse<AccessibilitySessionStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_start_session', { params });
+}
+
+export async function openhumanAccessibilityStopSession(
+  params?: AccessibilityStopSessionParams
+): Promise<CommandResponse<AccessibilitySessionStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_stop_session', { params: params ?? null });
+}
+
+export async function openhumanAccessibilityCaptureNow(): Promise<
+  CommandResponse<AccessibilityCaptureNowResult>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_capture_now');
+}
+
+export async function openhumanAccessibilityInputAction(
+  params: AccessibilityInputActionParams
+): Promise<CommandResponse<AccessibilityInputActionResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_input_action', { params });
+}
+
+export async function openhumanAccessibilityAutocompleteSuggest(
+  params?: AccessibilityAutocompleteSuggestParams
+): Promise<CommandResponse<AccessibilityAutocompleteSuggestResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_autocomplete_suggest', { params: params ?? null });
+}
+
+export async function openhumanAccessibilityAutocompleteCommit(
+  params: AccessibilityAutocompleteCommitParams
+): Promise<CommandResponse<AccessibilityAutocompleteCommitResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_accessibility_autocomplete_commit', { params });
 }
 
 export async function runtimeListSkills(): Promise<SkillSnapshot[]> {

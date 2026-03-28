@@ -1,5 +1,6 @@
 import { Route, Routes } from 'react-router-dom';
 
+import AccessibilityPanel from '../components/settings/panels/AccessibilityPanel';
 import AdvancedPanel from '../components/settings/panels/AdvancedPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
@@ -31,6 +32,7 @@ const Settings = () => {
         <Route path="advanced" element={<AdvancedPanel />} />
         <Route path="agent-chat" element={<AgentChatPanel />} />
         <Route path="ai" element={<AIPanel />} />
+        <Route path="accessibility" element={<AccessibilityPanel />} />
         <Route path="local-model" element={<LocalModelPanel />} />
         <Route path="billing" element={<BillingPanel />} />
         <Route path="skills" element={<SkillsPanel />} />
