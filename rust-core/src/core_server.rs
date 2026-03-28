@@ -559,10 +559,7 @@ async fn dispatch(
                 return Err("cron is disabled by config (cron.enabled=false)".to_string());
             }
             let jobs = cron::list_jobs(&config).map_err(|e| e.to_string())?;
-            to_json_value(command_response(
-                jobs,
-                vec!["cron jobs listed".to_string()],
-            ))
+            to_json_value(command_response(jobs, vec!["cron jobs listed".to_string()]))
         }
 
         "openhuman.cron_update" => {
@@ -583,10 +580,8 @@ async fn dispatch(
                 }
             }
 
-            let updated =
-                cron::update_job(&config, payload.job_id.trim(), payload.patch).map_err(|e| {
-                    e.to_string()
-                })?;
+            let updated = cron::update_job(&config, payload.job_id.trim(), payload.patch)
+                .map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 updated,
                 vec![format!("cron job updated: {}", payload.job_id.trim())],
@@ -663,11 +658,14 @@ async fn dispatch(
             }
 
             let limit = payload.limit.unwrap_or(20).max(1);
-            let runs =
-                cron::list_runs(&config, payload.job_id.trim(), limit).map_err(|e| e.to_string())?;
+            let runs = cron::list_runs(&config, payload.job_id.trim(), limit)
+                .map_err(|e| e.to_string())?;
             to_json_value(command_response(
                 runs,
-                vec![format!("cron run history loaded: {}", payload.job_id.trim())],
+                vec![format!(
+                    "cron run history loaded: {}",
+                    payload.job_id.trim()
+                )],
             ))
         }
 

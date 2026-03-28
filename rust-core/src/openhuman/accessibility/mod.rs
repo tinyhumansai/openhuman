@@ -6,9 +6,9 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::ffi::c_void;
-use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -361,7 +361,8 @@ impl AccessibilityEngine {
 
         self.request_permission(PermissionKind::ScreenRecording)
             .await?;
-        self.request_permission(PermissionKind::Accessibility).await?;
+        self.request_permission(PermissionKind::Accessibility)
+            .await?;
         self.request_permission(PermissionKind::InputMonitoring)
             .await?;
 
