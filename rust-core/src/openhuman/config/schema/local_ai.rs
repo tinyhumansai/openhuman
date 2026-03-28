@@ -60,15 +60,15 @@ fn default_provider() -> String {
 }
 
 fn default_model_id() -> String {
-    "qwen2.5:1.5b".to_string()
+    "gemma3:4b-it-qat".to_string()
 }
 
 fn default_chat_model_id() -> String {
-    "qwen2.5:1.5b".to_string()
+    "gemma3:4b-it-qat".to_string()
 }
 
 fn default_vision_model_id() -> String {
-    "qwen3-vl:2b".to_string()
+    "gemma3:4b-it-qat".to_string()
 }
 
 fn default_embedding_model_id() -> String {
