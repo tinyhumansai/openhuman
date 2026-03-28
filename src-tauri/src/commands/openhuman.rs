@@ -90,6 +90,16 @@ pub struct AgentServerStatus {
 pub struct LocalAiStatus {
     pub state: String,
     pub model_id: String,
+    pub chat_model_id: String,
+    pub vision_model_id: String,
+    pub embedding_model_id: String,
+    pub stt_model_id: String,
+    pub tts_voice_id: String,
+    pub quantization: String,
+    pub vision_state: String,
+    pub embedding_state: String,
+    pub stt_state: String,
+    pub tts_state: String,
     pub provider: String,
     pub download_progress: Option<f32>,
     pub downloaded_bytes: Option<u64>,
@@ -109,6 +119,44 @@ pub struct LocalAiStatus {
 pub struct LocalAiSuggestion {
     pub text: String,
     pub confidence: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiAssetStatus {
+    pub state: String,
+    pub id: String,
+    pub provider: String,
+    pub path: Option<String>,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiAssetsStatus {
+    pub chat: LocalAiAssetStatus,
+    pub vision: LocalAiAssetStatus,
+    pub embedding: LocalAiAssetStatus,
+    pub stt: LocalAiAssetStatus,
+    pub tts: LocalAiAssetStatus,
+    pub quantization: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiEmbeddingResult {
+    pub model_id: String,
+    pub dimensions: usize,
+    pub vectors: Vec<Vec<f32>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiSpeechResult {
+    pub text: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiTtsResult {
+    pub output_path: String,
+    pub voice_id: String,
 }
 
 /// Return the current health snapshot as JSON.
@@ -476,6 +524,92 @@ pub async fn openhuman_local_ai_prompt(
             "max_tokens": max_tokens,
             "no_think": no_think
         }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_vision_prompt(
+    app: tauri::AppHandle,
+    prompt: String,
+    image_refs: Vec<String>,
+    max_tokens: Option<u32>,
+) -> Result<CommandResponse<String>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_vision_prompt",
+        serde_json::json!({
+            "prompt": prompt,
+            "image_refs": image_refs,
+            "max_tokens": max_tokens
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_embed(
+    app: tauri::AppHandle,
+    inputs: Vec<String>,
+) -> Result<CommandResponse<LocalAiEmbeddingResult>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_embed",
+        serde_json::json!({
+            "inputs": inputs
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_transcribe(
+    app: tauri::AppHandle,
+    audio_path: String,
+) -> Result<CommandResponse<LocalAiSpeechResult>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_transcribe",
+        serde_json::json!({
+            "audio_path": audio_path
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_tts(
+    app: tauri::AppHandle,
+    text: String,
+    output_path: Option<String>,
+) -> Result<CommandResponse<LocalAiTtsResult>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_tts",
+        serde_json::json!({
+            "text": text,
+            "output_path": output_path
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_assets_status(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<LocalAiAssetsStatus>, String> {
+    call_core(&app, "openhuman.local_ai_assets_status", params_none()).await
+}
+
+#[tauri::command]
+pub async fn openhuman_local_ai_download_asset(
+    app: tauri::AppHandle,
+    capability: String,
+) -> Result<CommandResponse<LocalAiAssetsStatus>, String> {
+    call_core(
+        &app,
+        "openhuman.local_ai_download_asset",
+        serde_json::json!({ "capability": capability }),
     )
     .await
 }

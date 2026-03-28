@@ -1,16 +1,29 @@
 use crate::openhuman::config::Config;
+use crate::openhuman::multimodal;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:1.5b";
+const DEFAULT_OLLAMA_VISION_MODEL: &str = "qwen2.5vl:3b";
+const DEFAULT_OLLAMA_EMBED_MODEL: &str = "nomic-embed-text:latest";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalAiStatus {
     pub state: String,
     pub model_id: String,
+    pub chat_model_id: String,
+    pub vision_model_id: String,
+    pub embedding_model_id: String,
+    pub stt_model_id: String,
+    pub tts_voice_id: String,
+    pub quantization: String,
+    pub vision_state: String,
+    pub embedding_state: String,
+    pub stt_state: String,
+    pub tts_state: String,
     pub provider: String,
     pub download_progress: Option<f32>,
     pub downloaded_bytes: Option<u64>,
@@ -30,7 +43,17 @@ impl LocalAiStatus {
     fn disabled(config: &Config) -> Self {
         Self {
             state: "disabled".to_string(),
-            model_id: LocalAiService::effective_model_id(config),
+            model_id: LocalAiService::effective_chat_model_id(config),
+            chat_model_id: LocalAiService::effective_chat_model_id(config),
+            vision_model_id: LocalAiService::effective_vision_model_id(config),
+            embedding_model_id: LocalAiService::effective_embedding_model_id(config),
+            stt_model_id: LocalAiService::effective_stt_model_id(config),
+            tts_voice_id: LocalAiService::effective_tts_voice_id(config),
+            quantization: LocalAiService::effective_quantization(config),
+            vision_state: "disabled".to_string(),
+            embedding_state: "disabled".to_string(),
+            stt_state: "disabled".to_string(),
+            tts_state: "disabled".to_string(),
             provider: "ollama".to_string(),
             download_progress: None,
             downloaded_bytes: None,
@@ -54,6 +77,44 @@ pub struct Suggestion {
     pub confidence: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiAssetStatus {
+    pub state: String,
+    pub id: String,
+    pub provider: String,
+    pub path: Option<String>,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiAssetsStatus {
+    pub chat: LocalAiAssetStatus,
+    pub vision: LocalAiAssetStatus,
+    pub embedding: LocalAiAssetStatus,
+    pub stt: LocalAiAssetStatus,
+    pub tts: LocalAiAssetStatus,
+    pub quantization: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiEmbeddingResult {
+    pub model_id: String,
+    pub dimensions: usize,
+    pub vectors: Vec<Vec<f32>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiSpeechResult {
+    pub text: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiTtsResult {
+    pub output_path: String,
+    pub voice_id: String,
+}
+
 pub struct LocalAiService {
     status: parking_lot::Mutex<LocalAiStatus>,
     bootstrap_lock: tokio::sync::Mutex<()>,
@@ -62,8 +123,12 @@ pub struct LocalAiService {
 }
 
 impl LocalAiService {
-    fn effective_model_id(config: &Config) -> String {
-        let raw = config.local_ai.model_id.trim();
+    fn effective_chat_model_id(config: &Config) -> String {
+        let raw = if !config.local_ai.chat_model_id.trim().is_empty() {
+            config.local_ai.chat_model_id.trim()
+        } else {
+            config.local_ai.model_id.trim()
+        };
         if raw.is_empty() {
             return DEFAULT_OLLAMA_MODEL.to_string();
         }
@@ -78,12 +143,71 @@ impl LocalAiService {
         raw.to_string()
     }
 
+    fn effective_vision_model_id(config: &Config) -> String {
+        let raw = config.local_ai.vision_model_id.trim();
+        if raw.is_empty() {
+            return DEFAULT_OLLAMA_VISION_MODEL.to_string();
+        }
+        let lower = raw.to_ascii_lowercase();
+        if lower == "qwen3-vl:2b" || lower == "qwen3-vl-2b" {
+            return DEFAULT_OLLAMA_VISION_MODEL.to_string();
+        }
+        raw.to_string()
+    }
+
+    fn effective_embedding_model_id(config: &Config) -> String {
+        let raw = config.local_ai.embedding_model_id.trim();
+        if raw.is_empty() {
+            return DEFAULT_OLLAMA_EMBED_MODEL.to_string();
+        }
+        raw.to_string()
+    }
+
+    fn effective_stt_model_id(config: &Config) -> String {
+        let raw = config.local_ai.stt_model_id.trim();
+        if raw.is_empty() {
+            "ggml-tiny-q5_1.bin".to_string()
+        } else {
+            raw.to_string()
+        }
+    }
+
+    fn effective_tts_voice_id(config: &Config) -> String {
+        let raw = config.local_ai.tts_voice_id.trim();
+        if raw.is_empty() {
+            "en_US-lessac-medium".to_string()
+        } else {
+            raw.to_string()
+        }
+    }
+
+    fn effective_quantization(config: &Config) -> String {
+        let raw = config.local_ai.quantization.trim();
+        if raw.is_empty() {
+            "q4".to_string()
+        } else {
+            raw.to_ascii_lowercase()
+        }
+    }
+
     fn new(config: &Config) -> Self {
-        let model_id = Self::effective_model_id(config);
+        let model_id = Self::effective_chat_model_id(config);
+        let vision_model_id = Self::effective_vision_model_id(config);
+        let embedding_model_id = Self::effective_embedding_model_id(config);
         Self {
             status: parking_lot::Mutex::new(LocalAiStatus {
                 state: "idle".to_string(),
                 model_id: model_id.clone(),
+                chat_model_id: model_id.clone(),
+                vision_model_id: vision_model_id.clone(),
+                embedding_model_id: embedding_model_id.clone(),
+                stt_model_id: Self::effective_stt_model_id(config),
+                tts_voice_id: Self::effective_tts_voice_id(config),
+                quantization: Self::effective_quantization(config),
+                vision_state: "idle".to_string(),
+                embedding_state: "idle".to_string(),
+                stt_state: "idle".to_string(),
+                tts_state: "idle".to_string(),
                 provider: "ollama".to_string(),
                 download_progress: None,
                 downloaded_bytes: None,
@@ -109,10 +233,20 @@ impl LocalAiService {
     }
 
     pub fn reset_to_idle(&self, config: &Config) {
-        let model_id = Self::effective_model_id(config);
+        let model_id = Self::effective_chat_model_id(config);
         let mut status = self.status.lock();
         status.state = "idle".to_string();
         status.model_id = model_id.clone();
+        status.chat_model_id = model_id.clone();
+        status.vision_model_id = Self::effective_vision_model_id(config);
+        status.embedding_model_id = Self::effective_embedding_model_id(config);
+        status.stt_model_id = Self::effective_stt_model_id(config);
+        status.tts_voice_id = Self::effective_tts_voice_id(config);
+        status.quantization = Self::effective_quantization(config);
+        status.vision_state = "idle".to_string();
+        status.embedding_state = "idle".to_string();
+        status.stt_state = "idle".to_string();
+        status.tts_state = "idle".to_string();
         status.provider = "ollama".to_string();
         status.download_progress = None;
         status.downloaded_bytes = None;
@@ -141,6 +275,13 @@ impl LocalAiService {
 
         {
             let mut status = self.status.lock();
+            status.model_id = Self::effective_chat_model_id(config);
+            status.chat_model_id = Self::effective_chat_model_id(config);
+            status.vision_model_id = Self::effective_vision_model_id(config);
+            status.embedding_model_id = Self::effective_embedding_model_id(config);
+            status.stt_model_id = Self::effective_stt_model_id(config);
+            status.tts_voice_id = Self::effective_tts_voice_id(config);
+            status.quantization = Self::effective_quantization(config);
             status.state = "loading".to_string();
             status.warning = Some("Connecting to local Ollama runtime".to_string());
             status.download_progress = None;
@@ -150,17 +291,20 @@ impl LocalAiService {
             status.eta_seconds = None;
             status.active_backend = "ollama".to_string();
             status.backend_reason = Some("Inference delegated to Ollama runtime".to_string());
-            status.model_path = Some(format!("ollama://{}", Self::effective_model_id(config)));
+            status.model_path = Some(format!(
+                "ollama://{}",
+                Self::effective_chat_model_id(config)
+            ));
         }
 
-        if let Err(err) = self.ensure_ollama_server().await {
+        if let Err(err) = self.ensure_ollama_server(config).await {
             let mut status = self.status.lock();
             status.state = "degraded".to_string();
             status.warning = Some(err);
             return;
         }
 
-        if let Err(err) = self.ensure_model_available(config).await {
+        if let Err(err) = self.ensure_models_available(config).await {
             let mut status = self.status.lock();
             status.state = "degraded".to_string();
             status.warning = Some(err);
@@ -169,13 +313,36 @@ impl LocalAiService {
 
         let mut status = self.status.lock();
         status.state = "ready".to_string();
+        status.vision_state = if config.local_ai.preload_vision_model {
+            "ready".to_string()
+        } else {
+            "idle".to_string()
+        };
+        status.embedding_state = if config.local_ai.preload_embedding_model {
+            "ready".to_string()
+        } else {
+            "idle".to_string()
+        };
+        status.stt_state = if config.local_ai.preload_stt_model {
+            "loading".to_string()
+        } else {
+            "idle".to_string()
+        };
+        status.tts_state = if config.local_ai.preload_tts_voice {
+            "loading".to_string()
+        } else {
+            "idle".to_string()
+        };
         status.warning = None;
         status.download_progress = None;
         status.downloaded_bytes = None;
         status.total_bytes = None;
         status.download_speed_bps = None;
         status.eta_seconds = None;
-        status.model_path = Some(format!("ollama://{}", Self::effective_model_id(config)));
+        status.model_path = Some(format!(
+            "ollama://{}",
+            Self::effective_chat_model_id(config)
+        ));
     }
 
     pub async fn summarize(
@@ -236,6 +403,325 @@ impl LocalAiService {
         ))
     }
 
+    pub async fn vision_prompt(
+        &self,
+        config: &Config,
+        prompt: &str,
+        image_refs: &[String],
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        if !config.local_ai.enabled {
+            return Err("local ai is disabled".to_string());
+        }
+        if image_refs.is_empty() {
+            return Err("vision prompt requires at least one image reference".to_string());
+        }
+        self.bootstrap(config).await;
+        let vision_model = Self::effective_vision_model_id(config);
+        self.ensure_ollama_model_available(&vision_model, "vision").await?;
+
+        let images: Vec<String> = image_refs
+            .iter()
+            .filter_map(|reference| multimodal::extract_ollama_image_payload(reference))
+            .collect();
+        if images.is_empty() {
+            return Err("no valid image payloads were provided".to_string());
+        }
+
+        let body = OllamaGenerateRequest {
+            model: vision_model,
+            prompt: prompt.trim().to_string(),
+            system: Some("You are a vision model. Answer directly and concisely.".to_string()),
+            images: Some(images),
+            stream: false,
+            options: Some(OllamaGenerateOptions {
+                temperature: Some(0.2),
+                top_k: Some(30),
+                top_p: Some(0.9),
+                num_predict: max_tokens.map(|v| v as i32),
+            }),
+        };
+
+        let response = self
+            .http
+            .post(format!("{OLLAMA_BASE_URL}/api/generate"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("ollama vision request failed: {e}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "ollama vision request failed with status {}",
+                response.status()
+            ));
+        }
+
+        let payload: OllamaGenerateResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("ollama vision response parse failed: {e}"))?;
+        if payload.response.trim().is_empty() {
+            return Err("ollama vision returned empty content".to_string());
+        }
+
+        self.status.lock().vision_state = "ready".to_string();
+        Ok(payload.response)
+    }
+
+    pub async fn embed(
+        &self,
+        config: &Config,
+        inputs: &[String],
+    ) -> Result<LocalAiEmbeddingResult, String> {
+        if !config.local_ai.enabled {
+            return Err("local ai is disabled".to_string());
+        }
+        let items: Vec<String> = inputs
+            .iter()
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect();
+        if items.is_empty() {
+            return Err("embed requires at least one non-empty input".to_string());
+        }
+        self.bootstrap(config).await;
+        let embedding_model = Self::effective_embedding_model_id(config);
+        self.ensure_ollama_model_available(&embedding_model, "embedding")
+            .await?;
+
+        let response = self
+            .http
+            .post(format!("{OLLAMA_BASE_URL}/api/embed"))
+            .json(&OllamaEmbedRequest {
+                model: embedding_model.clone(),
+                input: items.clone(),
+            })
+            .send()
+            .await
+            .map_err(|e| format!("ollama embed request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            return Err(format!(
+                "ollama embed request failed with status {}",
+                response.status()
+            ));
+        }
+
+        let payload: OllamaEmbedResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("ollama embed parse failed: {e}"))?;
+        if payload.embeddings.is_empty() {
+            return Err("ollama embed returned no embeddings".to_string());
+        }
+
+        let dims = payload.embeddings.first().map(|v| v.len()).unwrap_or(0);
+        self.status.lock().embedding_state = "ready".to_string();
+        Ok(LocalAiEmbeddingResult {
+            model_id: embedding_model,
+            dimensions: dims,
+            vectors: payload.embeddings,
+        })
+    }
+
+    pub async fn transcribe(
+        &self,
+        config: &Config,
+        audio_path: &str,
+    ) -> Result<LocalAiSpeechResult, String> {
+        if !config.local_ai.enabled {
+            return Err("local ai is disabled".to_string());
+        }
+        let whisper_bin = resolve_whisper_binary()
+            .ok_or_else(|| "whisper.cpp binary not found. Set WHISPER_BIN or install whisper-cli.".to_string())?;
+        let model_path = resolve_stt_model_path(config)?;
+        let output = tokio::process::Command::new(whisper_bin)
+            .args(["-m", &model_path, "-f", audio_path])
+            .output()
+            .await
+            .map_err(|e| format!("failed to run whisper.cpp: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "whisper.cpp failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if text.is_empty() {
+            return Err("whisper.cpp returned empty transcript".to_string());
+        }
+        self.status.lock().stt_state = "ready".to_string();
+        Ok(LocalAiSpeechResult {
+            text,
+            model_id: Self::effective_stt_model_id(config),
+        })
+    }
+
+    pub async fn tts(
+        &self,
+        config: &Config,
+        text: &str,
+        output_path: Option<&str>,
+    ) -> Result<LocalAiTtsResult, String> {
+        if !config.local_ai.enabled {
+            return Err("local ai is disabled".to_string());
+        }
+        let piper_bin = resolve_piper_binary()
+            .ok_or_else(|| "piper binary not found. Set PIPER_BIN or install piper.".to_string())?;
+        let model_path = resolve_tts_voice_path(config)?;
+        let out_path = output_path
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| {
+                config_root_dir(config)
+                    .join("models")
+                    .join("local-ai")
+                    .join("tts-output.wav")
+                    .display()
+                    .to_string()
+            });
+        let parent = PathBuf::from(&out_path)
+            .parent()
+            .map(PathBuf::from)
+            .ok_or_else(|| "invalid output_path".to_string())?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("failed to create TTS output directory: {e}"))?;
+
+        let mut child = tokio::process::Command::new(piper_bin)
+            .args(["--model", &model_path, "--output_file", &out_path])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("failed to launch piper: {e}"))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            stdin
+                .write_all(text.as_bytes())
+                .await
+                .map_err(|e| format!("failed to write text to piper stdin: {e}"))?;
+        }
+        let output = child
+            .wait_with_output()
+            .await
+            .map_err(|e| format!("failed to wait for piper: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "piper failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        self.status.lock().tts_state = "ready".to_string();
+        Ok(LocalAiTtsResult {
+            output_path: out_path,
+            voice_id: Self::effective_tts_voice_id(config),
+        })
+    }
+
+    pub async fn assets_status(&self, config: &Config) -> Result<LocalAiAssetsStatus, String> {
+        let chat_model = Self::effective_chat_model_id(config);
+        let vision_model = Self::effective_vision_model_id(config);
+        let embedding_model = Self::effective_embedding_model_id(config);
+        let stt_model = Self::effective_stt_model_id(config);
+        let tts_voice = Self::effective_tts_voice_id(config);
+
+        let chat_ready = self.has_model(&chat_model).await.unwrap_or(false);
+        let vision_ready = self.has_model(&vision_model).await.unwrap_or(false);
+        let embedding_ready = self.has_model(&embedding_model).await.unwrap_or(false);
+        let stt_path = resolve_stt_model_path(config).ok();
+        let tts_path = resolve_tts_voice_path(config).ok();
+
+        Ok(LocalAiAssetsStatus {
+            chat: LocalAiAssetStatus {
+                state: if chat_ready { "ready" } else { "missing" }.to_string(),
+                id: chat_model,
+                provider: "ollama".to_string(),
+                path: None,
+                warning: None,
+            },
+            vision: LocalAiAssetStatus {
+                state: if vision_ready { "ready" } else { "missing" }.to_string(),
+                id: vision_model,
+                provider: "ollama".to_string(),
+                path: None,
+                warning: None,
+            },
+            embedding: LocalAiAssetStatus {
+                state: if embedding_ready { "ready" } else { "missing" }.to_string(),
+                id: embedding_model,
+                provider: "ollama".to_string(),
+                path: None,
+                warning: None,
+            },
+            stt: LocalAiAssetStatus {
+                state: if stt_path.is_some() { "ready" } else { "missing" }.to_string(),
+                id: stt_model,
+                provider: "whisper.cpp".to_string(),
+                path: stt_path,
+                warning: None,
+            },
+            tts: LocalAiAssetStatus {
+                state: if tts_path.is_some() { "ready" } else { "missing" }.to_string(),
+                id: tts_voice,
+                provider: "piper".to_string(),
+                path: tts_path,
+                warning: None,
+            },
+            quantization: Self::effective_quantization(config),
+        })
+    }
+
+    pub async fn download_asset(
+        &self,
+        config: &Config,
+        capability: &str,
+    ) -> Result<LocalAiAssetsStatus, String> {
+        if !config.local_ai.enabled {
+            return Err("local ai is disabled".to_string());
+        }
+
+        let capability = capability.trim().to_ascii_lowercase();
+        match capability.as_str() {
+            "chat" => {
+                self.ensure_ollama_server(config).await?;
+                let model = Self::effective_chat_model_id(config);
+                self.ensure_ollama_model_available(&model, "chat").await?;
+            }
+            "vision" => {
+                self.ensure_ollama_server(config).await?;
+                let model = Self::effective_vision_model_id(config);
+                self.ensure_ollama_model_available(&model, "vision").await?;
+            }
+            "embedding" | "embeddings" => {
+                self.ensure_ollama_server(config).await?;
+                let model = Self::effective_embedding_model_id(config);
+                self.ensure_ollama_model_available(&model, "embedding")
+                    .await?;
+            }
+            "stt" => {
+                return Err(
+                    "Automatic STT model download is not implemented yet. Place your whisper model in models/local-ai/stt or set a full path in local_ai.stt_model_id."
+                        .to_string(),
+                );
+            }
+            "tts" => {
+                return Err(
+                    "Automatic TTS voice download is not implemented yet. Place your Piper ONNX voice in models/local-ai/tts or set a full path in local_ai.tts_voice_id."
+                        .to_string(),
+                );
+            }
+            _ => {
+                return Err(
+                    "Unknown capability. Use one of: chat, vision, embedding, stt, tts."
+                        .to_string(),
+                )
+            }
+        }
+
+        self.assets_status(config).await
+    }
+
     pub fn should_run_memory_autosummary(&self, config: &Config) -> bool {
         let mut guard = self.last_memory_summary_at.lock();
         let now = std::time::Instant::now();
@@ -273,9 +759,10 @@ impl LocalAiService {
         combined_prompt.push_str(prompt);
 
         let body = OllamaGenerateRequest {
-            model: Self::effective_model_id(config),
+            model: Self::effective_chat_model_id(config),
             prompt: combined_prompt,
             system: Some(system.to_string()),
+            images: None,
             stream: false,
             options: Some(OllamaGenerateOptions {
                 temperature: Some(0.2),
@@ -327,12 +814,14 @@ impl LocalAiService {
         }
     }
 
-    async fn ensure_ollama_server(&self) -> Result<(), String> {
+    async fn ensure_ollama_server(&self, config: &Config) -> Result<(), String> {
         if self.ollama_healthy().await {
             return Ok(());
         }
 
-        if let Err(err) = tokio::process::Command::new("ollama")
+        let ollama_cmd = self.resolve_or_install_ollama_binary(config).await?;
+
+        if let Err(err) = tokio::process::Command::new(&ollama_cmd)
             .arg("--version")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -340,11 +829,12 @@ impl LocalAiService {
             .await
         {
             return Err(format!(
-                "Ollama is not installed or not on PATH ({err}). Install Ollama to use local models."
+                "Ollama binary not available ({}; error: {err}).",
+                ollama_cmd.display()
             ));
         }
 
-        let _ = tokio::process::Command::new("ollama")
+        let _ = tokio::process::Command::new(&ollama_cmd)
             .arg("serve")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -360,6 +850,89 @@ impl LocalAiService {
         Err("Ollama runtime is not reachable at http://127.0.0.1:11434. Start `ollama serve` and retry.".to_string())
     }
 
+    async fn resolve_or_install_ollama_binary(&self, config: &Config) -> Result<PathBuf, String> {
+        if let Some(from_env) = std::env::var("OLLAMA_BIN")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+        {
+            let path = PathBuf::from(from_env);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+
+        let workspace_bin = workspace_ollama_binary(config);
+        if workspace_bin.is_file() {
+            return Ok(workspace_bin);
+        }
+
+        if self.command_works(Path::new("ollama")).await {
+            return Ok(PathBuf::from("ollama"));
+        }
+
+        self.download_and_install_ollama(config).await?;
+        let installed = workspace_ollama_binary(config);
+        if installed.is_file() {
+            Ok(installed)
+        } else {
+            Err("Ollama download completed but executable is missing.".to_string())
+        }
+    }
+
+    async fn command_works(&self, command: &Path) -> bool {
+        tokio::process::Command::new(command)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    async fn download_and_install_ollama(&self, config: &Config) -> Result<(), String> {
+        let install_dir = workspace_ollama_dir(config);
+        tokio::fs::create_dir_all(&install_dir)
+            .await
+            .map_err(|e| format!("failed to create Ollama install directory: {e}"))?;
+
+        {
+            let mut status = self.status.lock();
+            status.state = "downloading".to_string();
+            status.warning = Some("Installing Ollama runtime (first run)".to_string());
+            status.download_progress = None;
+            status.downloaded_bytes = None;
+            status.total_bytes = None;
+            status.download_speed_bps = None;
+            status.eta_seconds = None;
+        }
+
+        let install_status = run_ollama_install_script().await?;
+        if !install_status.success() {
+            return Err("Ollama install script failed".to_string());
+        }
+
+        let installed = find_system_ollama_binary()
+            .ok_or_else(|| "Ollama installer finished but binary was not found".to_string())?;
+        let dest = workspace_ollama_binary(config);
+        tokio::fs::copy(&installed, &dest)
+            .await
+            .map_err(|e| format!("failed to copy Ollama binary into workspace: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("failed to set Ollama binary permissions: {e}"))?;
+        }
+
+        {
+            let mut status = self.status.lock();
+            status.warning = Some("Ollama runtime installed".to_string());
+            status.download_progress = Some(1.0);
+        }
+        Ok(())
+    }
+
     async fn ollama_healthy(&self) -> bool {
         self.http
             .get(format!("{OLLAMA_BASE_URL}/api/tags"))
@@ -370,9 +943,48 @@ impl LocalAiService {
             .unwrap_or(false)
     }
 
-    async fn ensure_model_available(&self, config: &Config) -> Result<(), String> {
-        let model_id = Self::effective_model_id(config);
-        if self.has_model(&model_id).await? {
+    async fn ensure_models_available(&self, config: &Config) -> Result<(), String> {
+        let chat_model = Self::effective_chat_model_id(config);
+        self.ensure_ollama_model_available(&chat_model, "chat").await?;
+
+        let vision_model = Self::effective_vision_model_id(config);
+        if config.local_ai.preload_vision_model {
+            self.ensure_ollama_model_available(&vision_model, "vision").await?;
+            self.status.lock().vision_state = "ready".to_string();
+        }
+
+        let embedding_model = Self::effective_embedding_model_id(config);
+        if config.local_ai.preload_embedding_model {
+            self.ensure_ollama_model_available(&embedding_model, "embedding")
+                .await?;
+            self.status.lock().embedding_state = "ready".to_string();
+        }
+
+        if config.local_ai.preload_stt_model {
+            self.status.lock().stt_state = if resolve_stt_model_path(config).is_ok() {
+                "ready".to_string()
+            } else {
+                "degraded".to_string()
+            };
+        }
+
+        if config.local_ai.preload_tts_voice {
+            self.status.lock().tts_state = if resolve_tts_voice_path(config).is_ok() {
+                "ready".to_string()
+            } else {
+                "degraded".to_string()
+            };
+        }
+
+        Ok(())
+    }
+
+    async fn ensure_ollama_model_available(
+        &self,
+        model_id: &str,
+        label: &str,
+    ) -> Result<(), String> {
+        if self.has_model(model_id).await? {
             return Ok(());
         }
 
@@ -380,8 +992,8 @@ impl LocalAiService {
             let mut status = self.status.lock();
             status.state = "downloading".to_string();
             status.warning = Some(format!(
-                "Pulling model `{}` from Ollama library",
-                model_id
+                "Pulling {} model `{}` from Ollama library",
+                label, model_id
             ));
             status.download_progress = Some(0.0);
             status.downloaded_bytes = Some(0);
@@ -395,7 +1007,7 @@ impl LocalAiService {
             .http
             .post(format!("{OLLAMA_BASE_URL}/api/pull"))
             .json(&OllamaPullRequest {
-                name: model_id.clone(),
+                name: model_id.to_string(),
                 stream: true,
             })
             .send()
@@ -437,6 +1049,12 @@ impl LocalAiService {
                 });
 
                 let mut status = self.status.lock();
+                if let Some(status_text) = event.status.as_deref() {
+                    status.warning = Some(format!("Ollama pull: {status_text}"));
+                    if status_text.eq_ignore_ascii_case("success") {
+                        status.download_progress = Some(1.0);
+                    }
+                }
                 status.downloaded_bytes = Some(completed);
                 status.total_bytes = total;
                 status.download_speed_bps = Some(speed_bps);
@@ -447,11 +1065,17 @@ impl LocalAiService {
             }
         }
 
-        if !self.has_model(&model_id).await? {
+        if !self.has_model(model_id).await? {
             return Err(format!(
                 "ollama pull finished but model `{}` was not found",
                 model_id
             ));
+        }
+
+        match label {
+            "vision" => self.status.lock().vision_state = "ready".to_string(),
+            "embedding" => self.status.lock().embedding_state = "ready".to_string(),
+            _ => {}
         }
 
         Ok(())
@@ -478,6 +1102,203 @@ impl LocalAiService {
             name == target || name.starts_with(&(target.clone() + ":"))
         }))
     }
+}
+
+fn config_root_dir(config: &Config) -> PathBuf {
+    config
+        .config_path
+        .parent()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| config.workspace_dir.clone())
+}
+
+fn workspace_ollama_dir(config: &Config) -> PathBuf {
+    config_root_dir(config).join("bin").join("ollama")
+}
+
+fn workspace_ollama_binary(config: &Config) -> PathBuf {
+    let name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    workspace_ollama_dir(config).join(name)
+}
+
+fn workspace_local_models_dir(config: &Config) -> PathBuf {
+    config_root_dir(config).join("models").join("local-ai")
+}
+
+fn resolve_whisper_binary() -> Option<PathBuf> {
+    if let Some(from_env) = std::env::var("WHISPER_BIN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        let path = PathBuf::from(from_env);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let bin_name = if cfg!(windows) {
+        "whisper-cli.exe"
+    } else {
+        "whisper-cli"
+    };
+    std::env::var_os("PATH").and_then(|path_var| {
+        std::env::split_paths(&path_var)
+            .map(|entry| entry.join(bin_name))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
+fn resolve_piper_binary() -> Option<PathBuf> {
+    if let Some(from_env) = std::env::var("PIPER_BIN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        let path = PathBuf::from(from_env);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let bin_name = if cfg!(windows) { "piper.exe" } else { "piper" };
+    std::env::var_os("PATH").and_then(|path_var| {
+        std::env::split_paths(&path_var)
+            .map(|entry| entry.join(bin_name))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
+fn resolve_stt_model_path(config: &Config) -> Result<String, String> {
+    let id = LocalAiService::effective_stt_model_id(config);
+    let path = PathBuf::from(&id);
+    if path.is_file() {
+        return Ok(path.display().to_string());
+    }
+    let candidate = workspace_local_models_dir(config).join("stt").join(&id);
+    if candidate.is_file() {
+        Ok(candidate.display().to_string())
+    } else {
+        Err(format!(
+            "STT model not found. Expected '{}' or '{}'",
+            path.display(),
+            candidate.display()
+        ))
+    }
+}
+
+fn resolve_tts_voice_path(config: &Config) -> Result<String, String> {
+    let voice_id = LocalAiService::effective_tts_voice_id(config);
+    let path = PathBuf::from(&voice_id);
+    if path.is_file() {
+        return Ok(path.display().to_string());
+    }
+    let filename = if voice_id.ends_with(".onnx") {
+        voice_id
+    } else {
+        format!("{voice_id}.onnx")
+    };
+    let candidate = workspace_local_models_dir(config).join("tts").join(filename);
+    if candidate.is_file() {
+        Ok(candidate.display().to_string())
+    } else {
+        Err(format!(
+            "TTS voice model not found. Expected '{}' or '{}'",
+            path.display(),
+            candidate.display()
+        ))
+    }
+}
+
+async fn run_ollama_install_script() -> Result<std::process::ExitStatus, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return tokio::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "irm https://ollama.com/install.ps1 | iex",
+            ])
+            .status()
+            .await
+            .map_err(|e| format!("failed to execute Ollama PowerShell installer: {e}"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // User-provided mac installer flow: curl ... | sh -mac
+        return tokio::process::Command::new("sh")
+            .arg("-lc")
+            .arg("curl -fsSL https://ollama.com/install.sh | sh -mac")
+            .status()
+            .await
+            .map_err(|e| format!("failed to execute Ollama macOS installer: {e}"));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return tokio::process::Command::new("sh")
+            .arg("-lc")
+            .arg("curl -fsSL https://ollama.com/install.sh | sh")
+            .status()
+            .await
+            .map_err(|e| format!("failed to execute Ollama Linux installer: {e}"));
+    }
+
+    #[allow(unreachable_code)]
+    Err(format!(
+        "Unsupported platform for automatic Ollama install: {}-{}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ))
+}
+
+fn find_system_ollama_binary() -> Option<PathBuf> {
+    if let Some(from_env) = std::env::var("OLLAMA_BIN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        let path = PathBuf::from(from_env);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let binary_name = if cfg!(windows) { "ollama.exe" } else { "ollama" };
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for entry in std::env::split_paths(&path_var) {
+            let candidate = entry.join(binary_name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    if cfg!(target_os = "macos") {
+        let common = [
+            PathBuf::from("/usr/local/bin/ollama"),
+            PathBuf::from("/opt/homebrew/bin/ollama"),
+        ];
+        for candidate in common {
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    if cfg!(target_os = "linux") {
+        let common = [
+            PathBuf::from("/usr/local/bin/ollama"),
+            PathBuf::from("/usr/bin/ollama"),
+        ];
+        for candidate in common {
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
 }
 
 #[derive(Debug, Serialize)]
@@ -511,6 +1332,7 @@ struct OllamaGenerateRequest {
     model: String,
     prompt: String,
     system: Option<String>,
+    images: Option<Vec<String>>,
     stream: bool,
     options: Option<OllamaGenerateOptions>,
 }
@@ -534,6 +1356,18 @@ struct OllamaGenerateResponse {
     prompt_eval_duration: Option<u64>,
     eval_count: Option<u32>,
     eval_duration: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct OllamaEmbedRequest {
+    model: String,
+    input: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaEmbedResponse {
+    #[serde(default)]
+    embeddings: Vec<Vec<f32>>,
 }
 
 fn ns_to_tps(tokens: f32, duration_ns: u64) -> Option<f32> {
@@ -564,7 +1398,7 @@ pub fn model_artifact_path(config: &Config) -> PathBuf {
         .unwrap_or_else(|| config.workspace_dir.clone());
     root.join("models")
         .join("local-ai")
-        .join(LocalAiService::effective_model_id(config).replace(':', "-") + ".ollama")
+        .join(LocalAiService::effective_chat_model_id(config).replace(':', "-") + ".ollama")
 }
 
 fn parse_suggestions(raw: &str, limit: usize) -> Vec<Suggestion> {

@@ -537,6 +537,16 @@ export interface RuntimeFlags {
 export interface LocalAiStatus {
   state: string;
   model_id: string;
+  chat_model_id: string;
+  vision_model_id: string;
+  embedding_model_id: string;
+  stt_model_id: string;
+  tts_voice_id: string;
+  quantization: string;
+  vision_state: string;
+  embedding_state: string;
+  stt_state: string;
+  tts_state: string;
   provider: string;
   download_progress?: number | null;
   downloaded_bytes?: number | null;
@@ -555,6 +565,39 @@ export interface LocalAiStatus {
 export interface LocalAiSuggestion {
   text: string;
   confidence: number;
+}
+
+export interface LocalAiAssetStatus {
+  state: string;
+  id: string;
+  provider: string;
+  path?: string | null;
+  warning?: string | null;
+}
+
+export interface LocalAiAssetsStatus {
+  chat: LocalAiAssetStatus;
+  vision: LocalAiAssetStatus;
+  embedding: LocalAiAssetStatus;
+  stt: LocalAiAssetStatus;
+  tts: LocalAiAssetStatus;
+  quantization: string;
+}
+
+export interface LocalAiEmbeddingResult {
+  model_id: string;
+  dimensions: number;
+  vectors: number[][];
+}
+
+export interface LocalAiSpeechResult {
+  text: string;
+  model_id: string;
+}
+
+export interface LocalAiTtsResult {
+  output_path: string;
+  voice_id: string;
 }
 
 function tauriErrorMessage(err: unknown): string {
@@ -747,6 +790,61 @@ export async function openhumanLocalAiPrompt(
     throw new Error('Not running in Tauri');
   }
   return await invoke('openhuman_local_ai_prompt', { prompt, maxTokens, noThink });
+}
+
+export async function openhumanLocalAiVisionPrompt(
+  prompt: string,
+  imageRefs: string[],
+  maxTokens?: number
+): Promise<CommandResponse<string>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_vision_prompt', { prompt, imageRefs, maxTokens });
+}
+
+export async function openhumanLocalAiEmbed(
+  inputs: string[]
+): Promise<CommandResponse<LocalAiEmbeddingResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_embed', { inputs });
+}
+
+export async function openhumanLocalAiTranscribe(
+  audioPath: string
+): Promise<CommandResponse<LocalAiSpeechResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_transcribe', { audioPath });
+}
+
+export async function openhumanLocalAiTts(
+  text: string,
+  outputPath?: string
+): Promise<CommandResponse<LocalAiTtsResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_tts', { text, outputPath });
+}
+
+export async function openhumanLocalAiAssetsStatus(): Promise<CommandResponse<LocalAiAssetsStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_assets_status');
+}
+
+export async function openhumanLocalAiDownloadAsset(
+  capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
+): Promise<CommandResponse<LocalAiAssetsStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_local_ai_download_asset', { capability });
 }
 
 export async function aiGetConfig(): Promise<AIPreview> {

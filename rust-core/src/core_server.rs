@@ -10,7 +10,10 @@ use serde_json::json;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::health;
-use crate::openhuman::local_ai::{self, Suggestion};
+use crate::openhuman::local_ai::{
+    self, LocalAiAssetsStatus, LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiTtsResult,
+    Suggestion,
+};
 use crate::openhuman::security::{SecretStore, SecurityPolicy};
 use crate::openhuman::{
     accessibility, doctor, hardware, integrations, migration, onboard, service,
@@ -193,6 +196,34 @@ struct LocalAiSuggestParams {
     context: Option<String>,
     #[serde(default)]
     lines: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiVisionPromptParams {
+    prompt: String,
+    image_refs: Vec<String>,
+    max_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiEmbedParams {
+    inputs: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiTranscribeParams {
+    audio_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiTtsParams {
+    text: String,
+    output_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiDownloadAssetParams {
+    capability: String,
 }
 
 async fn load_openhuman_config() -> Result<Config, String> {
@@ -612,6 +643,76 @@ async fn dispatch(
             to_json_value(command_response(
                 output,
                 vec!["local ai prompt completed".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_vision_prompt" => {
+            let p: LocalAiVisionPromptParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let output = service
+                .vision_prompt(&config, p.prompt.trim(), &p.image_refs, p.max_tokens)
+                .await?;
+            to_json_value(command_response(
+                output,
+                vec!["local ai vision prompt completed".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_embed" => {
+            let p: LocalAiEmbedParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let output: LocalAiEmbeddingResult = service.embed(&config, &p.inputs).await?;
+            to_json_value(command_response(
+                output,
+                vec!["local ai embedding completed".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_transcribe" => {
+            let p: LocalAiTranscribeParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let output: LocalAiSpeechResult = service.transcribe(&config, p.audio_path.trim()).await?;
+            to_json_value(command_response(
+                output,
+                vec!["local ai transcription completed".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_tts" => {
+            let p: LocalAiTtsParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let output: LocalAiTtsResult = service
+                .tts(&config, p.text.trim(), p.output_path.as_deref())
+                .await?;
+            to_json_value(command_response(
+                output,
+                vec!["local ai tts completed".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_assets_status" => {
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let output: LocalAiAssetsStatus = service.assets_status(&config).await?;
+            to_json_value(command_response(
+                output,
+                vec!["local ai assets status fetched".to_string()],
+            ))
+        }
+
+        "openhuman.local_ai_download_asset" => {
+            let p: LocalAiDownloadAssetParams = parse_params(params)?;
+            let config = load_openhuman_config().await?;
+            let service = local_ai::global(&config);
+            let output: LocalAiAssetsStatus =
+                service.download_asset(&config, p.capability.trim()).await?;
+            to_json_value(command_response(
+                output,
+                vec!["local ai asset download triggered".to_string()],
             ))
         }
 
