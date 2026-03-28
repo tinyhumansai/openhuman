@@ -334,6 +334,29 @@ export interface SkillSnapshot {
   state?: Record<string, unknown>;
 }
 
+export interface RuntimeDiscoveredSkill {
+  id: string;
+  name: string;
+  runtime?: string;
+  entry?: string;
+  autoStart?: boolean;
+  version?: string;
+  ignoreInProduction?: boolean;
+  description?: string;
+  platforms?: string[];
+  tickInterval?: number | null;
+}
+
+export interface RuntimeSkillOption {
+  name: string;
+  type: 'boolean' | 'text' | 'number' | 'select';
+  label: string;
+  description?: string | null;
+  default?: string | number | boolean | null;
+  options?: Array<{ label: string; value: string }> | null;
+  value?: string | number | boolean | null;
+}
+
 export interface DoctorReport {
   items: { severity: DoctorSeverity; category: string; message: string }[];
   summary: { ok: number; warnings: number; errors: number };
@@ -657,6 +680,54 @@ export interface RuntimeSkillDataStats {
   file_count: number;
 }
 
+export interface CoreCronScheduleCron {
+  kind: 'cron';
+  expr: string;
+  tz?: string | null;
+}
+
+export interface CoreCronScheduleAt {
+  kind: 'at';
+  at: string;
+}
+
+export interface CoreCronScheduleEvery {
+  kind: 'every';
+  every_ms: number;
+}
+
+export type CoreCronSchedule = CoreCronScheduleCron | CoreCronScheduleAt | CoreCronScheduleEvery;
+
+export interface CoreCronJob {
+  id: string;
+  expression: string;
+  schedule: CoreCronSchedule;
+  command: string;
+  prompt?: string | null;
+  name?: string | null;
+  job_type: 'shell' | 'agent' | string;
+  session_target: 'isolated' | 'main' | string;
+  model?: string | null;
+  enabled: boolean;
+  delivery: { mode: string; channel?: string | null; to?: string | null; best_effort: boolean };
+  delete_after_run: boolean;
+  created_at: string;
+  next_run: string;
+  last_run?: string | null;
+  last_status?: string | null;
+  last_output?: string | null;
+}
+
+export interface CoreCronRun {
+  id: number;
+  job_id: string;
+  started_at: string;
+  finished_at: string;
+  status: string;
+  output?: string | null;
+  duration_ms?: number | null;
+}
+
 function tauriErrorMessage(err: unknown): string {
   if (err instanceof Error && err.message) {
     return err.message;
@@ -773,6 +844,58 @@ export async function openhumanSetBrowserAllowAll(
     throw new Error('Not running in Tauri');
   }
   return await invoke('openhuman_set_browser_allow_all', { enabled });
+}
+
+export async function openhumanCronList(): Promise<CommandResponse<CoreCronJob[]>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_cron_list');
+}
+
+export async function openhumanCronUpdate(
+  jobId: string,
+  patch: Record<string, unknown>
+): Promise<CommandResponse<CoreCronJob>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_cron_update', { jobId, patch });
+}
+
+export async function openhumanCronRemove(
+  jobId: string
+): Promise<CommandResponse<{ job_id: string; removed: boolean }>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_cron_remove', { jobId });
+}
+
+export async function openhumanCronRun(
+  jobId: string
+): Promise<
+  CommandResponse<{
+    job_id: string;
+    status: 'ok' | 'error' | string;
+    duration_ms: number;
+    output: string;
+  }>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_cron_run', { jobId });
+}
+
+export async function openhumanCronRuns(
+  jobId: string,
+  limit = 20
+): Promise<CommandResponse<CoreCronRun[]>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('openhuman_cron_runs', { jobId, limit });
 }
 
 export async function openhumanAgentChat(
@@ -1168,6 +1291,36 @@ export async function runtimeListSkills(): Promise<SkillSnapshot[]> {
     throw new Error('Not running in Tauri');
   }
   return await invoke('runtime_list_skills');
+}
+
+export async function runtimeDiscoverSkills(): Promise<RuntimeDiscoveredSkill[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await invoke('runtime_discover_skills');
+}
+
+export async function runtimeListSkillOptions(skillId: string): Promise<RuntimeSkillOption[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  const response = await invoke<{ options?: RuntimeSkillOption[] }>('runtime_rpc', {
+    skillId,
+    method: 'options/list',
+    params: {},
+  });
+  return response.options ?? [];
+}
+
+export async function runtimeSetSkillOption(
+  skillId: string,
+  name: string,
+  value: unknown
+): Promise<void> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  await invoke('runtime_rpc', { skillId, method: 'options/set', params: { name, value } });
 }
 
 export async function runtimeIsSkillEnabled(skillId: string): Promise<boolean> {

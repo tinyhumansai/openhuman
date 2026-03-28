@@ -107,6 +107,23 @@ const SettingsHome = () => {
       onClick: () => navigateToSettings('messaging'),
       dangerous: false,
     },
+    {
+      id: 'cron-jobs',
+      title: 'Cron Jobs',
+      description: 'View and configure available scheduled jobs for runtime skills',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('cron-jobs'),
+      dangerous: false,
+    },
     // {
     //   id: "messaging",
     //   title: "Messaging",

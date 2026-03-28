@@ -345,6 +345,72 @@ pub async fn openhuman_set_browser_allow_all(
     .await
 }
 
+/// List cron jobs managed by the OpenHuman core scheduler.
+#[tauri::command]
+pub async fn openhuman_cron_list(
+    app: tauri::AppHandle,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    call_core(&app, "openhuman.cron_list", params_none()).await
+}
+
+/// Update a cron job with a partial patch payload.
+#[tauri::command]
+pub async fn openhuman_cron_update(
+    app: tauri::AppHandle,
+    job_id: String,
+    patch: serde_json::Value,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    call_core(
+        &app,
+        "openhuman.cron_update",
+        serde_json::json!({ "job_id": job_id, "patch": patch }),
+    )
+    .await
+}
+
+/// Remove a cron job by id.
+#[tauri::command]
+pub async fn openhuman_cron_remove(
+    app: tauri::AppHandle,
+    job_id: String,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    call_core(
+        &app,
+        "openhuman.cron_remove",
+        serde_json::json!({ "job_id": job_id }),
+    )
+    .await
+}
+
+/// Force-run a cron job immediately and record run metadata.
+#[tauri::command]
+pub async fn openhuman_cron_run(
+    app: tauri::AppHandle,
+    job_id: String,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    call_core(
+        &app,
+        "openhuman.cron_run",
+        serde_json::json!({ "job_id": job_id }),
+    )
+    .await
+}
+
+/// Read recent run history for a cron job.
+#[tauri::command]
+pub async fn openhuman_cron_runs(
+    app: tauri::AppHandle,
+    job_id: String,
+    limit: Option<usize>,
+) -> Result<CommandResponse<serde_json::Value>, String> {
+    call_core(
+        &app,
+        "openhuman.cron_runs",
+        serde_json::json!({ "job_id": job_id, "limit": limit }),
+    )
+    .await
+}
+
 /// Send a single message to the OpenHuman agent and return the response text.
 #[tauri::command]
 pub async fn openhuman_agent_chat(
