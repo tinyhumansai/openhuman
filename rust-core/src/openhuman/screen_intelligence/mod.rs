@@ -1,5 +1,5 @@
-use crate::openhuman::config::ScreenIntelligenceConfig;
 use crate::openhuman::config::Config;
+use crate::openhuman::config::ScreenIntelligenceConfig;
 use crate::openhuman::local_ai;
 use crate::openhuman::memory::{self, MemoryCategory};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -218,14 +218,8 @@ impl AppContext {
     fn same_as(&self, other: &AppContext) -> bool {
         self.app_name == other.app_name
             && self.window_title == other.window_title
-            && self
-                .bounds
-                .as_ref()
-                .map(|b| (b.x, b.y, b.width, b.height))
-                == other
-                    .bounds
-                    .as_ref()
-                    .map(|b| (b.x, b.y, b.width, b.height))
+            && self.bounds.as_ref().map(|b| (b.x, b.y, b.width, b.height))
+                == other.bounds.as_ref().map(|b| (b.x, b.y, b.width, b.height))
     }
 
     fn as_compound_text(&self) -> String {
@@ -1218,8 +1212,10 @@ fn now_ms() -> i64 {
 fn capture_screen_image_ref_for_context(context: Option<&AppContext>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let tmp_path =
-            std::env::temp_dir().join(format!("openhuman_screen_intelligence_{}.png", Uuid::new_v4()));
+        let tmp_path = std::env::temp_dir().join(format!(
+            "openhuman_screen_intelligence_{}.png",
+            Uuid::new_v4()
+        ));
 
         let bounds = context
             .and_then(|ctx| ctx.bounds.clone())
@@ -1228,7 +1224,10 @@ fn capture_screen_image_ref_for_context(context: Option<&AppContext>) -> Result<
             return Err("active window bounds are invalid".to_string());
         }
 
-        let rect = format!("{},{},{},{}", bounds.x, bounds.y, bounds.width, bounds.height);
+        let rect = format!(
+            "{},{},{},{}",
+            bounds.x, bounds.y, bounds.width, bounds.height
+        );
 
         let status = std::process::Command::new("screencapture")
             .arg("-x")

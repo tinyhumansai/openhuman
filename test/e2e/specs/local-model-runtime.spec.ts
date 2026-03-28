@@ -1,4 +1,3 @@
-/* eslint-disable */
 // @ts-nocheck
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';

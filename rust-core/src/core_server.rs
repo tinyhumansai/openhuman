@@ -23,7 +23,9 @@ use crate::openhuman::local_ai::{
 };
 use crate::openhuman::security::{SecretStore, SecurityPolicy};
 use crate::openhuman::tools::{ScreenshotTool, Tool};
-use crate::openhuman::{doctor, hardware, integrations, migration, onboard, screen_intelligence, service};
+use crate::openhuman::{
+    doctor, hardware, integrations, migration, onboard, screen_intelligence, service,
+};
 use chrono::Utc;
 
 pub use crate::openhuman::screen_intelligence::{
@@ -1086,7 +1088,9 @@ async fn dispatch(
         }
 
         "openhuman.accessibility_request_permissions" => {
-            let permissions = screen_intelligence::global_engine().request_permissions().await?;
+            let permissions = screen_intelligence::global_engine()
+                .request_permissions()
+                .await?;
             to_json_value(command_response(
                 permissions,
                 vec!["accessibility permissions requested".to_string()],
@@ -1144,7 +1148,9 @@ async fn dispatch(
 
         "openhuman.accessibility_input_action" => {
             let payload: InputActionParams = parse_params(params)?;
-            let result = screen_intelligence::global_engine().input_action(payload).await?;
+            let result = screen_intelligence::global_engine()
+                .input_action(payload)
+                .await?;
             to_json_value(command_response(
                 result,
                 vec!["screen intelligence input action processed".to_string()],
@@ -1185,7 +1191,8 @@ async fn dispatch(
         }
 
         "openhuman.accessibility_vision_flush" => {
-            let result: VisionFlushResult = screen_intelligence::global_engine().vision_flush().await?;
+            let result: VisionFlushResult =
+                screen_intelligence::global_engine().vision_flush().await?;
             to_json_value(command_response(
                 result,
                 vec!["screen intelligence vision flush completed".to_string()],
@@ -1734,8 +1741,10 @@ async fn execute_tools_screenshot_ref(
     args: ToolsScreenshotRefArgs,
 ) -> Result<serde_json::Value, String> {
     let raw = call_method("openhuman.accessibility_capture_image_ref", json!({})).await?;
-    let payload: CommandResponse<CaptureImageRefResult> = serde_json::from_value(raw)
-        .map_err(|e| format!("failed to decode screen intelligence capture_image_ref response: {e}"))?;
+    let payload: CommandResponse<CaptureImageRefResult> =
+        serde_json::from_value(raw).map_err(|e| {
+            format!("failed to decode screen intelligence capture_image_ref response: {e}")
+        })?;
 
     let mut logs = payload.logs;
     logs.push("tools.screenshot-ref executed".to_string());
@@ -1750,7 +1759,9 @@ async fn execute_tools_screenshot_ref(
                 output_path.display()
             ));
         } else {
-            return Err("screen intelligence capture_image_ref did not return image_ref".to_string());
+            return Err(
+                "screen intelligence capture_image_ref did not return image_ref".to_string(),
+            );
         }
     }
 
