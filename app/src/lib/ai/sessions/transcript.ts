@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-
+import { callCoreRpc } from '../../../services/coreRpcClient';
 import type {
   CompactionMarker,
   SessionEndMarker,
@@ -24,7 +23,10 @@ export async function writeSessionHeader(sessionId: string): Promise<void> {
     timestamp: new Date().toISOString(),
   };
 
-  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(header) });
+  await callCoreRpc<boolean>({
+    method: 'ai.sessions_append_transcript',
+    params: { session_id: sessionId, line: JSON.stringify(header) },
+  });
 }
 
 /**
@@ -40,7 +42,10 @@ export async function appendMessage(
     message,
   };
 
-  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(entry) });
+  await callCoreRpc<boolean>({
+    method: 'ai.sessions_append_transcript',
+    params: { session_id: sessionId, line: JSON.stringify(entry) },
+  });
 }
 
 /**
@@ -60,14 +65,20 @@ export async function appendCompactionMarker(
     preservedMessages,
   };
 
-  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(marker) });
+  await callCoreRpc<boolean>({
+    method: 'ai.sessions_append_transcript',
+    params: { session_id: sessionId, line: JSON.stringify(marker) },
+  });
 }
 
 /**
  * Read and parse all lines from a session transcript.
  */
 export async function readTranscript(sessionId: string): Promise<TranscriptLine[]> {
-  const lines = await invoke<string[]>('ai_sessions_read_transcript', { sessionId });
+  const lines = await callCoreRpc<string[]>({
+    method: 'ai.sessions_read_transcript',
+    params: { session_id: sessionId },
+  });
 
   return lines
     .map(line => {
@@ -101,7 +112,10 @@ export async function appendSessionEndMarker(
     memoryCaptured,
   };
 
-  await invoke('ai_sessions_append_transcript', { sessionId, line: JSON.stringify(marker) });
+  await callCoreRpc<boolean>({
+    method: 'ai.sessions_append_transcript',
+    params: { session_id: sessionId, line: JSON.stringify(marker) },
+  });
 }
 
 /**

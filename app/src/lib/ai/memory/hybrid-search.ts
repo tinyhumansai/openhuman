@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-
+import { callCoreRpc } from '../../../services/coreRpcClient';
 import type { EmbeddingProvider } from '../providers/embeddings';
 import { DEFAULT_MEMORY_CONFIG, type MemoryConfig, type SearchResult } from './types';
 
@@ -64,9 +63,9 @@ export async function hybridSearch(
   const { vectorWeight, textWeight, maxResults } = { ...DEFAULT_MEMORY_CONFIG, ...config };
 
   // Run FTS5 search
-  const ftsResults = await invoke<FtsSearchResult[]>('ai_memory_fts_search', {
-    query,
-    limit: maxResults * 2,
+  const ftsResults = await callCoreRpc<FtsSearchResult[]>({
+    method: 'ai.memory_fts_search',
+    params: { query, limit: maxResults * 2 },
   });
 
   // Normalize FTS scores to 0-1 range
@@ -82,7 +81,9 @@ export async function hybridSearch(
   if (embeddingProvider) {
     try {
       const queryEmbedding = await embeddingProvider.embedQuery(query);
-      const allEmbeddings = await invoke<[string, number[]][]>('ai_memory_get_all_embeddings');
+      const allEmbeddings = await callCoreRpc<[string, number[]][]>({
+        method: 'ai.memory_get_all_embeddings',
+      });
 
       for (const [chunkId, embeddingBytes] of allEmbeddings) {
         const embedding = decodeEmbedding(embeddingBytes);

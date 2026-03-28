@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useState } from 'react';
 
 import { apiClient } from '../services/apiClient';
+import { callCoreRpc } from '../services/coreRpcClient';
 import type { AIStatus } from '../store/aiSlice';
 import { useAppSelector } from '../store/hooks';
 import { aiListMemoryFiles } from '../utils/tauriCommands';
@@ -48,7 +48,9 @@ export function useIntelligenceStats(): IntelligenceStats {
 
     // Fetch local stats (Tauri invoke)
     try {
-      const index = await invoke<Record<string, SessionEntry>>('ai_sessions_load_index');
+      const index = await callCoreRpc<Record<string, SessionEntry>>({
+        method: 'ai.sessions_load_index',
+      });
       const entries = Object.values(index);
       setSessions({
         total: entries.length,

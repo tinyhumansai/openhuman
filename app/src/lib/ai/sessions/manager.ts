@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-
+import { callCoreRpc } from '../../../services/coreRpcClient';
 import type { ConstitutionConfig } from '../constitution/types';
 import type { MemoryManager } from '../memory/manager';
 import type { LLMProvider, Message } from '../providers/interface';
@@ -39,7 +38,7 @@ export class SessionManager {
 
   /** Initialize the sessions directory */
   async init(): Promise<void> {
-    await invoke('ai_sessions_init');
+    await callCoreRpc<boolean>({ method: 'ai.sessions_init' });
   }
 
   /** Get the current session ID */
@@ -85,7 +84,10 @@ export class SessionManager {
     await writeSessionHeader(sessionId);
 
     // Update index
-    await invoke('ai_sessions_update_index', { sessionId, entry });
+    await callCoreRpc<boolean>({
+      method: 'ai.sessions_update_index',
+      params: { session_id: sessionId, entry },
+    });
 
     this.currentSessionId = sessionId;
     this.currentEntry = entry;
@@ -99,7 +101,9 @@ export class SessionManager {
    */
   async loadSession(sessionId: string): Promise<void> {
     // Load session entry from index
-    const index = await invoke<Record<string, SessionEntry>>('ai_sessions_load_index');
+    const index = await callCoreRpc<Record<string, SessionEntry>>({
+      method: 'ai.sessions_load_index',
+    });
     const entry = index[sessionId];
     if (!entry) {
       throw new Error(`Session not found: ${sessionId}`);
@@ -174,9 +178,9 @@ export class SessionManager {
     }
     this.currentEntry.updatedAt = Date.now();
 
-    await invoke('ai_sessions_update_index', {
-      sessionId: this.currentSessionId,
-      entry: this.currentEntry,
+    await callCoreRpc<boolean>({
+      method: 'ai.sessions_update_index',
+      params: { session_id: this.currentSessionId, entry: this.currentEntry },
     });
   }
 
@@ -221,9 +225,9 @@ export class SessionManager {
     this.currentEntry.memoryFlushAt = Date.now();
     this.currentEntry.updatedAt = Date.now();
 
-    await invoke('ai_sessions_update_index', {
-      sessionId: this.currentSessionId,
-      entry: this.currentEntry,
+    await callCoreRpc<boolean>({
+      method: 'ai.sessions_update_index',
+      params: { session_id: this.currentSessionId, entry: this.currentEntry },
     });
 
     return true;
@@ -265,9 +269,9 @@ export class SessionManager {
           this.currentEntry.memoryFlushCompactionCount = this.currentEntry.compactionCount + 1;
           this.currentEntry.updatedAt = Date.now();
 
-          await invoke('ai_sessions_update_index', {
-            sessionId: this.currentSessionId,
-            entry: this.currentEntry,
+          await callCoreRpc<boolean>({
+            method: 'ai.sessions_update_index',
+            params: { session_id: this.currentSessionId, entry: this.currentEntry },
           });
         }
       } catch {
@@ -290,7 +294,9 @@ export class SessionManager {
    * List all sessions.
    */
   async listSessions(): Promise<SessionEntry[]> {
-    const index = await invoke<Record<string, SessionEntry>>('ai_sessions_load_index');
+    const index = await callCoreRpc<Record<string, SessionEntry>>({
+      method: 'ai.sessions_load_index',
+    });
     return Object.values(index).sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
@@ -298,7 +304,7 @@ export class SessionManager {
    * Delete a session.
    */
   async deleteSession(sessionId: string): Promise<void> {
-    await invoke('ai_sessions_delete', { sessionId });
+    await callCoreRpc<boolean>({ method: 'ai.sessions_delete', params: { session_id: sessionId } });
     if (this.currentSessionId === sessionId) {
       this.currentSessionId = null;
       this.currentEntry = null;

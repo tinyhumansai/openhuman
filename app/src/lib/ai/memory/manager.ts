@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-
+import { callCoreRpc } from '../../../services/coreRpcClient';
 import {
   aiListMemoryFiles,
   aiReadMemoryFile,
@@ -43,7 +42,7 @@ export class MemoryManager {
 
   /** Initialize the memory database */
   async init(): Promise<void> {
-    await invoke('ai_memory_init');
+    await callCoreRpc<boolean>({ method: 'ai.memory_init' });
     this.initialized = true;
   }
 
@@ -62,8 +61,9 @@ export class MemoryManager {
     const now = Date.now();
 
     // Check if file has changed
-    const existingFile = await invoke<FileRecord | null>('ai_memory_get_file', {
-      path: relativePath,
+    const existingFile = await callCoreRpc<FileRecord | null>({
+      method: 'ai.memory_get_file',
+      params: { path: relativePath },
     });
 
     if (existingFile && existingFile.hash === hash) {
@@ -74,7 +74,10 @@ export class MemoryManager {
     const chunks = await chunkMarkdown(content, this.config);
 
     // Delete old chunks for this file
-    await invoke('ai_memory_delete_chunks_by_path', { path: relativePath });
+    await callCoreRpc<number>({
+      method: 'ai.memory_delete_chunks_by_path',
+      params: { path: relativePath },
+    });
 
     // Store new chunks
     let indexed = 0;
@@ -108,7 +111,10 @@ export class MemoryManager {
         updated_at: now,
       };
 
-      await invoke('ai_memory_upsert_chunk', { chunk: chunkRecord });
+      await callCoreRpc<boolean>({
+        method: 'ai.memory_upsert_chunk',
+        params: { chunk: chunkRecord },
+      });
       indexed++;
     }
 
@@ -120,7 +126,7 @@ export class MemoryManager {
       mtime: now,
       size: content.length,
     };
-    await invoke('ai_memory_upsert_file', { file: fileRecord });
+    await callCoreRpc<boolean>({ method: 'ai.memory_upsert_file', params: { file: fileRecord } });
 
     return indexed;
   }
@@ -233,11 +239,11 @@ export class MemoryManager {
 
   /** Set metadata */
   async setMeta(key: string, value: string): Promise<void> {
-    await invoke('ai_memory_set_meta', { key, value });
+    await callCoreRpc<boolean>({ method: 'ai.memory_set_meta', params: { key, value } });
   }
 
   /** Get metadata */
   async getMeta(key: string): Promise<string | null> {
-    return invoke<string | null>('ai_memory_get_meta', { key });
+    return callCoreRpc<string | null>({ method: 'ai.memory_get_meta', params: { key } });
   }
 }

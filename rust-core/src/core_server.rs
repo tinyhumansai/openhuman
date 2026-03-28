@@ -1187,6 +1187,160 @@ async fn dispatch(
             to_json_value(wrote)
         }
 
+        "ai.memory_init" => {
+            let initialized = crate::ai::ai_memory_init().await?;
+            to_json_value(initialized)
+        }
+
+        "ai.memory_get_file" => {
+            #[derive(Debug, Deserialize)]
+            struct MemoryGetFileParams {
+                path: String,
+            }
+
+            let payload: MemoryGetFileParams = parse_params(params)?;
+            let file = crate::ai::ai_memory_get_file(payload.path).await?;
+            to_json_value(file)
+        }
+
+        "ai.memory_delete_chunks_by_path" => {
+            #[derive(Debug, Deserialize)]
+            struct MemoryDeleteChunksByPathParams {
+                path: String,
+            }
+
+            let payload: MemoryDeleteChunksByPathParams = parse_params(params)?;
+            let deleted = crate::ai::ai_memory_delete_chunks_by_path(payload.path).await?;
+            to_json_value(deleted)
+        }
+
+        "ai.memory_upsert_chunk" => {
+            #[derive(Debug, Deserialize)]
+            struct MemoryUpsertChunkParams {
+                chunk: crate::ai::ChunkRecord,
+            }
+
+            let payload: MemoryUpsertChunkParams = parse_params(params)?;
+            let upserted = crate::ai::ai_memory_upsert_chunk(payload.chunk).await?;
+            to_json_value(upserted)
+        }
+
+        "ai.memory_upsert_file" => {
+            #[derive(Debug, Deserialize)]
+            struct MemoryUpsertFileParams {
+                file: crate::ai::FileRecord,
+            }
+
+            let payload: MemoryUpsertFileParams = parse_params(params)?;
+            let upserted = crate::ai::ai_memory_upsert_file(payload.file).await?;
+            to_json_value(upserted)
+        }
+
+        "ai.memory_set_meta" => {
+            #[derive(Debug, Deserialize)]
+            struct MemorySetMetaParams {
+                key: String,
+                value: String,
+            }
+
+            let payload: MemorySetMetaParams = parse_params(params)?;
+            let set = crate::ai::ai_memory_set_meta(payload.key, payload.value).await?;
+            to_json_value(set)
+        }
+
+        "ai.memory_get_meta" => {
+            #[derive(Debug, Deserialize)]
+            struct MemoryGetMetaParams {
+                key: String,
+            }
+
+            let payload: MemoryGetMetaParams = parse_params(params)?;
+            let value = crate::ai::ai_memory_get_meta(payload.key).await?;
+            to_json_value(value)
+        }
+
+        "ai.memory_fts_search" => {
+            #[derive(Debug, Deserialize)]
+            struct MemoryFtsSearchParams {
+                query: String,
+                limit: i64,
+            }
+
+            let payload: MemoryFtsSearchParams = parse_params(params)?;
+            let results = crate::ai::ai_memory_fts_search(payload.query, payload.limit).await?;
+            to_json_value(results)
+        }
+
+        "ai.memory_get_all_embeddings" => {
+            let embeddings = crate::ai::ai_memory_get_all_embeddings().await?;
+            to_json_value(embeddings)
+        }
+
+        "ai.sessions_init" => {
+            let initialized = crate::ai::sessions::ai_sessions_init().await?;
+            to_json_value(initialized)
+        }
+
+        "ai.sessions_load_index" => {
+            let index = crate::ai::sessions::ai_sessions_load_index().await?;
+            to_json_value(index)
+        }
+
+        "ai.sessions_update_index" => {
+            #[derive(Debug, Deserialize)]
+            struct UpdateSessionIndexParams {
+                session_id: String,
+                entry: crate::ai::sessions::SessionIndexEntry,
+            }
+
+            let payload: UpdateSessionIndexParams = parse_params(params)?;
+            let updated =
+                crate::ai::sessions::ai_sessions_update_index(payload.session_id, payload.entry)
+                    .await?;
+            to_json_value(updated)
+        }
+
+        "ai.sessions_append_transcript" => {
+            #[derive(Debug, Deserialize)]
+            struct AppendTranscriptParams {
+                session_id: String,
+                line: String,
+            }
+
+            let payload: AppendTranscriptParams = parse_params(params)?;
+            let appended =
+                crate::ai::sessions::ai_sessions_append_transcript(payload.session_id, payload.line)
+                    .await?;
+            to_json_value(appended)
+        }
+
+        "ai.sessions_read_transcript" => {
+            #[derive(Debug, Deserialize)]
+            struct ReadTranscriptParams {
+                session_id: String,
+            }
+
+            let payload: ReadTranscriptParams = parse_params(params)?;
+            let lines = crate::ai::sessions::ai_sessions_read_transcript(payload.session_id).await?;
+            to_json_value(lines)
+        }
+
+        "ai.sessions_delete" => {
+            #[derive(Debug, Deserialize)]
+            struct DeleteSessionParams {
+                session_id: String,
+            }
+
+            let payload: DeleteSessionParams = parse_params(params)?;
+            let deleted = crate::ai::sessions::ai_sessions_delete(payload.session_id).await?;
+            to_json_value(deleted)
+        }
+
+        "ai.sessions_list" => {
+            let sessions = crate::ai::sessions::ai_sessions_list().await?;
+            to_json_value(sessions)
+        }
+
         "openhuman.encrypt_secret" => {
             let p: EncryptSecretParams = parse_params(params)?;
             let config = load_openhuman_config().await?;
