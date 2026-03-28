@@ -1230,7 +1230,13 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         idx += 1;
     }
 
+    let thread_stack_size = std::env::var("OPENHUMAN_CORE_THREAD_STACK_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(8 * 1024 * 1024);
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(thread_stack_size)
         .enable_all()
         .build()?;
     runtime.block_on(run_server(port))

@@ -142,7 +142,9 @@ const Home = () => {
                 </div>
 
                 <div className="mt-2 flex items-center justify-between text-xs">
-                  <span className="text-stone-300">{localAiStatus?.model_id ?? 'qwen3-1.7b'}</span>
+                  <span className="text-stone-300">
+                    {localAiStatus?.model_id ?? 'gemma3:4b-it-qat'}
+                  </span>
                   <span className="text-stone-200 capitalize">
                     {localAiStatus?.state ?? 'starting'}
                   </span>

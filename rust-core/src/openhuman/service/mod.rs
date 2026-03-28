@@ -79,6 +79,7 @@ fn daemon_program_args(exe: &std::path::Path) -> Vec<String> {
     let file_name = raw_file_name.to_ascii_lowercase();
     let standalone_core_binary = !is_current_executable(exe)
         && (file_name.contains("openhuman-core")
+            || file_name.starts_with("openhuman-")
             || file_name.starts_with("openhuman-core-")
             || raw_file_name == "openhuman"
             || raw_file_name == "openhuman.exe");
@@ -154,9 +155,25 @@ pub fn start(config: &Config) -> Result<ServiceStatus> {
         let domain = macos_gui_domain()?;
         let primary_target = macos_target(SERVICE_LABEL)?;
 
+        if !plist.exists() {
+            log::info!(
+                "[service] LaunchAgent plist missing, installing it before start: {}",
+                plist.display()
+            );
+            install_macos(config)?;
+        }
+
+        validate_macos_plist(&plist)?;
+
         // Prefer modern launchctl lifecycle commands on macOS.
         if !is_service_loaded_macos()? {
             log::info!("[service] Loading macOS LaunchAgent service");
+            run_best_effort(
+                Command::new("launchctl")
+                    .arg("bootout")
+                    .arg(&domain)
+                    .arg(&primary_target),
+            );
             let bootstrap_ok = run_checked(
                 Command::new("launchctl")
                     .arg("bootstrap")
@@ -492,9 +509,9 @@ fn install_macos(config: &Config) -> Result<()> {
         .collect::<String>();
 
     let plist = format!(
-        r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
-<plist version=\"1.0\">
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
 <dict>
   <key>Label</key>
   <string>{label}</string>
@@ -635,6 +652,11 @@ fn macos_target(label: &str) -> Result<String> {
     Ok(format!("{}/{}", macos_gui_domain()?, label))
 }
 
+fn validate_macos_plist(path: &std::path::Path) -> Result<()> {
+    run_checked(Command::new("plutil").arg("-lint").arg(path))
+        .with_context(|| format!("Invalid launch agent plist: {}", path.display()))
+}
+
 fn linux_service_file(config: &Config) -> Result<PathBuf> {
     let config_dir = config
         .config_path
@@ -678,33 +700,35 @@ fn run_best_effort(cmd: &mut Command) {
     }
 }
 
+fn run_check_silent(cmd: &mut Command) -> bool {
+    cmd.stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// Check if the macOS LaunchAgent service is loaded (regardless of running state)
 fn is_service_loaded_macos() -> Result<bool> {
-    if run_checked(
+    if run_check_silent(
         Command::new("launchctl")
             .arg("print")
             .arg(macos_target(SERVICE_LABEL)?),
-    )
-    .is_ok()
-    {
+    ) {
         return Ok(true);
     }
-    if run_checked(
+    if run_check_silent(
         Command::new("launchctl")
             .arg("print")
             .arg(macos_target(LEGACY_SERVICE_LABEL)?),
-    )
-    .is_ok()
-    {
+    ) {
         return Ok(true);
     }
-    if run_checked(
+    if run_check_silent(
         Command::new("launchctl")
             .arg("print")
             .arg(macos_target(LEGACY_APP_LABEL)?),
-    )
-    .is_ok()
-    {
+    ) {
         return Ok(true);
     }
     Ok(false)
