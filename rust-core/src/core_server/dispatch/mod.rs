@@ -1,4 +1,16 @@
+#[cfg(feature = "tauri-host")]
 mod ai_rpc;
+#[cfg(not(feature = "tauri-host"))]
+mod ai_rpc {
+    use crate::core_server::types::InvocationResult;
+
+    pub async fn try_dispatch(
+        _method: &str,
+        _params: serde_json::Value,
+    ) -> Option<Result<InvocationResult, String>> {
+        None
+    }
+}
 mod core;
 mod memory;
 mod openhuman;

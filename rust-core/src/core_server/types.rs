@@ -33,12 +33,6 @@ impl InvocationResult {
         })
     }
 
-    pub fn value_only(value: serde_json::Value) -> Self {
-        Self {
-            value,
-            logs: vec![],
-        }
-    }
 }
 
 pub fn invocation_to_rpc_json(inv: InvocationResult) -> serde_json::Value {
@@ -212,6 +206,7 @@ pub struct AuthListProviderCredentialsParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct SocketConnectParams {
     pub url: String,
     pub token: String,
@@ -219,6 +214,7 @@ pub struct SocketConnectParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 pub struct SocketEmitParams {
     pub event: String,
     #[serde(default)]

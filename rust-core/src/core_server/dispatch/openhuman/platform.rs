@@ -63,8 +63,10 @@ pub async fn try_dispatch(
 
         "openhuman.accessibility_start_session" => Some(
             async move {
-                let _payload: StartSessionParams = parse_params(params)?;
-                let session = screen_intelligence::global_engine().enable().await?;
+                let payload: StartSessionParams = parse_params(params)?;
+                let session = screen_intelligence::global_engine()
+                    .start_session(payload)
+                    .await?;
                 InvocationResult::with_logs(
                     session,
                     vec!["screen intelligence enabled".to_string()],

@@ -1,5 +1,7 @@
 use serde::de::DeserializeOwned;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+#[cfg(feature = "tauri-host")]
 use std::sync::{Arc, OnceLock};
 
 use crate::auth::AuthService;

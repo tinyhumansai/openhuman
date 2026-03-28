@@ -33,3 +33,5 @@ todo
 [ ] Add icon and app name to the various permission settings
 [ ] add self updated based on github release
 [ ] for each skill show information on how much data has been synced locally and information on how much syncs have happened so far etc..
+[ ] redo the docs once everything is done.
+[ ] remove unwanted feature flags from the rust binary
