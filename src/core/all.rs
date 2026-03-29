@@ -39,6 +39,7 @@ fn registry() -> &'static [RegisteredController] {
 fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
     controllers.extend(crate::openhuman::doctor::all_doctor_registered_controllers());
     controllers.extend(crate::openhuman::encryption::all_encryption_registered_controllers());
@@ -50,12 +51,20 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
     controllers.extend(crate::openhuman::local_ai::all_local_ai_registered_controllers());
+    controllers.extend(
+        crate::openhuman::screen_intelligence::all_screen_intelligence_registered_controllers(),
+    );
+    controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
+    controllers.extend(crate::openhuman::workspace::all_workspace_registered_controllers());
+    controllers.extend(crate::openhuman::tray::all_tray_registered_controllers());
+    controllers.extend(crate::openhuman::tools::all_tools_registered_controllers());
     controllers
 }
 
 fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
+    schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
@@ -67,6 +76,13 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
     schemas.extend(crate::openhuman::local_ai::all_local_ai_controller_schemas());
+    schemas.extend(
+        crate::openhuman::screen_intelligence::all_screen_intelligence_controller_schemas(),
+    );
+    schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
+    schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
+    schemas.extend(crate::openhuman::tray::all_tray_controller_schemas());
+    schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas
 }
 

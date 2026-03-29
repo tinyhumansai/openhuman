@@ -25,6 +25,7 @@ pub mod proxy_config;
 pub mod pushover;
 pub mod schedule;
 pub mod schema;
+mod schemas;
 pub mod screenshot;
 pub mod shell;
 pub mod traits;
@@ -56,6 +57,10 @@ pub use pushover::PushoverTool;
 pub use schedule::ScheduleTool;
 #[allow(unused_imports)]
 pub use schema::{CleaningStrategy, SchemaCleanr};
+pub use schemas::{
+    all_controller_schemas as all_tools_controller_schemas,
+    all_registered_controllers as all_tools_registered_controllers,
+};
 pub use screenshot::ScreenshotTool;
 pub use shell::ShellTool;
 pub use traits::Tool;

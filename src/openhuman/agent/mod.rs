@@ -8,7 +8,12 @@ pub mod loop_;
 pub mod memory_loader;
 pub mod multimodal;
 pub mod prompt;
+mod schemas;
 pub mod traits;
+pub use schemas::{
+    all_controller_schemas as all_agent_controller_schemas,
+    all_registered_controllers as all_agent_registered_controllers,
+};
 
 #[cfg(test)]
 mod tests;

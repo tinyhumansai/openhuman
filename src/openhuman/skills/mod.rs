@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 pub mod loader;
 pub mod manifest;
 pub mod preferences;
+mod schemas;
 pub mod types;
 pub mod utils;
 
@@ -15,6 +16,10 @@ pub mod qjs_skill_instance;
 pub mod quickjs_libs;
 pub mod skill_registry;
 pub mod socket_manager;
+pub use schemas::{
+    all_controller_schemas as all_skills_controller_schemas,
+    all_registered_controllers as all_skills_registered_controllers,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Skill {

@@ -1,9 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::openhuman::screen_intelligence::{
-    InputActionParams, PermissionRequestParams, StartSessionParams, StopSessionParams,
-};
 use crate::rpc::RpcOutcome;
 
 fn parse_params<T: DeserializeOwned>(params: serde_json::Value) -> Result<T, String> {
@@ -12,11 +9,6 @@ fn parse_params<T: DeserializeOwned>(params: serde_json::Value) -> Result<T, Str
 
 fn rpc_json<T: Serialize>(outcome: RpcOutcome<T>) -> Result<serde_json::Value, String> {
     outcome.into_cli_compatible_json()
-}
-
-#[derive(Debug, Deserialize)]
-struct AccessibilityVisionRecentParams {
-    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,129 +125,6 @@ pub async fn try_dispatch(
 
         "openhuman.security_policy_info" => Some(rpc_json(
             crate::openhuman::security::rpc::security_policy_info(),
-        )),
-
-        "openhuman.accessibility_status" => Some(
-            async move {
-                rpc_json(crate::openhuman::screen_intelligence::rpc::accessibility_status().await?)
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_request_permissions" => Some(
-            async move {
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_request_permissions()
-                        .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_request_permission" => Some(
-            async move {
-                let payload: PermissionRequestParams = parse_params(params)?;
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_request_permission(
-                        payload,
-                    )
-                    .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_start_session" => Some(
-            async move {
-                let payload: StartSessionParams = parse_params(params)?;
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_start_session(
-                        payload,
-                    )
-                    .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_stop_session" => Some(
-            async move {
-                let payload: StopSessionParams = parse_params(params)?;
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_stop_session(payload)
-                        .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_capture_now" => Some(
-            async move {
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_capture_now().await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_capture_image_ref" => Some(
-            async move {
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_capture_image_ref()
-                        .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_input_action" => Some(
-            async move {
-                let payload: InputActionParams = parse_params(params)?;
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_input_action(payload)
-                        .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_vision_recent" => Some(
-            async move {
-                let payload: AccessibilityVisionRecentParams = parse_params(params)?;
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_vision_recent(
-                        payload.limit,
-                    )
-                    .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.accessibility_vision_flush" => Some(
-            async move {
-                rpc_json(
-                    crate::openhuman::screen_intelligence::rpc::accessibility_vision_flush()
-                        .await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.socket.connect" => Some(Err(
-            "native skill runtime and socket manager are not available in this build".to_string(),
-        )),
-
-        "openhuman.socket.disconnect" => Some(Err(
-            "native skill runtime and socket manager are not available in this build".to_string(),
-        )),
-
-        "openhuman.socket.state" => Some(Err(
-            "native skill runtime and socket manager are not available in this build".to_string(),
-        )),
-
-        "openhuman.socket.emit" => Some(Err(
-            "native skill runtime and socket manager are not available in this build".to_string(),
         )),
 
         _ => None,

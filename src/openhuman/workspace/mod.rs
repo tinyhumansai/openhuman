@@ -1,5 +1,11 @@
 //! Workspace layout and bootstrap files (CLI `init` and similar entrypoints).
 
+mod schemas;
+pub use schemas::{
+    all_controller_schemas as all_workspace_controller_schemas,
+    all_registered_controllers as all_workspace_registered_controllers,
+};
+
 use serde_json::json;
 
 use crate::openhuman::config::rpc as config_rpc;
