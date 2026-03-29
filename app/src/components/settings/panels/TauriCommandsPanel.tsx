@@ -1291,9 +1291,7 @@ const TauriCommandsPanel = () => {
             collapsible={true}
             defaultExpanded={!isCollapsed('network-infrastructure')}
             hasChanges={false}
-            loading={
-              operationLoading?.includes('Tunnel') || operationLoading?.includes('Memory')
-            }>
+            loading={operationLoading?.includes('Tunnel') || operationLoading?.includes('Memory')}>
             <div className="grid gap-8">
               <InputGroup
                 title="Tunnel Configuration"
