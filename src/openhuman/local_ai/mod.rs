@@ -12,8 +12,8 @@ mod types;
 
 pub use service::LocalAiService;
 pub use types::{
-    LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiEmbeddingResult, LocalAiSpeechResult,
-    LocalAiStatus, LocalAiTtsResult, Suggestion,
+    LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiDownloadProgressItem, LocalAiDownloadsProgress,
+    LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiStatus, LocalAiTtsResult, Suggestion,
 };
 
 use std::path::PathBuf;

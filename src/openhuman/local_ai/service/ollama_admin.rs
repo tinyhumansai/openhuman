@@ -8,9 +8,7 @@ use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::ollama_api::{
     OllamaPullEvent, OllamaPullRequest, OllamaTagsResponse, OLLAMA_BASE_URL,
 };
-use crate::openhuman::local_ai::paths::{
-    resolve_stt_model_path, resolve_tts_voice_path, workspace_ollama_binary,
-};
+use crate::openhuman::local_ai::paths::workspace_ollama_binary;
 
 use super::LocalAiService;
 
@@ -170,19 +168,11 @@ impl LocalAiService {
         }
 
         if config.local_ai.preload_stt_model {
-            self.status.lock().stt_state = if resolve_stt_model_path(config).is_ok() {
-                "ready".to_string()
-            } else {
-                "degraded".to_string()
-            };
+            self.ensure_stt_asset_available(config).await?;
         }
 
         if config.local_ai.preload_tts_voice {
-            self.status.lock().tts_state = if resolve_tts_voice_path(config).is_ok() {
-                "ready".to_string()
-            } else {
-                "degraded".to_string()
-            };
+            self.ensure_tts_asset_available(config).await?;
         }
 
         Ok(())

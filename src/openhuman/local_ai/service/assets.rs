@@ -186,7 +186,10 @@ impl LocalAiService {
         self.assets_status(config).await
     }
 
-    async fn ensure_stt_asset_available(&self, config: &Config) -> Result<(), String> {
+    pub(in crate::openhuman::local_ai::service) async fn ensure_stt_asset_available(
+        &self,
+        config: &Config,
+    ) -> Result<(), String> {
         if resolve_stt_model_path(config).is_ok() {
             self.status.lock().stt_state = "ready".to_string();
             return Ok(());
@@ -206,7 +209,10 @@ impl LocalAiService {
         Ok(())
     }
 
-    async fn ensure_tts_asset_available(&self, config: &Config) -> Result<(), String> {
+    pub(in crate::openhuman::local_ai::service) async fn ensure_tts_asset_available(
+        &self,
+        config: &Config,
+    ) -> Result<(), String> {
         if resolve_tts_voice_path(config).is_ok() {
             self.status.lock().tts_state = "ready".to_string();
             return Ok(());

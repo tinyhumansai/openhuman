@@ -39,3 +39,32 @@ pub(crate) fn sanitize_inline_completion(raw: &str) -> String {
 
     cleaned
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_suggestions_strips_numbering_and_respects_limit() {
+        let raw = "1. First idea\n- Second idea\n3) Third idea\n";
+        let out = parse_suggestions(raw, 2);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "First idea");
+        assert_eq!(out[1].text, "Second idea");
+        assert!((out[0].confidence - 0.65).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn sanitize_inline_completion_handles_placeholders_and_clamps_length() {
+        assert_eq!(sanitize_inline_completion("none"), "");
+        assert_eq!(sanitize_inline_completion("n/a"), "");
+        assert_eq!(
+            sanitize_inline_completion("\"- hello world\""),
+            "hello world"
+        );
+
+        let long = "a".repeat(256);
+        let out = sanitize_inline_completion(&long);
+        assert_eq!(out.chars().count(), 128);
+    }
+}

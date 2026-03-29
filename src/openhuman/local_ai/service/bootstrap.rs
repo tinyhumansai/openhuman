@@ -144,16 +144,12 @@ impl LocalAiService {
         } else {
             "idle".to_string()
         };
-        status.stt_state = if config.local_ai.preload_stt_model {
-            "loading".to_string()
-        } else {
-            "idle".to_string()
-        };
-        status.tts_state = if config.local_ai.preload_tts_voice {
-            "loading".to_string()
-        } else {
-            "idle".to_string()
-        };
+        if !config.local_ai.preload_stt_model {
+            status.stt_state = "idle".to_string();
+        }
+        if !config.local_ai.preload_tts_voice {
+            status.tts_state = "idle".to_string();
+        }
         status.warning = None;
         status.download_progress = None;
         status.downloaded_bytes = None;
@@ -181,5 +177,20 @@ impl LocalAiService {
                 true
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autosummary_debounce_blocks_repeated_calls_inside_window() {
+        let mut config = Config::default();
+        config.local_ai.autosummary_debounce_ms = 60_000;
+        let service = LocalAiService::new(&config);
+
+        assert!(service.should_run_memory_autosummary(&config));
+        assert!(!service.should_run_memory_autosummary(&config));
     }
 }

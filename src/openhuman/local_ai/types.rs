@@ -92,6 +92,36 @@ pub struct LocalAiAssetsStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiDownloadProgressItem {
+    pub id: String,
+    pub provider: String,
+    pub state: String,
+    pub progress: Option<f32>,
+    pub downloaded_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub speed_bps: Option<u64>,
+    pub eta_seconds: Option<u64>,
+    pub warning: Option<String>,
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalAiDownloadsProgress {
+    pub state: String,
+    pub warning: Option<String>,
+    pub progress: Option<f32>,
+    pub downloaded_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub speed_bps: Option<u64>,
+    pub eta_seconds: Option<u64>,
+    pub chat: LocalAiDownloadProgressItem,
+    pub vision: LocalAiDownloadProgressItem,
+    pub embedding: LocalAiDownloadProgressItem,
+    pub stt: LocalAiDownloadProgressItem,
+    pub tts: LocalAiDownloadProgressItem,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalAiEmbeddingResult {
     pub model_id: String,
     pub dimensions: usize,
@@ -108,4 +138,23 @@ pub struct LocalAiSpeechResult {
 pub struct LocalAiTtsResult {
     pub output_path: String,
     pub voice_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_status_marks_all_capabilities_disabled() {
+        let config = Config::default();
+        let status = LocalAiStatus::disabled(&config);
+
+        assert_eq!(status.state, "disabled");
+        assert_eq!(status.vision_state, "disabled");
+        assert_eq!(status.embedding_state, "disabled");
+        assert_eq!(status.stt_state, "disabled");
+        assert_eq!(status.tts_state, "disabled");
+        assert_eq!(status.provider, "ollama");
+        assert_eq!(status.active_backend, "ollama");
+    }
 }

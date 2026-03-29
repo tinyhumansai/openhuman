@@ -141,3 +141,60 @@ pub(crate) fn tts_model_target_path(config: &Config) -> PathBuf {
         .join("tts")
         .join(filename)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_config() -> (tempfile::TempDir, Config) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = Config::default();
+        config.workspace_dir = dir.path().join("workspace");
+        config.config_path = dir.path().join("config.toml");
+        (dir, config)
+    }
+
+    #[test]
+    fn resolve_stt_model_path_prefers_workspace_relative_artifact() {
+        let (_tmp, mut config) = temp_config();
+        config.local_ai.stt_model_id = "tiny.bin".to_string();
+        let model_path = workspace_local_models_dir(&config)
+            .join("stt")
+            .join("tiny.bin");
+        std::fs::create_dir_all(model_path.parent().expect("parent")).expect("mkdirs");
+        std::fs::write(&model_path, b"stub").expect("write");
+
+        let resolved = resolve_stt_model_path(&config).expect("resolve stt");
+        assert_eq!(resolved, model_path.display().to_string());
+    }
+
+    #[test]
+    fn resolve_tts_voice_path_appends_onnx_for_voice_ids() {
+        let (_tmp, mut config) = temp_config();
+        config.local_ai.tts_voice_id = "en_US-lessac-medium".to_string();
+        let model_path = workspace_local_models_dir(&config)
+            .join("tts")
+            .join("en_US-lessac-medium.onnx");
+        std::fs::create_dir_all(model_path.parent().expect("parent")).expect("mkdirs");
+        std::fs::write(&model_path, b"stub").expect("write");
+
+        let resolved = resolve_tts_voice_path(&config).expect("resolve tts");
+        assert_eq!(resolved, model_path.display().to_string());
+    }
+
+    #[test]
+    fn target_paths_preserve_absolute_overrides() {
+        let (_tmp, mut config) = temp_config();
+        config.local_ai.stt_model_id = "/tmp/stt-model.bin".to_string();
+        config.local_ai.tts_voice_id = "/tmp/voice.onnx".to_string();
+
+        assert_eq!(
+            stt_model_target_path(&config),
+            PathBuf::from("/tmp/stt-model.bin")
+        );
+        assert_eq!(
+            tts_model_target_path(&config),
+            PathBuf::from("/tmp/voice.onnx")
+        );
+    }
+}
