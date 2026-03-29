@@ -24,6 +24,22 @@ use crate::openhuman::tools::local_cli::{
 };
 use crate::openhuman::workspace;
 
+const CLI_BANNER: &str = r#"
+
+ ▗▄▖ ▄▄▄▄  ▗▞▀▚▖▄▄▄▄  ▗▖ ▗▖█  ▐▌▄▄▄▄  ▗▞▀▜▌▄▄▄▄
+▐▌ ▐▌█   █ ▐▛▀▀▘█   █ ▐▌ ▐▌▀▄▄▞▘█ █ █ ▝▚▄▟▌█   █
+▐▌ ▐▌█▄▄▄▀ ▝▚▄▄▖█   █ ▐▛▀▜▌     █   █      █   █
+▝▚▄▞▘█                ▐▌ ▐▌
+     ▀
+
+Contribute & Star us on GitHub: https://github.com/tinyhumansai/openhuman
+
+"#;
+
+fn print_cli_banner() {
+    eprint!("{CLI_BANNER}");
+}
+
 #[derive(Debug, Parser)]
 #[command(name = "openhuman")]
 #[command(about = "OpenHuman core CLI")]
@@ -985,6 +1001,7 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
 }
 
 pub fn run_from_cli_args(args: &[String]) -> Result<()> {
+    print_cli_banner();
     let mut argv = Vec::with_capacity(args.len() + 1);
     argv.push("openhuman".to_string());
     argv.extend(args.iter().cloned());
