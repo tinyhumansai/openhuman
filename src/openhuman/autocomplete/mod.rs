@@ -197,6 +197,8 @@ struct EngineState {
     last_error: Option<String>,
     updated_at_ms: Option<i64>,
     last_tab_down: bool,
+    last_escape_down: bool,
+    last_overlay_signature: Option<String>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -212,6 +214,8 @@ impl Default for EngineState {
             last_error: None,
             updated_at_ms: None,
             last_tab_down: false,
+            last_escape_down: false,
+            last_overlay_signature: None,
             task: None,
         }
     }
@@ -287,13 +291,20 @@ impl AutocompleteEngine {
                         break;
                     }
                 }
+                let _ = engine.try_reject_via_escape().await;
                 let _ = engine.try_accept_via_tab().await;
                 if last_refresh.elapsed() >= Duration::from_millis(debounce_ms) {
                     if let Err(err) = engine.refresh(None).await {
-                        let mut state = engine.inner.lock().await;
-                        state.phase = "error".to_string();
-                        state.last_error = Some(err);
-                        state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                        let error_message = {
+                            let mut state = engine.inner.lock().await;
+                            state.phase = "error".to_string();
+                            state.last_error = Some(err);
+                            state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                            state.last_error.clone()
+                        };
+                        if let Some(error_message) = error_message {
+                            show_overflow_badge("error", None, Some(&error_message), None);
+                        }
                     } else {
                         let mut state = engine.inner.lock().await;
                         if state.phase == "error" {
@@ -314,6 +325,8 @@ impl AutocompleteEngine {
         let mut state = self.inner.lock().await;
         state.running = false;
         state.phase = "idle".to_string();
+        state.last_escape_down = false;
+        state.last_overlay_signature = None;
         if let Some(task) = state.task.take() {
             task.abort();
         }
@@ -377,10 +390,14 @@ impl AutocompleteEngine {
             state.phase = "accepting".to_string();
         }
         apply_text_to_focused_field(&cleaned)?;
-        let mut state = self.inner.lock().await;
-        state.suggestion = None;
-        state.phase = "idle".to_string();
-        state.updated_at_ms = Some(Utc::now().timestamp_millis());
+        {
+            let mut state = self.inner.lock().await;
+            state.suggestion = None;
+            state.phase = "idle".to_string();
+            state.updated_at_ms = Some(Utc::now().timestamp_millis());
+            state.last_overlay_signature = None;
+        }
+        show_overflow_badge("accepted", Some(&cleaned), None, None);
 
         Ok(AutocompleteAcceptResult {
             accepted: true,
@@ -439,12 +456,14 @@ impl AutocompleteEngine {
         let mut state = self.inner.lock().await;
         state.debounce_ms = config.autocomplete.debounce_ms;
         state.last_tab_down = false;
+        state.last_escape_down = false;
         if !config.autocomplete.enabled {
             state.running = false;
             if let Some(task) = state.task.take() {
                 task.abort();
             }
             state.suggestion = None;
+            state.last_overlay_signature = None;
         }
 
         Ok(AutocompleteSetStyleResult {
@@ -548,22 +567,35 @@ impl AutocompleteEngine {
             .unwrap_or_default();
 
         let suggestion = sanitize_suggestion(&generated);
+        let app_name = focused.app_name.clone();
         let mut state = self.inner.lock().await;
-        state.app_name = focused.app_name;
+        state.app_name = app_name.clone();
         state.context = context;
         state.updated_at_ms = Some(Utc::now().timestamp_millis());
         if suggestion.is_empty() {
             state.suggestion = None;
             state.phase = "idle".to_string();
             state.last_error = None;
+            state.last_overlay_signature = None;
             return Ok(());
         }
         state.suggestion = Some(AutocompleteSuggestion {
-            value: suggestion,
+            value: suggestion.clone(),
             confidence: 0.72,
         });
         state.phase = "ready".to_string();
         state.last_error = None;
+        let ready_signature = format!(
+            "ready:{}:{}",
+            app_name.as_deref().unwrap_or_default(),
+            suggestion
+        );
+        if state.last_overlay_signature.as_deref() != Some(ready_signature.as_str()) {
+            state.last_overlay_signature = Some(ready_signature);
+            drop(state);
+            show_overflow_badge("ready", Some(&suggestion), None, app_name.as_deref());
+            return Ok(());
+        }
         Ok(())
     }
 
@@ -598,13 +630,40 @@ impl AutocompleteEngine {
                     state.phase = "accepting".to_string();
                 }
                 apply_text_to_focused_field(&cleaned)?;
-                let mut state = self.inner.lock().await;
-                state.suggestion = None;
-                state.phase = "idle".to_string();
-                state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                {
+                    let mut state = self.inner.lock().await;
+                    state.suggestion = None;
+                    state.phase = "idle".to_string();
+                    state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                    state.last_overlay_signature = None;
+                }
+                show_overflow_badge("accepted", Some(&cleaned), None, None);
             }
         }
 
+        Ok(())
+    }
+
+    async fn try_reject_via_escape(&self) -> Result<(), String> {
+        let is_down = is_escape_key_down();
+        let rejected = {
+            let mut state = self.inner.lock().await;
+            let edge = is_down && !state.last_escape_down;
+            state.last_escape_down = is_down;
+            if !edge || state.suggestion.is_none() {
+                None
+            } else {
+                let value = state.suggestion.as_ref().map(|s| s.value.clone());
+                state.suggestion = None;
+                state.phase = "idle".to_string();
+                state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                state.last_overlay_signature = None;
+                value
+            }
+        };
+        if let Some(value) = rejected {
+            show_overflow_badge("rejected", Some(&value), None, None);
+        }
         Ok(())
     }
 }
@@ -636,6 +695,146 @@ fn sanitize_suggestion(text: &str) -> String {
         return String::new();
     }
     truncate_tail(&cleaned, MAX_SUGGESTION_CHARS)
+}
+
+#[cfg(target_os = "macos")]
+fn show_overflow_badge(
+    kind: &str,
+    suggestion: Option<&str>,
+    error: Option<&str>,
+    app_name: Option<&str>,
+) {
+    let (title, body) = match kind {
+        "ready" => (
+            "OpenHuman 🧠",
+            format!(
+                "{}{}",
+                suggestion.unwrap_or("Suggestion ready"),
+                app_name.map(|app| format!(" ({app})")).unwrap_or_default()
+            ),
+        ),
+        "accepted" => (
+            "OpenHuman ✅",
+            suggestion.unwrap_or("Suggestion accepted").to_string(),
+        ),
+        "rejected" => (
+            "OpenHuman ❌",
+            suggestion.unwrap_or("Suggestion rejected").to_string(),
+        ),
+        "error" => (
+            "OpenHuman ❌",
+            error.unwrap_or("Autocomplete error").to_string(),
+        ),
+        _ => return,
+    };
+    let compact_body = truncate_tail(&body, 140);
+    if show_overflow_chip_jxa(title, &compact_body).is_ok() {
+        return;
+    }
+    // Fallback: Notification Center if the transient chip fails.
+    let fallback = format!(
+        r#"display notification "{}" with title "{}""#,
+        escape_applescript_string(&compact_body),
+        escape_applescript_string(title),
+    );
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(fallback)
+        .output();
+}
+
+#[cfg(not(target_os = "macos"))]
+fn show_overflow_badge(
+    _kind: &str,
+    _suggestion: Option<&str>,
+    _error: Option<&str>,
+    _app_name: Option<&str>,
+) {
+}
+
+fn escape_applescript_string(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\"', "\\\"")
+        .replace('\n', " ")
+}
+
+#[cfg(target_os = "macos")]
+fn show_overflow_chip_jxa(title: &str, body: &str) -> Result<(), String> {
+    let title_json = serde_json::to_string(title).map_err(|e| e.to_string())?;
+    let body_json = serde_json::to_string(body).map_err(|e| e.to_string())?;
+    let jxa = format!(
+        r#"
+ObjC.import("Cocoa");
+var app = $.NSApplication.sharedApplication;
+app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
+var title = {title_json};
+var body = {body_json};
+var message = title + "  " + body;
+var maxWidth = 520;
+var minWidth = 280;
+var baseWidth = 180 + (body.length * 6);
+var width = Math.max(minWidth, Math.min(maxWidth, baseWidth));
+var height = 42;
+var mouse = $.NSEvent.mouseLocation;
+var screen = $.NSScreen.mainScreen.frame;
+var x = mouse.x + 18;
+var y = mouse.y - 16;
+if ((x + width) > (screen.origin.x + screen.size.width - 8)) {{
+  x = screen.origin.x + screen.size.width - width - 8;
+}}
+if (x < (screen.origin.x + 8)) {{
+  x = screen.origin.x + 8;
+}}
+if (y < (screen.origin.y + 8)) {{
+  y = screen.origin.y + 8;
+}}
+var rect = $.NSMakeRect(x, y, width, height);
+var win = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
+  rect,
+  $.NSWindowStyleMaskBorderless,
+  $.NSBackingStoreBuffered,
+  false
+);
+win.setLevel($.NSStatusWindowLevel);
+win.setOpaque(false);
+win.setBackgroundColor($.NSColor.clearColor);
+win.setIgnoresMouseEvents(true);
+win.setHasShadow(true);
+var content = win.contentView;
+var bg = $.NSView.alloc.initWithFrame($.NSMakeRect(0, 0, width, height));
+bg.setWantsLayer(true);
+bg.layer.setCornerRadius(12);
+bg.layer.setBackgroundColor($.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.07, 0.11, 0.18, 0.96).CGColor);
+var label = $.NSTextField.labelWithString(message);
+label.setFrame($.NSMakeRect(12, 11, width - 24, 20));
+label.setTextColor($.NSColor.whiteColor);
+label.setFont($.NSFont.boldSystemFontOfSize(13));
+label.setLineBreakMode($.NSLineBreakByTruncatingTail);
+bg.addSubview(label);
+content.addSubview(bg);
+win.makeKeyAndOrderFront($.nil);
+$.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.9));
+win.orderOut($.nil);
+"#
+    );
+    let output = std::process::Command::new("osascript")
+        .arg("-l")
+        .arg("JavaScript")
+        .arg("-e")
+        .arg(jxa)
+        .output()
+        .map_err(|e| format!("failed to run overflow chip script: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            Err("overflow chip script failed".to_string())
+        } else {
+            Err(stderr)
+        }
+    }
 }
 
 fn is_no_text_candidate_error(err: &str) -> bool {
@@ -874,6 +1073,16 @@ fn is_tab_key_down() -> bool {
 }
 
 #[cfg(target_os = "macos")]
+fn is_escape_key_down() -> bool {
+    unsafe { CGEventSourceKeyState(KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE, KVK_ESCAPE) }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_escape_key_down() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
@@ -883,3 +1092,5 @@ extern "C" {
 const KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE: i32 = 0;
 #[cfg(target_os = "macos")]
 const KVK_TAB: u16 = 48;
+#[cfg(target_os = "macos")]
+const KVK_ESCAPE: u16 = 53;
