@@ -1,19 +1,16 @@
 use super::super::context::{
     ChannelRouteSelection, ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
-use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
-use super::super::{traits, Channel, SendMessage};
+use super::super::runtime::process_channel_message;
+use super::super::{traits, Channel};
 use super::common::{
-    HistoryCaptureProvider, IterativeToolProvider, MockPriceTool, ModelCaptureProvider, NoopMemory,
-    RecordingChannel, SlowProvider, TelegramRecordingChannel, ToolCallingAliasProvider,
-    ToolCallingProvider,
+    IterativeToolProvider, MockPriceTool, ModelCaptureProvider, NoopMemory, RecordingChannel,
+    TelegramRecordingChannel, ToolCallingAliasProvider, ToolCallingProvider,
 };
-use crate::openhuman::providers::{self, ChatMessage, Provider};
-use crate::openhuman::tools::Tool;
+use crate::openhuman::providers::{self, Provider};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 
 async fn process_channel_message_executes_tool_calls_instead_of_sending_raw_json() {
     let channel_impl = Arc::new(RecordingChannel::default());

@@ -1,12 +1,12 @@
 use super::super::context::{
     build_memory_context, conversation_memory_key, ChannelRuntimeContext,
-    CHANNEL_MESSAGE_TIMEOUT_SECS, MAX_CHANNEL_HISTORY,
+    CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
 use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
 use super::common::{HistoryCaptureProvider, NoopMemory, RecordingChannel};
 use crate::openhuman::memory::{embeddings::NoopEmbedding, Memory, MemoryCategory, UnifiedMemory};
-use crate::openhuman::providers::{self, ChatMessage, Provider};
+use crate::openhuman::providers;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
