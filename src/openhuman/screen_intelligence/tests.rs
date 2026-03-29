@@ -2,11 +2,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{self, Duration};
 
-use super::engine::{AccessibilityEngine, EngineState, global_engine};
+use super::engine::{global_engine, AccessibilityEngine, EngineState};
 use super::helpers::validate_input_action;
 use super::types::{InputActionParams, StartSessionParams};
 use crate::openhuman::config::ScreenIntelligenceConfig;
-
 
 #[test]
 fn validates_coordinates_and_actions() {

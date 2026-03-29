@@ -9,7 +9,9 @@ pub(crate) fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
-pub(crate) fn capture_screen_image_ref_for_context(context: Option<&AppContext>) -> Result<String, String> {
+pub(crate) fn capture_screen_image_ref_for_context(
+    context: Option<&AppContext>,
+) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
         let tmp_path = std::env::temp_dir().join(format!(

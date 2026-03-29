@@ -7,9 +7,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 
-use super::capture::{
-    capture_screen_image_ref_for_context, foreground_context, now_ms,
-};
+use super::capture::{capture_screen_image_ref_for_context, foreground_context, now_ms};
 use super::context::AppContext;
 use super::helpers::{
     generate_suggestions, parse_vision_summary_output, persist_vision_summary,
@@ -22,10 +20,11 @@ use super::permissions::{
     open_macos_privacy_pane, request_accessibility_access, request_screen_recording_access,
 };
 use super::types::{
-    AccessibilityFeatures, AccessibilityStatus, AutocompleteCommitParams,
-    AutocompleteCommitResult, AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureFrame,
-    CaptureImageRefResult, CaptureNowResult,     InputActionParams, InputActionResult, PermissionKind, PermissionState, PermissionStatus,
-    SessionStatus, StartSessionParams, VisionFlushResult, VisionRecentResult, VisionSummary,
+    AccessibilityFeatures, AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
+    AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureFrame, CaptureImageRefResult,
+    CaptureNowResult, InputActionParams, InputActionResult, PermissionKind, PermissionState,
+    PermissionStatus, SessionStatus, StartSessionParams, VisionFlushResult, VisionRecentResult,
+    VisionSummary,
 };
 
 struct SessionRuntime {

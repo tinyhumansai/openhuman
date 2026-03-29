@@ -5,10 +5,10 @@ use serde_json::json;
 use crate::api::config::effective_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::rest::{user_id_from_settings_payload, BackendOAuthClient};
+use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
     build_session_state, parse_fields_value, profile_name_or_default, summarize_auth_profile,
 };
-use crate::openhuman::config::Config;
 use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::security::SecretStore;
 

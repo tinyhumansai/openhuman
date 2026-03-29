@@ -3,9 +3,7 @@ use crate::openhuman::memory::{self, MemoryCategory};
 use std::collections::VecDeque;
 use uuid::Uuid;
 
-use super::limits::{
-    MAX_CONTEXT_CHARS, MAX_EPHEMERAL_FRAMES, MAX_EPHEMERAL_VISION_SUMMARIES,
-};
+use super::limits::{MAX_CONTEXT_CHARS, MAX_EPHEMERAL_FRAMES, MAX_EPHEMERAL_VISION_SUMMARIES};
 use super::types::{AutocompleteSuggestion, CaptureFrame, InputActionParams, VisionSummary};
 
 pub(crate) fn validate_input_action(action: &InputActionParams) -> Result<(), String> {
@@ -54,7 +52,10 @@ pub(crate) fn push_ephemeral_frame(frames: &mut VecDeque<CaptureFrame>, frame: C
     }
 }
 
-pub(crate) fn push_ephemeral_vision_summary(summaries: &mut VecDeque<VisionSummary>, summary: VisionSummary) {
+pub(crate) fn push_ephemeral_vision_summary(
+    summaries: &mut VecDeque<VisionSummary>,
+    summary: VisionSummary,
+) {
     summaries.push_back(summary);
     while summaries.len() > MAX_EPHEMERAL_VISION_SUMMARIES {
         let _ = summaries.pop_front();
@@ -154,7 +155,10 @@ pub(crate) fn truncate_tail(text: &str, max_chars: usize) -> String {
     chars[chars.len() - max_chars..].iter().collect()
 }
 
-pub(crate) fn generate_suggestions(context: &str, max_results: usize) -> Vec<AutocompleteSuggestion> {
+pub(crate) fn generate_suggestions(
+    context: &str,
+    max_results: usize,
+) -> Vec<AutocompleteSuggestion> {
     let trimmed = context.trim();
     let lower = trimmed.to_lowercase();
 
