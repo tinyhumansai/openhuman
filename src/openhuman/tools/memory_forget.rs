@@ -25,23 +25,31 @@ impl Tool for MemoryForgetTool {
     }
 
     fn description(&self) -> &str {
-        "Remove a memory by key. Use to delete outdated facts or sensitive data. Returns whether the memory was found and removed."
+        "Remove a memory by namespace and key. Returns whether the memory was found and removed."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
+                "namespace": {
+                    "type": "string",
+                    "description": "Namespace for the memory key"
+                },
                 "key": {
                     "type": "string",
                     "description": "The key of the memory to forget"
                 }
             },
-            "required": ["key"]
+            "required": ["namespace", "key"]
         })
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let namespace = args
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'namespace' parameter"))?;
         let key = args
             .get("key")
             .and_then(|v| v.as_str())
@@ -58,10 +66,11 @@ impl Tool for MemoryForgetTool {
             });
         }
 
-        match self.memory.forget(key).await {
+        let namespaced_key = format!("{}/{}", namespace.trim(), key);
+        match self.memory.forget(&namespaced_key).await {
             Ok(true) => Ok(ToolResult {
                 success: true,
-                output: format!("Forgot memory: {key}"),
+                output: format!("Forgot memory: {namespaced_key}"),
                 error: None,
             }),
             Ok(false) => Ok(ToolResult {

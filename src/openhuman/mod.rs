@@ -28,7 +28,6 @@ pub mod heartbeat;
 pub mod identity;
 pub mod integrations;
 pub mod local_ai;
-pub mod local_memory;
 pub mod memory;
 pub mod migration;
 pub mod model_catalog;

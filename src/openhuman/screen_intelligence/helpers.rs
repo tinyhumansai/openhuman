@@ -1,6 +1,7 @@
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::{self, MemoryCategory};
+use crate::openhuman::memory::{self, NamespaceDocumentInput, UnifiedMemory};
 use std::collections::VecDeque;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::limits::{MAX_CONTEXT_CHARS, MAX_EPHEMERAL_FRAMES, MAX_EPHEMERAL_VISION_SUMMARIES};
@@ -114,12 +115,16 @@ pub(crate) async fn persist_vision_summary(summary: VisionSummary) {
         }
     };
 
-    let mem = match memory::create_memory_with_storage_and_routes(
-        &config.memory,
-        &config.embedding_routes,
-        Some(&config.storage.provider.config),
-        &config.workspace_dir,
+    let embedder = Arc::from(memory::embeddings::create_embedding_provider(
+        &config.memory.embedding_provider,
         config.api_key.as_deref(),
+        &config.memory.embedding_model,
+        config.memory.embedding_dimensions,
+    ));
+    let mem = match UnifiedMemory::new(
+        &config.workspace_dir,
+        embedder,
+        config.memory.sqlite_open_timeout_secs,
     ) {
         Ok(mem) => mem,
         Err(err) => {
@@ -138,12 +143,19 @@ pub(crate) async fn persist_vision_summary(summary: VisionSummary) {
 
     let key = format!("screen_intelligence_{}", summary.id);
     let _ = mem
-        .store(
-            &key,
-            &content,
-            MemoryCategory::Custom("screen_intelligence".to_string()),
-            None,
-        )
+        .upsert_document(NamespaceDocumentInput {
+            namespace: "background".to_string(),
+            key: key.clone(),
+            title: key,
+            content,
+            source_type: "screenshot".to_string(),
+            priority: "medium".to_string(),
+            tags: vec!["screen_intelligence".to_string()],
+            metadata: serde_json::json!({}),
+            category: "screen_intelligence".to_string(),
+            session_id: None,
+            document_id: None,
+        })
         .await;
 }
 

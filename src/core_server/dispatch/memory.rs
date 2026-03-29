@@ -1,116 +1,109 @@
 use serde::Deserialize;
 
-use crate::core_server::helpers::{
-    extract_namespaces_from_documents, filter_documents_payload_by_namespace, parse_params,
-};
+use crate::core_server::helpers::{parse_params, rpc_invocation_from_outcome};
 use crate::core_server::types::InvocationResult;
+use crate::openhuman::memory::rpc as memory_rpc;
 
 pub async fn try_dispatch(
     method: &str,
     params: serde_json::Value,
 ) -> Option<Result<InvocationResult, String>> {
     match method {
-        "memory.init" => Some(
-            async move {
-                #[derive(Debug, Deserialize)]
-                struct MemoryInitParams {
-                    #[allow(dead_code)]
-                    jwt_token: Option<String>,
-                }
+        "memory.namespace.list" => Some(
+            async move { rpc_invocation_from_outcome(memory_rpc::namespace_list().await?) }.await,
+        ),
 
-                let _payload: MemoryInitParams = parse_params(params)?;
-                let _client = crate::openhuman::local_memory::MemoryClient::new_local()?;
-                InvocationResult::ok(true)
+        "memory.doc.put" => Some(
+            async move {
+                let payload: memory_rpc::PutDocParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::doc_put(payload).await?)
             }
             .await,
         ),
 
-        "memory.list_documents" => Some(
+        "memory.doc.list" => Some(
             async move {
                 #[derive(Debug, Deserialize)]
-                struct MemoryListDocumentsParams {
+                struct DocListParams {
                     namespace: Option<String>,
                 }
-
-                let payload: MemoryListDocumentsParams = parse_params(params)?;
-                let client = crate::openhuman::local_memory::MemoryClient::new_local()?;
-                let docs = client.list_documents().await?;
-                let filtered = payload
+                let payload: DocListParams = parse_params(params)?;
+                let namespace_params = payload
                     .namespace
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|ns| !ns.is_empty())
-                    .map(|ns| filter_documents_payload_by_namespace(docs.clone(), ns))
-                    .unwrap_or(docs);
-                InvocationResult::ok(filtered)
+                    .map(|namespace| memory_rpc::NamespaceOnlyParams { namespace });
+                rpc_invocation_from_outcome(memory_rpc::doc_list(namespace_params).await?)
             }
             .await,
         ),
 
-        "memory.list_namespaces" => Some(
+        "memory.doc.delete" => Some(
             async move {
-                let client = crate::openhuman::local_memory::MemoryClient::new_local()?;
-                let docs = client.list_documents().await?;
-                InvocationResult::ok(extract_namespaces_from_documents(&docs))
+                let payload: memory_rpc::DeleteDocParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::doc_delete(payload).await?)
             }
             .await,
         ),
 
-        "memory.delete_document" => Some(
+        "memory.context.query" => Some(
             async move {
-                #[derive(Debug, Deserialize)]
-                struct MemoryDeleteDocumentParams {
-                    document_id: String,
-                    namespace: String,
-                }
-
-                let payload: MemoryDeleteDocumentParams = parse_params(params)?;
-                let client = crate::openhuman::local_memory::MemoryClient::new_local()?;
-                let result = client
-                    .delete_document(&payload.document_id, &payload.namespace)
-                    .await?;
-                InvocationResult::ok(result)
+                let payload: memory_rpc::QueryNamespaceParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::context_query(payload).await?)
             }
             .await,
         ),
 
-        "memory.query_namespace" => Some(
+        "memory.context.recall" => Some(
             async move {
-                #[derive(Debug, Deserialize)]
-                struct MemoryQueryNamespaceParams {
-                    namespace: String,
-                    query: String,
-                    max_chunks: Option<u32>,
-                }
-
-                let payload: MemoryQueryNamespaceParams = parse_params(params)?;
-                let client = crate::openhuman::local_memory::MemoryClient::new_local()?;
-                let result = client
-                    .query_namespace_context(
-                        &payload.namespace,
-                        &payload.query,
-                        payload.max_chunks.unwrap_or(10),
-                    )
-                    .await?;
-                InvocationResult::ok(result)
+                let payload: memory_rpc::RecallNamespaceParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::context_recall(payload).await?)
             }
             .await,
         ),
 
-        "memory.recall_namespace" => Some(
+        "memory.kv.set" => Some(
             async move {
-                #[derive(Debug, Deserialize)]
-                struct MemoryRecallNamespaceParams {
-                    namespace: String,
-                    max_chunks: Option<u32>,
-                }
+                let payload: memory_rpc::KvSetParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::kv_set(payload).await?)
+            }
+            .await,
+        ),
 
-                let payload: MemoryRecallNamespaceParams = parse_params(params)?;
-                let client = crate::openhuman::local_memory::MemoryClient::new_local()?;
-                let result = client
-                    .recall_namespace_context(&payload.namespace, payload.max_chunks.unwrap_or(10))
-                    .await?;
-                InvocationResult::ok(result)
+        "memory.kv.get" => Some(
+            async move {
+                let payload: memory_rpc::KvGetDeleteParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::kv_get(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.kv.delete" => Some(
+            async move {
+                let payload: memory_rpc::KvGetDeleteParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::kv_delete(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.kv.list_namespace" => Some(
+            async move {
+                let payload: memory_rpc::NamespaceOnlyParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::kv_list_namespace(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.graph.upsert" => Some(
+            async move {
+                let payload: memory_rpc::GraphUpsertParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::graph_upsert(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.graph.query" => Some(
+            async move {
+                let payload: memory_rpc::GraphQueryParams = parse_params(params)?;
+                rpc_invocation_from_outcome(memory_rpc::graph_query(payload).await?)
             }
             .await,
         ),

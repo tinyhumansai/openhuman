@@ -7,6 +7,8 @@ pub struct MemoryEntry {
     pub id: String,
     pub key: String,
     pub content: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
     pub category: MemoryCategory,
     pub timestamp: String,
     pub session_id: Option<String>,
@@ -113,6 +115,7 @@ mod tests {
             id: "id-1".into(),
             key: "favorite_language".into(),
             content: "Rust".into(),
+            namespace: Some("global".into()),
             category: MemoryCategory::Core,
             timestamp: "2026-02-16T00:00:00Z".into(),
             session_id: Some("session-abc".into()),
@@ -125,6 +128,7 @@ mod tests {
         assert_eq!(parsed.id, "id-1");
         assert_eq!(parsed.key, "favorite_language");
         assert_eq!(parsed.content, "Rust");
+        assert_eq!(parsed.namespace.as_deref(), Some("global"));
         assert_eq!(parsed.category, MemoryCategory::Core);
         assert_eq!(parsed.session_id.as_deref(), Some("session-abc"));
         assert_eq!(parsed.score, Some(0.98));

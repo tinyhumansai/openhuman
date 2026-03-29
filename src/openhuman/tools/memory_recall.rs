@@ -23,7 +23,7 @@ impl Tool for MemoryRecallTool {
     }
 
     fn description(&self) -> &str {
-        "Search long-term memory for relevant facts, preferences, or context. Returns scored results ranked by relevance."
+        "Search memory for relevant facts in a namespace. Returns scored results ranked by relevance."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -34,16 +34,24 @@ impl Tool for MemoryRecallTool {
                     "type": "string",
                     "description": "Keywords or phrase to search for in memory"
                 },
+                "namespace": {
+                    "type": "string",
+                    "description": "Namespace to search (e.g. 'global', 'background', 'autocomplete', or 'skill-{id}')"
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Max results to return (default: 5)"
                 }
             },
-            "required": ["query"]
+            "required": ["namespace", "query"]
         })
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let namespace = args
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'namespace' parameter"))?;
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
@@ -55,7 +63,8 @@ impl Tool for MemoryRecallTool {
             .and_then(serde_json::Value::as_u64)
             .map_or(5, |v| v as usize);
 
-        match self.memory.recall(query, limit, None).await {
+        let namespaced_query = format!("{} {}", namespace.trim(), query);
+        match self.memory.recall(&namespaced_query, limit, None).await {
             Ok(entries) if entries.is_empty() => Ok(ToolResult {
                 success: true,
                 output: "No memories found matching that query.".into(),

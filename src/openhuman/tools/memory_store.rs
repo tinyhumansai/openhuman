@@ -25,7 +25,7 @@ impl Tool for MemoryStoreTool {
     }
 
     fn description(&self) -> &str {
-        "Store a fact, preference, or note in long-term memory. Use category 'core' for permanent facts, 'daily' for session notes, 'conversation' for chat context, or a custom category name."
+        "Store a fact, preference, or note in a namespace. Requires explicit namespace (e.g. global, background, autocomplete, skill-telegram)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -36,6 +36,10 @@ impl Tool for MemoryStoreTool {
                     "type": "string",
                     "description": "Unique key for this memory (e.g. 'user_lang', 'project_stack')"
                 },
+                "namespace": {
+                    "type": "string",
+                    "description": "Target namespace (e.g. 'global', 'background', 'autocomplete', or 'skill-{id}')"
+                },
                 "content": {
                     "type": "string",
                     "description": "The information to remember"
@@ -45,11 +49,15 @@ impl Tool for MemoryStoreTool {
                     "description": "Memory category: 'core' (permanent), 'daily' (session), 'conversation' (chat), or a custom category name. Defaults to 'core'."
                 }
             },
-            "required": ["key", "content"]
+            "required": ["namespace", "key", "content"]
         })
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let namespace = args
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'namespace' parameter"))?;
         let key = args
             .get("key")
             .and_then(|v| v.as_str())
@@ -78,10 +86,15 @@ impl Tool for MemoryStoreTool {
             });
         }
 
-        match self.memory.store(key, content, category, None).await {
+        let namespaced_key = format!("{}/{}", namespace.trim(), key);
+        match self
+            .memory
+            .store(&namespaced_key, content, category, None)
+            .await
+        {
             Ok(()) => Ok(ToolResult {
                 success: true,
-                output: format!("Stored memory: {key}"),
+                output: format!("Stored memory: {namespaced_key}"),
                 error: None,
             }),
             Err(e) => Ok(ToolResult {

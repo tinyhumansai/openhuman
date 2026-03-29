@@ -1,6 +1,6 @@
 //! State and data ops: published state get/set, filesystem data read/write.
 
-use crate::openhuman::local_memory::{MemoryState, Priority, SourceType};
+use crate::openhuman::memory::{MemoryState, NamespaceDocumentInput};
 use parking_lot::RwLock;
 use rquickjs::{Ctx, Function, Object};
 use serde::Deserialize;
@@ -159,52 +159,45 @@ pub fn register<'js>(
                     let client =
                         client_opt.ok_or_else(|| js_err("Memory client is not initialized"))?;
                     let skill_id = sc.skill_id.clone();
-                    let integration_id = sc.skill_id.clone();
-                    let source_type = match input.source_type.as_deref() {
-                        Some("doc") => Some(SourceType::Doc),
-                        Some("chat") => Some(SourceType::Chat),
-                        Some("email") => Some(SourceType::Email),
-                        Some(_) => {
-                            return Err(js_err("sourceType must be one of: doc, chat, email"))
-                        }
-                        None => None,
-                    };
-                    let priority = match input.priority.as_deref() {
-                        Some("high") => Some(Priority::High),
-                        Some("medium") => Some(Priority::Medium),
-                        Some("low") => Some(Priority::Low),
-                        Some(_) => {
-                            return Err(js_err("priority must be one of: high, medium, low"))
-                        }
-                        None => None,
-                    };
+                    let namespace = format!("skill-{skill_id}");
+                    let source_type = input
+                        .source_type
+                        .unwrap_or_else(|| "doc".to_string())
+                        .to_ascii_lowercase();
+                    if !matches!(source_type.as_str(), "doc" | "chat" | "email") {
+                        return Err(js_err("sourceType must be one of: doc, chat, email"));
+                    }
+                    let priority = input
+                        .priority
+                        .unwrap_or_else(|| "medium".to_string())
+                        .to_ascii_lowercase();
+                    if !matches!(priority.as_str(), "high" | "medium" | "low") {
+                        return Err(js_err("priority must be one of: high, medium, low"));
+                    }
                     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
 
                     tokio::spawn(async move {
                         if let Err(e) = client
-                            .store_skill_sync(
-                                &skill_id,
-                                &integration_id,
-                                &input.title,
-                                &input.content,
+                            .put_doc(NamespaceDocumentInput {
+                                namespace,
+                                key: input.title.clone(),
+                                title: input.title.clone(),
+                                content: input.content.clone(),
                                 source_type,
-                                Some(metadata),
                                 priority,
-                                input.created_at,
-                                input.updated_at,
-                                input.document_id,
-                            )
+                                tags: Vec::new(),
+                                metadata,
+                                category: "core".to_string(),
+                                session_id: None,
+                                document_id: input.document_id,
+                            })
                             .await
                         {
-                            log::warn!(
-                                "[quickjs] memory_insert failed for '{}': {}",
-                                integration_id,
-                                e
-                            );
+                            log::warn!("[quickjs] memory_insert failed for '{}': {}", skill_id, e);
                         } else {
                             log::info!(
                                 "[quickjs] memory_insert stored '{}': title='{}'",
-                                integration_id,
+                                skill_id,
                                 input.title
                             );
                         }

@@ -16,7 +16,7 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::openhuman::local_memory::MemoryState;
+use crate::openhuman::memory::MemoryState;
 use crate::openhuman::skills::cron_scheduler::CronScheduler;
 use crate::openhuman::skills::quickjs_libs::{qjs_ops, IdbStorage};
 use crate::openhuman::skills::skill_registry::SkillRegistry;
