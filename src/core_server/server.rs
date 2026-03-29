@@ -4,7 +4,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
 
-use crate::core_server::json_rpc;
 use crate::core_server::types::AppState;
 
 /// Full HTTP app (/, /health, /rpc) for the core process and for integration tests.
@@ -12,7 +11,7 @@ pub fn build_core_http_router() -> Router {
     Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health_handler))
-        .route("/rpc", post(json_rpc::rpc_handler))
+        .route("/rpc", post(crate::core::jsonrpc::rpc_handler))
         .fallback(not_found_handler)
         .with_state(AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),

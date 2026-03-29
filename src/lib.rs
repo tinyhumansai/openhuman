@@ -1,4 +1,5 @@
 pub mod api;
+pub mod core;
 pub mod core_server;
 pub mod openhuman;
 pub mod rpc;

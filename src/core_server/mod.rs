@@ -1,12 +1,10 @@
-mod cli;
 mod config_rpc_bridge;
-mod dispatch;
+pub(crate) mod dispatch;
 mod helpers;
-mod json_rpc;
 mod repl;
 mod rpc_log;
 mod server;
-mod types;
+pub(crate) mod types;
 
 #[cfg(test)]
 mod tests;
@@ -47,7 +45,7 @@ pub async fn call_method(
         rpc_log::redact_params_for_log(&params)
     );
     let started = std::time::Instant::now();
-    let out = dispatch::dispatch(
+    let out = crate::core::jsonrpc::invoke_method(
         types::AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),
         },
@@ -83,5 +81,5 @@ pub async fn call_method(
 }
 
 pub fn run_from_cli_args(args: &[String]) -> anyhow::Result<()> {
-    cli::run_from_cli_args(args)
+    crate::core::cli::run_from_cli_args(args)
 }

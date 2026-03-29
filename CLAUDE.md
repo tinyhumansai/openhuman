@@ -113,6 +113,9 @@ Deep link plugin is registered where supported; behavior is platform-specific (s
 
 - **`openhuman/`** — Domain logic (skills, memory, channels, config, …). RPC controllers live in **`rpc.rs`** files per domain; use **`RpcOutcome<T>`** pattern per [`AGENTS.md`](AGENTS.md) / internal rules.
 - **`src/openhuman/` module layout**: **New** functionality must live in a **dedicated subdirectory** (its own folder/module, e.g. `openhuman/my_domain/mod.rs` plus related files, or a new subfolder under an existing domain). Do **not** add new standalone `*.rs` files directly at `src/openhuman/` root; place new code in a module directory and declare it from `mod.rs` (or merge into an existing domain folder).
+- **Controller schema contract**: Shared controller metadata types live in **`src/core/mod.rs`** (`ControllerSchema`, `FieldSchema`, `TypeSchema`) and are consumed by adapters (RPC/CLI) in different ways.
+- **Domain schema files**: For each domain, define controller schema metadata in a dedicated module inside the domain folder (example: **`src/openhuman/cron/schemas.rs`**) and export from the domain `mod.rs`.
+- **Light `mod.rs` rule**: Keep domain `mod.rs` files light and export-focused. Put operational code in sibling files (example: `ops.rs`, `store.rs`, `schedule.rs`, `types.rs`), then re-export the public API from `mod.rs`.
 - **`core_server/`** — Transport only: Axum/HTTP, JSON-RPC envelope, CLI parsing, **dispatch** (`core_server::dispatch`) — **no** heavy business logic here.
 - **Layering**: Implementation in `openhuman::<domain>/`, controllers in `openhuman::<domain>/rpc.rs`, routes in `core_server/`.
 
