@@ -34,6 +34,7 @@ pub mod memory;
 pub mod migration;
 pub mod multimodal;
 pub mod observability;
+pub mod onboard;
 pub mod peripherals;
 pub mod providers;
 pub mod rpc;

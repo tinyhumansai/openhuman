@@ -9,7 +9,7 @@ use clap_complete::{generate, Shell};
 use serde_json::json;
 
 use crate::core_server::helpers::{
-    load_openhuman_config, parse_params, rpc_outcome_fut_to_cli_json, rpc_outcome_to_cli_json,
+    parse_params, rpc_outcome_fut_to_cli_json, rpc_outcome_to_cli_json,
 };
 use crate::core_server::types::{
     command_response, BrowserSettingsUpdate, CommandResponse, ConfigSnapshot,
@@ -623,7 +623,7 @@ fn ensure_workspace_file(
 }
 
 async fn execute_init_command(args: InitCliArgs) -> Result<serde_json::Value, String> {
-    let config = load_openhuman_config().await?;
+    let config = config_rpc::load_config_with_timeout().await?;
     let workspace_dir = config.workspace_dir.clone();
 
     let mut created_dirs = Vec::new();
@@ -694,7 +694,7 @@ async fn execute_init_command(args: InitCliArgs) -> Result<serde_json::Value, St
 }
 
 async fn execute_tools_screenshot(args: ToolsScreenshotArgs) -> Result<serde_json::Value, String> {
-    let config = load_openhuman_config().await?;
+    let config = config_rpc::load_config_with_timeout().await?;
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
@@ -802,8 +802,7 @@ async fn execute_tools_screenshot_ref(
 }
 
 async fn get_config_snapshot() -> Result<CommandResponse<ConfigSnapshot>, String> {
-    let config = load_openhuman_config().await?;
-    let value = rpc_outcome_fut_to_cli_json(config_rpc::get_config_snapshot(&config)).await?;
+    let value = rpc_outcome_fut_to_cli_json(config_rpc::load_and_get_config_snapshot()).await?;
     serde_json::from_value::<CommandResponse<ConfigSnapshot>>(value)
         .map_err(|e| format!("failed to decode config snapshot: {e}"))
 }
@@ -907,9 +906,7 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                     ensure_non_empty_payload(&payload).map_err(|e| e.to_string())?;
                     let update: ModelSettingsUpdate =
                         parse_params(serde_json::Value::Object(payload))?;
-                    let mut config = load_openhuman_config().await?;
-                    rpc_outcome_fut_to_cli_json(config_rpc::apply_model_settings(
-                        &mut config,
+                    rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_model_settings(
                         update.into(),
                     ))
                     .await
@@ -941,9 +938,7 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                     ensure_non_empty_payload(&payload).map_err(|e| e.to_string())?;
                     let update: MemorySettingsUpdate =
                         parse_params(serde_json::Value::Object(payload))?;
-                    let mut config = load_openhuman_config().await?;
-                    rpc_outcome_fut_to_cli_json(config_rpc::apply_memory_settings(
-                        &mut config,
+                    rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_memory_settings(
                         update.into(),
                     ))
                     .await
@@ -972,9 +967,7 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                     ensure_non_empty_payload(&payload).map_err(|e| e.to_string())?;
                     let update: GatewaySettingsUpdate =
                         parse_params(serde_json::Value::Object(payload))?;
-                    let mut config = load_openhuman_config().await?;
-                    rpc_outcome_fut_to_cli_json(config_rpc::apply_gateway_settings(
-                        &mut config,
+                    rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_gateway_settings(
                         update.into(),
                     ))
                     .await
@@ -988,12 +981,8 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                 }
                 TunnelSettingsCommand::Set(args) => {
                     let tunnel: TunnelConfig = parse_params(parse_json_arg(&args.json)?)?;
-                    let mut config = load_openhuman_config().await?;
-                    rpc_outcome_fut_to_cli_json(config_rpc::apply_tunnel_settings(
-                        &mut config,
-                        tunnel,
-                    ))
-                    .await
+                    rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_tunnel_settings(tunnel))
+                        .await
                 }
             },
             SettingsCommand::Runtime { command } => match command {
@@ -1013,9 +1002,7 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                     ensure_non_empty_payload(&payload).map_err(|e| e.to_string())?;
                     let update: RuntimeSettingsUpdate =
                         parse_params(serde_json::Value::Object(payload))?;
-                    let mut config = load_openhuman_config().await?;
-                    rpc_outcome_fut_to_cli_json(config_rpc::apply_runtime_settings(
-                        &mut config,
+                    rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_runtime_settings(
                         update.into(),
                     ))
                     .await
@@ -1035,9 +1022,7 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                     ensure_non_empty_payload(&payload).map_err(|e| e.to_string())?;
                     let update: BrowserSettingsUpdate =
                         parse_params(serde_json::Value::Object(payload))?;
-                    let mut config = load_openhuman_config().await?;
-                    rpc_outcome_fut_to_cli_json(config_rpc::apply_browser_settings(
-                        &mut config,
+                    rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_browser_settings(
                         update.into(),
                     ))
                     .await
@@ -1398,58 +1383,46 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
         },
         CoreCommand::Config { command } => match command {
             ConfigCommand::Get => {
-                let config = load_openhuman_config().await?;
-                rpc_outcome_fut_to_cli_json(config_rpc::get_config_snapshot(&config)).await
+                rpc_outcome_fut_to_cli_json(config_rpc::load_and_get_config_snapshot()).await
             }
             ConfigCommand::UpdateModel { json } => {
                 let update: ModelSettingsUpdate = parse_params(parse_json_arg(&json)?)?;
-                let mut config = load_openhuman_config().await?;
-                rpc_outcome_fut_to_cli_json(config_rpc::apply_model_settings(
-                    &mut config,
+                rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_model_settings(
                     update.into(),
                 ))
                 .await
             }
             ConfigCommand::UpdateMemory { json } => {
                 let update: MemorySettingsUpdate = parse_params(parse_json_arg(&json)?)?;
-                let mut config = load_openhuman_config().await?;
-                rpc_outcome_fut_to_cli_json(config_rpc::apply_memory_settings(
-                    &mut config,
+                rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_memory_settings(
                     update.into(),
                 ))
                 .await
             }
             ConfigCommand::UpdateGateway { json } => {
                 let update: GatewaySettingsUpdate = parse_params(parse_json_arg(&json)?)?;
-                let mut config = load_openhuman_config().await?;
-                rpc_outcome_fut_to_cli_json(config_rpc::apply_gateway_settings(
-                    &mut config,
+                rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_gateway_settings(
                     update.into(),
                 ))
                 .await
             }
             ConfigCommand::UpdateRuntime { json } => {
                 let update: RuntimeSettingsUpdate = parse_params(parse_json_arg(&json)?)?;
-                let mut config = load_openhuman_config().await?;
-                rpc_outcome_fut_to_cli_json(config_rpc::apply_runtime_settings(
-                    &mut config,
+                rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_runtime_settings(
                     update.into(),
                 ))
                 .await
             }
             ConfigCommand::UpdateBrowser { json } => {
                 let update: BrowserSettingsUpdate = parse_params(parse_json_arg(&json)?)?;
-                let mut config = load_openhuman_config().await?;
-                rpc_outcome_fut_to_cli_json(config_rpc::apply_browser_settings(
-                    &mut config,
+                rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_browser_settings(
                     update.into(),
                 ))
                 .await
             }
             ConfigCommand::UpdateTunnel { json } => {
                 let tunnel: TunnelConfig = parse_params(parse_json_arg(&json)?)?;
-                let mut config = load_openhuman_config().await?;
-                rpc_outcome_fut_to_cli_json(config_rpc::apply_tunnel_settings(&mut config, tunnel))
+                rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_tunnel_settings(tunnel))
                     .await
             }
         },

@@ -1,8 +1,6 @@
 use serde::Deserialize;
 
-use crate::core_server::helpers::{
-    default_workspace_dir, load_openhuman_config, parse_params, rpc_invocation_from_outcome,
-};
+use crate::core_server::helpers::{parse_params, rpc_invocation_from_outcome};
 use crate::core_server::types::{
     BrowserSettingsUpdate, GatewaySettingsUpdate, InvocationResult, MemorySettingsUpdate,
     ModelSettingsUpdate, RuntimeFlags, RuntimeSettingsUpdate, ScreenIntelligenceSettingsUpdate,
@@ -26,8 +24,7 @@ pub async fn try_dispatch(
 
         "openhuman.get_config" => Some(
             async move {
-                let config = load_openhuman_config().await?;
-                rpc_invocation_from_outcome(config_rpc::get_config_snapshot(&config).await?)
+                rpc_invocation_from_outcome(config_rpc::load_and_get_config_snapshot().await?)
             }
             .await,
         ),
@@ -35,9 +32,8 @@ pub async fn try_dispatch(
         "openhuman.update_model_settings" => Some(
             async move {
                 let update: ModelSettingsUpdate = parse_params(params)?;
-                let mut config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
-                    config_rpc::apply_model_settings(&mut config, update.into()).await?,
+                    config_rpc::load_and_apply_model_settings(update.into()).await?,
                 )
             }
             .await,
@@ -46,9 +42,8 @@ pub async fn try_dispatch(
         "openhuman.update_memory_settings" => Some(
             async move {
                 let update: MemorySettingsUpdate = parse_params(params)?;
-                let mut config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
-                    config_rpc::apply_memory_settings(&mut config, update.into()).await?,
+                    config_rpc::load_and_apply_memory_settings(update.into()).await?,
                 )
             }
             .await,
@@ -57,10 +52,8 @@ pub async fn try_dispatch(
         "openhuman.update_screen_intelligence_settings" => Some(
             async move {
                 let update: ScreenIntelligenceSettingsUpdate = parse_params(params)?;
-                let mut config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
-                    config_rpc::apply_screen_intelligence_settings(&mut config, update.into())
-                        .await?,
+                    config_rpc::load_and_apply_screen_intelligence_settings(update.into()).await?,
                 )
             }
             .await,
@@ -69,9 +62,8 @@ pub async fn try_dispatch(
         "openhuman.update_gateway_settings" => Some(
             async move {
                 let update: GatewaySettingsUpdate = parse_params(params)?;
-                let mut config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
-                    config_rpc::apply_gateway_settings(&mut config, update.into()).await?,
+                    config_rpc::load_and_apply_gateway_settings(update.into()).await?,
                 )
             }
             .await,
@@ -80,9 +72,8 @@ pub async fn try_dispatch(
         "openhuman.update_tunnel_settings" => Some(
             async move {
                 let tunnel: crate::openhuman::config::TunnelConfig = parse_params(params)?;
-                let mut config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
-                    config_rpc::apply_tunnel_settings(&mut config, tunnel).await?,
+                    config_rpc::load_and_apply_tunnel_settings(tunnel).await?,
                 )
             }
             .await,
@@ -91,9 +82,8 @@ pub async fn try_dispatch(
         "openhuman.update_runtime_settings" => Some(
             async move {
                 let update: RuntimeSettingsUpdate = parse_params(params)?;
-                let mut config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
-                    config_rpc::apply_runtime_settings(&mut config, update.into()).await?,
+                    config_rpc::load_and_apply_runtime_settings(update.into()).await?,
                 )
             }
             .await,
@@ -102,9 +92,8 @@ pub async fn try_dispatch(
         "openhuman.update_browser_settings" => Some(
             async move {
                 let update: BrowserSettingsUpdate = parse_params(params)?;
-                let mut config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
-                    config_rpc::apply_browser_settings(&mut config, update.into()).await?,
+                    config_rpc::load_and_apply_browser_settings(update.into()).await?,
                 )
             }
             .await,
@@ -144,25 +133,13 @@ pub async fn try_dispatch(
                 }
 
                 let payload: WorkspaceOnboardingFlagParams = parse_params(params)?;
-                let name = payload
-                    .flag_name
-                    .unwrap_or_else(|| DEFAULT_ONBOARDING_FLAG_NAME.to_string());
-                let trimmed = name.trim();
-                if trimmed.is_empty()
-                    || trimmed.contains('/')
-                    || trimmed.contains('\\')
-                    || trimmed.contains("..")
-                {
-                    return Err("Invalid onboarding flag name".to_string());
-                }
-                let workspace_dir = match load_openhuman_config().await {
-                    Ok(cfg) => cfg.workspace_dir,
-                    Err(_) => default_workspace_dir(),
-                };
-                rpc_invocation_from_outcome(config_rpc::workspace_onboarding_flag_exists(
-                    workspace_dir,
-                    trimmed,
-                )?)
+                rpc_invocation_from_outcome(
+                    config_rpc::workspace_onboarding_flag_resolve(
+                        payload.flag_name,
+                        DEFAULT_ONBOARDING_FLAG_NAME,
+                    )
+                    .await?,
+                )
             }
             .await,
         ),

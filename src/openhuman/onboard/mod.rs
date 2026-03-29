@@ -1,6 +1,7 @@
 //! Onboarding helpers for OpenHuman.
 
 pub mod models;
+pub mod rpc;
 
 pub use models::{run_models_refresh, ModelCacheSnapshot, ModelRefreshResult, ModelRefreshSource};
 

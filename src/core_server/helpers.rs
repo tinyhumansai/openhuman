@@ -42,13 +42,6 @@ pub async fn load_openhuman_config() -> Result<Config, String> {
     crate::openhuman::config::rpc::load_config_with_timeout().await
 }
 
-pub fn default_workspace_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".openhuman")
-        .join("workspace")
-}
-
 pub fn parse_params<T: DeserializeOwned>(params: serde_json::Value) -> Result<T, String> {
     serde_json::from_value(params).map_err(|e| format!("invalid params: {e}"))
 }

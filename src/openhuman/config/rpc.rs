@@ -21,6 +21,24 @@ pub fn core_rpc_url_from_env() -> String {
         .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
 }
 
+const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Loads persisted config with the same 30s timeout used by JSON-RPC and the core CLI.
+pub async fn load_config_with_timeout() -> Result<Config, String> {
+    match tokio::time::timeout(CONFIG_LOAD_TIMEOUT, Config::load_or_init()).await {
+        Ok(Ok(config)) => Ok(config),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("Config loading timed out".to_string()),
+    }
+}
+
+fn fallback_workspace_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openhuman")
+        .join("workspace")
+}
+
 pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
     let value = serde_json::to_value(config).map_err(|e| e.to_string())?;
     Ok(json!({
@@ -296,6 +314,81 @@ pub async fn apply_browser_settings(
             config.config_path.display()
         )],
     ))
+}
+
+pub async fn load_and_get_config_snapshot() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    get_config_snapshot(&config).await
+}
+
+pub async fn load_and_apply_model_settings(
+    update: ModelSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_model_settings(&mut config, update).await
+}
+
+pub async fn load_and_apply_memory_settings(
+    update: MemorySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_memory_settings(&mut config, update).await
+}
+
+pub async fn load_and_apply_screen_intelligence_settings(
+    update: ScreenIntelligenceSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_screen_intelligence_settings(&mut config, update).await
+}
+
+pub async fn load_and_apply_gateway_settings(
+    update: GatewaySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_gateway_settings(&mut config, update).await
+}
+
+pub async fn load_and_apply_tunnel_settings(
+    tunnel: TunnelConfig,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_tunnel_settings(&mut config, tunnel).await
+}
+
+pub async fn load_and_apply_runtime_settings(
+    update: RuntimeSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_runtime_settings(&mut config, update).await
+}
+
+pub async fn load_and_apply_browser_settings(
+    update: BrowserSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_browser_settings(&mut config, update).await
+}
+
+/// Resolves workspace (load config or fallback), validates flag name, returns whether the flag file exists.
+pub async fn workspace_onboarding_flag_resolve(
+    flag_name: Option<String>,
+    default_name: &str,
+) -> Result<RpcOutcome<bool>, String> {
+    let name = flag_name.unwrap_or_else(|| default_name.to_string());
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+    {
+        return Err("Invalid onboarding flag name".to_string());
+    }
+    let workspace_dir = match load_config_with_timeout().await {
+        Ok(cfg) => cfg.workspace_dir,
+        Err(_) => fallback_workspace_dir(),
+    };
+    workspace_onboarding_flag_exists(workspace_dir, trimmed)
 }
 
 pub fn get_runtime_flags() -> RpcOutcome<RuntimeFlagsOut> {

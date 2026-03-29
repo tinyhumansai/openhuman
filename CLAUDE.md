@@ -475,15 +475,26 @@ Key updates from recent commits (cd9ebcd to current):
 - **PR template required**: Use `.github/pull_request_template.md` for all pull requests.
 - **AI tooling rule**: Any AI-generated PR description must follow the template sections in order and keep all checklist items.
 
-## Rust core (`src/openhuman`): `rpc.rs` controller layer
+## Rust core: implementation, `rpc.rs` controllers, and routes
 
-The Rust library under `src/openhuman/` powers JSON-RPC (`/rpc` via `src/core_server/`) and the core CLI (`call_method` / `src/core_server/cli.rs`). For every **domain** there that is part of that surface, keep orchestration in a dedicated `rpc.rs` file.
+Layering:
 
-- **Where**: `src/openhuman/<domain>/rpc.rs` for domains that expose RPC/CLI behavior (not necessarily every `pub mod`—only those with a real external surface).
+| Layer | Location | Role |
+| ----- | -------- | ---- |
+| **Implementation** | `src/openhuman/<domain>/` (everything except `rpc.rs` in that domain) | Domain logic, persistence, side effects. |
+| **Controller** | `src/openhuman/<domain>/rpc.rs` plus [`src/openhuman/rpc/mod.rs`](src/openhuman/rpc/mod.rs) (`RpcOutcome`) | Orchestrate: load config, validate, call implementation, attach logs. |
+| **Routes** | [`src/core_server/cli.rs`](src/core_server/cli.rs) (CLI), [`src/core_server/json_rpc.rs`](src/core_server/json_rpc.rs) (HTTP POST `/rpc`), and [`core_server::call_method`](src/core_server/mod.rs) (in-process JSON-RPC) | Parse transport only; delegate to dispatch or call `openhuman::…::rpc` directly. [`src/core_server/server.rs`](src/core_server/server.rs) wires the Axum router and `run_server`. |
+
+**Dispatch** ([`src/core_server/dispatch/`](src/core_server/dispatch/mod.rs)) is shared **method routing** (match `method` string → `parse_params` → controller). It is not the domain implementation; keep it free of business logic beyond parameter wiring.
+
+For every **domain** that exposes RPC/CLI, keep orchestration in a dedicated `rpc.rs` file.
+
+- **Where**: `src/openhuman/<domain>/rpc.rs` for domains with a real external surface (not necessarily every `pub mod`).
 - **What**: Controller-style functions—load config, enforce feature flags, validate inputs, call the domain implementation, attach human-readable log lines for RPC responses.
 - **Boundaries**: Do **not** import `crate::core_server` from `src/openhuman` (including `rpc.rs`). No HTTP/Axum, JSON-RPC method strings, or Clap parsing in `rpc.rs`; those stay in `src/core_server/`.
 - **Shared types**: Use `crate::openhuman::rpc::RpcOutcome<T>` for structured value + `logs`. Dispatch maps to `InvocationResult` with `crate::core_server::helpers::rpc_invocation_from_outcome`.
-- **Dispatch**: Keep `src/core_server/dispatch/openhuman/*.rs` as thin routers (`parse_params` → `crate::openhuman::...::rpc::...` → wrap). Entry point: [`src/core_server/dispatch/openhuman/mod.rs`](src/core_server/dispatch/openhuman/mod.rs). Reference implementation: [`src/openhuman/cron/rpc.rs`](src/openhuman/cron/rpc.rs) and [`src/core_server/dispatch/openhuman/cron.rs`](src/core_server/dispatch/openhuman/cron.rs).
+- **OpenHuman dispatch files**: Keep `src/core_server/dispatch/openhuman/*.rs` thin (`parse_params` → `crate::openhuman::...::rpc::...` → wrap). Entry point: [`src/core_server/dispatch/openhuman/mod.rs`](src/core_server/dispatch/openhuman/mod.rs). Reference: [`src/openhuman/cron/rpc.rs`](src/openhuman/cron/rpc.rs) and [`src/core_server/dispatch/openhuman/cron.rs`](src/core_server/dispatch/openhuman/cron.rs).
+- **CLI**: OpenHuman-facing subcommands call the same `rpc.rs` controllers directly, then format output with `crate::core_server::helpers::rpc_outcome_to_cli_json` / `rpc_outcome_fut_to_cli_json` (same shape as `invocation_to_rpc_json`). Use `crate::core_server::call_method` only for `core.*` methods, arbitrary `--call`, and non-controller stubs (e.g. socket).
 
 ## Key Patterns
 
