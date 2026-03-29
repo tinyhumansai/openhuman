@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
-const DEFAULT_OLLAMA_MODEL: &str = "qwen2.5:1.5b";
-const DEFAULT_OLLAMA_VISION_MODEL: &str = "moondream:1.8b";
+const DEFAULT_OLLAMA_MODEL: &str = "gemma3:4b-it-qat";
+const DEFAULT_OLLAMA_VISION_MODEL: &str = "gemma3:4b-it-qat";
 const DEFAULT_OLLAMA_EMBED_MODEL: &str = "nomic-embed-text:latest";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
