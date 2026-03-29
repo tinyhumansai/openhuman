@@ -3,6 +3,11 @@
 pub mod daemon;
 pub mod daemon_host;
 pub mod rpc;
+mod schemas;
+pub use schemas::{
+    all_controller_schemas as all_service_controller_schemas,
+    all_registered_controllers as all_service_registered_controllers,
+};
 
 mod common;
 #[cfg(target_os = "linux")]

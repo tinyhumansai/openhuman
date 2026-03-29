@@ -47,6 +47,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::autocomplete::all_autocomplete_registered_controllers());
     controllers.extend(crate::openhuman::config::all_config_registered_controllers());
     controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
+    controllers.extend(crate::openhuman::service::all_service_registered_controllers());
+    controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
+    controllers.extend(crate::openhuman::local_ai::all_local_ai_registered_controllers());
     controllers
 }
 
@@ -61,6 +64,9 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::autocomplete::all_autocomplete_controller_schemas());
     schemas.extend(crate::openhuman::config::all_config_controller_schemas());
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
+    schemas.extend(crate::openhuman::service::all_service_controller_schemas());
+    schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
+    schemas.extend(crate::openhuman::local_ai::all_local_ai_controller_schemas());
     schemas
 }
 

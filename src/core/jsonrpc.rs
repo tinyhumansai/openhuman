@@ -226,4 +226,40 @@ mod tests {
             .expect_err("missing token should fail");
         assert!(err.contains("missing required param 'token'"));
     }
+
+    #[tokio::test]
+    async fn invoke_service_status_rejects_unknown_param() {
+        let err = invoke_method(
+            default_state(),
+            "openhuman.service_status",
+            json!({ "x": 1 }),
+        )
+        .await
+        .expect_err("unknown param should fail");
+        assert!(err.contains("unknown param 'x'"));
+    }
+
+    #[tokio::test]
+    async fn invoke_migrate_openclaw_rejects_unknown_param() {
+        let err = invoke_method(
+            default_state(),
+            "openhuman.migrate_openclaw",
+            json!({ "x": 1 }),
+        )
+        .await
+        .expect_err("unknown param should fail");
+        assert!(err.contains("unknown param 'x'"));
+    }
+
+    #[tokio::test]
+    async fn invoke_local_ai_download_asset_missing_required_param_fails_validation() {
+        let err = invoke_method(
+            default_state(),
+            "openhuman.local_ai_download_asset",
+            json!({}),
+        )
+        .await
+        .expect_err("missing capability should fail");
+        assert!(err.contains("missing required param 'capability'"));
+    }
 }

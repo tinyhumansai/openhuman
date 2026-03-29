@@ -1,6 +1,7 @@
 //! Bundled local AI stack (Ollama, whisper.cpp, Piper).
 
 pub mod rpc;
+mod schemas;
 
 mod install;
 mod model_ids;
@@ -10,6 +11,10 @@ mod paths;
 mod service;
 mod types;
 
+pub use schemas::{
+    all_controller_schemas as all_local_ai_controller_schemas,
+    all_registered_controllers as all_local_ai_registered_controllers,
+};
 pub use service::LocalAiService;
 pub use types::{
     LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiDownloadProgressItem, LocalAiDownloadsProgress,

@@ -1,6 +1,11 @@
 //! Data migration helpers for OpenHuman.
 
 pub mod rpc;
+mod schemas;
+pub use schemas::{
+    all_controller_schemas as all_migration_controller_schemas,
+    all_registered_controllers as all_migration_registered_controllers,
+};
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::{self, Memory, MemoryCategory};

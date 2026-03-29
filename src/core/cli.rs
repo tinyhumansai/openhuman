@@ -288,5 +288,8 @@ mod tests {
         assert!(grouped.contains_key("autocomplete"));
         assert!(grouped.contains_key("get"));
         assert!(grouped.contains_key("auth.store"));
+        assert!(grouped.contains_key("service"));
+        assert!(grouped.contains_key("migrate"));
+        assert!(grouped.contains_key("local_ai"));
     }
 }
