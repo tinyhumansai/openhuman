@@ -181,7 +181,7 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
     );
 
     // --- auth: session state (no JWT yet) ---
-    let state_before = post_json_rpc(&rpc_base, 3, "openhuman.auth.get_state", json!({})).await;
+    let state_before = post_json_rpc(&rpc_base, 3, "openhuman.auth_get_state", json!({})).await;
     let state_outer = assert_no_jsonrpc_error(&state_before, "get_state");
     let state_body = state_outer.get("result").unwrap_or(state_outer);
     assert!(
@@ -193,10 +193,10 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
     let store = post_json_rpc(
         &rpc_base,
         4,
-        "openhuman.auth.store_session",
+        "openhuman.auth_store_session",
         json!({
             "token": "e2e-test-jwt",
-            "userId": "e2e-user"
+            "user_id": "e2e-user"
         }),
     )
     .await;
@@ -206,7 +206,7 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
     let chat = post_json_rpc(
         &rpc_base,
         5,
-        "openhuman.agent_chat",
+        "openhuman.local_ai_agent_chat",
         json!({
             "message": "Hello",
         }),

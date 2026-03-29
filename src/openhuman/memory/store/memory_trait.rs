@@ -83,19 +83,29 @@ impl Memory for UnifiedMemory {
                 "SELECT document_id, key, content, updated_at, category
                  FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
                 params![GLOBAL_NAMESPACE, key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .optional()?;
-        Ok(row.map(|(id, key, content, updated_at, category)| MemoryEntry {
-            id,
-            key,
-            content,
-            namespace: Some(GLOBAL_NAMESPACE.to_string()),
-            category: memory_category_from_stored(&category),
-            timestamp: format!("{updated_at}"),
-            session_id: None,
-            score: None,
-        }))
+        Ok(
+            row.map(|(id, key, content, updated_at, category)| MemoryEntry {
+                id,
+                key,
+                content,
+                namespace: Some(GLOBAL_NAMESPACE.to_string()),
+                category: memory_category_from_stored(&category),
+                timestamp: format!("{updated_at}"),
+                session_id: None,
+                score: None,
+            }),
+        )
     }
 
     async fn list(
