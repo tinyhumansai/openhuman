@@ -263,7 +263,7 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
     }
 
     if config.channels_config.webhook.is_some() {
-        println!("  ℹ️  Webhook   check gateway health in the web UI");
+        println!("  ℹ️  Webhook   ensure your webhook endpoint is reachable");
     }
 
     println!();

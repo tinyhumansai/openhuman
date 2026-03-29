@@ -1531,7 +1531,7 @@ mod tests {
 
     // =================================================================
     // SECURITY CHECKLIST TESTS
-    // Checklist: gateway not public, pairing required,
+    // Checklist: inbound surfaces not public, pairing required,
     //            filesystem scoped (no /), access via tunnel
     // =================================================================
 

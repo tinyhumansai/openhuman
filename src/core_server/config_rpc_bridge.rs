@@ -2,12 +2,12 @@
 //! so dispatch and CLI stay thin.
 
 use crate::core_server::types::{
-    BrowserSettingsUpdate, GatewaySettingsUpdate, MemorySettingsUpdate, ModelSettingsUpdate,
-    RuntimeSettingsUpdate, ScreenIntelligenceSettingsUpdate,
+    BrowserSettingsUpdate, MemorySettingsUpdate, ModelSettingsUpdate, RuntimeSettingsUpdate,
+    ScreenIntelligenceSettingsUpdate,
 };
 use crate::openhuman::config::rpc::{
-    BrowserSettingsPatch, GatewaySettingsPatch, MemorySettingsPatch, ModelSettingsPatch,
-    RuntimeSettingsPatch, ScreenIntelligenceSettingsPatch,
+    BrowserSettingsPatch, MemorySettingsPatch, ModelSettingsPatch, RuntimeSettingsPatch,
+    ScreenIntelligenceSettingsPatch,
 };
 
 impl From<ModelSettingsUpdate> for ModelSettingsPatch {
@@ -30,17 +30,6 @@ impl From<MemorySettingsUpdate> for MemorySettingsPatch {
             embedding_provider: u.embedding_provider,
             embedding_model: u.embedding_model,
             embedding_dimensions: u.embedding_dimensions,
-        }
-    }
-}
-
-impl From<GatewaySettingsUpdate> for GatewaySettingsPatch {
-    fn from(u: GatewaySettingsUpdate) -> Self {
-        Self {
-            host: u.host,
-            port: u.port,
-            require_pairing: u.require_pairing,
-            allow_public_bind: u.allow_public_bind,
         }
     }
 }

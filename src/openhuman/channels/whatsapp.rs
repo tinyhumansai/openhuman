@@ -5,9 +5,8 @@ use uuid::Uuid;
 /// `WhatsApp` channel — uses `WhatsApp` Business Cloud API
 ///
 /// This channel operates in webhook mode (push-based) rather than polling.
-/// Messages are received via the gateway's `/whatsapp` webhook endpoint.
-/// The `listen` method here is a no-op placeholder; actual message handling
-/// happens in the gateway when Meta sends webhook events.
+/// The `listen` method here is a no-op placeholder; inbound delivery depends on
+/// your deployment wiring Meta webhooks to the app.
 fn ensure_https(url: &str) -> anyhow::Result<()> {
     if !url.starts_with("https://") {
         anyhow::bail!(
@@ -203,11 +202,10 @@ impl Channel for WhatsAppChannel {
 
     async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         // WhatsApp uses webhooks (push-based), not polling.
-        // Messages are received via the gateway's /whatsapp endpoint.
         // This method keeps the channel "alive" but doesn't actively poll.
         tracing::info!(
             "WhatsApp channel active (webhook mode). \
-            Configure Meta webhook to POST to your gateway's /whatsapp endpoint."
+            Configure Meta to POST webhook events to your deployed HTTPS webhook URL."
         );
 
         // Keep the task alive — it will be cancelled when the channel shuts down

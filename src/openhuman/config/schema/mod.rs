@@ -8,7 +8,6 @@ mod autocomplete;
 mod autonomy;
 mod channels;
 mod defaults;
-mod gateway;
 mod hardware;
 mod heartbeat_cron;
 mod identity_cost;
@@ -32,7 +31,6 @@ pub use channels::{
     SandboxBackend, SandboxConfig, SecurityConfig, SignalConfig, SlackConfig, StreamMode,
     TelegramConfig, WebhookConfig, WhatsAppConfig,
 };
-pub use gateway::GatewayConfig;
 pub use hardware::{HardwareConfig, HardwareTransport};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{
@@ -132,9 +130,6 @@ pub struct Config {
     pub tunnel: TunnelConfig,
 
     #[serde(default)]
-    pub gateway: GatewayConfig,
-
-    #[serde(default)]
     pub composio: ComposioConfig,
 
     #[serde(default)]
@@ -204,7 +199,6 @@ impl Default for Config {
             memory: MemoryConfig::default(),
             storage: StorageConfig::default(),
             tunnel: TunnelConfig::default(),
-            gateway: GatewayConfig::default(),
             composio: ComposioConfig::default(),
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),

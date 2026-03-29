@@ -29,7 +29,6 @@ import {
   openhumanServiceStatus,
   openhumanServiceUninstall,
   openhumanSetDaemonHostConfig,
-  openhumanUpdateGatewaySettings,
   openhumanUpdateMemorySettings,
   openhumanUpdateModelSettings,
   openhumanUpdateRuntimeSettings,
@@ -88,10 +87,6 @@ const TauriCommandsPanel = () => {
   const [ngrokToken, setNgrokToken] = useState<string>('');
   const [tailscaleHostname, setTailscaleHostname] = useState<string>('');
   const [customCommand, setCustomCommand] = useState<string>('');
-  const [gatewayHost, setGatewayHost] = useState<string>('127.0.0.1');
-  const [gatewayPort, setGatewayPort] = useState<string>('3000');
-  const [gatewayPairing, setGatewayPairing] = useState<boolean>(true);
-  const [gatewayPublic, setGatewayPublic] = useState<boolean>(false);
   const [memoryBackend, setMemoryBackend] = useState<string>('sqlite');
   const [memoryAutoSave, setMemoryAutoSave] = useState<boolean>(true);
   const [embeddingProvider, setEmbeddingProvider] = useState<string>('none');
@@ -392,12 +387,6 @@ const TauriCommandsPanel = () => {
       );
       setCustomCommand(((tunnel.custom as Record<string, unknown>)?.start_command as string) ?? '');
 
-      const gateway = (config.gateway as Record<string, unknown>) ?? {};
-      setGatewayHost((gateway.host as string) ?? '127.0.0.1');
-      setGatewayPort(String((gateway.port as number) ?? 3000));
-      setGatewayPairing((gateway.require_pairing as boolean) ?? true);
-      setGatewayPublic((gateway.allow_public_bind as boolean) ?? false);
-
       const memory = (config.memory as Record<string, unknown>) ?? {};
       setMemoryBackend((memory.backend as string) ?? 'sqlite');
       setMemoryAutoSave((memory.auto_save as boolean) ?? true);
@@ -601,18 +590,6 @@ const TauriCommandsPanel = () => {
 
   const saveTunnelSettings = () =>
     run(() => openhumanUpdateTunnelSettings(buildTunnelConfig()), 'saveTunnelSettings');
-
-  const saveGatewaySettings = () =>
-    run(
-      () =>
-        openhumanUpdateGatewaySettings({
-          host: gatewayHost.trim() ? gatewayHost : null,
-          port: parseOptionalNumber(gatewayPort),
-          require_pairing: gatewayPairing,
-          allow_public_bind: gatewayPublic,
-        }),
-      'saveGatewaySettings'
-    );
 
   const saveMemorySettings = () =>
     run(
@@ -1315,48 +1292,9 @@ const TauriCommandsPanel = () => {
             defaultExpanded={!isCollapsed('network-infrastructure')}
             hasChanges={false}
             loading={
-              operationLoading?.includes('Gateway') ||
-              operationLoading?.includes('Tunnel') ||
-              operationLoading?.includes('Memory')
+              operationLoading?.includes('Tunnel') || operationLoading?.includes('Memory')
             }>
-            <div className="grid gap-8 lg:grid-cols-2">
-              <InputGroup
-                title="Gateway Settings"
-                description="Configure API gateway host and port">
-                <Field
-                  label="Host"
-                  helpText="IP address for the API gateway server. Use '127.0.0.1' for local-only access or '0.0.0.0' to accept connections from any network interface. Change with caution for security.">
-                  <input
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
-                    placeholder="127.0.0.1"
-                    value={gatewayHost}
-                    onChange={event => setGatewayHost(event.target.value)}
-                  />
-                </Field>
-                <Field
-                  label="Port"
-                  helpText="Network port for the agent's API server. Default 3000 works for most setups. Change if this port conflicts with other services. Ports below 1024 may require administrator privileges.">
-                  <input
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
-                    placeholder="3000"
-                    value={gatewayPort}
-                    onChange={event => setGatewayPort(event.target.value)}
-                  />
-                </Field>
-                <CheckboxField
-                  label="Require pairing"
-                  helpText="Enforces device pairing before API access. Provides additional security by requiring explicit authorization. Disable only for development or trusted network environments."
-                  checked={gatewayPairing}
-                  onChange={setGatewayPairing}
-                />
-                <CheckboxField
-                  label="Allow public bind"
-                  helpText="Permits connections from external networks when enabled. WARNING: Only enable in secure environments with proper firewall protection. Disabled by default for security."
-                  checked={gatewayPublic}
-                  onChange={setGatewayPublic}
-                />
-              </InputGroup>
-
+            <div className="grid gap-8">
               <InputGroup
                 title="Tunnel Configuration"
                 description="Configure external tunnel providers">
@@ -1467,11 +1405,6 @@ const TauriCommandsPanel = () => {
             </InputGroup>
 
             <ActionPanel>
-              <PrimaryButton
-                onClick={saveGatewaySettings}
-                loading={operationLoading === 'saveGatewaySettings'}>
-                Save Gateway Settings
-              </PrimaryButton>
               <PrimaryButton
                 onClick={saveTunnelSettings}
                 loading={operationLoading === 'saveTunnelSettings'}>

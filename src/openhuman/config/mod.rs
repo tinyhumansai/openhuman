@@ -13,7 +13,7 @@ pub use schema::{
     AgentConfig, AuditConfig, AutocompleteConfig, AutonomyConfig, BrowserComputerUseConfig,
     BrowserConfig, ChannelsConfig, ClassificationRule, CloudflareTunnelConfig, ComposioConfig,
     Config, CostConfig, CronConfig, CustomTunnelConfig, DelegateAgentConfig, DiscordConfig,
-    DockerRuntimeConfig, EmbeddingRouteConfig, GatewayConfig, HardwareConfig, HardwareTransport,
+    DockerRuntimeConfig, EmbeddingRouteConfig, HardwareConfig, HardwareTransport,
     HeartbeatConfig, HttpRequestConfig, IMessageConfig, IdentityConfig, LarkConfig, LocalAiConfig,
     MatrixConfig, MemoryConfig, ModelRouteConfig, MultimodalConfig, NgrokTunnelConfig,
     ObservabilityConfig, PeripheralBoardConfig, PeripheralsConfig, ProxyConfig, ProxyScope,

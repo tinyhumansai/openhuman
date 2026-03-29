@@ -23,7 +23,6 @@ pub mod daemon;
 pub mod daemon_host;
 pub mod dev_paths;
 pub mod doctor;
-pub mod gateway;
 pub mod health;
 pub mod heartbeat;
 pub mod identity;

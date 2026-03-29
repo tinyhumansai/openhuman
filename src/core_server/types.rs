@@ -100,14 +100,6 @@ pub struct MemorySettingsUpdate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GatewaySettingsUpdate {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub require_pairing: Option<bool>,
-    pub allow_public_bind: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeSettingsUpdate {
     pub kind: Option<String>,
     pub reasoning_enabled: Option<bool>,

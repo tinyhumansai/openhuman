@@ -1,11 +1,7 @@
-// Gateway pairing mode — first-connect authentication.
+// First-connect authentication for channels (e.g. Telegram) that support operator pairing.
 //
-// On startup the gateway generates a one-time pairing code printed to the
-// terminal. The first client must present this code via `X-Pairing-Code`
-// header on a `POST /pair` request. The server responds with a bearer token
-// that must be sent on all subsequent requests via `Authorization: Bearer <token>`.
-//
-// Already-paired tokens are persisted in config so restarts don't require
+// A one-time pairing code can be shown to the operator; successful pairing issues
+// a bearer token. Tokens can be persisted in config so restarts don't require
 // re-pairing.
 
 use parking_lot::Mutex;
@@ -19,7 +15,7 @@ const MAX_PAIR_ATTEMPTS: u32 = 5;
 /// Lockout duration after too many failed pairing attempts.
 const PAIR_LOCKOUT_SECS: u64 = 300; // 5 minutes
 
-/// Manages pairing state for the gateway.
+/// Manages pairing state for channels that use bearer-token auth after pairing.
 ///
 /// Bearer tokens are stored as SHA-256 hashes to prevent plaintext exposure
 /// in config files. When a new token is generated, the plaintext is returned

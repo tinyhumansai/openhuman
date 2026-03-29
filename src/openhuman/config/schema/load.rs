@@ -422,25 +422,6 @@ impl Config {
             }
         }
 
-        if let Ok(port_str) =
-            std::env::var("OPENHUMAN_GATEWAY_PORT").or_else(|_| std::env::var("PORT"))
-        {
-            if let Ok(port) = port_str.parse::<u16>() {
-                self.gateway.port = port;
-            }
-        }
-
-        if let Ok(host) = std::env::var("OPENHUMAN_GATEWAY_HOST").or_else(|_| std::env::var("HOST"))
-        {
-            if !host.is_empty() {
-                self.gateway.host = host;
-            }
-        }
-
-        if let Ok(val) = std::env::var("OPENHUMAN_ALLOW_PUBLIC_BIND") {
-            self.gateway.allow_public_bind = val == "1" || val.eq_ignore_ascii_case("true");
-        }
-
         if let Ok(temp_str) = std::env::var("OPENHUMAN_TEMPERATURE") {
             if let Ok(temp) = temp_str.parse::<f64>() {
                 if (0.0..=2.0).contains(&temp) {

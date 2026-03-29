@@ -10,8 +10,8 @@ use crate::core_server::helpers::{
     parse_params, rpc_outcome_fut_to_cli_json, rpc_outcome_to_cli_json,
 };
 use crate::core_server::types::{
-    BrowserSettingsUpdate, CommandResponse, ConfigSnapshot, GatewaySettingsUpdate,
-    MemorySettingsUpdate, ModelSettingsUpdate, RuntimeSettingsUpdate,
+    BrowserSettingsUpdate, CommandResponse, ConfigSnapshot, MemorySettingsUpdate,
+    ModelSettingsUpdate, RuntimeSettingsUpdate,
 };
 use crate::core_server::{call_method, run_server, APP_SESSION_PROVIDER};
 use crate::openhuman::config::rpc as config_rpc;
@@ -112,10 +112,6 @@ enum SettingsCommand {
         #[command(subcommand)]
         command: MemorySettingsCommand,
     },
-    Gateway {
-        #[command(subcommand)]
-        command: GatewaySettingsCommand,
-    },
     Tunnel {
         #[command(subcommand)]
         command: TunnelSettingsCommand,
@@ -168,24 +164,6 @@ struct MemorySetArgs {
     embedding_model: Option<String>,
     #[arg(long)]
     embedding_dimensions: Option<usize>,
-}
-
-#[derive(Debug, Subcommand)]
-enum GatewaySettingsCommand {
-    Get,
-    Set(GatewaySetArgs),
-}
-
-#[derive(Debug, Args)]
-struct GatewaySetArgs {
-    #[arg(long)]
-    host: Option<String>,
-    #[arg(long)]
-    port: Option<u16>,
-    #[arg(long)]
-    require_pairing: Option<bool>,
-    #[arg(long)]
-    allow_public_bind: Option<bool>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -354,11 +332,6 @@ enum ConfigCommand {
     },
     /// Update memory settings with a JSON object
     UpdateMemory {
-        #[arg(long)]
-        json: String,
-    },
-    /// Update gateway settings with a JSON object
-    UpdateGateway {
         #[arg(long)]
         json: String,
     },
@@ -642,42 +615,6 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
                     let update: MemorySettingsUpdate =
                         parse_params(serde_json::Value::Object(payload))?;
                     rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_memory_settings(
-                        update.into(),
-                    ))
-                    .await
-                }
-            },
-            SettingsCommand::Gateway { command } => match command {
-                GatewaySettingsCommand::Get => {
-                    let snapshot = get_config_snapshot().await?;
-                    Ok(settings_section_json(
-                        "gateway",
-                        &ConfigSnapshotFields {
-                            config: snapshot.result.config.clone(),
-                            workspace_dir: snapshot.result.workspace_dir.clone(),
-                            config_path: snapshot.result.config_path.clone(),
-                        },
-                        snapshot.logs,
-                    ))
-                }
-                GatewaySettingsCommand::Set(args) => {
-                    let mut payload = serde_json::Map::new();
-                    if let Some(v) = args.host {
-                        payload.insert("host".to_string(), json!(v));
-                    }
-                    if let Some(v) = args.port {
-                        payload.insert("port".to_string(), json!(v));
-                    }
-                    if let Some(v) = args.require_pairing {
-                        payload.insert("require_pairing".to_string(), json!(v));
-                    }
-                    if let Some(v) = args.allow_public_bind {
-                        payload.insert("allow_public_bind".to_string(), json!(v));
-                    }
-                    ensure_non_empty_payload(&payload).map_err(|e| e.to_string())?;
-                    let update: GatewaySettingsUpdate =
-                        parse_params(serde_json::Value::Object(payload))?;
-                    rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_gateway_settings(
                         update.into(),
                     ))
                     .await
@@ -1020,13 +957,6 @@ async fn execute_core_cli(cli: CoreCli) -> Result<serde_json::Value, String> {
             ConfigCommand::UpdateMemory { json } => {
                 let update: MemorySettingsUpdate = parse_params(parse_json_arg(&json)?)?;
                 rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_memory_settings(
-                    update.into(),
-                ))
-                .await
-            }
-            ConfigCommand::UpdateGateway { json } => {
-                let update: GatewaySettingsUpdate = parse_params(parse_json_arg(&json)?)?;
-                rpc_outcome_fut_to_cli_json(config_rpc::load_and_apply_gateway_settings(
                     update.into(),
                 ))
                 .await

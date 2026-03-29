@@ -29,10 +29,6 @@ pub fn settings_section_json(
             .get("memory")
             .cloned()
             .unwrap_or(serde_json::Value::Null),
-        "gateway" => cfg
-            .get("gateway")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
         "tunnel" => cfg
             .get("tunnel")
             .cloned()

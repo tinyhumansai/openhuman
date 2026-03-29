@@ -154,7 +154,7 @@ fn integration_setup_hints(name: &str, status: IntegrationStatus) -> Vec<String>
             hints.push("Create schedules in the UI".to_string());
         }
         "Webhooks" => {
-            hints.push("Enable the gateway to receive webhooks".to_string());
+            hints.push("Configure a channel or integration that supports inbound webhooks".to_string());
         }
         _ => {
             if status == IntegrationStatus::ComingSoon {

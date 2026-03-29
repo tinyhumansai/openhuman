@@ -710,13 +710,6 @@ export interface MemorySettingsUpdate {
   embedding_dimensions?: number | null;
 }
 
-export interface GatewaySettingsUpdate {
-  host?: string | null;
-  port?: number | null;
-  require_pairing?: boolean | null;
-  allow_public_bind?: boolean | null;
-}
-
 export interface RuntimeSettingsUpdate {
   kind?: string | null;
   reasoning_enabled?: boolean | null;
@@ -924,18 +917,6 @@ export async function openhumanUpdateMemorySettings(
   }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.update_memory_settings',
-    params: update,
-  });
-}
-
-export async function openhumanUpdateGatewaySettings(
-  update: GatewaySettingsUpdate
-): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: 'openhuman.update_gateway_settings',
     params: update,
   });
 }

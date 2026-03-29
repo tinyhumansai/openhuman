@@ -2,9 +2,8 @@ use serde::Deserialize;
 
 use crate::core_server::helpers::{parse_params, rpc_invocation_from_outcome};
 use crate::core_server::types::{
-    BrowserSettingsUpdate, GatewaySettingsUpdate, InvocationResult, MemorySettingsUpdate,
-    ModelSettingsUpdate, RuntimeFlags, RuntimeSettingsUpdate, ScreenIntelligenceSettingsUpdate,
-    SetBrowserAllowAllParams,
+    BrowserSettingsUpdate, InvocationResult, MemorySettingsUpdate, ModelSettingsUpdate,
+    RuntimeFlags, RuntimeSettingsUpdate, ScreenIntelligenceSettingsUpdate, SetBrowserAllowAllParams,
 };
 use crate::core_server::DEFAULT_ONBOARDING_FLAG_NAME;
 use crate::openhuman::config::rpc::{self as config_rpc};
@@ -54,16 +53,6 @@ pub async fn try_dispatch(
                 let update: ScreenIntelligenceSettingsUpdate = parse_params(params)?;
                 rpc_invocation_from_outcome(
                     config_rpc::load_and_apply_screen_intelligence_settings(update.into()).await?,
-                )
-            }
-            .await,
-        ),
-
-        "openhuman.update_gateway_settings" => Some(
-            async move {
-                let update: GatewaySettingsUpdate = parse_params(params)?;
-                rpc_invocation_from_outcome(
-                    config_rpc::load_and_apply_gateway_settings(update.into()).await?,
                 )
             }
             .await,

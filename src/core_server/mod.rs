@@ -29,9 +29,8 @@ pub use crate::openhuman::screen_intelligence::{
 };
 
 pub use types::{
-    BrowserSettingsUpdate, CommandResponse, ConfigSnapshot, GatewaySettingsUpdate,
-    MemorySettingsUpdate, ModelSettingsUpdate, RuntimeFlags, RuntimeSettingsUpdate,
-    ScreenIntelligenceSettingsUpdate,
+    BrowserSettingsUpdate, CommandResponse, ConfigSnapshot, MemorySettingsUpdate,
+    ModelSettingsUpdate, RuntimeFlags, RuntimeSettingsUpdate, ScreenIntelligenceSettingsUpdate,
 };
 
 pub use server::run_server;

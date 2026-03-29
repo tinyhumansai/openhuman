@@ -306,14 +306,6 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagnosticItem>) {
         ));
     }
 
-    // Gateway port range
-    let port = config.gateway.port;
-    if port > 0 {
-        items.push(DiagnosticItem::ok(cat, format!("gateway port: {port}")));
-    } else {
-        items.push(DiagnosticItem::error(cat, "gateway port is 0 (invalid)"));
-    }
-
     // Reliability: fallback providers
     for fb in &config.reliability.fallback_providers {
         if let Some(reason) = provider_validation_error(fb) {

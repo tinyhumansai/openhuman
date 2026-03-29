@@ -67,14 +67,6 @@ pub struct MemorySettingsPatch {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct GatewaySettingsPatch {
-    pub host: Option<String>,
-    pub port: Option<u16>,
-    pub require_pairing: Option<bool>,
-    pub allow_public_bind: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default)]
 pub struct RuntimeSettingsPatch {
     pub kind: Option<String>,
     pub reasoning_enabled: Option<bool>,
@@ -234,33 +226,6 @@ pub async fn apply_screen_intelligence_settings(
     ))
 }
 
-pub async fn apply_gateway_settings(
-    config: &mut Config,
-    update: GatewaySettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    if let Some(host) = update.host {
-        config.gateway.host = host;
-    }
-    if let Some(port) = update.port {
-        config.gateway.port = port;
-    }
-    if let Some(require_pairing) = update.require_pairing {
-        config.gateway.require_pairing = require_pairing;
-    }
-    if let Some(allow_public_bind) = update.allow_public_bind {
-        config.gateway.allow_public_bind = allow_public_bind;
-    }
-    config.save().await.map_err(|e| e.to_string())?;
-    let snapshot = snapshot_config_json(config)?;
-    Ok(RpcOutcome::new(
-        snapshot,
-        vec![format!(
-            "gateway settings saved to {}",
-            config.config_path.display()
-        )],
-    ))
-}
-
 pub async fn apply_tunnel_settings(
     config: &mut Config,
     tunnel: TunnelConfig,
@@ -340,13 +305,6 @@ pub async fn load_and_apply_screen_intelligence_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_screen_intelligence_settings(&mut config, update).await
-}
-
-pub async fn load_and_apply_gateway_settings(
-    update: GatewaySettingsPatch,
-) -> Result<RpcOutcome<serde_json::Value>, String> {
-    let mut config = load_config_with_timeout().await?;
-    apply_gateway_settings(&mut config, update).await
 }
 
 pub async fn load_and_apply_tunnel_settings(

@@ -21,8 +21,8 @@ use tokio::sync::Mutex;
 /// Agnostic tunnel abstraction — bring your own tunnel provider.
 ///
 /// Implementations wrap an external tunnel binary (cloudflared, tailscale,
-/// ngrok, etc.) or a custom command. The gateway calls `start()` after
-/// binding its local port and `stop()` on shutdown.
+/// ngrok, etc.) or a custom command. Callers invoke `start()` with the
+/// desired local host/port and `stop()` on shutdown.
 #[async_trait::async_trait]
 pub trait Tunnel: Send + Sync {
     /// Human-readable provider name (e.g. "cloudflare", "tailscale")

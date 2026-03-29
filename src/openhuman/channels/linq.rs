@@ -5,9 +5,8 @@ use uuid::Uuid;
 /// Linq channel — uses the Linq Partner V3 API for iMessage, RCS, and SMS.
 ///
 /// This channel operates in webhook mode (push-based) rather than polling.
-/// Messages are received via the gateway's `/linq` webhook endpoint.
-/// The `listen` method here is a keepalive placeholder; actual message handling
-/// happens in the gateway when Linq sends webhook events.
+/// The `listen` method here is a keepalive placeholder; inbound delivery depends on
+/// your deployment wiring Linq webhooks to the app.
 pub struct LinqChannel {
     api_token: String,
     from_phone: String,
@@ -294,10 +293,9 @@ impl Channel for LinqChannel {
 
     async fn listen(&self, _tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         // Linq uses webhooks (push-based), not polling.
-        // Messages are received via the gateway's /linq endpoint.
         tracing::info!(
             "Linq channel active (webhook mode). \
-            Configure Linq webhook to POST to your gateway's /linq endpoint."
+            Configure Linq to POST webhook events to your deployed HTTPS webhook URL."
         );
 
         // Keep the task alive — it will be cancelled when the channel shuts down
