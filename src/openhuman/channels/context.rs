@@ -1,7 +1,6 @@
 //! Shared channel runtime state and memory helpers.
 
 use crate::openhuman::memory::Memory;
-use crate::openhuman::observability::Observer;
 use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -50,7 +49,6 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) default_provider: Arc<String>,
     pub(crate) memory: Arc<dyn Memory>,
     pub(crate) tools_registry: Arc<Vec<Box<dyn Tool>>>,
-    pub(crate) observer: Arc<dyn Observer>,
     pub(crate) system_prompt: Arc<String>,
     pub(crate) model: Arc<String>,
     pub(crate) temperature: f64,

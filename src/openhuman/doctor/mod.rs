@@ -176,7 +176,7 @@ pub fn run_models(config: &Config, use_cache: bool) -> Result<ModelProbeReport> 
     let mut error_count = 0usize;
 
     for provider_name in &targets {
-        match crate::openhuman::onboard::run_models_refresh(config, !use_cache) {
+        match crate::openhuman::model_catalog::run_models_refresh(config, !use_cache) {
             Ok(_) => {
                 ok_count += 1;
                 entries.push(ModelProbeEntry {

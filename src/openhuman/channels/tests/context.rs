@@ -5,7 +5,6 @@ use super::super::context::{
     CHANNEL_HISTORY_COMPACT_CONTENT_CHARS, CHANNEL_HISTORY_COMPACT_KEEP_MESSAGES,
     CHANNEL_MESSAGE_TIMEOUT_SECS, MIN_CHANNEL_MESSAGE_TIMEOUT_SECS,
 };
-use crate::openhuman::observability::NoopObserver;
 use crate::openhuman::providers::ChatMessage;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -68,7 +67,6 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(super::common::NoopMemory),
         tools_registry: Arc::new(vec![]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("system".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,

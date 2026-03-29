@@ -5,8 +5,8 @@ use chrono::Utc;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai::{
-    self, LocalAiAssetsStatus, LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiTtsResult,
-    Suggestion,
+    self, LocalAiAssetsStatus, LocalAiDownloadsProgress, LocalAiEmbeddingResult,
+    LocalAiSpeechResult, LocalAiTtsResult, Suggestion,
 };
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
 use crate::openhuman::rpc::RpcOutcome;
@@ -116,6 +116,31 @@ pub async fn local_ai_download(
     Ok(RpcOutcome::single_log(
         service.status(),
         "local ai full model download triggered",
+    ))
+}
+
+pub async fn local_ai_download_all_assets(
+    config: &Config,
+    force: bool,
+) -> Result<RpcOutcome<LocalAiDownloadsProgress>, String> {
+    let service = local_ai::global(config);
+    if force {
+        service.reset_to_idle(config);
+    }
+    let service_clone = service.clone();
+    let config_clone = config.clone();
+    tokio::spawn(async move {
+        if let Err(err) = service_clone.download_all_models(&config_clone).await {
+            service_clone.mark_degraded(err);
+        }
+    });
+    let progress = service
+        .downloads_progress(config)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        progress,
+        "local ai full asset download triggered",
     ))
 }
 
@@ -298,6 +323,20 @@ pub async fn local_ai_assets_status(
     Ok(RpcOutcome::single_log(
         output,
         "local ai assets status fetched",
+    ))
+}
+
+pub async fn local_ai_downloads_progress(
+    config: &Config,
+) -> Result<RpcOutcome<LocalAiDownloadsProgress>, String> {
+    let service = local_ai::global(config);
+    let output = service
+        .downloads_progress(config)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        output,
+        "local ai downloads progress fetched",
     ))
 }
 

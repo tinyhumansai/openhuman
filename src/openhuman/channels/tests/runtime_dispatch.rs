@@ -2,7 +2,6 @@ use super::super::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS}
 use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
 use super::super::{traits, Channel};
 use super::common::{NoopMemory, RecordingChannel, SlowProvider};
-use crate::openhuman::observability::NoopObserver;
 use crate::openhuman::providers::{self, Provider};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,7 +24,6 @@ async fn message_dispatch_processes_messages_in_parallel() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
@@ -99,7 +97,6 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,

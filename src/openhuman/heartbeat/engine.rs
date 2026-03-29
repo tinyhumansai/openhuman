@@ -1,8 +1,6 @@
 use crate::openhuman::config::HeartbeatConfig;
-use crate::openhuman::observability::{Observer, ObserverEvent};
 use anyhow::Result;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::time::{self, Duration};
 use tracing::{info, warn};
 
@@ -10,19 +8,13 @@ use tracing::{info, warn};
 pub struct HeartbeatEngine {
     config: HeartbeatConfig,
     workspace_dir: std::path::PathBuf,
-    observer: Arc<dyn Observer>,
 }
 
 impl HeartbeatEngine {
-    pub fn new(
-        config: HeartbeatConfig,
-        workspace_dir: std::path::PathBuf,
-        observer: Arc<dyn Observer>,
-    ) -> Self {
+    pub fn new(config: HeartbeatConfig, workspace_dir: std::path::PathBuf) -> Self {
         Self {
             config,
             workspace_dir,
-            observer,
         }
     }
 
@@ -40,7 +32,6 @@ impl HeartbeatEngine {
 
         loop {
             interval.tick().await;
-            self.observer.record_event(&ObserverEvent::HeartbeatTick);
 
             match self.tick().await {
                 Ok(tasks) => {
@@ -50,10 +41,6 @@ impl HeartbeatEngine {
                 }
                 Err(e) => {
                     warn!("💓 Heartbeat error: {}", e);
-                    self.observer.record_event(&ObserverEvent::Error {
-                        component: "heartbeat".into(),
-                        message: e.to_string(),
-                    });
                 }
             }
         }
@@ -243,14 +230,12 @@ mod tests {
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
-        let observer: Arc<dyn Observer> = Arc::new(crate::openhuman::observability::NoopObserver);
         let engine = HeartbeatEngine::new(
             HeartbeatConfig {
                 enabled: true,
                 interval_minutes: 30,
             },
             dir.clone(),
-            observer,
         );
         let count = engine.tick().await.unwrap();
         assert_eq!(count, 0);
@@ -268,14 +253,12 @@ mod tests {
             .await
             .unwrap();
 
-        let observer: Arc<dyn Observer> = Arc::new(crate::openhuman::observability::NoopObserver);
         let engine = HeartbeatEngine::new(
             HeartbeatConfig {
                 enabled: true,
                 interval_minutes: 30,
             },
             dir.clone(),
-            observer,
         );
         let count = engine.tick().await.unwrap();
         assert_eq!(count, 3);
@@ -285,14 +268,12 @@ mod tests {
 
     #[tokio::test]
     async fn run_returns_immediately_when_disabled() {
-        let observer: Arc<dyn Observer> = Arc::new(crate::openhuman::observability::NoopObserver);
         let engine = HeartbeatEngine::new(
             HeartbeatConfig {
                 enabled: false,
                 interval_minutes: 30,
             },
             std::env::temp_dir(),
-            observer,
         );
         // Should return Ok immediately, not loop forever
         let result = engine.run().await;

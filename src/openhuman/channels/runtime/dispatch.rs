@@ -218,7 +218,6 @@ pub(crate) async fn process_channel_message(
             active_provider.as_ref(),
             &mut history,
             ctx.tools_registry.as_ref(),
-            ctx.observer.as_ref(),
             route.provider.as_str(),
             route.model.as_str(),
             ctx.temperature,

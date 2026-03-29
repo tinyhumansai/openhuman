@@ -5,7 +5,7 @@
 //! - Security policy, secrets, audit, channel pairing, and sandboxing
 //! - Daemon supervisor with exponential backoff
 //! - Agent runtime (dispatcher, loop, prompt, etc.)
-//! - Providers, tools, memory, observability, approval, and skills
+//! - Providers, tools, memory, approval, and skills
 
 // These modules define the public API surface for future agent features.
 // Many types/functions are not yet consumed but are intentionally exported.
@@ -32,9 +32,8 @@ pub mod local_ai;
 pub mod local_memory;
 pub mod memory;
 pub mod migration;
+pub mod model_catalog;
 pub mod multimodal;
-pub mod observability;
-pub mod onboard;
 pub mod peripherals;
 pub mod providers;
 pub mod rpc;

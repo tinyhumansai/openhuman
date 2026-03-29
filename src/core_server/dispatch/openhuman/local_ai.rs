@@ -72,6 +72,21 @@ pub async fn try_dispatch(
             .await,
         ),
 
+        "openhuman.local_ai_download_all_assets" => Some(
+            async move {
+                let p: LocalAiDownloadParams = parse_params(params)?;
+                let config = load_openhuman_config().await?;
+                rpc_invocation_from_outcome(
+                    crate::openhuman::local_ai::rpc::local_ai_download_all_assets(
+                        &config,
+                        p.force.unwrap_or(false),
+                    )
+                    .await?,
+                )
+            }
+            .await,
+        ),
+
         "openhuman.local_ai_summarize" => Some(
             async move {
                 let p: LocalAiSummarizeParams = parse_params(params)?;
@@ -199,6 +214,16 @@ pub async fn try_dispatch(
                 let config = load_openhuman_config().await?;
                 rpc_invocation_from_outcome(
                     crate::openhuman::local_ai::rpc::local_ai_assets_status(&config).await?,
+                )
+            }
+            .await,
+        ),
+
+        "openhuman.local_ai_downloads_progress" => Some(
+            async move {
+                let config = load_openhuman_config().await?;
+                rpc_invocation_from_outcome(
+                    crate::openhuman::local_ai::rpc::local_ai_downloads_progress(&config).await?,
                 )
             }
             .await,

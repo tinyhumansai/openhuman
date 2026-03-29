@@ -1,4 +1,4 @@
-//! Onboarding helpers for OpenHuman.
+//! Model catalog refresh and cache (live fetch + workspace cache).
 
 pub mod models;
 pub mod rpc;

@@ -194,6 +194,11 @@ impl LocalAiService {
                 "Pulling {} model `{}` from Ollama library",
                 label, model_id
             ));
+            match label {
+                "vision" => status.vision_state = "downloading".to_string(),
+                "embedding" => status.embedding_state = "downloading".to_string(),
+                _ => {}
+            }
             status.download_progress = Some(0.0);
             status.downloaded_bytes = Some(0);
             status.total_bytes = None;

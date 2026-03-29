@@ -7,7 +7,9 @@ use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::paths::{
     resolve_stt_model_path, resolve_tts_voice_path, stt_model_target_path, tts_model_target_path,
 };
-use crate::openhuman::local_ai::types::{LocalAiAssetStatus, LocalAiAssetsStatus};
+use crate::openhuman::local_ai::types::{
+    LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiDownloadProgressItem, LocalAiDownloadsProgress,
+};
 
 use super::LocalAiService;
 
@@ -72,6 +74,122 @@ impl LocalAiService {
                 warning: None,
             },
             quantization: model_ids::effective_quantization(config),
+        })
+    }
+
+    pub async fn downloads_progress(
+        &self,
+        config: &Config,
+    ) -> Result<LocalAiDownloadsProgress, String> {
+        let assets = self.assets_status(config).await?;
+        let status = self.status();
+
+        let mut chat = LocalAiDownloadProgressItem {
+            id: assets.chat.id,
+            provider: assets.chat.provider,
+            state: assets.chat.state,
+            progress: None,
+            downloaded_bytes: None,
+            total_bytes: None,
+            speed_bps: None,
+            eta_seconds: None,
+            warning: assets.chat.warning,
+            path: assets.chat.path,
+        };
+        let mut vision = LocalAiDownloadProgressItem {
+            id: assets.vision.id,
+            provider: assets.vision.provider,
+            state: assets.vision.state,
+            progress: None,
+            downloaded_bytes: None,
+            total_bytes: None,
+            speed_bps: None,
+            eta_seconds: None,
+            warning: assets.vision.warning,
+            path: assets.vision.path,
+        };
+        let mut embedding = LocalAiDownloadProgressItem {
+            id: assets.embedding.id,
+            provider: assets.embedding.provider,
+            state: assets.embedding.state,
+            progress: None,
+            downloaded_bytes: None,
+            total_bytes: None,
+            speed_bps: None,
+            eta_seconds: None,
+            warning: assets.embedding.warning,
+            path: assets.embedding.path,
+        };
+        let mut stt = LocalAiDownloadProgressItem {
+            id: assets.stt.id,
+            provider: assets.stt.provider,
+            state: assets.stt.state,
+            progress: None,
+            downloaded_bytes: None,
+            total_bytes: None,
+            speed_bps: None,
+            eta_seconds: None,
+            warning: assets.stt.warning,
+            path: assets.stt.path,
+        };
+        let mut tts = LocalAiDownloadProgressItem {
+            id: assets.tts.id,
+            provider: assets.tts.provider,
+            state: assets.tts.state,
+            progress: None,
+            downloaded_bytes: None,
+            total_bytes: None,
+            speed_bps: None,
+            eta_seconds: None,
+            warning: assets.tts.warning,
+            path: assets.tts.path,
+        };
+
+        if status.state == "downloading" {
+            let active = if status.stt_state == "downloading" {
+                "stt"
+            } else if status.tts_state == "downloading" {
+                "tts"
+            } else if status.vision_state == "downloading" {
+                "vision"
+            } else if status.embedding_state == "downloading" {
+                "embedding"
+            } else {
+                "chat"
+            };
+
+            let apply = |item: &mut LocalAiDownloadProgressItem| {
+                item.state = "downloading".to_string();
+                item.progress = status.download_progress;
+                item.downloaded_bytes = status.downloaded_bytes;
+                item.total_bytes = status.total_bytes;
+                item.speed_bps = status.download_speed_bps;
+                item.eta_seconds = status.eta_seconds;
+                item.warning = status.warning.clone();
+            };
+
+            match active {
+                "stt" => apply(&mut stt),
+                "tts" => apply(&mut tts),
+                "vision" => apply(&mut vision),
+                "embedding" => apply(&mut embedding),
+                _ => apply(&mut chat),
+            }
+        }
+
+        Ok(LocalAiDownloadsProgress {
+            state: status.state,
+            warning: status.warning,
+            progress: status.download_progress,
+            downloaded_bytes: status.downloaded_bytes,
+            total_bytes: status.total_bytes,
+            speed_bps: status.download_speed_bps,
+            eta_seconds: status.eta_seconds,
+            chat,
+            vision,
+            embedding,
+            stt,
+            tts,
         })
     }
 
@@ -270,6 +388,22 @@ impl LocalAiService {
             ));
         }
 
+        {
+            let mut status = self.status.lock();
+            status.state = "downloading".to_string();
+            status.warning = Some(format!("Downloading {label} asset"));
+            match label {
+                "stt" => status.stt_state = "downloading".to_string(),
+                "tts" | "tts-config" => status.tts_state = "downloading".to_string(),
+                _ => {}
+            }
+            status.download_progress = Some(0.0);
+            status.downloaded_bytes = Some(0);
+            status.total_bytes = response.content_length();
+            status.download_speed_bps = Some(0);
+            status.eta_seconds = None;
+        }
+
         let total = response.content_length();
         let mut downloaded: u64 = 0;
         let started_at = std::time::Instant::now();
@@ -300,6 +434,11 @@ impl LocalAiService {
             let mut status = self.status.lock();
             status.state = "downloading".to_string();
             status.warning = Some(format!("Downloading {label} asset"));
+            match label {
+                "stt" => status.stt_state = "downloading".to_string(),
+                "tts" | "tts-config" => status.tts_state = "downloading".to_string(),
+                _ => {}
+            }
             status.downloaded_bytes = Some(downloaded);
             status.total_bytes = total;
             status.download_speed_bps = Some(speed_bps);

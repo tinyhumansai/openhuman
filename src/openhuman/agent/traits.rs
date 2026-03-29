@@ -6,7 +6,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════
 // Provider trait — LLM model interface
@@ -313,89 +312,6 @@ impl Memory for NoopMemory {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Observer trait — observability backends
-// ═══════════════════════════════════════════════════════════════════
-
-/// Events the observer can record.
-#[derive(Debug, Clone)]
-pub enum ObserverEvent {
-    AgentStart {
-        provider: String,
-        model: String,
-    },
-    LlmRequest {
-        provider: String,
-        model: String,
-        messages_count: usize,
-    },
-    LlmResponse {
-        provider: String,
-        model: String,
-        duration: Duration,
-        success: bool,
-        error_message: Option<String>,
-    },
-    AgentEnd {
-        provider: String,
-        model: String,
-        duration: Duration,
-        tokens_used: Option<u64>,
-        cost_usd: Option<f64>,
-    },
-    ToolCallStart {
-        tool: String,
-    },
-    ToolCall {
-        tool: String,
-        duration: Duration,
-        success: bool,
-    },
-    TurnComplete,
-    ChannelMessage {
-        channel: String,
-        direction: String,
-    },
-    HeartbeatTick,
-    Error {
-        component: String,
-        message: String,
-    },
-}
-
-/// Numeric metrics.
-#[derive(Debug, Clone)]
-pub enum ObserverMetric {
-    RequestLatency(Duration),
-    TokensUsed(u64),
-    ActiveSessions(u64),
-    QueueDepth(u64),
-}
-
-/// Core observability trait — implement for any backend.
-pub trait Observer: Send + Sync + 'static {
-    fn record_event(&self, event: &ObserverEvent);
-    fn record_metric(&self, metric: &ObserverMetric);
-    fn flush(&self) {}
-    fn name(&self) -> &str;
-    fn as_any(&self) -> &dyn std::any::Any;
-}
-
-/// Noop observer that discards all events.
-#[derive(Default)]
-pub struct NoopObserver;
-
-impl Observer for NoopObserver {
-    fn record_event(&self, _event: &ObserverEvent) {}
-    fn record_metric(&self, _metric: &ObserverMetric) {}
-    fn name(&self) -> &str {
-        "noop"
-    }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // RuntimeAdapter trait — platform abstractions
 // ═══════════════════════════════════════════════════════════════════
 
@@ -524,15 +440,6 @@ mod tests {
         assert!(mem.get("key").await.unwrap().is_none());
         assert!(mem.recall("query", 10, None).await.unwrap().is_empty());
         assert!(!mem.forget("key").await.unwrap());
-    }
-
-    #[test]
-    fn noop_observer_accepts_events() {
-        let observer = NoopObserver;
-        observer.record_event(&ObserverEvent::HeartbeatTick);
-        observer.record_metric(&ObserverMetric::TokensUsed(42));
-        observer.flush();
-        assert_eq!(observer.name(), "noop");
     }
 
     #[test]

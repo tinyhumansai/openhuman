@@ -30,7 +30,6 @@ use crate::openhuman::agent::dispatcher::{
 };
 use crate::openhuman::config::{AgentConfig, MemoryConfig};
 use crate::openhuman::memory::{self, Memory};
-use crate::openhuman::observability::{NoopObserver, Observer};
 use crate::openhuman::providers::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolCall,
     ToolResultMessage,
@@ -268,10 +267,6 @@ fn make_sqlite_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
     (mem, tmp)
 }
 
-fn make_observer() -> Arc<dyn Observer> {
-    Arc::from(NoopObserver {})
-}
-
 fn build_agent_with(
     provider: Box<dyn Provider>,
     tools: Vec<Box<dyn Tool>>,
@@ -281,7 +276,6 @@ fn build_agent_with(
         .provider(provider)
         .tools(tools)
         .memory(make_memory())
-        .observer(make_observer())
         .tool_dispatcher(dispatcher)
         .workspace_dir(std::env::temp_dir())
         .build()
@@ -298,7 +292,6 @@ fn build_agent_with_memory(
         .provider(provider)
         .tools(tools)
         .memory(mem)
-        .observer(make_observer())
         .tool_dispatcher(Box::new(NativeToolDispatcher))
         .workspace_dir(std::env::temp_dir())
         .auto_save(auto_save)
@@ -315,7 +308,6 @@ fn build_agent_with_config(
         .provider(provider)
         .tools(tools)
         .memory(make_memory())
-        .observer(make_observer())
         .tool_dispatcher(Box::new(NativeToolDispatcher))
         .workspace_dir(std::env::temp_dir())
         .config(config)
@@ -932,7 +924,6 @@ async fn builder_fails_without_provider() {
     let result = Agent::builder()
         .tools(vec![])
         .memory(make_memory())
-        .observer(make_observer())
         .tool_dispatcher(Box::new(NativeToolDispatcher))
         .workspace_dir(std::path::PathBuf::from("/tmp"))
         .build();

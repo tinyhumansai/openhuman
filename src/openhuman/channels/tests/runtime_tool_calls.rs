@@ -8,7 +8,6 @@ use super::common::{
     RecordingChannel, SlowProvider, TelegramRecordingChannel, ToolCallingAliasProvider,
     ToolCallingProvider,
 };
-use crate::openhuman::observability::NoopObserver;
 use crate::openhuman::providers::{self, ChatMessage, Provider};
 use crate::openhuman::tools::Tool;
 use std::collections::HashMap;
@@ -29,7 +28,6 @@ async fn process_channel_message_executes_tool_calls_instead_of_sending_raw_json
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
@@ -84,7 +82,6 @@ async fn process_channel_message_executes_tool_calls_with_alias_tags() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
@@ -148,7 +145,6 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("default-model".to_string()),
         temperature: 0.0,
@@ -233,7 +229,6 @@ async fn process_channel_message_uses_route_override_provider_and_model() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("default-model".to_string()),
         temperature: 0.0,
@@ -294,7 +289,6 @@ async fn process_channel_message_respects_configured_max_tool_iterations_above_d
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,
@@ -350,7 +344,6 @@ async fn process_channel_message_reports_configured_max_tool_iterations_limit() 
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![Box::new(MockPriceTool)]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,

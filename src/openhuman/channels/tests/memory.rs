@@ -6,7 +6,6 @@ use super::super::runtime::process_channel_message;
 use super::super::{traits, Channel};
 use super::common::{HistoryCaptureProvider, NoopMemory, RecordingChannel};
 use crate::openhuman::memory::{Memory, MemoryCategory, SqliteMemory};
-use crate::openhuman::observability::NoopObserver;
 use crate::openhuman::providers::{self, ChatMessage, Provider};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -129,7 +128,6 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
         tools_registry: Arc::new(vec![]),
-        observer: Arc::new(NoopObserver),
         system_prompt: Arc::new("test-system-prompt".to_string()),
         model: Arc::new("test-model".to_string()),
         temperature: 0.0,

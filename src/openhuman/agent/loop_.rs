@@ -2,7 +2,6 @@ use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalRespo
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::{self, Memory, MemoryCategory};
 use crate::openhuman::multimodal;
-use crate::openhuman::observability::{self, Observer, ObserverEvent};
 use crate::openhuman::providers::{
     self, ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ToolCall,
 };
@@ -15,7 +14,6 @@ use regex::{Regex, RegexSet};
 use std::fmt::Write;
 use std::io::Write as _;
 use std::sync::{Arc, LazyLock};
-use std::time::Instant;
 use uuid::Uuid;
 
 /// Minimum characters per chunk when relaying LLM text to a streaming draft.
@@ -806,7 +804,6 @@ pub(crate) async fn agent_turn(
     provider: &dyn Provider,
     history: &mut Vec<ChatMessage>,
     tools_registry: &[Box<dyn Tool>],
-    observer: &dyn Observer,
     provider_name: &str,
     model: &str,
     temperature: f64,
@@ -818,7 +815,6 @@ pub(crate) async fn agent_turn(
         provider,
         history,
         tools_registry,
-        observer,
         provider_name,
         model,
         temperature,
@@ -839,7 +835,6 @@ pub(crate) async fn run_tool_call_loop(
     provider: &dyn Provider,
     history: &mut Vec<ChatMessage>,
     tools_registry: &[Box<dyn Tool>],
-    observer: &dyn Observer,
     provider_name: &str,
     model: &str,
     temperature: f64,
@@ -876,14 +871,6 @@ pub(crate) async fn run_tool_call_loop(
         let prepared_messages =
             multimodal::prepare_messages_for_provider(history, multimodal_config).await?;
 
-        observer.record_event(&ObserverEvent::LlmRequest {
-            provider: provider_name.to_string(),
-            model: model.to_string(),
-            messages_count: history.len(),
-        });
-
-        let llm_started_at = Instant::now();
-
         // Unified path via Provider::chat so provider-specific native tool logic
         // (OpenAI/Anthropic/OpenRouter/compatible adapters) is honored.
         let request_tools = if use_native_tools {
@@ -905,14 +892,6 @@ pub(crate) async fn run_tool_call_loop(
                 .await
             {
                 Ok(resp) => {
-                    observer.record_event(&ObserverEvent::LlmResponse {
-                        provider: provider_name.to_string(),
-                        model: model.to_string(),
-                        duration: llm_started_at.elapsed(),
-                        success: true,
-                        error_message: None,
-                    });
-
                     let response_text = resp.text_or_empty().to_string();
                     let mut calls = parse_structured_tool_calls(&resp.tool_calls);
                     let mut parsed_text = String::new();
@@ -943,15 +922,6 @@ pub(crate) async fn run_tool_call_loop(
                     )
                 }
                 Err(e) => {
-                    observer.record_event(&ObserverEvent::LlmResponse {
-                        provider: provider_name.to_string(),
-                        model: model.to_string(),
-                        duration: llm_started_at.elapsed(),
-                        success: false,
-                        error_message: Some(crate::openhuman::providers::sanitize_api_error(
-                            &e.to_string(),
-                        )),
-                    });
                     return Err(e);
                 }
             };
@@ -1028,18 +998,9 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
 
-            observer.record_event(&ObserverEvent::ToolCallStart {
-                tool: call.name.clone(),
-            });
-            let start = Instant::now();
             let result = if let Some(tool) = find_tool(tools_registry, &call.name) {
                 match tool.execute(call.arguments.clone()).await {
                     Ok(r) => {
-                        observer.record_event(&ObserverEvent::ToolCall {
-                            tool: call.name.clone(),
-                            duration: start.elapsed(),
-                            success: r.success,
-                        });
                         if r.success {
                             scrub_credentials(&r.output)
                         } else {
@@ -1047,11 +1008,6 @@ pub(crate) async fn run_tool_call_loop(
                         }
                     }
                     Err(e) => {
-                        observer.record_event(&ObserverEvent::ToolCall {
-                            tool: call.name.clone(),
-                            duration: start.elapsed(),
-                            success: false,
-                        });
                         format!("Error executing {}: {e}", call.name)
                     }
                 }
@@ -1127,8 +1083,6 @@ pub async fn run(
     peripheral_overrides: Vec<String>,
 ) -> Result<String> {
     // ── Wire up agnostic subsystems ──────────────────────────────
-    let base_observer = observability::create_observer(&config.observability);
-    let observer: Arc<dyn Observer> = Arc::from(base_observer);
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
@@ -1207,11 +1161,6 @@ pub async fn run(
         model_name,
         &provider_runtime_options,
     )?;
-
-    observer.record_event(&ObserverEvent::AgentStart {
-        provider: provider_name.to_string(),
-        model: model_name.to_string(),
-    });
 
     // ── Build system prompt from workspace MD files (OpenClaw framework) ──
     let skills = crate::openhuman::skills::load_skills(&config.workspace_dir);
@@ -1340,8 +1289,6 @@ pub async fn run(
     let approval_manager = ApprovalManager::from_config(&config.autonomy);
 
     // ── Execute ──────────────────────────────────────────────────
-    let start = Instant::now();
-
     let mut final_output = String::new();
 
     if let Some(msg) = message {
@@ -1372,7 +1319,6 @@ pub async fn run(
             provider.as_ref(),
             &mut history,
             &tools_registry,
-            observer.as_ref(),
             provider_name,
             model_name,
             temperature,
@@ -1386,7 +1332,6 @@ pub async fn run(
         .await?;
         final_output = response.clone();
         println!("{response}");
-        observer.record_event(&ObserverEvent::TurnComplete);
 
         // Auto-save assistant response to daily log
         if config.memory.auto_save {
@@ -1494,7 +1439,6 @@ pub async fn run(
                 provider.as_ref(),
                 &mut history,
                 &tools_registry,
-                observer.as_ref(),
                 provider_name,
                 model_name,
                 temperature,
@@ -1525,7 +1469,6 @@ pub async fn run(
             {
                 eprintln!("\nError sending console response: {e}\n");
             }
-            observer.record_event(&ObserverEvent::TurnComplete);
 
             // Auto-compaction before hard trimming to preserve long-context signal.
             if let Ok(compacted) = auto_compact_history(
@@ -1555,23 +1498,12 @@ pub async fn run(
         }
     }
 
-    let duration = start.elapsed();
-    observer.record_event(&ObserverEvent::AgentEnd {
-        provider: provider_name.to_string(),
-        model: model_name.to_string(),
-        duration,
-        tokens_used: None,
-        cost_usd: None,
-    });
-
     Ok(final_output)
 }
 
 /// Process a single message through the full agent (with tools, peripherals, memory).
 /// Used by channels (Telegram, Discord, etc.) to enable hardware and tool use.
 pub async fn process_message(config: Config, message: &str) -> Result<String> {
-    let observer: Arc<dyn Observer> =
-        Arc::from(observability::create_observer(&config.observability));
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
@@ -1707,7 +1639,6 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         provider.as_ref(),
         &mut history,
         &tools_registry,
-        observer.as_ref(),
         provider_name,
         &model_name,
         config.default_temperature,
@@ -1745,7 +1676,6 @@ mod tests {
         assert!(scrubbed.contains("public"));
     }
     use crate::openhuman::memory::{Memory, MemoryCategory, SqliteMemory};
-    use crate::openhuman::observability::NoopObserver;
     use crate::openhuman::providers::traits::ProviderCapabilities;
     use crate::openhuman::providers::ChatResponse;
     use tempfile::TempDir;
@@ -1826,13 +1756,11 @@ mod tests {
             "please inspect [IMAGE:data:image/png;base64,iVBORw0KGgo=]".to_string(),
         )];
         let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
-        let observer = NoopObserver;
 
         let err = run_tool_call_loop(
             &provider,
             &mut history,
             &tools_registry,
-            &observer,
             "mock-provider",
             "mock-model",
             0.0,
@@ -1864,7 +1792,6 @@ mod tests {
         ))];
 
         let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
-        let observer = NoopObserver;
         let multimodal = crate::openhuman::config::MultimodalConfig {
             max_images: 4,
             max_image_size_mb: 1,
@@ -1875,7 +1802,6 @@ mod tests {
             &provider,
             &mut history,
             &tools_registry,
-            &observer,
             "mock-provider",
             "mock-model",
             0.0,
@@ -1906,13 +1832,11 @@ mod tests {
             "Analyze this [IMAGE:data:image/png;base64,iVBORw0KGgo=]".to_string(),
         )];
         let tools_registry: Vec<Box<dyn Tool>> = Vec::new();
-        let observer = NoopObserver;
 
         let result = run_tool_call_loop(
             &provider,
             &mut history,
             &tools_registry,
-            &observer,
             "mock-provider",
             "mock-model",
             0.0,

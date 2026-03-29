@@ -5,7 +5,6 @@ use super::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use super::prompt::{PromptContext, SystemPromptBuilder};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::{self, Memory, MemoryCategory};
-use crate::openhuman::observability::{self, Observer, ObserverEvent};
 use crate::openhuman::providers::{self, ChatMessage, ChatRequest, ConversationMessage, Provider};
 use crate::openhuman::runtime;
 use crate::openhuman::security::SecurityPolicy;
@@ -14,14 +13,12 @@ use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
-use std::time::Instant;
 
 pub struct Agent {
     provider: Box<dyn Provider>,
     tools: Vec<Box<dyn Tool>>,
     tool_specs: Vec<ToolSpec>,
     memory: Arc<dyn Memory>,
-    observer: Arc<dyn Observer>,
     prompt_builder: SystemPromptBuilder,
     tool_dispatcher: Box<dyn ToolDispatcher>,
     memory_loader: Box<dyn MemoryLoader>,
@@ -41,7 +38,6 @@ pub struct AgentBuilder {
     provider: Option<Box<dyn Provider>>,
     tools: Option<Vec<Box<dyn Tool>>>,
     memory: Option<Arc<dyn Memory>>,
-    observer: Option<Arc<dyn Observer>>,
     prompt_builder: Option<SystemPromptBuilder>,
     tool_dispatcher: Option<Box<dyn ToolDispatcher>>,
     memory_loader: Option<Box<dyn MemoryLoader>>,
@@ -62,7 +58,6 @@ impl AgentBuilder {
             provider: None,
             tools: None,
             memory: None,
-            observer: None,
             prompt_builder: None,
             tool_dispatcher: None,
             memory_loader: None,
@@ -90,11 +85,6 @@ impl AgentBuilder {
 
     pub fn memory(mut self, memory: Arc<dyn Memory>) -> Self {
         self.memory = Some(memory);
-        self
-    }
-
-    pub fn observer(mut self, observer: Arc<dyn Observer>) -> Self {
-        self.observer = Some(observer);
         self
     }
 
@@ -179,9 +169,6 @@ impl AgentBuilder {
             memory: self
                 .memory
                 .ok_or_else(|| anyhow::anyhow!("memory is required"))?,
-            observer: self
-                .observer
-                .ok_or_else(|| anyhow::anyhow!("observer is required"))?,
             prompt_builder: self
                 .prompt_builder
                 .unwrap_or_else(SystemPromptBuilder::with_defaults),
@@ -221,8 +208,6 @@ impl Agent {
     }
 
     pub fn from_config(config: &Config) -> Result<Self> {
-        let observer: Arc<dyn Observer> =
-            Arc::from(observability::create_observer(&config.observability));
         let runtime: Arc<dyn runtime::RuntimeAdapter> =
             Arc::from(runtime::create_runtime(&config.runtime)?);
         let security = Arc::new(SecurityPolicy::from_config(
@@ -293,7 +278,6 @@ impl Agent {
             .provider(provider)
             .tools(tools)
             .memory(memory)
-            .observer(observer)
             .tool_dispatcher(tool_dispatcher)
             .memory_loader(Box::new(DefaultMemoryLoader::new(
                 5,
@@ -353,16 +337,9 @@ impl Agent {
     }
 
     async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
-        let start = Instant::now();
-
         let result = if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
             match tool.execute(call.arguments.clone()).await {
                 Ok(r) => {
-                    self.observer.record_event(&ObserverEvent::ToolCall {
-                        tool: call.name.clone(),
-                        duration: start.elapsed(),
-                        success: r.success,
-                    });
                     if r.success {
                         r.output
                     } else {
@@ -370,11 +347,6 @@ impl Agent {
                     }
                 }
                 Err(e) => {
-                    self.observer.record_event(&ObserverEvent::ToolCall {
-                        tool: call.name.clone(),
-                        duration: start.elapsed(),
-                        success: false,
-                    });
                     format!("Error executing {}: {e}", call.name)
                 }
             }
@@ -559,8 +531,6 @@ pub async fn run(
     model_override: Option<String>,
     temperature: f64,
 ) -> Result<()> {
-    let start = Instant::now();
-
     let mut effective_config = config;
     if let Some(m) = model_override {
         effective_config.default_model = Some(m);
@@ -569,32 +539,12 @@ pub async fn run(
 
     let mut agent = Agent::from_config(&effective_config)?;
 
-    let provider_name = providers::INFERENCE_BACKEND_ID.to_string();
-    let model_name = effective_config
-        .default_model
-        .as_deref()
-        .unwrap_or("neocortex-mk1")
-        .to_string();
-
-    agent.observer.record_event(&ObserverEvent::AgentStart {
-        provider: provider_name.clone(),
-        model: model_name.clone(),
-    });
-
     if let Some(msg) = message {
         let response = agent.run_single(&msg).await?;
         println!("{response}");
     } else {
         agent.run_interactive().await?;
     }
-
-    agent.observer.record_event(&ObserverEvent::AgentEnd {
-        provider: provider_name,
-        model: model_name,
-        duration: start.elapsed(),
-        tokens_used: None,
-        cost_usd: None,
-    });
 
     Ok(())
 }
@@ -688,13 +638,10 @@ mod tests {
             .unwrap(),
         );
 
-        let observer: Arc<dyn Observer> =
-            Arc::from(crate::openhuman::observability::NoopObserver {});
         let mut agent = Agent::builder()
             .provider(provider)
             .tools(vec![Box::new(MockTool)])
             .memory(mem)
-            .observer(observer)
             .tool_dispatcher(Box::new(XmlToolDispatcher))
             .workspace_dir(std::path::PathBuf::from("/tmp"))
             .build()
@@ -736,13 +683,10 @@ mod tests {
             .unwrap(),
         );
 
-        let observer: Arc<dyn Observer> =
-            Arc::from(crate::openhuman::observability::NoopObserver {});
         let mut agent = Agent::builder()
             .provider(provider)
             .tools(vec![Box::new(MockTool)])
             .memory(mem)
-            .observer(observer)
             .tool_dispatcher(Box::new(NativeToolDispatcher))
             .workspace_dir(std::path::PathBuf::from("/tmp"))
             .build()

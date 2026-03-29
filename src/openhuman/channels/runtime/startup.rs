@@ -30,7 +30,6 @@ use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::{self, Memory};
-use crate::openhuman::observability::{self, Observer};
 use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::runtime;
 use crate::openhuman::security::SecurityPolicy;
@@ -59,8 +58,6 @@ pub async fn start_channels(config: Config) -> Result<()> {
         tracing::warn!("Provider warmup failed (non-fatal): {e}");
     }
 
-    let observer: Arc<dyn Observer> =
-        Arc::from(observability::create_observer(&config.observability));
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
@@ -426,7 +423,6 @@ pub async fn start_channels(config: Config) -> Result<()> {
         default_provider: Arc::new(provider_name),
         memory: Arc::clone(&mem),
         tools_registry: Arc::clone(&tools_registry),
-        observer,
         system_prompt: Arc::new(system_prompt),
         model: Arc::new(model.clone()),
         temperature,
