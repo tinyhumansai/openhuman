@@ -50,7 +50,7 @@ fn profile_kind_label(kind: AuthProfileKind) -> String {
 }
 
 pub fn summarize_auth_profile(
-    profile: &crate::openhuman::auth_profiles::profiles::AuthProfile,
+    profile: &crate::openhuman::credentials::profiles::AuthProfile,
 ) -> AuthProfileSummary {
     let mut metadata_keys = profile
         .metadata
@@ -78,7 +78,7 @@ pub fn summarize_auth_profile(
 }
 
 fn session_user_value(
-    profile: &crate::openhuman::auth_profiles::profiles::AuthProfile,
+    profile: &crate::openhuman::credentials::profiles::AuthProfile,
 ) -> Option<serde_json::Value> {
     profile
         .metadata

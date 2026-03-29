@@ -128,7 +128,7 @@ pub struct RuntimeFlags {
 }
 
 #[allow(unused_imports)]
-pub use crate::openhuman::auth_profiles::responses::{AuthProfileSummary, AuthStateResponse};
+pub use crate::openhuman::credentials::responses::{AuthProfileSummary, AuthStateResponse};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

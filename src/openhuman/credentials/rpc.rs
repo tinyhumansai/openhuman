@@ -5,15 +5,14 @@ use serde_json::json;
 use crate::api::config::effective_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::rest::{user_id_from_settings_payload, BackendOAuthClient};
-use crate::openhuman::auth_profiles::session_support::{
+use crate::openhuman::credentials::session_support::{
     build_session_state, parse_fields_value, profile_name_or_default, summarize_auth_profile,
 };
-use crate::openhuman::auth_profiles::AuthService;
 use crate::openhuman::config::Config;
 use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::security::SecretStore;
 
-use super::{APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+use super::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 
 fn secret_store_for_config(config: &Config) -> SecretStore {
     let data_dir = config

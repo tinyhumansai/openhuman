@@ -1,5 +1,5 @@
 //! Inference via the OpenHuman backend OpenAI-compatible API (`{api_url}/openai/v1/...`) using the app session JWT.
-//! Session material is loaded via [`crate::openhuman::auth_profiles`] (see also [`crate::api::jwt`] for shared helpers).
+//! Session material is loaded via [`crate::openhuman::credentials`] (see also [`crate::api::jwt`] for shared helpers).
 
 use super::compatible::{AuthStyle, OpenAiCompatibleProvider};
 use super::traits::{
@@ -8,7 +8,7 @@ use super::traits::{
 };
 use super::ProviderRuntimeOptions;
 use crate::api::config::effective_api_url;
-use crate::openhuman::auth_profiles::{AuthService, APP_SESSION_PROVIDER};
+use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
 use async_trait::async_trait;
 use futures_util::stream::{self, StreamExt};
 use std::path::PathBuf;
