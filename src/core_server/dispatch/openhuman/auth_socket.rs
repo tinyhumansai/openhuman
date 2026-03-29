@@ -1,6 +1,7 @@
 use crate::core_server::helpers::{parse_params, rpc_invocation_from_outcome};
 use crate::core_server::types::{
-    AuthListProviderCredentialsParams, AuthRemoveProviderCredentialsParams,
+    AuthListProviderCredentialsParams, AuthOauthConnectParams, AuthOauthIntegrationTokensParams,
+    AuthOauthRevokeParams, AuthRemoveProviderCredentialsParams,
     AuthStoreProviderCredentialsParams, AuthStoreSessionParams, InvocationResult,
 };
 use crate::openhuman::config::Config;
@@ -125,6 +126,64 @@ pub async fn try_dispatch(
                     crate::openhuman::credentials::rpc::list_provider_credentials(
                         &config,
                         provider_filter,
+                    )
+                    .await?,
+                )
+            }
+            .await,
+        ),
+
+        "openhuman.auth.oauth_connect" => Some(
+            async move {
+                let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+                let payload: AuthOauthConnectParams = parse_params(params)?;
+                rpc_invocation_from_outcome(
+                    crate::openhuman::credentials::rpc::oauth_connect(
+                        &config,
+                        payload.provider.trim(),
+                        payload.skill_id.as_deref().map(str::trim),
+                        payload.response_type.as_deref().map(str::trim),
+                    )
+                    .await?,
+                )
+            }
+            .await,
+        ),
+
+        "openhuman.auth.oauth_list_integrations" => Some(
+            async move {
+                let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+                rpc_invocation_from_outcome(
+                    crate::openhuman::credentials::rpc::oauth_list_integrations(&config).await?,
+                )
+            }
+            .await,
+        ),
+
+        "openhuman.auth.oauth_fetch_integration_tokens" => Some(
+            async move {
+                let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+                let payload: AuthOauthIntegrationTokensParams = parse_params(params)?;
+                rpc_invocation_from_outcome(
+                    crate::openhuman::credentials::rpc::oauth_fetch_integration_tokens(
+                        &config,
+                        payload.integration_id.trim(),
+                        payload.key.trim(),
+                    )
+                    .await?,
+                )
+            }
+            .await,
+        ),
+
+        "openhuman.auth.oauth_revoke_integration" => Some(
+            async move {
+                let config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+                let payload: AuthOauthRevokeParams = parse_params(params)?;
+                rpc_invocation_from_outcome(
+                    crate::openhuman::credentials::rpc::oauth_revoke_integration(
+                        &config,
+                        payload.integration_id.trim(),
                     )
                     .await?,
                 )

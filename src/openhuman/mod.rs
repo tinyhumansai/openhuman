@@ -14,6 +14,7 @@
 pub mod agent;
 pub mod approval;
 pub mod autocomplete;
+pub mod auth_profiles;
 pub mod channels;
 pub mod config;
 pub mod cost;

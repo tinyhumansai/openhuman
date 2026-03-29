@@ -5045,6 +5045,7 @@ dependencies = [
  "matrix-sdk",
  "nusb 0.2.3",
  "once_cell",
+ "openssl",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

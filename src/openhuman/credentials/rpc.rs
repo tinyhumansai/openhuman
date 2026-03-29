@@ -3,11 +3,12 @@
 use serde_json::json;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::session_support::{
+use crate::openhuman::auth_profiles::session_support::{
     build_session_state, get_session_token, parse_fields_value, profile_name_or_default,
     summarize_auth_profile,
 };
-use crate::openhuman::credentials::AuthService;
+use crate::openhuman::auth_profiles::AuthService;
+use super::backend_oauth::BackendOAuthClient;
 use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::security::SecretStore;
 
@@ -193,4 +194,99 @@ pub async fn list_provider_credentials(
     });
 
     Ok(RpcOutcome::single_log(items, "provider credentials listed"))
+}
+
+pub async fn oauth_connect(
+    config: &Config,
+    provider: &str,
+    skill_id: Option<&str>,
+    response_type: Option<&str>,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let api_url = config
+        .api_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| "config.api_url is required for OAuth connect".to_string())?;
+    let token = get_session_token(config)?.ok_or_else(|| {
+        "session JWT required; complete login and store_session first".to_string()
+    })?;
+    let client = BackendOAuthClient::new(api_url).map_err(|e| e.to_string())?;
+    let r = client
+        .connect(provider, &token, skill_id, response_type)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        serde_json::json!({ "oauthUrl": r.oauth_url, "state": r.state }),
+        "oauth connect URL ready",
+    ))
+}
+
+pub async fn oauth_list_integrations(
+    config: &Config,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let api_url = config
+        .api_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| "config.api_url is required".to_string())?;
+    let token = get_session_token(config)?
+        .ok_or_else(|| "session JWT required".to_string())?;
+    let client = BackendOAuthClient::new(api_url).map_err(|e| e.to_string())?;
+    let list = client
+        .list_integrations(&token)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        serde_json::to_value(&list).map_err(|e| e.to_string())?,
+        "integrations listed",
+    ))
+}
+
+pub async fn oauth_fetch_integration_tokens(
+    config: &Config,
+    integration_id: &str,
+    encryption_key: &str,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let api_url = config
+        .api_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| "config.api_url is required".to_string())?;
+    let token = get_session_token(config)?
+        .ok_or_else(|| "session JWT required".to_string())?;
+    let client = BackendOAuthClient::new(api_url).map_err(|e| e.to_string())?;
+    let tokens = client
+        .fetch_integration_tokens_handoff(integration_id, &token, encryption_key)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        serde_json::to_value(&tokens).map_err(|e| e.to_string())?,
+        "integration tokens retrieved",
+    ))
+}
+
+pub async fn oauth_revoke_integration(
+    config: &Config,
+    integration_id: &str,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let api_url = config
+        .api_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| "config.api_url is required".to_string())?;
+    let token = get_session_token(config)?
+        .ok_or_else(|| "session JWT required".to_string())?;
+    let client = BackendOAuthClient::new(api_url).map_err(|e| e.to_string())?;
+    client
+        .revoke_integration(integration_id, &token)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        serde_json::json!({ "revoked": true, "integrationId": integration_id }),
+        "integration revoked",
+    ))
 }

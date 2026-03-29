@@ -266,12 +266,12 @@ impl Agent {
             config,
         );
 
-        let provider_name = config.default_provider.as_deref().unwrap_or("openrouter");
+        let provider_name = config.default_provider.as_deref().unwrap_or("openhuman");
 
         let model_name = config
             .default_model
             .as_deref()
-            .unwrap_or("anthropic/claude-sonnet-4-20250514")
+            .unwrap_or("gpt-4o")
             .to_string();
 
         let provider: Box<dyn Provider> = providers::create_routed_provider(

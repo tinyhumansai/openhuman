@@ -1189,12 +1189,12 @@ pub async fn run(
     let provider_name = provider_override
         .as_deref()
         .or(config.default_provider.as_deref())
-        .unwrap_or("openrouter");
+        .unwrap_or("openhuman");
 
     let model_name = model_override
         .as_deref()
         .or(config.default_model.as_deref())
-        .unwrap_or("anthropic/claude-sonnet-4");
+        .unwrap_or("gpt-4o");
 
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
@@ -1616,11 +1616,11 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
         crate::openhuman::peripherals::create_peripheral_tools(&config.peripherals).await?;
     tools_registry.extend(peripheral_tools);
 
-    let provider_name = config.default_provider.as_deref().unwrap_or("openrouter");
+    let provider_name = config.default_provider.as_deref().unwrap_or("openhuman");
     let model_name = config
         .default_model
         .clone()
-        .unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".into());
+        .unwrap_or_else(|| "gpt-4o".into());
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
         openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),

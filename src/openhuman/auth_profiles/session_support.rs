@@ -1,9 +1,10 @@
 //! Session/auth helpers used by RPC and [`crate::core_server::helpers`].
 
 use crate::openhuman::config::Config;
-use crate::openhuman::credentials::profiles::{AuthProfileKind, TokenSet};
-use crate::openhuman::credentials::responses::{AuthProfileSummary, AuthStateResponse};
-use crate::openhuman::credentials::AuthService;
+
+use super::profiles::{AuthProfileKind, TokenSet};
+use super::responses::{AuthProfileSummary, AuthStateResponse};
+use super::AuthService;
 
 use super::{APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 
@@ -49,7 +50,7 @@ fn profile_kind_label(kind: AuthProfileKind) -> String {
 }
 
 pub fn summarize_auth_profile(
-    profile: &crate::openhuman::credentials::profiles::AuthProfile,
+    profile: &crate::openhuman::auth_profiles::profiles::AuthProfile,
 ) -> AuthProfileSummary {
     let mut metadata_keys = profile
         .metadata
@@ -77,7 +78,7 @@ pub fn summarize_auth_profile(
 }
 
 fn session_user_value(
-    profile: &crate::openhuman::credentials::profiles::AuthProfile,
+    profile: &crate::openhuman::auth_profiles::profiles::AuthProfile,
 ) -> Option<serde_json::Value> {
     profile
         .metadata

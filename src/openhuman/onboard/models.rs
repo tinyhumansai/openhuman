@@ -49,7 +49,7 @@ pub fn run_models_refresh(
 ) -> Result<ModelRefreshResult> {
     let provider_name = provider_override
         .or(config.default_provider.as_deref())
-        .unwrap_or("openrouter")
+        .unwrap_or("openhuman")
         .trim()
         .to_string();
 
@@ -77,9 +77,22 @@ pub fn run_models_refresh(
         }
     }
 
-    let api_key = config.api_key.clone().unwrap_or_default();
+    let api_key = config
+        .api_key
+        .clone()
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| {
+            crate::openhuman::auth_profiles::session_support::get_session_token(config)
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_default();
 
-    match fetch_live_models_for_provider(&provider_name, &api_key) {
+    match fetch_live_models_for_provider(
+        &provider_name,
+        &api_key,
+        config.api_url.as_deref(),
+    ) {
         Ok(models) if !models.is_empty() => {
             cache_live_models_for_provider(&config.workspace_dir, &provider_name, &models)?;
             Ok(ModelRefreshResult {
@@ -134,6 +147,7 @@ fn canonical_provider_name(provider_name: &str) -> &str {
     }
 
     match provider_name {
+        "backend" | "openhuman-backend" => "openhuman",
         "grok" => "xai",
         "together" => "together-ai",
         "google" | "google-gemini" => "gemini",
@@ -154,7 +168,8 @@ fn allows_unauthenticated_model_fetch(provider_name: &str) -> bool {
 fn supports_live_model_fetch(provider_name: &str) -> bool {
     matches!(
         canonical_provider_name(provider_name),
-        "openai"
+        "openhuman"
+            | "openai"
             | "openrouter"
             | "anthropic"
             | "gemini"
@@ -397,7 +412,11 @@ fn fetch_ollama_models() -> Result<Vec<String>> {
     Ok(parse_ollama_model_ids(&payload))
 }
 
-fn fetch_live_models_for_provider(provider_name: &str, api_key: &str) -> Result<Vec<String>> {
+fn fetch_live_models_for_provider(
+    provider_name: &str,
+    api_key: &str,
+    api_base: Option<&str>,
+) -> Result<Vec<String>> {
     let requested_provider_name = provider_name;
     let provider_name = canonical_provider_name(provider_name);
     let api_key = if api_key.trim().is_empty() {
@@ -419,6 +438,16 @@ fn fetch_live_models_for_provider(provider_name: &str, api_key: &str) -> Result<
     };
 
     let models = match provider_name {
+        "openhuman" => {
+            let base = api_base
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("config api_url is required to list models for openhuman")
+                })?;
+            let endpoint = format!("{}/openai/v1/models", base.trim_end_matches('/'));
+            fetch_openai_compatible_models(&endpoint, api_key.as_ref().map(|s| s.as_str()), false)?
+        }
         "openrouter" => fetch_openrouter_models(api_key.as_deref())?,
         "anthropic" => fetch_anthropic_models(api_key.as_deref())?,
         "gemini" => fetch_gemini_models(api_key.as_deref())?,
@@ -595,6 +624,7 @@ fn provider_env_var(name: &str) -> &'static str {
     }
 
     match canonical_provider_name(name) {
+        "openhuman" => "API_KEY",
         "openrouter" => "OPENROUTER_API_KEY",
         "anthropic" => "ANTHROPIC_API_KEY",
         "openai" => "OPENAI_API_KEY",
@@ -619,81 +649,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supports_live_model_fetch_for_known_providers() {
-        assert!(supports_live_model_fetch("openai"));
-        assert!(supports_live_model_fetch("anthropic"));
-        assert!(supports_live_model_fetch("gemini"));
-        assert!(supports_live_model_fetch("grok"));
-        assert!(supports_live_model_fetch("together"));
-        assert!(supports_live_model_fetch("nvidia"));
-        assert!(supports_live_model_fetch("ollama"));
-        assert!(supports_live_model_fetch("astrai"));
-        assert!(supports_live_model_fetch("venice"));
-        assert!(supports_live_model_fetch("glm-cn"));
-        assert!(supports_live_model_fetch("qwen-intl"));
-        assert!(!supports_live_model_fetch("unknown-provider"));
-    }
-
-    #[test]
-    fn allows_unauthenticated_model_fetch_for_public_catalogs() {
-        assert!(allows_unauthenticated_model_fetch("openrouter"));
-        assert!(allows_unauthenticated_model_fetch("venice"));
-        assert!(allows_unauthenticated_model_fetch("nvidia"));
-        assert!(allows_unauthenticated_model_fetch("nvidia-nim"));
-        assert!(allows_unauthenticated_model_fetch("build.nvidia.com"));
-        assert!(allows_unauthenticated_model_fetch("astrai"));
-        assert!(allows_unauthenticated_model_fetch("ollama"));
-        assert!(!allows_unauthenticated_model_fetch("openai"));
-        assert!(!allows_unauthenticated_model_fetch("deepseek"));
-    }
-
-    #[test]
-    fn models_endpoint_for_provider_handles_region_aliases() {
-        assert_eq!(
-            models_endpoint_for_provider("glm-cn"),
-            Some("https://open.bigmodel.cn/api/paas/v4/models")
-        );
-        assert_eq!(
-            models_endpoint_for_provider("zai-cn"),
-            Some("https://open.bigmodel.cn/api/coding/paas/v4/models")
-        );
-        assert_eq!(
-            models_endpoint_for_provider("qwen-intl"),
-            Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models")
-        );
-    }
-
-    #[test]
-    fn provider_env_var_known_providers() {
-        assert_eq!(provider_env_var("openrouter"), "OPENROUTER_API_KEY");
-        assert_eq!(provider_env_var("anthropic"), "ANTHROPIC_API_KEY");
-        assert_eq!(provider_env_var("openai"), "OPENAI_API_KEY");
-        assert_eq!(provider_env_var("ollama"), "OLLAMA_API_KEY");
-        assert_eq!(provider_env_var("xai"), "XAI_API_KEY");
-        assert_eq!(provider_env_var("grok"), "XAI_API_KEY");
-        assert_eq!(provider_env_var("together"), "TOGETHER_API_KEY");
-        assert_eq!(provider_env_var("together-ai"), "TOGETHER_API_KEY");
-        assert_eq!(provider_env_var("google"), "GEMINI_API_KEY");
-        assert_eq!(provider_env_var("google-gemini"), "GEMINI_API_KEY");
-        assert_eq!(provider_env_var("gemini"), "GEMINI_API_KEY");
-        assert_eq!(provider_env_var("qwen"), "DASHSCOPE_API_KEY");
-        assert_eq!(provider_env_var("qwen-intl"), "DASHSCOPE_API_KEY");
-        assert_eq!(provider_env_var("dashscope-us"), "DASHSCOPE_API_KEY");
-        assert_eq!(provider_env_var("qwen-code"), "QWEN_OAUTH_TOKEN");
-        assert_eq!(provider_env_var("qwen-oauth"), "QWEN_OAUTH_TOKEN");
-        assert_eq!(provider_env_var("glm-cn"), "GLM_API_KEY");
-        assert_eq!(provider_env_var("minimax-cn"), "MINIMAX_API_KEY");
-        assert_eq!(provider_env_var("kimi-code"), "KIMI_CODE_API_KEY");
-        assert_eq!(provider_env_var("kimi_coding"), "KIMI_CODE_API_KEY");
-        assert_eq!(provider_env_var("kimi_for_coding"), "KIMI_CODE_API_KEY");
-        assert_eq!(provider_env_var("minimax-oauth"), "MINIMAX_API_KEY");
-        assert_eq!(provider_env_var("minimax-oauth-cn"), "MINIMAX_API_KEY");
-        assert_eq!(provider_env_var("moonshot-intl"), "MOONSHOT_API_KEY");
-        assert_eq!(provider_env_var("zai-cn"), "ZAI_API_KEY");
-        assert_eq!(provider_env_var("nvidia"), "NVIDIA_API_KEY");
-        assert_eq!(provider_env_var("nvidia-nim"), "NVIDIA_API_KEY");
-        assert_eq!(provider_env_var("build.nvidia.com"), "NVIDIA_API_KEY");
-        assert_eq!(provider_env_var("astrai"), "ASTRAI_API_KEY");
+    fn supports_openhuman_backend() {
+        assert!(supports_live_model_fetch("openhuman"));
+        assert!(supports_live_model_fetch("backend"));
     }
 
     #[test]

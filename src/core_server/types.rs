@@ -129,7 +129,7 @@ pub struct RuntimeFlags {
 }
 
 #[allow(unused_imports)]
-pub use crate::openhuman::credentials::responses::{AuthProfileSummary, AuthStateResponse};
+pub use crate::openhuman::auth_profiles::responses::{AuthProfileSummary, AuthStateResponse};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -168,6 +168,29 @@ pub struct AuthRemoveProviderCredentialsParams {
 pub struct AuthListProviderCredentialsParams {
     #[serde(default)]
     pub provider: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthOauthConnectParams {
+    pub provider: String,
+    #[serde(default)]
+    pub skill_id: Option<String>,
+    #[serde(default)]
+    pub response_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthOauthIntegrationTokensParams {
+    pub integration_id: String,
+    pub key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthOauthRevokeParams {
+    pub integration_id: String,
 }
 
 #[derive(Debug, Deserialize)]
