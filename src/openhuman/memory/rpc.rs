@@ -1,5 +1,5 @@
 use crate::openhuman::memory::{MemoryClient, NamespaceDocumentInput};
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]

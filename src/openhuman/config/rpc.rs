@@ -6,8 +6,8 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::openhuman::config::{Config, TunnelConfig};
-use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::screen_intelligence;
+use crate::rpc::RpcOutcome;
 
 fn env_flag_enabled(key: &str) -> bool {
     matches!(

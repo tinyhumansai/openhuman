@@ -22,7 +22,7 @@ pub async fn dispatch(
         log::debug!("[rpc:dispatch] routed method={} subsystem=ai", method);
         return result;
     }
-    if let Some(result) = crate::openhuman::rpc::try_dispatch(method, params).await {
+    if let Some(result) = crate::rpc::try_dispatch(method, params).await {
         log::debug!(
             "[rpc:dispatch] routed method={} subsystem=openhuman",
             method

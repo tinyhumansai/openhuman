@@ -6,7 +6,7 @@ use crate::openhuman::autocomplete::{
     AutocompleteSetStyleResult, AutocompleteStartParams, AutocompleteStartResult,
     AutocompleteStatus, AutocompleteStopParams, AutocompleteStopResult,
 };
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 use serde_json::json;
 use std::process::Stdio;
 use tokio::time::{self, Duration};

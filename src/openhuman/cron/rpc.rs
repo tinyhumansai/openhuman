@@ -5,8 +5,8 @@ use serde_json::json;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{self, CronJob, CronJobPatch, CronRun};
-use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::security::SecurityPolicy;
+use crate::rpc::RpcOutcome;
 
 pub async fn cron_list(config: &Config) -> Result<RpcOutcome<Vec<CronJob>>, String> {
     if !config.cron.enabled {

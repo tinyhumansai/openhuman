@@ -111,7 +111,7 @@ pub async fn run_cli_screenshot(args: CliScreenshotArgs) -> Result<serde_json::V
 pub async fn run_cli_screenshot_ref(
     args: CliScreenshotRefArgs,
 ) -> Result<serde_json::Value, String> {
-    let crate::openhuman::rpc::RpcOutcome {
+    let crate::rpc::RpcOutcome {
         value: payload,
         mut logs,
     } = crate::openhuman::screen_intelligence::rpc::accessibility_capture_image_ref().await?;

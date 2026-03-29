@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 
 #[allow(dead_code)]
 static DESKTOP_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
@@ -43,7 +43,7 @@ pub fn parse_params<T: DeserializeOwned>(params: serde_json::Value) -> Result<T,
     serde_json::from_value(params).map_err(|e| format!("invalid params: {e}"))
 }
 
-/// Maps a domain [`RpcOutcome`](crate::openhuman::rpc::RpcOutcome) into a JSON-RPC [`InvocationResult`].
+/// Maps a domain [`RpcOutcome`](crate::rpc::RpcOutcome) into a JSON-RPC [`InvocationResult`].
 pub fn rpc_invocation_from_outcome<T: Serialize>(
     o: RpcOutcome<T>,
 ) -> Result<super::types::InvocationResult, String> {

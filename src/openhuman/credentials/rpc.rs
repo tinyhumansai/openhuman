@@ -9,8 +9,8 @@ use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
     build_session_state, parse_fields_value, profile_name_or_default, summarize_auth_profile,
 };
-use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::security::SecretStore;
+use crate::rpc::RpcOutcome;
 
 use super::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
 

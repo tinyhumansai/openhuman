@@ -2,12 +2,12 @@
 
 use serde_json::json;
 
-use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::screen_intelligence::{
     self, AccessibilityStatus, CaptureImageRefResult, CaptureNowResult, InputActionParams,
     InputActionResult, PermissionRequestParams, PermissionState, PermissionStatus, SessionStatus,
     StartSessionParams, StopSessionParams, VisionFlushResult, VisionRecentResult,
 };
+use crate::rpc::RpcOutcome;
 
 pub async fn accessibility_status() -> Result<RpcOutcome<AccessibilityStatus>, String> {
     if let Ok(config) = crate::openhuman::config::Config::load_or_init().await {

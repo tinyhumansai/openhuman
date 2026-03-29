@@ -18,7 +18,7 @@ use parking_lot::RwLock;
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
-use crate::models::socket::{ConnectionStatus, SocketState};
+use crate::api::models::socket::{ConnectionStatus, SocketState};
 
 // WebSocket-based Socket.IO client (desktop)
 use {

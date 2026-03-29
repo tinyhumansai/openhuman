@@ -2,8 +2,8 @@
 
 use serde_json::json;
 
-use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::security::SecurityPolicy;
+use crate::rpc::RpcOutcome;
 
 pub fn security_policy_info() -> RpcOutcome<serde_json::Value> {
     let policy = SecurityPolicy::default();

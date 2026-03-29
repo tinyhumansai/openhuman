@@ -4,9 +4,11 @@
 //! [`crate::api::jwt`] for session token retrieval and bearer formatting,
 //! [`crate::api::rest`] for authenticated REST calls (`/auth/...`, `GET /settings`, etc.),
 //! and [`crate::api::socket`] for Socket.IO WebSocket URLs.
+//! [`crate::api::models`] holds shared DTOs for auth and realtime (server-adjacent).
 
 pub mod config;
 pub mod jwt;
+pub mod models;
 pub mod rest;
 pub mod socket;
 

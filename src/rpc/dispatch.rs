@@ -7,10 +7,10 @@ use crate::openhuman::autocomplete::{
 };
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
-use crate::openhuman::rpc::RpcOutcome;
 use crate::openhuman::screen_intelligence::{
     InputActionParams, PermissionRequestParams, StartSessionParams, StopSessionParams,
 };
+use crate::rpc::RpcOutcome;
 
 const DEFAULT_ONBOARDING_FLAG_NAME: &str = ".skip_onboarding";
 

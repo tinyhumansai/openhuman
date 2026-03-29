@@ -2,7 +2,7 @@
 
 use crate::openhuman::config::Config;
 use crate::openhuman::doctor::{self, DoctorReport, ModelProbeReport};
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 
 pub async fn doctor_report(config: &Config) -> Result<RpcOutcome<DoctorReport>, String> {
     let report = doctor::run(config).map_err(|e| e.to_string())?;

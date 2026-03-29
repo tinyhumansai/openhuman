@@ -2,7 +2,7 @@
 
 use crate::openhuman::config::Config;
 use crate::openhuman::integrations::{self, IntegrationInfo};
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 
 pub async fn list_integrations(
     config: &Config,

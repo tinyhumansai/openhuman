@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::migration::{self, MigrationReport};
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 
 pub async fn migrate_openclaw(
     config: &Config,

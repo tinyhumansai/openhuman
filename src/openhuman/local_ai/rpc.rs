@@ -14,7 +14,7 @@ use crate::openhuman::local_ai::{
     LocalAiSpeechResult, LocalAiTtsResult, Suggestion,
 };
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 
 static REPL_AGENT_SESSIONS: Lazy<Mutex<HashMap<String, Agent>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));

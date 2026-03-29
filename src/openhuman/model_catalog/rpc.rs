@@ -2,7 +2,7 @@
 
 use crate::openhuman::config::Config;
 use crate::openhuman::model_catalog::{self, ModelRefreshResult};
-use crate::openhuman::rpc::RpcOutcome;
+use crate::rpc::RpcOutcome;
 
 pub async fn models_refresh(
     config: &Config,

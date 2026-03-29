@@ -29,7 +29,6 @@ pub mod memory;
 pub mod migration;
 pub mod model_catalog;
 pub mod providers;
-pub mod rpc;
 pub mod screen_intelligence;
 pub mod security;
 pub mod service;

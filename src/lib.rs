@@ -1,8 +1,8 @@
 pub mod ai;
 pub mod api;
 pub mod core_server;
-pub mod models;
 pub mod openhuman;
+pub mod rpc;
 
 pub use openhuman::config::DaemonConfig;
 pub use openhuman::memory::{MemoryClient, MemoryState};
