@@ -1,6 +1,6 @@
 import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 
-import soulMd from '../../../../../src/ai/prompts/SOUL.md?raw';
+import soulMd from '../../../../../src/openhuman/agent/prompts/SOUL.md?raw';
 import type {
   BehaviorPattern,
   EmergencyResponse,
@@ -14,7 +14,7 @@ import type {
 } from './types';
 
 const SOUL_GITHUB_URL =
-  'https://raw.githubusercontent.com/openhumanxyz/openhuman/refs/heads/main/src/ai/prompts/SOUL.md';
+  'https://raw.githubusercontent.com/openhumanxyz/openhuman/refs/heads/main/src/openhuman/agent/prompts/SOUL.md';
 const SOUL_CACHE_KEY = 'openhuman.soul.cache';
 const SOUL_CACHE_TTL = 1000 * 60 * 30; // 30 minutes
 

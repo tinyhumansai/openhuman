@@ -271,7 +271,7 @@ async fn ai_refresh_config(app: tauri::AppHandle) -> Result<AIPreview, String> {
     Ok(build_ai_preview(&app))
 }
 
-/// Write AI configuration files to `src/ai/prompts` in the repo (dev resolution from cwd).
+/// Write AI configuration files to `src/openhuman/agent/prompts` in the repo (dev resolution from cwd).
 #[tauri::command]
 async fn write_ai_config_file(filename: String, content: String) -> Result<bool, String> {
     use std::env;
@@ -291,7 +291,13 @@ async fn write_ai_config_file(filename: String, content: String) -> Result<bool,
     }
 
     let ai_dir = utils::dev_paths::repo_ai_prompts_dir(&current_dir)
-        .unwrap_or_else(|| current_dir.join("src").join("ai").join("prompts"));
+        .unwrap_or_else(|| {
+            current_dir
+                .join("src")
+                .join("openhuman")
+                .join("agent")
+                .join("prompts")
+        });
     let file_path = ai_dir.join(&filename);
 
     // Ensure ai directory exists

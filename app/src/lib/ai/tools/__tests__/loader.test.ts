@@ -8,7 +8,7 @@ import { clearToolsCache, loadTools, parseTools } from '../loader';
 import type { ToolsConfig } from '../types';
 
 // Mock the bundled tools markdown
-vi.mock('../../../../../src/ai/prompts/TOOLS.md?raw', () => ({
+vi.mock('../../../../../src/openhuman/agent/prompts/TOOLS.md?raw', () => ({
   default: `# OpenHuman Tools
 
 ## Overview

@@ -1,6 +1,6 @@
 import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 
-import toolsMd from '../../../../../src/ai/prompts/TOOLS.md?raw';
+import toolsMd from '../../../../../src/openhuman/agent/prompts/TOOLS.md?raw';
 import type {
   SkillGroup,
   ToolCategory,
