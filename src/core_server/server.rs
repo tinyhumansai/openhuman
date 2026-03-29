@@ -7,6 +7,18 @@ use serde_json::json;
 use crate::core_server::json_rpc;
 use crate::core_server::types::AppState;
 
+/// Full HTTP app (/, /health, /rpc) for the core process and for integration tests.
+pub fn build_core_http_router() -> Router {
+    Router::new()
+        .route("/", get(root_handler))
+        .route("/health", get(health_handler))
+        .route("/rpc", post(json_rpc::rpc_handler))
+        .fallback(not_found_handler)
+        .with_state(AppState {
+            core_version: env!("CARGO_PKG_VERSION").to_string(),
+        })
+}
+
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, Json(json!({ "ok": true })))
 }
@@ -55,14 +67,7 @@ pub async fn run_server(port: Option<u16>) -> anyhow::Result<()> {
     let bind_addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
-    let app = Router::new()
-        .route("/", get(root_handler))
-        .route("/health", get(health_handler))
-        .route("/rpc", post(json_rpc::rpc_handler))
-        .fallback(not_found_handler)
-        .with_state(AppState {
-            core_version: env!("CARGO_PKG_VERSION").to_string(),
-        });
+    let app = build_core_http_router();
 
     log::info!("[core] listening on http://{bind_addr}");
     log::info!("[rpc:http] JSON-RPC server running — POST http://{bind_addr}/rpc (JSON-RPC 2.0)");

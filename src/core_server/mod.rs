@@ -34,7 +34,7 @@ pub use types::{
     ModelSettingsUpdate, RuntimeFlags, RuntimeSettingsUpdate, ScreenIntelligenceSettingsUpdate,
 };
 
-pub use server::run_server;
+pub use server::{build_core_http_router, run_server};
 
 pub async fn call_method(
     method: &str,
