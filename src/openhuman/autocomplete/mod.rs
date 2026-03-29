@@ -911,7 +911,24 @@ fn apply_text_to_focused_field(text: &str) -> Result<(), String> {
         .replace('\"', "\\\"")
         .replace('\n', " ");
     let script = format!(
-        r#"tell application "System Events" to keystroke "{}""#,
+        r##"
+tell application "System Events"
+  set frontApp to first application process whose frontmost is true
+  set focusedElement to value of attribute "AXFocusedUIElement" of frontApp
+  set currentValue to ""
+  try
+    set currentValue to value of attribute "AXValue" of focusedElement as text
+  end try
+  if currentValue is "missing value" then set currentValue to ""
+  if currentValue is "" then
+    try
+      set currentValue to value of attribute "AXSelectedText" of focusedElement as text
+    end try
+    if currentValue is "missing value" then set currentValue to ""
+  end if
+  set value of attribute "AXValue" of focusedElement to (currentValue & "{}")
+end tell
+"##,
         escaped
     );
     let output = std::process::Command::new("osascript")
@@ -920,7 +937,13 @@ fn apply_text_to_focused_field(text: &str) -> Result<(), String> {
         .output()
         .map_err(|e| format!("failed to run osascript: {e}"))?;
     if !output.status.success() {
-        return Err("failed to apply suggestion to focused text field".to_string());
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err("failed to apply suggestion to focused text field".to_string());
+        }
+        return Err(format!(
+            "failed to apply suggestion to focused text field: {stderr}"
+        ));
     }
     Ok(())
 }
