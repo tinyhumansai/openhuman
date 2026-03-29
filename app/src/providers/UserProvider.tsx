@@ -1,10 +1,10 @@
 import { useEffect, useRef } from 'react';
 
-import { clearToken, setToken } from '../store/authSlice';
+import { clearToken, setAuthBootstrapComplete, setToken } from '../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { fetchTeams } from '../store/teamSlice';
 import { fetchCurrentUser } from '../store/userSlice';
-import { getSessionToken } from '../utils/tauriCommands';
+import { getAuthState, getSessionToken, isTauri } from '../utils/tauriCommands';
 
 /**
  * UserProvider automatically fetches user data when JWT token is available.
@@ -16,18 +16,31 @@ const UserProvider = ({ children }: { children: React.ReactNode }) => {
   const attemptedSessionRestoreRef = useRef(false);
 
   useEffect(() => {
-    if (token || attemptedSessionRestoreRef.current) return;
+    if (attemptedSessionRestoreRef.current) return;
     attemptedSessionRestoreRef.current = true;
 
     let mounted = true;
     void (async () => {
+      if (!isTauri()) {
+        if (mounted) dispatch(setAuthBootstrapComplete(true));
+        return;
+      }
+
       try {
-        const sessionToken = await getSessionToken();
-        if (mounted && sessionToken) {
-          dispatch(setToken(sessionToken));
+        const [authState, sessionToken] = await Promise.all([getAuthState(), getSessionToken()]);
+        if (!mounted) return;
+
+        if (authState.is_authenticated && sessionToken) {
+          if (sessionToken !== token) {
+            dispatch(setToken(sessionToken));
+          }
+        } else if (!authState.is_authenticated && token) {
+          await dispatch(clearToken());
         }
       } catch (err) {
         console.warn('[auth] Failed to restore session token from core RPC:', err);
+      } finally {
+        if (mounted) dispatch(setAuthBootstrapComplete(true));
       }
     })();
 

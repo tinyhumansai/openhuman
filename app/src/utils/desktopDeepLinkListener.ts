@@ -56,11 +56,11 @@ const handleAuthDeepLink = async (parsed: URL) => {
 
   if (key === 'auth') {
     store.dispatch(setToken(token));
-    window.location.hash = '/onboarding';
+    window.location.hash = '/home';
   } else {
     const jwtToken = await consumeLoginToken(token);
     store.dispatch(setToken(jwtToken));
-    window.location.hash = '/onboarding';
+    window.location.hash = '/home';
   }
 };
 

@@ -11,7 +11,7 @@ This file orients contributors and coding agents. Authoritative narrative archit
 | Path                    | Role                                                                                                                                                                                                      |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`app/`**              | Yarn workspace **`openhuman-app`**: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests                                                                                        |
-| **Repo root `src/`**    | Rust library **`openhuman_core`** and **`openhuman`** CLI binary (`src/bin/openhuman.rs`) — `core_server`, `openhuman::*` domains, skills runtime (QuickJS / `rquickjs`), MCP routing in the core process |
+| **Repo root `src/`**    | Rust library **`openhuman_core`** and **`openhuman`** CLI binary entrypoint (`src/main.rs`) — `core_server`, `openhuman::*` domains, skills runtime (QuickJS / `rquickjs`), MCP routing in the core process |
 | **Skills registry**     | **[`tinyhumansai/openhuman-skills`](https://github.com/tinyhumansai/openhuman-skills)** on GitHub — canonical skill packages and TS build; not vendored in this tree (see blurb below).                                                                                                                                                    |
 | **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar the UI stages via `app`’s `core:stage`                                                                                                     |
 | **`docs/`**             | Architecture and module guides (numbered pages under `docs/src/`, `docs/src-tauri/`)                                                                                                                      |
@@ -72,6 +72,88 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 **Tests**: Vitest in `app/` (`yarn test`, `yarn test:coverage`). Rust tests via `cargo test` at repo root as wired in `app/package.json`.
 
 **Quality**: ESLint + Prettier + Husky in the `app` workspace.
+
+---
+
+## Testing Guide (Unit + E2E)
+
+### Unit tests (Vitest)
+
+- **Where tests live**: co-locate as `*.test.ts` / `*.test.tsx` under `app/src/**`.
+- **Runner/config**: Vitest with `app/test/vitest.config.ts` and shared setup in `app/src/test/setup.ts`.
+- **Run**:
+
+```bash
+yarn test:unit
+yarn test:coverage
+```
+
+- **Authoring rules**:
+  - Prefer testing behavior over implementation details.
+  - Use existing helpers from `app/src/test/` (`test-utils.tsx`, MSW handlers/server) before adding new harness code.
+  - Keep tests deterministic: avoid real network calls, time-sensitive flakes, or hidden global state.
+
+### E2E tests (WDIO + Appium mac2)
+
+- **Where specs live**: `app/test/e2e/specs/*.spec.ts`
+- **Shared harness**:
+  - Helpers: `app/test/e2e/helpers/*`
+  - Mock backend: `app/test/e2e/mock-server.ts`
+  - WDIO config: `app/test/wdio.conf.ts`
+
+- **Build + run**:
+
+```bash
+# Build desktop app bundle + stage core sidecar
+yarn test:e2e:build
+
+# Run one spec
+bash scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
+
+# Run all flow specs
+yarn test:e2e:all:flows
+```
+
+- **Authoring rules**:
+  - Ensure each spec is runnable in isolation.
+  - Use helper waits (`waitForAppReady`, `waitForWebView`, etc.) instead of ad hoc long sleeps.
+  - Assert both UI outcomes and backend/mock effects when relevant.
+  - Add failure diagnostics (request logs, accessibility tree dump) for faster debugging by agents.
+
+### Deterministic core-sidecar reset
+
+For reproducible E2E runs, isolate `openhuman` storage using a temp workspace:
+
+```bash
+export OPENHUMAN_WORKSPACE="$(mktemp -d)"
+yarn test:e2e:build
+bash scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
+rm -rf "$OPENHUMAN_WORKSPACE"
+```
+
+- `OPENHUMAN_WORKSPACE` redirects core config + workspace storage away from `~/.openhuman`.
+- Default reset strategy:
+  - Rebuild/stage sidecar once per E2E run (`yarn test:e2e:build`).
+  - Isolate state per test case with a fresh temp workspace.
+
+Example per-test-case pattern inside a harness script:
+
+```bash
+run_case() {
+  export OPENHUMAN_WORKSPACE="$(mktemp -d)"
+  bash scripts/e2e-run-spec.sh "$1" "$2"
+  rm -rf "$OPENHUMAN_WORKSPACE"
+}
+```
+
+### Test authoring checklist
+
+- Add/update unit tests for logic changes before stacking additional features.
+- Add/update E2E coverage for user-visible flows and cross-process integration behavior.
+- Keep new tests independent, deterministic, and debuggable from logs alone.
+- When touching core/sidecar behavior, validate both:
+  - `yarn test:unit`
+  - targeted E2E spec(s) via `scripts/e2e-run-spec.sh`
 
 ---
 

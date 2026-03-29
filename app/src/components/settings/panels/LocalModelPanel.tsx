@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
-  isTauri,
   type LocalAiAssetsStatus,
+  type LocalAiDownloadsProgress,
   type LocalAiEmbeddingResult,
   type LocalAiSpeechResult,
   type LocalAiStatus,
@@ -10,7 +10,9 @@ import {
   type LocalAiTtsResult,
   openhumanLocalAiAssetsStatus,
   openhumanLocalAiDownload,
+  openhumanLocalAiDownloadAllAssets,
   openhumanLocalAiDownloadAsset,
+  openhumanLocalAiDownloadsProgress,
   openhumanLocalAiEmbed,
   openhumanLocalAiPrompt,
   openhumanLocalAiStatus,
@@ -77,6 +79,12 @@ const progressFromStatus = (status: LocalAiStatus | null): number => {
   }
 };
 
+const progressFromDownloads = (downloads: LocalAiDownloadsProgress | null): number | null => {
+  if (!downloads) return null;
+  if (typeof downloads.progress !== 'number') return null;
+  return Math.max(0, Math.min(1, downloads.progress));
+};
+
 const formatBytes = (bytes?: number | null): string => {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '0 B';
   if (bytes < 1024) return `${Math.round(bytes)} B`;
@@ -104,6 +112,7 @@ const LocalModelPanel = () => {
   const { navigateBack } = useSettingsNavigation();
   const [status, setStatus] = useState<LocalAiStatus | null>(null);
   const [assets, setAssets] = useState<LocalAiAssetsStatus | null>(null);
+  const [downloads, setDownloads] = useState<LocalAiDownloadsProgress | null>(null);
   const [statusError, setStatusError] = useState<string>('');
   const [isTriggeringDownload, setIsTriggeringDownload] = useState(false);
   const [assetDownloadBusy, setAssetDownloadBusy] = useState<Record<string, boolean>>({});
@@ -139,37 +148,43 @@ const LocalModelPanel = () => {
   const [ttsOutput, setTtsOutput] = useState<LocalAiTtsResult | null>(null);
   const [isTtsLoading, setIsTtsLoading] = useState(false);
 
-  const progress = useMemo(() => progressFromStatus(status), [status]);
+  const progress = useMemo(() => {
+    const downloadProgress = progressFromDownloads(downloads);
+    if (downloadProgress != null) return downloadProgress;
+    return progressFromStatus(status);
+  }, [downloads, status]);
   const isIndeterminateDownload =
-    status?.state === 'downloading' && typeof status.download_progress !== 'number';
+    (downloads?.state ?? status?.state) === 'downloading' &&
+    typeof downloads?.progress !== 'number' &&
+    typeof status?.download_progress !== 'number';
+  const downloadedBytes = downloads?.downloaded_bytes ?? status?.downloaded_bytes;
+  const totalBytes = downloads?.total_bytes ?? status?.total_bytes;
+  const speedBps = downloads?.speed_bps ?? status?.download_speed_bps;
+  const etaSeconds = downloads?.eta_seconds ?? status?.eta_seconds;
   const downloadedText =
-    typeof status?.downloaded_bytes === 'number'
-      ? `${formatBytes(status.downloaded_bytes)}${typeof status?.total_bytes === 'number' ? ` / ${formatBytes(status.total_bytes)}` : ''}`
+    typeof downloadedBytes === 'number'
+      ? `${formatBytes(downloadedBytes)}${typeof totalBytes === 'number' ? ` / ${formatBytes(totalBytes)}` : ''}`
       : '';
-  const speedText =
-    typeof status?.download_speed_bps === 'number' && status.download_speed_bps > 0
-      ? `${formatBytes(status.download_speed_bps)}/s`
-      : '';
-  const etaText = formatEta(status?.eta_seconds);
+  const speedText = typeof speedBps === 'number' && speedBps > 0 ? `${formatBytes(speedBps)}/s` : '';
+  const etaText = formatEta(etaSeconds);
 
   const loadStatus = async () => {
-    if (!isTauri()) {
-      setStatusError('Local model tools are available only in Tauri desktop builds.');
-      setStatus(null);
-      return;
-    }
-
     try {
-      const response = await openhumanLocalAiStatus();
-      const assetResponse = await openhumanLocalAiAssetsStatus();
-      setStatus(response.result);
-      setAssets(assetResponse.result);
+      const [statusResponse, assetsResponse, downloadsResponse] = await Promise.all([
+        openhumanLocalAiStatus(),
+        openhumanLocalAiAssetsStatus(),
+        openhumanLocalAiDownloadsProgress(),
+      ]);
+      setStatus(statusResponse.result);
+      setAssets(assetsResponse.result);
+      setDownloads(downloadsResponse.result);
       setStatusError('');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to read local model status';
       setStatusError(message);
       setStatus(null);
       setAssets(null);
+      setDownloads(null);
     }
   };
 
@@ -182,11 +197,11 @@ const LocalModelPanel = () => {
   }, []);
 
   const triggerDownload = async (force: boolean) => {
-    if (!isTauri()) return;
     setIsTriggeringDownload(true);
     setStatusError('');
     try {
       await openhumanLocalAiDownload(force);
+      await openhumanLocalAiDownloadAllAssets(force);
       await loadStatus();
     } catch (err) {
       const message =
@@ -198,7 +213,7 @@ const LocalModelPanel = () => {
   };
 
   const runSummaryTest = async () => {
-    if (!summaryInput.trim() || !isTauri()) return;
+    if (!summaryInput.trim()) return;
     setIsSummaryLoading(true);
     setSummaryOutput('');
     setStatusError('');
@@ -215,7 +230,7 @@ const LocalModelPanel = () => {
   };
 
   const runSuggestTest = async () => {
-    if (!suggestInput.trim() || !isTauri()) return;
+    if (!suggestInput.trim()) return;
     setIsSuggestLoading(true);
     setSuggestions([]);
     setStatusError('');
@@ -232,7 +247,7 @@ const LocalModelPanel = () => {
   };
 
   const runPromptTest = async () => {
-    if (!promptInput.trim() || !isTauri()) return;
+    if (!promptInput.trim()) return;
     setIsPromptLoading(true);
     setPromptOutput('');
     setStatusError('');
@@ -249,7 +264,7 @@ const LocalModelPanel = () => {
   };
 
   const runVisionTest = async () => {
-    if (!visionPromptInput.trim() || !visionImageInput.trim() || !isTauri()) return;
+    if (!visionPromptInput.trim() || !visionImageInput.trim()) return;
     setIsVisionLoading(true);
     setVisionOutput('');
     setStatusError('');
@@ -270,7 +285,7 @@ const LocalModelPanel = () => {
   };
 
   const runEmbeddingTest = async () => {
-    if (!embeddingInput.trim() || !isTauri()) return;
+    if (!embeddingInput.trim()) return;
     setIsEmbeddingLoading(true);
     setEmbeddingOutput(null);
     setStatusError('');
@@ -291,7 +306,7 @@ const LocalModelPanel = () => {
   };
 
   const runTranscribeTest = async () => {
-    if (!audioPathInput.trim() || !isTauri()) return;
+    if (!audioPathInput.trim()) return;
     setIsTranscribeLoading(true);
     setTranscribeOutput(null);
     setStatusError('');
@@ -308,7 +323,7 @@ const LocalModelPanel = () => {
   };
 
   const runTtsTest = async () => {
-    if (!ttsInput.trim() || !isTauri()) return;
+    if (!ttsInput.trim()) return;
     setIsTtsLoading(true);
     setTtsOutput(null);
     setStatusError('');
@@ -330,7 +345,6 @@ const LocalModelPanel = () => {
   const triggerAssetDownload = async (
     capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
   ) => {
-    if (!isTauri()) return;
     setAssetDownloadBusy(prev => ({ ...prev, [capability]: true }));
     setStatusError('');
     try {
@@ -364,7 +378,7 @@ const LocalModelPanel = () => {
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-400">State</span>
               <span className={`font-medium ${statusTone(status?.state ?? 'idle')}`}>
-                {status ? statusLabel(status.state) : 'Unavailable'}
+                {status ? statusLabel(downloads?.state ?? status.state) : 'Unavailable'}
               </span>
             </div>
 
@@ -436,13 +450,13 @@ const LocalModelPanel = () => {
             <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={() => void triggerDownload(false)}
-                disabled={isTriggeringDownload || !isTauri()}
+                disabled={isTriggeringDownload}
                 className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
                 {isTriggeringDownload ? 'Triggering...' : 'Bootstrap / Resume'}
               </button>
               <button
                 onClick={() => void triggerDownload(true)}
-                disabled={isTriggeringDownload || !isTauri()}
+                disabled={isTriggeringDownload}
                 className="px-3 py-1.5 text-xs rounded-md border border-gray-600 hover:border-gray-500 disabled:opacity-60 text-stone-200">
                 Force Re-bootstrap
               </button>
@@ -475,7 +489,7 @@ const LocalModelPanel = () => {
                   )}
                   <button
                     onClick={() => void triggerAssetDownload(key)}
-                    disabled={assetDownloadBusy[key] || !isTauri()}
+                    disabled={assetDownloadBusy[key]}
                     className="mt-2 px-2 py-1 text-[10px] rounded border border-gray-600 hover:border-gray-500 disabled:opacity-60 text-stone-200">
                     {assetDownloadBusy[key] ? 'Downloading...' : 'Download'}
                   </button>
@@ -500,7 +514,7 @@ const LocalModelPanel = () => {
               </div>
               <button
                 onClick={() => void runSummaryTest()}
-                disabled={isSummaryLoading || !summaryInput.trim() || !isTauri()}
+                disabled={isSummaryLoading || !summaryInput.trim()}
                 className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
                 {isSummaryLoading ? 'Running...' : 'Run Summary Test'}
               </button>
@@ -528,7 +542,7 @@ const LocalModelPanel = () => {
               </div>
               <button
                 onClick={() => void runSuggestTest()}
-                disabled={isSuggestLoading || !suggestInput.trim() || !isTauri()}
+                disabled={isSuggestLoading || !suggestInput.trim()}
                 className="px-3 py-1.5 text-xs rounded-md bg-cyan-600 hover:bg-cyan-700 disabled:opacity-60 text-white">
                 {isSuggestLoading ? 'Running...' : 'Run Suggestion Test'}
               </button>
@@ -572,7 +586,7 @@ const LocalModelPanel = () => {
               </label>
               <button
                 onClick={() => void runPromptTest()}
-                disabled={isPromptLoading || !promptInput.trim() || !isTauri()}
+                disabled={isPromptLoading || !promptInput.trim()}
                 className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
                 {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
               </button>
@@ -608,8 +622,7 @@ const LocalModelPanel = () => {
               disabled={
                 isVisionLoading ||
                 !visionPromptInput.trim() ||
-                !visionImageInput.trim() ||
-                !isTauri()
+                !visionImageInput.trim()
               }
               className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
               {isVisionLoading ? 'Running...' : 'Run Vision Test'}
@@ -633,7 +646,7 @@ const LocalModelPanel = () => {
             />
             <button
               onClick={() => void runEmbeddingTest()}
-              disabled={isEmbeddingLoading || !embeddingInput.trim() || !isTauri()}
+              disabled={isEmbeddingLoading || !embeddingInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white">
               {isEmbeddingLoading ? 'Running...' : 'Run Embedding Test'}
             </button>
@@ -658,7 +671,7 @@ const LocalModelPanel = () => {
             />
             <button
               onClick={() => void runTranscribeTest()}
-              disabled={isTranscribeLoading || !audioPathInput.trim() || !isTauri()}
+              disabled={isTranscribeLoading || !audioPathInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white">
               {isTranscribeLoading ? 'Running...' : 'Run Transcription Test'}
             </button>
@@ -688,7 +701,7 @@ const LocalModelPanel = () => {
             />
             <button
               onClick={() => void runTtsTest()}
-              disabled={isTtsLoading || !ttsInput.trim() || !isTauri()}
+              disabled={isTtsLoading || !ttsInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white">
               {isTtsLoading ? 'Running...' : 'Run TTS Test'}
             </button>

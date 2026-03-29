@@ -20,7 +20,12 @@ const ProtectedRoute = ({
   redirectTo,
 }: ProtectedRouteProps) => {
   const token = useAppSelector(state => state.auth.token);
+  const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
   const isOnboarded = useAppSelector(selectIsOnboarded);
+
+  if (!isAuthBootstrapComplete) {
+    return null;
+  }
 
   // If auth is required but user is not logged in
   if (requireAuth && !token) {

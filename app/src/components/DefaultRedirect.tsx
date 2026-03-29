@@ -9,6 +9,11 @@ import { useAppSelector } from '../store/hooks';
  */
 const DefaultRedirect = () => {
   const token = useAppSelector(state => state.auth.token);
+  const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
+
+  if (!isAuthBootstrapComplete) {
+    return null;
+  }
 
   if (token) {
     return <Navigate to="/home" replace />;

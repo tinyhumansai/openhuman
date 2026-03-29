@@ -5,6 +5,8 @@ import { clearUser } from './userSlice';
 
 export interface AuthState {
   token: string | null;
+  /** True once startup auth/session bootstrap has checked core binary state */
+  isAuthBootstrapComplete: boolean;
   /** Onboarding completion per user id */
   isOnboardedByUser: Record<string, boolean>;
   /** Additional onboarding task progress per user id */
@@ -28,6 +30,7 @@ export interface UserOnboardingTasks {
 
 const initialState: AuthState = {
   token: null,
+  isAuthBootstrapComplete: false,
   isOnboardedByUser: {},
   onboardingTasksByUser: {},
   hasIncompleteOnboardingByUser: {},
@@ -42,6 +45,9 @@ const authSlice = createSlice({
   reducers: {
     setToken: (state, action: PayloadAction<string>) => {
       state.token = action.payload;
+    },
+    setAuthBootstrapComplete: (state, action: PayloadAction<boolean>) => {
+      state.isAuthBootstrapComplete = action.payload;
     },
     _clearToken: state => {
       state.token = null;
@@ -92,6 +98,7 @@ export const clearToken = createAsyncThunk('auth/clearToken', async (_, { dispat
 
 export const {
   setToken,
+  setAuthBootstrapComplete,
   setOnboardedForUser,
   setAnalyticsForUser,
   setOnboardingTasksForUser,

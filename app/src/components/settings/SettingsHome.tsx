@@ -23,7 +23,7 @@ const SettingsHome = () => {
     } catch (err) {
       console.warn('[Settings] Rust logout failed:', err);
     }
-    window.location.hash = '/login';
+    window.location.hash = '/';
   };
 
   const clearAllAppData = async () => {
@@ -47,7 +47,7 @@ const SettingsHome = () => {
     }
 
     // Complete reset - redirect to login for fresh start
-    window.location.hash = '/login';
+    window.location.hash = '/';
   };
 
   const handleLogoutAndClearData = async () => {

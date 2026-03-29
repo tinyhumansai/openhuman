@@ -13,6 +13,11 @@ interface PublicRouteProps {
  */
 const PublicRoute = ({ children, redirectTo }: PublicRouteProps) => {
   const token = useAppSelector(state => state.auth.token);
+  const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
+
+  if (!isAuthBootstrapComplete) {
+    return null;
+  }
 
   // If user is logged in, always go to home.
   // Home itself will redirect to onboarding if needed.

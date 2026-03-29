@@ -14,7 +14,7 @@ import storage from 'redux-persist/lib/storage';
 
 import { setStoreForApiClient } from '../services/apiClient';
 import { IS_DEV } from '../utils/config';
-import { storeSession, syncMemoryClientToken } from '../utils/tauriCommands';
+import { logout as clearRustSession, storeSession, syncMemoryClientToken } from '../utils/tauriCommands';
 import accessibilityReducer from './accessibilitySlice';
 import aiReducer from './aiSlice';
 import authReducer, { setOnboardedForUser, setToken } from './authSlice';
@@ -77,34 +77,49 @@ const persistedChannelConnectionsReducer = persistReducer(
  * Middleware that syncs the JWT token to the Rust SESSION_SERVICE whenever
  * setToken is dispatched or auth state is rehydrated from persist.
  */
-const syncTokenToRust: Middleware = () => next => action => {
-  const result = next(action);
+const syncTokenToRust: Middleware = () => {
+  let lastSyncedToken: string | null = null;
+  return next => action => {
+    const result = next(action);
 
-  const syncToken = (token: string) => {
-    // Pass a minimal user object — the token is what matters for SESSION_SERVICE
-    storeSession(token, { id: '' }).catch(err =>
-      console.warn('[syncTokenToRust] Failed to sync token:', err)
-    );
-    syncMemoryClientToken(token).catch(err =>
-      console.warn('[syncTokenToRust] Failed to sync memory token:', err)
-    );
-  };
+    const syncToken = (token: string) => {
+      if (token === lastSyncedToken) return;
+      lastSyncedToken = token;
 
-  // Sync on explicit setToken
-  if (setToken.match(action) && action.payload) {
-    syncToken(action.payload);
-  }
+      // Pass a minimal user object — the token is what matters for SESSION_SERVICE
+      storeSession(token, { id: '' }).catch(err =>
+        console.warn('[syncTokenToRust] Failed to sync token:', err)
+      );
+      syncMemoryClientToken(token).catch(err =>
+        console.warn('[syncTokenToRust] Failed to sync memory token:', err)
+      );
+    };
 
-  // Sync on rehydration (app restart — persist loads token from localStorage)
-  const a = action as { type?: string; key?: string; payload?: { token?: string } };
-  if (a.type === REHYDRATE && a.key === 'auth') {
-    const token = a.payload?.token;
-    if (token) {
-      syncToken(token);
+    // Sync on explicit setToken
+    if (setToken.match(action) && action.payload) {
+      syncToken(action.payload);
     }
-  }
 
-  return result;
+    if ((action as { type?: string }).type === 'auth/_clearToken') {
+      lastSyncedToken = null;
+      clearRustSession().catch(err =>
+        console.warn('[syncTokenToRust] Failed to clear core session:', err)
+      );
+    }
+
+    // Sync on rehydration (app restart — persist loads token from localStorage)
+    const a = action as { type?: string; key?: string; payload?: { token?: string } };
+    if (a.type === REHYDRATE && a.key === 'auth') {
+      const token = a.payload?.token;
+      if (token) {
+        syncToken(token);
+      } else {
+        lastSyncedToken = null;
+      }
+    }
+
+    return result;
+  };
 };
 
 export const store = configureStore({

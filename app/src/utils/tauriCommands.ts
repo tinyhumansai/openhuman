@@ -1107,9 +1107,6 @@ export async function openhumanAgentChat(
 }
 
 export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiStatus>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   try {
     return await callCoreRpc<CommandResponse<LocalAiStatus>>({
       method: 'openhuman.local_ai_status',
@@ -1128,9 +1125,6 @@ export async function openhumanLocalAiStatus(): Promise<CommandResponse<LocalAiS
 export async function openhumanLocalAiDownload(
   force?: boolean
 ): Promise<CommandResponse<LocalAiStatus>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   try {
     return await callCoreRpc<CommandResponse<LocalAiStatus>>({
       method: 'openhuman.local_ai_download',
@@ -1148,9 +1142,6 @@ export async function openhumanLocalAiDownload(
 export async function openhumanLocalAiDownloadAllAssets(
   force?: boolean
 ): Promise<CommandResponse<LocalAiDownloadsProgress>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiDownloadsProgress>>({
     method: 'openhuman.local_ai_download_all_assets',
     params: { force: force ?? false },
@@ -1161,9 +1152,6 @@ export async function openhumanLocalAiSummarize(
   text: string,
   maxTokens?: number
 ): Promise<CommandResponse<string>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<string>>({
     method: 'openhuman.local_ai_summarize',
     params: { text, max_tokens: maxTokens },
@@ -1174,9 +1162,6 @@ export async function openhumanLocalAiSuggestQuestions(
   context?: string,
   lines?: string[]
 ): Promise<CommandResponse<LocalAiSuggestion[]>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiSuggestion[]>>({
     method: 'openhuman.local_ai_suggest_questions',
     params: { context, lines },
@@ -1188,9 +1173,6 @@ export async function openhumanLocalAiPrompt(
   maxTokens?: number,
   noThink?: boolean
 ): Promise<CommandResponse<string>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<string>>({
     method: 'openhuman.local_ai_prompt',
     params: { prompt, max_tokens: maxTokens, no_think: noThink },
@@ -1202,9 +1184,6 @@ export async function openhumanLocalAiVisionPrompt(
   imageRefs: string[],
   maxTokens?: number
 ): Promise<CommandResponse<string>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<string>>({
     method: 'openhuman.local_ai_vision_prompt',
     params: { prompt, image_refs: imageRefs, max_tokens: maxTokens },
@@ -1214,9 +1193,6 @@ export async function openhumanLocalAiVisionPrompt(
 export async function openhumanLocalAiEmbed(
   inputs: string[]
 ): Promise<CommandResponse<LocalAiEmbeddingResult>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiEmbeddingResult>>({
     method: 'openhuman.local_ai_embed',
     params: { inputs },
@@ -1226,9 +1202,6 @@ export async function openhumanLocalAiEmbed(
 export async function openhumanLocalAiTranscribe(
   audioPath: string
 ): Promise<CommandResponse<LocalAiSpeechResult>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiSpeechResult>>({
     method: 'openhuman.local_ai_transcribe',
     params: { audio_path: audioPath },
@@ -1239,9 +1212,6 @@ export async function openhumanLocalAiTranscribeBytes(
   audioBytes: number[],
   extension?: string
 ): Promise<CommandResponse<LocalAiSpeechResult>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiSpeechResult>>({
     method: 'openhuman.local_ai_transcribe_bytes',
     params: { audio_bytes: audioBytes, extension },
@@ -1252,9 +1222,6 @@ export async function openhumanLocalAiTts(
   text: string,
   outputPath?: string
 ): Promise<CommandResponse<LocalAiTtsResult>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiTtsResult>>({
     method: 'openhuman.local_ai_tts',
     params: { text, output_path: outputPath },
@@ -1264,9 +1231,6 @@ export async function openhumanLocalAiTts(
 export async function openhumanLocalAiAssetsStatus(): Promise<
   CommandResponse<LocalAiAssetsStatus>
 > {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiAssetsStatus>>({
     method: 'openhuman.local_ai_assets_status',
   });
@@ -1275,9 +1239,6 @@ export async function openhumanLocalAiAssetsStatus(): Promise<
 export async function openhumanLocalAiDownloadsProgress(): Promise<
   CommandResponse<LocalAiDownloadsProgress>
 > {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiDownloadsProgress>>({
     method: 'openhuman.local_ai_downloads_progress',
   });
@@ -1286,9 +1247,6 @@ export async function openhumanLocalAiDownloadsProgress(): Promise<
 export async function openhumanLocalAiDownloadAsset(
   capability: 'chat' | 'vision' | 'embedding' | 'stt' | 'tts'
 ): Promise<CommandResponse<LocalAiAssetsStatus>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
   return await callCoreRpc<CommandResponse<LocalAiAssetsStatus>>({
     method: 'openhuman.local_ai_download_asset',
     params: { capability },
