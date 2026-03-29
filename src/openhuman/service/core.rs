@@ -1,11 +1,11 @@
-use crate::openhuman::config::Config;
-use anyhow::Result;
 #[cfg(target_os = "linux")]
 use super::linux;
 #[cfg(target_os = "macos")]
 use super::macos;
 #[cfg(windows)]
 use super::windows;
+use crate::openhuman::config::Config;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

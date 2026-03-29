@@ -7,6 +7,8 @@ pub mod settings_cli;
 #[allow(unused_imports)]
 pub use daemon::DaemonConfig;
 
+pub use ops as rpc;
+pub use ops::*;
 #[allow(unused_imports)]
 pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
@@ -23,8 +25,6 @@ pub use schema::{
     StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
     TailscaleTunnelConfig, TelegramConfig, TunnelConfig, WebSearchConfig, WebhookConfig,
 };
-pub use ops as rpc;
-pub use ops::*;
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
     all_registered_controllers as all_config_registered_controllers,

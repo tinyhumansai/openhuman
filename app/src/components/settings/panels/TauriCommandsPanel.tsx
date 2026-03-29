@@ -995,7 +995,6 @@ const TauriCommandsPanel = () => {
                   />
                 </Field>
               </InputGroup>
-
             </div>
 
             <ActionPanel>

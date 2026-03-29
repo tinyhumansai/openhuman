@@ -1,12 +1,12 @@
-mod ops;
+pub mod ops;
 mod schedule;
 mod schemas;
 mod store;
 mod types;
 
-pub mod rpc;
 pub mod scheduler;
 
+pub use ops as rpc;
 pub use ops::{add_once, add_once_at, pause_job, resume_job, update_cron_job};
 #[allow(unused_imports)]
 pub use schedule::{

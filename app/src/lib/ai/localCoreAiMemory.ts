@@ -2,7 +2,6 @@
  * In-process replacement for the removed `openhuman::ai_memory` core RPC surface.
  * Keeps session + memory index behavior in RAM for the desktop UI (no disk persistence).
  */
-
 import type { ChunkRecordRust } from './memory/types';
 import type { SessionEntry } from './sessions/types';
 
@@ -21,7 +20,14 @@ const chunksByPath = new Map<string, Set<string>>();
 const metaKv = new Map<string, string>();
 const embeddingCache = new Map<
   string,
-  { provider: string; model: string; hash: string; embedding: number[]; dims: number | null; updated_at: number }
+  {
+    provider: string;
+    model: string;
+    hash: string;
+    embedding: number[];
+    dims: number | null;
+    updated_at: number;
+  }
 >();
 
 let sessionIndex: Record<string, SessionEntry> = {};
@@ -42,7 +48,10 @@ function ftsScore(text: string, query: string): number {
   return score;
 }
 
-export async function dispatchLocalAiMethod(method: string, params: Record<string, unknown>): Promise<unknown> {
+export async function dispatchLocalAiMethod(
+  method: string,
+  params: Record<string, unknown>
+): Promise<unknown> {
   switch (method) {
     case 'ai.list_memory_files': {
       const dir = (params.relative_dir as string | undefined) ?? 'memory';

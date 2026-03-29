@@ -322,5 +322,4 @@ mod tests {
         let err = validate_registry(&registered, &declared).expect_err("expected duplicate input");
         assert!(err.contains("duplicate required input `use_cache` in `doctor.models`"));
     }
-
 }
