@@ -208,8 +208,8 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "agent_chat" => ControllerSchema {
-            namespace: "agent",
-            function: "chat",
+            namespace: "local_ai",
+            function: "agent_chat",
             description: "Run one-shot agent chat with optional model overrides.",
             inputs: vec![
                 required_string("message", "User message."),
@@ -219,8 +219,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("response", "Agent response payload.")],
         },
         "agent_chat_simple" => ControllerSchema {
-            namespace: "agent_chat",
-            function: "simple",
+            namespace: "local_ai",
+            function: "agent_chat_simple",
             description: "Run one-shot lightweight provider chat.",
             inputs: vec![
                 required_string("message", "User message."),
@@ -230,8 +230,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("response", "Agent response payload.")],
         },
         "agent_repl_session_start" => ControllerSchema {
-            namespace: "agent_repl_session",
-            function: "start",
+            namespace: "local_ai",
+            function: "agent_repl_session_start",
             description: "Create a persistent REPL agent session.",
             inputs: vec![
                 optional_string("session_id", "Optional session id."),
@@ -241,8 +241,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("result", "Session creation result.")],
         },
         "agent_repl_session_chat" => ControllerSchema {
-            namespace: "agent_repl_session",
-            function: "chat",
+            namespace: "local_ai",
+            function: "agent_repl_session_chat",
             description: "Send a message through REPL agent session.",
             inputs: vec![
                 required_string("session_id", "REPL session id."),
@@ -251,15 +251,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("response", "Session chat response.")],
         },
         "agent_repl_session_reset" => ControllerSchema {
-            namespace: "agent_repl_session",
-            function: "reset",
+            namespace: "local_ai",
+            function: "agent_repl_session_reset",
             description: "Clear REPL session history.",
             inputs: vec![required_string("session_id", "REPL session id.")],
             outputs: vec![json_output("result", "Session reset result.")],
         },
         "agent_repl_session_end" => ControllerSchema {
-            namespace: "agent_repl_session",
-            function: "end",
+            namespace: "local_ai",
+            function: "agent_repl_session_end",
             description: "Terminate REPL session.",
             inputs: vec![required_string("session_id", "REPL session id.")],
             outputs: vec![json_output("result", "Session end result.")],
@@ -279,8 +279,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("status", "Local AI status payload.")],
         },
         "local_ai_download_all_assets" => ControllerSchema {
-            namespace: "local_ai_download_all",
-            function: "assets",
+            namespace: "local_ai",
+            function: "download_all_assets",
             description: "Trigger full local AI asset download.",
             inputs: vec![optional_bool("force", "Reset state before download.")],
             outputs: vec![json_output("progress", "Download progress payload.")],
@@ -296,8 +296,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("summary", "Summary text.")],
         },
         "local_ai_suggest_questions" => ControllerSchema {
-            namespace: "local_ai_suggest",
-            function: "questions",
+            namespace: "local_ai",
+            function: "suggest_questions",
             description: "Suggest questions for provided context.",
             inputs: vec![
                 optional_string("context", "Context text."),
@@ -324,8 +324,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("output", "Prompt output text.")],
         },
         "local_ai_vision_prompt" => ControllerSchema {
-            namespace: "local_ai_vision",
-            function: "prompt",
+            namespace: "local_ai",
+            function: "vision_prompt",
             description: "Run multimodal local AI prompt with image refs.",
             inputs: vec![
                 required_string("prompt", "Prompt text."),
@@ -359,8 +359,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("speech", "Transcription payload.")],
         },
         "local_ai_transcribe_bytes" => ControllerSchema {
-            namespace: "local_ai_transcribe",
-            function: "bytes",
+            namespace: "local_ai",
+            function: "transcribe_bytes",
             description: "Transcribe audio from raw bytes.",
             inputs: vec![
                 FieldSchema {
@@ -384,22 +384,22 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("tts", "TTS result payload.")],
         },
         "local_ai_assets_status" => ControllerSchema {
-            namespace: "local_ai_assets",
-            function: "status",
+            namespace: "local_ai",
+            function: "assets_status",
             description: "Get local AI asset installation status.",
             inputs: vec![],
             outputs: vec![json_output("status", "Assets status payload.")],
         },
         "local_ai_downloads_progress" => ControllerSchema {
-            namespace: "local_ai_downloads",
-            function: "progress",
+            namespace: "local_ai",
+            function: "downloads_progress",
             description: "Get local AI download progress.",
             inputs: vec![],
             outputs: vec![json_output("progress", "Download progress payload.")],
         },
         "local_ai_download_asset" => ControllerSchema {
-            namespace: "local_ai_download",
-            function: "asset",
+            namespace: "local_ai",
+            function: "download_asset",
             description: "Trigger download for one local AI asset capability.",
             inputs: vec![required_string("capability", "Asset capability id.")],
             outputs: vec![json_output("status", "Assets status payload.")],

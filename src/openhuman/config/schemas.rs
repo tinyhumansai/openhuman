@@ -128,8 +128,8 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "get_config" => ControllerSchema {
-            namespace: "get",
-            function: "config",
+            namespace: "config",
+            function: "get",
             description: "Read persisted config snapshot and resolved paths.",
             inputs: vec![],
             outputs: vec![FieldSchema {
@@ -140,8 +140,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
         "update_model_settings" => ControllerSchema {
-            namespace: "update_model",
-            function: "settings",
+            namespace: "config",
+            function: "update_model_settings",
             description: "Update model and API connection settings.",
             inputs: vec![
                 optional_string("api_key", "Provider API key."),
@@ -157,8 +157,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_memory_settings" => ControllerSchema {
-            namespace: "update_memory",
-            function: "settings",
+            namespace: "config",
+            function: "update_memory_settings",
             description: "Update memory backend and embedding settings.",
             inputs: vec![
                 optional_string("backend", "Memory backend identifier."),
@@ -180,8 +180,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_screen_intelligence_settings" => ControllerSchema {
-            namespace: "update_screen_intelligence",
-            function: "settings",
+            namespace: "config",
+            function: "update_screen_intelligence_settings",
             description: "Update screen intelligence runtime settings.",
             inputs: vec![
                 optional_bool("enabled", "Enable screen intelligence."),
@@ -215,8 +215,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_tunnel_settings" => ControllerSchema {
-            namespace: "update_tunnel",
-            function: "settings",
+            namespace: "config",
+            function: "update_tunnel_settings",
             description: "Replace tunnel settings with provided config payload.",
             inputs: vec![
                 required_string("provider", "Tunnel provider id."),
@@ -248,8 +248,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_runtime_settings" => ControllerSchema {
-            namespace: "update_runtime",
-            function: "settings",
+            namespace: "config",
+            function: "update_runtime_settings",
             description: "Update runtime execution strategy settings.",
             inputs: vec![
                 optional_string("kind", "Runtime kind."),
@@ -258,15 +258,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_browser_settings" => ControllerSchema {
-            namespace: "update_browser",
-            function: "settings",
+            namespace: "config",
+            function: "update_browser_settings",
             description: "Update browser automation settings.",
             inputs: vec![optional_bool("enabled", "Enable browser integration.")],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "get_runtime_flags" => ControllerSchema {
-            namespace: "get_runtime",
-            function: "flags",
+            namespace: "config",
+            function: "get_runtime_flags",
             description: "Read environment-driven runtime flags.",
             inputs: vec![],
             outputs: vec![FieldSchema {
@@ -277,8 +277,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
         "set_browser_allow_all" => ControllerSchema {
-            namespace: "set_browser_allow",
-            function: "all",
+            namespace: "config",
+            function: "set_browser_allow_all",
             description: "Set OPENHUMAN_BROWSER_ALLOW_ALL runtime flag.",
             inputs: vec![FieldSchema {
                 name: "enabled",
@@ -294,8 +294,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
         "workspace_onboarding_flag_exists" => ControllerSchema {
-            namespace: "workspace_onboarding_flag",
-            function: "exists",
+            namespace: "config",
+            function: "workspace_onboarding_flag_exists",
             description: "Check if onboarding flag file exists in workspace.",
             inputs: vec![FieldSchema {
                 name: "flag_name",
@@ -311,8 +311,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
         "agent_server_status" => ControllerSchema {
-            namespace: "agent_server",
-            function: "status",
+            namespace: "config",
+            function: "agent_server_status",
             description: "Return agent server runtime URL and status.",
             inputs: vec![],
             outputs: vec![json_output("status", "Agent server status payload.")],

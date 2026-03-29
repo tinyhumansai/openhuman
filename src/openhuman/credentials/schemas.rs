@@ -148,8 +148,8 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         "auth_store_session" => ControllerSchema {
-            namespace: "auth.store",
-            function: "session",
+            namespace: "auth",
+            function: "store_session",
             description: "Store and validate app session JWT.",
             inputs: vec![
                 required_string("token", "Session JWT token."),
@@ -159,36 +159,36 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("profile", "Stored auth profile summary.")],
         },
         "auth_clear_session" => ControllerSchema {
-            namespace: "auth.clear",
-            function: "session",
+            namespace: "auth",
+            function: "clear_session",
             description: "Remove stored app session credentials.",
             inputs: vec![],
             outputs: vec![json_output("result", "Session clear result payload.")],
         },
         "auth_get_state" => ControllerSchema {
-            namespace: "auth.get",
-            function: "state",
+            namespace: "auth",
+            function: "get_state",
             description: "Get current auth/session state.",
             inputs: vec![],
             outputs: vec![json_output("state", "Current auth state response.")],
         },
         "auth_get_session_token" => ControllerSchema {
-            namespace: "auth.get_session",
-            function: "token",
+            namespace: "auth",
+            function: "get_session_token",
             description: "Read stored app session token.",
             inputs: vec![],
             outputs: vec![json_output("token", "Session token payload.")],
         },
         "auth_consume_login_token" => ControllerSchema {
-            namespace: "auth.consume_login",
-            function: "token",
+            namespace: "auth",
+            function: "consume_login_token",
             description: "Consume login handoff token and return session JWT.",
             inputs: vec![required_string("loginToken", "One-time login token.")],
             outputs: vec![json_output("result", "Consumed login token result.")],
         },
         "auth_store_provider_credentials" => ControllerSchema {
-            namespace: "auth.store_provider",
-            function: "credentials",
+            namespace: "auth",
+            function: "store_provider_credentials",
             description: "Store provider credentials for a profile.",
             inputs: vec![
                 required_string("provider", "Provider id."),
@@ -200,8 +200,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("profile", "Stored provider profile summary.")],
         },
         "auth_remove_provider_credentials" => ControllerSchema {
-            namespace: "auth.remove_provider",
-            function: "credentials",
+            namespace: "auth",
+            function: "remove_provider_credentials",
             description: "Remove provider credentials for a profile.",
             inputs: vec![
                 required_string("provider", "Provider id."),
@@ -210,15 +210,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("result", "Provider credential removal result.")],
         },
         "auth_list_provider_credentials" => ControllerSchema {
-            namespace: "auth.list_provider",
-            function: "credentials",
+            namespace: "auth",
+            function: "list_provider_credentials",
             description: "List stored provider credentials.",
             inputs: vec![optional_string("provider", "Optional provider filter.")],
             outputs: vec![json_output("profiles", "Listed provider credentials.")],
         },
         "auth_oauth_connect" => ControllerSchema {
-            namespace: "auth.oauth",
-            function: "connect",
+            namespace: "auth",
+            function: "oauth_connect",
             description: "Create OAuth connect URL for provider.",
             inputs: vec![
                 required_string("provider", "Provider id."),
@@ -228,15 +228,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("result", "OAuth connect payload.")],
         },
         "auth_oauth_list_integrations" => ControllerSchema {
-            namespace: "auth.oauth_list",
-            function: "integrations",
+            namespace: "auth",
+            function: "oauth_list_integrations",
             description: "List OAuth integrations for current session.",
             inputs: vec![],
             outputs: vec![json_output("integrations", "OAuth integration list.")],
         },
         "auth_oauth_fetch_integration_tokens" => ControllerSchema {
-            namespace: "auth.oauth_fetch_integration",
-            function: "tokens",
+            namespace: "auth",
+            function: "oauth_fetch_integration_tokens",
             description: "Fetch integration handoff tokens.",
             inputs: vec![
                 required_string("integrationId", "Integration id."),
@@ -245,8 +245,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output("tokens", "Integration tokens handoff payload.")],
         },
         "auth_oauth_revoke_integration" => ControllerSchema {
-            namespace: "auth.oauth_revoke",
-            function: "integration",
+            namespace: "auth",
+            function: "oauth_revoke_integration",
             description: "Revoke OAuth integration.",
             inputs: vec![required_string("integrationId", "Integration id.")],
             outputs: vec![json_output("result", "Integration revoke result.")],
