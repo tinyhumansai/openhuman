@@ -23,7 +23,7 @@ const DEFAULT_CONFIG: AutocompleteConfig = {
   style_preset: 'balanced',
   style_instructions: null,
   style_examples: [],
-  disabled_apps: ['terminal', 'code'],
+  disabled_apps: [],
   accept_with_tab: true,
 };
 

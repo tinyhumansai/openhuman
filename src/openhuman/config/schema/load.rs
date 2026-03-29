@@ -254,6 +254,24 @@ fn encrypt_optional_secret(
     Ok(())
 }
 
+fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
+    // Legacy defaults blocked both terminal and code, which prevented Codex/CLI usage.
+    // Migrate only the exact legacy default so custom user preferences remain untouched.
+    let mut normalized: Vec<String> = config
+        .autocomplete
+        .disabled_apps
+        .iter()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect();
+    normalized.sort();
+    normalized.dedup();
+
+    if normalized == ["code".to_string(), "terminal".to_string()] {
+        config.autocomplete.disabled_apps = vec!["code".to_string()];
+    }
+}
+
 #[cfg(unix)]
 async fn sync_directory(path: &Path) -> Result<()> {
     let dir = File::open(path)
@@ -339,6 +357,7 @@ impl Config {
             for agent in config.agents.values_mut() {
                 decrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
             }
+            migrate_legacy_autocomplete_disabled_apps(&mut config);
             config.apply_env_overrides();
             tracing::info!(
                 path = %config.config_path.display(),

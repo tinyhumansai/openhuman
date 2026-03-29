@@ -50,7 +50,7 @@ impl Default for AutocompleteConfig {
             style_preset: default_style_preset(),
             style_instructions: None,
             style_examples: Vec::new(),
-            disabled_apps: vec!["terminal".to_string(), "code".to_string()],
+            disabled_apps: vec![],
             accept_with_tab: default_accept_with_tab(),
         }
     }
