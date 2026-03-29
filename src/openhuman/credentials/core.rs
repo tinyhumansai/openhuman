@@ -166,8 +166,8 @@ pub fn select_profile_id(
 
 #[cfg(test)]
 mod tests {
-    use crate::openhuman::credentials::profiles::{AuthProfile, AuthProfileKind};
     use super::*;
+    use crate::openhuman::credentials::profiles::{AuthProfile, AuthProfileKind};
 
     #[test]
     fn normalize_provider_basic() {

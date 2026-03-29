@@ -51,11 +51,19 @@ impl Tool for MemoryRecallTool {
         let namespace = args
             .get("namespace")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'namespace' parameter"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'namespace' parameter"))?
+            .trim();
+        if namespace.is_empty() {
+            return Err(anyhow::anyhow!("namespace cannot be empty"));
+        }
         let query = args
             .get("query")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'query' parameter"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'query' parameter"))?
+            .trim();
+        if query.is_empty() {
+            return Err(anyhow::anyhow!("query cannot be empty"));
+        }
 
         #[allow(clippy::cast_possible_truncation)]
         let limit = args
@@ -63,8 +71,11 @@ impl Tool for MemoryRecallTool {
             .and_then(serde_json::Value::as_u64)
             .map_or(5, |v| v as usize);
 
-        let namespaced_query = format!("{} {}", namespace.trim(), query);
-        match self.memory.recall(&namespaced_query, limit, None).await {
+        // Search with the user query only. Prefixing `namespace` into the recall string adds a
+        // redundant token that matches almost every row (e.g. all `global/...` keys contain "global").
+        // `namespace` is still required by the tool contract; unified memory scopes recall to the
+        // global document namespace until multi-namespace recall is wired through the `Memory` trait.
+        match self.memory.recall(query, limit, None).await {
             Ok(entries) if entries.is_empty() => Ok(ToolResult {
                 success: true,
                 output: "No memories found matching that query.".into(),

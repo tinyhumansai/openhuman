@@ -9,6 +9,15 @@ use anyhow::Context;
 
 use super::unified::UnifiedMemory;
 
+fn memory_category_from_stored(raw: &str) -> MemoryCategory {
+    match raw {
+        "core" => MemoryCategory::Core,
+        "daily" => MemoryCategory::Daily,
+        "conversation" => MemoryCategory::Conversation,
+        other => MemoryCategory::Custom(other.to_string()),
+    }
+}
+
 #[async_trait]
 impl Memory for UnifiedMemory {
     fn name(&self) -> &str {
@@ -46,25 +55,22 @@ impl Memory for UnifiedMemory {
         limit: usize,
         _session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
-        let text = self
-            .query_namespace_context(GLOBAL_NAMESPACE, query, limit as u32)
+        let ranked = self
+            .query_namespace_ranked(GLOBAL_NAMESPACE, query, limit as u32)
             .await
             .map_err(anyhow::Error::msg)?;
-        let out = text
-            .lines()
+        let out = ranked
+            .into_iter()
             .enumerate()
-            .filter_map(|(idx, line)| {
-                let (key, content) = line.split_once(": ")?;
-                Some(MemoryEntry {
-                    id: format!("global:{idx}"),
-                    key: key.to_string(),
-                    content: content.to_string(),
-                    namespace: Some(GLOBAL_NAMESPACE.to_string()),
-                    category: MemoryCategory::Core,
-                    timestamp: Utc::now().to_rfc3339(),
-                    session_id: None,
-                    score: Some(1.0),
-                })
+            .map(|(idx, r)| MemoryEntry {
+                id: format!("global:{idx}"),
+                key: r.key,
+                content: r.content,
+                namespace: Some(GLOBAL_NAMESPACE.to_string()),
+                category: memory_category_from_stored(&r.category),
+                timestamp: Utc::now().to_rfc3339(),
+                session_id: None,
+                score: Some(r.score * 100.0),
             })
             .collect();
         Ok(out)
@@ -72,20 +78,20 @@ impl Memory for UnifiedMemory {
 
     async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
         let conn = self.conn.lock();
-        let row: Option<(String, String, String, f64)> = conn
+        let row: Option<(String, String, String, f64, String)> = conn
             .query_row(
-                "SELECT document_id, key, content, updated_at
+                "SELECT document_id, key, content, updated_at, category
                  FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
                 params![GLOBAL_NAMESPACE, key],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .optional()?;
-        Ok(row.map(|(id, key, content, updated_at)| MemoryEntry {
+        Ok(row.map(|(id, key, content, updated_at, category)| MemoryEntry {
             id,
             key,
             content,
             namespace: Some(GLOBAL_NAMESPACE.to_string()),
-            category: MemoryCategory::Core,
+            category: memory_category_from_stored(&category),
             timestamp: format!("{updated_at}"),
             session_id: None,
             score: None,

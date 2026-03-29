@@ -59,6 +59,5 @@ pub use tunnel::{
     TunnelConfig,
 };
 
-
 mod types;
 pub use types::*;

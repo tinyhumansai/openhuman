@@ -28,4 +28,6 @@ pub struct NamespaceQueryResult {
     pub key: String,
     pub content: String,
     pub score: f64,
+    /// Stored category string (e.g. `core`, `daily`, or custom label).
+    pub category: String,
 }

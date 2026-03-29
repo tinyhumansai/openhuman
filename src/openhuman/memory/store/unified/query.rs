@@ -6,12 +6,13 @@ use crate::openhuman::memory::store::types::NamespaceQueryResult;
 use super::UnifiedMemory;
 
 impl UnifiedMemory {
-    pub async fn query_namespace_context(
+    /// Ranked memory hits for a namespace (keyword + vector merge), with stored category per row.
+    pub async fn query_namespace_ranked(
         &self,
         namespace: &str,
         query: &str,
         limit: u32,
-    ) -> Result<String, String> {
+    ) -> Result<Vec<NamespaceQueryResult>, String> {
         let ns = Self::sanitize_namespace(namespace);
         let query_terms: Vec<String> = query
             .split_whitespace()
@@ -22,7 +23,7 @@ impl UnifiedMemory {
             let conn = self.conn.lock();
             let mut stmt = conn
                 .prepare(
-                    "SELECT key, content, updated_at FROM memory_docs
+                    "SELECT key, content, category, updated_at FROM memory_docs
                      WHERE namespace = ?1 ORDER BY updated_at DESC LIMIT 400",
                 )
                 .map_err(|e| format!("prepare query_namespace_context: {e}"))?;
@@ -30,13 +31,14 @@ impl UnifiedMemory {
                 .query(params![ns])
                 .map_err(|e| format!("query query_namespace_context: {e}"))?;
             let mut keyword_scores: HashMap<String, f64> = HashMap::new();
-            let mut by_key: HashMap<String, String> = HashMap::new();
+            let mut by_key: HashMap<String, (String, String)> = HashMap::new();
             while let Some(row) = rows
                 .next()
                 .map_err(|e| format!("row query_namespace_context: {e}"))?
             {
                 let key: String = row.get(0).map_err(|e| e.to_string())?;
                 let content: String = row.get(1).map_err(|e| e.to_string())?;
+                let category: String = row.get(2).map_err(|e| e.to_string())?;
                 let lower = format!("{key} {content}").to_ascii_lowercase();
                 let matched = if query_terms.is_empty() {
                     1
@@ -49,7 +51,7 @@ impl UnifiedMemory {
                 if matched > 0 {
                     let score = matched as f64 / (query_terms.len().max(1) as f64);
                     keyword_scores.insert(key.clone(), score);
-                    by_key.insert(key, content);
+                    by_key.insert(key, (content, category));
                 }
             }
             (keyword_scores, by_key)
@@ -61,13 +63,14 @@ impl UnifiedMemory {
             .unwrap_or_default();
         let mut merged: Vec<NamespaceQueryResult> = by_key
             .into_iter()
-            .map(|(key, content)| {
+            .map(|(key, (content, category))| {
                 let k = keyword_scores.get(&key).copied().unwrap_or(0.0);
                 let v = vector_scores.get(&key).copied().unwrap_or(0.0);
                 NamespaceQueryResult {
                     key,
                     content,
                     score: 0.7 * v + 0.3 * k,
+                    category,
                 }
             })
             .collect();
@@ -77,6 +80,16 @@ impl UnifiedMemory {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         merged.truncate(limit as usize);
+        Ok(merged)
+    }
+
+    pub async fn query_namespace_context(
+        &self,
+        namespace: &str,
+        query: &str,
+        limit: u32,
+    ) -> Result<String, String> {
+        let merged = self.query_namespace_ranked(namespace, query, limit).await?;
         Ok(merged
             .into_iter()
             .map(|r| format!("{}: {}", r.key, r.content))
