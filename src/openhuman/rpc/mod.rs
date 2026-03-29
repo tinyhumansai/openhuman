@@ -6,6 +6,10 @@
 use serde::Serialize;
 use serde_json::json;
 
+mod dispatch;
+
+pub use dispatch::try_dispatch;
+
 /// Successful RPC handler result: serialized JSON value plus optional log lines.
 #[derive(Debug)]
 pub struct RpcOutcome<T> {

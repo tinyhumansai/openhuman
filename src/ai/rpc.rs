@@ -1,12 +1,18 @@
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
-use crate::core_server::helpers::parse_params;
-use crate::core_server::types::InvocationResult;
+fn parse_params<T: DeserializeOwned>(params: serde_json::Value) -> Result<T, String> {
+    serde_json::from_value(params).map_err(|e| format!("invalid params: {e}"))
+}
+
+fn to_json<T: Serialize>(value: T) -> Result<serde_json::Value, String> {
+    serde_json::to_value(value).map_err(|e| e.to_string())
+}
 
 pub async fn try_dispatch(
     method: &str,
     params: serde_json::Value,
-) -> Option<Result<InvocationResult, String>> {
+) -> Option<Result<serde_json::Value, String>> {
     match method {
         "ai.list_memory_files" => Some(
             async move {
@@ -17,8 +23,7 @@ pub async fn try_dispatch(
 
                 let payload: ListMemoryFilesParams = parse_params(params)?;
                 let relative_dir = payload.relative_dir.unwrap_or_else(|| "memory".to_string());
-                let files = crate::ai::sessions::ai_list_memory_files(relative_dir).await?;
-                InvocationResult::ok(files)
+                to_json(crate::ai::sessions::ai_list_memory_files(relative_dir).await?)
             }
             .await,
         ),
@@ -31,9 +36,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: ReadMemoryFileParams = parse_params(params)?;
-                let content =
-                    crate::ai::sessions::ai_read_memory_file(payload.relative_path).await?;
-                InvocationResult::ok(content)
+                to_json(crate::ai::sessions::ai_read_memory_file(payload.relative_path).await?)
             }
             .await,
         ),
@@ -47,23 +50,18 @@ pub async fn try_dispatch(
                 }
 
                 let payload: WriteMemoryFileParams = parse_params(params)?;
-                let wrote = crate::ai::sessions::ai_write_memory_file(
-                    payload.relative_path,
-                    payload.content,
+                to_json(
+                    crate::ai::sessions::ai_write_memory_file(
+                        payload.relative_path,
+                        payload.content,
+                    )
+                    .await?,
                 )
-                .await?;
-                InvocationResult::ok(wrote)
             }
             .await,
         ),
 
-        "ai.memory_init" => Some(
-            async move {
-                let initialized = crate::ai::ai_memory_init().await?;
-                InvocationResult::ok(initialized)
-            }
-            .await,
-        ),
+        "ai.memory_init" => Some(async move { to_json(crate::ai::ai_memory_init().await?) }.await),
 
         "ai.memory_get_file" => Some(
             async move {
@@ -73,8 +71,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryGetFileParams = parse_params(params)?;
-                let file = crate::ai::ai_memory_get_file(payload.path).await?;
-                InvocationResult::ok(file)
+                to_json(crate::ai::ai_memory_get_file(payload.path).await?)
             }
             .await,
         ),
@@ -87,8 +84,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryDeleteChunksByPathParams = parse_params(params)?;
-                let deleted = crate::ai::ai_memory_delete_chunks_by_path(payload.path).await?;
-                InvocationResult::ok(deleted)
+                to_json(crate::ai::ai_memory_delete_chunks_by_path(payload.path).await?)
             }
             .await,
         ),
@@ -101,8 +97,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryUpsertChunkParams = parse_params(params)?;
-                let upserted = crate::ai::ai_memory_upsert_chunk(payload.chunk).await?;
-                InvocationResult::ok(upserted)
+                to_json(crate::ai::ai_memory_upsert_chunk(payload.chunk).await?)
             }
             .await,
         ),
@@ -115,8 +110,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryUpsertFileParams = parse_params(params)?;
-                let upserted = crate::ai::ai_memory_upsert_file(payload.file).await?;
-                InvocationResult::ok(upserted)
+                to_json(crate::ai::ai_memory_upsert_file(payload.file).await?)
             }
             .await,
         ),
@@ -130,8 +124,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemorySetMetaParams = parse_params(params)?;
-                let set = crate::ai::ai_memory_set_meta(payload.key, payload.value).await?;
-                InvocationResult::ok(set)
+                to_json(crate::ai::ai_memory_set_meta(payload.key, payload.value).await?)
             }
             .await,
         ),
@@ -144,8 +137,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryGetMetaParams = parse_params(params)?;
-                let value = crate::ai::ai_memory_get_meta(payload.key).await?;
-                InvocationResult::ok(value)
+                to_json(crate::ai::ai_memory_get_meta(payload.key).await?)
             }
             .await,
         ),
@@ -159,19 +151,14 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryFtsSearchParams = parse_params(params)?;
-                let results = crate::ai::ai_memory_fts_search(payload.query, payload.limit).await?;
-                InvocationResult::ok(results)
+                to_json(crate::ai::ai_memory_fts_search(payload.query, payload.limit).await?)
             }
             .await,
         ),
 
-        "ai.memory_get_all_embeddings" => Some(
-            async move {
-                let embeddings = crate::ai::ai_memory_get_all_embeddings().await?;
-                InvocationResult::ok(embeddings)
-            }
-            .await,
-        ),
+        "ai.memory_get_all_embeddings" => {
+            Some(async move { to_json(crate::ai::ai_memory_get_all_embeddings().await?) }.await)
+        }
 
         "ai.memory_get_chunks" => Some(
             async move {
@@ -181,8 +168,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryGetChunksParams = parse_params(params)?;
-                let chunks = crate::ai::ai_memory_get_chunks(payload.path).await?;
-                InvocationResult::ok(chunks)
+                to_json(crate::ai::ai_memory_get_chunks(payload.path).await?)
             }
             .await,
         ),
@@ -195,8 +181,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryCacheEmbeddingParams = parse_params(params)?;
-                let ok = crate::ai::ai_memory_cache_embedding(payload.entry).await?;
-                InvocationResult::ok(ok)
+                to_json(crate::ai::ai_memory_cache_embedding(payload.entry).await?)
             }
             .await,
         ),
@@ -211,32 +196,25 @@ pub async fn try_dispatch(
                 }
 
                 let payload: MemoryGetCachedEmbeddingParams = parse_params(params)?;
-                let bytes = crate::ai::ai_memory_get_cached_embedding(
-                    payload.provider,
-                    payload.model,
-                    payload.hash,
+                to_json(
+                    crate::ai::ai_memory_get_cached_embedding(
+                        payload.provider,
+                        payload.model,
+                        payload.hash,
+                    )
+                    .await?,
                 )
-                .await?;
-                InvocationResult::ok(bytes)
             }
             .await,
         ),
 
-        "ai.sessions_init" => Some(
-            async move {
-                let initialized = crate::ai::sessions::ai_sessions_init().await?;
-                InvocationResult::ok(initialized)
-            }
-            .await,
-        ),
+        "ai.sessions_init" => {
+            Some(async move { to_json(crate::ai::sessions::ai_sessions_init().await?) }.await)
+        }
 
-        "ai.sessions_load_index" => Some(
-            async move {
-                let index = crate::ai::sessions::ai_sessions_load_index().await?;
-                InvocationResult::ok(index)
-            }
-            .await,
-        ),
+        "ai.sessions_load_index" => {
+            Some(async move { to_json(crate::ai::sessions::ai_sessions_load_index().await?) }.await)
+        }
 
         "ai.sessions_update_index" => Some(
             async move {
@@ -247,12 +225,13 @@ pub async fn try_dispatch(
                 }
 
                 let payload: UpdateSessionIndexParams = parse_params(params)?;
-                let updated = crate::ai::sessions::ai_sessions_update_index(
-                    payload.session_id,
-                    payload.entry,
+                to_json(
+                    crate::ai::sessions::ai_sessions_update_index(
+                        payload.session_id,
+                        payload.entry,
+                    )
+                    .await?,
                 )
-                .await?;
-                InvocationResult::ok(updated)
             }
             .await,
         ),
@@ -266,12 +245,13 @@ pub async fn try_dispatch(
                 }
 
                 let payload: AppendTranscriptParams = parse_params(params)?;
-                let appended = crate::ai::sessions::ai_sessions_append_transcript(
-                    payload.session_id,
-                    payload.line,
+                to_json(
+                    crate::ai::sessions::ai_sessions_append_transcript(
+                        payload.session_id,
+                        payload.line,
+                    )
+                    .await?,
                 )
-                .await?;
-                InvocationResult::ok(appended)
             }
             .await,
         ),
@@ -284,9 +264,7 @@ pub async fn try_dispatch(
                 }
 
                 let payload: ReadTranscriptParams = parse_params(params)?;
-                let lines =
-                    crate::ai::sessions::ai_sessions_read_transcript(payload.session_id).await?;
-                InvocationResult::ok(lines)
+                to_json(crate::ai::sessions::ai_sessions_read_transcript(payload.session_id).await?)
             }
             .await,
         ),
@@ -299,19 +277,14 @@ pub async fn try_dispatch(
                 }
 
                 let payload: DeleteSessionParams = parse_params(params)?;
-                let deleted = crate::ai::sessions::ai_sessions_delete(payload.session_id).await?;
-                InvocationResult::ok(deleted)
+                to_json(crate::ai::sessions::ai_sessions_delete(payload.session_id).await?)
             }
             .await,
         ),
 
-        "ai.sessions_list" => Some(
-            async move {
-                let sessions = crate::ai::sessions::ai_sessions_list().await?;
-                InvocationResult::ok(sessions)
-            }
-            .await,
-        ),
+        "ai.sessions_list" => {
+            Some(async move { to_json(crate::ai::sessions::ai_sessions_list().await?) }.await)
+        }
 
         _ => None,
     }

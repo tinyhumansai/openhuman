@@ -1,10 +1,7 @@
-mod ai_rpc;
 mod core;
-mod memory;
-mod openhuman;
 
 use crate::core_server::rpc_log;
-use crate::core_server::types::{invocation_to_rpc_json, AppState};
+use crate::core_server::types::AppState;
 
 pub async fn dispatch(
     state: AppState,
@@ -19,22 +16,18 @@ pub async fn dispatch(
 
     if let Some(result) = core::try_dispatch(&state, method, params.clone()) {
         log::debug!("[rpc:dispatch] routed method={} subsystem=core", method);
-        return result.map(invocation_to_rpc_json);
+        return result.map(crate::core_server::types::invocation_to_rpc_json);
     }
-    if let Some(result) = memory::try_dispatch(method, params.clone()).await {
-        log::debug!("[rpc:dispatch] routed method={} subsystem=memory", method);
-        return result.map(invocation_to_rpc_json);
+    if let Some(result) = crate::ai::rpc::try_dispatch(method, params.clone()).await {
+        log::debug!("[rpc:dispatch] routed method={} subsystem=ai", method);
+        return result;
     }
-    if let Some(result) = ai_rpc::try_dispatch(method, params.clone()).await {
-        log::debug!("[rpc:dispatch] routed method={} subsystem=ai_rpc", method);
-        return result.map(invocation_to_rpc_json);
-    }
-    if let Some(result) = openhuman::try_dispatch(&state, method, params).await {
+    if let Some(result) = crate::openhuman::rpc::try_dispatch(method, params).await {
         log::debug!(
             "[rpc:dispatch] routed method={} subsystem=openhuman",
             method
         );
-        return result.map(invocation_to_rpc_json);
+        return result;
     }
 
     log::warn!("[rpc:dispatch] unknown_method method={}", method);

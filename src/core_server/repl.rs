@@ -238,9 +238,10 @@ fn parse_dotenv_value(raw: &str) -> String {
     } else {
         raw
     };
-    unquoted
-        .split_once(" #")
-        .map_or_else(|| unquoted.trim().to_string(), |(value, _)| value.trim().to_string())
+    unquoted.split_once(" #").map_or_else(
+        || unquoted.trim().to_string(),
+        |(value, _)| value.trim().to_string(),
+    )
 }
 
 fn resolve_dotenv_path() -> PathBuf {
