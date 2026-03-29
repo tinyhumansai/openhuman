@@ -9,6 +9,7 @@ use crate::openhuman::autocomplete::{
 use crate::openhuman::rpc::RpcOutcome;
 use serde_json::json;
 use std::process::Stdio;
+use tokio::time::{self, Duration};
 
 #[derive(Debug, Clone)]
 pub struct AutocompleteStartCliOptions {
@@ -124,15 +125,62 @@ pub async fn autocomplete_start_cli(
             "autocomplete service running in foreground (pid={}); press Ctrl-C to stop",
             std::process::id()
         );
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|e| format!("failed waiting for interrupt signal: {e}"))?;
+        let mut serve_logs: Vec<String> = Vec::new();
+        let mut poll = time::interval(Duration::from_millis(300));
+        poll.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
+        let mut prev_phase = String::new();
+        let mut prev_app: Option<String> = None;
+        let mut prev_error: Option<String> = None;
+        let mut prev_suggestion: Option<String> = None;
+
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {
+                    break;
+                }
+                _ = poll.tick() => {
+                    let status = autocomplete::global_engine().status().await;
+                    if status.phase != prev_phase {
+                        let msg = format!("phase={} (debounce={}ms)", status.phase, status.debounce_ms);
+                        eprintln!("{msg}");
+                        serve_logs.push(msg);
+                        prev_phase = status.phase.clone();
+                    }
+                    if status.app_name != prev_app {
+                        if let Some(app_name) = status.app_name.clone() {
+                            let msg = format!("app={app_name}");
+                            eprintln!("{msg}");
+                            serve_logs.push(msg);
+                        }
+                        prev_app = status.app_name.clone();
+                    }
+                    let next_suggestion = status.suggestion.as_ref().map(|s| s.value.clone());
+                    if next_suggestion != prev_suggestion {
+                        if let Some(suggestion) = next_suggestion.clone() {
+                            let msg = format!("suggestion=\"{}\"", suggestion);
+                            eprintln!("{msg}");
+                            serve_logs.push(msg);
+                        }
+                        prev_suggestion = next_suggestion;
+                    }
+                    if status.last_error != prev_error {
+                        if let Some(error) = status.last_error.clone() {
+                            let msg = format!("error={error}");
+                            eprintln!("{msg}");
+                            serve_logs.push(msg);
+                        }
+                        prev_error = status.last_error.clone();
+                    }
+                }
+            }
+        }
 
         let stop = autocomplete_stop(Some(AutocompleteStopParams {
             reason: Some("interrupt".to_string()),
         }))
         .await?;
         let mut logs = start.logs;
+        logs.extend(serve_logs);
         logs.push("autocomplete service received interrupt signal".to_string());
         logs.extend(stop.logs);
         return Ok(json!({
