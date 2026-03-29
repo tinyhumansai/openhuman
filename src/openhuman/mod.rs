@@ -41,6 +41,7 @@ pub mod security;
 pub mod service;
 pub mod skills;
 pub mod tools;
+pub mod tray;
 pub mod tunnel;
 pub mod util;
 pub mod workspace;

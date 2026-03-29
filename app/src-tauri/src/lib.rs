@@ -34,12 +34,6 @@ use tokio::{
     time::{interval, Duration},
 };
 
-#[cfg(desktop)]
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-};
-
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
 
@@ -310,37 +304,6 @@ async fn write_ai_config_file(filename: String, content: String) -> Result<bool,
     Ok(true)
 }
 
-// Helper function to show the window (used by tray and macOS reopen)
-#[cfg(desktop)]
-fn show_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-    }
-}
-
-// Helper function to toggle window visibility
-#[cfg(desktop)]
-fn toggle_main_window_visibility(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        match window.is_visible() {
-            Ok(true) => {
-                let _ = window.hide();
-            }
-            Ok(false) => {
-                show_main_window(app);
-            }
-            Err(_) => {
-                // If we can't determine visibility, try to show it
-                show_main_window(app);
-            }
-        }
-    } else {
-        eprintln!("Could not find window 'main'");
-    }
-}
-
 fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
@@ -350,51 +313,6 @@ fn daemon_foreground_requested() -> bool {
         std::env::var("OPENHUMAN_DAEMON_FOREGROUND").ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
     )
-}
-
-// Setup system tray with menu
-#[cfg(desktop)]
-fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show_hide_item =
-        MenuItem::with_id(app, "show_hide", "Show/Hide Window", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-
-    let menu = Menu::with_items(app, &[&show_hide_item, &quit_item])?;
-
-    let _tray = TrayIconBuilder::with_id("main-tray")
-        .icon(app.default_window_icon().unwrap().clone())
-        .menu(&menu)
-        .tooltip("OpenHuman")
-        .on_menu_event(move |app, event| match event.id().as_ref() {
-            "show_hide" => {
-                toggle_main_window_visibility(app);
-            }
-            "quit" => {
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| match event {
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } => {
-                let app = tray.app_handle();
-                toggle_main_window_visibility(app);
-            }
-            TrayIconEvent::DoubleClick {
-                button: MouseButton::Left,
-                ..
-            } => {
-                let app = tray.app_handle();
-                show_main_window(app);
-            }
-            _ => {}
-        })
-        .build(app)?;
-
-    Ok(())
 }
 
 /// Watch daemon health file and bridge changes to frontend Tauri events
@@ -597,7 +515,8 @@ pub fn run() {
                     let daemon_host_cfg =
                         tauri::async_runtime::block_on(daemon_host_config::load(app.handle()));
                     if daemon_host_cfg.show_tray {
-                        setup_tray(app.handle())?;
+                        openhuman_core::setup_tray(app.handle())
+                            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
                     } else {
                         log::info!(
                             "[app] Daemon host tray disabled by local config (show_tray=false)"
@@ -657,9 +576,7 @@ pub fn run() {
                             .unwrap_or_else(|| std::path::PathBuf::from("."))
                             .join(".openhuman")
                     });
-                let daemon_config = openhuman_core::openhuman::config::DaemonConfig::from_app_data_dir(
-                    &data_dir,
-                );
+                let daemon_config = openhuman_core::DaemonConfig::from_app_data_dir(&data_dir);
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let daemon_handle = openhuman_daemon::DaemonHandle {
                     cancel: cancel.clone(),
@@ -669,7 +586,6 @@ pub fn run() {
                 // Determine daemon mode: internal supervisor vs external platform service
                 let use_internal_daemon = daemon_mode
                     || daemon_foreground_requested()
-                    || cfg!(debug_assertions)  // Always use internal supervisor in debug builds
                     || std::env::var("OPENHUMAN_DAEMON_INTERNAL").unwrap_or("false".to_string()) == "true";  // Cross-platform override via env var
 
                 if use_internal_daemon {
@@ -677,9 +593,10 @@ pub fn run() {
                     // This path is taken when:
                     // - Daemon mode enabled, OR
                     // - Foreground daemon requested, OR
-                    // - Debug build (for easier development), OR
                     // - OPENHUMAN_DAEMON_INTERNAL=true env var (any platform)
-                    log::info!("[openhuman] Using internal daemon supervisor (OPENHUMAN_DAEMON_INTERNAL=true or debug build)");
+                    log::info!(
+                        "[openhuman] Using internal daemon supervisor (daemon mode / foreground / OPENHUMAN_DAEMON_INTERNAL=true)"
+                    );
                     let app_handle_for_daemon = app.handle().clone();
                     tauri::async_runtime::spawn(async move {
                         log::info!("[openhuman] Starting daemon supervisor with health monitoring");
@@ -705,21 +622,12 @@ pub fn run() {
 
                     // Start the external platform service
                     tauri::async_runtime::spawn(async move {
-                        match openhuman_core::openhuman::config::Config::load_or_init().await {
-                            Ok(config) => {
-                                match openhuman_core::openhuman::service::install(&config) {
-                                    Ok(status) => log::info!("[openhuman] External daemon service installed: {:?}", status),
-                                    Err(e) => log::error!("[openhuman] Failed to install external daemon service: {e}"),
-                                }
-                                match openhuman_core::openhuman::service::start(&config) {
-                                    Ok(status) => log::info!("[openhuman] External daemon service started: {:?}", status),
-                                    Err(e) => log::error!("[openhuman] Failed to start external daemon service: {e}"),
-                                }
+                        match commands::core_relay::ensure_service_managed_core_running().await {
+                            Ok(()) => {
+                                log::info!("[openhuman] External daemon service ensured via core RPC");
                             }
                             Err(e) => {
-                                log::error!(
-                                    "[openhuman] Failed to load config for external service: {e}"
-                                );
+                                log::error!("[openhuman] Failed to ensure external daemon service: {e}");
                             }
                         }
                     });
@@ -841,6 +749,11 @@ pub fn run() {
                     // OpenHuman local host commands (core RPC uses core_rpc_relay)
                     openhuman_get_daemon_host_config,
                     openhuman_set_daemon_host_config,
+                    openhuman_service_install,
+                    openhuman_service_start,
+                    openhuman_service_stop,
+                    openhuman_service_status,
+                    openhuman_service_uninstall,
                     // Neocortex memory: use callCoreRpc / memory.* on openhuman-core (see coreRpcClient)
                     // Chat commands (agentic conversation loop)
                     chat_send,
@@ -864,7 +777,7 @@ pub fn run() {
                 #[cfg(target_os = "macos")]
                 RunEvent::Reopen { .. } => {
                     if !daemon_mode {
-                        show_main_window(app_handle);
+                        openhuman_core::show_main_window(app_handle);
                     }
                 }
 

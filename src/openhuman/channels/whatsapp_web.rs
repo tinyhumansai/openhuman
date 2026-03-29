@@ -266,6 +266,7 @@ impl Channel for WhatsAppWebChannel {
                                         reply_target: normalized.clone(),
                                         content: text.to_string(),
                                         timestamp: chrono::Utc::now().timestamp_millis() as u64,
+                                        thread_ts: None,
                                     })
                                     .await
                                 {

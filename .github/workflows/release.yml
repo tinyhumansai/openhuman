@@ -244,8 +244,8 @@ jobs:
           node-version: 24.x
           cache: yarn
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 

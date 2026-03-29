@@ -1,0 +1,6 @@
+[toolchain]
+# Pin below Rust 1.94 until matrix-sdk resolves recursion limit overflow in async
+# (see https://github.com/matrix-org/matrix-rust-sdk/issues/6254).
+channel = "1.93.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

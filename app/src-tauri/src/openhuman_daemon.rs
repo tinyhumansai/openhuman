@@ -4,7 +4,7 @@
 //! waits until the app signals shutdown via `CancellationToken`.
 
 use anyhow::Result;
-use openhuman_core::openhuman::config::DaemonConfig;
+use openhuman_core::DaemonConfig;
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 

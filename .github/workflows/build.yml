@@ -30,7 +30,7 @@ jobs:
           cache: 'yarn'
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: x86_64-unknown-linux-gnu
 

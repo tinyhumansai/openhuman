@@ -1,5 +1,4 @@
 use crate::core_process::CoreProcessHandle;
-use openhuman_core::openhuman::{config::Config, service};
 use serde::Deserialize;
 use serde_json::Value;
 use tauri::Manager;
@@ -14,16 +13,41 @@ pub struct CoreRpcRelayRequest {
     pub service_managed: bool,
 }
 
-async fn ensure_service_managed_core_running() -> Result<(), String> {
-    let timeout_duration = std::time::Duration::from_secs(30);
-    let config = match tokio::time::timeout(timeout_duration, Config::load_or_init()).await {
-        Ok(Ok(config)) => config,
-        Ok(Err(err)) => return Err(err.to_string()),
-        Err(_) => return Err("Config loading timed out".to_string()),
-    };
+async fn invoke_core_cli_call(method: &str, params: Value) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("failed to resolve current exe: {e}"))?;
+    let params_json =
+        serde_json::to_string(&params).map_err(|e| format!("failed to serialize params: {e}"))?;
 
-    let _ = service::install(&config);
-    let _ = service::start(&config);
+    let output = tokio::process::Command::new(exe)
+        .arg("core")
+        .arg("call")
+        .arg("--method")
+        .arg(method)
+        .arg("--params")
+        .arg(params_json)
+        .output()
+        .await
+        .map_err(|e| format!("failed to run core cli call {method}: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(format!(
+            "core cli call {method} failed with status {}. stdout: {} stderr: {}",
+            output.status, stdout, stderr
+        ));
+    }
+
+    Ok(())
+}
+
+pub(crate) async fn ensure_service_managed_core_running() -> Result<(), String> {
+    if crate::core_rpc::ping().await {
+        return Ok(());
+    }
+
+    let _ = invoke_core_cli_call("openhuman.service_install", serde_json::json!({})).await;
+    let _ = invoke_core_cli_call("openhuman.service_start", serde_json::json!({})).await;
 
     for _ in 0..40 {
         if crate::core_rpc::ping().await {
