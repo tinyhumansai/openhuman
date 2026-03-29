@@ -158,6 +158,7 @@ impl OpenAiCompatibleProvider {
             let builder = Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .connect_timeout(std::time::Duration::from_secs(10))
+                .http1_only()
                 .default_headers(headers);
             let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
                 builder,
@@ -170,11 +171,18 @@ impl OpenAiCompatibleProvider {
             });
         }
 
-        crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
+        let builder = Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .http1_only();
+        let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
+            builder,
             "provider.compatible",
-            120,
-            10,
-        )
+        );
+        builder.build().unwrap_or_else(|error| {
+            tracing::warn!("Failed to build proxied timeout client: {error}");
+            Client::new()
+        })
     }
 
     /// Build the full URL for chat completions, detecting if base_url already includes the path.

@@ -30,6 +30,23 @@ pub async fn try_dispatch(
             .await,
         ),
 
+        "openhuman.agent_chat_simple" => Some(
+            async move {
+                let p: AgentChatParams = parse_params(params)?;
+                let config = load_openhuman_config().await?;
+                rpc_invocation_from_outcome(
+                    crate::openhuman::local_ai::rpc::agent_chat_simple(
+                        &config,
+                        &p.message,
+                        p.model_override,
+                        p.temperature,
+                    )
+                    .await?,
+                )
+            }
+            .await,
+        ),
+
         "openhuman.local_ai_status" => Some(
             async move {
                 let config = load_openhuman_config().await?;

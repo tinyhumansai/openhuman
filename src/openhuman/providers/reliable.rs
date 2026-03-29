@@ -177,7 +177,7 @@ fn failure_reason(rate_limited: bool, non_retryable: bool) -> &'static str {
 }
 
 fn compact_error_detail(err: &anyhow::Error) -> String {
-    super::sanitize_api_error(&err.to_string())
+    super::sanitize_api_error(&super::format_anyhow_chain(err))
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

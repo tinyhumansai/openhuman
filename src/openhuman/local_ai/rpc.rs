@@ -8,6 +8,7 @@ use crate::openhuman::local_ai::{
     self, LocalAiAssetsStatus, LocalAiEmbeddingResult, LocalAiSpeechResult, LocalAiTtsResult,
     Suggestion,
 };
+use crate::openhuman::providers::{self, ProviderRuntimeOptions};
 use crate::openhuman::rpc::RpcOutcome;
 
 pub async fn agent_chat(
@@ -25,6 +26,58 @@ pub async fn agent_chat(
     let mut agent = Agent::from_config(config).map_err(|e| e.to_string())?;
     let response = agent.run_single(message).await.map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(response, "agent chat completed"))
+}
+
+pub async fn agent_chat_simple(
+    config: &Config,
+    message: &str,
+    model_override: Option<String>,
+    temperature: Option<f64>,
+) -> Result<RpcOutcome<String>, String> {
+    let mut effective = config.clone();
+    if let Some(model) = model_override {
+        effective.default_model = Some(model);
+    }
+    if let Some(temp) = temperature {
+        effective.default_temperature = temp;
+    }
+
+    let default_model = effective
+        .default_model
+        .clone()
+        .unwrap_or_else(|| "neocortex-mk1".to_string());
+
+    let options = ProviderRuntimeOptions {
+        auth_profile_override: None,
+        openhuman_dir: effective.config_path.parent().map(std::path::PathBuf::from),
+        secrets_encrypt: effective.secrets.encrypt,
+        reasoning_enabled: effective.runtime.reasoning_enabled,
+    };
+
+    let provider = providers::create_routed_provider_with_options(
+        effective.api_key.as_deref(),
+        effective.api_url.as_deref(),
+        &effective.reliability,
+        &effective.model_routes,
+        default_model.as_str(),
+        &options,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let response = provider
+        .chat_with_system(
+            None,
+            message,
+            default_model.as_str(),
+            effective.default_temperature,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(RpcOutcome::single_log(
+        response,
+        "agent simple chat completed",
+    ))
 }
 
 pub async fn local_ai_status(

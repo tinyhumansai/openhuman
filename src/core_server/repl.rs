@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::json;
+use tokio::process::Command;
 use tokio::task::JoinHandle;
 use url::Url;
 
@@ -136,8 +137,12 @@ pub async fn run_repl(options: ReplOptions) -> Result<(), String> {
         }
 
         if line.starts_with('/') {
-            if handle_command(line, &mut mode, &mut transcript, &mut rpc).await? {
-                break;
+            match handle_command(line, &mut mode, &mut transcript, &mut rpc).await {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(err) => {
+                    eprintln!("{err}");
+                }
             }
             continue;
         }
@@ -145,9 +150,45 @@ pub async fn run_repl(options: ReplOptions) -> Result<(), String> {
         match mode {
             ReplMode::Message => {
                 let outgoing = compose_message_payload(&transcript, line);
-                let result = rpc
+                let result = match rpc
                     .call("openhuman.agent_chat", json!({ "message": outgoing }))
-                    .await?;
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        eprintln!(
+                            "[repl] falling back to openhuman.agent_chat_simple (no tool loop)"
+                        );
+                        match rpc
+                            .call(
+                                "openhuman.agent_chat_simple",
+                                json!({ "message": outgoing }),
+                            )
+                            .await
+                        {
+                            Ok(result) => result,
+                            Err(fallback_err) => {
+                                eprintln!("{fallback_err}");
+                                eprintln!("[repl] falling back to direct backend curl transport");
+                                match backend_chat_via_curl(&mut rpc, outgoing.as_str()).await {
+                                    Ok(text) => {
+                                        println!("{text}");
+                                        transcript.push(TranscriptTurn {
+                                            user: line.to_string(),
+                                            assistant: text,
+                                        });
+                                        while transcript.len() > history_turns {
+                                            transcript.remove(0);
+                                        }
+                                    }
+                                    Err(curl_err) => eprintln!("{curl_err}"),
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                };
                 print_result(&result);
 
                 if let Some(reply) = extract_agent_reply(&result) {
@@ -162,7 +203,13 @@ pub async fn run_repl(options: ReplOptions) -> Result<(), String> {
             }
             ReplMode::Settings => {
                 let (method, params) = parse_method_and_params(line)?;
-                let result = rpc.call(&method, params).await?;
+                let result = match rpc.call(&method, params).await {
+                    Ok(result) => result,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        continue;
+                    }
+                };
                 print_result(&result);
             }
         }
@@ -411,6 +458,101 @@ fn print_help() {
     println!("Modes:");
     println!("  message: plain text sends openhuman.agent_chat");
     println!("  settings: plain text is '<method> [json]'");
+}
+
+async fn backend_chat_via_curl(rpc: &mut RpcClient, message: &str) -> Result<String, String> {
+    let config = rpc.call("openhuman.get_config", json!({})).await?;
+    let config_body = config
+        .get("result")
+        .and_then(|v| v.get("config"))
+        .or_else(|| config.get("config"))
+        .ok_or_else(|| "unable to read config from openhuman.get_config".to_string())?;
+
+    let api_url = config_body
+        .get("api_url")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("https://staging-api.alphahuman.xyz");
+    let model = config_body
+        .get("default_model")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("neocortex-mk1");
+    let token = resolve_bearer_token(rpc, config_body).await?;
+    let endpoint = format!(
+        "{}/openai/v1/chat/completions",
+        api_url.trim_end_matches('/')
+    );
+    let payload = json!({
+        "model": model,
+        "messages": [{"role": "user", "content": message}],
+    })
+    .to_string();
+
+    let output = Command::new("curl")
+        .arg("-sS")
+        .arg("--connect-timeout")
+        .arg("10")
+        .arg("-X")
+        .arg("POST")
+        .arg(endpoint)
+        .arg("-H")
+        .arg("Content-Type: application/json")
+        .arg("-H")
+        .arg(format!("Authorization: Bearer {token}"))
+        .arg("-d")
+        .arg(payload)
+        .output()
+        .await
+        .map_err(|e| format!("failed to spawn curl fallback: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format!("curl fallback failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let value: serde_json::Value =
+        serde_json::from_str(stdout.trim()).map_err(|e| format!("invalid curl JSON: {e}"))?;
+    value
+        .get("choices")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|msg| msg.get("content"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "curl fallback response missing choices[0].message.content".to_string())
+}
+
+async fn resolve_bearer_token(
+    rpc: &mut RpcClient,
+    config_body: &serde_json::Value,
+) -> Result<String, String> {
+    if let Ok(token_response) = rpc
+        .call("openhuman.auth.get_session_token", json!({}))
+        .await
+    {
+        if let Some(token) = token_response
+            .get("result")
+            .and_then(|v| v.get("token"))
+            .or_else(|| token_response.get("token"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(token.to_string());
+        }
+    }
+
+    if let Some(token) = config_body
+        .get("api_key")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(token.to_string());
+    }
+
+    Err("no bearer token found in auth session or config.api_key".to_string())
 }
 
 #[cfg(test)]
