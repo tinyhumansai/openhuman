@@ -44,6 +44,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::encryption::all_encryption_registered_controllers());
     controllers.extend(crate::openhuman::heartbeat::all_heartbeat_registered_controllers());
     controllers.extend(crate::openhuman::cost::all_cost_registered_controllers());
+    controllers.extend(crate::openhuman::autocomplete::all_autocomplete_registered_controllers());
+    controllers.extend(crate::openhuman::config::all_config_registered_controllers());
+    controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
     controllers
 }
 
@@ -55,6 +58,9 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
     schemas.extend(crate::openhuman::heartbeat::all_heartbeat_controller_schemas());
     schemas.extend(crate::openhuman::cost::all_cost_controller_schemas());
+    schemas.extend(crate::openhuman::autocomplete::all_autocomplete_controller_schemas());
+    schemas.extend(crate::openhuman::config::all_config_controller_schemas());
+    schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas
 }
 

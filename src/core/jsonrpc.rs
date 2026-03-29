@@ -198,4 +198,32 @@ mod tests {
         .expect_err("unknown param should fail");
         assert!(err.contains("unknown param 'invalid'"));
     }
+
+    #[tokio::test]
+    async fn invoke_config_get_runtime_flags_via_registry() {
+        let result = invoke_method(default_state(), "openhuman.get_runtime_flags", json!({}))
+            .await
+            .expect("runtime flags should succeed");
+        assert!(result.get("result").is_some());
+    }
+
+    #[tokio::test]
+    async fn invoke_autocomplete_status_rejects_unknown_param() {
+        let err = invoke_method(
+            default_state(),
+            "openhuman.autocomplete_status",
+            json!({ "extra": true }),
+        )
+        .await
+        .expect_err("unknown param should fail");
+        assert!(err.contains("unknown param 'extra'"));
+    }
+
+    #[tokio::test]
+    async fn invoke_auth_store_session_missing_token_fails_validation() {
+        let err = invoke_method(default_state(), "openhuman.auth.store_session", json!({}))
+            .await
+            .expect_err("missing token should fail");
+        assert!(err.contains("missing required param 'token'"));
+    }
 }

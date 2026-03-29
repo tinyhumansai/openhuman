@@ -4,7 +4,12 @@ pub mod cli;
 pub mod profiles;
 pub mod responses;
 pub mod rpc;
+mod schemas;
 pub mod session_support;
+pub use schemas::{
+    all_controller_schemas as all_credentials_controller_schemas,
+    all_registered_controllers as all_credentials_registered_controllers,
+};
 
 pub use crate::api::rest::{
     decrypt_handoff_blob, user_id_from_settings_payload, BackendOAuthClient, ConnectResponse,

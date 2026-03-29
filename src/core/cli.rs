@@ -285,5 +285,8 @@ mod tests {
         assert!(grouped.contains_key("doctor"));
         assert!(grouped.contains_key("encrypt"));
         assert!(grouped.contains_key("decrypt"));
+        assert!(grouped.contains_key("autocomplete"));
+        assert!(grouped.contains_key("get"));
+        assert!(grouped.contains_key("auth.store"));
     }
 }

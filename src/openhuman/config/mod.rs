@@ -1,6 +1,7 @@
 pub mod daemon;
 pub mod rpc;
 pub mod schema;
+mod schemas;
 pub mod settings_cli;
 
 #[allow(unused_imports)]
@@ -21,6 +22,10 @@ pub use schema::{
     SchedulerConfig, ScreenIntelligenceConfig, SecretsConfig, SecurityConfig, SlackConfig,
     StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
     TailscaleTunnelConfig, TelegramConfig, TunnelConfig, WebSearchConfig, WebhookConfig,
+};
+pub use schemas::{
+    all_controller_schemas as all_config_controller_schemas,
+    all_registered_controllers as all_config_registered_controllers,
 };
 
 #[cfg(test)]

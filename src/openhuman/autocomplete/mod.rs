@@ -1,4 +1,9 @@
 pub mod rpc;
+mod schemas;
+pub use schemas::{
+    all_controller_schemas as all_autocomplete_controller_schemas,
+    all_registered_controllers as all_autocomplete_registered_controllers,
+};
 
 use crate::openhuman::config::{AutocompleteConfig, Config};
 use crate::openhuman::local_ai;
