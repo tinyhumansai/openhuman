@@ -1,8 +1,9 @@
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, Method, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{extract::Request, Json, Router};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 
@@ -91,9 +92,37 @@ pub fn build_core_http_router() -> Router {
         .route("/schema", get(schema_handler))
         .route("/rpc", post(rpc_handler))
         .fallback(not_found_handler)
+        .layer(middleware::from_fn(cors_middleware))
         .with_state(AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),
         })
+}
+
+async fn cors_middleware(req: Request, next: Next) -> Response {
+    if req.method() == Method::OPTIONS {
+        return with_cors_headers(StatusCode::NO_CONTENT.into_response());
+    }
+
+    let response = next.run(req).await;
+    with_cors_headers(response)
+}
+
+fn with_cors_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Content-Type, Authorization"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_MAX_AGE,
+        HeaderValue::from_static("86400"),
+    );
+    response
 }
 
 async fn health_handler() -> impl IntoResponse {

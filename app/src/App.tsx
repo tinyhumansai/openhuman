@@ -6,6 +6,7 @@ import { PersistGate } from 'redux-persist/integration/react';
 import AppRoutes from './AppRoutes';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import MiniSidebar from './components/MiniSidebar';
+import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import AIProvider from './providers/AIProvider';
 import SkillProvider from './providers/SkillProvider';
 import SocketProvider from './providers/SocketProvider';
@@ -27,31 +28,36 @@ function App() {
         <PersistGate
           loading={null}
           persistor={persistor}
-          onBeforeLift={async () => {
+          onBeforeLift={() => {
             const token = store.getState().auth.token;
             console.info('[memory] PersistGate onBeforeLift: token_present=%s', !!token);
-            if (token) await syncMemoryClientToken(token);
+            if (token) {
+              // Do not block initial render on core/memory availability.
+              void syncMemoryClientToken(token);
+            }
           }}>
           <UserProvider>
             <SocketProvider>
               <AIProvider>
                 <SkillProvider>
                   <Router>
-                    <div className="relative h-screen flex flex-col overflow-hidden">
-                      <div className="flex-1 flex overflow-hidden">
-                        <MiniSidebar />
-                        <div className="flex flex-col flex-1 relative overflow-hidden">
-                          <div className="flex-1 overflow-y-auto">
-                            <AppRoutes />
-                          </div>
-                          <div className="pointer-events-none flex-shrink-0 flex justify-center z-50">
-                            <div className="w-full px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-white/40 text-center bg-[#000]">
-                              OpenHuman is in early beta
+                    <ServiceBlockingGate>
+                      <div className="relative h-screen flex flex-col overflow-hidden">
+                        <div className="flex-1 flex overflow-hidden">
+                          <MiniSidebar />
+                          <div className="flex flex-col flex-1 relative overflow-hidden">
+                            <div className="flex-1 overflow-y-auto">
+                              <AppRoutes />
+                            </div>
+                            <div className="pointer-events-none flex-shrink-0 flex justify-center z-50">
+                              <div className="w-full px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-white/40 text-center bg-[#000]">
+                                OpenHuman is in early beta
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </ServiceBlockingGate>
                   </Router>
                 </SkillProvider>
               </AIProvider>

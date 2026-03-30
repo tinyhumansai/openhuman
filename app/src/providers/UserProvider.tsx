@@ -6,6 +6,21 @@ import { fetchTeams } from '../store/teamSlice';
 import { fetchCurrentUser } from '../store/userSlice';
 import { getAuthState, getSessionToken, isTauri } from '../utils/tauriCommands';
 
+const AUTH_BOOTSTRAP_TIMEOUT_MS = 5000;
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 /**
  * UserProvider automatically fetches user data when JWT token is available.
  * On fetch failure (e.g. expired token), logs out the user.
@@ -27,7 +42,10 @@ const UserProvider = ({ children }: { children: React.ReactNode }) => {
       }
 
       try {
-        const [authState, sessionToken] = await Promise.all([getAuthState(), getSessionToken()]);
+        const [authState, sessionToken] = await withTimeout(
+          Promise.all([getAuthState(), getSessionToken()]),
+          AUTH_BOOTSTRAP_TIMEOUT_MS
+        );
         if (!mounted) return;
 
         if (authState.is_authenticated && sessionToken) {

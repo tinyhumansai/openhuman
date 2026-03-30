@@ -12,7 +12,7 @@ const DefaultRedirect = () => {
   const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
 
   if (!isAuthBootstrapComplete) {
-    return null;
+    return <div className="h-full w-full" aria-busy="true" />;
   }
 
   if (token) {

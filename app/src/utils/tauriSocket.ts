@@ -25,6 +25,30 @@ import { setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
 import { BACKEND_URL } from './config';
 
+let runtimeSocketCommandsAvailable = true;
+
+function isCommandNotFoundError(error: unknown): boolean {
+  const message =
+    typeof error === 'string'
+      ? error
+      : error instanceof Error
+        ? error.message
+        : String(error ?? '');
+  const normalized = message.toLowerCase();
+  return normalized.includes('command') && normalized.includes('not found');
+}
+
+function handleRuntimeSocketInvokeError(context: string, error: unknown): void {
+  if (isCommandNotFoundError(error)) {
+    runtimeSocketCommandsAvailable = false;
+    console.warn(
+      `[TauriSocket] ${context} unavailable: runtime socket commands are not registered in this build`
+    );
+    return;
+  }
+  console.error(`[TauriSocket] Failed to ${context}:`, error);
+}
+
 // Check if we're running in Tauri
 export const isTauri = (): boolean => {
   const isTauriEnv = coreIsTauri();
@@ -51,13 +75,14 @@ export const isTauri = (): boolean => {
  */
 export async function connectRustSocket(token: string): Promise<void> {
   if (!isTauri()) return;
+  if (!runtimeSocketCommandsAvailable) return;
 
   try {
     console.log('[TauriSocket] Connecting Rust socket to', BACKEND_URL);
     await invoke('runtime_socket_connect', { token, url: BACKEND_URL });
     console.log('[TauriSocket] Rust socket connect call succeeded');
   } catch (error) {
-    console.error('[TauriSocket] Failed to connect Rust socket:', error);
+    handleRuntimeSocketInvokeError('connect Rust socket', error);
     // Ensure Redux status reflects the failure
     const uid = getSocketUserId();
     store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
@@ -69,12 +94,13 @@ export async function connectRustSocket(token: string): Promise<void> {
  */
 export async function disconnectRustSocket(): Promise<void> {
   if (!isTauri()) return;
+  if (!runtimeSocketCommandsAvailable) return;
 
   try {
     await invoke('runtime_socket_disconnect');
     console.log('[TauriSocket] Rust socket disconnected');
   } catch (error) {
-    console.error('[TauriSocket] Failed to disconnect Rust socket:', error);
+    handleRuntimeSocketInvokeError('disconnect Rust socket', error);
   }
 }
 
@@ -84,11 +110,12 @@ export async function disconnectRustSocket(): Promise<void> {
  */
 export async function emitViaRustSocket(event: string, data?: unknown): Promise<void> {
   if (!isTauri()) return;
+  if (!runtimeSocketCommandsAvailable) return;
 
   try {
     await invoke('runtime_socket_emit', { event, data: data ?? null });
   } catch (error) {
-    console.error('[TauriSocket] Failed to emit via Rust socket:', error);
+    handleRuntimeSocketInvokeError('emit via Rust socket', error);
   }
 }
 
@@ -100,11 +127,12 @@ export async function getRustSocketState(): Promise<{
   socket_id: string | null;
 } | null> {
   if (!isTauri()) return null;
+  if (!runtimeSocketCommandsAvailable) return null;
 
   try {
     return await invoke('runtime_socket_state');
   } catch (error) {
-    console.error('[TauriSocket] Failed to get Rust socket state:', error);
+    handleRuntimeSocketInvokeError('get Rust socket state', error);
     return null;
   }
 }

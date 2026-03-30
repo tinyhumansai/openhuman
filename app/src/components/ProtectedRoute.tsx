@@ -24,7 +24,7 @@ const ProtectedRoute = ({
   const isOnboarded = useAppSelector(selectIsOnboarded);
 
   if (!isAuthBootstrapComplete) {
-    return null;
+    return <div className="h-full w-full" aria-busy="true" />;
   }
 
   // If auth is required but user is not logged in

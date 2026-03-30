@@ -44,6 +44,11 @@ vi.mock('../utils/tauriCommands', () => ({
   getAuthState: vi.fn().mockResolvedValue({ is_authenticated: false }),
   logout: vi.fn().mockResolvedValue(undefined),
   syncMemoryClientToken: vi.fn().mockResolvedValue(undefined),
+  openhumanServiceInstall: vi.fn().mockResolvedValue({ result: { state: 'Running' }, logs: [] }),
+  openhumanServiceStart: vi.fn().mockResolvedValue({ result: { state: 'Running' }, logs: [] }),
+  openhumanServiceStop: vi.fn().mockResolvedValue({ result: { state: 'Stopped' }, logs: [] }),
+  openhumanServiceStatus: vi.fn().mockResolvedValue({ result: { state: 'Running' }, logs: [] }),
+  openhumanAgentServerStatus: vi.fn().mockResolvedValue({ result: { running: true }, logs: [] }),
   exchangeToken: vi.fn(),
   invoke: vi.fn(),
 }));

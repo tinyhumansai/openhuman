@@ -16,7 +16,7 @@ const PublicRoute = ({ children, redirectTo }: PublicRouteProps) => {
   const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
 
   if (!isAuthBootstrapComplete) {
-    return null;
+    return <div className="h-full w-full" aria-busy="true" />;
   }
 
   // If user is logged in, always go to home.
