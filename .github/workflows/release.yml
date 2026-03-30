@@ -418,49 +418,6 @@ jobs:
           MATRIX_TARGET: ${{ matrix.settings.target }}
           SIDECAR_BASE: ${{ steps.core-paths.outputs.sidecar_base }}
 
-      - name: Import Apple certificate for sidecar signing
-        if: matrix.settings.platform == 'macos-latest'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERTIFICATE_PATH"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          security import "$CERTIFICATE_PATH" \
-            -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 \
-            -k "$KEYCHAIN_PATH"
-
-          security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
-
-      - name: Codesign sidecar binary with hardened runtime (macOS)
-        if: matrix.settings.platform == 'macos-latest'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-          SIDECAR_BASE: ${{ steps.core-paths.outputs.sidecar_base }}
-        run: |
-          SIDECAR_PATH="app/src-tauri/binaries/${SIDECAR_BASE}-${MATRIX_TARGET}"
-          ENTITLEMENTS="app/src-tauri/entitlements.sidecar.plist"
-          echo "Signing sidecar: $SIDECAR_PATH"
-          echo "Using entitlements: $ENTITLEMENTS"
-          codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$SIDECAR_PATH"
-          codesign --verify --verbose "$SIDECAR_PATH"
-          codesign --display --entitlements - "$SIDECAR_PATH"
-          echo "Sidecar signed successfully"
-
       - name: Resolve standalone core CLI artifact path
         id: cli-paths
         shell: bash

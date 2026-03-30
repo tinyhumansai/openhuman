@@ -178,3 +178,24 @@ pub struct AutocompleteCommitParams {
 pub struct AutocompleteCommitResult {
     pub committed: bool,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppContextInfo {
+    pub app_name: Option<String>,
+    pub window_title: Option<String>,
+    pub bounds_x: Option<i32>,
+    pub bounds_y: Option<i32>,
+    pub bounds_width: Option<i32>,
+    pub bounds_height: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaptureTestResult {
+    pub ok: bool,
+    pub capture_mode: String,
+    pub context: Option<AppContextInfo>,
+    pub image_ref: Option<String>,
+    pub bytes_estimate: Option<usize>,
+    pub error: Option<String>,
+    pub timing_ms: u64,
+}
