@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
+import ScreenIntelligenceDebugPanel from '../../../components/intelligence/ScreenIntelligenceDebugPanel';
 import {
   fetchAccessibilityStatus,
   fetchAccessibilityVisionRecent,
@@ -399,6 +400,8 @@ const ScreenIntelligencePanel = () => {
           )}
         </section>
 
+        <DebugSection />
+
         {!status?.platform_supported && (
           <div className="rounded-xl border border-amber-700/40 bg-amber-900/20 p-3 text-sm text-amber-200">
             Screen Intelligence V1 is currently supported on macOS only.
@@ -412,6 +415,24 @@ const ScreenIntelligencePanel = () => {
         )}
       </div>
     </div>
+  );
+};
+
+const DebugSection = () => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
+      <button
+        type="button"
+        onClick={() => setIsOpen(prev => !prev)}
+        className="flex w-full items-center justify-between text-sm font-semibold text-white"
+      >
+        <span>Debug & Diagnostics</span>
+        <span className="text-xs text-stone-400">{isOpen ? 'Collapse' : 'Expand'}</span>
+      </button>
+      {isOpen && <ScreenIntelligenceDebugPanel />}
+    </section>
   );
 };
 

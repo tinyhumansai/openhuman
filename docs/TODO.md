@@ -36,6 +36,7 @@ todo
 [] allow users to choose which version of LLM model they'd like to choose based on their CPU. better ram and gpu means higher parameter model can be used. - mithil
 [x] in the client side app, make console.log follow a logger style logging where there's a namespace for every logger (like python) - steve
 [ ] - currently we bundle tauri in the openhumany rust core but that shouldn't really have to be there. it can be completely removed.
+[] allow skills to be debuggged from the UI (we shuold try to call various tools or see state from the UI itself)
 
 --- e2e tests to write up
 

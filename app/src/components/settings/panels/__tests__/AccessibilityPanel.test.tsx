@@ -66,6 +66,8 @@ const createStore = () =>
       accessibility: {
         status,
         recentVisionSummaries: [],
+        captureTestResult: null,
+        isCaptureTestRunning: false,
         isLoading: false,
         isRequestingPermissions: false,
         isStartingSession: false,
