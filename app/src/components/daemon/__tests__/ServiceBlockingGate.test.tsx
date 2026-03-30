@@ -87,4 +87,34 @@ describe('ServiceBlockingGate', () => {
     await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
     expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
   });
+
+  it('renders children when service is stopped but agent server is running (soft pass)', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockResolvedValue({ result: { state: 'Stopped' }, logs: [] });
+    mockAgentStatus.mockResolvedValue({ result: { running: true }, logs: [] });
+
+    render(
+      <ServiceBlockingGate>
+        <div>App Content</div>
+      </ServiceBlockingGate>
+    );
+
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
+  });
+
+  it('renders children when service probe fails but agent server is running (soft pass)', async () => {
+    mockIsTauri.mockReturnValue(true);
+    mockServiceStatus.mockRejectedValue(new Error('service status unavailable'));
+    mockAgentStatus.mockResolvedValue({ result: { running: true }, logs: [] });
+
+    render(
+      <ServiceBlockingGate>
+        <div>App Content</div>
+      </ServiceBlockingGate>
+    );
+
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
+  });
 });

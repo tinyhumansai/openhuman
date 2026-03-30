@@ -197,12 +197,7 @@ pub(crate) fn stop(_config: &Config) -> Result<()> {
 }
 
 pub(crate) fn status(_config: &Config) -> Result<ServiceStatus> {
-    let out = run_capture(Command::new("launchctl").arg("list"))?;
-    let running = out.lines().any(|line| {
-        line.contains(SERVICE_LABEL)
-            || line.contains(LEGACY_SERVICE_LABEL)
-            || line.contains(LEGACY_APP_LABEL)
-    });
+    let running = is_service_running_macos()?;
     Ok(ServiceStatus {
         state: if running {
             ServiceState::Running
@@ -263,26 +258,44 @@ fn validate_macos_plist(path: &std::path::Path) -> Result<()> {
 }
 
 fn is_service_loaded_macos() -> Result<bool> {
-    if run_check_silent(
-        Command::new("launchctl")
-            .arg("print")
-            .arg(macos_target(SERVICE_LABEL)?),
-    ) {
-        return Ok(true);
+    for target in candidate_macos_targets(SERVICE_LABEL)? {
+        if run_check_silent(Command::new("launchctl").arg("print").arg(target)) {
+            return Ok(true);
+        }
     }
-    if run_check_silent(
-        Command::new("launchctl")
-            .arg("print")
-            .arg(macos_target(LEGACY_SERVICE_LABEL)?),
-    ) {
-        return Ok(true);
+    for target in candidate_macos_targets(LEGACY_SERVICE_LABEL)? {
+        if run_check_silent(Command::new("launchctl").arg("print").arg(target)) {
+            return Ok(true);
+        }
     }
-    if run_check_silent(
-        Command::new("launchctl")
-            .arg("print")
-            .arg(macos_target(LEGACY_APP_LABEL)?),
-    ) {
-        return Ok(true);
+    for target in candidate_macos_targets(LEGACY_APP_LABEL)? {
+        if run_check_silent(Command::new("launchctl").arg("print").arg(target)) {
+            return Ok(true);
+        }
     }
     Ok(false)
+}
+
+fn is_service_running_macos() -> Result<bool> {
+    if is_service_loaded_macos()? {
+        return Ok(true);
+    }
+
+    // Fallback for environments where `launchctl print` is restricted.
+    let out = run_capture(Command::new("launchctl").arg("list"))?;
+    Ok(out.lines().any(|line| {
+        line.contains(SERVICE_LABEL)
+            || line.contains(LEGACY_SERVICE_LABEL)
+            || line.contains(LEGACY_APP_LABEL)
+    }))
+}
+
+fn candidate_macos_targets(label: &str) -> Result<Vec<String>> {
+    let uid = run_capture(Command::new("id").arg("-u"))?;
+    let uid = uid.trim();
+    Ok(vec![
+        format!("gui/{uid}/{label}"),
+        format!("user/{uid}/{label}"),
+        format!("system/{label}"),
+    ])
 }

@@ -57,28 +57,31 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
         openhumanServiceStatus(),
         openhumanAgentServerStatus(),
       ]);
-
-      if (serviceResult.status !== 'fulfilled') {
-        throw serviceResult.reason;
-      }
-
-      const serviceState = serviceResult.value?.result?.state;
-      const normalized = normalizeServiceState(serviceState);
+      const normalized =
+        serviceResult.status === 'fulfilled'
+          ? normalizeServiceState(serviceResult.value?.result?.state)
+          : 'Unknown';
       const serviceRunning = normalized === 'Running';
       const agentIsRunning =
         agentResult.status === 'fulfilled' ? !!agentResult.value?.result?.running : false;
+      const gateReady = serviceRunning || agentIsRunning;
+
+      if (serviceResult.status !== 'fulfilled' && !agentIsRunning) {
+        throw serviceResult.reason;
+      }
 
       setServiceStateText(prev => (prev === normalized ? prev : normalized));
       setAgentRunning(prev => (prev === agentIsRunning ? prev : agentIsRunning));
       setGateStatus(prev => {
-        const next = serviceRunning ? 'ready' : 'blocked';
+        const next = gateReady ? 'ready' : 'blocked';
         return prev === next ? prev : next;
       });
       setError(prev => (prev ? null : prev));
       console.info('[ServiceBlockingGate] Status refreshed', {
         serviceState: normalized,
         agentRunning: agentIsRunning,
-        nextGateStatus: serviceRunning ? 'ready' : 'blocked',
+        nextGateStatus: gateReady ? 'ready' : 'blocked',
+        passMode: serviceRunning ? 'hard(service)' : agentIsRunning ? 'soft(agent)' : 'blocked',
       });
     } catch (err) {
       setServiceStateText('Unknown');
