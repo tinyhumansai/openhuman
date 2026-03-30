@@ -12,8 +12,6 @@ import { cleanup } from '@testing-library/react';
 import type React from 'react';
 import { afterAll, afterEach, beforeAll, beforeEach, vi } from 'vitest';
 
-import { store } from '../store';
-import { setStoreForApiClient } from '../services/apiClient';
 
 // @ts-ignore - test-only JS module outside app/src
 import {
@@ -122,8 +120,6 @@ vi.mock('@sentry/react', () => ({
   setTag: vi.fn(),
   setUser: vi.fn(),
 }));
-
-setStoreForApiClient(() => store.getState().auth.token);
 
 // Silence console during tests to keep output clean
 if (!process.env.DEBUG_TESTS) {
