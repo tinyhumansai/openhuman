@@ -25,12 +25,6 @@ struct AgentReplSessionStartParams {
 }
 
 #[derive(Debug, Deserialize)]
-struct AgentReplSessionChatParams {
-    session_id: String,
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct AgentReplSessionControlParams {
     session_id: String,
 }
@@ -100,7 +94,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("agent_chat"),
         schemas("agent_chat_simple"),
         schemas("agent_repl_session_start"),
-        schemas("agent_repl_session_chat"),
         schemas("agent_repl_session_reset"),
         schemas("agent_repl_session_end"),
         schemas("local_ai_status"),
@@ -133,10 +126,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("agent_repl_session_start"),
             handler: handle_agent_repl_session_start,
-        },
-        RegisteredController {
-            schema: schemas("agent_repl_session_chat"),
-            handler: handle_agent_repl_session_chat,
         },
         RegisteredController {
             schema: schemas("agent_repl_session_reset"),
@@ -239,16 +228,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_f64("temperature", "Optional temperature override."),
             ],
             outputs: vec![json_output("result", "Session creation result.")],
-        },
-        "agent_repl_session_chat" => ControllerSchema {
-            namespace: "local_ai",
-            function: "agent_repl_session_chat",
-            description: "Send a message through REPL agent session.",
-            inputs: vec![
-                required_string("session_id", "REPL session id."),
-                required_string("message", "User message."),
-            ],
-            outputs: vec![json_output("response", "Session chat response.")],
         },
         "agent_repl_session_reset" => ControllerSchema {
             namespace: "local_ai",
@@ -461,19 +440,6 @@ fn handle_agent_repl_session_start(params: Map<String, Value>) -> ControllerFutu
                 p.session_id,
                 p.model_override,
                 p.temperature,
-            )
-            .await?,
-        )
-    })
-}
-
-fn handle_agent_repl_session_chat(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<AgentReplSessionChatParams>(params)?;
-        to_json(
-            crate::openhuman::local_ai::rpc::agent_repl_session_chat(
-                p.session_id.trim(),
-                &p.message,
             )
             .await?,
         )

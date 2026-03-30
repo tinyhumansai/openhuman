@@ -137,19 +137,6 @@
       ]
     },
     {
-      "description": "Send a message through REPL agent session.",
-      "function": "repl_session_chat",
-      "inputs": [
-        { "comment": "REPL session id.", "name": "session_id", "required": true, "ty": "String" },
-        { "comment": "User message.", "name": "message", "required": true, "ty": "String" }
-      ],
-      "method": "openhuman.agent_repl_session_chat",
-      "namespace": "agent",
-      "outputs": [
-        { "comment": "Session chat response.", "name": "response", "required": true, "ty": "Json" }
-      ]
-    },
-    {
       "description": "Terminate REPL session.",
       "function": "repl_session_end",
       "inputs": [
@@ -1283,19 +1270,6 @@
       "namespace": "local_ai",
       "outputs": [
         { "comment": "Agent response payload.", "name": "response", "required": true, "ty": "Json" }
-      ]
-    },
-    {
-      "description": "Send a message through REPL agent session.",
-      "function": "agent_repl_session_chat",
-      "inputs": [
-        { "comment": "REPL session id.", "name": "session_id", "required": true, "ty": "String" },
-        { "comment": "User message.", "name": "message", "required": true, "ty": "String" }
-      ],
-      "method": "openhuman.local_ai_agent_repl_session_chat",
-      "namespace": "local_ai",
-      "outputs": [
-        { "comment": "Session chat response.", "name": "response", "required": true, "ty": "Json" }
       ]
     },
     {

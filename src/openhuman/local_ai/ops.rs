@@ -122,60 +122,6 @@ pub async fn agent_repl_session_start(
     ))
 }
 
-pub async fn agent_repl_session_chat(
-    session_id: &str,
-    message: &str,
-) -> Result<RpcOutcome<String>, String> {
-    let session_id = session_id.trim();
-    if session_id.is_empty() {
-        return Err("session_id is required".to_string());
-    }
-    let started = std::time::Instant::now();
-    log::info!(
-        "[agent_repl] chat start session_id={} message_chars={}",
-        session_id,
-        message.chars().count()
-    );
-
-    let mut agent = {
-        let mut sessions = REPL_AGENT_SESSIONS.lock().await;
-        sessions
-            .remove(session_id)
-            .ok_or_else(|| format!("agent repl session not found: {session_id}"))?
-    };
-
-    let result = agent.run_single(message).await;
-    REPL_AGENT_SESSIONS
-        .lock()
-        .await
-        .insert(session_id.to_string(), agent);
-
-    let response = match result {
-        Ok(response) => {
-            log::info!(
-                "[agent_repl] chat ok session_id={} elapsed_ms={} response_chars={}",
-                session_id,
-                started.elapsed().as_millis(),
-                response.chars().count()
-            );
-            response
-        }
-        Err(err) => {
-            log::error!(
-                "[agent_repl] chat error session_id={} elapsed_ms={} error={}",
-                session_id,
-                started.elapsed().as_millis(),
-                err
-            );
-            return Err(err.to_string());
-        }
-    };
-    Ok(RpcOutcome::single_log(
-        response,
-        "agent repl session chat completed",
-    ))
-}
-
 pub async fn agent_repl_session_reset(
     session_id: &str,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {

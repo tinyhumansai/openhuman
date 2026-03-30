@@ -107,7 +107,7 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                 payload.temperature
             );
 
-            if let Err(error) = crate::openhuman::web_channel::ops::channel_web_chat(
+            match crate::openhuman::channels::providers::web::start_chat(
                 &client_id,
                 &payload.thread_id,
                 &payload.message,
@@ -116,7 +116,18 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
             )
             .await
             {
-                let error_payload = json!({
+                Ok(request_id) => {
+                    let accepted_payload = json!({
+                        "event": "chat_accepted",
+                        "client_id": client_id,
+                        "thread_id": thread_id,
+                        "request_id": request_id,
+                    });
+                    log::debug!("[socketio] send event=chat_accepted client_id={} thread_id={}", socket.id, payload.thread_id);
+                    emit_with_aliases(&socket, "chat_accepted", &accepted_payload);
+                }
+                Err(error) => {
+                    let error_payload = json!({
                     "event": "chat_error",
                     "client_id": client_id,
                     "thread_id": thread_id,
@@ -124,8 +135,9 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                     "message": error,
                     "error_type": "inference",
                 });
-                log::debug!("[socketio] send event=chat_error client_id={} thread_id={} message={}", socket.id, payload.thread_id, error);
-                let _ = socket.emit("chat_error", &error_payload);
+                    log::debug!("[socketio] send event=chat_error client_id={} thread_id={} message={}", socket.id, payload.thread_id, error);
+                    emit_with_aliases(&socket, "chat_error", &error_payload);
+                }
             }
         });
 
@@ -136,11 +148,9 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                 client_id,
                 payload.thread_id
             );
-            let _ = crate::openhuman::web_channel::ops::channel_web_cancel(
-                &client_id,
-                &payload.thread_id,
-            )
-            .await;
+            let _ =
+                crate::openhuman::channels::providers::web::cancel_chat(&client_id, &payload.thread_id)
+                    .await;
         });
     });
 
@@ -186,7 +196,31 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
         );
-        let _ = io.to(room).emit(name, &payload);
+        emit_room_with_aliases(io, &room, &name, &payload);
+    }
+}
+
+fn event_alias(name: &str) -> Option<String> {
+    if name.contains('_') {
+        return Some(name.replace('_', ":"));
+    }
+    if name.contains(':') {
+        return Some(name.replace(':', "_"));
+    }
+    None
+}
+
+fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value) {
+    let _ = socket.emit(name, payload);
+    if let Some(alias) = event_alias(name) {
+        let _ = socket.emit(alias, payload);
+    }
+}
+
+fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde_json::Value) {
+    let _ = io.to(room.to_string()).emit(name.to_string(), payload);
+    if let Some(alias) = event_alias(name) {
+        let _ = io.to(room.to_string()).emit(alias, payload);
     }
 }
 
@@ -198,5 +232,17 @@ fn json_type_name(value: &serde_json::Value) -> &'static str {
         serde_json::Value::String(_) => "string",
         serde_json::Value::Array(_) => "array",
         serde_json::Value::Object(_) => "object",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::event_alias;
+
+    #[test]
+    fn event_alias_translates_between_delimiters() {
+        assert_eq!(event_alias("chat_done").as_deref(), Some("chat:done"));
+        assert_eq!(event_alias("chat:error").as_deref(), Some("chat_error"));
+        assert_eq!(event_alias("ready"), None);
     }
 }
