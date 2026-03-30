@@ -26,7 +26,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: 'yarn'
+          cache: "yarn"
 
       - name: Cache node modules
         id: yarn-cache
@@ -44,16 +44,16 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Type check TypeScript files
-        run: yarn typecheck
+        run: yarn workspace openhuman-app compile
         env:
           NODE_ENV: test
 
       - name: Check Prettier formatting
-        run: yarn format:check
+        run: yarn workspace openhuman-app format:check
         env:
           NODE_ENV: test
 
       - name: Run ESLint
-        run: yarn lint
+        run: yarn workspace openhuman-app lint
         env:
           NODE_ENV: test

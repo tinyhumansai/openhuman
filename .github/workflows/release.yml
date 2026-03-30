@@ -275,12 +275,6 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Install skills dependencies
-        run: cd skills && yarn install --frozen-lockfile
-
-      - name: Build skills
-        run: cd skills && yarn build
-
       - name: Define Tauri configuration overrides
         id: config-overrides
         uses: actions/github-script@v7
