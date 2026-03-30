@@ -17,6 +17,7 @@ import Skills from './pages/Skills';
 import Welcome from './pages/Welcome';
 import { selectHasEncryptionKey, selectIsOnboarded } from './store/authSelectors';
 import { useAppSelector } from './store/hooks';
+import { DEV_FORCE_ONBOARDING } from './utils/config';
 import {
   DEFAULT_WORKSPACE_ONBOARDING_FLAG,
   openhumanWorkspaceOnboardingFlagExists,
@@ -33,7 +34,9 @@ const OnboardingRoute = ({
 }: OnboardingRouteProps) => {
   const isOnboarded = useAppSelector(selectIsOnboarded);
   const hasEncryptionKey = useAppSelector(selectHasEncryptionKey);
-  const shouldSkipOnboarding = isOnboarded || hasWorkspaceOnboardingFlag;
+  const shouldSkipOnboarding = DEV_FORCE_ONBOARDING
+    ? false
+    : isOnboarded || hasWorkspaceOnboardingFlag;
 
   if (isWorkspaceFlagLoading) return <RouteLoadingScreen label="Loading workspace..." />;
   if (shouldSkipOnboarding && !hasEncryptionKey) return <Navigate to="/mnemonic" replace />;
@@ -61,7 +64,9 @@ const HomeRoute = ({ hasWorkspaceOnboardingFlag, isWorkspaceFlagLoading }: HomeR
   const isOnboarded = useAppSelector(selectIsOnboarded);
   const hasEncryptionKey = useAppSelector(selectHasEncryptionKey);
 
-  const shouldSkipOnboarding = isOnboarded || hasWorkspaceOnboardingFlag;
+  const shouldSkipOnboarding = DEV_FORCE_ONBOARDING
+    ? false
+    : isOnboarded || hasWorkspaceOnboardingFlag;
 
   // While user profile is still loading, show Home (avoid flash to onboarding)
   if (!user) return <Home />;
@@ -83,6 +88,11 @@ const AppRoutes = () => {
   const [isWorkspaceFlagLoading, setIsWorkspaceFlagLoading] = useState(true);
 
   useEffect(() => {
+    if (DEV_FORCE_ONBOARDING) {
+      setHasWorkspaceOnboardingFlag(false);
+      setIsWorkspaceFlagLoading(false);
+      return;
+    }
     let mounted = true;
     const loadWorkspaceFlag = async () => {
       try {
