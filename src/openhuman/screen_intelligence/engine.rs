@@ -889,14 +889,14 @@ impl AccessibilityEngine {
         state.last_event = Some(format!("session_stopped:{reason}"));
     }
 
-    fn rule_matches_context(&self, ctx: &AppContext, rules: &[String]) -> bool {
+    pub(crate) fn rule_matches_context(&self, ctx: &AppContext, rules: &[String]) -> bool {
         let compound = ctx.as_compound_text();
         rules
             .iter()
             .any(|d| !d.trim().is_empty() && compound.contains(&d.to_lowercase()))
     }
 
-    fn should_capture_context(&self, ctx: &AppContext, config: &ScreenIntelligenceConfig) -> bool {
+    pub(crate) fn should_capture_context(&self, ctx: &AppContext, config: &ScreenIntelligenceConfig) -> bool {
         let blacklisted = self.rule_matches_context(ctx, &config.denylist);
         let whitelisted = self.rule_matches_context(ctx, &config.allowlist);
 

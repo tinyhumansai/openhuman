@@ -692,6 +692,25 @@ export interface AccessibilityVisionFlushResult {
   summary: AccessibilityVisionSummary | null;
 }
 
+export interface CaptureTestContextInfo {
+  app_name: string | null;
+  window_title: string | null;
+  bounds_x: number | null;
+  bounds_y: number | null;
+  bounds_width: number | null;
+  bounds_height: number | null;
+}
+
+export interface CaptureTestResult {
+  ok: boolean;
+  capture_mode: string;
+  context: CaptureTestContextInfo | null;
+  image_ref: string | null;
+  bytes_estimate: number | null;
+  error: string | null;
+  timing_ms: number;
+}
+
 export interface ConfigSnapshot {
   config: Record<string, unknown>;
   workspace_dir: string;
@@ -1575,6 +1594,18 @@ export async function openhumanAccessibilityVisionFlush(): Promise<
   }
   return await callCoreRpc<CommandResponse<AccessibilityVisionFlushResult>>({
     method: 'openhuman.accessibility_vision_flush',
+    serviceManaged: true,
+  });
+}
+
+export async function openhumanScreenIntelligenceCaptureTest(): Promise<
+  CommandResponse<CaptureTestResult>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<CaptureTestResult>>({
+    method: 'openhuman.screen_intelligence_capture_test',
     serviceManaged: true,
   });
 }
