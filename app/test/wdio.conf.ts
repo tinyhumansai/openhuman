@@ -1,4 +1,5 @@
 import type { Options } from '@wdio/types';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -14,15 +15,25 @@ const tsconfigE2ePath = path.join(projectRoot, 'test', 'tsconfig.e2e.json');
  * On Windows/Linux, tauri-driver would be used instead (not covered here).
  */
 function getAppPath(): string {
-  const bundleBase = path.join(repoRoot, 'target', 'debug', 'bundle');
+  const bundleBases = [
+    path.join(projectRoot, 'src-tauri', 'target', 'debug', 'bundle'),
+    path.join(repoRoot, 'target', 'debug', 'bundle'),
+  ];
 
   switch (process.platform) {
-    case 'darwin':
-      return path.join(bundleBase, 'macos', 'OpenHuman.app');
+    case 'darwin': {
+      for (const base of bundleBases) {
+        const appPath = path.join(base, 'macos', 'OpenHuman.app');
+        if (fs.existsSync(appPath)) {
+          return appPath;
+        }
+      }
+      return path.join(bundleBases[0], 'macos', 'OpenHuman.app');
+    }
     case 'win32':
-      return path.join(repoRoot, 'target', 'debug', 'OpenHuman.exe');
+      return path.join(projectRoot, 'src-tauri', 'target', 'debug', 'OpenHuman.exe');
     case 'linux':
-      return path.join(repoRoot, 'target', 'debug', 'alpha-human');
+      return path.join(projectRoot, 'src-tauri', 'target', 'debug', 'alpha-human');
     default:
       throw new Error(`Unsupported platform: ${process.platform}`);
   }
@@ -40,7 +51,6 @@ export const config: Options.Testrunner = {
       // @ts-expect-error -- Appium capabilities are not in standard WebDriver types
       'appium:automationName': 'Mac2',
       'appium:app': getAppPath(),
-      'appium:bundleId': 'com.openhuman.app',
       'appium:showServerLogs': true,
     },
   ],

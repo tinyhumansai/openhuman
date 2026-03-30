@@ -35,7 +35,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../../skills/skills", "../../src/openhuman/agent/prompts"],
+    "resources": ["../../src/openhuman/agent/prompts"],
     "externalBin": ["binaries/openhuman"],
     "createUpdaterArtifacts": true,
     "macOS": {

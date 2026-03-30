@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build the .app bundle for E2E tests with the mock server URL baked in.
-#
-# This does a cargo clean first to ensure the frontend assets are re-embedded
-# (Cargo's incremental build won't detect changes to dist/).
+# Cargo incremental builds are used by default for faster iteration.
 #
 set -euo pipefail
 
@@ -18,10 +16,11 @@ export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
 
 echo "Building E2E app bundle with VITE_BACKEND_URL=$VITE_BACKEND_URL"
 
-if [ -z "${E2E_SKIP_CARGO_CLEAN:-}" ]; then
+if [ -n "${E2E_FORCE_CARGO_CLEAN:-}" ]; then
+  echo "Forcing cargo clean (E2E_FORCE_CARGO_CLEAN is set)."
   cargo clean --manifest-path src-tauri/Cargo.toml
 else
-  echo "Skipping cargo clean (E2E_SKIP_CARGO_CLEAN is set)."
+  echo "Skipping cargo clean (default incremental E2E build)."
 fi
 
 if [ -f .env ]; then
@@ -36,7 +35,8 @@ export VITE_BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT:-18473}"
 # Stage rust-core sidecar for bundle.externalBin (see app/src-tauri/tauri.conf.json).
 node "$REPO_ROOT/scripts/stage-core-sidecar.mjs"
 
-# Use npx so CI does not require a global Tauri CLI (cwd must be the Tauri frontend root).
-npx tauri build --bundles app --debug
+# Disable updater artifacts for E2E bundles to avoid signing-key requirements.
+TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
+npx tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
 
 echo "E2E build complete."
