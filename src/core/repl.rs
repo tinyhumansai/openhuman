@@ -188,7 +188,10 @@ fn run_interactive(rt: &tokio::runtime::Runtime, verbose: bool) -> anyhow::Resul
 
     let mut state = ReplState::new(verbose);
 
-    println!("OpenHuman interactive shell (v{})", env!("CARGO_PKG_VERSION"));
+    println!(
+        "OpenHuman interactive shell (v{})",
+        env!("CARGO_PKG_VERSION")
+    );
     println!("Type `help` for commands, `exit` or Ctrl-D to quit.\n");
 
     loop {
@@ -327,7 +330,10 @@ fn handle_meta_command(state: &mut ReplState, cmd: &str, args: &[String]) {
     match cmd {
         ".json" => {
             state.json_mode = parse_toggle(toggle, state.json_mode);
-            eprintln!("  json mode: {}", if state.json_mode { "on" } else { "off" });
+            eprintln!(
+                "  json mode: {}",
+                if state.json_mode { "on" } else { "off" }
+            );
         }
         ".verbose" => {
             let new_val = parse_toggle(toggle, state.verbose);
@@ -344,10 +350,7 @@ fn handle_meta_command(state: &mut ReplState, cmd: &str, args: &[String]) {
         }
         ".time" => {
             state.show_time = parse_toggle(toggle, state.show_time);
-            eprintln!(
-                "  timing: {}",
-                if state.show_time { "on" } else { "off" }
-            );
+            eprintln!("  timing: {}", if state.show_time { "on" } else { "off" });
         }
         other => {
             eprintln!("  unknown meta command: {other}");
@@ -493,7 +496,10 @@ fn parse_cli_params(
         }
         let key = raw.trim_start_matches("--").replace('-', "_");
         let Some(spec) = schema.inputs.iter().find(|input| input.name == key) else {
-            return Err(format!("unknown param '--{key}' for {}.{}", schema.namespace, schema.function));
+            return Err(format!(
+                "unknown param '--{key}' for {}.{}",
+                schema.namespace, schema.function
+            ));
         };
         let raw_value = args
             .get(i + 1)
@@ -571,8 +577,7 @@ fn print_namespaces() {
     let grouped = grouped_schemas();
     println!("  Namespaces ({} total):", grouped.len());
     for (ns, schemas) in &grouped {
-        let desc = all::namespace_description(ns)
-            .unwrap_or("(no description)");
+        let desc = all::namespace_description(ns).unwrap_or("(no description)");
         println!("    {ns:<24} {desc} ({} functions)", schemas.len());
     }
 }
@@ -606,8 +611,11 @@ fn print_schema(namespace: Option<&str>) {
         }
         None => {
             let all = all::all_controller_schemas();
-            println!("  {} registered controllers across {} namespaces",
-                all.len(), grouped.len());
+            println!(
+                "  {} registered controllers across {} namespaces",
+                all.len(),
+                grouped.len()
+            );
             println!("  use `schema <namespace>` for details");
         }
     }
@@ -696,8 +704,16 @@ impl Completer for ReplHelper {
 
                 // Built-in commands.
                 for cmd in &[
-                    "call", "help", "namespaces", "schema", "env", "exit", "quit",
-                    ".json", ".verbose", ".time",
+                    "call",
+                    "help",
+                    "namespaces",
+                    "schema",
+                    "env",
+                    "exit",
+                    "quit",
+                    ".json",
+                    ".verbose",
+                    ".time",
                 ] {
                     if cmd.starts_with(prefix) {
                         candidates.push(Pair {
@@ -931,7 +947,9 @@ mod tests {
 
     #[test]
     fn skip_history_token() {
-        assert!(should_skip_history(r#"call auth.store_session {"token": "abc"}"#));
+        assert!(should_skip_history(
+            r#"call auth.store_session {"token": "abc"}"#
+        ));
     }
 
     #[test]
