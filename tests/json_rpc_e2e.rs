@@ -577,3 +577,216 @@ async fn json_rpc_skills_registry_install_uninstall() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+// ---------------------------------------------------------------------------
+// Skills runtime E2E: start, list_tools, call_tool, sync, stop
+// ---------------------------------------------------------------------------
+
+/// Create a minimal QuickJS skill on disk with one tool.
+fn write_test_skill(workspace: &Path, skill_id: &str) {
+    let skill_dir = workspace.join("skills").join(skill_id);
+    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+
+    let manifest = json!({
+        "id": skill_id,
+        "name": "E2E Runtime Skill",
+        "version": "1.0.0",
+        "description": "Minimal skill for runtime E2E tests",
+        "runtime": "quickjs",
+        "entry": "index.js",
+        "auto_start": false
+    });
+    std::fs::write(
+        skill_dir.join("manifest.json"),
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .expect("write manifest");
+
+    // Minimal JS skill that exports one tool: "echo"
+    let js = r#"
+        globalThis.__skill = {
+            name: "E2E Runtime Skill",
+            tools: [
+                {
+                    name: "echo",
+                    description: "Echoes back the input message",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            message: { type: "string", description: "Message to echo" }
+                        },
+                        required: ["message"]
+                    },
+                    execute(args) {
+                        return { type: "text", text: "echo: " + (args.message || "empty") };
+                    }
+                }
+            ]
+        };
+
+        function init() {
+            if (globalThis.__ops && globalThis.__ops.log) {
+                globalThis.__ops.log("info", "e2e-runtime-skill initialized");
+            }
+        }
+
+        init();
+    "#;
+    std::fs::write(skill_dir.join("index.js"), js).expect("write index.js");
+}
+
+#[tokio::test]
+async fn json_rpc_skills_runtime_start_tools_call_stop() {
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+    let workspace = openhuman_home.join("workspace");
+    std::fs::create_dir_all(workspace.join("skills")).expect("create skills dir");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", &workspace);
+
+    // Write a minimal skill to the workspace
+    write_test_skill(&workspace, "e2e-runtime");
+
+    // Mock upstream for config loading
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    // Initialize and set the global RuntimeEngine
+    let skills_data_dir = workspace.join("skills_data");
+    std::fs::create_dir_all(&skills_data_dir).expect("create skills_data dir");
+    let engine = std::sync::Arc::new(
+        RuntimeEngine::new(skills_data_dir).expect("create RuntimeEngine"),
+    );
+    engine.set_workspace_dir(workspace.clone());
+    set_global_engine(engine);
+
+    // Start RPC server
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Sanity check
+    let ping = post_json_rpc(&rpc_base, 1, "core.ping", json!({})).await;
+    assert_no_jsonrpc_error(&ping, "core.ping");
+
+    // 1. Start the skill
+    let start = post_json_rpc(
+        &rpc_base,
+        20,
+        "openhuman.skills_start",
+        json!({"skill_id": "e2e-runtime"}),
+    )
+    .await;
+    let start_result = assert_no_jsonrpc_error(&start, "skills_start");
+    assert_eq!(
+        start_result.get("skill_id").and_then(Value::as_str),
+        Some("e2e-runtime"),
+        "start should return correct skill_id: {start_result}"
+    );
+    let status_str = start_result.get("status").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        status_str == "running" || status_str == "initializing",
+        "skill should be running or initializing after start, got: {status_str}"
+    );
+
+    // Give the skill a moment to finish initializing
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // 2. Get skill status
+    let status = post_json_rpc(
+        &rpc_base,
+        21,
+        "openhuman.skills_status",
+        json!({"skill_id": "e2e-runtime"}),
+    )
+    .await;
+    let status_result = assert_no_jsonrpc_error(&status, "skills_status");
+    assert_eq!(
+        status_result.get("skill_id").and_then(Value::as_str),
+        Some("e2e-runtime")
+    );
+
+    // 3. List tools
+    let tools = post_json_rpc(
+        &rpc_base,
+        22,
+        "openhuman.skills_list_tools",
+        json!({"skill_id": "e2e-runtime"}),
+    )
+    .await;
+    let tools_result = assert_no_jsonrpc_error(&tools, "skills_list_tools");
+    let tools_arr = tools_result
+        .get("tools")
+        .and_then(Value::as_array)
+        .expect("tools should be an array");
+    assert!(
+        !tools_arr.is_empty(),
+        "skill should expose at least one tool: {tools_result}"
+    );
+    let has_echo = tools_arr
+        .iter()
+        .any(|t| t.get("name").and_then(Value::as_str) == Some("echo"));
+    assert!(has_echo, "should have 'echo' tool: {tools_result}");
+
+    // 4. Call the echo tool
+    let call = post_json_rpc(
+        &rpc_base,
+        23,
+        "openhuman.skills_call_tool",
+        json!({
+            "skill_id": "e2e-runtime",
+            "tool_name": "echo",
+            "arguments": { "message": "hello from e2e" }
+        }),
+    )
+    .await;
+    let call_result = assert_no_jsonrpc_error(&call, "skills_call_tool");
+    // Tool result has content array with text blocks
+    let empty = vec![];
+    let content = call_result
+        .get("content")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty);
+    let has_echo_text = content.iter().any(|c| {
+        c.get("text")
+            .and_then(Value::as_str)
+            .map(|t| t.contains("hello from e2e"))
+            .unwrap_or(false)
+    });
+    assert!(
+        has_echo_text,
+        "echo tool should return the message: {call_result}"
+    );
+
+    // 5. Trigger sync (tick)
+    let sync = post_json_rpc(
+        &rpc_base,
+        24,
+        "openhuman.skills_sync",
+        json!({"skill_id": "e2e-runtime"}),
+    )
+    .await;
+    let sync_result = assert_no_jsonrpc_error(&sync, "skills_sync");
+    assert_eq!(
+        sync_result.get("ok"),
+        Some(&json!(true)),
+        "sync should acknowledge: {sync_result}"
+    );
+
+    // 6. Stop the skill
+    let stop = post_json_rpc(
+        &rpc_base,
+        25,
+        "openhuman.skills_stop",
+        json!({"skill_id": "e2e-runtime"}),
+    )
+    .await;
+    let stop_result = assert_no_jsonrpc_error(&stop, "skills_stop");
+    assert_eq!(stop_result.get("success"), Some(&json!(true)));
+
+    mock_join.abort();
+    rpc_join.abort();
+}

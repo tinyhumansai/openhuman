@@ -4,29 +4,30 @@
 //! Uses QuickJS (via rquickjs) for JavaScript execution.
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 use tauri::{AppHandle, Emitter};
 
-/// Global RuntimeEngine instance, set once during app startup.
-/// Allows RPC handlers (which are plain `fn` pointers) to access the runtime.
-static GLOBAL_ENGINE: OnceLock<Arc<RuntimeEngine>> = OnceLock::new();
+/// Global RuntimeEngine instance. Uses `RwLock` so it can be swapped in tests.
+static GLOBAL_ENGINE: parking_lot::RwLock<Option<Arc<RuntimeEngine>>> =
+    parking_lot::RwLock::new(None);
 
 /// Store a reference to the RuntimeEngine so RPC handlers can access it.
-/// Call this once during app setup after creating the engine.
+/// In production, call this once during app setup. In tests, can be called
+/// multiple times (each call replaces the previous engine).
 pub fn set_global_engine(engine: Arc<RuntimeEngine>) {
-    let _ = GLOBAL_ENGINE.set(engine);
+    *GLOBAL_ENGINE.write() = Some(engine);
 }
 
-/// Get a reference to the global RuntimeEngine.
+/// Get a clone of the global RuntimeEngine Arc.
 /// Returns `None` if the engine has not been initialized yet.
-pub fn global_engine() -> Option<&'static Arc<RuntimeEngine>> {
-    GLOBAL_ENGINE.get()
+pub fn global_engine() -> Option<Arc<RuntimeEngine>> {
+    GLOBAL_ENGINE.read().clone()
 }
 
 /// Get the global RuntimeEngine or return an error string.
-pub fn require_engine() -> Result<&'static Arc<RuntimeEngine>, String> {
+pub fn require_engine() -> Result<Arc<RuntimeEngine>, String> {
     global_engine().ok_or_else(|| "skill runtime not initialized".to_string())
 }
 
