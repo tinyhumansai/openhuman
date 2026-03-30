@@ -116,9 +116,12 @@ impl ChannelDefinition {
         mode: ChannelAuthMode,
         credentials: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), String> {
-        let spec = self
-            .auth_mode_spec(mode)
-            .ok_or_else(|| format!("channel '{}' does not support auth mode '{}'", self.id, mode))?;
+        let spec = self.auth_mode_spec(mode).ok_or_else(|| {
+            format!(
+                "channel '{}' does not support auth mode '{}'",
+                self.id, mode
+            )
+        })?;
 
         let missing: Vec<&str> = spec
             .fields
@@ -276,7 +279,12 @@ mod tests {
             for spec in &def.auth_modes {
                 for field in &spec.fields {
                     if field.required {
-                        assert!(!field.key.is_empty(), "empty key in {}.{:?}", def.id, spec.mode);
+                        assert!(
+                            !field.key.is_empty(),
+                            "empty key in {}.{:?}",
+                            def.id,
+                            spec.mode
+                        );
                         assert!(
                             !field.label.is_empty(),
                             "empty label in {}.{:?}",
@@ -296,7 +304,10 @@ mod tests {
         assert!(def.auth_mode_spec(ChannelAuthMode::ManagedDm).is_some());
 
         let bot = def.auth_mode_spec(ChannelAuthMode::BotToken).unwrap();
-        assert!(bot.fields.iter().any(|f| f.key == "bot_token" && f.required));
+        assert!(bot
+            .fields
+            .iter()
+            .any(|f| f.key == "bot_token" && f.required));
         assert!(bot.auth_action.is_none());
 
         let managed = def.auth_mode_spec(ChannelAuthMode::ManagedDm).unwrap();
@@ -356,10 +367,19 @@ mod tests {
         let v = serde_json::to_value(&def).expect("serialize");
         let obj = v.as_object().expect("top-level object");
         assert_eq!(obj.get("id").and_then(|v| v.as_str()), Some("telegram"));
-        assert_eq!(obj.get("display_name").and_then(|v| v.as_str()), Some("Telegram"));
-        let modes = obj.get("auth_modes").and_then(|v| v.as_array()).expect("auth_modes");
+        assert_eq!(
+            obj.get("display_name").and_then(|v| v.as_str()),
+            Some("Telegram")
+        );
+        let modes = obj
+            .get("auth_modes")
+            .and_then(|v| v.as_array())
+            .expect("auth_modes");
         assert_eq!(modes.len(), def.auth_modes.len());
-        let caps = obj.get("capabilities").and_then(|v| v.as_array()).expect("capabilities");
+        let caps = obj
+            .get("capabilities")
+            .and_then(|v| v.as_array())
+            .expect("capabilities");
         assert_eq!(caps.len(), def.capabilities.len());
     }
 

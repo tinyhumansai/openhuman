@@ -114,8 +114,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "channels",
             function: "describe",
             description: "Get the full definition for a single channel.",
-            inputs: vec![required_string("channel", "Channel identifier (e.g. telegram).")],
-            outputs: vec![json_output("definition", "Channel definition with auth modes and capabilities.")],
+            inputs: vec![required_string(
+                "channel",
+                "Channel identifier (e.g. telegram).",
+            )],
+            outputs: vec![json_output(
+                "definition",
+                "Channel definition with auth modes and capabilities.",
+            )],
         },
         "connect" => ControllerSchema {
             namespace: "channels",
@@ -123,10 +129,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Initiate a channel connection.",
             inputs: vec![
                 required_string("channel", "Channel identifier."),
-                required_string("authMode", "Auth mode (api_key, bot_token, oauth, managed_dm)."),
+                required_string(
+                    "authMode",
+                    "Auth mode (api_key, bot_token, oauth, managed_dm).",
+                ),
                 optional_json("credentials", "Credential fields for the chosen auth mode."),
             ],
-            outputs: vec![json_output("result", "Connection result with status and optional auth action.")],
+            outputs: vec![json_output(
+                "result",
+                "Connection result with status and optional auth action.",
+            )],
         },
         "disconnect" => ControllerSchema {
             namespace: "channels",
@@ -143,7 +155,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "status",
             description: "Get connection status for one or all channels.",
             inputs: vec![optional_string("channel", "Optional channel filter.")],
-            outputs: vec![json_output("entries", "Array of status entries per channel and auth mode.")],
+            outputs: vec![json_output(
+                "entries",
+                "Array of status entries per channel and auth mode.",
+            )],
         },
         "test" => ControllerSchema {
             namespace: "channels",
@@ -154,7 +169,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("authMode", "Auth mode to test."),
                 required_json("credentials", "Credential fields to test."),
             ],
-            outputs: vec![json_output("result", "Test result with success flag and message.")],
+            outputs: vec![json_output(
+                "result",
+                "Test result with success flag and message.",
+            )],
         },
         _ => ControllerSchema {
             namespace: "channels",

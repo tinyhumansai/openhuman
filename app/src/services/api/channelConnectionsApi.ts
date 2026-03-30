@@ -1,163 +1,69 @@
 import type {
   ChannelAuthMode,
-  ChannelConnection,
-  ChannelConnectionsByMode,
+  ChannelConnectionResult,
+  ChannelDefinition,
+  ChannelStatusEntry,
   ChannelType,
 } from '../../types/channels';
 import { callCoreRpc } from '../coreRpcClient';
 
 interface ConnectChannelPayload {
   authMode: ChannelAuthMode;
-  credentials?: { botToken?: string; apiKey?: string };
-}
-
-interface ConnectChannelResponse {
-  connection?: ChannelConnection;
-  oauthUrl?: string;
-}
-
-interface ChannelConnectionsResponse {
-  defaultMessagingChannel: ChannelType;
-  connections: Record<ChannelType, ChannelConnectionsByMode>;
-}
-
-interface AuthProfileSummary {
-  provider: string;
-  profileName: string;
-}
-
-interface OAuthIntegrationSummary {
-  id: string;
-  provider: string;
-}
-
-const SUPPORTED_CHANNELS: ChannelType[] = ['telegram', 'discord'];
-const SUPPORTED_AUTH_MODES: ChannelAuthMode[] = ['managed_dm', 'oauth', 'bot_token', 'api_key'];
-
-function emptyChannelConnectionsResponse(): ChannelConnectionsResponse {
-  return { defaultMessagingChannel: 'telegram', connections: { telegram: {}, discord: {} } };
-}
-
-function isSupportedChannel(value: string): value is ChannelType {
-  return SUPPORTED_CHANNELS.includes(value as ChannelType);
-}
-
-function makeConnectedChannelConnection(
-  channel: ChannelType,
-  authMode: ChannelAuthMode
-): ChannelConnection {
-  return {
-    channel,
-    authMode,
-    status: 'connected',
-    selectedDefault: false,
-    lastError: undefined,
-    capabilities: authMode === 'managed_dm' ? ['dm'] : ['read', 'write'],
-    updatedAt: new Date().toISOString(),
-  };
+  credentials?: Record<string, string>;
 }
 
 export const channelConnectionsApi = {
-  listConnections: async (): Promise<ChannelConnectionsResponse> => {
-    const [profilesResponse, integrationsResponse] = await Promise.all([
-      callCoreRpc<{ result: AuthProfileSummary[] }>({
-        method: 'openhuman.auth.list_provider_credentials',
-        params: {},
-      }),
-      callCoreRpc<{ result: OAuthIntegrationSummary[] }>({
-        method: 'openhuman.auth.oauth_list_integrations',
-        params: {},
-      }),
-    ]);
-
-    const output = emptyChannelConnectionsResponse();
-    const profiles = profilesResponse.result ?? [];
-    const integrations = integrationsResponse.result ?? [];
-
-    for (const profile of profiles) {
-      if (!isSupportedChannel(profile.provider)) continue;
-      const authMode = profile.profileName as ChannelAuthMode;
-      if (!SUPPORTED_AUTH_MODES.includes(authMode) || authMode === 'oauth') continue;
-      output.connections[profile.provider][authMode] = makeConnectedChannelConnection(
-        profile.provider,
-        authMode
-      );
-    }
-
-    for (const integration of integrations) {
-      if (!isSupportedChannel(integration.provider)) continue;
-      output.connections[integration.provider].oauth = makeConnectedChannelConnection(
-        integration.provider,
-        'oauth'
-      );
-    }
-
-    return output;
+  /** Fetch all available channel definitions from the backend. */
+  listDefinitions: async (): Promise<ChannelDefinition[]> => {
+    const response = await callCoreRpc<{ result: ChannelDefinition[] }>({
+      method: 'openhuman.channels_list',
+      params: {},
+    });
+    return response.result ?? [];
   },
 
+  /** Get connection status for one or all channels. */
+  listStatus: async (channel?: ChannelType): Promise<ChannelStatusEntry[]> => {
+    const params: Record<string, string> = {};
+    if (channel) params.channel = channel;
+    const response = await callCoreRpc<{ result: ChannelStatusEntry[] }>({
+      method: 'openhuman.channels_status',
+      params,
+    });
+    return response.result ?? [];
+  },
+
+  /** Connect a channel with the given auth mode and credentials. */
   connectChannel: async (
     channel: ChannelType,
     payload: ConnectChannelPayload
-  ): Promise<ConnectChannelResponse> => {
-    if (payload.authMode === 'oauth') {
-      const response = await callCoreRpc<{ result: { oauthUrl: string } }>({
-        method: 'openhuman.auth.oauth_connect',
-        params: { provider: channel, skillId: channel },
-      });
-      return {
-        oauthUrl: response.result.oauthUrl,
-        connection: makeConnectedChannelConnection(channel, payload.authMode),
-      };
-    }
-
-    const token =
-      payload.authMode === 'bot_token'
-        ? payload.credentials?.botToken?.trim()
-        : payload.authMode === 'api_key'
-          ? payload.credentials?.apiKey?.trim()
-          : undefined;
-
-    await callCoreRpc({
-      method: 'openhuman.auth.store_provider_credentials',
-      params: {
-        provider: channel,
-        profile: payload.authMode,
-        token,
-        fields: { authMode: payload.authMode },
-        setActive: true,
-      },
+  ): Promise<ChannelConnectionResult> => {
+    const response = await callCoreRpc<{ result: ChannelConnectionResult }>({
+      method: 'openhuman.channels_connect',
+      params: { channel, authMode: payload.authMode, credentials: payload.credentials ?? {} },
     });
-
-    return { connection: makeConnectedChannelConnection(channel, payload.authMode) };
+    return response.result;
   },
 
+  /** Disconnect a channel for a given auth mode. */
   disconnectChannel: async (channel: ChannelType, authMode: ChannelAuthMode): Promise<void> => {
-    if (authMode === 'oauth') {
-      const listResponse = await callCoreRpc<{ result: OAuthIntegrationSummary[] }>({
-        method: 'openhuman.auth.oauth_list_integrations',
-        params: {},
-      });
-      const integrationIds = (listResponse.result ?? [])
-        .filter(item => item.provider === channel)
-        .map(item => item.id);
-
-      await Promise.all(
-        integrationIds.map(integrationId =>
-          callCoreRpc({
-            method: 'openhuman.auth.oauth_revoke_integration',
-            params: { integrationId },
-          })
-        )
-      );
-      return;
-    }
-
-    await callCoreRpc({
-      method: 'openhuman.auth.remove_provider_credentials',
-      params: { provider: channel, profile: authMode },
-    });
+    await callCoreRpc({ method: 'openhuman.channels_disconnect', params: { channel, authMode } });
   },
 
+  /** Test channel credentials without persisting. */
+  testChannel: async (
+    channel: ChannelType,
+    authMode: ChannelAuthMode,
+    credentials: Record<string, string>
+  ): Promise<{ success: boolean; message: string }> => {
+    const response = await callCoreRpc<{ result: { success: boolean; message: string } }>({
+      method: 'openhuman.channels_test',
+      params: { channel, authMode, credentials },
+    });
+    return response.result;
+  },
+
+  /** Placeholder for default channel preference sync. */
   updatePreferences: async (defaultMessagingChannel: ChannelType): Promise<void> => {
     void defaultMessagingChannel;
   },

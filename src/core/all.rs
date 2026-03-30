@@ -49,9 +49,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::channels::providers::web::all_web_channel_registered_controllers(),
     );
-    controllers.extend(
-        crate::openhuman::channels::controllers::all_channels_registered_controllers(),
-    );
+    controllers
+        .extend(crate::openhuman::channels::controllers::all_channels_registered_controllers());
     controllers.extend(crate::openhuman::config::all_config_registered_controllers());
     controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());

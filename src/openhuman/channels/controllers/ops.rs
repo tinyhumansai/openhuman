@@ -72,9 +72,12 @@ pub async fn connect_channel(
     let def = find_channel_definition(channel_id)
         .ok_or_else(|| format!("unknown channel: {channel_id}"))?;
 
-    let spec = def
-        .auth_mode_spec(auth_mode)
-        .ok_or_else(|| format!("channel '{}' does not support auth mode '{}'", channel_id, auth_mode))?;
+    let spec = def.auth_mode_spec(auth_mode).ok_or_else(|| {
+        format!(
+            "channel '{}' does not support auth mode '{}'",
+            channel_id, auth_mode
+        )
+    })?;
 
     // For OAuth/managed modes, return the auth action without storing credentials.
     if let Some(action) = spec.auth_action {
@@ -83,10 +86,7 @@ pub async fn connect_channel(
                 status: "pending_auth".to_string(),
                 restart_required: false,
                 auth_action: Some(action.to_string()),
-                message: Some(format!(
-                    "Initiate '{}' auth flow on the frontend.",
-                    action
-                )),
+                message: Some(format!("Initiate '{}' auth flow on the frontend.", action)),
             },
             vec![],
         ));
@@ -119,7 +119,7 @@ pub async fn connect_channel(
     credentials::ops::store_provider_credentials(
         config,
         &provider_key,
-        None,  // default profile
+        None, // default profile
         token,
         fields,
         Some(true),
@@ -148,8 +148,7 @@ pub async fn disconnect_channel(
     auth_mode: ChannelAuthMode,
 ) -> Result<RpcOutcome<Value>, String> {
     // Verify channel exists.
-    find_channel_definition(channel_id)
-        .ok_or_else(|| format!("unknown channel: {channel_id}"))?;
+    find_channel_definition(channel_id).ok_or_else(|| format!("unknown channel: {channel_id}"))?;
 
     let provider_key = credential_provider(channel_id, auth_mode);
 
@@ -174,23 +173,16 @@ pub async fn channel_status(
     channel_id: Option<&str>,
 ) -> Result<RpcOutcome<Vec<ChannelStatusEntry>>, String> {
     // List all stored credentials with "channel:" prefix.
-    let stored = credentials::ops::list_provider_credentials(
-        config,
-        Some("channel:".to_string()),
-    )
-    .await
-    .map_err(|e| format!("failed to list credentials: {e}"))?;
+    let stored = credentials::ops::list_provider_credentials(config, Some("channel:".to_string()))
+        .await
+        .map_err(|e| format!("failed to list credentials: {e}"))?;
 
-    let stored_providers: Vec<String> = stored
-        .value
-        .iter()
-        .map(|p| p.provider.clone())
-        .collect();
+    let stored_providers: Vec<String> = stored.value.iter().map(|p| p.provider.clone()).collect();
 
     let defs = match channel_id {
         Some(id) => {
-            let def = find_channel_definition(id)
-                .ok_or_else(|| format!("unknown channel: {id}"))?;
+            let def =
+                find_channel_definition(id).ok_or_else(|| format!("unknown channel: {id}"))?;
             vec![def]
         }
         None => all_channel_definitions(),
