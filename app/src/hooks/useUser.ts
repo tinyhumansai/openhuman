@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { fetchCurrentUser } from '../store/userSlice';
@@ -12,10 +12,17 @@ export const useUser = () => {
   const user = useAppSelector(state => state.user.user);
   const isLoading = useAppSelector(state => state.user.isLoading);
   const error = useAppSelector(state => state.user.error);
+  const lastAutoFetchTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Fetch user data when token is available and user is not loaded
-    if (token && !user && !isLoading) {
+    if (!token) {
+      lastAutoFetchTokenRef.current = null;
+      return;
+    }
+
+    // Auto-fetch at most once per token to avoid infinite retry loops on persistent 401s.
+    if (!user && !isLoading && lastAutoFetchTokenRef.current !== token) {
+      lastAutoFetchTokenRef.current = token;
       dispatch(fetchCurrentUser());
     }
   }, [token, user, isLoading, dispatch]);

@@ -15,6 +15,7 @@ function makeState(
   return {
     auth: {
       token,
+      isAuthBootstrapComplete: true,
       isOnboardedByUser,
       onboardingTasksByUser: {},
       hasIncompleteOnboardingByUser: {},
@@ -32,13 +33,12 @@ function makeState(
     ai: {} as RootState['ai'],
     skills: {} as RootState['skills'],
     daemon: {} as RootState['daemon'],
-    gmail: {} as RootState['gmail'],
     thread: {} as RootState['thread'],
     intelligence: {} as RootState['intelligence'],
     invite: {} as RootState['invite'],
-    notion: {} as RootState['notion'],
     accessibility: {} as RootState['accessibility'],
-  } as RootState;
+    channelConnections: {} as RootState['channelConnections'],
+  } as unknown as RootState;
 }
 
 describe('selectIsOnboarded', () => {
