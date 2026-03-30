@@ -32,6 +32,14 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         skills_schema("sync"),
         skills_schema("call_tool"),
         skills_schema("rpc"),
+        skills_schema("discover"),
+        skills_schema("list"),
+        skills_schema("data_read"),
+        skills_schema("data_write"),
+        skills_schema("data_dir"),
+        skills_schema("enable"),
+        skills_schema("disable"),
+        skills_schema("is_enabled"),
     ]
 }
 
@@ -111,6 +119,38 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: skills_schema("rpc"),
             handler: handle_skills_rpc,
+        },
+        RegisteredController {
+            schema: skills_schema("discover"),
+            handler: handle_skills_discover,
+        },
+        RegisteredController {
+            schema: skills_schema("list"),
+            handler: handle_skills_list,
+        },
+        RegisteredController {
+            schema: skills_schema("data_read"),
+            handler: handle_skills_data_read,
+        },
+        RegisteredController {
+            schema: skills_schema("data_write"),
+            handler: handle_skills_data_write,
+        },
+        RegisteredController {
+            schema: skills_schema("data_dir"),
+            handler: handle_skills_data_dir,
+        },
+        RegisteredController {
+            schema: skills_schema("enable"),
+            handler: handle_skills_enable,
+        },
+        RegisteredController {
+            schema: skills_schema("disable"),
+            handler: handle_skills_disable,
+        },
+        RegisteredController {
+            schema: skills_schema("is_enabled"),
+            handler: handle_skills_is_enabled,
         },
     ]
 }
@@ -391,6 +431,124 @@ fn skills_schema(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "discover" => ControllerSchema {
+            namespace: "skills",
+            function: "discover",
+            description: "Discover all available skill manifests from source and workspace directories.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of skill manifests.",
+                required: true,
+            }],
+        },
+        "list" => ControllerSchema {
+            namespace: "skills",
+            function: "list",
+            description: "List all registered (running or stopped) skill snapshots.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Array of skill snapshots.",
+                required: true,
+            }],
+        },
+        "data_read" => ControllerSchema {
+            namespace: "skills",
+            function: "data_read",
+            description: "Read a file from a skill's data directory.",
+            inputs: vec![
+                skill_id_input("The skill ID."),
+                FieldSchema {
+                    name: "filename",
+                    ty: TypeSchema::String,
+                    comment: "Filename to read.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "content",
+                ty: TypeSchema::String,
+                comment: "File content.",
+                required: true,
+            }],
+        },
+        "data_write" => ControllerSchema {
+            namespace: "skills",
+            function: "data_write",
+            description: "Write a file to a skill's data directory.",
+            inputs: vec![
+                skill_id_input("The skill ID."),
+                FieldSchema {
+                    name: "filename",
+                    ty: TypeSchema::String,
+                    comment: "Filename to write.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "content",
+                    ty: TypeSchema::String,
+                    comment: "Content to write.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Write acknowledgment.",
+                required: true,
+            }],
+        },
+        "data_dir" => ControllerSchema {
+            namespace: "skills",
+            function: "data_dir",
+            description: "Get the data directory path for a skill.",
+            inputs: vec![skill_id_input("The skill ID.")],
+            outputs: vec![FieldSchema {
+                name: "path",
+                ty: TypeSchema::String,
+                comment: "Absolute path to the skill's data directory.",
+                required: true,
+            }],
+        },
+        "enable" => ControllerSchema {
+            namespace: "skills",
+            function: "enable",
+            description: "Enable a skill (set preference and start it).",
+            inputs: vec![skill_id_input("The skill ID to enable.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Enable acknowledgment.",
+                required: true,
+            }],
+        },
+        "disable" => ControllerSchema {
+            namespace: "skills",
+            function: "disable",
+            description: "Disable a skill (set preference and stop it).",
+            inputs: vec![skill_id_input("The skill ID to disable.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Disable acknowledgment.",
+                required: true,
+            }],
+        },
+        "is_enabled" => ControllerSchema {
+            namespace: "skills",
+            function: "is_enabled",
+            description: "Check whether a skill is enabled in user preferences.",
+            inputs: vec![skill_id_input("The skill ID to check.")],
+            outputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "Whether the skill is enabled.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "skills",
             function: "unknown",
@@ -613,6 +771,103 @@ fn handle_skills_rpc(params: Map<String, Value>) -> ControllerFuture {
                 p.params.unwrap_or(serde_json::json!({})),
             )
             .await
+    })
+}
+
+fn handle_skills_discover(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let engine = require_engine()?;
+        let manifests = engine.discover_skills().await?;
+        serde_json::to_value(&manifests).map_err(|e| e.to_string())
+    })
+}
+
+fn handle_skills_list(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let engine = require_engine()?;
+        let skills = engine.list_skills();
+        serde_json::to_value(&skills).map_err(|e| e.to_string())
+    })
+}
+
+fn handle_skills_data_read(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let skill_id = params
+            .get("skill_id")
+            .and_then(|v| v.as_str())
+            .ok_or("missing skill_id")?
+            .to_string();
+        let filename = params
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .ok_or("missing filename")?
+            .to_string();
+        let engine = require_engine()?;
+        let content = engine.data_read(&skill_id, &filename)?;
+        Ok(serde_json::json!({ "content": content }))
+    })
+}
+
+fn handle_skills_data_write(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let skill_id = params
+            .get("skill_id")
+            .and_then(|v| v.as_str())
+            .ok_or("missing skill_id")?
+            .to_string();
+        let filename = params
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .ok_or("missing filename")?
+            .to_string();
+        let content = params
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or("missing content")?
+            .to_string();
+        let engine = require_engine()?;
+        engine.data_write(&skill_id, &filename, &content)?;
+        Ok(serde_json::json!({ "ok": true }))
+    })
+}
+
+fn handle_skills_data_dir(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p: SkillIdParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        let engine = require_engine()?;
+        let path = engine.skill_data_dir(&p.skill_id);
+        Ok(serde_json::json!({ "path": path.display().to_string() }))
+    })
+}
+
+fn handle_skills_enable(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p: SkillIdParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        let engine = require_engine()?;
+        engine.enable_skill(&p.skill_id).await?;
+        Ok(serde_json::json!({ "ok": true }))
+    })
+}
+
+fn handle_skills_disable(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p: SkillIdParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        let engine = require_engine()?;
+        engine.disable_skill(&p.skill_id).await?;
+        Ok(serde_json::json!({ "ok": true }))
+    })
+}
+
+fn handle_skills_is_enabled(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p: SkillIdParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        let engine = require_engine()?;
+        let enabled = engine.is_skill_enabled(&p.skill_id);
+        Ok(serde_json::json!({ "enabled": enabled }))
     })
 }
 

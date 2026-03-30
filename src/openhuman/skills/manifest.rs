@@ -18,7 +18,7 @@ pub struct SkillSetup {
 }
 
 /// Raw manifest as it appears on disk.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub struct SkillManifest {
     /// Unique skill identifier (e.g., "price-tracker").
     pub id: String,

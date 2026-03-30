@@ -1698,31 +1698,29 @@ export async function openhumanAutocompleteClearHistory(): Promise<
 }
 
 export async function runtimeListSkills(): Promise<SkillSnapshot[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_list_skills');
+  return await callCoreRpc<SkillSnapshot[]>({
+    method: 'openhuman.skills_list',
+  });
 }
 
 export async function runtimeDiscoverSkills(): Promise<RuntimeDiscoveredSkill[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_discover_skills');
+  return await callCoreRpc<RuntimeDiscoveredSkill[]>({
+    method: 'openhuman.skills_discover',
+  });
 }
 
 export async function runtimeStartSkill(skillId: string): Promise<SkillSnapshot> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_start_skill', { skill_id: skillId });
+  return await callCoreRpc<SkillSnapshot>({
+    method: 'openhuman.skills_start',
+    params: { skill_id: skillId },
+  });
 }
 
 export async function runtimeStopSkill(skillId: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_stop_skill', { skill_id: skillId });
+  await callCoreRpc({
+    method: 'openhuman.skills_stop',
+    params: { skill_id: skillId },
+  });
 }
 
 export async function runtimeRpc<T = unknown>(
@@ -1730,17 +1728,18 @@ export async function runtimeRpc<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke<T>('runtime_rpc', { skill_id: skillId, method, params });
+  return await callCoreRpc<T>({
+    method: 'openhuman.skills_rpc',
+    params: { skill_id: skillId, method, params },
+  });
 }
 
 export async function runtimeSkillDataRead(skillId: string, filename: string): Promise<string> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_skill_data_read', { skill_id: skillId, filename });
+  const result = await callCoreRpc<{ content: string }>({
+    method: 'openhuman.skills_data_read',
+    params: { skill_id: skillId, filename },
+  });
+  return result.content;
 }
 
 export async function runtimeSkillDataWrite(
@@ -1748,17 +1747,18 @@ export async function runtimeSkillDataWrite(
   filename: string,
   content: string
 ): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_skill_data_write', { skill_id: skillId, filename, content });
+  await callCoreRpc({
+    method: 'openhuman.skills_data_write',
+    params: { skill_id: skillId, filename, content },
+  });
 }
 
 export async function runtimeSkillDataDir(skillId: string): Promise<string> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_skill_data_dir', { skill_id: skillId });
+  const result = await callCoreRpc<{ path: string }>({
+    method: 'openhuman.skills_data_dir',
+    params: { skill_id: skillId },
+  });
+  return result.path;
 }
 
 export async function runtimeListSkillOptions(skillId: string): Promise<RuntimeSkillOption[]> {
@@ -1785,29 +1785,30 @@ export async function runtimeSetSkillOption(
 }
 
 export async function runtimeIsSkillEnabled(skillId: string): Promise<boolean> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_is_skill_enabled', { skill_id: skillId });
+  const result = await callCoreRpc<{ enabled: boolean }>({
+    method: 'openhuman.skills_is_enabled',
+    params: { skill_id: skillId },
+  });
+  return result.enabled;
 }
 
 export async function runtimeEnableSkill(skillId: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_enable_skill', { skill_id: skillId });
+  await callCoreRpc({
+    method: 'openhuman.skills_enable',
+    params: { skill_id: skillId },
+  });
 }
 
 export async function runtimeDisableSkill(skillId: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_disable_skill', { skill_id: skillId });
+  await callCoreRpc({
+    method: 'openhuman.skills_disable',
+    params: { skill_id: skillId },
+  });
 }
 
 export async function runtimeSkillDataStats(skillId: string): Promise<RuntimeSkillDataStats> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_skill_data_stats', { skill_id: skillId });
+  return await callCoreRpc<RuntimeSkillDataStats>({
+    method: 'openhuman.skills_status',
+    params: { skill_id: skillId },
+  });
 }
