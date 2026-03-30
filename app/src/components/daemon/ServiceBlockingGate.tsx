@@ -17,10 +17,7 @@ interface ServiceBlockingGateProps {
 
 type GateStatus = 'checking' | 'ready' | 'blocked';
 const SERVICE_GATE_POLL_MS = 3000;
-type RefreshOptions = {
-  showChecking?: boolean;
-  clearError?: boolean;
-};
+type RefreshOptions = { showChecking?: boolean; clearError?: boolean };
 
 const normalizeServiceState = (state: ServiceState | undefined): string => {
   if (!state) return 'Unknown';
