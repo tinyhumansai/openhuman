@@ -165,7 +165,7 @@ const LocalAIStep = ({ onNext }: LocalAIStepProps) => {
   /* ---------- Phase 1: consent ---------- */
   if (consent === null) {
     return (
-      <div className="rounded-3xl border border-stone-700 bg-black/30 p-8 shadow-large animate-fade-up">
+      <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
         <div className="text-center mb-5">
           <h1 className="text-xl font-bold mb-2">Download Local AI Models</h1>
           <p className="opacity-70 text-sm">
@@ -215,7 +215,7 @@ const LocalAIStep = ({ onNext }: LocalAIStepProps) => {
   /* ---------- Phase 2: consent=false, skip ---------- */
   if (consent === false) {
     return (
-      <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
+      <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
         <div className="text-center mb-5">
           <h1 className="text-xl font-bold mb-2">Local AI Models</h1>
           <p className="opacity-70 text-sm">

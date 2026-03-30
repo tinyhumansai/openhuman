@@ -26,7 +26,7 @@ const ScreenPermissionsStep = ({ onNext }: ScreenPermissionsStepProps) => {
   const isGranted = accessibilityPermission === 'granted';
 
   return (
-    <div className="rounded-3xl border border-stone-700 bg-black/30 p-8 shadow-large animate-fade-up">
+    <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
       <div className="text-center mb-5">
         <h1 className="text-xl font-bold mb-2">Screen & Accessibility Permissions</h1>
         <p className="opacity-70 text-sm">
@@ -49,7 +49,7 @@ const ScreenPermissionsStep = ({ onNext }: ScreenPermissionsStepProps) => {
             Processing uses your local AI model and hence remains free.
           </p>
         </div>
-        <div className="rounded-2xl border border-stone-700 bg-black/30 p-3">
+        <div className="rounded-2xl border border-stone-700 bg-stone-900 p-3">
           <p className="text-xs uppercase tracking-wide opacity-60 mb-2">
             Current permission state
           </p>

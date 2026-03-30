@@ -163,7 +163,7 @@ const MnemonicStep = ({ onComplete }: MnemonicStepProps) => {
   const canContinue = mode === 'generate' ? confirmed : isImportComplete;
 
   return (
-    <div className="rounded-3xl border border-stone-700 bg-black/30 p-8 shadow-large animate-fade-up">
+    <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
       {mode === 'generate' ? (
         <>
           <div className="text-center mb-4">

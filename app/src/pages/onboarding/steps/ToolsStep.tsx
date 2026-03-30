@@ -42,7 +42,7 @@ const ToolsStep = ({ onNext }: ToolsStepProps) => {
     .map(([k]) => k);
 
   return (
-    <div className="rounded-3xl border border-stone-700 bg-black/30 p-8 shadow-large animate-fade-up">
+    <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
       <div className="text-center mb-5">
         <h1 className="text-xl font-bold mb-2">Enable Tools</h1>
         <p className="opacity-70 text-sm">
@@ -68,7 +68,7 @@ const ToolsStep = ({ onNext }: ToolsStepProps) => {
                     key={tool.id}
                     type="button"
                     onClick={() => toggle(tool.id)}
-                    className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-700 bg-black/30 hover:border-stone-600 transition-colors text-left">
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-700 bg-stone-900 hover:border-stone-600 transition-colors text-left">
                     <div className="min-w-0 flex-1">
                       <span className="text-sm font-medium">{tool.displayName}</span>
                       <p className="text-xs opacity-60 mt-0.5">{tool.description}</p>
