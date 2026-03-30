@@ -221,7 +221,15 @@ impl ToolDispatcher for NativeToolDispatcher {
     }
 
     fn prompt_instructions(&self, _tools: &[Box<dyn Tool>]) -> String {
-        String::new()
+        [
+            "## Tool Use Protocol",
+            "",
+            "When a tool is needed, emit tool calls directly via the model's native tool-calling output.",
+            "Do not only narrate intent (for example, avoid \"Let me check...\") without emitting the tool call.",
+            "After tool results are provided, continue reasoning and then produce the final answer.",
+            "",
+        ]
+        .join("\n")
     }
 
     fn to_provider_messages(&self, history: &[ConversationMessage]) -> Vec<ChatMessage> {

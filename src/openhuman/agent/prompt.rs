@@ -251,7 +251,8 @@ fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &s
             }
         }
         Err(_) => {
-            let _ = writeln!(prompt, "### {filename}\n\n[File not found: {filename}]\n");
+            // Keep prompt focused: missing optional identity/bootstrap files should not
+            // add noisy placeholders that dilute tool-calling instructions.
         }
     }
 }
