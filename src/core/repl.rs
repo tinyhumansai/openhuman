@@ -156,7 +156,6 @@ struct ReplState {
     json_mode: bool,
     show_time: bool,
     verbose: bool,
-    tool_warning_shown: bool,
 }
 
 impl ReplState {
@@ -165,7 +164,6 @@ impl ReplState {
             json_mode: false,
             show_time: false,
             verbose,
-            tool_warning_shown: false,
         }
     }
 }
