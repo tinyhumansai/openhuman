@@ -79,3 +79,8 @@ pub async fn core_rpc_relay(
 
     crate::core_rpc::call::<Value>(&request.method, request.params).await
 }
+
+#[tauri::command]
+pub fn core_rpc_url() -> String {
+    crate::core_rpc::resolved_rpc_url()
+}

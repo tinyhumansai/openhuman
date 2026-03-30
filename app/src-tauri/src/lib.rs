@@ -593,6 +593,7 @@ pub fn run() {
                     ai_get_config,
                     ai_refresh_config,
                     core_rpc_relay,
+                    core_rpc_url,
                     show_window,
                     hide_window,
                     toggle_window,

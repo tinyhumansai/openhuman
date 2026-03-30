@@ -33,6 +33,10 @@ fn rpc_url() -> String {
     std::env::var("OPENHUMAN_CORE_RPC_URL").unwrap_or_else(|_| DEFAULT_CORE_RPC_URL.to_string())
 }
 
+pub fn resolved_rpc_url() -> String {
+    rpc_url()
+}
+
 pub async fn call<T: DeserializeOwned>(
     method: &str,
     params: serde_json::Value,

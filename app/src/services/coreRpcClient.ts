@@ -1,3 +1,5 @@
+import { invoke, isTauri as coreIsTauri } from '@tauri-apps/api/core';
+
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_URL } from '../utils/config';
 
@@ -43,6 +45,8 @@ const LEGACY_METHOD_ALIASES: Record<string, string> = {
 };
 
 let nextJsonRpcId = 1;
+let resolvedCoreRpcUrl: string | null = null;
+let resolvingCoreRpcUrl: Promise<string> | null = null;
 
 function coreRpcErrorMessage(err: unknown): string {
   if (err instanceof Error && err.message) {
@@ -80,6 +84,38 @@ function normalizeLegacyMethod(method: string): string {
   return method;
 }
 
+async function getCoreRpcUrl(): Promise<string> {
+  if (resolvedCoreRpcUrl) {
+    return resolvedCoreRpcUrl;
+  }
+
+  if (!coreIsTauri()) {
+    resolvedCoreRpcUrl = CORE_RPC_URL;
+    return CORE_RPC_URL;
+  }
+
+  if (resolvingCoreRpcUrl) {
+    return resolvingCoreRpcUrl;
+  }
+
+  const resolvePromise: Promise<string> = (async () => {
+    try {
+      const url = await invoke<string>('core_rpc_url');
+      const trimmed = String(url || '').trim();
+      resolvedCoreRpcUrl = trimmed || CORE_RPC_URL;
+      return resolvedCoreRpcUrl || CORE_RPC_URL;
+    } catch {
+      resolvedCoreRpcUrl = CORE_RPC_URL;
+      return CORE_RPC_URL;
+    } finally {
+      resolvingCoreRpcUrl = null;
+    }
+  })();
+  resolvingCoreRpcUrl = resolvePromise;
+
+  return resolvePromise;
+}
+
 export async function callCoreRpc<T>({
   method,
   params,
@@ -100,7 +136,8 @@ export async function callCoreRpc<T>({
   };
 
   try {
-    const response = await fetch(CORE_RPC_URL, {
+    const rpcUrl = await getCoreRpcUrl();
+    const response = await fetch(rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

@@ -9,8 +9,20 @@ import './polyfills';
 import { initSentry } from './services/analytics';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 
+const ensureDefaultHashRoute = () => {
+  const hash = window.location.hash;
+  if (!hash || hash === '#') {
+    window.location.replace(`${window.location.pathname}${window.location.search}#/`);
+    return;
+  }
+  if (!hash.startsWith('#/')) {
+    window.location.hash = '/';
+  }
+};
+
 // Initialize Sentry early (before React renders)
 initSentry();
+ensureDefaultHashRoute();
 
 // Deep link listener — try/catch handles non-Tauri environments
 setupDesktopDeepLinkListener().catch(err => {
