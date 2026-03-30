@@ -7,6 +7,7 @@ import { setOnboardedForUser, setOnboardingTasksForUser } from '../../store/auth
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import LocalAIStep from './steps/LocalAIStep';
 import ScreenPermissionsStep from './steps/ScreenPermissionsStep';
+import WelcomeStep from './steps/WelcomeStep';
 import SkillsStep from './steps/SkillsStep';
 import ToolsStep from './steps/ToolsStep';
 
@@ -28,7 +29,7 @@ const Onboarding = () => {
     accessibilityPermissionGranted: false,
     enabledTools: [],
   });
-  const totalSteps = 4;
+  const totalSteps = 5;
 
   const handleNext = () => {
     if (currentStep < totalSteps - 1) {
@@ -94,14 +95,18 @@ const Onboarding = () => {
 
   const renderStep = () => {
     switch (currentStep) {
+      case 0:
+        return <WelcomeStep onNext={handleNext} />;
       case 1:
-        return <ScreenPermissionsStep onNext={handleAccessibilityNext} />;
+        return <LocalAIStep onNext={handleLocalAINext} />;
       case 2:
-        return <ToolsStep onNext={handleToolsNext} />;
+        return <ScreenPermissionsStep onNext={handleAccessibilityNext} />;
       case 3:
+        return <ToolsStep onNext={handleToolsNext} />;
+      case 4:
         return <SkillsStep onComplete={handleComplete} />;
       default:
-        return <LocalAIStep onNext={handleLocalAINext} />;
+        return null;
     }
   };
 

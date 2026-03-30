@@ -30,23 +30,41 @@ const ScreenPermissionsStep = ({ onNext }: ScreenPermissionsStepProps) => {
       <div className="text-center mb-5">
         <h1 className="text-xl font-bold mb-2">Screen & Accessibility Permissions</h1>
         <p className="opacity-70 text-sm">
-          Grant screen and accessibility access so OpenHuman can observe your workflow and assist
-          with desktop actions.
+          OpenHuman uses information from your screen to constantly build context about your
+          workflow and assist you with desktop actions. You can always change this later in
+          Settings.
         </p>
       </div>
 
-      <div className="rounded-2xl border border-stone-700 bg-black/30 p-4 mb-4">
-        <p className="text-xs uppercase tracking-wide opacity-60 mb-2">Current permission state</p>
-        <div className="flex items-center justify-between">
-          <span className="text-sm">Accessibility</span>
-          <span
-            className={`text-xs px-2 py-1 rounded-md border ${
-              isGranted
-                ? 'bg-sage-500/20 border-sage-500/30 text-sage-300'
-                : 'bg-amber-500/20 border-amber-500/30 text-amber-300'
-            }`}>
-            {accessibilityPermission}
-          </span>
+      <div className="space-y-3 mb-5">
+        <div className="rounded-2xl border border-sage-500/30 bg-sage-500/10 p-3">
+          <p className="text-sm font-medium mb-1">Complete Privacy</p>
+          <p className="text-xs opacity-80">
+            All screenshots and accessibility information gets processed locally by your local AI
+            model. No data is sent to any third party.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-sage-500/30 bg-sage-500/10 p-3">
+          <p className="text-sm font-medium mb-1">Absolutely Free</p>
+          <p className="text-xs opacity-80">
+            Processing uses your local AI model and hence remains free.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-stone-700 bg-black/30 p-3">
+          <p className="text-xs uppercase tracking-wide opacity-60 mb-2">
+            Current permission state
+          </p>
+          <div className="flex items-center justify-between">
+            <span className="text-sm">Accessibility</span>
+            <span
+              className={`text-xs px-2 py-1 rounded-md border ${
+                isGranted
+                  ? 'bg-sage-500/20 border-sage-500/30 text-sage-300'
+                  : 'bg-amber-500/20 border-amber-500/30 text-amber-300'
+              }`}>
+              {accessibilityPermission}
+            </span>
+          </div>
         </div>
       </div>
 

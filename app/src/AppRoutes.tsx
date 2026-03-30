@@ -150,7 +150,7 @@ const AppRoutes = () => {
         <Route
           path="/home"
           element={
-            <ProtectedRoute requireAuth={true}>
+            <ProtectedRoute requireAuth={true} requireOnboarded={true}>
               <HomeRoute
                 hasWorkspaceOnboardingFlag={hasWorkspaceOnboardingFlag}
                 isWorkspaceFlagLoading={isWorkspaceFlagLoading}
