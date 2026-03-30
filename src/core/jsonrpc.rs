@@ -88,6 +88,9 @@ pub fn default_state() -> AppState {
 // --- HTTP server (Axum) ----------------------------------------------------
 
 pub fn build_core_http_router() -> Router {
+    let (socket_layer, io) = crate::core::socketio::attach_socketio();
+    crate::core::socketio::spawn_web_channel_bridge(io);
+
     Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health_handler))
@@ -95,6 +98,7 @@ pub fn build_core_http_router() -> Router {
         .route("/events", get(events_handler))
         .route("/rpc", post(rpc_handler))
         .fallback(not_found_handler)
+        .layer(socket_layer)
         .layer(middleware::from_fn(cors_middleware))
         .with_state(AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),

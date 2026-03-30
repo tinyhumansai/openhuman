@@ -12,11 +12,7 @@ mod core_process;
 mod core_rpc;
 mod utils;
 
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Key, Nonce};
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use commands::*;
-use rand::TryRngCore;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -31,16 +27,6 @@ use tauri_plugin_deep_link::DeepLinkExt;
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-fn derive_key(password: &str) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(password.as_bytes());
-    let hash = hasher.finalize();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&hash[..32]);
-    key
 }
 
 #[derive(Debug, Clone, Serialize)]

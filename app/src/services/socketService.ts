@@ -1,14 +1,14 @@
+import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { io, Socket } from 'socket.io-client';
 
 import { MCPTool, MCPToolCall, SocketIOMCPTransportImpl } from '../lib/mcp';
 import { skillManager, syncToolsToBackend } from '../lib/skills';
-import { getBackendUrl } from '../services/backendUrl';
 import { store } from '../store';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
 import type { ChannelAuthMode, ChannelConnectionStatus, ChannelType } from '../types/channels';
-import { IS_DEV } from '../utils/config';
+import { CORE_RPC_URL, IS_DEV } from '../utils/config';
 import { createSafeLogData, sanitizeError } from '../utils/sanitize';
 
 // Socket service logger using debug package
@@ -20,6 +20,24 @@ const socketError = debug('socket:error');
 // Enable socket logging in development by default
 if (IS_DEV) {
   debug.enable('socket*');
+}
+
+function coreSocketBaseFromRpcUrl(rpcUrl: string): string {
+  const trimmed = rpcUrl.trim().replace(/\/+$/, '');
+  return trimmed.endsWith('/rpc') ? trimmed.slice(0, -4) : trimmed;
+}
+
+async function resolveCoreSocketBaseUrl(): Promise<string> {
+  if (!coreIsTauri()) {
+    return coreSocketBaseFromRpcUrl(CORE_RPC_URL);
+  }
+
+  try {
+    const rpcUrl = await invoke<string>('core_rpc_url');
+    return coreSocketBaseFromRpcUrl(String(rpcUrl || CORE_RPC_URL));
+  } catch {
+    return coreSocketBaseFromRpcUrl(CORE_RPC_URL);
+  }
 }
 
 interface JwtPayload {
@@ -108,8 +126,8 @@ class SocketService {
     const uid = getSocketUserId();
     store.dispatch(setStatusForUser({ userId: uid, status: 'connecting' }));
 
-    const backendUrl = await getBackendUrl();
-    socketLog('Connecting', { userId: uid, backendUrl });
+    const backendUrl = await resolveCoreSocketBaseUrl();
+    socketLog('Connecting to core socket', { userId: uid, backendUrl });
 
     // Ensure we're not connecting to the wrong URL
     if (backendUrl.includes('localhost:1420') || backendUrl.includes(':1420')) {
