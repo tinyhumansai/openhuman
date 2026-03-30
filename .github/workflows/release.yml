@@ -453,9 +453,12 @@ jobs:
           SIDECAR_BASE: ${{ steps.core-paths.outputs.sidecar_base }}
         run: |
           SIDECAR_PATH="app/src-tauri/binaries/${SIDECAR_BASE}-${MATRIX_TARGET}"
+          ENTITLEMENTS="app/src-tauri/entitlements.sidecar.plist"
           echo "Signing sidecar: $SIDECAR_PATH"
-          codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" "$SIDECAR_PATH"
+          echo "Using entitlements: $ENTITLEMENTS"
+          codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign "$APPLE_SIGNING_IDENTITY" "$SIDECAR_PATH"
           codesign --verify --verbose "$SIDECAR_PATH"
+          codesign --display --entitlements - "$SIDECAR_PATH"
           echo "Sidecar signed successfully"
 
       - name: Resolve standalone core CLI artifact path

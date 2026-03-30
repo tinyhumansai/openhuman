@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "OpenHuman"
-version = "0.49.20"
+version = "0.49.21"
 dependencies = [
  "env_logger",
  "log",

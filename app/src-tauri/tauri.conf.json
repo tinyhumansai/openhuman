@@ -53,6 +53,7 @@
     "createUpdaterArtifacts": true,
     "macOS": {
       "minimumSystemVersion": "10.15",
+      "entitlements": "entitlements.sidecar.plist",
       "dmg": {
         "background": "./images/background-dmg.png"
       }
