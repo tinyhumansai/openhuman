@@ -1698,15 +1698,11 @@ export async function openhumanAutocompleteClearHistory(): Promise<
 }
 
 export async function runtimeListSkills(): Promise<SkillSnapshot[]> {
-  return await callCoreRpc<SkillSnapshot[]>({
-    method: 'openhuman.skills_list',
-  });
+  return await callCoreRpc<SkillSnapshot[]>({ method: 'openhuman.skills_list' });
 }
 
 export async function runtimeDiscoverSkills(): Promise<RuntimeDiscoveredSkill[]> {
-  return await callCoreRpc<RuntimeDiscoveredSkill[]>({
-    method: 'openhuman.skills_discover',
-  });
+  return await callCoreRpc<RuntimeDiscoveredSkill[]>({ method: 'openhuman.skills_discover' });
 }
 
 export async function runtimeStartSkill(skillId: string): Promise<SkillSnapshot> {
@@ -1717,10 +1713,7 @@ export async function runtimeStartSkill(skillId: string): Promise<SkillSnapshot>
 }
 
 export async function runtimeStopSkill(skillId: string): Promise<void> {
-  await callCoreRpc({
-    method: 'openhuman.skills_stop',
-    params: { skill_id: skillId },
-  });
+  await callCoreRpc({ method: 'openhuman.skills_stop', params: { skill_id: skillId } });
 }
 
 export async function runtimeRpc<T = unknown>(
@@ -1793,17 +1786,11 @@ export async function runtimeIsSkillEnabled(skillId: string): Promise<boolean> {
 }
 
 export async function runtimeEnableSkill(skillId: string): Promise<void> {
-  await callCoreRpc({
-    method: 'openhuman.skills_enable',
-    params: { skill_id: skillId },
-  });
+  await callCoreRpc({ method: 'openhuman.skills_enable', params: { skill_id: skillId } });
 }
 
 export async function runtimeDisableSkill(skillId: string): Promise<void> {
-  await callCoreRpc({
-    method: 'openhuman.skills_disable',
-    params: { skill_id: skillId },
-  });
+  await callCoreRpc({ method: 'openhuman.skills_disable', params: { skill_id: skillId } });
 }
 
 export async function runtimeSkillDataStats(skillId: string): Promise<RuntimeSkillDataStats> {

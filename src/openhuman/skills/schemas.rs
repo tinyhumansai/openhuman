@@ -408,7 +408,8 @@ fn skills_schema(function: &str) -> ControllerSchema {
         "rpc" => ControllerSchema {
             namespace: "skills",
             function: "rpc",
-            description: "Send an arbitrary RPC method to a running skill (e.g. oauth/complete, skill/sync).",
+            description:
+                "Send an arbitrary RPC method to a running skill (e.g. oauth/complete, skill/sync).",
             inputs: vec![
                 skill_id_input("The target skill ID."),
                 FieldSchema {
@@ -434,7 +435,8 @@ fn skills_schema(function: &str) -> ControllerSchema {
         "discover" => ControllerSchema {
             namespace: "skills",
             function: "discover",
-            description: "Discover all available skill manifests from source and workspace directories.",
+            description:
+                "Discover all available skill manifests from source and workspace directories.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "result",
