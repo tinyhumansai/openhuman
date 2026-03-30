@@ -17,6 +17,10 @@ interface ServiceBlockingGateProps {
 
 type GateStatus = 'checking' | 'ready' | 'blocked';
 const SERVICE_GATE_POLL_MS = 3000;
+type RefreshOptions = {
+  showChecking?: boolean;
+  clearError?: boolean;
+};
 
 const normalizeServiceState = (state: ServiceState | undefined): string => {
   if (!state) return 'Unknown';
@@ -32,15 +36,20 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
   const [isOperating, setIsOperating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshStatus = useCallback(async () => {
+  const refreshStatus = useCallback(async (options: RefreshOptions = {}) => {
+    const { showChecking = false, clearError = false } = options;
     if (!isTauri()) {
       console.info('[ServiceBlockingGate] Non-Tauri environment detected; gate is ready');
       setGateStatus('ready');
       return;
     }
 
-    setError(null);
-    setGateStatus('checking');
+    if (clearError) {
+      setError(null);
+    }
+    if (showChecking) {
+      setGateStatus('checking');
+    }
     console.info('[ServiceBlockingGate] Refreshing service + agent status');
 
     try {
@@ -53,9 +62,13 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
       const serviceRunning = normalized === 'Running';
       const agentIsRunning = !!agent?.result?.running;
 
-      setServiceStateText(normalized);
-      setAgentRunning(agentIsRunning);
-      setGateStatus(serviceRunning && agentIsRunning ? 'ready' : 'blocked');
+      setServiceStateText(prev => (prev === normalized ? prev : normalized));
+      setAgentRunning(prev => (prev === agentIsRunning ? prev : agentIsRunning));
+      setGateStatus(prev => {
+        const next = serviceRunning && agentIsRunning ? 'ready' : 'blocked';
+        return prev === next ? prev : next;
+      });
+      setError(prev => (prev ? null : prev));
       console.info('[ServiceBlockingGate] Status refreshed', {
         serviceState: normalized,
         agentRunning: agentIsRunning,
@@ -72,7 +85,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
   }, []);
 
   useEffect(() => {
-    void refreshStatus();
+    void refreshStatus({ showChecking: true });
   }, [refreshStatus]);
 
   useEffect(() => {
@@ -202,7 +215,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
 
           <button
             disabled={isOperating}
-            onClick={() => void refreshStatus()}
+            onClick={() => void refreshStatus({ showChecking: true, clearError: true })}
             className="px-3 py-2 rounded-lg text-sm bg-gray-700 hover:bg-gray-600 disabled:bg-gray-700/60 disabled:text-gray-400">
             Refresh
           </button>

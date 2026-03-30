@@ -31,8 +31,11 @@ export default defineConfig({
     environment: "jsdom",
     maxWorkers: 1,
     minWorkers: 1,
-    mockReset: true,
-    restoreMocks: true,
+    // Clear call history between tests but keep mock implementations from setup.ts
+    // (mockReset/restoreMocks wipe vi.fn implementations and break shared mocks like getBackendUrl).
+    clearMocks: true,
+    mockReset: false,
+    restoreMocks: false,
     setupFiles: ["src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     hookTimeout: 30000,

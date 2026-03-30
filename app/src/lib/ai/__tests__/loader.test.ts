@@ -60,6 +60,10 @@ describe('Unified AI Loader', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset persisted mockReturnValue from tests that stub localStorage (e.g. cache hit test).
+    localStorageMock.getItem.mockReset();
+    localStorageMock.setItem.mockReset();
+    localStorageMock.removeItem.mockReset();
     clearAICache();
     (loadSoul as any).mockResolvedValue(mockSoulConfig);
     (loadTools as any).mockResolvedValue(mockToolsConfig);
