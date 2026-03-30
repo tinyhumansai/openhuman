@@ -165,7 +165,7 @@ jobs:
       release_id: ${{ steps.create.outputs.release_id }}
       upload_url: ${{ steps.create.outputs.upload_url }}
     steps:
-      - name: Create published release with generated notes
+      - name: Create draft release with generated notes
         id: create
         uses: actions/github-script@v7
         with:
@@ -192,7 +192,7 @@ jobs:
               tag_name: tag,
               target_commitish: target,
               name: `OpenHuman v${version}`,
-              draft: false,
+              draft: true,
               prerelease: false,
               generate_release_notes: true,
             });
@@ -527,6 +527,26 @@ jobs:
           name: standalone-bins-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix }}
           path: |
             ${{ steps.cli-paths.outputs.cli_path }}
+
+  publish-release:
+    name: Publish draft release
+    runs-on: ubuntu-latest
+    environment: Production
+    needs: [create-release, build-artifacts]
+    if: needs.build-artifacts.result == 'success'
+    steps:
+      - name: Publish release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releaseId = Number('${{ needs.create-release.outputs.release_id }}');
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: releaseId,
+              draft: false,
+            });
+            core.info(`Published release ${releaseId}`);
 
   cleanup-failed-release:
     name: Remove release and tag if build failed
