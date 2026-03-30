@@ -6,9 +6,9 @@ import App from './App';
 import ErrorReportNotification from './components/ErrorReportNotification';
 import './index.css';
 import './polyfills';
-import { store } from './store';
-import { setStoreForApiClient } from './services/apiClient';
 import { initSentry } from './services/analytics';
+import { setStoreForApiClient } from './services/apiClient';
+import { store } from './store';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 
 setStoreForApiClient(() => store.getState().auth.token);
