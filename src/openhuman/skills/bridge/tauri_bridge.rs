@@ -1,4 +1,4 @@
-//! Platform and Tauri bridge for skills.
+//! Platform bridge for skills.
 //!
 //! Provides platform detection and native OS features like notifications.
 
@@ -12,12 +12,8 @@ pub fn get_platform() -> &'static str {
     }
 }
 
-/// Send a native OS notification (desktop only).
-pub fn send_notification(
-    _app_handle: &tauri::AppHandle,
-    title: &str,
-    body: &str,
-) -> Result<(), String> {
+/// Send a native OS notification.
+pub fn send_notification(title: &str, body: &str) -> Result<(), String> {
     log::info!("[runtime] notification requested: {title} - {body}");
     Ok(())
 }

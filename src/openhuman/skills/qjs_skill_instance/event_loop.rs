@@ -5,10 +5,9 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::openhuman::memory::MemoryState;
+use crate::openhuman::memory::MemoryClientRef;
 use crate::openhuman::skills::quickjs_libs::qjs_ops;
 use crate::openhuman::skills::types::{SkillMessage, SkillStatus, ToolResult};
-use tauri::Manager;
 
 use super::js_handlers::{
     call_lifecycle, handle_cron_trigger, handle_js_call, handle_js_void_call, handle_server_event,
@@ -29,7 +28,7 @@ struct PendingToolCall {
 /// 2. Checks for incoming messages (non-blocking)
 /// 3. Runs the QuickJS job queue for promises/async ops
 /// 4. Checks if a pending async tool call has completed
-/// 5. Syncs published state from ops → instance and emits Tauri events
+/// 5. Syncs published state from ops → instance
 /// 6. Sleeps efficiently when idle
 pub(crate) async fn run_event_loop(
     rt: &rquickjs::AsyncRuntime,
@@ -39,7 +38,7 @@ pub(crate) async fn run_event_loop(
     skill_id: &str,
     timer_state: &Arc<RwLock<qjs_ops::TimerState>>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
-    app_handle: Option<&tauri::AppHandle>,
+    memory_client: Option<MemoryClientRef>,
 ) {
     // Maximum sleep duration when no timers are pending
     const MAX_IDLE_SLEEP: Duration = Duration::from_millis(100);
@@ -75,7 +74,7 @@ pub(crate) async fn run_event_loop(
                     state,
                     skill_id,
                     &mut pending_tool,
-                    app_handle,
+                    &memory_client,
                     ops_state,
                 )
                 .await;
@@ -138,23 +137,7 @@ pub(crate) async fn run_event_loop(
                     .iter()
                     .map(|(k, v): (&String, &serde_json::Value)| (k.clone(), v.clone()))
                     .collect();
-                state.write().published_state = new_map.clone();
-
-                // Emit Tauri event to the main window so the frontend receives it (Tauri 2: target explicitly)
-                if let Some(handle) = app_handle {
-                    use tauri::Emitter;
-                    let payload = serde_json::json!({
-                        "skillId": skill_id,
-                        "state": new_map,
-                    });
-                    if let Err(e) = handle.emit_to("main", "skill-state-changed", payload) {
-                        log::warn!(
-                            "[skill:{}] Failed to emit skill-state-changed to main: {}",
-                            skill_id,
-                            e
-                        );
-                    }
-                }
+                state.write().published_state = new_map;
             }
         }
 
@@ -197,7 +180,7 @@ async fn handle_message(
     state: &Arc<RwLock<SkillState>>,
     skill_id: &str,
     pending_tool: &mut Option<PendingToolCall>,
-    app_handle: Option<&tauri::AppHandle>,
+    memory_client: &Option<MemoryClientRef>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
 ) -> bool {
     match msg {
@@ -327,13 +310,7 @@ async fn handle_message(
             params,
             reply,
         } => {
-            // Resolve the optional memory client once for this RPC call.
-            // State is registered as MemoryState(Mutex<Option<MemoryClientRef>>), not
-            // Option<MemoryClientRef> directly, so we must use the newtype wrapper.
-            let memory_client_opt = app_handle.and_then(|ah| {
-                ah.try_state::<MemoryState>()
-                    .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()))
-            });
+            let memory_client_opt = memory_client.clone();
 
             let result = match method.as_str() {
                 "oauth/complete" => {

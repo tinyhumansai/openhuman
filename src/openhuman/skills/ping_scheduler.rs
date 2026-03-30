@@ -16,11 +16,10 @@ use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter};
 use tokio::sync::watch;
 
 use crate::openhuman::skills::skill_registry::SkillRegistry;
-use crate::openhuman::skills::types::{events, SkillMessage, SkillStatus};
+use crate::openhuman::skills::types::{SkillMessage, SkillStatus};
 
 /// Interval between ping sweeps.
 const PING_INTERVAL: Duration = Duration::from_secs(60);
@@ -43,8 +42,6 @@ struct PingResult {
 pub struct PingScheduler {
     /// Reference to the skill registry (set after engine initialisation).
     registry: Arc<RwLock<Option<Arc<SkillRegistry>>>>,
-    /// Tauri app handle for emitting events to the frontend.
-    app_handle: Arc<RwLock<Option<AppHandle>>>,
     /// Watch channel to signal the tick loop to stop.
     stop_tx: watch::Sender<bool>,
 }
@@ -54,7 +51,6 @@ impl PingScheduler {
         let (stop_tx, _) = watch::channel(false);
         Self {
             registry: Arc::new(RwLock::new(None)),
-            app_handle: Arc::new(RwLock::new(None)),
             stop_tx,
         }
     }
@@ -64,17 +60,11 @@ impl PingScheduler {
         *self.registry.write() = Some(registry);
     }
 
-    /// Set the Tauri app handle for emitting events.
-    pub fn set_app_handle(&self, handle: AppHandle) {
-        *self.app_handle.write() = Some(handle);
-    }
-
     /// Start the background ping loop. Returns the Tokio task handle.
     ///
     /// Must be called from within a Tokio runtime context.
     pub fn start(&self) -> tokio::task::JoinHandle<()> {
         let registry = self.registry.clone();
-        let app_handle = self.app_handle.clone();
         let mut stop_rx = self.stop_tx.subscribe();
 
         tokio::spawn(async move {
@@ -87,8 +77,7 @@ impl PingScheduler {
                 tokio::select! {
                     _ = tokio::time::sleep(PING_INTERVAL) => {
                         let reg = registry.read().clone();
-                        let handle = app_handle.read().clone();
-                        Self::tick(&reg, &handle).await;
+                        Self::tick(&reg).await;
                     }
                     _ = stop_rx.changed() => {
                         log::info!("[ping] Scheduler stopped");
@@ -106,7 +95,7 @@ impl PingScheduler {
     }
 
     /// Ping all running skills concurrently and act on failures.
-    async fn tick(registry: &Option<Arc<SkillRegistry>>, app_handle: &Option<AppHandle>) {
+    async fn tick(registry: &Option<Arc<SkillRegistry>>) {
         let registry = match registry {
             Some(r) => r,
             None => return,
@@ -139,9 +128,8 @@ impl PingScheduler {
             .into_iter()
             .map(|skill_id| {
                 let registry = Arc::clone(registry);
-                let app_handle = app_handle.clone();
                 async move {
-                    Self::ping_skill(&skill_id, &registry, &app_handle).await;
+                    Self::ping_skill(&skill_id, &registry).await;
                 }
             })
             .collect();
@@ -153,7 +141,6 @@ impl PingScheduler {
     async fn ping_skill(
         skill_id: &str,
         registry: &Arc<SkillRegistry>,
-        app_handle: &Option<AppHandle>,
     ) {
         log::debug!("[ping] Pinging skill '{}'", skill_id);
 
@@ -236,15 +223,6 @@ impl PingScheduler {
                 if let Err(e) = registry.stop_skill(skill_id).await {
                     log::error!("[ping] Failed to stop skill '{}': {}", skill_id, e);
                 }
-
-                if let Some(handle) = app_handle {
-                    let payload = serde_json::json!({
-                        "skill_id": skill_id,
-                        "status": "error",
-                        "error": error_message,
-                    });
-                    let _ = handle.emit(events::SKILL_STATUS_CHANGED, &payload);
-                }
             }
             _ => {
                 // Network or other error: update published state, keep running
@@ -281,25 +259,6 @@ impl PingScheduler {
                     );
                     // Don't block on the reply — fire-and-forget
                     let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
-                }
-
-                // Also emit a state-changed event so the frontend picks it up
-                if let Some(handle) = app_handle {
-                    let mut state_map = std::collections::HashMap::new();
-                    state_map.insert(
-                        "connection_status".to_string(),
-                        serde_json::Value::String("error".to_string()),
-                    );
-                    state_map.insert(
-                        "connection_error".to_string(),
-                        serde_json::Value::String(error_message.to_string()),
-                    );
-
-                    let payload = serde_json::json!({
-                        "skillId": skill_id,
-                        "state": state_map,
-                    });
-                    let _ = handle.emit_to("main", "skill-state-changed", payload);
                 }
             }
         }

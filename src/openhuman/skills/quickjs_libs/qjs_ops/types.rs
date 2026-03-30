@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
 
 // ============================================================================
 // Timer State
@@ -77,7 +76,7 @@ pub fn poll_timers(timer_state: &RwLock<TimerState>) -> (Vec<u32>, Option<Durati
 pub struct SkillContext {
     pub skill_id: String,
     pub data_dir: PathBuf,
-    pub app_handle: Option<AppHandle>,
+    pub memory_client: Option<crate::openhuman::memory::MemoryClientRef>,
 }
 
 // ============================================================================

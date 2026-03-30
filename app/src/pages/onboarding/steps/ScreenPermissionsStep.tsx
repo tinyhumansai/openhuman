@@ -68,14 +68,16 @@ const ScreenPermissionsStep = ({ onNext }: ScreenPermissionsStepProps) => {
         </div>
       </div>
 
-      <div className="space-y-2 mb-4">
+      <div className="grid grid-cols-2 gap-2 mb-4">
         <button
+          type="button"
           onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
           disabled={isRequestingPermissions || isLoading}
           className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
           {isRequestingPermissions ? 'Requesting...' : 'Request Permission'}
         </button>
         <button
+          type="button"
           onClick={() => navigate('/settings/accessibility')}
           className="w-full py-2.5 text-sm font-medium rounded-xl border border-stone-600 hover:border-stone-500 transition-colors">
           Open Accessibility Settings

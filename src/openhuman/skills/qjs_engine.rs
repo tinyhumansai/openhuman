@@ -1,13 +1,12 @@
 //! RuntimeEngine — top-level orchestrator for the QuickJS skill runtime.
 //!
-//! Manages skill lifecycle and provides the public API consumed by Tauri commands.
+//! Manages skill lifecycle and provides the public API consumed by RPC handlers.
 //! Uses QuickJS (via rquickjs) for JavaScript execution.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use tauri::{AppHandle, Emitter};
 
 /// Global RuntimeEngine instance. Uses `RwLock` so it can be swapped in tests.
 static GLOBAL_ENGINE: parking_lot::RwLock<Option<Arc<RuntimeEngine>>> =
@@ -38,7 +37,8 @@ use crate::openhuman::skills::preferences::PreferencesStore;
 use crate::openhuman::skills::qjs_skill_instance::{BridgeDeps, QjsSkillInstance};
 use crate::openhuman::skills::skill_registry::SkillRegistry;
 use crate::openhuman::skills::socket_manager::SocketManager;
-use crate::openhuman::skills::types::{events, SkillSnapshot, SkillStatus, ToolResult};
+use crate::openhuman::memory::{MemoryClient, MemoryClientRef};
+use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolResult};
 // IdbStorage removed during runtime cleanup
 
 /// The central runtime engine using QuickJS.
@@ -55,10 +55,10 @@ pub struct RuntimeEngine {
     skills_data_dir: PathBuf,
     /// Directory containing skill source files.
     skills_source_dir: RwLock<Option<PathBuf>>,
-    /// Tauri resource directory (bundled skills in production).
+    /// Resource directory (bundled skills in production).
     resource_dir: RwLock<Option<PathBuf>>,
-    /// Tauri app handle for emitting events.
-    app_handle: RwLock<Option<AppHandle>>,
+    /// Memory client for skill data persistence.
+    memory_client: RwLock<Option<MemoryClientRef>>,
     /// Socket manager for emitting tool:sync events.
     socket_manager: RwLock<Option<Arc<SocketManager>>>,
     /// Workspace directory for user-installed skills from registry.
@@ -75,6 +75,18 @@ impl RuntimeEngine {
         ping_scheduler.set_registry(Arc::clone(&registry));
         let preferences = Arc::new(PreferencesStore::new(&skills_data_dir));
 
+        // Eagerly initialize local memory client for skill persistence.
+        let memory_client = match MemoryClient::new_local() {
+            Ok(client) => {
+                log::info!("[runtime] Local MemoryClient initialized");
+                Some(Arc::new(client))
+            }
+            Err(e) => {
+                log::warn!("[runtime] Failed to create local MemoryClient: {e}");
+                None
+            }
+        };
+
         log::info!("[runtime] QuickJS RuntimeEngine created");
 
         Ok(Self {
@@ -85,7 +97,7 @@ impl RuntimeEngine {
             skills_data_dir,
             skills_source_dir: RwLock::new(None),
             resource_dir: RwLock::new(None),
-            app_handle: RwLock::new(None),
+            memory_client: RwLock::new(memory_client),
             socket_manager: RwLock::new(None),
             workspace_dir: RwLock::new(None),
         })
@@ -106,10 +118,9 @@ impl RuntimeEngine {
         Arc::clone(&self.ping_scheduler)
     }
 
-    /// Set the Tauri app handle for emitting events to the frontend.
-    pub fn set_app_handle(&self, handle: AppHandle) {
-        self.ping_scheduler.set_app_handle(handle.clone());
-        *self.app_handle.write() = Some(handle);
+    /// Set the memory client for skill data persistence.
+    pub fn set_memory_client(&self, client: MemoryClientRef) {
+        *self.memory_client.write() = Some(client);
     }
 
     /// Set the directory containing skill source files.
@@ -361,7 +372,7 @@ impl RuntimeEngine {
         let deps = BridgeDeps {
             cron_scheduler: self.cron_scheduler.clone(),
             skill_registry: self.registry.clone(),
-            app_handle: self.app_handle.read().clone(),
+            memory_client: self.memory_client.read().clone(),
             data_dir: data_dir.clone(),
         };
 
@@ -479,12 +490,14 @@ impl RuntimeEngine {
         self.registry.all_tools()
     }
 
-    /// Emit a skill status change event to the frontend.
+    /// Log a skill status change (event emission moved to Socket.IO layer).
     fn emit_status_change(&self, skill_id: &str) {
-        if let Some(ref app) = *self.app_handle.read() {
-            if let Some(snap) = self.registry.get_skill(skill_id) {
-                let _ = app.emit(events::SKILL_STATUS_CHANGED, &snap);
-            }
+        if let Some(snap) = self.registry.get_skill(skill_id) {
+            log::debug!(
+                "[runtime] Skill status changed: {} → {:?}",
+                skill_id,
+                snap.status
+            );
         }
     }
 

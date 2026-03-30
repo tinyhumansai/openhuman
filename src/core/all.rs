@@ -61,7 +61,6 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     );
     controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
     controllers.extend(crate::openhuman::workspace::all_workspace_registered_controllers());
-    controllers.extend(crate::openhuman::tray::all_tray_registered_controllers());
     controllers.extend(crate::openhuman::tools::all_tools_registered_controllers());
     controllers
 }
@@ -89,7 +88,6 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     );
     schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
-    schemas.extend(crate::openhuman::tray::all_tray_controller_schemas());
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas
 }

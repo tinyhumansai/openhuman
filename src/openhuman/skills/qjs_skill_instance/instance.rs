@@ -135,7 +135,7 @@ impl QjsSkillInstance {
                     let skill_context = qjs_ops::SkillContext {
                         skill_id: skill_id.clone(),
                         data_dir: data_dir.clone(),
-                        app_handle: _deps.app_handle.clone(),
+                        memory_client: _deps.memory_client.clone(),
                     };
 
                     if let Err(e) = qjs_ops::register_ops(
@@ -237,7 +237,7 @@ impl QjsSkillInstance {
                 &config.skill_id,
                 &timer_state,
                 &published_state,
-                _deps.app_handle.as_ref(),
+                _deps.memory_client.clone(),
             )
             .await;
         })

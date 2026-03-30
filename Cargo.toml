@@ -10,7 +10,6 @@ name = "openhuman_core"
 crate-type = ["rlib"]
 
 [dependencies]
-tauri = { version = "2.10", features = ["tray-icon"] }
 rquickjs = { version = "0.9", features = ["futures", "parallel"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

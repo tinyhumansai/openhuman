@@ -1,11 +1,10 @@
 //! State and data ops: published state get/set, filesystem data read/write.
 
-use crate::openhuman::memory::{MemoryState, NamespaceDocumentInput};
+use crate::openhuman::memory::NamespaceDocumentInput;
 use parking_lot::RwLock;
 use rquickjs::{Ctx, Function, Object};
 use serde::Deserialize;
 use std::sync::Arc;
-use tauri::Manager;
 
 use super::types::{js_err, SkillContext, SkillState};
 
@@ -141,23 +140,10 @@ pub fn register<'js>(
                         return Err(js_err("memory.insert requires non-empty content"));
                     }
 
-                    let app_handle = sc
-                        .app_handle
+                    let client = sc
+                        .memory_client
                         .clone()
-                        .ok_or_else(|| js_err("App handle not available for memory insert"))?;
-
-                    let memory_state = app_handle
-                        .try_state::<MemoryState>()
-                        .ok_or_else(|| js_err("Memory state not available"))?;
-
-                    let client_opt = memory_state
-                        .0
-                        .lock()
-                        .map_err(|_| js_err("Failed to lock memory state"))?
-                        .clone();
-
-                    let client =
-                        client_opt.ok_or_else(|| js_err("Memory client is not initialized"))?;
+                        .ok_or_else(|| js_err("Memory client is not initialized"))?;
                     let skill_id = sc.skill_id.clone();
                     let namespace = format!("skill-{skill_id}");
                     let source_type = input
