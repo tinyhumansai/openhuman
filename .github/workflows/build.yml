@@ -27,7 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.x
-          cache: 'yarn'
+          cache: "yarn"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@1.93.0
@@ -68,9 +68,6 @@ jobs:
       - name: Install dependencies
         if: steps.yarn-cache.outputs.cache-hit != 'true'
         run: yarn install --frozen-lockfile
-
-      - name: Install skills dependencies
-        run: cd skills && yarn install --frozen-lockfile
 
       - name: Build sidecar core binary
         run: cargo build --manifest-path Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman

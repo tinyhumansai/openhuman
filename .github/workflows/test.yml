@@ -120,9 +120,6 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Install skills dependencies
-        run: cd skills && yarn install --frozen-lockfile
-
       - name: Ensure .env exists for E2E build
         run: touch app/.env
 
@@ -132,9 +129,7 @@ jobs:
           appium driver install mac2
 
       - name: Build E2E app bundle
-        run: yarn test:e2e:build
-        env:
-          E2E_SKIP_CARGO_CLEAN: "1"
+        run: yarn workspace openhuman-app test:e2e:build
 
       - name: Run all E2E flows
-        run: yarn test:e2e:all:flows
+        run: yarn workspace openhuman-app test:e2e:all:flows
