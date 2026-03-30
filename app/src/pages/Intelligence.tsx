@@ -11,6 +11,7 @@ import {
   useSnoozeActionableItem,
   useUpdateActionableItem,
 } from '../hooks/useIntelligenceApiFallback';
+import { useScreenIntelligenceItems } from '../hooks/useScreenIntelligenceItems';
 import {
   useIntelligenceSocket,
   useIntelligenceSocketManager,
@@ -69,10 +70,16 @@ export default function Intelligence() {
     setToasts(prev => prev.filter(toast => toast.id !== id));
   }, []);
 
-  const usingMemoryData = consciousItems.length > 0;
-  const items: ActionableItem[] = useMemo(() => consciousItems, [consciousItems]);
+  const { items: screenIntelligenceItems, loading: screenIntelligenceLoading } =
+    useScreenIntelligenceItems();
 
-  const itemsLoading = consciousLoading;
+  const usingMemoryData = consciousItems.length > 0 || screenIntelligenceItems.length > 0;
+  const items: ActionableItem[] = useMemo(
+    () => [...consciousItems, ...screenIntelligenceItems],
+    [consciousItems, screenIntelligenceItems]
+  );
+
+  const itemsLoading = consciousLoading || screenIntelligenceLoading;
 
   // Initialize socket connection
   useEffect(() => {
