@@ -2,6 +2,7 @@ import { Navigate } from 'react-router-dom';
 
 import { selectIsOnboarded } from '../store/authSelectors';
 import { useAppSelector } from '../store/hooks';
+import RouteLoadingScreen from './RouteLoadingScreen';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -24,7 +25,7 @@ const ProtectedRoute = ({
   const isOnboarded = useAppSelector(selectIsOnboarded);
 
   if (!isAuthBootstrapComplete) {
-    return <div className="h-full w-full" aria-busy="true" />;
+    return <RouteLoadingScreen />;
   }
 
   // If auth is required but user is not logged in

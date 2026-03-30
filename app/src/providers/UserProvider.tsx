@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 
 import { clearToken, setAuthBootstrapComplete, setToken } from '../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -28,11 +28,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 const UserProvider = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useAppDispatch();
   const token = useAppSelector(state => state.auth.token);
-  const attemptedSessionRestoreRef = useRef(false);
+  const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
 
   useEffect(() => {
-    if (attemptedSessionRestoreRef.current) return;
-    attemptedSessionRestoreRef.current = true;
+    if (isAuthBootstrapComplete) return;
 
     let mounted = true;
     void (async () => {
@@ -65,7 +64,7 @@ const UserProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       mounted = false;
     };
-  }, [token, dispatch]);
+  }, [token, dispatch, isAuthBootstrapComplete]);
 
   useEffect(() => {
     if (!token) return;

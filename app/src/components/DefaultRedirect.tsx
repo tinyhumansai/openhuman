@@ -1,6 +1,7 @@
 import { Navigate } from 'react-router-dom';
 
 import { useAppSelector } from '../store/hooks';
+import RouteLoadingScreen from './RouteLoadingScreen';
 
 /**
  * Default redirect component that routes users based on their auth status.
@@ -12,7 +13,7 @@ const DefaultRedirect = () => {
   const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
 
   if (!isAuthBootstrapComplete) {
-    return <div className="h-full w-full" aria-busy="true" />;
+    return <RouteLoadingScreen />;
   }
 
   if (token) {

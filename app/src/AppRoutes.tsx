@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import RouteLoadingScreen from './components/RouteLoadingScreen';
 import Agents from './pages/Agents';
 import Conversations from './pages/Conversations';
 import Home from './pages/Home';
@@ -34,7 +35,7 @@ const OnboardingRoute = ({
   const hasEncryptionKey = useAppSelector(selectHasEncryptionKey);
   const shouldSkipOnboarding = isOnboarded || hasWorkspaceOnboardingFlag;
 
-  if (isWorkspaceFlagLoading) return null;
+  if (isWorkspaceFlagLoading) return <RouteLoadingScreen label="Loading workspace..." />;
   if (shouldSkipOnboarding && !hasEncryptionKey) return <Navigate to="/mnemonic" replace />;
   if (shouldSkipOnboarding) return <Navigate to="/home" replace />;
   return <Onboarding />;

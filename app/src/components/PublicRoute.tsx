@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 
+import RouteLoadingScreen from './RouteLoadingScreen';
 import { useAppSelector } from '../store/hooks';
 
 interface PublicRouteProps {
@@ -16,7 +17,7 @@ const PublicRoute = ({ children, redirectTo }: PublicRouteProps) => {
   const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
 
   if (!isAuthBootstrapComplete) {
-    return <div className="h-full w-full" aria-busy="true" />;
+    return <RouteLoadingScreen />;
   }
 
   // If user is logged in, always go to home.

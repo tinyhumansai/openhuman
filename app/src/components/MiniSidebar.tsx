@@ -152,9 +152,9 @@ const MiniSidebar = () => {
     }).length;
   });
 
-  // Hide sidebar when not authenticated or on public/onboarding routes
-  const hiddenPaths = ['/', '/login', '/onboarding'];
-  if (!token || hiddenPaths.includes(location.pathname)) {
+  // Hide sidebar on public/setup routes and when not authenticated.
+  const hiddenPaths = ['/', '/login', '/onboarding', '/mnemonic'];
+  if (!token || hiddenPaths.some(path => location.pathname === path || location.pathname.startsWith(`${path}/`))) {
     return null;
   }
 
