@@ -1,8 +1,8 @@
 import { isTauri } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
-import type { ServiceState } from '../tauriCommands';
 import { callCoreRpc } from '../../services/coreRpcClient';
+import type { ServiceState } from '../tauriCommands';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));

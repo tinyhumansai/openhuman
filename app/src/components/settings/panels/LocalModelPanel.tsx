@@ -165,7 +165,8 @@ const LocalModelPanel = () => {
     typeof downloadedBytes === 'number'
       ? `${formatBytes(downloadedBytes)}${typeof totalBytes === 'number' ? ` / ${formatBytes(totalBytes)}` : ''}`
       : '';
-  const speedText = typeof speedBps === 'number' && speedBps > 0 ? `${formatBytes(speedBps)}/s` : '';
+  const speedText =
+    typeof speedBps === 'number' && speedBps > 0 ? `${formatBytes(speedBps)}/s` : '';
   const etaText = formatEta(etaSeconds);
 
   const loadStatus = async () => {
@@ -619,11 +620,7 @@ const LocalModelPanel = () => {
             />
             <button
               onClick={() => void runVisionTest()}
-              disabled={
-                isVisionLoading ||
-                !visionPromptInput.trim() ||
-                !visionImageInput.trim()
-              }
+              disabled={isVisionLoading || !visionPromptInput.trim() || !visionImageInput.trim()}
               className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
               {isVisionLoading ? 'Running...' : 'Run Vision Test'}
             </button>

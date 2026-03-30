@@ -5,16 +5,15 @@ import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 
+import * as tauriCommands from '../tauriCommands';
+// @ts-ignore - test-only JS module outside app/src
+import { clearRequestLog, getRequestLog } from '../../../../scripts/mock-api-core.mjs';
 import PublicRoute from '../../components/PublicRoute';
 import UserProvider from '../../providers/UserProvider';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import { store } from '../../store';
 import { clearToken, setAuthBootstrapComplete } from '../../store/authSlice';
 import { setupDesktopDeepLinkListener } from '../desktopDeepLinkListener';
-import * as tauriCommands from '../tauriCommands';
-
-// @ts-ignore - test-only JS module outside app/src
-import { clearRequestLog, getRequestLog } from '../../../../scripts/mock-api-core.mjs';
 
 vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 

@@ -1,7 +1,7 @@
 import { Navigate } from 'react-router-dom';
 
-import RouteLoadingScreen from './RouteLoadingScreen';
 import { useAppSelector } from '../store/hooks';
+import RouteLoadingScreen from './RouteLoadingScreen';
 
 interface PublicRouteProps {
   children: React.ReactNode;

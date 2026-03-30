@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import { inferenceApi, type ModelInfo } from '../services/api/inferenceApi';
+import { getBackendUrl } from '../services/backendUrl';
 import {
   chatCancel,
   chatSend,
@@ -13,7 +14,6 @@ import {
   subscribeChatEvents,
   useRustChat,
 } from '../services/chatService';
-import { getBackendUrl } from '../services/backendUrl';
 import { store } from '../store';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import type { NotionPageSummary, NotionSummary, NotionUserProfile } from '../store/notionSlice';

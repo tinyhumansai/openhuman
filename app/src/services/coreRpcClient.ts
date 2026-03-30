@@ -1,4 +1,4 @@
-import { invoke, isTauri as coreIsTauri } from '@tauri-apps/api/core';
+import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_URL } from '../utils/config';
@@ -40,8 +40,7 @@ const LEGACY_METHOD_ALIASES: Record<string, string> = {
   'openhuman.update_screen_intelligence_settings':
     'openhuman.config_update_screen_intelligence_settings',
   'openhuman.update_tunnel_settings': 'openhuman.config_update_tunnel_settings',
-  'openhuman.workspace_onboarding_flag_exists':
-    'openhuman.config_workspace_onboarding_flag_exists',
+  'openhuman.workspace_onboarding_flag_exists': 'openhuman.config_workspace_onboarding_flag_exists',
 };
 
 let nextJsonRpcId = 1;

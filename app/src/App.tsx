@@ -4,9 +4,9 @@ import { HashRouter as Router } from 'react-router-dom';
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
+import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import MiniSidebar from './components/MiniSidebar';
-import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import AIProvider from './providers/AIProvider';
 import SkillProvider from './providers/SkillProvider';
 import SocketProvider from './providers/SocketProvider';

@@ -14,7 +14,11 @@ import storage from 'redux-persist/lib/storage';
 
 import { setStoreForApiClient } from '../services/apiClient';
 import { IS_DEV } from '../utils/config';
-import { logout as clearRustSession, storeSession, syncMemoryClientToken } from '../utils/tauriCommands';
+import {
+  logout as clearRustSession,
+  storeSession,
+  syncMemoryClientToken,
+} from '../utils/tauriCommands';
 import accessibilityReducer from './accessibilitySlice';
 import aiReducer from './aiSlice';
 import authReducer, { setOnboardedForUser, setToken } from './authSlice';

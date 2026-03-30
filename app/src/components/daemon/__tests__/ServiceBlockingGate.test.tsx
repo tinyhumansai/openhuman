@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, type Mock } from 'vitest';
 
-import ServiceBlockingGate from '../ServiceBlockingGate';
 import * as tauriCommands from '../../../utils/tauriCommands';
+import ServiceBlockingGate from '../ServiceBlockingGate';
 
 describe('ServiceBlockingGate', () => {
   const mockIsTauri = tauriCommands.isTauri as Mock;

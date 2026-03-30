@@ -4,10 +4,10 @@ import {
   isTauri,
   openhumanAgentServerStatus,
   openhumanServiceInstall,
-  openhumanServiceUninstall,
   openhumanServiceStart,
   openhumanServiceStatus,
   openhumanServiceStop,
+  openhumanServiceUninstall,
   type ServiceState,
 } from '../../utils/tauriCommands';
 
@@ -44,7 +44,10 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
     console.info('[ServiceBlockingGate] Refreshing service + agent status');
 
     try {
-      const [service, agent] = await Promise.all([openhumanServiceStatus(), openhumanAgentServerStatus()]);
+      const [service, agent] = await Promise.all([
+        openhumanServiceStatus(),
+        openhumanAgentServerStatus(),
+      ]);
       const serviceState = service?.result?.state;
       const normalized = normalizeServiceState(serviceState);
       const serviceRunning = normalized === 'Running';

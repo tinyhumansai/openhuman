@@ -166,10 +166,7 @@ describe('Service connectivity flow (UI ↔ Rust service)', () => {
 
   it('uninstalls the service from the gate', async () => {
     const state = await readMockState();
-    await writeMockState({
-      ...state,
-      failures: { ...state.failures, start: undefined },
-    });
+    await writeMockState({ ...state, failures: { ...state.failures, start: undefined } });
 
     stepLog('Clicking Uninstall Service');
     await clickButton('Uninstall Service');
