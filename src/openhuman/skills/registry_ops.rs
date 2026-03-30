@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_registry_cache_ttl_expired() {
-        let ws = make_workspace();
+        let _ws = make_workspace();
         let cached = CachedRegistry {
             fetched_at: "2020-01-01T00:00:00Z".to_string(),
             registry: sample_registry(),
@@ -567,7 +567,7 @@ mod tests {
             "runtime": "quickjs",
             "entry": "index.js"
         });
-        let js_content = b"function init() { console.log('hello'); }";
+        // let js_content = b"function init() { console.log('hello'); }";
 
         let app = Router::new()
             .route(
