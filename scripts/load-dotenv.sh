@@ -38,7 +38,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   fi
 done < "$RESOLVED"
 
-joined=$(printf '%s\n' "${exports[@]}")
+if [[ ${#exports[@]} -eq 0 ]]; then
+  joined=""
+else
+  joined=$(printf '%s\n' "${exports[@]}")
+fi
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   echo "$joined"
