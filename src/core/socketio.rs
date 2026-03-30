@@ -6,6 +6,14 @@ use socketioxide::SocketIo;
 use crate::openhuman::web_channel::events::WebChannelEvent;
 
 #[derive(Debug, Deserialize)]
+struct SocketRpcRequest {
+    id: serde_json::Value,
+    method: String,
+    #[serde(default)]
+    params: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChatStartPayload {
     thread_id: String,
     message: String,
@@ -25,11 +33,37 @@ struct ChatCancelPayload {
 pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
     let (layer, io) = SocketIo::new_layer();
 
+    log::debug!(
+        "[socketio] configured with req_path={}",
+        io.config().engine_config.req_path
+    );
+
     io.ns("/", |socket: SocketRef| {
         let client_id = socket.id.to_string();
         let _ = socket.join(client_id.clone());
         let ready_payload = json!({ "sid": client_id });
         let _ = socket.emit("ready", &ready_payload);
+
+        socket.on("rpc:request", |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| async move {
+            let response = match crate::core::jsonrpc::invoke_method(
+                crate::core::jsonrpc::default_state(),
+                payload.method.as_str(),
+                payload.params,
+            )
+            .await
+            {
+                Ok(result) => ("rpc:response", json!({ "id": payload.id, "result": result })),
+                Err(message) => (
+                    "rpc:error",
+                    json!({
+                        "id": payload.id,
+                        "error": { "code": -32000, "message": message }
+                    }),
+                ),
+            };
+
+            let _ = socket.emit(response.0, &response.1);
+        });
 
         socket.on("chat:start", |socket: SocketRef, Data(payload): Data<ChatStartPayload>| async move {
             let client_id = socket.id.to_string();

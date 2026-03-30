@@ -87,10 +87,6 @@ export interface ChatSendParams {
   threadId: string;
   message: string;
   model: string;
-  authToken: string;
-  backendUrl: string;
-  messages: Array<{ role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }>;
-  notionContext?: string | null;
 }
 
 export async function chatSend(params: ChatSendParams): Promise<void> {
@@ -102,10 +98,6 @@ export async function chatSend(params: ChatSendParams): Promise<void> {
     thread_id: params.threadId,
     message: params.message,
     model: params.model,
-    auth_token: params.authToken,
-    backend_url: params.backendUrl,
-    messages: params.messages,
-    notion_context: params.notionContext ?? null,
   };
 
   socketService.emit('chat:start', payload);

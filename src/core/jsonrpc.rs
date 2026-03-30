@@ -87,22 +87,26 @@ pub fn default_state() -> AppState {
 
 // --- HTTP server (Axum) ----------------------------------------------------
 
-pub fn build_core_http_router() -> Router {
-    let (socket_layer, io) = crate::core::socketio::attach_socketio();
-    crate::core::socketio::spawn_web_channel_bridge(io);
-
-    Router::new()
+pub fn build_core_http_router(socketio_enabled: bool) -> Router {
+    let router = Router::new()
         .route("/", get(root_handler))
         .route("/health", get(health_handler))
         .route("/schema", get(schema_handler))
         .route("/events", get(events_handler))
         .route("/rpc", post(rpc_handler))
         .fallback(not_found_handler)
-        .layer(socket_layer)
         .layer(middleware::from_fn(cors_middleware))
         .with_state(AppState {
             core_version: env!("CARGO_PKG_VERSION").to_string(),
-        })
+        });
+
+    if socketio_enabled {
+        let (socket_layer, io) = crate::core::socketio::attach_socketio();
+        crate::core::socketio::spawn_web_channel_bridge(io);
+        return router.layer(socket_layer);
+    }
+
+    router
 }
 
 async fn cors_middleware(req: Request, next: Next) -> Response {
@@ -212,16 +216,21 @@ fn core_port() -> u16 {
         .unwrap_or(7788)
 }
 
-pub async fn run_server(port: Option<u16>) -> anyhow::Result<()> {
+pub async fn run_server(port: Option<u16>, socketio_enabled: bool) -> anyhow::Result<()> {
     let _ = all::all_registered_controllers();
     let port = port.unwrap_or_else(core_port);
     let bind_addr = format!("127.0.0.1:{port}");
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
-    let app = build_core_http_router();
+    let app = build_core_http_router(socketio_enabled);
 
     log::info!("[core] listening on http://{bind_addr}");
     log::info!("[rpc:http] JSON-RPC server running — POST http://{bind_addr}/rpc (JSON-RPC 2.0)");
+    if socketio_enabled {
+        log::info!("[rpc:socketio] Socket.IO server running — ws://{bind_addr}/socket.io/");
+    } else {
+        log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
+    }
 
     tokio::spawn(async {
         match crate::openhuman::config::Config::load_or_init().await {

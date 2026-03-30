@@ -36,6 +36,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
 
 fn run_server_command(args: &[String]) -> Result<()> {
     let mut port: Option<u16> = None;
+    let mut socketio_enabled = true;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
@@ -49,8 +50,12 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 );
                 i += 2;
             }
+            "--jsonrpc-only" => {
+                socketio_enabled = false;
+                i += 1;
+            }
             "-h" | "--help" => {
-                println!("Usage: openhuman run [--port <u16>]");
+                println!("Usage: openhuman run [--port <u16>] [--jsonrpc-only]");
                 return Ok(());
             }
             other => return Err(anyhow::anyhow!("unknown run arg: {other}")),
@@ -60,7 +65,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(async { crate::core::jsonrpc::run_server(port).await })?;
+    rt.block_on(async { crate::core::jsonrpc::run_server(port, socketio_enabled).await })?;
     Ok(())
 }
 
