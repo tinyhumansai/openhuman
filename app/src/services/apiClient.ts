@@ -12,8 +12,9 @@ interface RequestOptions {
 }
 
 /**
- * Lazy store accessor so `apiClient` never imports `store/index` at module level.
- * `store/index.ts` calls `setStoreForApiClient` once after `configureStore`.
+ * Lazy auth token accessor so `apiClient` never imports `store/index` at module level.
+ * Entry (`main.tsx`) and Vitest setup call `setStoreForApiClient` after the store module loads,
+ * avoiding a cycle: `store` → `apiClient` → … → `socketService` → `store`.
  *
  * The binding name avoids clashing with transpiled private method names (e.g. `_getToken`).
  */

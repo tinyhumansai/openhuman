@@ -12,7 +12,6 @@ import {
 } from 'redux-persist';
 import storage from 'redux-persist/lib/storage';
 
-import { setStoreForApiClient } from '../services/apiClient';
 import { IS_DEV } from '../utils/config';
 import {
   logout as clearRustSession,
@@ -151,9 +150,6 @@ export const store = configureStore({
     return middleware;
   },
 });
-
-// Wire apiClient to auth token once the store exists (keeps `apiClient` free of `store/` imports).
-setStoreForApiClient(() => store.getState().auth.token);
 
 export const persistor = persistStore(store, null, () => {
   // Dev-only: auto-inject JWT token for local testing without login flow.
