@@ -221,6 +221,10 @@ jobs:
             args: --target x86_64-unknown-linux-gnu
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+            artifact_suffix: windows
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -376,10 +380,16 @@ jobs:
         shell: bash
         run: |
           mkdir -p app/src-tauri/binaries
-          SOURCE="$CORE_TARGET_DIR/$CORE_BIN_NAME"
-          DEST="app/src-tauri/binaries/$SIDECAR_BASE-$MATRIX_TARGET"
+          EXE_SUFFIX=""
+          if [[ "$MATRIX_TARGET" == *"windows"* ]]; then
+            EXE_SUFFIX=".exe"
+          fi
+          SOURCE="$CORE_TARGET_DIR/${CORE_BIN_NAME}${EXE_SUFFIX}"
+          DEST="app/src-tauri/binaries/${SIDECAR_BASE}-${MATRIX_TARGET}${EXE_SUFFIX}"
           cp "$SOURCE" "$DEST"
-          chmod +x "$DEST"
+          if [[ "$MATRIX_TARGET" != *"windows"* ]]; then
+            chmod +x "$DEST"
+          fi
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
           CORE_TARGET_DIR: ${{ steps.core-paths.outputs.core_target_dir }}
@@ -389,7 +399,11 @@ jobs:
       - name: Verify staged sidecar for bundler (all platforms)
         shell: bash
         run: |
-          SIDE_CAR_PATH="app/src-tauri/binaries/$SIDECAR_BASE-$MATRIX_TARGET"
+          EXE_SUFFIX=""
+          if [[ "$MATRIX_TARGET" == *"windows"* ]]; then
+            EXE_SUFFIX=".exe"
+          fi
+          SIDE_CAR_PATH="app/src-tauri/binaries/${SIDECAR_BASE}-${MATRIX_TARGET}${EXE_SUFFIX}"
           echo "Checking staged sidecar: $SIDE_CAR_PATH"
           if [ ! -f "$SIDE_CAR_PATH" ]; then
             echo "Missing staged sidecar binary: $SIDE_CAR_PATH"
@@ -409,8 +423,12 @@ jobs:
         shell: bash
         run: |
           BASE_DIR="$CORE_TARGET_DIR"
+          EXE_SUFFIX=""
+          if [[ "$MATRIX_TARGET" == *"windows"* ]]; then
+            EXE_SUFFIX=".exe"
+          fi
           echo "base_dir=$BASE_DIR" >> "$GITHUB_OUTPUT"
-          echo "cli_path=$BASE_DIR/$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
+          echo "cli_path=$BASE_DIR/${CORE_BIN_NAME}${EXE_SUFFIX}" >> "$GITHUB_OUTPUT"
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
           CORE_TARGET_DIR: ${{ steps.core-paths.outputs.core_target_dir }}

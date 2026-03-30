@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Run Unit Tests
+  unit-tests:
+    name: Frontend Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -56,7 +56,7 @@ jobs:
           retention-days: 7
 
   rust-tests:
-    name: Run Rust Tests
+    name: Rust Tests + Quality
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
@@ -67,6 +67,7 @@ jobs:
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
+          components: rustfmt, clippy
           targets: x86_64-unknown-linux-gnu
 
       - name: Install Tauri build dependencies
@@ -91,10 +92,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-test-cargo-
 
-      - name: Test rust-core (openhuman)
+      - name: Check formatting (cargo fmt)
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy (core crate)
+        run: cargo clippy -p openhuman -- -D warnings
+
+      - name: Run clippy (Tauri shell)
+        run: cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings
+
+      - name: Test core crate (openhuman)
         run: cargo test -p openhuman
 
-      - name: Test src-tauri (OpenHuman)
+      - name: Test Tauri shell (OpenHuman)
         run: cargo test --manifest-path app/src-tauri/Cargo.toml
 
   e2e-macos:
