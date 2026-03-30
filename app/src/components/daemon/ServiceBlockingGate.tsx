@@ -16,6 +16,7 @@ interface ServiceBlockingGateProps {
 }
 
 type GateStatus = 'checking' | 'ready' | 'blocked';
+const SERVICE_GATE_POLL_MS = 3000;
 
 const normalizeServiceState = (state: ServiceState | undefined): string => {
   if (!state) return 'Unknown';
@@ -33,12 +34,14 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
 
   const refreshStatus = useCallback(async () => {
     if (!isTauri()) {
+      console.info('[ServiceBlockingGate] Non-Tauri environment detected; gate is ready');
       setGateStatus('ready');
       return;
     }
 
     setError(null);
     setGateStatus('checking');
+    console.info('[ServiceBlockingGate] Refreshing service + agent status');
 
     try {
       const [service, agent] = await Promise.all([openhumanServiceStatus(), openhumanAgentServerStatus()]);
@@ -50,11 +53,18 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
       setServiceStateText(normalized);
       setAgentRunning(agentIsRunning);
       setGateStatus(serviceRunning && agentIsRunning ? 'ready' : 'blocked');
+      console.info('[ServiceBlockingGate] Status refreshed', {
+        serviceState: normalized,
+        agentRunning: agentIsRunning,
+        nextGateStatus: serviceRunning && agentIsRunning ? 'ready' : 'blocked',
+      });
     } catch (err) {
       setServiceStateText('Unknown');
       setAgentRunning(false);
       setGateStatus('blocked');
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      console.error('[ServiceBlockingGate] Failed to refresh status', { error: message });
     }
   }, []);
 
@@ -62,17 +72,52 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
     void refreshStatus();
   }, [refreshStatus]);
 
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    console.info('[ServiceBlockingGate] Starting periodic health polling', {
+      pollMs: SERVICE_GATE_POLL_MS,
+    });
+    const interval = window.setInterval(() => {
+      void refreshStatus();
+    }, SERVICE_GATE_POLL_MS);
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        console.info('[ServiceBlockingGate] App visible; forcing immediate status refresh');
+        void refreshStatus();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      console.info('[ServiceBlockingGate] Stopping periodic health polling');
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refreshStatus]);
+
   const installed = useMemo(() => serviceStateText !== 'NotInstalled', [serviceStateText]);
   const serviceRunning = useMemo(() => serviceStateText === 'Running', [serviceStateText]);
 
   const runOperation = useCallback(
     async (op: () => Promise<unknown>) => {
+      const opName = op.name || 'anonymous-operation';
+      console.info('[ServiceBlockingGate] Running operation', { operation: opName });
       setIsOperating(true);
       setError(null);
       try {
         await op();
+        console.info('[ServiceBlockingGate] Operation completed', { operation: opName });
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        console.error('[ServiceBlockingGate] Operation failed', {
+          operation: opName,
+          error: message,
+        });
       } finally {
         setIsOperating(false);
         await refreshStatus();
@@ -82,6 +127,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
   );
 
   const restartService = useCallback(async () => {
+    console.info('[ServiceBlockingGate] Restart requested: stop -> start');
     await openhumanServiceStop();
     await openhumanServiceStart();
   }, []);

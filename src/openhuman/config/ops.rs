@@ -390,6 +390,7 @@ pub fn workspace_onboarding_flag_exists(
 
 pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
     let running = crate::openhuman::service::mock::mock_agent_running().unwrap_or(true);
+    log::info!("[config] agent_server_status requested: running={running}");
     let payload = json!({
         "running": running,
         "url": core_rpc_url_from_env(),

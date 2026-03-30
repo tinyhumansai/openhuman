@@ -55,45 +55,60 @@ pub(crate) fn is_enabled() -> bool {
 }
 
 pub(crate) fn install(config: &Config) -> Result<ServiceStatus> {
+    log::info!("[service-mock] install requested");
     let mut state = load_state(config)?;
     maybe_fail(state.failures.install.as_deref(), "install")?;
     state.installed = true;
     state.running = false;
     save_state(config, &state)?;
+    log::info!("[service-mock] install completed: installed=true running=false");
     status(config)
 }
 
 pub(crate) fn start(config: &Config) -> Result<ServiceStatus> {
+    log::info!("[service-mock] start requested");
     let mut state = load_state(config)?;
     maybe_fail(state.failures.start.as_deref(), "start")?;
     if !state.installed {
+        log::warn!("[service-mock] start requested while not installed");
         return Ok(service_status_from_state(config, &state));
     }
     state.running = true;
     save_state(config, &state)?;
+    log::info!("[service-mock] start completed: installed=true running=true");
     status(config)
 }
 
 pub(crate) fn stop(config: &Config) -> Result<ServiceStatus> {
+    log::info!("[service-mock] stop requested");
     let mut state = load_state(config)?;
     maybe_fail(state.failures.stop.as_deref(), "stop")?;
     state.running = false;
     save_state(config, &state)?;
+    log::info!("[service-mock] stop completed: running=false");
     status(config)
 }
 
 pub(crate) fn status(config: &Config) -> Result<ServiceStatus> {
     let state = load_state(config)?;
     maybe_fail(state.failures.status.as_deref(), "status")?;
+    log::info!(
+        "[service-mock] status requested: installed={} running={} agent_running={}",
+        state.installed,
+        state.running,
+        state.agent_running
+    );
     Ok(service_status_from_state(config, &state))
 }
 
 pub(crate) fn uninstall(config: &Config) -> Result<ServiceStatus> {
+    log::info!("[service-mock] uninstall requested");
     let mut state = load_state(config)?;
     maybe_fail(state.failures.uninstall.as_deref(), "uninstall")?;
     state.installed = false;
     state.running = false;
     save_state(config, &state)?;
+    log::info!("[service-mock] uninstall completed: installed=false running=false");
     status(config)
 }
 
@@ -109,6 +124,7 @@ pub(crate) fn mock_agent_running() -> Option<bool> {
 
 fn maybe_fail(message: Option<&str>, operation: &str) -> Result<()> {
     if let Some(msg) = message {
+        log::error!("[service-mock] forced failure for operation={operation}: {msg}");
         anyhow::bail!("[service-mock] {operation} failed: {msg}");
     }
     Ok(())
@@ -119,8 +135,13 @@ fn load_state(config: &Config) -> Result<MockServiceState> {
     if !path.exists() {
         let state = MockServiceState::default();
         save_state_to_path(&path, &state)?;
+        log::info!(
+            "[service-mock] created default state file at {}",
+            path.display()
+        );
         return Ok(state);
     }
+    log::debug!("[service-mock] loading state from {}", path.display());
     read_state_from_path(&path)
 }
 
@@ -137,6 +158,13 @@ fn save_state_to_path(path: &Path, state: &MockServiceState) -> Result<()> {
         serde_json::to_vec_pretty(state).context("failed serializing service mock state")?;
     std::fs::write(path, bytes)
         .with_context(|| format!("failed writing service mock state {}", path.display()))?;
+    log::debug!(
+        "[service-mock] wrote state to {} (installed={} running={} agent_running={})",
+        path.display(),
+        state.installed,
+        state.running,
+        state.agent_running
+    );
     Ok(())
 }
 

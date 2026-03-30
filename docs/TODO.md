@@ -14,23 +14,24 @@ todo
 [] clean up the core so that we can run it as a binary on a server or as docker
 
 [x] Separate the binary from the tauri codebase
-[ ] Integrate our custom memory engine into core
-[ ] Integrate our skills registry into core
+[] Integrate our custom memory engine into core
+[] Integrate our skills registry into core
 [x] Integrate accessibility service installation
-[ ] Add as a step and setting in the UI
+[] Add as a step and setting in the UI
 [x] Remove mentions of zeroclaw from the codebaes
 [x] Integrate local LLM into core
-[ ] Handle process/deamon properly
+[] Handle process/deamon properly
 [x] install the linux philosophy of few modules that do their own thing really well sort of..
 [x] Remove android / ios support from the codebase.
-[ ] e2e test to check if daemon and sidecar loading works properly
+[] e2e test to check if daemon and sidecar loading works properly
 [x] Find a better way to structure the cargo files
 [x] fix all the rust and cargo issues
-[ ] Add icon and app name to the various permission settings
-[ ] add self update based on github release. create a update action on the cli
-[ ] for each skill show information on how much data has been synced locally and information on how much syncs have happened so far etc..
+[] Add icon and app name to the various permission settings
+[] add self update based on github release. create a update action on the cli
+[] for each skill show information on how much data has been synced locally and information on how much syncs have happened so far etc..
 [x] redo the docs once everything is done.
 [x] remove unwanted feature flags from the rust binary
-[ ] fix the config properly
-[ ] Allow for Migrating from OpenClaw
+[] fix the config properly
+[] Allow for Migrating from OpenClaw
 [] allow users to choose which version of LLM model they'd like to choose based on their CPU. better ram and gpu means higher parameter model can be used.
+[] in the client side app, make console.log follow a logger style logging where there's a namespace for every logger (like python)
