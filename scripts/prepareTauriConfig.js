@@ -1,9 +1,6 @@
 export default function prepareTauriConfig() {
-  // For production builds, use the dist directory path
-  // BASE_URL is only used for updater endpoints, not for frontendDist
-  const frontendDist = process.env.BASE_URL?.startsWith('http')
-    ? '../dist'
-    : process.env.BASE_URL || '../dist';
+  // Production frontend always ships from dist; BASE_URL is for updater URLs.
+  const frontendDist = '../dist';
 
   const config = {
     build: { frontendDist, devUrl: null },
@@ -12,11 +9,28 @@ export default function prepareTauriConfig() {
   };
 
   if (process.env.WITH_UPDATER === 'true') {
+    const repoSlug = process.env.UPDATER_REPO || 'tinyhumansai/openhuman';
+    const baseUrl =
+      process.env.BASE_URL ||
+      `https://github.com/${repoSlug}/releases/latest/download`;
+    const normalizedBaseUrl = String(baseUrl).replace(/\/+$/, '');
+    const updaterEndpoint =
+      process.env.UPDATER_ENDPOINT ||
+      process.env.UPDATER_GIST_URL ||
+      `${normalizedBaseUrl}/latest.json`;
+    const updaterPublicKey = process.env.UPDATER_PUBLIC_KEY;
+
+    if (!updaterPublicKey) {
+      throw new Error(
+        'WITH_UPDATER=true requires UPDATER_PUBLIC_KEY to be set',
+      );
+    }
+
     config.plugins = {
       updater: {
         dialog: false,
-        endpoints: [process.env.UPDATER_GIST_URL],
-        pubkey: process.env.UPDATER_PUBLIC_KEY,
+        endpoints: [updaterEndpoint],
+        pubkey: updaterPublicKey,
       },
     };
 

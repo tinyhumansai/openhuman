@@ -5,10 +5,12 @@
 # - Uses scripts/ci-secrets.example.json for secrets/vars.
 # - Runs in dry-run mode unless --run is passed.
 #
-# For --run: set XGH_TOKEN in scripts/ci-secrets.json (PAT with repo scope). prepare-release uses
-# XGH_TOKEN for checkout/push. Do not put a bad GITHUB_TOKEN in ci-secrets.json — act uses it to
-# clone action repos and an invalid PAT breaks even public clones. github-script steps use
-# secrets.XGH_TOKEN (see release.yml).
+# For --run: set GitHub App credentials in scripts/ci-secrets.json:
+# - XGITHUB_APP_ID
+# - XGITHUB_APP_PRIVATE_KEY
+# prepare-release uses those to mint a token for checkout/push.
+# Do not put a bad GITHUB_TOKEN in ci-secrets.json — act uses it to clone action repos and an
+# invalid PAT breaks even public clones.
 #
 # Usage:
 #   ./scripts/test-release-act.sh

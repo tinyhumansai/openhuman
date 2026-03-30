@@ -209,15 +209,14 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          # macOS builds are disabled for now to ensure the flow works first
-          # - platform: macos-latest
-          #   args: --target aarch64-apple-darwin
-          #   target: aarch64-apple-darwin
-          #   artifact_suffix: aarch64-apple-darwin
-          # - platform: macos-latest
-          #   args: --target x86_64-apple-darwin
-          #   target: x86_64-apple-darwin
-          #   artifact_suffix: x86_64-apple-darwin
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+            target: aarch64-apple-darwin
+            artifact_suffix: aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+            target: x86_64-apple-darwin
+            artifact_suffix: x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: --target x86_64-unknown-linux-gnu
             target: x86_64-unknown-linux-gnu
@@ -275,12 +274,46 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Validate signing prerequisites
+        shell: bash
+        env:
+          MATRIX_PLATFORM: ${{ matrix.settings.platform }}
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY || vars.UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$UPDATER_PUBLIC_KEY" ]; then
+            echo "Missing UPDATER_PUBLIC_KEY (set as secret or repo/environment variable)."
+            exit 1
+          fi
+
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "Missing TAURI_SIGNING_PRIVATE_KEY (or fallback UPDATER_PRIVATE_KEY)."
+            exit 1
+          fi
+
+          if [ "$MATRIX_PLATFORM" = "macos-latest" ]; then
+            for var in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              if [ -z "${!var}" ]; then
+                echo "Missing required macOS signing secret: $var"
+                exit 1
+              fi
+            done
+          fi
+
       - name: Define Tauri configuration overrides
         id: config-overrides
         uses: actions/github-script@v7
         env:
           BASE_URL: ${{ vars.BASE_URL }}
-          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY }}
+          UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY || vars.UPDATER_PUBLIC_KEY }}
+          UPDATER_ENDPOINT: ${{ vars.UPDATER_ENDPOINT }}
+          UPDATER_REPO: tinyhumansai/openhuman
           WITH_UPDATER: "true"
         with:
           script: |
