@@ -1,36 +1,14 @@
-## Summary
+## SUMMARY
 
-- What changed and why.
-- Keep this to 3-6 bullets focused on user-visible or architecture-impacting changes.
+- WHAT CHANGED AND WHY.
+- KEEP THIS TO 3-6 BULLETS FOCUSED ON USER-VISIBLE OR ARCHITECTURE-IMPACTING CHANGES.
 
-## Problem
+## PROBLEM
 
-- What issue or risk this PR addresses.
-- Include context needed for reviewers to evaluate correctness quickly.
+- WHAT ISSUE OR RISK THIS PR ADDRESSES.
+- INCLUDE CONTEXT NEEDED FOR REVIEWERS TO EVALUATE CORRECTNESS QUICKLY.
 
-## Solution
+## SOLUTION
 
-- How the implementation solves the problem.
-- Note important design decisions and tradeoffs.
-
-## Testing
-
-- [ ] `yarn -s compile`
-- [ ] `cargo check --manifest-path app/src-tauri/Cargo.toml`
-- [ ] Other checks run (list commands)
-- [ ] Manual validation completed (list scenarios)
-
-## Impact
-
-- Runtime/platform impact (desktop/mobile/web/CLI), if any.
-- Performance, security, migration, or compatibility implications.
-
-## Breaking Changes
-
-- [ ] None
-- [ ] Yes (describe clearly, including migration steps)
-
-## Related
-
-- Issue(s):
-- Follow-up PR(s)/TODOs:
+- HOW THE IMPLEMENTATION SOLVES THE PROBLEM.
+- NOTE IMPORTANT DESIGN DECISIONS AND TRADEOFFS.
