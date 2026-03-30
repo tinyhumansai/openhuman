@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AccessibilityStatus } from '../../utils/tauriCommands';
-import type { CaptureTestResult } from '../../utils/tauriCommands';
+import type { AccessibilityStatus, CaptureTestResult } from '../../utils/tauriCommands';
 import reducer, {
   clearAccessibilityError,
   fetchAccessibilityStatus,
