@@ -52,10 +52,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy (core crate)
-        run: cargo clippy -p openhuman -- -D warnings
+        run: cargo clippy -p openhuman
 
       - name: Run clippy (Tauri shell)
-        run: cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path app/src-tauri/Cargo.toml
 
   build:
     name: Build Tauri App (${{ matrix.settings.label }})

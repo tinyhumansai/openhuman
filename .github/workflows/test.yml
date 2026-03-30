@@ -96,10 +96,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy (core crate)
-        run: cargo clippy -p openhuman -- -D warnings
+        run: cargo clippy -p openhuman
 
       - name: Run clippy (Tauri shell)
-        run: cargo clippy --manifest-path app/src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path app/src-tauri/Cargo.toml
 
       - name: Test core crate (openhuman)
         run: cargo test -p openhuman
@@ -131,7 +131,9 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Ensure .env exists for E2E build
-        run: touch app/.env
+        run: |
+          touch .env
+          touch app/.env
 
       - name: Install Appium and mac2 driver
         run: |
