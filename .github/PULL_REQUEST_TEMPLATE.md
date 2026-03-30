@@ -1,36 +1,36 @@
-## SUMMARY
+## Summary
 
-- WHAT CHANGED AND WHY.
-- KEEP THIS TO 3-6 BULLETS FOCUSED ON USER-VISIBLE OR ARCHITECTURE-IMPACTING CHANGES.
+- What changed and why.
+- Keep this to 3-6 bullets focused on user-visible or architecture-impacting changes.
 
-## PROBLEM
+## Problem
 
-- WHAT ISSUE OR RISK THIS PR ADDRESSES.
-- INCLUDE CONTEXT NEEDED FOR REVIEWERS TO EVALUATE CORRECTNESS QUICKLY.
+- What issue or risk this PR addresses.
+- Include context needed for reviewers to evaluate correctness quickly.
 
-## SOLUTION
+## Solution
 
-- HOW THE IMPLEMENTATION SOLVES THE PROBLEM.
-- NOTE IMPORTANT DESIGN DECISIONS AND TRADEOFFS.
+- How the implementation solves the problem.
+- Note important design decisions and tradeoffs.
 
-## TESTING
+## Testing
 
 - [ ] `yarn -s compile`
 - [ ] `cargo check --manifest-path app/src-tauri/Cargo.toml`
-- [ ] OTHER CHECKS RUN (LIST COMMANDS)
-- [ ] MANUAL VALIDATION COMPLETED (LIST SCENARIOS)
+- [ ] Other checks run (list commands)
+- [ ] Manual validation completed (list scenarios)
 
-## IMPACT
+## Impact
 
-- RUNTIME/PLATFORM IMPACT (DESKTOP/MOBILE/WEB/CLI), IF ANY.
-- PERFORMANCE, SECURITY, MIGRATION, OR COMPATIBILITY IMPLICATIONS.
+- Runtime/platform impact (desktop/mobile/web/CLI), if any.
+- Performance, security, migration, or compatibility implications.
 
-## BREAKING CHANGES
+## Breaking Changes
 
-- [ ] NONE
-- [ ] YES (DESCRIBE CLEARLY, INCLUDING MIGRATION STEPS)
+- [ ] None
+- [ ] Yes (describe clearly, including migration steps)
 
-## RELATED
+## Related
 
-- ISSUE(S):
-- FOLLOW-UP PR(S)/TODOS:
+- Issue(s):
+- Follow-up PR(s)/TODOs:
