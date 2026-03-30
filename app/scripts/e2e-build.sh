@@ -37,6 +37,8 @@ node "$REPO_ROOT/scripts/stage-core-sidecar.mjs"
 
 # Disable updater artifacts for E2E bundles to avoid signing-key requirements.
 TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
+# Tauri CLI maps env CI to --ci and only accepts true|false; some runners set CI=1.
+case "${CI:-}" in 1) export CI=true ;; 0) export CI=false ;; esac
 npx tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles app --debug
 
 echo "E2E build complete."

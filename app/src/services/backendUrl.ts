@@ -10,6 +10,13 @@ function normalizeBaseUrl(url: string): string {
 }
 
 function webFallbackBackendUrl(): string {
+  const fromVite =
+    typeof import.meta.env.VITE_BACKEND_URL === 'string'
+      ? import.meta.env.VITE_BACKEND_URL.trim()
+      : '';
+  if (fromVite) {
+    return normalizeBaseUrl(fromVite);
+  }
   if (typeof window !== 'undefined' && window.location?.origin) {
     return normalizeBaseUrl(window.location.origin);
   }
