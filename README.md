@@ -60,6 +60,18 @@ Browse all releases: [github.com/tinyhumansai/openhuman/releases](https://github
 
 # Under the hood (Architecture)
 
+OpenHuman is a **desktop monorepo**: **Rust** owns **business logic and execution**; the **UI** owns **interaction, layout, and OS integration**.
+
+**Rust (`openhuman` / `openhuman_core`).** The repo root **`src/`** crate is the brain: **JSON-RPC over HTTP** (`core_server`), domain modules (auth, config, memory, skills, channels, screen intelligence, local AI, cron, …), and a **QuickJS** runtime for **sandboxed JavaScript skills**. The **`openhuman`** binary is built and **staged next to the Tauri app** so the desktop shell can spawn it as a **sidecar**. Heavy work—SQLite, sockets, crypto, skill lifecycle—runs there under **Tokio**, not in the WebView.
+
+**UI (`app/`).** **Vite + React** (TypeScript) implements screens, onboarding, settings, and realtime UX. **Redux Toolkit** holds client state; **Socket.io** and the **MCP-style** client stack stay in sync with the core’s realtime surface. **Tauri v2** (`app/src-tauri/`) is a thin **Rust host**: windowing, filesystem hooks where needed, and **`core_rpc_relay`**—forwarding JSON-RPC from the WebView to the **`openhuman`** process so the UI never re-implements domain rules.
+
+**Controllers and the RPC surface.** Features are exposed as **registered controllers**: each domain declares **schemas** (namespace, function name, parameter shapes) and a **handler**. At runtime, calls are **validated**, dispatched by **method name** (e.g. `openhuman.auth_get_state`, `openhuman.local_ai_agent_chat`), and return structured outcomes. **CLI** and **HTTP** share the same controller catalog, so automation, tests, and the app all hit one contract.
+
+**What ties it together:** one **registry** of controllers, one **sidecar** process for execution, **Tauri IPC** for shell-only capabilities, and **HTTP JSON-RPC** for everything else—plus **skills** and **dual-socket** behavior documented in the architecture guide.
+
+**Read more:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · Frontend tree: [`docs/src/README.md`](docs/src/README.md) · Tauri commands: [`docs/src-tauri/README.md`](docs/src-tauri/README.md)
+
 # Star us on GitHub
 
 _Building toward AGI and artificial consciousness? Star the repo and help others find the path._
