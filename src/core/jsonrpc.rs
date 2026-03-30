@@ -286,7 +286,7 @@ pub async fn run_server(port: Option<u16>, socketio_enabled: bool) -> anyhow::Re
 
 /// Initialize the QuickJS skill runtime and register it globally so RPC
 /// handlers (`openhuman.skills_*`) can reach it.
-async fn bootstrap_skill_runtime() {
+pub async fn bootstrap_skill_runtime() {
     use crate::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
     use std::sync::Arc;
 

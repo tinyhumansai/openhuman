@@ -31,6 +31,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
     match args[0].as_str() {
         "run" | "serve" => run_server_command(&args[1..]),
         "call" => run_call_command(&args[1..]),
+        "repl" | "shell" => crate::core::repl::run_repl(&args[1..]),
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
 }
@@ -270,6 +271,11 @@ fn parse_function_params(
     Ok(out)
 }
 
+/// Public alias for REPL param parsing (same logic, no duplication).
+pub fn parse_input_value_for_repl(ty: &TypeSchema, raw: &str) -> Result<Value, String> {
+    parse_input_value(ty, raw)
+}
+
 fn parse_input_value(ty: &TypeSchema, raw: &str) -> Result<Value, String> {
     match ty {
         TypeSchema::String => Ok(Value::String(raw.to_string())),
@@ -322,6 +328,7 @@ fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("OpenHuman core CLI\n");
     println!("Usage:");
     println!("  openhuman run [--port <u16>] [--jsonrpc-only] [--verbose]");
+    println!("  openhuman repl [--verbose] [--eval '<cmd>'] [--batch]");
     println!("  openhuman call --method <name> [--params '<json>']");
     println!("  openhuman <namespace> <function> [--param value ...]\n");
     println!("Available namespaces:");
