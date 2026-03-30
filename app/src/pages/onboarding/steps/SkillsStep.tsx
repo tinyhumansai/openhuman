@@ -133,9 +133,9 @@ const SkillsStep = ({ onComplete }: SkillsStepProps) => {
               key={source.id}
               type="button"
               onClick={() => handleConnect(source)}
-              disabled={!source.skill}
+              disabled={!source.snap}
               className={`w-full flex items-start space-x-3 p-3 bg-black/50 border border-stone-700 rounded-xl text-left transition-all ${
-                source.skill
+                source.snap
                   ? 'hover:border-stone-600 hover:shadow-medium'
                   : 'opacity-60 cursor-not-allowed'
               }`}>

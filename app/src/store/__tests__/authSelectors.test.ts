@@ -31,7 +31,6 @@ function makeState(
     socket: { byUser: {} },
     team: {} as RootState['team'],
     ai: {} as RootState['ai'],
-    skills: {} as RootState['skills'],
     daemon: {} as RootState['daemon'],
     thread: {} as RootState['thread'],
     intelligence: {} as RootState['intelligence'],

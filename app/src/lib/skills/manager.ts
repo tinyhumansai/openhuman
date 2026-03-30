@@ -471,9 +471,8 @@ class SkillManager {
       // Stop all running skills first
       await this.stopAll();
 
-      // Get all skill IDs from Redux state
-      const state = store.getState();
-      const skillIds = Object.keys(state.skills.skills);
+      // Get all skill IDs from runtime map
+      const skillIds = Array.from(this.runtimes.keys());
 
       // Clear data for each skill
       const clearPromises = skillIds.map(async (skillId) => {

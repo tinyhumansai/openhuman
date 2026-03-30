@@ -20,7 +20,6 @@ function makeState(
     user: { user: null, isLoading: false, error: null },
     team: {} as RootState['team'],
     ai: {} as RootState['ai'],
-    skills: {} as RootState['skills'],
   } as RootState;
 }
 

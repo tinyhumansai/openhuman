@@ -178,9 +178,7 @@ export default function SkillsGrid() {
               </thead>
               <tbody className="skills-table-body">
                 {sortedSkillsList.map(skill => {
-                  const skillState = skillStates[skill.id] as Record<string, unknown> | undefined;
-                  const syncStats = syncStatsBySkill[skill.id];
-                  const syncSummaryText = deriveSkillSyncSummaryText(skillState, syncStats);
+                  const syncSummaryText = deriveSkillSyncSummaryText(undefined, undefined);
 
                   return (
                     <SkillRow

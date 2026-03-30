@@ -25,7 +25,6 @@ import channelConnectionsReducer from './channelConnectionsSlice';
 import daemonReducer from './daemonSlice';
 import intelligenceReducer from './intelligenceSlice';
 import inviteReducer from './inviteSlice';
-import skillsReducer from './skillsSlice';
 import socketReducer from './socketSlice';
 import teamReducer from './teamSlice';
 import threadReducer from './threadSlice';
@@ -49,9 +48,6 @@ const authPersistConfig = {
 // Persist config for AI state (config only)
 const aiPersistConfig = { key: 'ai', storage, whitelist: ['config'] };
 
-// Persist config for skills state (setupComplete + sync metrics per skill)
-const skillsPersistConfig = { key: 'skills', storage, whitelist: ['skills', 'syncStatsBySkill'] };
-
 // Persist config for thread data and UI prefs (includes threads and messages)
 // Note: activeThreadId is intentionally excluded as it's transient state
 const threadPersistConfig = {
@@ -62,7 +58,6 @@ const threadPersistConfig = {
 
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);
 const persistedAiReducer = persistReducer(aiPersistConfig, aiReducer);
-const persistedSkillsReducer = persistReducer(skillsPersistConfig, skillsReducer);
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
@@ -130,7 +125,6 @@ export const store = configureStore({
     user: userReducer,
     daemon: daemonReducer,
     ai: persistedAiReducer,
-    skills: persistedSkillsReducer,
     team: teamReducer,
     thread: persistedThreadReducer,
     intelligence: intelligenceReducer,
