@@ -26,13 +26,20 @@ import {
   setSelectedThread,
 } from '../store/threadSlice';
 import type { ThreadMessage } from '../types/thread';
-import { openhumanLocalAiTranscribeBytes, openhumanLocalAiTts } from '../utils/tauriCommands';
+import {
+  isTauri,
+  openhumanAutocompleteAccept,
+  openhumanAutocompleteCurrent,
+  openhumanLocalAiTranscribeBytes,
+  openhumanLocalAiTts,
+} from '../utils/tauriCommands';
 
 const DEFAULT_THREAD_ID = 'default-thread';
 const DEFAULT_THREAD_TITLE = 'Conversation';
 type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
 type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
+const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 180;
 
 interface ToolTimelineEntry {
   id: string;
@@ -52,6 +59,25 @@ function formatRelativeTime(dateStr: string): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function getInlineCompletionSuffix(input: string, suggestion: string): string {
+  const normalizedInput = input;
+  const normalizedSuggestion = suggestion;
+
+  if (!normalizedInput || !normalizedSuggestion) {
+    return '';
+  }
+
+  if (normalizedSuggestion === normalizedInput) {
+    return '';
+  }
+
+  if (normalizedSuggestion.startsWith(normalizedInput)) {
+    return normalizedSuggestion.slice(normalizedInput.length);
+  }
+
+  return '';
 }
 
 const Conversations = () => {
@@ -76,6 +102,7 @@ const Conversations = () => {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [isPlayingReply, setIsPlayingReply] = useState(false);
+  const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
 
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState('neocortex-mk1');
@@ -102,6 +129,8 @@ const Conversations = () => {
   const audioChunksRef = useRef<Blob[]>([]);
   const replyAudioRef = useRef<HTMLAudioElement | null>(null);
   const lastSpokenMessageIdRef = useRef<string | null>(null);
+  const autocompleteDebounceRef = useRef<number | null>(null);
+  const autocompleteRequestSeqRef = useRef(0);
 
   const getAudioExtension = (mimeType: string): string => {
     const lower = mimeType.toLowerCase();
@@ -183,6 +212,45 @@ const Conversations = () => {
       setSendError(null);
     }
   }, [inputValue, sendError]);
+
+  useEffect(() => {
+    if (
+      !isTauri() ||
+      !rustChat ||
+      inputMode !== 'text' ||
+      isSending ||
+      inputValue.trim().length === 0
+    ) {
+      setInlineSuggestionValue('');
+      return;
+    }
+
+    if (autocompleteDebounceRef.current !== null) {
+      window.clearTimeout(autocompleteDebounceRef.current);
+    }
+
+    autocompleteDebounceRef.current = window.setTimeout(() => {
+      const requestSeq = autocompleteRequestSeqRef.current + 1;
+      autocompleteRequestSeqRef.current = requestSeq;
+
+      void openhumanAutocompleteCurrent({ context: inputValue })
+        .then(response => {
+          if (autocompleteRequestSeqRef.current !== requestSeq) return;
+          setInlineSuggestionValue(response.result.suggestion?.value ?? '');
+        })
+        .catch(() => {
+          if (autocompleteRequestSeqRef.current !== requestSeq) return;
+          setInlineSuggestionValue('');
+        });
+    }, AUTOCOMPLETE_POLL_DEBOUNCE_MS);
+
+    return () => {
+      if (autocompleteDebounceRef.current !== null) {
+        window.clearTimeout(autocompleteDebounceRef.current);
+        autocompleteDebounceRef.current = null;
+      }
+    };
+  }, [inputValue, inputMode, isSending, rustChat]);
 
   useEffect(() => {
     return () => {
@@ -508,6 +576,20 @@ const Conversations = () => {
   }, [messages, replyMode, rustChat]);
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
+
+    if (e.key === 'Tab' && inlineSuffix.length > 0) {
+      e.preventDefault();
+      setInputValue(prev => prev + inlineSuffix);
+      setInlineSuggestionValue('');
+      if (isTauri()) {
+        void openhumanAutocompleteAccept({ suggestion: inputValue + inlineSuffix }).catch(() => {
+          // Keep local UX smooth even if accept RPC fails.
+        });
+      }
+      return;
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void handleSendMessage();
@@ -528,6 +610,7 @@ const Conversations = () => {
   const selectedThreadToolTimeline = selectedThreadId
     ? (toolTimelineByThread[selectedThreadId] ?? [])
     : [];
+  const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
 
   return (
     <div className="h-full relative z-10 flex overflow-hidden">
@@ -903,15 +986,23 @@ const Conversations = () => {
 
           {inputMode === 'text' ? (
             <div className="flex items-end gap-2">
-              <textarea
-                value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
-                onKeyDown={handleInputKeyDown}
-                placeholder="Type a message..."
-                rows={1}
-                disabled={isSending || !rustChat}
-                className="flex-1 resize-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
+              <div className="relative flex-1 rounded-xl border border-white/10 bg-white/5 focus-within:ring-1 focus-within:ring-primary-500/50 focus-within:border-primary-500/50 transition-all">
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal">
+                  <span className="invisible">{inputValue}</span>
+                  <span className="text-stone-500/50">{inlineCompletionSuffix}</span>
+                </div>
+                <textarea
+                  value={inputValue}
+                  onChange={e => setInputValue(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  placeholder="Type a message..."
+                  rows={1}
+                  disabled={isSending || !rustChat}
+                  className="relative z-10 w-full resize-none border-0 bg-transparent px-4 py-2.5 text-sm placeholder:text-stone-500 focus:outline-none focus:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
               <button
                 onClick={() => {
                   void handleSendMessage();

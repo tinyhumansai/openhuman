@@ -4,6 +4,7 @@ use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration, Instant};
@@ -108,6 +109,15 @@ struct FocusedTextContext {
     text: String,
     selected_text: Option<String>,
     raw_error: Option<String>,
+    bounds: Option<FocusedElementBounds>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FocusedElementBounds {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 }
 
 fn is_text_role(role: Option<&str>) -> bool {
@@ -301,7 +311,7 @@ impl AutocompleteEngine {
                             state.last_error.clone()
                         };
                         if let Some(error_message) = error_message {
-                            show_overflow_badge("error", None, Some(&error_message), None);
+                            show_overflow_badge("error", None, Some(&error_message), None, None);
                         }
                     } else {
                         let mut state = engine.inner.lock().await;
@@ -395,7 +405,7 @@ impl AutocompleteEngine {
             state.updated_at_ms = Some(Utc::now().timestamp_millis());
             state.last_overlay_signature = None;
         }
-        show_overflow_badge("accepted", Some(&cleaned), None, None);
+        show_overflow_badge("accepted", Some(&cleaned), None, None, None);
 
         Ok(AutocompleteAcceptResult {
             accepted: true,
@@ -491,6 +501,7 @@ impl AutocompleteEngine {
                 text: context,
                 selected_text: None,
                 raw_error: None,
+                bounds: None,
             }
         } else {
             let focused = focused_text_context_verbose()?;
@@ -591,7 +602,13 @@ impl AutocompleteEngine {
         if state.last_overlay_signature.as_deref() != Some(ready_signature.as_str()) {
             state.last_overlay_signature = Some(ready_signature);
             drop(state);
-            show_overflow_badge("ready", Some(&suggestion), None, app_name.as_deref());
+            show_overflow_badge(
+                "ready",
+                Some(&suggestion),
+                None,
+                app_name.as_deref(),
+                focused.bounds.as_ref(),
+            );
             return Ok(());
         }
         Ok(())
@@ -635,7 +652,7 @@ impl AutocompleteEngine {
                     state.updated_at_ms = Some(Utc::now().timestamp_millis());
                     state.last_overlay_signature = None;
                 }
-                show_overflow_badge("accepted", Some(&cleaned), None, None);
+                show_overflow_badge("accepted", Some(&cleaned), None, None, None);
             }
         }
 
@@ -660,7 +677,7 @@ impl AutocompleteEngine {
             }
         };
         if let Some(value) = rejected {
-            show_overflow_badge("rejected", Some(&value), None, None);
+            show_overflow_badge("rejected", Some(&value), None, None, None);
         }
         Ok(())
     }
@@ -672,6 +689,10 @@ pub static AUTOCOMPLETE_ENGINE: Lazy<Arc<AutocompleteEngine>> =
 pub fn global_engine() -> Arc<AutocompleteEngine> {
     AUTOCOMPLETE_ENGINE.clone()
 }
+
+#[cfg(target_os = "macos")]
+static LAST_OVERFLOW_BADGE: Lazy<StdMutex<Option<(String, i64)>>> =
+    Lazy::new(|| StdMutex::new(None));
 
 fn truncate_tail(text: &str, max_chars: usize) -> String {
     let chars: Vec<char> = text.chars().collect();
@@ -696,11 +717,174 @@ fn sanitize_suggestion(text: &str) -> String {
 }
 
 fn show_overflow_badge(
-    _kind: &str,
-    _suggestion: Option<&str>,
-    _error: Option<&str>,
-    _app_name: Option<&str>,
+    kind: &str,
+    suggestion: Option<&str>,
+    error: Option<&str>,
+    app_name: Option<&str>,
+    anchor_bounds: Option<&FocusedElementBounds>,
 ) {
+    #[cfg(target_os = "macos")]
+    {
+        const READY_THROTTLE_MS: i64 = 1_200;
+        let now_ms = Utc::now().timestamp_millis();
+        let signature = format!(
+            "{}:{}:{}:{}",
+            kind,
+            app_name.unwrap_or_default(),
+            suggestion.unwrap_or_default(),
+            error.unwrap_or_default()
+        );
+
+        if let Ok(mut guard) = LAST_OVERFLOW_BADGE.lock() {
+            if let Some((last_signature, last_ms)) = guard.as_ref() {
+                if *last_signature == signature {
+                    return;
+                }
+                if kind == "ready" && (now_ms - *last_ms) < READY_THROTTLE_MS {
+                    return;
+                }
+            }
+            *guard = Some((signature, now_ms));
+        }
+
+        let title = match kind {
+            "ready" => "OpenHuman suggestion",
+            "accepted" => "OpenHuman applied",
+            "rejected" => "OpenHuman dismissed",
+            "error" => "OpenHuman autocomplete error",
+            _ => "OpenHuman autocomplete",
+        };
+
+        let mut body = match kind {
+            "ready" => suggestion.unwrap_or_default().to_string(),
+            "accepted" => format!("Inserted: {}", suggestion.unwrap_or_default()),
+            "rejected" => "Suggestion dismissed.".to_string(),
+            "error" => error.unwrap_or("Autocomplete failed").to_string(),
+            _ => suggestion.unwrap_or_default().to_string(),
+        };
+        if body.trim().is_empty() {
+            body = "No suggestion".to_string();
+        }
+        body = truncate_tail(&body, 140);
+
+        let subtitle = app_name.unwrap_or_default().trim().to_string();
+        let escaped_title = escape_osascript_text(title);
+        let escaped_body = escape_osascript_text(&body);
+        let escaped_subtitle = escape_osascript_text(&subtitle);
+
+        let script = if kind == "ready" {
+            if let (Some(bounds), Some(suggestion_text)) = (anchor_bounds, suggestion) {
+                build_inline_overlay_script(suggestion_text, bounds)
+            } else {
+                String::new()
+            }
+        } else if subtitle.is_empty() {
+            format!(
+                r#"display notification "{}" with title "{}""#,
+                escaped_body, escaped_title
+            )
+        } else {
+            format!(
+                r#"display notification "{}" with title "{}" subtitle "{}""#,
+                escaped_body, escaped_title, escaped_subtitle
+            )
+        };
+
+        std::thread::spawn(move || {
+            if !script.is_empty() {
+                let _ = std::process::Command::new("osascript")
+                    .arg("-l")
+                    .arg("JavaScript")
+                    .arg("-e")
+                    .arg(script)
+                    .output();
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn escape_osascript_text(raw: &str) -> String {
+    raw.replace('\\', "\\\\")
+        .replace('\"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', " ")
+}
+
+#[cfg(target_os = "macos")]
+fn escape_js_text(raw: &str) -> String {
+    raw.replace('\\', "\\\\")
+        .replace('\"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', " ")
+}
+
+#[cfg(target_os = "macos")]
+fn build_inline_overlay_script(text: &str, bounds: &FocusedElementBounds) -> String {
+    let suggestion = truncate_tail(text, 80);
+    let escaped_suggestion = escape_js_text(&suggestion);
+    format!(
+        r#"
+ObjC.import('AppKit');
+const app = $.NSApplication.sharedApplication;
+app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
+
+const screen = $.NSScreen.mainScreen;
+if (!screen) {{
+  $.exit(0);
+}}
+const screenHeight = Number(screen.frame.size.height);
+const axX = {x};
+const axY = {y};
+const axW = Math.max(0, {w});
+const axH = Math.max(0, {h});
+const text = "{text}";
+const width = Math.min(420, Math.max(140, text.length * 7 + 24));
+const height = 26;
+
+const px = axX + Math.max(8, Math.min(axW - width - 8, 28));
+const pyTop = axY + Math.max(5, Math.min(axH - height - 4, 10));
+const cocoaY = Math.max(6, screenHeight - pyTop - height);
+
+const window = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
+  $.NSMakeRect(px, cocoaY, width, height),
+  $.NSWindowStyleMaskBorderless,
+  $.NSBackingStoreBuffered,
+  false
+);
+window.setLevel($.NSStatusWindowLevel);
+window.setOpaque(false);
+window.setBackgroundColor($.NSColor.clearColor);
+window.setIgnoresMouseEvents(true);
+window.setHasShadow(false);
+window.setCollectionBehavior($.NSWindowCollectionBehaviorCanJoinAllSpaces);
+
+const bg = $.NSView.alloc.initWithFrame($.NSMakeRect(0, 0, width, height));
+bg.setWantsLayer(true);
+bg.layer.setCornerRadius(6.0);
+bg.layer.setBackgroundColor($.NSColor.colorWithCalibratedWhiteAlpha(0.08, 0.35).CGColor);
+window.contentView.addSubview(bg);
+
+const label = $.NSTextField.alloc.initWithFrame($.NSMakeRect(8, 4, width - 12, 18));
+label.setStringValue($(text));
+label.setBezeled(false);
+label.setDrawsBackground(false);
+label.setEditable(false);
+label.setSelectable(false);
+label.setFont($.NSFont.systemFontOfSize(13));
+label.setTextColor($.NSColor.colorWithCalibratedWhiteAlpha(1.0, 0.45));
+window.contentView.addSubview(label);
+
+window.orderFrontRegardless();
+$.NSThread.sleepForTimeInterval(0.9);
+window.orderOut(null);
+"#,
+        x = bounds.x,
+        y = bounds.y,
+        w = bounds.width,
+        h = bounds.height,
+        text = escaped_suggestion
+    )
 }
 
 fn is_no_text_candidate_error(err: &str) -> bool {
@@ -729,6 +913,10 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
         set textValue to ""
         set selectedValue to ""
         set errValue to ""
+        set posX to ""
+        set posY to ""
+        set sizeW to ""
+        set sizeH to ""
         set targetRoles to {"AXTextArea", "AXTextField", "AXSearchField", "AXComboBox", "AXEditableText"}
 
         try
@@ -738,6 +926,16 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
           end try
           try
             set textValue to value of attribute "AXValue" of focusedElement as text
+          end try
+          try
+            set p to value of attribute "AXPosition" of focusedElement
+            set posX to item 1 of p as text
+            set posY to item 2 of p as text
+          end try
+          try
+            set s to value of attribute "AXSize" of focusedElement
+            set sizeW to item 1 of s as text
+            set sizeH to item 2 of s as text
           end try
           if textValue is "missing value" then set textValue to ""
           if textValue is "" then
@@ -774,6 +972,20 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
                 try
                   set childValue to value of attribute "AXValue" of childElem as text
                 end try
+                set childPosX to ""
+                set childPosY to ""
+                set childSizeW to ""
+                set childSizeH to ""
+                try
+                  set cp to value of attribute "AXPosition" of childElem
+                  set childPosX to item 1 of cp as text
+                  set childPosY to item 2 of cp as text
+                end try
+                try
+                  set cs to value of attribute "AXSize" of childElem
+                  set childSizeW to item 1 of cs as text
+                  set childSizeH to item 2 of cs as text
+                end try
                 if childValue is "missing value" then set childValue to ""
                 if childValue is "" then
                   try
@@ -785,6 +997,10 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
                 if childValue is not "" then
                   set roleValue to childRole
                   set textValue to childValue
+                  if childPosX is not "" then set posX to childPosX
+                  if childPosY is not "" then set posY to childPosY
+                  if childSizeW is not "" then set sizeW to childSizeW
+                  if childSizeH is not "" then set sizeH to childSizeH
                   exit repeat
                 end if
               end if
@@ -826,7 +1042,7 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
           set errValue to "ERROR:no_text_candidate_found"
         end if
 
-        return appName & sep & roleValue & sep & textValue & sep & selectedValue & sep & errValue
+        return appName & sep & roleValue & sep & textValue & sep & selectedValue & sep & errValue & sep & posX & sep & posY & sep & sizeW & sep & sizeH
       end tell
     "##;
 
@@ -845,7 +1061,7 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
 
     let text = String::from_utf8_lossy(&output.stdout);
     let trimmed = text.trim_end_matches(['\r', '\n']);
-    let mut segments = trimmed.splitn(5, '\u{1f}');
+    let mut segments = trimmed.splitn(9, '\u{1f}');
     let app_name = segments
         .next()
         .map(|s| normalize_ax_value(s.trim()))
@@ -863,6 +1079,10 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
         .next()
         .map(|s| normalize_ax_value(s.trim()))
         .filter(|s| !s.is_empty());
+    let pos_x = segments.next().and_then(parse_ax_number);
+    let pos_y = segments.next().and_then(parse_ax_number);
+    let size_w = segments.next().and_then(parse_ax_number);
+    let size_h = segments.next().and_then(parse_ax_number);
 
     let allow_terminal_text_value =
         is_terminal_app(app_name.as_deref()) && !value.trim().is_empty();
@@ -880,6 +1100,17 @@ fn focused_text_context_verbose() -> Result<FocusedTextContext, String> {
         text: value,
         selected_text,
         raw_error,
+        bounds: match (pos_x, pos_y, size_w, size_h) {
+            (Some(x), Some(y), Some(width), Some(height)) if width > 0 && height > 0 => {
+                Some(FocusedElementBounds {
+                    x,
+                    y,
+                    width,
+                    height,
+                })
+            }
+            _ => None,
+        },
     })
 }
 
@@ -900,6 +1131,15 @@ fn normalize_ax_value(raw: &str) -> String {
     } else {
         v.to_string()
     }
+}
+
+fn parse_ax_number(raw: &str) -> Option<i32> {
+    let trimmed = normalize_ax_value(raw);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let cleaned = trimmed.replace(',', ".");
+    cleaned.parse::<f64>().ok().map(|v| v.round() as i32)
 }
 
 #[cfg(target_os = "macos")]
