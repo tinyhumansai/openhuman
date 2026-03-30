@@ -1623,6 +1623,44 @@ export async function openhumanAutocompleteSetStyle(
   });
 }
 
+export interface AcceptedCompletion {
+  context: string;
+  suggestion: string;
+  app_name?: string | null;
+  timestamp_ms: number;
+}
+
+export interface AutocompleteHistoryResult {
+  entries: AcceptedCompletion[];
+}
+
+export interface AutocompleteClearHistoryResult {
+  cleared: number;
+}
+
+export async function openhumanAutocompleteHistory(params?: {
+  limit?: number;
+}): Promise<CommandResponse<AutocompleteHistoryResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AutocompleteHistoryResult>>({
+    method: 'openhuman.autocomplete_history',
+    params: params ?? {},
+  });
+}
+
+export async function openhumanAutocompleteClearHistory(): Promise<
+  CommandResponse<AutocompleteClearHistoryResult>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AutocompleteClearHistoryResult>>({
+    method: 'openhuman.autocomplete_clear_history',
+  });
+}
+
 export async function runtimeListSkills(): Promise<SkillSnapshot[]> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
