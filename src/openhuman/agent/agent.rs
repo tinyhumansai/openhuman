@@ -479,6 +479,7 @@ impl Agent {
                         resp.text.as_ref().map_or(0, |t| t.chars().count()),
                         resp.tool_calls.len()
                     );
+                    log::debug!("[agent_loop] provider response: {resp:?}");
                     resp
                 }
                 Err(err) => return Err(err),

@@ -271,7 +271,9 @@ fn default_workspace_file_content(filename: &str) -> &'static str {
         "TOOLS.md" => include_str!("prompts/TOOLS.md"),
         "IDENTITY.md" => include_str!("prompts/IDENTITY.md"),
         "USER.md" => include_str!("prompts/USER.md"),
-        "HEARTBEAT.md" => "# Periodic Tasks\n\n# Add tasks below (one per line, starting with `- `)\n",
+        "HEARTBEAT.md" => {
+            "# Periodic Tasks\n\n# Add tasks below (one per line, starting with `- `)\n"
+        }
         "BOOTSTRAP.md" => include_str!("prompts/BOOTSTRAP.md"),
         "MEMORY.md" => include_str!("prompts/MEMORY.md"),
         _ => "",
