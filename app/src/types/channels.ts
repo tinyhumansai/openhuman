@@ -1,4 +1,4 @@
-export type ChannelType = 'telegram' | 'discord';
+export type ChannelType = 'telegram' | 'discord' | 'web';
 
 export type ChannelAuthMode = 'managed_dm' | 'oauth' | 'bot_token' | 'api_key';
 

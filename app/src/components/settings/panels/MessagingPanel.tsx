@@ -115,6 +115,21 @@ const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
     ],
     capabilities: ['send_text', 'receive_text', 'typing', 'threaded_replies'],
   },
+  {
+    id: 'web',
+    display_name: 'Web',
+    description: 'Chat via the built-in web UI.',
+    icon: 'web',
+    auth_modes: [
+      {
+        mode: 'managed_dm',
+        description: 'Use the embedded web chat — no setup required.',
+        fields: [],
+        auth_action: undefined,
+      },
+    ],
+    capabilities: ['send_text', 'send_rich_text', 'receive_text'],
+  },
 ];
 
 const MessagingPanel = () => {

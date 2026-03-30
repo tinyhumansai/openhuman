@@ -21,7 +21,11 @@ const initialState: ChannelConnectionsState = {
   schemaVersion: SCHEMA_VERSION,
   migrationCompleted: false,
   defaultMessagingChannel: 'telegram',
-  connections: { telegram: makeEmptyChannelModes(), discord: makeEmptyChannelModes() },
+  connections: {
+    telegram: makeEmptyChannelModes(),
+    discord: makeEmptyChannelModes(),
+    web: makeEmptyChannelModes(),
+  },
 };
 
 function touchConnection(
@@ -47,6 +51,7 @@ const channelConnectionsSlice = createSlice({
       if (state.migrationCompleted) return;
       state.connections.telegram = makeEmptyChannelModes();
       state.connections.discord = makeEmptyChannelModes();
+      state.connections.web = makeEmptyChannelModes();
       state.defaultMessagingChannel = 'telegram';
       state.migrationCompleted = true;
       state.schemaVersion = SCHEMA_VERSION;

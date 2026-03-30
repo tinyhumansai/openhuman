@@ -150,7 +150,11 @@ impl ChannelDefinition {
 
 /// Return the static registry of all supported channel definitions.
 pub fn all_channel_definitions() -> Vec<ChannelDefinition> {
-    vec![telegram_definition(), discord_definition()]
+    vec![
+        telegram_definition(),
+        discord_definition(),
+        web_definition(),
+    ]
 }
 
 /// Look up a channel definition by id.
@@ -244,6 +248,26 @@ fn discord_definition() -> ChannelDefinition {
             ChannelCapability::ReceiveText,
             ChannelCapability::Typing,
             ChannelCapability::ThreadedReplies,
+        ],
+    }
+}
+
+fn web_definition() -> ChannelDefinition {
+    ChannelDefinition {
+        id: "web",
+        display_name: "Web",
+        description: "Chat via the built-in web UI.",
+        icon: "web",
+        auth_modes: vec![AuthModeSpec {
+            mode: ChannelAuthMode::ManagedDm,
+            description: "Use the embedded web chat — no setup required.",
+            fields: vec![],
+            auth_action: None,
+        }],
+        capabilities: vec![
+            ChannelCapability::SendText,
+            ChannelCapability::SendRichText,
+            ChannelCapability::ReceiveText,
         ],
     }
 }
