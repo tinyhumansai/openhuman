@@ -104,6 +104,12 @@ struct WebChatSseEvent {
     full_response: Option<String>,
     message: Option<String>,
     error_type: Option<String>,
+    tool_name: Option<String>,
+    skill_id: Option<String>,
+    args: Option<Value>,
+    output: Option<String>,
+    success: Option<bool>,
+    round: Option<u32>,
 }
 
 fn core_events_url() -> String {
@@ -168,10 +174,10 @@ fn emit_web_chat_event(app: &AppHandle, event: WebChatSseEvent) {
         "tool_call" => {
             let payload = serde_json::json!({
                 "thread_id": event.thread_id,
-                "tool_name": "unknown",
-                "skill_id": "web_channel",
-                "args": {},
-                "round": 0,
+                "tool_name": event.tool_name.unwrap_or_else(|| "unknown".to_string()),
+                "skill_id": event.skill_id.unwrap_or_else(|| "web_channel".to_string()),
+                "args": event.args.unwrap_or_else(|| serde_json::json!({})),
+                "round": event.round.unwrap_or(0),
                 "request_id": event.request_id,
             });
             let _ = app.emit("chat:tool_call", payload);
@@ -179,11 +185,11 @@ fn emit_web_chat_event(app: &AppHandle, event: WebChatSseEvent) {
         "tool_result" => {
             let payload = serde_json::json!({
                 "thread_id": event.thread_id,
-                "tool_name": "unknown",
-                "skill_id": "web_channel",
-                "output": "",
-                "success": true,
-                "round": 0,
+                "tool_name": event.tool_name.unwrap_or_else(|| "unknown".to_string()),
+                "skill_id": event.skill_id.unwrap_or_else(|| "web_channel".to_string()),
+                "output": event.output.unwrap_or_default(),
+                "success": event.success.unwrap_or(true),
+                "round": event.round.unwrap_or(0),
                 "request_id": event.request_id,
             });
             let _ = app.emit("chat:tool_result", payload);

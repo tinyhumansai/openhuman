@@ -12,16 +12,16 @@ interface RequestOptions {
 }
 
 /**
- * Lazy store accessor to break the circular dependency:
- *   store/index → slices → api services → apiClient → store/index
+ * Lazy auth token accessor so `apiClient` never imports `store/index` at module level.
+ * Entry (`main.tsx`) and Vitest setup call `setStoreForApiClient` after the store module loads,
+ * avoiding a cycle: `store` → `apiClient` → … → `socketService` → `store`.
  *
- * The store registers itself via `setStoreForApiClient` after creation,
- * so apiClient never imports store/index at module level.
+ * The binding name avoids clashing with transpiled private method names (e.g. `_getToken`).
  */
-let _getToken: (() => string | null) | null = null;
+let authTokenGetterRef: (() => string | null) | null = null;
 
 export function setStoreForApiClient(getToken: () => string | null) {
-  _getToken = getToken;
+  authTokenGetterRef = getToken;
 }
 
 /**
@@ -29,8 +29,8 @@ export function setStoreForApiClient(getToken: () => string | null) {
  * Handles authentication, error handling, and response typing
  */
 class ApiClient {
-  private getToken(): string | null {
-    return _getToken ? _getToken() : null;
+  private resolveAuthToken(): string | null {
+    return authTokenGetterRef ? authTokenGetterRef() : null;
   }
 
   /**
@@ -44,7 +44,7 @@ class ApiClient {
 
     // Add authorization header if auth is required
     if (options.requireAuth !== false) {
-      const token = this.getToken();
+      const token = this.resolveAuthToken();
       if (token) {
         headers.Authorization = `Bearer ${token}`;
       }

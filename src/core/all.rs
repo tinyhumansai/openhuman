@@ -46,7 +46,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::heartbeat::all_heartbeat_registered_controllers());
     controllers.extend(crate::openhuman::cost::all_cost_registered_controllers());
     controllers.extend(crate::openhuman::autocomplete::all_autocomplete_registered_controllers());
-    controllers.extend(crate::openhuman::web_channel::all_web_channel_registered_controllers());
+    controllers.extend(
+        crate::openhuman::channels::providers::web::all_web_channel_registered_controllers(),
+    );
     controllers.extend(crate::openhuman::config::all_config_registered_controllers());
     controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
@@ -72,7 +74,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::heartbeat::all_heartbeat_controller_schemas());
     schemas.extend(crate::openhuman::cost::all_cost_controller_schemas());
     schemas.extend(crate::openhuman::autocomplete::all_autocomplete_controller_schemas());
-    schemas.extend(crate::openhuman::web_channel::all_web_channel_controller_schemas());
+    schemas
+        .extend(crate::openhuman::channels::providers::web::all_web_channel_controller_schemas());
     schemas.extend(crate::openhuman::config::all_config_controller_schemas());
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());

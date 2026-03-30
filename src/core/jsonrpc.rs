@@ -156,7 +156,7 @@ async fn events_handler(
     Query(query): Query<EventsQuery>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     let client_id = query.client_id;
-    let rx = crate::openhuman::web_channel::subscribe_web_channel_events();
+    let rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |item| {
         let event = match item {
             Ok(ev) => ev,

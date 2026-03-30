@@ -396,33 +396,6 @@ impl Agent {
         self.model_name.clone()
     }
 
-    fn has_tool_named(&self, name: &str) -> bool {
-        self.tools.iter().any(|tool| tool.name() == name)
-    }
-
-    fn should_force_list_files_fallback(&self, user_message: &str, assistant_text: &str) -> bool {
-        if !self.has_tool_named("shell") {
-            return false;
-        }
-
-        let user = user_message.to_ascii_lowercase();
-        let asks_for_files = (user.contains("files") || user.contains("list"))
-            && (user.contains("current dir")
-                || user.contains("current directory")
-                || user.contains("this dir")
-                || user.contains("this directory")
-                || user.contains("here"));
-        if !asks_for_files {
-            return false;
-        }
-
-        let assistant = assistant_text.to_ascii_lowercase();
-        assistant.contains("let's check")
-            || assistant.contains("let me check")
-            || assistant.contains("checking")
-            || assistant.contains("i'll check")
-    }
-
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
         log::info!(
             "[agent_loop] turn start message_chars={} history_len={} max_tool_iterations={}",
@@ -432,6 +405,11 @@ impl Agent {
         );
         if self.history.is_empty() {
             let system_prompt = self.build_system_prompt()?;
+            log::info!(
+                "[agent_loop] system prompt built chars={} content=\n{}",
+                system_prompt.chars().count(),
+                system_prompt
+            );
             self.history
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     system_prompt,
@@ -514,26 +492,6 @@ impl Agent {
                 calls.len()
             );
             if calls.is_empty() {
-                if iteration == 0 && self.should_force_list_files_fallback(user_message, &text) {
-                    log::warn!(
-                        "[agent_loop] applying list-files direct fallback i={} tool=shell command=ls -la",
-                        iteration + 1
-                    );
-                    let fallback_call = ParsedToolCall {
-                        name: "shell".to_string(),
-                        arguments: serde_json::json!({"command": "ls -la"}),
-                        tool_call_id: None,
-                    };
-                    let result = self.execute_tool_call(&fallback_call).await;
-                    let final_text = result.output;
-                    self.history
-                        .push(ConversationMessage::Chat(ChatMessage::assistant(
-                            final_text.clone(),
-                        )));
-                    self.trim_history();
-                    return Ok(final_text);
-                }
-
                 let final_text = if text.is_empty() {
                     response.text.unwrap_or_default()
                 } else {

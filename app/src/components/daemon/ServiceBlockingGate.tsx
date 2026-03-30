@@ -22,6 +22,9 @@ type RefreshOptions = { showChecking?: boolean; clearError?: boolean };
 const normalizeServiceState = (state: ServiceState | undefined): string => {
   if (!state) return 'Unknown';
   if (typeof state === 'string') return state;
+  if ('Running' in state) return 'Running';
+  if ('Stopped' in state) return 'Stopped';
+  if ('NotInstalled' in state) return 'NotInstalled';
   if ('Unknown' in state) return `Unknown(${state.Unknown})`;
   return 'Unknown';
 };
@@ -50,26 +53,35 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
     console.info('[ServiceBlockingGate] Refreshing service + agent status');
 
     try {
-      const [service, agent] = await Promise.all([
+      const [serviceResult, agentResult] = await Promise.allSettled([
         openhumanServiceStatus(),
         openhumanAgentServerStatus(),
       ]);
-      const serviceState = service?.result?.state;
-      const normalized = normalizeServiceState(serviceState);
+      const normalized =
+        serviceResult.status === 'fulfilled'
+          ? normalizeServiceState(serviceResult.value?.result?.state)
+          : 'Unknown';
       const serviceRunning = normalized === 'Running';
-      const agentIsRunning = !!agent?.result?.running;
+      const agentIsRunning =
+        agentResult.status === 'fulfilled' ? !!agentResult.value?.result?.running : false;
+      const gateReady = serviceRunning || agentIsRunning;
+
+      if (serviceResult.status !== 'fulfilled' && !agentIsRunning) {
+        throw serviceResult.reason;
+      }
 
       setServiceStateText(prev => (prev === normalized ? prev : normalized));
       setAgentRunning(prev => (prev === agentIsRunning ? prev : agentIsRunning));
       setGateStatus(prev => {
-        const next = serviceRunning && agentIsRunning ? 'ready' : 'blocked';
+        const next = gateReady ? 'ready' : 'blocked';
         return prev === next ? prev : next;
       });
       setError(prev => (prev ? null : prev));
       console.info('[ServiceBlockingGate] Status refreshed', {
         serviceState: normalized,
         agentRunning: agentIsRunning,
-        nextGateStatus: serviceRunning && agentIsRunning ? 'ready' : 'blocked',
+        nextGateStatus: gateReady ? 'ready' : 'blocked',
+        passMode: serviceRunning ? 'hard(service)' : agentIsRunning ? 'soft(agent)' : 'blocked',
       });
     } catch (err) {
       setServiceStateText('Unknown');
@@ -183,7 +195,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
           </button>
 
           <button
-            disabled={isOperating || !installed || (serviceRunning && agentRunning)}
+            disabled={isOperating || !installed || serviceRunning}
             onClick={() => void runOperation(() => openhumanServiceStart())}
             className="px-3 py-2 rounded-lg text-sm bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:text-gray-400">
             Start Service
