@@ -189,24 +189,50 @@ async fn handle_message(
             arguments,
             reply,
         } => {
+            log::info!(
+                "[skill:{}] event_loop: CallTool '{}' received",
+                skill_id,
+                tool_name
+            );
+
             // Lazy-load persisted OAuth credential before calling the tool
             restore_oauth_credential(ctx, skill_id).await;
+            log::debug!(
+                "[skill:{}] event_loop: OAuth credential restored for tool '{}'",
+                skill_id,
+                tool_name
+            );
 
             // Start the async tool execution. The JS code stores the result
             // in globals when done. The main event loop checks for completion.
             match start_async_tool_call(ctx, &tool_name, arguments).await {
                 Ok(Some(sync_result)) => {
-                    // Tool returned synchronously (non-Promise)
+                    log::info!(
+                        "[skill:{}] event_loop: tool '{}' completed synchronously (blocks={})",
+                        skill_id,
+                        tool_name,
+                        sync_result.content.len()
+                    );
                     let _ = reply.send(Ok(sync_result));
                 }
                 Ok(None) => {
-                    // Tool returned a Promise — event loop will drive it
+                    log::info!(
+                        "[skill:{}] event_loop: tool '{}' returned Promise, waiting async",
+                        skill_id,
+                        tool_name
+                    );
                     *pending_tool = Some(PendingToolCall {
                         reply,
                         deadline: tokio::time::Instant::now() + Duration::from_secs(120),
                     });
                 }
                 Err(e) => {
+                    log::error!(
+                        "[skill:{}] event_loop: tool '{}' failed: {}",
+                        skill_id,
+                        tool_name,
+                        e
+                    );
                     let _ = reply.send(Err(e));
                 }
             }

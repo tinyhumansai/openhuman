@@ -100,24 +100,36 @@ const handleOAuthDeepLink = async (parsed: URL) => {
 
     console.log(`[DeepLink] OAuth success for skill=${skillId} integration=${integrationId}`);
 
-    // Always mark the skill as connected first — the OAuth completed on the backend.
-    // Token handoff is best-effort; the backend stores credentials server-side regardless.
+    // 1. Persist setup completion
     await rpcSetSetupComplete(skillId, true).catch(err =>
       console.warn('[DeepLink] Failed to persist setup_complete via RPC:', err)
     );
-    // Notify hooks to re-fetch
     emitSkillStateChange(skillId);
 
-    // Best-effort: notify skill runtime of OAuth completion and trigger sync
+    // 2. Start the skill in the core QuickJS runtime (if not already running)
     try {
-      await skillManager.notifyOAuthComplete(skillId, integrationId);
-      await skillManager.triggerSync(skillId);
-    } catch (runtimeErr) {
-      // Skill runtime may not be running — that's OK, setup is already persisted
-      console.warn('[DeepLink] Runtime notify skipped (skill not running):', runtimeErr);
+      const { startSkill } = await import('../lib/skills/skillsApi');
+      await startSkill(skillId);
+      console.log(`[DeepLink] Skill '${skillId}' started in core runtime`);
+    } catch (startErr) {
+      console.warn(`[DeepLink] Could not start skill '${skillId}' in runtime:`, startErr);
     }
 
-    // Re-emit so hooks pick up the latest state
+    // 3. Send oauth/complete to the running skill with the credential
+    try {
+      await skillManager.notifyOAuthComplete(skillId, integrationId);
+      console.log(`[DeepLink] OAuth complete sent to skill '${skillId}'`);
+    } catch (runtimeErr) {
+      console.warn('[DeepLink] Runtime notify failed:', runtimeErr);
+    }
+
+    // 4. Trigger initial data sync
+    try {
+      await skillManager.triggerSync(skillId);
+    } catch {
+      // Non-critical
+    }
+
     emitSkillStateChange(skillId);
   } else if (path === 'error') {
     const error = parsed.searchParams.get('error') ?? 'Unknown error';

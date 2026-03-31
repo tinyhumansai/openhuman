@@ -120,6 +120,8 @@ pub(crate) async fn start_async_tool_call(
     tool_name: &str,
     arguments: serde_json::Value,
 ) -> Result<Option<ToolResult>, String> {
+    log::info!("[tool_call] start_async_tool_call: tool='{}' args={}", tool_name, arguments);
+
     let args_str =
         serde_json::to_string(&arguments).map_err(|e| format!("Failed to serialize args: {e}"))?;
     let tool_name = tool_name.to_string();
