@@ -717,9 +717,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       <div className="mt-3 text-[11px] text-stone-500">
         Sessions: {sessions ? formatNumber(sessions.total) : '--'} · Token volume:{' '}
         {sessions ? formatNumber(sessions.totalTokens) : '--'}
-        {graphRelations.length > 0 && (
-          <> · Relations: {formatNumber(graphRelations.length)}</>
-        )}
+        {graphRelations.length > 0 && <> · Relations: {formatNumber(graphRelations.length)}</>}
         {entities && <> · Entity buckets: {formatNumber(Object.keys(entities).length)}</>}
       </div>
     </section>

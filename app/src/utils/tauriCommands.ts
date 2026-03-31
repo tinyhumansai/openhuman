@@ -310,10 +310,7 @@ export async function memoryDocIngest(params: {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<unknown>({
-    method: 'memory.doc.ingest',
-    params,
-  });
+  return await callCoreRpc<unknown>({ method: 'memory.doc.ingest', params });
 }
 
 export async function aiListMemoryFiles(relativeDir = 'memory'): Promise<string[]> {
