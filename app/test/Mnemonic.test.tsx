@@ -45,6 +45,7 @@ const {
 }));
 
 vi.mock('../src/utils/cryptoKeys', () => ({
+  MNEMONIC_GENERATE_WORD_COUNT: 24,
   generateMnemonicPhrase: mockGenerateMnemonicPhrase,
   validateMnemonicPhrase: mockValidateMnemonicPhrase,
   deriveAesKeyFromMnemonic: mockDeriveAesKey,
@@ -123,7 +124,7 @@ describe('Mnemonic — generate mode: initial render', () => {
 
   it('renders the amber warning notice', () => {
     renderWithUser();
-    expect(screen.getByText(/never share your recovery phrase/i)).toBeInTheDocument();
+    expect(screen.getByText(/can never be recovered if lost/i)).toBeInTheDocument();
   });
 
   it('renders the confirmation checkbox unchecked', () => {

@@ -1,15 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-  isTauri: vi.fn(() => false),
-}));
+import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
+import { callCoreRpc } from '../coreRpcClient';
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
 vi.mock('../../lib/ai/localCoreAiMemory', () => ({
   dispatchLocalAiMethod: vi.fn(async (_method: string) => ({ source: 'local-ai' })),
 }));
-
-import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
-import { callCoreRpc } from '../coreRpcClient';
 
 describe('coreRpcClient', () => {
   beforeEach(() => {
@@ -24,9 +21,7 @@ describe('coreRpcClient', () => {
       json: async () => ({ jsonrpc: '2.0', id: 1, result: { ok: true } }),
     } as Response);
 
-    await callCoreRpc({
-      method: 'openhuman.auth.get_state',
-    });
+    await callCoreRpc({ method: 'openhuman.auth.get_state' });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
@@ -41,9 +36,7 @@ describe('coreRpcClient', () => {
       json: async () => ({ jsonrpc: '2.0', id: 2, result: { accepted: true } }),
     } as Response);
 
-    await callCoreRpc({
-      method: 'openhuman.accessibility_status',
-    });
+    await callCoreRpc({ method: 'openhuman.accessibility_status' });
 
     const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(String(requestInit.body));
@@ -82,10 +75,7 @@ describe('coreRpcClient', () => {
     const localDispatchMock = vi.mocked(dispatchLocalAiMethod);
     localDispatchMock.mockResolvedValueOnce({ state: 'ready' });
 
-    const result = await callCoreRpc<{ state: string }>({
-      method: 'ai.get_config',
-      params: {},
-    });
+    const result = await callCoreRpc<{ state: string }>({ method: 'ai.get_config', params: {} });
 
     expect(localDispatchMock).toHaveBeenCalledWith('ai.get_config', {});
     expect(fetch).not.toHaveBeenCalled();

@@ -258,7 +258,8 @@ pub fn default_core_bin() -> Option<PathBuf> {
                     continue;
                 };
                 #[cfg(windows)]
-                let matches = file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe");
+                let matches =
+                    file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe");
                 #[cfg(not(windows))]
                 let matches = file_name.starts_with("openhuman-core-");
                 if matches {
@@ -321,8 +322,8 @@ pub fn default_core_bin() -> Option<PathBuf> {
             let matches = (file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe"))
                 || (file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe"));
             #[cfg(not(windows))]
-            let matches =
-                file_name.starts_with("openhuman-core-") || file_name.starts_with("openhuman-core-");
+            let matches = file_name.starts_with("openhuman-core-")
+                || file_name.starts_with("openhuman-core-");
 
             if matches && !same_executable_path(&path, &exe) {
                 return Some(path);
@@ -336,7 +337,8 @@ pub fn default_core_bin() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_core_port, default_core_run_mode, same_executable_path, CoreProcessHandle, CoreRunMode,
+        default_core_port, default_core_run_mode, same_executable_path, CoreProcessHandle,
+        CoreRunMode,
     };
 
     struct EnvGuard {
@@ -406,6 +408,9 @@ mod tests {
             let handle = CoreProcessHandle::new(port, None, CoreRunMode::ChildProcess);
             handle.ensure_running().await
         });
-        assert!(result.is_ok(), "ensure_running should fast-path: {result:?}");
+        assert!(
+            result.is_ok(),
+            "ensure_running should fast-path: {result:?}"
+        );
     }
 }

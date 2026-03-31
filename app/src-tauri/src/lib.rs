@@ -41,7 +41,13 @@ fn show_main_window(app: &AppHandle) {
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     log::info!("[tray] setting up tray icon");
 
-    let show_item = MenuItem::with_id(app, "tray_show_window", "Open OpenHuman", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(
+        app,
+        "tray_show_window",
+        "Open OpenHuman",
+        true,
+        None::<&str>,
+    )?;
     let quit_item = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
