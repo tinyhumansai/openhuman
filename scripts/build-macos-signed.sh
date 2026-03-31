@@ -105,6 +105,29 @@ echo "Verifying signing identity..."
 security find-identity -v -p codesigning "$KEYCHAIN_NAME" | head -5
 echo
 
+# ── Pre-sign sidecar binaries ─────────────────────────────────────────
+# Tauri signs external binaries during bundling, but Apple notarization
+# requires the hardened runtime flag + entitlements on ALL executables.
+# Tauri may not apply entitlements to sidecars, so we pre-sign them here.
+ENTITLEMENTS="app/src-tauri/entitlements.sidecar.plist"
+SIDECAR_DIR="app/src-tauri/binaries"
+
+if [[ -d "$SIDECAR_DIR" ]]; then
+  echo "Pre-signing sidecar binaries with hardened runtime..."
+  for bin in "$SIDECAR_DIR"/*; do
+    [[ -f "$bin" && -x "$bin" ]] || continue
+    echo "  Signing: $(basename "$bin")"
+    codesign --force --options runtime \
+      --entitlements "$ENTITLEMENTS" \
+      --sign "$APPLE_SIGNING_IDENTITY" \
+      --timestamp \
+      "$bin"
+    codesign --verify --strict --verbose=1 "$bin"
+  done
+  echo "Sidecar pre-signing complete."
+  echo
+fi
+
 # ── Build ─────────────────────────────────────────────────────────────
 echo "Building Tauri app (mode=$BUILD_MODE, bundles=$BUNDLE_TARGETS)..."
 
