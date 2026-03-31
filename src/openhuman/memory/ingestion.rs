@@ -1784,4 +1784,143 @@ mod tests {
             .iter()
             .any(|hit| !hit.supporting_relations.is_empty()));
     }
+
+    /// Smoke test using the real GLiNER relex ONNX model with the Notion fixture.
+    /// Verifies that entity types extracted by the model flow through ingestion
+    /// into graph relations (attrs.entity_types) and into retrieval context
+    /// (MemoryRetrievalEntity.entity_type) via build_retrieval_context.
+    ///
+    /// Run: cargo test -p openhuman --lib gline_rs_smoke -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore] // requires GLiNER ONNX model on disk
+    async fn gline_rs_smoke_notion_entity_types_flow_through() {
+        use crate::openhuman::memory::ops::build_retrieval_context;
+
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        // Use default config so the real GLiNER model runs
+        let result = memory
+            .ingest_document(MemoryIngestionRequest {
+                document: NamespaceDocumentInput {
+                    namespace: "skill-notion".to_string(),
+                    key: "notion-roadmap".to_string(),
+                    title: "OpenHuman Memory Layer Roadmap".to_string(),
+                    content: fixture("notion_page_example.txt"),
+                    source_type: "notion".to_string(),
+                    priority: "high".to_string(),
+                    tags: Vec::new(),
+                    metadata: json!({}),
+                    category: "core".to_string(),
+                    session_id: None,
+                    document_id: None,
+                },
+                config: MemoryIngestionConfig::default(),
+            })
+            .await
+            .unwrap();
+
+        // 1. Verify GLiNER extracted entities with types
+        println!("--- Extracted entities ({}) ---", result.entities.len());
+        for entity in &result.entities {
+            println!("  {} [{}]", entity.name, entity.entity_type);
+        }
+        assert!(
+            !result.entities.is_empty(),
+            "GLiNER should extract at least some entities"
+        );
+        assert!(
+            result.entities.iter().any(|e| !e.entity_type.is_empty()),
+            "at least one entity should have a non-empty entity_type"
+        );
+
+        // 2. Verify relations carry subject_type / object_type
+        println!("--- Extracted relations ({}) ---", result.relations.len());
+        for rel in &result.relations {
+            println!(
+                "  {} [{}] -[{}]-> {} [{}]  (conf={:.2})",
+                rel.subject,
+                rel.subject_type,
+                rel.predicate,
+                rel.object,
+                rel.object_type,
+                rel.confidence
+            );
+        }
+        let typed_relations = result
+            .relations
+            .iter()
+            .filter(|r| !r.subject_type.is_empty() && !r.object_type.is_empty())
+            .count();
+        assert!(
+            typed_relations > 0,
+            "at least one relation should have typed subject and object"
+        );
+
+        // 3. Verify graph relations have entity_types in attrs
+        let graph_rows = memory
+            .graph_query_namespace("skill-notion", None, None)
+            .await
+            .unwrap();
+        println!("--- Graph relations ({}) ---", graph_rows.len());
+        let mut graph_has_entity_types = false;
+        for row in &graph_rows {
+            let et = row.get("attrs").and_then(|a| a.get("entity_types"));
+            if let Some(et) = et {
+                println!(
+                    "  {} -> {} -> {}  entity_types={}",
+                    row["subject"], row["predicate"], row["object"], et
+                );
+                graph_has_entity_types = true;
+            }
+        }
+        assert!(
+            graph_has_entity_types,
+            "at least one graph relation should have attrs.entity_types"
+        );
+
+        // 4. Verify build_retrieval_context propagates entity_type from query hits
+        let context_data = memory
+            .query_namespace_context_data("skill-notion", "who owns what", 10)
+            .await
+            .unwrap();
+        let retrieval = build_retrieval_context(&context_data.hits);
+        println!("--- Retrieval entities ({}) ---", retrieval.entities.len());
+        for entity in &retrieval.entities {
+            println!(
+                "  {} [type={:?}]",
+                entity.name,
+                entity.entity_type.as_deref().unwrap_or("None")
+            );
+        }
+        let typed_entities = retrieval
+            .entities
+            .iter()
+            .filter(|e| e.entity_type.is_some())
+            .count();
+        println!(
+            "Typed entities: {}/{}",
+            typed_entities,
+            retrieval.entities.len()
+        );
+        // If there are any supporting relations with entity_types, then
+        // build_retrieval_context should have picked them up.
+        let has_typed_supporting_relations = context_data
+            .hits
+            .iter()
+            .flat_map(|hit| hit.supporting_relations.iter())
+            .any(|rel| {
+                rel.attrs
+                    .get("entity_types")
+                    .and_then(|et| et.get("subject"))
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.is_empty())
+            });
+        if has_typed_supporting_relations {
+            assert!(
+                typed_entities > 0,
+                "build_retrieval_context should propagate entity_type from supporting relations"
+            );
+        }
+    }
 }

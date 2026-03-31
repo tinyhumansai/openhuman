@@ -148,18 +148,33 @@ fn chunk_metadata(hit: &NamespaceMemoryHit) -> Value {
     })
 }
 
-fn build_retrieval_context(hits: &[NamespaceMemoryHit]) -> MemoryRetrievalContext {
-    let mut entities = BTreeSet::new();
+fn extract_entity_type(attrs: &Value, role: &str) -> Option<String> {
+    attrs
+        .get("entity_types")
+        .and_then(|et| et.get(role))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+pub(crate) fn build_retrieval_context(hits: &[NamespaceMemoryHit]) -> MemoryRetrievalContext {
+    let mut entity_types: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut relations = BTreeMap::new();
     let chunks = hits
         .iter()
         .map(|hit| {
             for relation in &hit.supporting_relations {
                 if !relation.subject.trim().is_empty() {
-                    entities.insert(relation.subject.clone());
+                    let entry = entity_types.entry(relation.subject.clone()).or_insert(None);
+                    if entry.is_none() {
+                        *entry = extract_entity_type(&relation.attrs, "subject");
+                    }
                 }
                 if !relation.object.trim().is_empty() {
-                    entities.insert(relation.object.clone());
+                    let entry = entity_types.entry(relation.object.clone()).or_insert(None);
+                    if entry.is_none() {
+                        *entry = extract_entity_type(&relation.attrs, "object");
+                    }
                 }
                 relations
                     .entry(relation_identity(relation))
@@ -186,12 +201,12 @@ fn build_retrieval_context(hits: &[NamespaceMemoryHit]) -> MemoryRetrievalContex
         .collect();
 
     MemoryRetrievalContext {
-        entities: entities
+        entities: entity_types
             .into_iter()
-            .map(|name| MemoryRetrievalEntity {
+            .map(|(name, entity_type)| MemoryRetrievalEntity {
                 id: None,
                 name,
-                entity_type: None,
+                entity_type,
                 score: None,
                 metadata: json!({}),
             })
@@ -1026,6 +1041,73 @@ mod tests {
         assert_eq!(context.chunks.len(), 1);
         assert_eq!(context.chunks[0].document_id.as_deref(), Some("doc-1"));
         assert_eq!(context.relations[0].predicate, "OWNS");
+    }
+
+    fn sample_hit_with_entity_types() -> NamespaceMemoryHit {
+        NamespaceMemoryHit {
+            id: "doc-2".to_string(),
+            kind: MemoryItemKind::Document,
+            namespace: "team".to_string(),
+            key: "atlas-status".to_string(),
+            title: Some("Atlas status".to_string()),
+            content: "Project Atlas is owned by Alice.".to_string(),
+            category: "core".to_string(),
+            source_type: Some("doc".to_string()),
+            updated_at: 1_700_000_000.0,
+            score: 0.92,
+            score_breakdown: RetrievalScoreBreakdown {
+                keyword_relevance: 0.3,
+                vector_similarity: 0.4,
+                graph_relevance: 0.9,
+                freshness: 0.0,
+                final_score: 0.92,
+            },
+            document_id: Some("doc-2".to_string()),
+            chunk_id: Some("doc-2#chunk-1".to_string()),
+            supporting_relations: vec![GraphRelationRecord {
+                namespace: Some("team".to_string()),
+                subject: "Alice".to_string(),
+                predicate: "OWNS".to_string(),
+                object: "Atlas".to_string(),
+                attrs: json!({
+                    "source": "ingestion",
+                    "entity_types": {
+                        "subject": "PERSON",
+                        "object": "PROJECT"
+                    }
+                }),
+                updated_at: 1_700_000_000.0,
+                evidence_count: 2,
+                order_index: Some(1),
+                document_ids: vec!["doc-2".to_string()],
+                chunk_ids: vec!["doc-2#chunk-1".to_string()],
+            }],
+        }
+    }
+
+    #[test]
+    fn build_retrieval_context_extracts_entity_types_from_attrs() {
+        let context = build_retrieval_context(&[sample_hit_with_entity_types()]);
+        assert_eq!(context.entities.len(), 2);
+
+        let alice = context.entities.iter().find(|e| e.name == "Alice").unwrap();
+        assert_eq!(alice.entity_type.as_deref(), Some("PERSON"));
+
+        let atlas = context.entities.iter().find(|e| e.name == "Atlas").unwrap();
+        assert_eq!(atlas.entity_type.as_deref(), Some("PROJECT"));
+    }
+
+    #[test]
+    fn build_retrieval_context_entity_type_none_when_attrs_missing() {
+        let context = build_retrieval_context(&[sample_hit()]);
+        assert_eq!(context.entities.len(), 2);
+
+        for entity in &context.entities {
+            assert_eq!(
+                entity.entity_type, None,
+                "entity_type should be None when attrs has no entity_types"
+            );
+        }
     }
 
     #[test]
