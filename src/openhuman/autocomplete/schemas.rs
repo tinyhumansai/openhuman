@@ -3,6 +3,7 @@ use serde_json::{Map, Value};
 
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::autocomplete::ops::AutocompleteHistoryParams;
 use crate::openhuman::autocomplete::{
     AutocompleteAcceptParams, AutocompleteCurrentParams, AutocompleteSetStyleParams,
     AutocompleteStartParams, AutocompleteStopParams,
@@ -18,6 +19,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("debug_focus"),
         schemas("accept"),
         schemas("set_style"),
+        schemas("history"),
+        schemas("clear_history"),
     ]
 }
 
@@ -50,6 +53,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_style"),
             handler: handle_set_style,
+        },
+        RegisteredController {
+            schema: schemas("history"),
+            handler: handle_history,
+        },
+        RegisteredController {
+            schema: schemas("clear_history"),
+            handler: handle_clear_history,
         },
     ]
 }
@@ -213,6 +224,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "history" => ControllerSchema {
+            namespace: "autocomplete",
+            function: "history",
+            description: "List recent accepted completions stored in memory (newest first).",
+            inputs: vec![FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum number of entries to return (default 20).",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "entries",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("AcceptedCompletion"))),
+                comment: "List of accepted completions.",
+                required: true,
+            }],
+        },
+        "clear_history" => ControllerSchema {
+            namespace: "autocomplete",
+            function: "clear_history",
+            description: "Delete all accepted-completion history entries from memory.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "cleared",
+                ty: TypeSchema::U64,
+                comment: "Number of entries removed.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "autocomplete",
             function: "unknown",
@@ -278,6 +318,23 @@ fn handle_set_style(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = deserialize_params::<AutocompleteSetStyleParams>(params)?;
         to_json(crate::openhuman::autocomplete::rpc::autocomplete_set_style(payload).await?)
+    })
+}
+
+fn handle_history(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = if params.is_empty() {
+            AutocompleteHistoryParams { limit: None }
+        } else {
+            deserialize_params::<AutocompleteHistoryParams>(params)?
+        };
+        to_json(crate::openhuman::autocomplete::rpc::autocomplete_history(payload).await?)
+    })
+}
+
+fn handle_clear_history(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        to_json(crate::openhuman::autocomplete::rpc::autocomplete_clear_history().await?)
     })
 }
 

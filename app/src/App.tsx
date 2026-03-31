@@ -7,6 +7,7 @@ import AppRoutes from './AppRoutes';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import MiniSidebar from './components/MiniSidebar';
+import OnboardingOverlay from './components/OnboardingOverlay';
 import SocketProvider from './providers/SocketProvider';
 import UserProvider from './providers/UserProvider';
 import { tagErrorSource } from './services/errorReportQueue';
@@ -53,6 +54,7 @@ function App() {
                       </div>
                     </div>
                   </div>
+                  <OnboardingOverlay />
                 </ServiceBlockingGate>
               </Router>
             </SocketProvider>

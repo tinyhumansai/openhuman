@@ -1,0 +1,798 @@
+use std::path::Path;
+
+use sha2::{Digest, Sha256};
+
+use super::registry_types::{
+    AvailableSkillEntry, CachedRegistry, InstalledSkillInfo, RegistrySkillEntry,
+    RemoteSkillRegistry, SkillCategory,
+};
+
+/// Cache TTL in seconds (1 hour).
+const CACHE_TTL_SECS: i64 = 3600;
+
+/// Default registry URL (GitHub raw on the `build` branch).
+const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/tinyhumansai/openhuman-skills/refs/heads/build/skills/registry.json";
+
+fn registry_url() -> String {
+    std::env::var("SKILLS_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string())
+}
+
+fn cache_path(workspace_dir: &Path) -> std::path::PathBuf {
+    workspace_dir.join("skills").join(".registry-cache.json")
+}
+
+fn is_cache_fresh(cached: &CachedRegistry) -> bool {
+    let Ok(fetched) = chrono::DateTime::parse_from_rfc3339(&cached.fetched_at) else {
+        return false;
+    };
+    let now = chrono::Utc::now();
+    (now - fetched.to_utc()).num_seconds() < CACHE_TTL_SECS
+}
+
+fn read_cache(workspace_dir: &Path) -> Option<CachedRegistry> {
+    let path = cache_path(workspace_dir);
+    let content = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn write_cache(workspace_dir: &Path, registry: &RemoteSkillRegistry) -> Result<(), String> {
+    let cached = CachedRegistry {
+        fetched_at: chrono::Utc::now().to_rfc3339(),
+        registry: registry.clone(),
+    };
+    let path = cache_path(workspace_dir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create cache dir: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(&cached).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| format!("failed to write cache: {e}"))?;
+    Ok(())
+}
+
+/// Tag each entry with its category based on which list it came from.
+fn tag_categories(registry: &mut RemoteSkillRegistry) {
+    for entry in &mut registry.skills.core {
+        entry.category = SkillCategory::Core;
+    }
+    for entry in &mut registry.skills.third_party {
+        entry.category = SkillCategory::ThirdParty;
+    }
+}
+
+/// Fetch the remote skill registry. Uses cache unless `force` is true or cache is stale.
+pub async fn registry_fetch(
+    workspace_dir: &Path,
+    force: bool,
+) -> Result<RemoteSkillRegistry, String> {
+    if !force {
+        if let Some(cached) = read_cache(workspace_dir) {
+            if is_cache_fresh(&cached) {
+                log::debug!("[registry] returning cached registry");
+                return Ok(cached.registry);
+            }
+        }
+    }
+
+    let url = registry_url();
+    log::info!("[registry] fetching registry from {url}");
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("failed to fetch registry from {url}: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "registry fetch failed with status {}",
+            resp.status()
+        ));
+    }
+
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read registry body: {e}"))?;
+
+    let mut registry: RemoteSkillRegistry =
+        serde_json::from_str(&body).map_err(|e| format!("failed to parse registry JSON: {e}"))?;
+
+    tag_categories(&mut registry);
+    write_cache(workspace_dir, &registry)?;
+
+    log::info!(
+        "[registry] fetched {} core + {} third-party skills",
+        registry.skills.core.len(),
+        registry.skills.third_party.len()
+    );
+
+    Ok(registry)
+}
+
+/// Search the registry by query string, optionally filtering by category.
+pub async fn registry_search(
+    workspace_dir: &Path,
+    query: &str,
+    category: Option<&str>,
+) -> Result<Vec<RegistrySkillEntry>, String> {
+    let registry = registry_fetch(workspace_dir, false).await?;
+    let query_lower = query.to_lowercase();
+
+    let matches_query = |entry: &RegistrySkillEntry| -> bool {
+        entry.id.to_lowercase().contains(&query_lower)
+            || entry.name.to_lowercase().contains(&query_lower)
+            || entry.description.to_lowercase().contains(&query_lower)
+    };
+
+    let mut results: Vec<RegistrySkillEntry> = Vec::new();
+
+    let include_core = category.map_or(true, |c| c == "core");
+    let include_third_party = category.map_or(true, |c| c == "third_party");
+
+    if include_core {
+        results.extend(
+            registry
+                .skills
+                .core
+                .into_iter()
+                .filter(|e| matches_query(e)),
+        );
+    }
+    if include_third_party {
+        results.extend(
+            registry
+                .skills
+                .third_party
+                .into_iter()
+                .filter(|e| matches_query(e)),
+        );
+    }
+
+    Ok(results)
+}
+
+/// Install a skill by downloading its JS bundle and manifest from the registry.
+pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), String> {
+    let registry = registry_fetch(workspace_dir, false).await?;
+
+    let entry = registry
+        .skills
+        .core
+        .iter()
+        .chain(registry.skills.third_party.iter())
+        .find(|e| e.id == skill_id)
+        .ok_or_else(|| format!("skill '{skill_id}' not found in registry"))?
+        .clone();
+
+    let skill_dir = workspace_dir.join("skills").join(skill_id);
+    std::fs::create_dir_all(&skill_dir).map_err(|e| format!("failed to create skill dir: {e}"))?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    // Download manifest
+    log::info!("[registry] downloading manifest for '{skill_id}'");
+    let manifest_resp = client
+        .get(&entry.manifest_url)
+        .send()
+        .await
+        .map_err(|e| format!("failed to download manifest: {e}"))?;
+    if !manifest_resp.status().is_success() {
+        return Err(format!(
+            "manifest download failed with status {}",
+            manifest_resp.status()
+        ));
+    }
+    let manifest_bytes = manifest_resp
+        .bytes()
+        .await
+        .map_err(|e| format!("failed to read manifest: {e}"))?;
+
+    // Download JS bundle
+    log::info!("[registry] downloading JS bundle for '{skill_id}'");
+    let js_resp = client
+        .get(&entry.download_url)
+        .send()
+        .await
+        .map_err(|e| format!("failed to download JS bundle: {e}"))?;
+    if !js_resp.status().is_success() {
+        return Err(format!(
+            "JS download failed with status {}",
+            js_resp.status()
+        ));
+    }
+    let js_bytes = js_resp
+        .bytes()
+        .await
+        .map_err(|e| format!("failed to read JS bundle: {e}"))?;
+
+    // Verify checksum if present
+    if let Some(expected) = &entry.checksum_sha256 {
+        let mut hasher = Sha256::new();
+        hasher.update(&js_bytes);
+        let actual = format!("{:x}", hasher.finalize());
+        if actual != *expected {
+            // Clean up the directory we created
+            let _ = std::fs::remove_dir_all(&skill_dir);
+            return Err(format!(
+                "checksum mismatch for '{skill_id}': expected {expected}, got {actual}"
+            ));
+        }
+        log::debug!("[registry] checksum verified for '{skill_id}'");
+    }
+
+    // Write files
+    std::fs::write(skill_dir.join("manifest.json"), &manifest_bytes)
+        .map_err(|e| format!("failed to write manifest: {e}"))?;
+    std::fs::write(skill_dir.join(&entry.entry), &js_bytes)
+        .map_err(|e| format!("failed to write JS bundle: {e}"))?;
+
+    log::info!("[registry] skill '{skill_id}' installed successfully");
+    Ok(())
+}
+
+/// Uninstall a skill by removing its directory from the workspace.
+pub async fn skill_uninstall(workspace_dir: &Path, skill_id: &str) -> Result<(), String> {
+    let skill_dir = workspace_dir.join("skills").join(skill_id);
+    if !skill_dir.exists() {
+        return Err(format!("skill '{skill_id}' is not installed"));
+    }
+
+    std::fs::remove_dir_all(&skill_dir)
+        .map_err(|e| format!("failed to remove skill directory: {e}"))?;
+
+    log::info!("[registry] skill '{skill_id}' uninstalled");
+    Ok(())
+}
+
+/// List all installed skills by scanning the workspace skills directory.
+pub async fn skills_list_installed(
+    workspace_dir: &Path,
+) -> Result<Vec<InstalledSkillInfo>, String> {
+    let skills_dir = workspace_dir.join("skills");
+    let entries = match std::fs::read_dir(&skills_dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    let mut installed = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        if dir_name.starts_with('.') {
+            continue;
+        }
+
+        let manifest_path = path.join("manifest.json");
+        if !manifest_path.exists() {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(&manifest_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&content) {
+            installed.push(InstalledSkillInfo {
+                id: manifest
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&dir_name)
+                    .to_string(),
+                name: manifest
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&dir_name)
+                    .to_string(),
+                version: manifest
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                description: manifest
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                runtime: manifest
+                    .get("runtime")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("quickjs")
+                    .to_string(),
+            });
+        }
+    }
+
+    Ok(installed)
+}
+
+/// List all available skills from the registry, enriched with installed status.
+pub async fn skills_list_available(
+    workspace_dir: &Path,
+) -> Result<Vec<AvailableSkillEntry>, String> {
+    let registry = registry_fetch(workspace_dir, false).await?;
+    let installed = skills_list_installed(workspace_dir).await?;
+
+    let installed_map: std::collections::HashMap<&str, &InstalledSkillInfo> =
+        installed.iter().map(|s| (s.id.as_str(), s)).collect();
+
+    let mut available = Vec::new();
+
+    let all_entries = registry
+        .skills
+        .core
+        .into_iter()
+        .chain(registry.skills.third_party.into_iter());
+
+    for entry in all_entries {
+        let is_installed = installed_map.contains_key(entry.id.as_str());
+        let installed_version = installed_map
+            .get(entry.id.as_str())
+            .map(|s| s.version.clone());
+        let update_available = installed_version
+            .as_ref()
+            .map_or(false, |v| !v.is_empty() && *v != entry.version);
+
+        available.push(AvailableSkillEntry {
+            registry: entry,
+            installed: is_installed,
+            installed_version,
+            update_available,
+        });
+    }
+
+    Ok(available)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::registry_types::RegistrySkillCategories;
+    use super::*;
+
+    fn make_workspace() -> tempfile::TempDir {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("skills")).unwrap();
+        dir
+    }
+
+    fn sample_registry() -> RemoteSkillRegistry {
+        RemoteSkillRegistry {
+            version: 1,
+            generated_at: "2026-03-30T12:00:00Z".to_string(),
+            skills: RegistrySkillCategories {
+                core: vec![
+                    RegistrySkillEntry {
+                        id: "gmail".to_string(),
+                        name: "Gmail".to_string(),
+                        version: "1.0.0".to_string(),
+                        description: "Gmail integration for email".to_string(),
+                        runtime: "quickjs".to_string(),
+                        entry: "index.js".to_string(),
+                        auto_start: false,
+                        platforms: Some(vec!["macos".into(), "windows".into()]),
+                        setup: None,
+                        ignore_in_production: false,
+                        download_url: String::new(),
+                        manifest_url: String::new(),
+                        checksum_sha256: None,
+                        author: None,
+                        repository: None,
+                        category: SkillCategory::Core,
+                    },
+                    RegistrySkillEntry {
+                        id: "notion".to_string(),
+                        name: "Notion".to_string(),
+                        version: "1.1.0".to_string(),
+                        description: "Notion workspace integration".to_string(),
+                        runtime: "quickjs".to_string(),
+                        entry: "index.js".to_string(),
+                        auto_start: false,
+                        platforms: None,
+                        setup: None,
+                        ignore_in_production: false,
+                        download_url: String::new(),
+                        manifest_url: String::new(),
+                        checksum_sha256: None,
+                        author: None,
+                        repository: None,
+                        category: SkillCategory::Core,
+                    },
+                ],
+                third_party: vec![RegistrySkillEntry {
+                    id: "custom-tracker".to_string(),
+                    name: "Custom Tracker".to_string(),
+                    version: "0.1.0".to_string(),
+                    description: "A custom price tracker".to_string(),
+                    runtime: "quickjs".to_string(),
+                    entry: "index.js".to_string(),
+                    auto_start: false,
+                    platforms: None,
+                    setup: None,
+                    ignore_in_production: false,
+                    download_url: String::new(),
+                    manifest_url: String::new(),
+                    checksum_sha256: None,
+                    author: Some("dev".into()),
+                    repository: Some("https://github.com/dev/tracker".into()),
+                    category: SkillCategory::ThirdParty,
+                }],
+            },
+        }
+    }
+
+    fn create_installed_skill(workspace: &Path, id: &str, version: &str) {
+        let skill_dir = workspace.join("skills").join(id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let manifest = serde_json::json!({
+            "id": id,
+            "name": id,
+            "version": version,
+            "description": format!("Test skill {id}"),
+            "runtime": "quickjs",
+            "entry": "index.js"
+        });
+        std::fs::write(
+            skill_dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(skill_dir.join("index.js"), "function init() {}").unwrap();
+    }
+
+    // --- Cache tests ---
+
+    #[test]
+    fn test_registry_cache_write_and_read() {
+        let ws = make_workspace();
+        let registry = sample_registry();
+        write_cache(ws.path(), &registry).unwrap();
+
+        let cached = read_cache(ws.path()).unwrap();
+        assert_eq!(cached.registry.version, 1);
+        assert_eq!(cached.registry.skills.core.len(), 2);
+    }
+
+    #[test]
+    fn test_registry_cache_ttl_expired() {
+        let _ws = make_workspace();
+        let cached = CachedRegistry {
+            fetched_at: "2020-01-01T00:00:00Z".to_string(),
+            registry: sample_registry(),
+        };
+        assert!(!is_cache_fresh(&cached));
+
+        let fresh = CachedRegistry {
+            fetched_at: chrono::Utc::now().to_rfc3339(),
+            registry: sample_registry(),
+        };
+        assert!(is_cache_fresh(&fresh));
+    }
+
+    // --- Search tests (using cache directly to avoid HTTP) ---
+
+    fn search_entries(entries: &[RegistrySkillEntry], query: &str) -> Vec<RegistrySkillEntry> {
+        let query_lower = query.to_lowercase();
+        entries
+            .iter()
+            .filter(|e| {
+                e.id.to_lowercase().contains(&query_lower)
+                    || e.name.to_lowercase().contains(&query_lower)
+                    || e.description.to_lowercase().contains(&query_lower)
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn test_registry_search_by_name() {
+        let registry = sample_registry();
+        let all: Vec<_> = registry
+            .skills
+            .core
+            .iter()
+            .chain(registry.skills.third_party.iter())
+            .cloned()
+            .collect();
+        let results = search_entries(&all, "gmail");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "gmail");
+    }
+
+    #[test]
+    fn test_registry_search_by_description() {
+        let registry = sample_registry();
+        let all: Vec<_> = registry
+            .skills
+            .core
+            .iter()
+            .chain(registry.skills.third_party.iter())
+            .cloned()
+            .collect();
+        let results = search_entries(&all, "price tracker");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "custom-tracker");
+    }
+
+    #[test]
+    fn test_registry_search_case_insensitive() {
+        let registry = sample_registry();
+        let all: Vec<_> = registry
+            .skills
+            .core
+            .iter()
+            .chain(registry.skills.third_party.iter())
+            .cloned()
+            .collect();
+        let results = search_entries(&all, "NOTION");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "notion");
+    }
+
+    #[test]
+    fn test_registry_search_with_category_filter() {
+        let registry = sample_registry();
+        // Core only
+        let results = search_entries(&registry.skills.core, "email");
+        assert_eq!(results.len(), 1); // gmail matches "Gmail integration for email"
+        assert_eq!(results[0].id, "gmail");
+
+        // Third party only
+        let results = search_entries(&registry.skills.third_party, "tracker");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "custom-tracker");
+    }
+
+    // --- Install/Uninstall tests using mock HTTP server ---
+
+    #[tokio::test]
+    async fn test_skill_install_creates_files() {
+        use axum::{routing::get, Router};
+
+        let manifest = serde_json::json!({
+            "id": "test-skill",
+            "name": "Test Skill",
+            "version": "1.0.0",
+            "runtime": "quickjs",
+            "entry": "index.js"
+        });
+        // let js_content = b"function init() { console.log('hello'); }";
+
+        let app = Router::new()
+            .route(
+                "/skills/test-skill/manifest.json",
+                get({
+                    let m = manifest.clone();
+                    move || async move { serde_json::to_string(&m).unwrap() }
+                }),
+            )
+            .route(
+                "/skills/test-skill/index.js",
+                get(|| async { "function init() { console.log('hello'); }" }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let base = format!("http://127.0.0.1:{port}");
+
+        // Build a registry pointing at our mock server
+        let registry = RemoteSkillRegistry {
+            version: 1,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            skills: RegistrySkillCategories {
+                core: vec![RegistrySkillEntry {
+                    id: "test-skill".to_string(),
+                    name: "Test Skill".to_string(),
+                    version: "1.0.0".to_string(),
+                    description: "A test skill".to_string(),
+                    runtime: "quickjs".to_string(),
+                    entry: "index.js".to_string(),
+                    auto_start: false,
+                    platforms: None,
+                    setup: None,
+                    ignore_in_production: false,
+                    download_url: format!("{base}/skills/test-skill/index.js"),
+                    manifest_url: format!("{base}/skills/test-skill/manifest.json"),
+                    checksum_sha256: None,
+                    author: None,
+                    repository: None,
+                    category: SkillCategory::Core,
+                }],
+                third_party: vec![],
+            },
+        };
+
+        let ws = make_workspace();
+        // Pre-populate cache so skill_install doesn't need to fetch registry via HTTP
+        write_cache(ws.path(), &registry).unwrap();
+
+        skill_install(ws.path(), "test-skill").await.unwrap();
+
+        let manifest_path = ws.path().join("skills/test-skill/manifest.json");
+        let js_path = ws.path().join("skills/test-skill/index.js");
+        assert!(manifest_path.exists(), "manifest.json should exist");
+        assert!(js_path.exists(), "index.js should exist");
+
+        let installed_manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        assert_eq!(installed_manifest["id"], "test-skill");
+
+        let installed_js = std::fs::read_to_string(&js_path).unwrap();
+        assert!(installed_js.contains("init"));
+    }
+
+    #[tokio::test]
+    async fn test_skill_install_checksum_verification() {
+        use axum::{routing::get, Router};
+
+        let js_content = "function init() { return 42; }";
+        let mut hasher = Sha256::new();
+        hasher.update(js_content.as_bytes());
+        let correct_checksum = format!("{:x}", hasher.finalize());
+
+        let app = Router::new()
+            .route(
+                "/skills/cs-skill/manifest.json",
+                get(|| async { r#"{"id":"cs-skill","name":"CS Skill","version":"1.0.0"}"# }),
+            )
+            .route(
+                "/skills/cs-skill/index.js",
+                get(move || async move { js_content }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let base = format!("http://127.0.0.1:{port}");
+
+        // Test with correct checksum
+        let registry = RemoteSkillRegistry {
+            version: 1,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            skills: RegistrySkillCategories {
+                core: vec![RegistrySkillEntry {
+                    id: "cs-skill".to_string(),
+                    name: "CS Skill".to_string(),
+                    version: "1.0.0".to_string(),
+                    description: "".to_string(),
+                    runtime: "quickjs".to_string(),
+                    entry: "index.js".to_string(),
+                    auto_start: false,
+                    platforms: None,
+                    setup: None,
+                    ignore_in_production: false,
+                    download_url: format!("{base}/skills/cs-skill/index.js"),
+                    manifest_url: format!("{base}/skills/cs-skill/manifest.json"),
+                    checksum_sha256: Some(correct_checksum.clone()),
+                    author: None,
+                    repository: None,
+                    category: SkillCategory::Core,
+                }],
+                third_party: vec![],
+            },
+        };
+
+        let ws = make_workspace();
+        write_cache(ws.path(), &registry).unwrap();
+        assert!(skill_install(ws.path(), "cs-skill").await.is_ok());
+
+        // Test with wrong checksum
+        let ws2 = make_workspace();
+        let mut bad_registry = registry.clone();
+        bad_registry.skills.core[0].checksum_sha256 = Some("wrong_checksum".to_string());
+        write_cache(ws2.path(), &bad_registry).unwrap();
+        let result = skill_install(ws2.path(), "cs-skill").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("checksum mismatch"));
+    }
+
+    #[tokio::test]
+    async fn test_skill_install_not_in_registry() {
+        let ws = make_workspace();
+        let registry = RemoteSkillRegistry {
+            version: 1,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            skills: RegistrySkillCategories {
+                core: vec![],
+                third_party: vec![],
+            },
+        };
+        write_cache(ws.path(), &registry).unwrap();
+
+        let result = skill_install(ws.path(), "nonexistent").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found in registry"));
+    }
+
+    #[tokio::test]
+    async fn test_skill_uninstall_removes_directory() {
+        let ws = make_workspace();
+        create_installed_skill(ws.path(), "to-remove", "1.0.0");
+
+        assert!(ws.path().join("skills/to-remove").exists());
+        skill_uninstall(ws.path(), "to-remove").await.unwrap();
+        assert!(!ws.path().join("skills/to-remove").exists());
+    }
+
+    #[tokio::test]
+    async fn test_skill_uninstall_nonexistent() {
+        let ws = make_workspace();
+        let result = skill_uninstall(ws.path(), "does-not-exist").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not installed"));
+    }
+
+    #[tokio::test]
+    async fn test_list_installed_empty() {
+        let ws = make_workspace();
+        let installed = skills_list_installed(ws.path()).await.unwrap();
+        assert!(installed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_installed_with_skills() {
+        let ws = make_workspace();
+        create_installed_skill(ws.path(), "gmail", "1.0.0");
+        create_installed_skill(ws.path(), "notion", "1.1.0");
+
+        let installed = skills_list_installed(ws.path()).await.unwrap();
+        assert_eq!(installed.len(), 2);
+
+        let ids: Vec<&str> = installed.iter().map(|s| s.id.as_str()).collect();
+        assert!(ids.contains(&"gmail"));
+        assert!(ids.contains(&"notion"));
+    }
+
+    #[tokio::test]
+    async fn test_list_available_marks_installed() {
+        let ws = make_workspace();
+
+        // Install gmail at version 1.0.0 (registry has 1.0.0)
+        create_installed_skill(ws.path(), "gmail", "1.0.0");
+        // Install notion at version 1.0.0 (registry has 1.1.0 → update available)
+        create_installed_skill(ws.path(), "notion", "1.0.0");
+
+        // Write a registry to cache
+        let registry = sample_registry();
+        write_cache(ws.path(), &registry).unwrap();
+
+        let available = skills_list_available(ws.path()).await.unwrap();
+        assert_eq!(available.len(), 3); // gmail, notion, custom-tracker
+
+        let gmail = available.iter().find(|a| a.registry.id == "gmail").unwrap();
+        assert!(gmail.installed);
+        assert!(!gmail.update_available); // same version
+
+        let notion = available
+            .iter()
+            .find(|a| a.registry.id == "notion")
+            .unwrap();
+        assert!(notion.installed);
+        assert!(notion.update_available); // 1.0.0 vs 1.1.0
+
+        let tracker = available
+            .iter()
+            .find(|a| a.registry.id == "custom-tracker")
+            .unwrap();
+        assert!(!tracker.installed);
+        assert!(!tracker.update_available);
+    }
+}

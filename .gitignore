@@ -1,3 +1,7 @@
+# Workflow docs (local only)
+workflow
+create_issue
+
 # Logs
 logs
 *.log
@@ -19,7 +23,7 @@ dist-ssr
 .env.local
 .env.*.local
 
-my_docs/*
+my_docs
 
 # CI secrets for local testing (contains real tokens)
 scripts/ci-secrets.json
@@ -52,3 +56,5 @@ tauri.key
 tauri.key.pub
 /target/
 src-tauri/target/
+
+workflow

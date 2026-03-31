@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import {
   DefaultIcon,
@@ -6,15 +6,14 @@ import {
   SkillActionButton,
   type SkillListEntry,
   STATUS_DISPLAY,
-  STATUS_PRIORITY,
 } from '../components/skills/shared';
+import SkillDebugModal from '../components/skills/SkillDebugModal';
 import SkillSetupModal from '../components/skills/SkillSetupModal';
-import { deriveConnectionStatus, useSkillConnectionStatus } from '../lib/skills/hooks';
+import { useAvailableSkills, useSkillConnectionStatus, useSkillState } from '../lib/skills/hooks';
 import { skillManager } from '../lib/skills/manager';
+import { installSkill } from '../lib/skills/skillsApi';
 import type { SkillConnectionStatus, SkillHostConnectionState } from '../lib/skills/types';
-import { useAppSelector } from '../store/hooks';
 import { IS_DEV } from '../utils/config';
-import { runtimeDiscoverSkills } from '../utils/tauriCommands';
 import { deriveSkillSyncSummaryText, deriveSkillSyncUiState } from './skillsSyncUi';
 
 /** Status dot color for skill connection status */
@@ -41,11 +40,10 @@ interface SkillCardProps {
 function SkillCard({ skill, onSetup }: SkillCardProps) {
   const connectionStatus = useSkillConnectionStatus(skill.id);
   const statusDisplay = STATUS_DISPLAY[connectionStatus] || STATUS_DISPLAY.offline;
-  const skillState = useAppSelector(state => state.skills.skillStates[skill.id]) as
-    | (SkillHostConnectionState & Record<string, unknown>)
-    | undefined;
-  const syncStats = useAppSelector(state => state.skills.syncStatsBySkill[skill.id]);
+  const skillState = useSkillState<SkillHostConnectionState & Record<string, unknown>>(skill.id);
+  const syncStats = undefined; // TODO: sync stats will come from RPC in future
   const [manualSyncing, setManualSyncing] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
   const syncUi = useMemo(
     () => deriveSkillSyncUiState(skill.id, skillState),
     [skill.id, skillState]
@@ -157,6 +155,23 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
                 />
               </svg>
             </button>
+            {/* Debug */}
+            <button
+              onClick={e => {
+                e.stopPropagation();
+                setDebugOpen(true);
+              }}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+              title="Debug">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </button>
           </>
         )}
         <SkillActionButton
@@ -165,6 +180,14 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
           onOpenModal={onSetup}
         />
       </div>
+
+      {debugOpen && (
+        <SkillDebugModal
+          skillId={skill.id}
+          skillName={skill.name}
+          onClose={() => setDebugOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -172,11 +195,8 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
 // ─── Main Skills Page ───────────────────────────────────────────────────────
 
 export default function Skills() {
-  // Skills state
-  const [skillsList, setSkillsList] = useState<SkillListEntry[]>([]);
-  const [skillsLoading, setSkillsLoading] = useState(true);
-  const skillsState = useAppSelector(state => state.skills.skills);
-  const skillStates = useAppSelector(state => state.skills.skillStates);
+  // Skills from registry via RPC
+  const { skills: availableSkills, loading: skillsLoading } = useAvailableSkills();
 
   // Modal state
   const [setupModalOpen, setSetupModalOpen] = useState(false);
@@ -185,66 +205,41 @@ export default function Skills() {
   const [activeSkillDescription, setActiveSkillDescription] = useState('');
   const [activeSkillHasSetup, setActiveSkillHasSetup] = useState(false);
 
-  // Load skills
-  useEffect(() => {
-    const loadSkills = async () => {
-      try {
-        const manifests = await runtimeDiscoverSkills();
-        const ALLOWED_SKILLS = new Set(['gmail', 'notion']);
-        const validManifests = manifests.filter(m => {
-          const id = m.id as string;
-          if (id.includes('_')) return false;
-          return ALLOWED_SKILLS.has(id);
-        });
-
-        const processed: SkillListEntry[] = validManifests
-          .map(m => {
-            const setup = m.setup as Record<string, unknown> | undefined;
-            return {
-              id: m.id as string,
-              name:
-                (m.name as string) ||
-                (m.id as string).charAt(0).toUpperCase() + (m.id as string).slice(1),
-              description: (m.description as string) || '',
-              icon: SKILL_ICONS[m.id as string],
-              ignoreInProduction: (m.ignoreInProduction as boolean) ?? false,
-              hasSetup: !!(setup && setup.required),
-            };
-          })
-          .filter(s => IS_DEV || !s.ignoreInProduction);
-
-        setSkillsList(processed);
-      } catch {
-        // Skills unavailable
-      } finally {
-        setSkillsLoading(false);
-      }
-    };
-    loadSkills();
-  }, []);
-
-  // Sort skills by connection status
-  const sortedSkillsList = useMemo(() => {
-    return [...skillsList]
-      .sort((a, b) => {
-        const skillA = skillsState[a.id];
-        const skillB = skillsState[b.id];
-        const stateA = skillStates[a.id];
-        const stateB = skillStates[b.id];
-
-        const statusA = deriveConnectionStatus(skillA?.status, skillA?.setupComplete, stateA);
-        const statusB = deriveConnectionStatus(skillB?.status, skillB?.setupComplete, stateB);
-
-        const priorityA = STATUS_PRIORITY[statusA] ?? 999;
-        const priorityB = STATUS_PRIORITY[statusB] ?? 999;
-
-        if (priorityA === priorityB) return a.name.localeCompare(b.name);
-        return priorityA - priorityB;
+  // Transform registry entries to SkillListEntry
+  const skillsList: SkillListEntry[] = useMemo(() => {
+    return availableSkills
+      .filter(e => {
+        if (e.id.includes('_')) return false;
+        if (!IS_DEV && e.ignore_in_production) return false;
+        return true;
       })
-      .filter(s => IS_DEV || !s.ignoreInProduction);
-  }, [skillsList, skillsState, skillStates]);
+      .map(e => ({
+        id: e.id,
+        name: e.name || e.id.charAt(0).toUpperCase() + e.id.slice(1),
+        description: e.description || '',
+        icon: SKILL_ICONS[e.id],
+        ignoreInProduction: e.ignore_in_production,
+        hasSetup: !!(e.setup && e.setup.required),
+      }));
+  }, [availableSkills]);
 
-  const openSkillSetup = (skill: SkillListEntry) => {
+  // Sort by name (connection status sorting will use the hook per-card)
+  const sortedSkillsList = useMemo(() => {
+    return [...skillsList].sort((a, b) => a.name.localeCompare(b.name));
+  }, [skillsList]);
+
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  const openSkillSetup = async (skill: SkillListEntry) => {
+    try {
+      setInstalling(skill.id);
+      await installSkill(skill.id);
+    } catch (err) {
+      console.warn(`[Skills] install failed for ${skill.id}, continuing anyway:`, err);
+    } finally {
+      setInstalling(null);
+    }
+
     setActiveSkillId(skill.id);
     setActiveSkillName(skill.name);
     setActiveSkillDescription(skill.description);
@@ -268,9 +263,11 @@ export default function Skills() {
                 <h2 className="text-sm font-semibold text-white opacity-80">Active Skills</h2>
               </div>
 
-              {skillsLoading ? (
+              {skillsLoading || installing ? (
                 <div className="glass rounded-2xl p-6 text-center">
-                  <p className="text-sm text-stone-500">Loading skills...</p>
+                  <p className="text-sm text-stone-500">
+                    {installing ? `Installing ${installing}...` : 'Loading skills...'}
+                  </p>
                 </div>
               ) : sortedSkillsList.length === 0 ? (
                 <div className="glass rounded-2xl p-6 text-center">

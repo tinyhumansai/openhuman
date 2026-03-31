@@ -1,10 +1,13 @@
 use serde_json::json;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::openhuman::memory::embeddings::{self, EmbeddingProvider};
-use crate::openhuman::memory::store::types::NamespaceDocumentInput;
+use crate::openhuman::memory::ingestion::{MemoryIngestionRequest, MemoryIngestionResult};
+use crate::openhuman::memory::store::types::{
+    NamespaceDocumentInput, NamespaceMemoryHit, NamespaceRetrievalContext,
+};
 use crate::openhuman::memory::store::unified::UnifiedMemory;
-
 pub type MemoryClientRef = Arc<MemoryClient>;
 
 pub struct MemoryState(pub std::sync::Mutex<Option<MemoryClientRef>>);
@@ -24,9 +27,13 @@ impl MemoryClient {
             .ok_or_else(|| "Failed to resolve home directory".to_string())?
             .join(".openhuman")
             .join("workspace");
+        Self::from_workspace_dir(workspace_dir)
+    }
+
+    pub fn from_workspace_dir(workspace_dir: PathBuf) -> Result<Self, String> {
         std::fs::create_dir_all(&workspace_dir)
             .map_err(|e| format!("Create workspace dir {}: {e}", workspace_dir.display()))?;
-        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(embeddings::NoopEmbedding);
+        let embedder: Arc<dyn EmbeddingProvider> = embeddings::default_local_embedding_provider();
         let memory =
             UnifiedMemory::new(&workspace_dir, embedder, None).map_err(|e| format!("{e}"))?;
         Ok(Self {
@@ -36,6 +43,13 @@ impl MemoryClient {
 
     pub async fn put_doc(&self, input: NamespaceDocumentInput) -> Result<String, String> {
         self.inner.upsert_document(input).await
+    }
+
+    pub async fn ingest_doc(
+        &self,
+        request: MemoryIngestionRequest,
+    ) -> Result<MemoryIngestionResult, String> {
+        self.inner.ingest_document(request).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -121,6 +135,17 @@ impl MemoryClient {
             .await
     }
 
+    pub async fn query_namespace_context_data(
+        &self,
+        namespace: &str,
+        query: &str,
+        max_chunks: u32,
+    ) -> Result<NamespaceRetrievalContext, String> {
+        self.inner
+            .query_namespace_context_data(namespace, query, max_chunks)
+            .await
+    }
+
     pub async fn recall_namespace(
         &self,
         namespace: &str,
@@ -129,6 +154,24 @@ impl MemoryClient {
         self.inner
             .recall_namespace_context(namespace, max_chunks)
             .await
+    }
+
+    pub async fn recall_namespace_context_data(
+        &self,
+        namespace: &str,
+        max_chunks: u32,
+    ) -> Result<NamespaceRetrievalContext, String> {
+        self.inner
+            .recall_namespace_context_data(namespace, max_chunks)
+            .await
+    }
+
+    pub async fn recall_namespace_memories(
+        &self,
+        namespace: &str,
+        limit: u32,
+    ) -> Result<Vec<NamespaceMemoryHit>, String> {
+        self.inner.recall_namespace_memories(namespace, limit).await
     }
 
     pub async fn kv_set(

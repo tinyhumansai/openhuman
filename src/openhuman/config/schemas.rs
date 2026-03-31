@@ -60,6 +60,12 @@ struct WorkspaceOnboardingFlagParams {
     flag_name: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct WorkspaceOnboardingFlagSetParams {
+    flag_name: Option<String>,
+    value: bool,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -73,6 +79,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_runtime_flags"),
         schemas("set_browser_allow_all"),
         schemas("workspace_onboarding_flag_exists"),
+        schemas("workspace_onboarding_flag_set"),
         schemas("agent_server_status"),
     ]
 }
@@ -122,6 +129,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("workspace_onboarding_flag_exists"),
             handler: handle_workspace_onboarding_flag_exists,
+        },
+        RegisteredController {
+            schema: schemas("workspace_onboarding_flag_set"),
+            handler: handle_workspace_onboarding_flag_set,
         },
         RegisteredController {
             schema: schemas("agent_server_status"),
@@ -327,6 +338,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "workspace_onboarding_flag_set" => ControllerSchema {
+            namespace: "config",
+            function: "workspace_onboarding_flag_set",
+            description: "Create or remove the onboarding flag file in workspace.",
+            inputs: vec![
+                FieldSchema {
+                    name: "flag_name",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional onboarding flag name override.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "value",
+                    ty: TypeSchema::Bool,
+                    comment: "True to create, false to remove.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "exists",
+                ty: TypeSchema::Bool,
+                comment: "True when the flag file is present after the operation.",
+                required: true,
+            }],
+        },
         "agent_server_status" => ControllerSchema {
             namespace: "config",
             function: "agent_server_status",
@@ -447,6 +483,20 @@ fn handle_workspace_onboarding_flag_exists(params: Map<String, Value>) -> Contro
             config_rpc::workspace_onboarding_flag_resolve(
                 payload.flag_name,
                 DEFAULT_ONBOARDING_FLAG_NAME,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_workspace_onboarding_flag_set(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = deserialize_params::<WorkspaceOnboardingFlagSetParams>(params)?;
+        to_json(
+            config_rpc::workspace_onboarding_flag_set(
+                payload.flag_name,
+                DEFAULT_ONBOARDING_FLAG_NAME,
+                payload.value,
             )
             .await?,
         )

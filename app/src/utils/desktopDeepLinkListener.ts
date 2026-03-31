@@ -1,39 +1,24 @@
-import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
+import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
 import { skillManager } from '../lib/skills/manager';
-import { consumeLoginToken, fetchIntegrationTokens } from '../services/api/authApi';
-import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
+import { emitSkillStateChange } from '../lib/skills/skillEvents';
+import { setSetupComplete as rpcSetSetupComplete, startSkill } from '../lib/skills/skillsApi';
+import { consumeLoginToken } from '../services/api/authApi';
 import { store } from '../store';
 import { setToken } from '../store/authSlice';
-import { setSkillState } from '../store/skillsSlice';
-import {
-  decryptIntegrationTokens,
-  hexToBase64,
-  type IntegrationTokensPayload,
-} from './integrationTokensCrypto';
 
-function getCurrentUserId(): string | null {
-  const state = store.getState();
-  const explicitId = state.user.user?._id;
-  if (explicitId) return explicitId;
-
-  const token = state.auth.token;
-  if (!token) return null;
-
+const focusMainWindow = async () => {
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payloadBase64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padLen = (4 - (payloadBase64.length % 4)) % 4;
-    const padded = padLen ? payloadBase64 + '='.repeat(padLen) : payloadBase64;
-    const payloadJson = atob(padded);
-    const payload = JSON.parse(payloadJson);
-    return payload.tgUserId || payload.userId || payload.sub || null;
-  } catch {
-    return null;
+    const window = getCurrentWindow();
+    await window.show();
+    await window.unminimize();
+    await window.setFocus();
+  } catch (err) {
+    console.warn('[DeepLink] Failed to focus window:', err);
   }
-}
+};
 
 /**
  * Handle an `openhuman://auth?token=...` deep link for login.
@@ -48,11 +33,7 @@ const handleAuthDeepLink = async (parsed: URL) => {
 
   console.log('[DeepLink] Received auth token', token);
 
-  try {
-    await invoke('show_window');
-  } catch (err) {
-    console.warn('[DeepLink] Failed to show window:', err);
-  }
+  await focusMainWindow();
 
   if (key === 'auth') {
     store.dispatch(setToken(token));
@@ -72,11 +53,7 @@ const handleAuthDeepLink = async (parsed: URL) => {
 const handlePaymentDeepLink = async (parsed: URL) => {
   const path = parsed.pathname.replace(/^\/+/, '');
 
-  try {
-    await invoke('show_window');
-  } catch {
-    // Not fatal
-  }
+  await focusMainWindow();
 
   if (path === 'success') {
     const sessionId = parsed.searchParams.get('session_id');
@@ -110,11 +87,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
   // pathname is "/success" or "/error" (hostname is "oauth")
   const path = parsed.pathname.replace(/^\/+/, '');
 
-  try {
-    await invoke('show_window');
-  } catch {
-    // Not fatal
-  }
+  await focusMainWindow();
 
   if (path === 'success') {
     const integrationId = parsed.searchParams.get('integrationId');
@@ -127,123 +100,36 @@ const handleOAuthDeepLink = async (parsed: URL) => {
 
     console.log(`[DeepLink] OAuth success for skill=${skillId} integration=${integrationId}`);
 
+    // 1. Persist setup completion
+    await rpcSetSetupComplete(skillId, true).catch(err =>
+      console.warn('[DeepLink] Failed to persist setup_complete via RPC:', err)
+    );
+    emitSkillStateChange(skillId);
+
+    // 2. Start the skill in the core QuickJS runtime (if not already running)
     try {
-      const state = store.getState();
-      const userId = getCurrentUserId();
-      if (!userId) {
-        console.warn('[DeepLink] Cannot fetch integration tokens: no current user id');
-        return;
-      }
-
-      const encryptionKeyHex = state.auth.encryptionKeyByUser[userId];
-      if (!encryptionKeyHex || typeof encryptionKeyHex !== 'string') {
-        console.warn(
-          '[DeepLink] Cannot fetch integration tokens: no encryption key found for user',
-          userId
-        );
-        return;
-      }
-
-      const trimmedHex = encryptionKeyHex.trim().replace(/^0x/i, '');
-      if (!trimmedHex || trimmedHex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(trimmedHex)) {
-        const msg =
-          '[DeepLink] Cannot fetch integration tokens: encryption key must be non-empty hex (even length, [0-9a-fA-F])';
-        console.error(msg, { userId, encryptionKeyHex });
-        enqueueError({
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-          source: 'manual',
-          title: 'Deep link integration tokens: invalid encryption key',
-          message: msg,
-          sentryEvent: buildManualSentryEvent(
-            { type: 'DeepLinkIntegrationTokensInvalidKey', value: msg },
-            { component: 'desktopDeepLinkListener', userId, encryptionKeyHex }
-          ),
-        });
-        return;
-      }
-
-      let keyForBackend: string;
-      try {
-        keyForBackend = hexToBase64(trimmedHex);
-      } catch (e) {
-        const msg = '[DeepLink] Cannot fetch integration tokens: encryption key conversion failed';
-        console.error(msg, { userId, encryptionKeyHex, error: e });
-        const err = e instanceof Error ? e : new Error(String(e));
-        enqueueError({
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-          source: 'manual',
-          title: 'Deep link integration tokens: encryption key conversion failed',
-          message: err.message,
-          sentryEvent: buildManualSentryEvent(
-            { type: 'DeepLinkIntegrationTokensHexToBase64Error', value: err.message },
-            { component: 'desktopDeepLinkListener', userId, encryptionKeyHex }
-          ),
-          originalError: err,
-        });
-        return;
-      }
-      if (!keyForBackend) {
-        const msg =
-          '[DeepLink] Cannot fetch integration tokens: encryption key produced empty base64';
-        console.error(msg, { userId, encryptionKeyHex });
-        enqueueError({
-          id: crypto.randomUUID(),
-          timestamp: Date.now(),
-          source: 'manual',
-          title: 'Deep link integration tokens: empty key for backend',
-          message: msg,
-          sentryEvent: buildManualSentryEvent(
-            { type: 'DeepLinkIntegrationTokensEmptyKey', value: msg },
-            { component: 'desktopDeepLinkListener', userId, encryptionKeyHex }
-          ),
-        });
-        return;
-      }
-
-      const response = await fetchIntegrationTokens(integrationId, keyForBackend);
-      if (!response.success || !response.data?.encrypted) {
-        console.warn(
-          '[DeepLink] Integration tokens response missing encrypted payload for integration',
-          integrationId
-        );
-        return;
-      }
-
-      const existingState = state.skills.skillStates[skillId] ?? {};
-      store.dispatch(
-        setSkillState({
-          skillId,
-          state: {
-            ...existingState,
-            oauthTokens: {
-              ...(existingState.oauthTokens as Record<string, { encrypted: string }> | undefined),
-              [integrationId]: { encrypted: response.data.encrypted },
-            },
-          },
-        })
-      );
-
-      // For OAuth-capable skills (e.g. Gmail, Notion), pass decrypted access token so the
-      // skill can use it directly when supported instead of always going through the proxy.
-      let extraCredential: { accessToken?: string } | undefined;
-
-      try {
-        const decryptedJson = await decryptIntegrationTokens(response.data.encrypted, trimmedHex);
-        const payload = JSON.parse(decryptedJson) as IntegrationTokensPayload;
-        if (payload.accessToken) {
-          extraCredential = { accessToken: payload.accessToken };
-        }
-      } catch (e) {
-        console.warn('[DeepLink] Could not decrypt integration token for skill:', e);
-      }
-
-      await skillManager.notifyOAuthComplete(skillId, integrationId, undefined, extraCredential);
-      await skillManager.triggerSync(skillId);
-    } catch (err) {
-      console.error('[DeepLink] Failed to notify OAuth complete:', err);
+      await startSkill(skillId);
+      console.log(`[DeepLink] Skill '${skillId}' started in core runtime`);
+    } catch (startErr) {
+      console.warn(`[DeepLink] Could not start skill '${skillId}' in runtime:`, startErr);
     }
+
+    // 3. Send oauth/complete to the running skill with the credential
+    try {
+      await skillManager.notifyOAuthComplete(skillId, integrationId);
+      console.log(`[DeepLink] OAuth complete sent to skill '${skillId}'`);
+    } catch (runtimeErr) {
+      console.warn('[DeepLink] Runtime notify failed:', runtimeErr);
+    }
+
+    // 4. Trigger initial data sync
+    try {
+      await skillManager.triggerSync(skillId);
+    } catch {
+      // Non-critical
+    }
+
+    emitSkillStateChange(skillId);
   } else if (path === 'error') {
     const error = parsed.searchParams.get('error') ?? 'Unknown error';
     const provider = parsed.searchParams.get('provider') ?? 'unknown';
@@ -317,7 +203,7 @@ export const setupDesktopDeepLinkListener = async () => {
 
     if (typeof window !== 'undefined') {
       // window.__simulateDeepLink('openhuman://auth?token=1234567890')
-      // window.__simulateDeepLink('openhuman://oauth/success?integrationId=6989ef9c8e8bf1b6d991a08c&skillId=notion')
+      // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69c34e6a103bd070232d2710&skillId=notion')
       const win = window as Window & { __simulateDeepLink?: (url: string) => Promise<void> };
       win.__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);
     }

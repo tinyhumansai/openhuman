@@ -21,6 +21,92 @@ pub async fn try_dispatch(
     params: serde_json::Value,
 ) -> Option<Result<serde_json::Value, String>> {
     match method {
+        "memory.init" => Some(
+            async move {
+                let payload: crate::openhuman::memory::MemoryInitRequest = parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::memory_init(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.list_documents" => Some(
+            async move {
+                let payload: crate::openhuman::memory::ListDocumentsRequest = parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::memory_list_documents(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.list_namespaces" => Some(
+            async move {
+                let payload: crate::openhuman::memory::EmptyRequest = parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::memory_list_namespaces(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.delete_document" => Some(
+            async move {
+                let payload: crate::openhuman::memory::DeleteDocumentRequest =
+                    parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::memory_delete_document(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.query_namespace" => Some(
+            async move {
+                let payload: crate::openhuman::memory::QueryNamespaceRequest =
+                    parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::memory_query_namespace(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.recall_context" | "memory.recall_namespace" => Some(
+            async move {
+                let payload: crate::openhuman::memory::RecallContextRequest = parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::memory_recall_context(payload).await?)
+            }
+            .await,
+        ),
+
+        "memory.recall_memories" => Some(
+            async move {
+                let payload: crate::openhuman::memory::RecallMemoriesRequest =
+                    parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::memory_recall_memories(payload).await?)
+            }
+            .await,
+        ),
+
+        "ai.list_memory_files" => Some(
+            async move {
+                let payload: crate::openhuman::memory::ListMemoryFilesRequest =
+                    parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::ai_list_memory_files(payload).await?)
+            }
+            .await,
+        ),
+
+        "ai.read_memory_file" => Some(
+            async move {
+                let payload: crate::openhuman::memory::ReadMemoryFileRequest =
+                    parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::ai_read_memory_file(payload).await?)
+            }
+            .await,
+        ),
+
+        "ai.write_memory_file" => Some(
+            async move {
+                let payload: crate::openhuman::memory::WriteMemoryFileRequest =
+                    parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::ai_write_memory_file(payload).await?)
+            }
+            .await,
+        ),
+
         "memory.namespace.list" => Some(
             async move { rpc_json(crate::openhuman::memory::rpc::namespace_list().await?) }.await,
         ),

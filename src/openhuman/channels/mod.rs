@@ -1,6 +1,7 @@
 //! Channel implementations and runtime orchestration.
 
 pub mod cli;
+pub mod controllers;
 pub mod providers;
 pub mod traits;
 
@@ -56,5 +57,6 @@ pub use whatsapp::WhatsAppChannel;
 pub use whatsapp_web::WhatsAppWebChannel;
 
 pub use commands::doctor_channels;
+pub use controllers::{ChannelAuthMode, ChannelDefinition};
 pub use prompt::build_system_prompt;
 pub use runtime::start_channels;

@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 
 import {
+  type AcceptedCompletion,
   type AutocompleteConfig,
   type AutocompleteStatus,
   isTauri,
   openhumanAutocompleteAccept,
+  openhumanAutocompleteClearHistory,
   openhumanAutocompleteCurrent,
   openhumanAutocompleteDebugFocus,
+  openhumanAutocompleteHistory,
   openhumanAutocompleteSetStyle,
   openhumanAutocompleteStart,
   openhumanAutocompleteStatus,
@@ -77,6 +80,11 @@ const AutocompletePanel = () => {
   const [logs, setLogs] = useState<string[]>([]);
   const previousStatusRef = useRef<AutocompleteStatus | null>(null);
 
+  // Personalization history state
+  const [historyEntries, setHistoryEntries] = useState<AcceptedCompletion[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [isClearingHistory, setIsClearingHistory] = useState(false);
+
   const appendLogs = (entries: string[]) => {
     if (entries.length === 0) return;
     const now = new Date().toLocaleTimeString();
@@ -143,8 +151,35 @@ const AutocompletePanel = () => {
 
   useEffect(() => {
     void load();
+    void loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadHistory = async () => {
+    if (!isTauri()) return;
+    setIsHistoryLoading(true);
+    try {
+      const response = await openhumanAutocompleteHistory({ limit: 20 });
+      setHistoryEntries(response.result.entries);
+    } catch {
+      // Non-critical — silently ignore
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  };
+
+  const clearHistory = async () => {
+    if (!isTauri()) return;
+    setIsClearingHistory(true);
+    try {
+      await openhumanAutocompleteClearHistory();
+      setHistoryEntries([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear history');
+    } finally {
+      setIsClearingHistory(false);
+    }
+  };
 
   const refreshStatus = async () => {
     if (!isTauri()) return;
@@ -419,6 +454,52 @@ const AutocompletePanel = () => {
             className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
             {isSaving ? 'Saving…' : 'Save Autocomplete Settings'}
           </button>
+        </section>
+
+        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">Personalization History</h3>
+            <button
+              type="button"
+              onClick={() => void clearHistory()}
+              disabled={isClearingHistory || historyEntries.length === 0}
+              className="rounded-lg border border-red-500/60 bg-red-500/20 px-3 py-1.5 text-xs text-red-200 disabled:opacity-40">
+              {isClearingHistory ? 'Clearing…' : 'Clear History'}
+            </button>
+          </div>
+          <p className="text-xs text-stone-400">
+            {isHistoryLoading
+              ? 'Loading…'
+              : historyEntries.length === 0
+                ? 'No accepted completions yet. Accept suggestions with Tab to start personalising.'
+                : `${String(historyEntries.length)} accepted completion${historyEntries.length === 1 ? '' : 's'} stored — used to personalise future suggestions.`}
+          </p>
+          {historyEntries.length > 0 && (
+            <div className="max-h-48 overflow-y-auto rounded-xl border border-stone-700 bg-stone-900/50 p-2 space-y-1">
+              {historyEntries.map((entry, idx) => (
+                <div
+                  key={`${String(entry.timestamp_ms)}-${String(idx)}`}
+                  className="flex flex-col gap-0.5 rounded-lg bg-stone-800/40 px-2 py-1.5 text-xs">
+                  <div className="flex items-center gap-2 text-stone-400">
+                    <span className="shrink-0">
+                      {new Date(entry.timestamp_ms).toLocaleString()}
+                    </span>
+                    {entry.app_name && (
+                      <span className="rounded bg-stone-700/60 px-1 text-stone-300">
+                        {entry.app_name}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-baseline gap-1 text-stone-200 truncate">
+                    <span className="shrink-0 text-stone-500">…</span>
+                    <span className="truncate text-stone-400">{entry.context.slice(-40)}</span>
+                    <span className="shrink-0 text-stone-500">→</span>
+                    <span className="font-medium text-cyan-300 truncate">{entry.suggestion}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">

@@ -159,6 +159,54 @@ impl Tool for EchoTool {
     }
 }
 
+/// A generic skills bridge test-double tool.
+struct SkillsCallEchoTool;
+
+#[async_trait]
+impl Tool for SkillsCallEchoTool {
+    fn name(&self) -> &str {
+        "skills_call"
+    }
+
+    fn description(&self) -> &str {
+        "Calls a skill tool"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "skill_id": {"type": "string"},
+                "tool_name": {"type": "string"},
+                "arguments": {"type": "object"}
+            },
+            "required": ["skill_id", "tool_name"]
+        })
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        let skill_id = args
+            .get("skill_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let tool_name = args
+            .get("tool_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let message = args
+            .get("arguments")
+            .and_then(|v| v.get("message"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("empty");
+
+        Ok(ToolResult {
+            success: true,
+            output: format!("{skill_id}:{tool_name}:{message}"),
+            error: None,
+        })
+    }
+}
+
 /// A tool that always fails execution.
 struct FailingTool;
 
@@ -249,12 +297,17 @@ impl Tool for CountingTool {
     }
 }
 
-fn make_memory() -> Arc<dyn Memory> {
+/// Create an isolated memory instance with its own temp directory.
+/// The returned `TempDir` must be held alive for the duration of the test
+/// to prevent the directory (and its SQLite database) from being deleted.
+fn make_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
+    let tmp = tempfile::TempDir::new().unwrap();
     let cfg = MemoryConfig {
         backend: "none".into(),
         ..MemoryConfig::default()
     };
-    Arc::from(memory::create_memory(&cfg, &std::env::temp_dir(), None).unwrap())
+    let mem = Arc::from(memory::create_memory(&cfg, tmp.path(), None).unwrap());
+    (mem, tmp)
 }
 
 fn make_sqlite_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
@@ -267,19 +320,23 @@ fn make_sqlite_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
     (mem, tmp)
 }
 
+/// Build an agent with an isolated temp workspace.
+/// Returns `(Agent, TempDir)` — hold `_tmp` in the test to keep the dir alive.
 fn build_agent_with(
     provider: Box<dyn Provider>,
     tools: Vec<Box<dyn Tool>>,
     dispatcher: Box<dyn ToolDispatcher>,
-) -> Agent {
-    Agent::builder()
+) -> (Agent, tempfile::TempDir) {
+    let (mem, tmp) = make_memory();
+    let agent = Agent::builder()
         .provider(provider)
         .tools(tools)
-        .memory(make_memory())
+        .memory(mem)
         .tool_dispatcher(dispatcher)
-        .workspace_dir(std::env::temp_dir())
+        .workspace_dir(tmp.path().to_path_buf())
         .build()
-        .unwrap()
+        .unwrap();
+    (agent, tmp)
 }
 
 fn build_agent_with_memory(
@@ -287,32 +344,36 @@ fn build_agent_with_memory(
     tools: Vec<Box<dyn Tool>>,
     mem: Arc<dyn Memory>,
     auto_save: bool,
-) -> Agent {
-    Agent::builder()
+) -> (Agent, tempfile::TempDir) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let agent = Agent::builder()
         .provider(provider)
         .tools(tools)
         .memory(mem)
         .tool_dispatcher(Box::new(NativeToolDispatcher))
-        .workspace_dir(std::env::temp_dir())
+        .workspace_dir(tmp.path().to_path_buf())
         .auto_save(auto_save)
         .build()
-        .unwrap()
+        .unwrap();
+    (agent, tmp)
 }
 
 fn build_agent_with_config(
     provider: Box<dyn Provider>,
     tools: Vec<Box<dyn Tool>>,
     config: AgentConfig,
-) -> Agent {
-    Agent::builder()
+) -> (Agent, tempfile::TempDir) {
+    let (mem, tmp) = make_memory();
+    let agent = Agent::builder()
         .provider(provider)
         .tools(tools)
-        .memory(make_memory())
+        .memory(mem)
         .tool_dispatcher(Box::new(NativeToolDispatcher))
-        .workspace_dir(std::env::temp_dir())
+        .workspace_dir(tmp.path().to_path_buf())
         .config(config)
         .build()
-        .unwrap()
+        .unwrap();
+    (agent, tmp)
 }
 
 /// Helper: create a ChatResponse with tool calls (native format).
@@ -348,7 +409,7 @@ fn xml_tool_response(name: &str, args: &str) -> ChatResponse {
 #[tokio::test]
 async fn turn_returns_text_when_no_tools_called() {
     let provider = Box::new(ScriptedProvider::new(vec![text_response("Hello world")]));
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -376,7 +437,7 @@ async fn turn_executes_single_tool_then_returns() {
         text_response("I ran the tool"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -416,7 +477,7 @@ async fn turn_handles_multi_step_tool_chain() {
         text_response("Done after 3 calls"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(counting_tool)],
         Box::new(NativeToolDispatcher),
@@ -454,7 +515,7 @@ async fn turn_bails_out_at_max_iterations() {
         ..AgentConfig::default()
     };
 
-    let mut agent = build_agent_with_config(provider, vec![Box::new(EchoTool)], config);
+    let (mut agent, _tmp) = build_agent_with_config(provider, vec![Box::new(EchoTool)], config);
 
     let result = agent.turn("infinite loop").await;
     assert!(result.is_err());
@@ -480,7 +541,7 @@ async fn turn_handles_unknown_tool_gracefully() {
         text_response("I couldn't find that tool"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -520,7 +581,7 @@ async fn turn_recovers_from_tool_failure() {
         text_response("Tool failed but I recovered"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(FailingTool)],
         Box::new(NativeToolDispatcher),
@@ -544,7 +605,7 @@ async fn turn_recovers_from_tool_error() {
         text_response("I recovered from the error"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(PanickingTool)],
         Box::new(NativeToolDispatcher),
@@ -563,7 +624,7 @@ async fn turn_recovers_from_tool_error() {
 
 #[tokio::test]
 async fn turn_propagates_provider_error() {
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         Box::new(FailingProvider),
         vec![],
         Box::new(NativeToolDispatcher),
@@ -591,7 +652,7 @@ async fn history_trims_after_max_messages() {
         ..AgentConfig::default()
     };
 
-    let mut agent = build_agent_with_config(provider, vec![], config);
+    let (mut agent, _tmp) = build_agent_with_config(provider, vec![], config);
 
     for i in 0..max_history + 5 {
         let _ = agent.turn(&format!("msg {i}")).await.unwrap();
@@ -622,7 +683,7 @@ async fn auto_save_stores_messages_in_memory() {
         "I remember everything",
     )]));
 
-    let mut agent = build_agent_with_memory(
+    let (mut agent, _tmp2) = build_agent_with_memory(
         provider,
         vec![],
         mem.clone(),
@@ -644,7 +705,7 @@ async fn auto_save_disabled_does_not_store() {
     let (mem, _tmp) = make_sqlite_memory();
     let provider = Box::new(ScriptedProvider::new(vec![text_response("hello")]));
 
-    let mut agent = build_agent_with_memory(
+    let (mut agent, _tmp2) = build_agent_with_memory(
         provider,
         vec![],
         mem.clone(),
@@ -668,7 +729,7 @@ async fn xml_dispatcher_parses_and_loops() {
         text_response("XML tool completed"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(XmlToolDispatcher),
@@ -684,7 +745,7 @@ async fn xml_dispatcher_parses_and_loops() {
 #[tokio::test]
 async fn native_dispatcher_sends_tool_specs() {
     let provider = Box::new(ScriptedProvider::new(vec![text_response("ok")]));
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -714,7 +775,7 @@ async fn turn_handles_empty_text_response() {
         tool_calls: vec![],
     }]));
 
-    let mut agent = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
+    let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
     let response = agent.turn("hi").await.unwrap();
     assert!(response.is_empty());
@@ -727,7 +788,7 @@ async fn turn_handles_none_text_response() {
         tool_calls: vec![],
     }]));
 
-    let mut agent = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
+    let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
     // Should not panic — falls back to empty string
     let response = agent.turn("hi").await.unwrap();
@@ -752,7 +813,7 @@ async fn turn_preserves_text_alongside_tool_calls() {
         text_response("Here are the results"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -801,7 +862,7 @@ async fn turn_handles_multiple_tools_in_one_response() {
         text_response("All 3 done"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(counting_tool)],
         Box::new(NativeToolDispatcher),
@@ -819,6 +880,59 @@ async fn turn_handles_multiple_tools_in_one_response() {
     );
 }
 
+#[tokio::test]
+async fn e2e_native_loop_executes_text_fallback_tool_calls_and_persists_history() {
+    let provider = Box::new(ScriptedProvider::new(vec![
+        ChatResponse {
+            text: Some(
+                "I'll inspect now.\n<invoke>{\"name\":\"echo\",\"arguments\":{\"message\":\"from-fallback\"}}</invoke>"
+                    .into(),
+            ),
+            tool_calls: vec![],
+        },
+        text_response("Completed via tool"),
+    ]));
+
+    let mut agent = build_agent_with(
+        provider,
+        vec![Box::new(EchoTool)],
+        Box::new(NativeToolDispatcher),
+    );
+
+    let response = agent.turn("please use a tool").await.unwrap();
+    assert_eq!(response, "Completed via tool");
+
+    let mut assistant_tool_calls: Option<Vec<ToolCall>> = None;
+    let mut tool_results: Option<Vec<ToolResultMessage>> = None;
+
+    for msg in agent.history() {
+        match msg {
+            ConversationMessage::AssistantToolCalls { tool_calls, .. } => {
+                assistant_tool_calls = Some(tool_calls.clone());
+            }
+            ConversationMessage::ToolResults(results) => {
+                tool_results = Some(results.clone());
+            }
+            _ => {}
+        }
+    }
+
+    let calls = assistant_tool_calls.expect("assistant tool calls should be persisted");
+    let results = tool_results.expect("tool results should be persisted");
+    assert_eq!(calls.len(), 1, "expected one parsed/persisted tool call");
+    assert_eq!(results.len(), 1, "expected one tool result");
+    assert_eq!(calls[0].name, "echo");
+    assert!(
+        calls[0].arguments.contains("from-fallback"),
+        "persisted tool-call arguments should include fallback payload"
+    );
+    assert_eq!(
+        calls[0].id, results[0].tool_call_id,
+        "tool result must map to persisted assistant tool-call id"
+    );
+    assert_eq!(results[0].content, "from-fallback");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 14. System prompt generation & tool instructions
 // ═══════════════════════════════════════════════════════════════════════════
@@ -826,7 +940,7 @@ async fn turn_handles_multiple_tools_in_one_response() {
 #[tokio::test]
 async fn system_prompt_injected_on_first_turn() {
     let provider = Box::new(ScriptedProvider::new(vec![text_response("ok")]));
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -850,7 +964,7 @@ async fn system_prompt_not_duplicated_on_second_turn() {
         text_response("first"),
         text_response("second"),
     ]));
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -882,7 +996,7 @@ async fn history_contains_all_expected_entries_after_tool_loop() {
         text_response("final answer"),
     ]));
 
-    let mut agent = build_agent_with(
+    let (mut agent, _tmp) = build_agent_with(
         provider,
         vec![Box::new(EchoTool)],
         Box::new(NativeToolDispatcher),
@@ -921,11 +1035,12 @@ async fn history_contains_all_expected_entries_after_tool_loop() {
 
 #[tokio::test]
 async fn builder_fails_without_provider() {
+    let (mem, _tmp) = make_memory();
     let result = Agent::builder()
         .tools(vec![])
-        .memory(make_memory())
+        .memory(mem)
         .tool_dispatcher(Box::new(NativeToolDispatcher))
-        .workspace_dir(std::path::PathBuf::from("/tmp"))
+        .workspace_dir(_tmp.path().to_path_buf())
         .build();
 
     assert!(result.is_err(), "Building without provider should fail");
@@ -943,7 +1058,7 @@ async fn multi_turn_maintains_growing_history() {
         text_response("response 3"),
     ]));
 
-    let mut agent = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
+    let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
     let r1 = agent.turn("msg 1").await.unwrap();
     let len_after_1 = agent.history().len();
@@ -1042,8 +1157,9 @@ fn xml_dispatcher_handles_unclosed_tool_call() {
 
     let dispatcher = XmlToolDispatcher;
     let (text, calls) = dispatcher.parse_response(&response);
-    // Should not panic — just treat as text
-    assert!(calls.is_empty());
+    // Should not panic; robust parser recovers the JSON tool call.
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "shell");
     assert!(text.contains("Before"));
 }
 
@@ -1221,6 +1337,54 @@ fn native_dispatcher_converts_tool_results_to_tool_messages() {
     assert_eq!(messages[1].role, "tool");
 }
 
+#[tokio::test]
+async fn native_dispatcher_executes_generic_skills_call_tool() {
+    let provider = Box::new(ScriptedProvider::new(vec![
+        tool_response(vec![ToolCall {
+            id: "tc-skills-1".into(),
+            name: "skills_call".into(),
+            arguments: serde_json::json!({
+                "skill_id": "e2e-runtime",
+                "tool_name": "echo",
+                "arguments": { "message": "hello from agent test" }
+            })
+            .to_string(),
+        }]),
+        text_response("skills call done"),
+    ]));
+
+    let mut agent = build_agent_with(
+        provider,
+        vec![Box::new(SkillsCallEchoTool)],
+        Box::new(NativeToolDispatcher),
+    );
+
+    let response = agent.turn("Use skills_call").await.unwrap();
+    assert_eq!(response, "skills call done");
+
+    let result_payloads: Vec<String> = agent
+        .history()
+        .iter()
+        .filter_map(|msg| match msg {
+            ConversationMessage::ToolResults(results) => Some(
+                results
+                    .iter()
+                    .map(|r| r.content.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        result_payloads
+            .iter()
+            .any(|payload| payload.contains("e2e-runtime:echo:hello from agent test")),
+        "expected skills_call output in tool results, got: {result_payloads:?}"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 23. XML tool instructions generation
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1238,11 +1402,16 @@ fn xml_dispatcher_generates_tool_instructions() {
 }
 
 #[test]
-fn native_dispatcher_returns_empty_instructions() {
+fn native_dispatcher_prompt_instructions_are_protocol_only_not_tool_catalog() {
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
     let dispatcher = NativeToolDispatcher;
     let instructions = dispatcher.prompt_instructions(&tools);
-    assert!(instructions.is_empty());
+    assert!(instructions.contains("## Tool Use Protocol"));
+    assert!(instructions.contains("native tool-calling"));
+    assert!(
+        !instructions.contains("echo"),
+        "native dispatcher does not inline tool names/schemas; provider sends tool specs when should_send_tool_specs is true"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1256,7 +1425,7 @@ async fn clear_history_resets_conversation() {
         text_response("second"),
     ]));
 
-    let mut agent = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
+    let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
     let _ = agent.turn("hi").await.unwrap();
     assert!(!agent.history().is_empty());
@@ -1279,7 +1448,7 @@ async fn clear_history_resets_conversation() {
 #[tokio::test]
 async fn run_single_delegates_to_turn() {
     let provider = Box::new(ScriptedProvider::new(vec![text_response("via run_single")]));
-    let mut agent = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
+    let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
     let response = agent.run_single("test").await.unwrap();
     assert!(

@@ -20,11 +20,11 @@ use super::permissions::{
     open_macos_privacy_pane, request_accessibility_access, request_screen_recording_access,
 };
 use super::types::{
-    AccessibilityFeatures, AccessibilityStatus, AutocompleteCommitParams, AutocompleteCommitResult,
-    AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureFrame, CaptureImageRefResult,
-    CaptureNowResult, InputActionParams, InputActionResult, PermissionKind, PermissionState,
-    PermissionStatus, SessionStatus, StartSessionParams, VisionFlushResult, VisionRecentResult,
-    VisionSummary,
+    AccessibilityFeatures, AccessibilityStatus, AppContextInfo, AutocompleteCommitParams,
+    AutocompleteCommitResult, AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureFrame,
+    CaptureImageRefResult, CaptureNowResult, CaptureTestResult, InputActionParams,
+    InputActionResult, PermissionKind, PermissionState, PermissionStatus, SessionStatus,
+    StartSessionParams, VisionFlushResult, VisionRecentResult, VisionSummary,
 };
 
 struct SessionRuntime {
@@ -641,8 +641,65 @@ impl AccessibilityEngine {
         })
     }
 
+    /// Standalone capture test — works without an active session.
+    /// Returns rich diagnostics for the debug UI.
+    pub async fn capture_test(&self) -> CaptureTestResult {
+        let start = std::time::Instant::now();
+        let context = foreground_context();
+
+        let context_info = context.as_ref().map(|c| AppContextInfo {
+            app_name: c.app_name.clone(),
+            window_title: c.window_title.clone(),
+            bounds_x: c.bounds.as_ref().map(|b| b.x),
+            bounds_y: c.bounds.as_ref().map(|b| b.y),
+            bounds_width: c.bounds.as_ref().map(|b| b.width),
+            bounds_height: c.bounds.as_ref().map(|b| b.height),
+        });
+
+        let has_bounds = context
+            .as_ref()
+            .and_then(|c| c.bounds.as_ref())
+            .map(|b| b.width > 0 && b.height > 0)
+            .unwrap_or(false);
+
+        let capture_mode = if has_bounds {
+            "windowed".to_string()
+        } else if context.is_some() {
+            "fullscreen".to_string()
+        } else {
+            "fullscreen".to_string()
+        };
+
+        match capture_screen_image_ref_for_context(context.as_ref()) {
+            Ok(image_ref) => {
+                let bytes_estimate = image_ref
+                    .strip_prefix("data:image/png;base64,")
+                    .map(|payload| payload.len() * 3 / 4);
+                CaptureTestResult {
+                    ok: true,
+                    capture_mode,
+                    context: context_info,
+                    image_ref: Some(image_ref),
+                    bytes_estimate,
+                    error: None,
+                    timing_ms: start.elapsed().as_millis() as u64,
+                }
+            }
+            Err(err) => CaptureTestResult {
+                ok: false,
+                capture_mode,
+                context: context_info,
+                image_ref: None,
+                bytes_estimate: None,
+                error: Some(err),
+                timing_ms: start.elapsed().as_millis() as u64,
+            },
+        }
+    }
+
     async fn run_capture_worker(self: Arc<Self>) {
         let mut tick = time::interval(Duration::from_millis(250));
+        tracing::debug!("[screen_intelligence] capture worker started");
 
         loop {
             tick.tick().await;
@@ -651,10 +708,16 @@ impl AccessibilityEngine {
                 let state = self.inner.lock().await;
                 match &state.session {
                     Some(session) => now_ms() >= session.expires_at_ms,
-                    None => return,
+                    None => {
+                        tracing::debug!(
+                            "[screen_intelligence] capture worker: no session, exiting"
+                        );
+                        return;
+                    }
                 }
             };
             if should_stop {
+                tracing::debug!("[screen_intelligence] capture worker: TTL expired, stopping");
                 self.stop_session_internal("ttl_expired".to_string()).await;
                 return;
             }
@@ -678,6 +741,10 @@ impl AccessibilityEngine {
                 .map(|ctx| self.should_capture_context(ctx, &config))
                 .unwrap_or(false);
             if !is_allowed {
+                tracing::trace!(
+                    "[screen_intelligence] capture skipped: context blocked by denylist (app={:?})",
+                    context.as_ref().and_then(|c| c.app_name.as_deref())
+                );
                 continue;
             }
 
@@ -699,12 +766,21 @@ impl AccessibilityEngine {
                     "baseline"
                 };
 
+                let capture_result = capture_screen_image_ref_for_context(context.as_ref());
+                if let Err(ref e) = capture_result {
+                    tracing::debug!(
+                        "[screen_intelligence] capture failed (reason={}): {}",
+                        reason,
+                        e
+                    );
+                }
+
                 let frame = CaptureFrame {
                     captured_at_ms: now,
                     reason: reason.to_string(),
                     app_name: context.as_ref().and_then(|c| c.app_name.clone()),
                     window_title: context.as_ref().and_then(|c| c.window_title.clone()),
-                    image_ref: capture_screen_image_ref_for_context(context.as_ref()).ok(),
+                    image_ref: capture_result.ok(),
                 };
                 push_ephemeral_frame(&mut session.frames, frame.clone());
                 session.last_capture_at_ms = Some(now);
@@ -727,12 +803,20 @@ impl AccessibilityEngine {
         self: Arc<Self>,
         mut rx: tokio::sync::mpsc::UnboundedReceiver<CaptureFrame>,
     ) {
+        tracing::debug!("[screen_intelligence] vision worker started");
+
         while let Some(frame) = rx.recv().await {
+            tracing::debug!(
+                "[screen_intelligence] vision worker: received frame (app={:?}, reason={})",
+                frame.app_name,
+                frame.reason
+            );
             {
                 let mut state = self.inner.lock().await;
                 if let Some(session) = state.session.as_mut() {
                     session.vision_state = "processing".to_string();
                 } else {
+                    tracing::debug!("[screen_intelligence] vision worker: no session, exiting");
                     break;
                 }
             }
@@ -746,6 +830,11 @@ impl AccessibilityEngine {
             session.vision_queue_depth = session.vision_queue_depth.saturating_sub(1);
             match result {
                 Ok(summary) => {
+                    tracing::debug!(
+                        "[screen_intelligence] vision analysis complete: confidence={:.2} notes={}",
+                        summary.confidence,
+                        &summary.actionable_notes[..summary.actionable_notes.len().min(80)]
+                    );
                     push_ephemeral_vision_summary(&mut session.vision_summaries, summary.clone());
                     session.last_vision_at_ms = Some(summary.captured_at_ms);
                     session.last_vision_summary = Some(summary.actionable_notes.clone());
@@ -756,6 +845,7 @@ impl AccessibilityEngine {
                     });
                 }
                 Err(err) => {
+                    tracing::debug!("[screen_intelligence] vision analysis failed: {err}");
                     session.vision_state = "error".to_string();
                     state.last_error = Some(err);
                 }
@@ -801,14 +891,18 @@ impl AccessibilityEngine {
         state.last_event = Some(format!("session_stopped:{reason}"));
     }
 
-    fn rule_matches_context(&self, ctx: &AppContext, rules: &[String]) -> bool {
+    pub(crate) fn rule_matches_context(&self, ctx: &AppContext, rules: &[String]) -> bool {
         let compound = ctx.as_compound_text();
         rules
             .iter()
             .any(|d| !d.trim().is_empty() && compound.contains(&d.to_lowercase()))
     }
 
-    fn should_capture_context(&self, ctx: &AppContext, config: &ScreenIntelligenceConfig) -> bool {
+    pub(crate) fn should_capture_context(
+        &self,
+        ctx: &AppContext,
+        config: &ScreenIntelligenceConfig,
+    ) -> bool {
         let blacklisted = self.rule_matches_context(ctx, &config.denylist);
         let whitelisted = self.rule_matches_context(ctx, &config.allowlist);
 

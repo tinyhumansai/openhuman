@@ -14,24 +14,30 @@ todo
 [] clean up the core so that we can run it as a binary on a server or as docker
 
 [x] Separate the binary from the tauri codebase
-[] Integrate our custom memory engine into core
-[] Integrate our skills registry into core
+[] Integrate our custom memory engine into core - sanil
+[] Integrate our skills registry into core - steve
 [x] Integrate accessibility service installation
-[] Add as a step and setting in the UI
+[] Add as a step and setting in the UI - cyrus
 [x] Remove mentions of zeroclaw from the codebaes
 [x] Integrate local LLM into core
-[] Handle process/deamon properly
+[x] Handle process/deamon properly
 [x] install the linux philosophy of few modules that do their own thing really well sort of..
 [x] Remove android / ios support from the codebase.
-[] e2e test to check if daemon and sidecar loading works properly
+[x] e2e test to check if daemon and sidecar loading works properly
 [x] Find a better way to structure the cargo files
 [x] fix all the rust and cargo issues
-[] Add icon and app name to the various permission settings
-[] add self update based on github release. create a update action on the cli
-[] for each skill show information on how much data has been synced locally and information on how much syncs have happened so far etc..
+[] Add icon and app name to the various permission settings - mithil
+[] add self update based on github release. create a update action on the cli - aniketh
+[] for each skill show information on how much data has been synced locally and information on how much syncs have happened so far etc.. - mithil/elvin
 [x] redo the docs once everything is done.
 [x] remove unwanted feature flags from the rust binary
 [] fix the config properly - mithil
 [] Allow for Migrating from OpenClaw - steve done - to be tested
 [] allow users to choose which version of LLM model they'd like to choose based on their CPU. better ram and gpu means higher parameter model can be used. - mithil
-[x] in the client side app, make console.log follow a logger style logging where there's a namespace for every logger (like python) - steve 
+[x] in the client side app, make console.log follow a logger style logging where there's a namespace for every logger (like python) - steve
+[ ] - currently we bundle tauri in the openhumany rust core but that shouldn't really have to be there. it can be completely removed.
+[] allow skills to be debuggged from the UI (we shuold try to call various tools or see state from the UI itself)
+
+--- e2e tests to write up
+
+- [ ] connecting a channel like telegram/discord works properly

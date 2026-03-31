@@ -9,13 +9,13 @@
  *  - Error handling when backend URL lookup fails
  *  - dev-mode URL construction (?responseType=json)
  */
-import type { ComponentProps } from 'react';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderWithProviders } from '../src/test/test-utils';
 import OAuthProviderButton from '../src/components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../src/components/oauth/providerConfigs';
+import { renderWithProviders } from '../src/test/test-utils';
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -29,7 +29,7 @@ const { mockGetBackendUrl, mockOpenUrl, mockIsTauri } = vi.hoisted(() => ({
 
 vi.mock('../src/services/backendUrl', () => ({ getBackendUrl: mockGetBackendUrl }));
 vi.mock('../src/utils/openUrl', () => ({ openUrl: mockOpenUrl }));
-vi.mock('../src/utils/tauriCommands', async (importOriginal) => {
+vi.mock('../src/utils/tauriCommands', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, isTauri: mockIsTauri };
 });
@@ -43,7 +43,10 @@ const discordConfig = oauthProviderConfigs.find(p => p.id === 'discord')!;
 const renderDiscordButton = (props: Partial<ComponentProps<typeof OAuthProviderButton>> = {}) =>
   renderWithProviders(<OAuthProviderButton provider={discordConfig} {...props} />);
 
-const clickButton = (btn: HTMLElement) => act(async () => { fireEvent.click(btn); });
+const clickButton = (btn: HTMLElement) =>
+  act(async () => {
+    fireEvent.click(btn);
+  });
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -115,9 +118,7 @@ describe('OAuthProviderButton (Discord) — web OAuth flow', () => {
     renderDiscordButton();
     await clickButton(screen.getByRole('button', { name: /discord/i }));
 
-    await waitFor(() =>
-      expect((window.location as unknown as { href: string }).href).not.toBe('')
-    );
+    await waitFor(() => expect((window.location as unknown as { href: string }).href).not.toBe(''));
     expect(mockOpenUrl).not.toHaveBeenCalled();
   });
 
@@ -125,9 +126,7 @@ describe('OAuthProviderButton (Discord) — web OAuth flow', () => {
     renderDiscordButton();
     await clickButton(screen.getByRole('button', { name: /discord/i }));
 
-    await waitFor(() =>
-      expect((window.location as unknown as { href: string }).href).not.toBe('')
-    );
+    await waitFor(() => expect((window.location as unknown as { href: string }).href).not.toBe(''));
     expect(mockGetBackendUrl).toHaveBeenCalledTimes(1);
   });
 });
@@ -180,7 +179,11 @@ describe('OAuthProviderButton (Discord) — Tauri OAuth flow', () => {
 describe('OAuthProviderButton (Discord) — loading state', () => {
   it('shows spinner and "Connecting..." while getBackendUrl is pending', async () => {
     let resolve!: (_v: string) => void;
-    mockGetBackendUrl.mockReturnValue(new Promise<string>(res => { resolve = res; }));
+    mockGetBackendUrl.mockReturnValue(
+      new Promise<string>(res => {
+        resolve = res;
+      })
+    );
     mockIsTauri.mockReturnValue(false);
 
     renderDiscordButton();
@@ -191,12 +194,18 @@ describe('OAuthProviderButton (Discord) — loading state', () => {
     expect(document.querySelector('.animate-spin')).toBeInTheDocument();
     expect(button).toBeDisabled();
 
-    await act(async () => { resolve('http://localhost:5005'); });
+    await act(async () => {
+      resolve('http://localhost:5005');
+    });
   });
 
   it('ignores a second click while already loading', async () => {
     let resolve!: (_v: string) => void;
-    mockGetBackendUrl.mockReturnValue(new Promise<string>(res => { resolve = res; }));
+    mockGetBackendUrl.mockReturnValue(
+      new Promise<string>(res => {
+        resolve = res;
+      })
+    );
     mockIsTauri.mockReturnValue(false);
 
     renderDiscordButton();
@@ -208,7 +217,9 @@ describe('OAuthProviderButton (Discord) — loading state', () => {
     fireEvent.click(button);
     expect(mockGetBackendUrl).toHaveBeenCalledTimes(1);
 
-    await act(async () => { resolve('http://localhost:5005'); });
+    await act(async () => {
+      resolve('http://localhost:5005');
+    });
   });
 });
 
@@ -242,9 +253,7 @@ describe('OAuthProviderButton (Discord) — error handling', () => {
     renderDiscordButton();
     await clickButton(screen.getByRole('button', { name: /discord/i }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /discord/i })).toBeEnabled()
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /discord/i })).toBeEnabled());
     expect((window.location as unknown as { href: string }).href).toBe('');
 
     (window as unknown as Record<string, unknown>).location = originalLocation;
@@ -257,9 +266,7 @@ describe('OAuthProviderButton (Discord) — error handling', () => {
     renderDiscordButton();
     await clickButton(screen.getByRole('button', { name: /discord/i }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /discord/i })).toBeEnabled()
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /discord/i })).toBeEnabled());
     expect(mockOpenUrl).not.toHaveBeenCalled();
   });
 

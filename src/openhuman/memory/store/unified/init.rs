@@ -23,6 +23,13 @@ impl UnifiedMemory {
 
         let db_path = memory_dir.join("memory.db");
         let conn = Connection::open(&db_path)?;
+        // Active storage layout for the core memory domain:
+        // - memory_docs: namespace-scoped source documents and markdown metadata.
+        // - vector_chunks: chunked document text plus optional local embedding bytes.
+        // - graph_namespace: namespace graph edges used for relation-first retrieval.
+        // - graph_global: cross-namespace graph edges used as fallback/shared memory.
+        // - kv_namespace: namespace-scoped durable preferences, decisions, and state.
+        // - kv_global: global durable key-value memories outside a namespace scope.
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
@@ -69,6 +76,7 @@ impl UnifiedMemory {
                updated_at REAL NOT NULL,
                PRIMARY KEY(subject, predicate, object)
              );
+             CREATE INDEX IF NOT EXISTS idx_graph_global_subject ON graph_global(subject, predicate);
 
              CREATE TABLE IF NOT EXISTS graph_namespace (
                namespace TEXT NOT NULL,
@@ -80,6 +88,7 @@ impl UnifiedMemory {
                PRIMARY KEY(namespace, subject, predicate, object)
              );
              CREATE INDEX IF NOT EXISTS idx_graph_namespace_ns ON graph_namespace(namespace);
+             CREATE INDEX IF NOT EXISTS idx_graph_namespace_subject ON graph_namespace(namespace, subject, predicate);
 
              CREATE TABLE IF NOT EXISTS vector_chunks (
                namespace TEXT NOT NULL,

@@ -6,6 +6,7 @@ import {
   type AccessibilitySessionStatus,
   type AccessibilityStatus,
   type AccessibilityVisionSummary,
+  type CaptureTestResult,
   openhumanAccessibilityInputAction,
   openhumanAccessibilityRequestPermission,
   openhumanAccessibilityRequestPermissions,
@@ -14,11 +15,14 @@ import {
   openhumanAccessibilityStopSession,
   openhumanAccessibilityVisionFlush,
   openhumanAccessibilityVisionRecent,
+  openhumanScreenIntelligenceCaptureTest,
 } from '../utils/tauriCommands';
 
 interface AccessibilityState {
   status: AccessibilityStatus | null;
   recentVisionSummaries: AccessibilityVisionSummary[];
+  captureTestResult: CaptureTestResult | null;
+  isCaptureTestRunning: boolean;
   isLoading: boolean;
   isRequestingPermissions: boolean;
   isStartingSession: boolean;
@@ -31,6 +35,8 @@ interface AccessibilityState {
 const initialState: AccessibilityState = {
   status: null,
   recentVisionSummaries: [],
+  captureTestResult: null,
+  isCaptureTestRunning: false,
   isLoading: false,
   isRequestingPermissions: false,
   isStartingSession: false,
@@ -156,6 +162,18 @@ export const flushAccessibilityVision = createAsyncThunk(
   }
 );
 
+export const runCaptureTest = createAsyncThunk(
+  'accessibility/captureTest',
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await openhumanScreenIntelligenceCaptureTest();
+      return response.result;
+    } catch (error) {
+      return rejectWithValue(extractError(error, 'Failed to run capture test'));
+    }
+  }
+);
+
 const accessibilitySlice = createSlice({
   name: 'accessibility',
   initialState,
@@ -269,6 +287,19 @@ const accessibilitySlice = createSlice({
       .addCase(flushAccessibilityVision.rejected, (state, action) => {
         state.isFlushingVision = false;
         state.lastError = (action.payload as string) ?? 'Failed to flush accessibility vision';
+      })
+      .addCase(runCaptureTest.pending, state => {
+        state.isCaptureTestRunning = true;
+        state.captureTestResult = null;
+        state.lastError = null;
+      })
+      .addCase(runCaptureTest.fulfilled, (state, action) => {
+        state.isCaptureTestRunning = false;
+        state.captureTestResult = action.payload;
+      })
+      .addCase(runCaptureTest.rejected, (state, action) => {
+        state.isCaptureTestRunning = false;
+        state.lastError = (action.payload as string) ?? 'Failed to run capture test';
       });
   },
 });

@@ -6,7 +6,9 @@ use super::prompt::{PromptContext, SystemPromptBuilder};
 use crate::openhuman::agent::host_runtime;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::{self, Memory, MemoryCategory};
-use crate::openhuman::providers::{self, ChatMessage, ChatRequest, ConversationMessage, Provider};
+use crate::openhuman::providers::{
+    self, ChatMessage, ChatRequest, ConversationMessage, Provider, ToolCall,
+};
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::{self, Tool, ToolSpec};
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -195,6 +197,41 @@ impl AgentBuilder {
 }
 
 impl Agent {
+    fn with_fallback_tool_call_ids(
+        mut parsed_calls: Vec<ParsedToolCall>,
+        iteration: usize,
+    ) -> Vec<ParsedToolCall> {
+        for (idx, call) in parsed_calls.iter_mut().enumerate() {
+            if call.tool_call_id.is_none() {
+                call.tool_call_id = Some(format!("parsed-{}-{}", iteration + 1, idx + 1));
+            }
+        }
+        parsed_calls
+    }
+
+    fn persisted_tool_calls_for_history(
+        response: &crate::openhuman::providers::ChatResponse,
+        parsed_calls: &[ParsedToolCall],
+        iteration: usize,
+    ) -> Vec<ToolCall> {
+        if !response.tool_calls.is_empty() {
+            return response.tool_calls.clone();
+        }
+
+        parsed_calls
+            .iter()
+            .enumerate()
+            .map(|(idx, call)| ToolCall {
+                id: call
+                    .tool_call_id
+                    .clone()
+                    .unwrap_or_else(|| format!("parsed-{}-{}", iteration + 1, idx + 1)),
+                name: call.name.clone(),
+                arguments: call.arguments.to_string(),
+            })
+            .collect()
+    }
+
     pub fn builder() -> AgentBuilder {
         AgentBuilder::new()
     }
@@ -486,6 +523,7 @@ impl Agent {
             };
 
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
+            let calls = Self::with_fallback_tool_call_ids(calls, iteration);
             log::info!(
                 "[agent_loop] parsed response i={} parsed_text_chars={} parsed_tool_calls={}",
                 iteration + 1,
@@ -540,10 +578,21 @@ impl Agent {
                 iteration + 1,
                 tool_names
             );
-
+            let persisted_tool_calls =
+                Self::persisted_tool_calls_for_history(&response, &calls, iteration);
+            log::info!(
+                "[agent_loop] persisting assistant tool calls i={} persisted_tool_calls={} parsed_tool_calls={}",
+                iteration + 1,
+                persisted_tool_calls.len(),
+                calls.len()
+            );
             self.history.push(ConversationMessage::AssistantToolCalls {
-                text: response.text.clone(),
-                tool_calls: response.tool_calls.clone(),
+                text: if text.is_empty() {
+                    None
+                } else {
+                    Some(text.clone())
+                },
+                tool_calls: persisted_tool_calls,
             });
 
             let results = self.execute_tools(&calls).await;
@@ -696,6 +745,9 @@ mod tests {
 
     #[tokio::test]
     async fn turn_without_tools_returns_text() {
+        let workspace = tempfile::TempDir::new().expect("temp workspace");
+        let workspace_path = workspace.path().to_path_buf();
+
         let provider = Box::new(MockProvider {
             responses: Mutex::new(vec![crate::openhuman::providers::ChatResponse {
                 text: Some("hello".into()),
@@ -708,12 +760,7 @@ mod tests {
             ..crate::openhuman::config::MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> = Arc::from(
-            crate::openhuman::memory::create_memory(
-                &memory_cfg,
-                std::path::Path::new("/tmp"),
-                None,
-            )
-            .unwrap(),
+            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
         );
 
         let mut agent = Agent::builder()
@@ -721,7 +768,7 @@ mod tests {
             .tools(vec![Box::new(MockTool)])
             .memory(mem)
             .tool_dispatcher(Box::new(XmlToolDispatcher))
-            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .workspace_dir(workspace_path)
             .build()
             .unwrap();
 
@@ -731,6 +778,9 @@ mod tests {
 
     #[tokio::test]
     async fn turn_with_native_dispatcher_handles_tool_results_variant() {
+        let workspace = tempfile::TempDir::new().expect("temp workspace");
+        let workspace_path = workspace.path().to_path_buf();
+
         let provider = Box::new(MockProvider {
             responses: Mutex::new(vec![
                 crate::openhuman::providers::ChatResponse {
@@ -753,12 +803,7 @@ mod tests {
             ..crate::openhuman::config::MemoryConfig::default()
         };
         let mem: Arc<dyn Memory> = Arc::from(
-            crate::openhuman::memory::create_memory(
-                &memory_cfg,
-                std::path::Path::new("/tmp"),
-                None,
-            )
-            .unwrap(),
+            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
         );
 
         let mut agent = Agent::builder()
@@ -766,7 +811,7 @@ mod tests {
             .tools(vec![Box::new(MockTool)])
             .memory(mem)
             .tool_dispatcher(Box::new(NativeToolDispatcher))
-            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .workspace_dir(workspace_path)
             .build()
             .unwrap();
 
@@ -776,5 +821,58 @@ mod tests {
             .history()
             .iter()
             .any(|msg| matches!(msg, ConversationMessage::ToolResults(_))));
+    }
+
+    #[tokio::test]
+    async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
+        let workspace = tempfile::TempDir::new().expect("temp workspace");
+        let workspace_path = workspace.path().to_path_buf();
+
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![
+                crate::openhuman::providers::ChatResponse {
+                    text: Some(
+                        "Checking...\n<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>"
+                            .into(),
+                    ),
+                    tool_calls: vec![],
+                },
+                crate::openhuman::providers::ChatResponse {
+                    text: Some("done".into()),
+                    tool_calls: vec![],
+                },
+            ]),
+        });
+
+        let memory_cfg = crate::openhuman::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::openhuman::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        );
+
+        let mut agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool)])
+            .memory(mem)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(workspace_path)
+            .build()
+            .unwrap();
+
+        let response = agent.turn("hi").await.unwrap();
+        assert_eq!(response, "done");
+
+        let persisted_calls = agent
+            .history()
+            .iter()
+            .find_map(|msg| match msg {
+                ConversationMessage::AssistantToolCalls { tool_calls, .. } => Some(tool_calls),
+                _ => None,
+            })
+            .expect("assistant tool calls should be persisted");
+        assert_eq!(persisted_calls.len(), 1);
+        assert_eq!(persisted_calls[0].name, "echo");
     }
 }

@@ -157,10 +157,17 @@ fn default_http_timeout_secs() -> u64 {
 pub struct WebSearchConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Search provider. Valid values: `duckduckgo` (default, free), `brave` (requires `brave_api_key`),
+    /// `parallel` (requires `parallel_api_key`).
     #[serde(default = "default_web_search_provider")]
     pub provider: String,
+    /// API key for the Brave Search API. Set via `OPENHUMAN_BRAVE_API_KEY` / `BRAVE_API_KEY`.
     #[serde(default)]
     pub brave_api_key: Option<String>,
+    /// API key for the Parallel Search API (<https://docs.parallel.ai>).
+    /// Set via `OPENHUMAN_PARALLEL_API_KEY` / `PARALLEL_API_KEY`.
+    #[serde(default)]
+    pub parallel_api_key: Option<String>,
     #[serde(default = "default_web_search_max_results")]
     pub max_results: usize,
     #[serde(default = "default_web_search_timeout_secs")]
@@ -185,6 +192,7 @@ impl Default for WebSearchConfig {
             enabled: true,
             provider: default_web_search_provider(),
             brave_api_key: None,
+            parallel_api_key: None,
             max_results: default_web_search_max_results(),
             timeout_secs: default_web_search_timeout_secs(),
         }

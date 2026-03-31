@@ -153,7 +153,7 @@ const MiniSidebar = () => {
   });
 
   // Hide sidebar on public/setup routes and when not authenticated.
-  const hiddenPaths = ['/', '/login', '/onboarding', '/mnemonic'];
+  const hiddenPaths = ['/', '/login'];
   if (
     !token ||
     hiddenPaths.some(path => location.pathname === path || location.pathname.startsWith(`${path}/`))

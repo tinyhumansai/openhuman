@@ -1,29 +1,41 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 import ProgressIndicator from '../../components/ProgressIndicator';
 import { userApi } from '../../services/api/userApi';
 import { setOnboardedForUser, setOnboardingTasksForUser } from '../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import FeaturesStep from './steps/FeaturesStep';
-import GetStartedStep from './steps/GetStartedStep';
-import PrivacyStep from './steps/PrivacyStep';
+import { openhumanWorkspaceOnboardingFlagSet } from '../../utils/tauriCommands';
+import LocalAIStep from './steps/LocalAIStep';
+import MnemonicStep from './steps/MnemonicStep';
+import ScreenPermissionsStep from './steps/ScreenPermissionsStep';
+import SkillsStep from './steps/SkillsStep';
+import ToolsStep from './steps/ToolsStep';
+import WelcomeStep from './steps/WelcomeStep';
 
-interface OnboardingDraft {
-  accessibilityPermissionGranted: boolean;
-  localModelConsentGiven: boolean;
+interface OnboardingProps {
+  onComplete?: () => void;
 }
 
-const Onboarding = () => {
-  const navigate = useNavigate();
+interface OnboardingDraft {
+  localModelConsentGiven: boolean;
+  localModelDownloadStarted: boolean;
+  accessibilityPermissionGranted: boolean;
+  enabledTools: string[];
+  connectedSources: string[];
+}
+
+const Onboarding = ({ onComplete }: OnboardingProps) => {
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.user.user);
   const [currentStep, setCurrentStep] = useState(0);
   const [draft, setDraft] = useState<OnboardingDraft>({
-    accessibilityPermissionGranted: false,
     localModelConsentGiven: false,
+    localModelDownloadStarted: false,
+    accessibilityPermissionGranted: false,
+    enabledTools: [],
+    connectedSources: [],
   });
-  const totalSteps = 3;
+  const totalSteps = 7;
 
   const handleNext = () => {
     if (currentStep < totalSteps - 1) {
@@ -31,17 +43,29 @@ const Onboarding = () => {
     }
   };
 
+  const handleLocalAINext = (result: { consentGiven: boolean; downloadStarted: boolean }) => {
+    setDraft(prev => ({
+      ...prev,
+      localModelConsentGiven: result.consentGiven,
+      localModelDownloadStarted: result.downloadStarted,
+    }));
+    handleNext();
+  };
+
   const handleAccessibilityNext = (accessibilityPermissionGranted: boolean) => {
     setDraft(prev => ({ ...prev, accessibilityPermissionGranted }));
     handleNext();
   };
 
-  const handleLocalModelNext = (localModelConsentGiven: boolean) => {
-    setDraft(prev => ({ ...prev, localModelConsentGiven }));
+  const handleToolsNext = (enabledTools: string[]) => {
+    setDraft(prev => ({ ...prev, enabledTools }));
     handleNext();
   };
 
-  const handleComplete = async (connectedSources: string[]) => {
+  const handleSkillsNext = async (connectedSources: string[]) => {
+    setDraft(prev => ({ ...prev, connectedSources }));
+
+    // Persist onboarding tasks
     if (user?._id) {
       dispatch(
         setOnboardingTasksForUser({
@@ -49,12 +73,15 @@ const Onboarding = () => {
           tasks: {
             accessibilityPermissionGranted: draft.accessibilityPermissionGranted,
             localModelConsentGiven: draft.localModelConsentGiven,
+            localModelDownloadStarted: draft.localModelDownloadStarted,
+            enabledTools: draft.enabledTools,
             connectedSources,
           },
         })
       );
     }
 
+    // Notify backend
     try {
       await userApi.onboardingComplete();
     } catch (e) {
@@ -67,20 +94,43 @@ const Onboarding = () => {
           : 'Failed to complete onboarding. Please try again.';
       throw new Error(msg);
     }
+
+    // Advance to mnemonic step
+    handleNext();
+  };
+
+  const handleMnemonicComplete = async () => {
+    // Mark onboarded in Redux
     if (user?._id) {
       dispatch(setOnboardedForUser({ userId: user._id, value: true }));
     }
-    navigate('/mnemonic');
+
+    // Write workspace flag so the overlay won't show again
+    try {
+      await openhumanWorkspaceOnboardingFlagSet(true);
+    } catch {
+      // Non-critical — Redux state is the primary gate
+    }
+
+    onComplete?.();
   };
 
   const renderStep = () => {
     switch (currentStep) {
+      case 0:
+        return <WelcomeStep onNext={handleNext} />;
       case 1:
-        return <PrivacyStep onNext={handleLocalModelNext} />;
+        return <LocalAIStep onNext={handleLocalAINext} />;
       case 2:
-        return <GetStartedStep onComplete={handleComplete} />;
+        return <ScreenPermissionsStep onNext={handleAccessibilityNext} />;
+      case 3:
+        return <ToolsStep onNext={handleToolsNext} />;
+      case 4:
+        return <SkillsStep onComplete={handleSkillsNext} />;
+      case 5:
+        return <MnemonicStep onComplete={handleMnemonicComplete} />;
       default:
-        return <FeaturesStep onNext={handleAccessibilityNext} />;
+        return null;
     }
   };
 

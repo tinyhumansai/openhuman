@@ -9,14 +9,14 @@
  *  - Error handling when the backend URL lookup fails
  *  - dev-mode URL construction (responseType=json query param)
  */
-import type { ComponentProps } from 'react';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderWithProviders } from '../src/test/test-utils';
 import OAuthLoginSection from '../src/components/oauth/OAuthLoginSection';
 import OAuthProviderButton from '../src/components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../src/components/oauth/providerConfigs';
+import { renderWithProviders } from '../src/test/test-utils';
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -30,15 +30,11 @@ const { mockGetBackendUrl, mockOpenUrl, mockIsTauri } = vi.hoisted(() => ({
   mockIsTauri: vi.fn(),
 }));
 
-vi.mock('../src/services/backendUrl', () => ({
-  getBackendUrl: mockGetBackendUrl,
-}));
+vi.mock('../src/services/backendUrl', () => ({ getBackendUrl: mockGetBackendUrl }));
 
-vi.mock('../src/utils/openUrl', () => ({
-  openUrl: mockOpenUrl,
-}));
+vi.mock('../src/utils/openUrl', () => ({ openUrl: mockOpenUrl }));
 
-vi.mock('../src/utils/tauriCommands', async (importOriginal) => {
+vi.mock('../src/utils/tauriCommands', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, isTauri: mockIsTauri };
 });
@@ -58,7 +54,10 @@ const renderGoogleButton = (props: Partial<ComponentProps<typeof OAuthProviderBu
   renderWithProviders(<OAuthProviderButton provider={googleConfig} {...props} />);
 
 // act() with an async callback returns Promise<void>, making await valid.
-const clickButton = (btn: HTMLElement) => act(async () => { fireEvent.click(btn); });
+const clickButton = (btn: HTMLElement) =>
+  act(async () => {
+    fireEvent.click(btn);
+  });
 
 // ---------------------------------------------------------------------------
 // OAuthLoginSection — rendering
@@ -170,9 +169,7 @@ describe('OAuthProviderButton (Google) — web OAuth flow', () => {
     renderGoogleButton();
     await clickButton(screen.getByRole('button', { name: /google/i }));
 
-    await waitFor(() =>
-      expect((window.location as unknown as { href: string }).href).not.toBe('')
-    );
+    await waitFor(() => expect((window.location as unknown as { href: string }).href).not.toBe(''));
     expect(mockOpenUrl).not.toHaveBeenCalled();
   });
 
@@ -180,9 +177,7 @@ describe('OAuthProviderButton (Google) — web OAuth flow', () => {
     renderGoogleButton();
     await clickButton(screen.getByRole('button', { name: /google/i }));
 
-    await waitFor(() =>
-      expect((window.location as unknown as { href: string }).href).not.toBe('')
-    );
+    await waitFor(() => expect((window.location as unknown as { href: string }).href).not.toBe(''));
     expect(mockGetBackendUrl).toHaveBeenCalledTimes(1);
   });
 });
@@ -227,7 +222,9 @@ describe('OAuthProviderButton (Google) — loading state', () => {
   it('shows spinner and "Connecting..." text while login is in progress', async () => {
     let resolveBackendUrl!: (_v: string) => void;
     mockGetBackendUrl.mockReturnValue(
-      new Promise<string>(res => { resolveBackendUrl = res; })
+      new Promise<string>(res => {
+        resolveBackendUrl = res;
+      })
     );
     mockIsTauri.mockReturnValue(false);
 
@@ -241,13 +238,17 @@ describe('OAuthProviderButton (Google) — loading state', () => {
     expect(button).toBeDisabled();
 
     // Settle the promise so React doesn't warn about state updates after unmount
-    await act(async () => { resolveBackendUrl('http://localhost:5005'); });
+    await act(async () => {
+      resolveBackendUrl('http://localhost:5005');
+    });
   });
 
   it('does not respond to a second click while already loading', async () => {
     let resolveBackendUrl!: (_v: string) => void;
     mockGetBackendUrl.mockReturnValue(
-      new Promise<string>(res => { resolveBackendUrl = res; })
+      new Promise<string>(res => {
+        resolveBackendUrl = res;
+      })
     );
     mockIsTauri.mockReturnValue(false);
 
@@ -261,7 +262,9 @@ describe('OAuthProviderButton (Google) — loading state', () => {
     fireEvent.click(button);
     expect(mockGetBackendUrl).toHaveBeenCalledTimes(1);
 
-    await act(async () => { resolveBackendUrl('http://localhost:5005'); });
+    await act(async () => {
+      resolveBackendUrl('http://localhost:5005');
+    });
   });
 
   it('remains in loading state after successful Tauri openUrl (awaits deep-link callback)', async () => {
@@ -311,9 +314,7 @@ describe('OAuthProviderButton (Google) — error handling', () => {
     renderGoogleButton();
     await clickButton(screen.getByRole('button', { name: /google/i }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /google/i })).toBeEnabled()
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /google/i })).toBeEnabled());
     expect((window.location as unknown as { href: string }).href).toBe('');
 
     (window as unknown as Record<string, unknown>).location = originalLocation;
@@ -326,9 +327,7 @@ describe('OAuthProviderButton (Google) — error handling', () => {
     renderGoogleButton();
     await clickButton(screen.getByRole('button', { name: /google/i }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /google/i })).toBeEnabled()
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /google/i })).toBeEnabled());
     expect(mockOpenUrl).not.toHaveBeenCalled();
   });
 
@@ -371,9 +370,7 @@ describe('OAuthProviderButton (Google) — dev mode URL params', () => {
     renderGoogleButton();
     await clickButton(screen.getByRole('button', { name: /google/i }));
 
-    await waitFor(() =>
-      expect((window.location as unknown as { href: string }).href).not.toBe('')
-    );
+    await waitFor(() => expect((window.location as unknown as { href: string }).href).not.toBe(''));
     expect((window.location as unknown as { href: string }).href).toBe(
       'https://api.example.com/auth/google/login?responseType=json'
     );

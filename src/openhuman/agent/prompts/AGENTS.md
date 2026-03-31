@@ -78,7 +78,7 @@ Activated for workflow creation, scheduled tasks, and skill management.
 
 ## PR Authoring Rule
 
-When an agent prepares or suggests pull request content, it must follow `.github/pull_request_template.md` and keep all sections/checklists intact.
+When an agent prepares or suggests pull request content, it must follow `.github/PULL_REQUEST_TEMPLATE.md` and keep all sections/checklists intact.
 
 ## Engineering Ownership Rules
 

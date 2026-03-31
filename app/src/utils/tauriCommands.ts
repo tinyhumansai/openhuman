@@ -4,6 +4,7 @@
  * Helper functions for invoking Tauri commands from the frontend.
  */
 import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { callCoreRpc } from '../services/coreRpcClient';
 
@@ -86,7 +87,10 @@ export async function showWindow(): Promise<void> {
     return;
   }
 
-  await invoke('show_window');
+  const window = getCurrentWindow();
+  await window.show();
+  await window.unminimize();
+  await window.setFocus();
 }
 
 /**
@@ -97,7 +101,7 @@ export async function hideWindow(): Promise<void> {
     return;
   }
 
-  await invoke('hide_window');
+  await getCurrentWindow().hide();
 }
 
 /**
@@ -108,7 +112,15 @@ export async function toggleWindow(): Promise<void> {
     return;
   }
 
-  await invoke('toggle_window');
+  const window = getCurrentWindow();
+  const visible = await window.isVisible();
+  if (visible) {
+    await window.hide();
+    return;
+  }
+  await window.show();
+  await window.unminimize();
+  await window.setFocus();
 }
 
 /**
@@ -119,7 +131,7 @@ export async function isWindowVisible(): Promise<boolean> {
     return true; // In browser, window is always visible
   }
 
-  return await invoke('is_window_visible');
+  return await getCurrentWindow().isVisible();
 }
 
 /**
@@ -130,7 +142,7 @@ export async function minimizeWindow(): Promise<void> {
     return;
   }
 
-  await invoke('minimize_window');
+  await getCurrentWindow().minimize();
 }
 
 /**
@@ -141,7 +153,8 @@ export async function maximizeWindow(): Promise<void> {
     return;
   }
 
-  await invoke('maximize_window');
+  const window = getCurrentWindow();
+  await window.toggleMaximize();
 }
 
 /**
@@ -152,7 +165,7 @@ export async function closeWindow(): Promise<void> {
     return;
   }
 
-  await invoke('close_window');
+  await getCurrentWindow().close();
 }
 
 /**
@@ -164,7 +177,7 @@ export async function setWindowTitle(title: string): Promise<void> {
     return;
   }
 
-  await invoke('set_window_title', { title });
+  await getCurrentWindow().setTitle(title);
 }
 
 // --- Memory Commands ---
@@ -346,10 +359,6 @@ export type HardwareTransport = 'Native' | 'Serial' | 'Probe' | 'None';
 export interface CommandResponse<T> {
   result: T;
   logs: string[];
-}
-
-function wrapCommandResult<T>(result: T): CommandResponse<T> {
-  return { result, logs: [] };
 }
 
 export interface SkillSnapshot {
@@ -683,6 +692,25 @@ export interface AccessibilityVisionFlushResult {
   summary: AccessibilityVisionSummary | null;
 }
 
+export interface CaptureTestContextInfo {
+  app_name: string | null;
+  window_title: string | null;
+  bounds_x: number | null;
+  bounds_y: number | null;
+  bounds_width: number | null;
+  bounds_height: number | null;
+}
+
+export interface CaptureTestResult {
+  ok: boolean;
+  capture_mode: string;
+  context: CaptureTestContextInfo | null;
+  image_ref: string | null;
+  bytes_estimate: number | null;
+  error: string | null;
+  timing_ms: number;
+}
+
 export interface ConfigSnapshot {
   config: Record<string, unknown>;
   workspace_dir: string;
@@ -1012,6 +1040,19 @@ export async function openhumanWorkspaceOnboardingFlagExists(
   });
 }
 
+export async function openhumanWorkspaceOnboardingFlagSet(
+  value: boolean,
+  flagName = DEFAULT_WORKSPACE_ONBOARDING_FLAG
+): Promise<boolean> {
+  if (!isTauri()) {
+    return false;
+  }
+  return await callCoreRpc<boolean>({
+    method: 'openhuman.workspace_onboarding_flag_set',
+    params: { flag_name: flagName, value },
+  });
+}
+
 export async function openhumanSetBrowserAllowAll(
   enabled: boolean
 ): Promise<CommandResponse<RuntimeFlags>> {
@@ -1253,18 +1294,83 @@ export async function openhumanLocalAiDownloadAsset(
   });
 }
 
+// --- Device profile & model tier presets ---
+
+export interface DeviceProfileResult {
+  total_ram_bytes: number;
+  cpu_count: number;
+  cpu_brand: string;
+  os_name: string;
+  os_version: string;
+  has_gpu: boolean;
+  gpu_description: string | null;
+}
+
+export interface ModelPresetResult {
+  tier: string;
+  label: string;
+  description: string;
+  chat_model_id: string;
+  vision_model_id: string;
+  embedding_model_id: string;
+  quantization: string;
+  min_ram_gb: number;
+  approx_download_gb: number;
+}
+
+export interface PresetsResponse {
+  presets: ModelPresetResult[];
+  recommended_tier: string;
+  current_tier: string;
+  device: DeviceProfileResult;
+}
+
+export interface ApplyPresetResult {
+  applied_tier: string;
+  chat_model_id: string;
+  vision_model_id: string;
+  embedding_model_id: string;
+  quantization: string;
+}
+
+export async function openhumanLocalAiDeviceProfile(): Promise<DeviceProfileResult> {
+  return await callCoreRpc<DeviceProfileResult>({ method: 'openhuman.local_ai_device_profile' });
+}
+
+export async function openhumanLocalAiPresets(): Promise<PresetsResponse> {
+  return await callCoreRpc<PresetsResponse>({ method: 'openhuman.local_ai_presets' });
+}
+
+export async function openhumanLocalAiApplyPreset(tier: string): Promise<ApplyPresetResult> {
+  return await callCoreRpc<ApplyPresetResult>({
+    method: 'openhuman.local_ai_apply_preset',
+    params: { tier },
+  });
+}
+
 export async function aiGetConfig(): Promise<AIPreview> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('ai_get_config');
+  return {
+    soul: {
+      raw: '',
+      name: 'OpenHuman',
+      description: 'AI assistant',
+      personalityPreview: [],
+      safetyRulesPreview: [],
+      loadedAt: Date.now(),
+    },
+    tools: { raw: '', totalTools: 0, activeSkills: 0, skillsPreview: [], loadedAt: Date.now() },
+    metadata: {
+      loadedAt: Date.now(),
+      loadingDuration: 0,
+      hasFallbacks: true,
+      sources: { soul: 'frontend', tools: 'frontend' },
+      errors: ['AI prompt preview has been moved out of the Tauri host.'],
+    },
+  };
 }
 
 export async function aiRefreshConfig(): Promise<AIPreview> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('ai_refresh_config');
+  return aiGetConfig();
 }
 
 export async function openhumanEncryptSecret(plaintext: string): Promise<CommandResponse<string>> {
@@ -1390,8 +1496,9 @@ export async function openhumanGetDaemonHostConfig(): Promise<CommandResponse<Da
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  const result = await invoke<DaemonHostConfig>('openhuman_get_daemon_host_config');
-  return wrapCommandResult(result);
+  return await callCoreRpc<CommandResponse<DaemonHostConfig>>({
+    method: 'openhuman.service_daemon_host_get',
+  });
 }
 
 export async function openhumanSetDaemonHostConfig(
@@ -1400,8 +1507,10 @@ export async function openhumanSetDaemonHostConfig(
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  const result = await invoke<DaemonHostConfig>('openhuman_set_daemon_host_config', { showTray });
-  return wrapCommandResult(result);
+  return await callCoreRpc<CommandResponse<DaemonHostConfig>>({
+    method: 'openhuman.service_daemon_host_set',
+    params: { show_tray: showTray },
+  });
 }
 
 export async function openhumanAccessibilityStatus(): Promise<
@@ -1543,6 +1652,18 @@ export async function openhumanAccessibilityVisionFlush(): Promise<
   });
 }
 
+export async function openhumanScreenIntelligenceCaptureTest(): Promise<
+  CommandResponse<CaptureTestResult>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<CaptureTestResult>>({
+    method: 'openhuman.screen_intelligence_capture_test',
+    serviceManaged: true,
+  });
+}
+
 export async function openhumanAutocompleteStatus(): Promise<CommandResponse<AutocompleteStatus>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
@@ -1623,32 +1744,61 @@ export async function openhumanAutocompleteSetStyle(
   });
 }
 
-export async function runtimeListSkills(): Promise<SkillSnapshot[]> {
+export interface AcceptedCompletion {
+  context: string;
+  suggestion: string;
+  app_name?: string | null;
+  timestamp_ms: number;
+}
+
+export interface AutocompleteHistoryResult {
+  entries: AcceptedCompletion[];
+}
+
+export interface AutocompleteClearHistoryResult {
+  cleared: number;
+}
+
+export async function openhumanAutocompleteHistory(params?: {
+  limit?: number;
+}): Promise<CommandResponse<AutocompleteHistoryResult>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await invoke('runtime_list_skills');
+  return await callCoreRpc<CommandResponse<AutocompleteHistoryResult>>({
+    method: 'openhuman.autocomplete_history',
+    params: params ?? {},
+  });
+}
+
+export async function openhumanAutocompleteClearHistory(): Promise<
+  CommandResponse<AutocompleteClearHistoryResult>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AutocompleteClearHistoryResult>>({
+    method: 'openhuman.autocomplete_clear_history',
+  });
+}
+
+export async function runtimeListSkills(): Promise<SkillSnapshot[]> {
+  return await callCoreRpc<SkillSnapshot[]>({ method: 'openhuman.skills_list' });
 }
 
 export async function runtimeDiscoverSkills(): Promise<RuntimeDiscoveredSkill[]> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_discover_skills');
+  return await callCoreRpc<RuntimeDiscoveredSkill[]>({ method: 'openhuman.skills_discover' });
 }
 
 export async function runtimeStartSkill(skillId: string): Promise<SkillSnapshot> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_start_skill', { skill_id: skillId });
+  return await callCoreRpc<SkillSnapshot>({
+    method: 'openhuman.skills_start',
+    params: { skill_id: skillId },
+  });
 }
 
 export async function runtimeStopSkill(skillId: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_stop_skill', { skill_id: skillId });
+  await callCoreRpc({ method: 'openhuman.skills_stop', params: { skill_id: skillId } });
 }
 
 export async function runtimeRpc<T = unknown>(
@@ -1656,17 +1806,18 @@ export async function runtimeRpc<T = unknown>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke<T>('runtime_rpc', { skill_id: skillId, method, params });
+  return await callCoreRpc<T>({
+    method: 'openhuman.skills_rpc',
+    params: { skill_id: skillId, method, params },
+  });
 }
 
 export async function runtimeSkillDataRead(skillId: string, filename: string): Promise<string> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_skill_data_read', { skill_id: skillId, filename });
+  const result = await callCoreRpc<{ content: string }>({
+    method: 'openhuman.skills_data_read',
+    params: { skill_id: skillId, filename },
+  });
+  return result.content;
 }
 
 export async function runtimeSkillDataWrite(
@@ -1674,17 +1825,18 @@ export async function runtimeSkillDataWrite(
   filename: string,
   content: string
 ): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_skill_data_write', { skill_id: skillId, filename, content });
+  await callCoreRpc({
+    method: 'openhuman.skills_data_write',
+    params: { skill_id: skillId, filename, content },
+  });
 }
 
 export async function runtimeSkillDataDir(skillId: string): Promise<string> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_skill_data_dir', { skill_id: skillId });
+  const result = await callCoreRpc<{ path: string }>({
+    method: 'openhuman.skills_data_dir',
+    params: { skill_id: skillId },
+  });
+  return result.path;
 }
 
 export async function runtimeListSkillOptions(skillId: string): Promise<RuntimeSkillOption[]> {
@@ -1711,29 +1863,24 @@ export async function runtimeSetSkillOption(
 }
 
 export async function runtimeIsSkillEnabled(skillId: string): Promise<boolean> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_is_skill_enabled', { skill_id: skillId });
+  const result = await callCoreRpc<{ enabled: boolean }>({
+    method: 'openhuman.skills_is_enabled',
+    params: { skill_id: skillId },
+  });
+  return result.enabled;
 }
 
 export async function runtimeEnableSkill(skillId: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_enable_skill', { skill_id: skillId });
+  await callCoreRpc({ method: 'openhuman.skills_enable', params: { skill_id: skillId } });
 }
 
 export async function runtimeDisableSkill(skillId: string): Promise<void> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  await invoke('runtime_disable_skill', { skill_id: skillId });
+  await callCoreRpc({ method: 'openhuman.skills_disable', params: { skill_id: skillId } });
 }
 
 export async function runtimeSkillDataStats(skillId: string): Promise<RuntimeSkillDataStats> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await invoke('runtime_skill_data_stats', { skill_id: skillId });
+  return await callCoreRpc<RuntimeSkillDataStats>({
+    method: 'openhuman.skills_status',
+    params: { skill_id: skillId },
+  });
 }

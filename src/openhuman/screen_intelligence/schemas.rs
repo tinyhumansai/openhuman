@@ -26,6 +26,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("input_action"),
         schemas("vision_recent"),
         schemas("vision_flush"),
+        schemas("capture_test"),
     ]
 }
 
@@ -70,6 +71,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("vision_flush"),
             handler: handle_vision_flush,
+        },
+        RegisteredController {
+            schema: schemas("capture_test"),
+            handler: handle_capture_test,
         },
     ]
 }
@@ -179,6 +184,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("result", "Vision flush payload.")],
         },
+        "capture_test" => ControllerSchema {
+            namespace: "screen_intelligence",
+            function: "capture_test",
+            description: "Standalone capture test with diagnostics (no session required).",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "Capture test result with diagnostics.",
+            )],
+        },
         _ => ControllerSchema {
             namespace: "screen_intelligence",
             function: "unknown",
@@ -273,6 +288,12 @@ fn handle_vision_recent(params: Map<String, Value>) -> ControllerFuture {
 fn handle_vision_flush(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
         to_json(crate::openhuman::screen_intelligence::rpc::accessibility_vision_flush().await?)
+    })
+}
+
+fn handle_capture_test(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        to_json(crate::openhuman::screen_intelligence::rpc::accessibility_capture_test().await?)
     })
 }
 

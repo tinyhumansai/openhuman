@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenHuman",
-  "version": "0.49.19",
+  "version": "0.49.32",
   "identifier": "com.openhuman.app",
   "build": {
     "beforeDevCommand": "npm run core:stage && npm run dev",
@@ -29,7 +29,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "app",
+      "dmg",
+      "deb",
+      "nsis",
+      "msi",
+      "appimage"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,11 +48,12 @@
       "../../src/openhuman/agent/prompts"
     ],
     "externalBin": [
-      "binaries/openhuman"
+      "binaries/openhuman-core"
     ],
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "macOS": {
       "minimumSystemVersion": "10.15",
+      "entitlements": "entitlements.sidecar.plist",
       "dmg": {
         "background": "./images/background-dmg.png"
       }
@@ -53,7 +61,8 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA1NkI1NEQzNjVDMjA0NDgKUldSSUJNSmwwMVJyQmJCTnQrQWxPSmhZQmVyWU1NMXdwRlRCSHR0ZEdlbkRncCtpQnhaZU5rUEQK",
+      "active": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxRTlFRkFEMjA3NzIwQjMKUldTeklIY2dyZS9wd2I3WDF2TXdqVU52MS92L1RValhhNlhTNW5BYzF0V2VVK0ZmQThjVHBwSysK",
       "endpoints": [
         "https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json"
       ]

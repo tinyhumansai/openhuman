@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AccessibilityStatus } from '../../utils/tauriCommands';
+import type { AccessibilityStatus, CaptureTestResult } from '../../utils/tauriCommands';
 import reducer, {
   clearAccessibilityError,
   fetchAccessibilityStatus,
+  runCaptureTest,
   setAccessibilityStatus,
   startAccessibilitySession,
   stopAccessibilitySession,
@@ -99,5 +100,42 @@ describe('accessibilitySlice', () => {
 
     const cleared = reducer(errored, clearAccessibilityError());
     expect(cleared.lastError).toBeNull();
+  });
+
+  it('tracks capture test lifecycle', () => {
+    const pending = reducer(undefined, { type: runCaptureTest.pending.type });
+    expect(pending.isCaptureTestRunning).toBe(true);
+    expect(pending.captureTestResult).toBeNull();
+
+    const testResult: CaptureTestResult = {
+      ok: true,
+      capture_mode: 'windowed',
+      context: {
+        app_name: 'Safari',
+        window_title: 'GitHub',
+        bounds_x: 0,
+        bounds_y: 0,
+        bounds_width: 1400,
+        bounds_height: 900,
+      },
+      image_ref: 'data:image/png;base64,abc',
+      bytes_estimate: 12345,
+      error: null,
+      timing_ms: 150,
+    };
+
+    const fulfilled = reducer(pending, runCaptureTest.fulfilled(testResult, 'req-3', undefined));
+    expect(fulfilled.isCaptureTestRunning).toBe(false);
+    expect(fulfilled.captureTestResult?.ok).toBe(true);
+    expect(fulfilled.captureTestResult?.capture_mode).toBe('windowed');
+  });
+
+  it('handles capture test failure', () => {
+    const rejected = reducer(undefined, {
+      type: runCaptureTest.rejected.type,
+      payload: 'capture failed',
+    });
+    expect(rejected.isCaptureTestRunning).toBe(false);
+    expect(rejected.lastError).toBe('capture failed');
   });
 });

@@ -84,6 +84,12 @@ export function SkillActionButton({
 
   const handleEnable = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (skill.hasSetup) {
+      // Skills with setup (e.g. OAuth) go straight to the setup modal
+      // — no need to start the QuickJS runtime first.
+      onOpenModal();
+      return;
+    }
     setLoading(true);
     try {
       await skillManager.startSkill({
@@ -92,11 +98,8 @@ export function SkillActionButton({
         version: '0.0.0',
         description: skill.description,
         runtime: 'quickjs',
-        setup: skill.hasSetup ? { required: true } : undefined,
+        setup: undefined,
       });
-      if (skill.hasSetup) {
-        onOpenModal();
-      }
     } catch (err) {
       console.error(`Failed to enable ${skill.id}:`, err);
     } finally {

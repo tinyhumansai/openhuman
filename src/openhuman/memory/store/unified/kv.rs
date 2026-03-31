@@ -1,6 +1,8 @@
 use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 
+use crate::openhuman::memory::store::types::MemoryKvRecord;
+
 use super::UnifiedMemory;
 
 impl UnifiedMemory {
@@ -107,6 +109,78 @@ impl UnifiedMemory {
                 "value": serde_json::from_str::<serde_json::Value>(&value_raw).unwrap_or(serde_json::Value::Null),
                 "updatedAt": row.get::<_, f64>(2).map_err(|e| e.to_string())?,
             }));
+        }
+        Ok(out)
+    }
+
+    pub(crate) async fn kv_records_for_scope(
+        &self,
+        namespace: &str,
+    ) -> Result<Vec<MemoryKvRecord>, String> {
+        let mut records = self.kv_records_namespace(namespace).await?;
+        records.extend(self.kv_records_global().await?);
+        records.sort_by(|a, b| {
+            b.updated_at
+                .partial_cmp(&a.updated_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(records)
+    }
+
+    pub(crate) async fn kv_records_namespace(
+        &self,
+        namespace: &str,
+    ) -> Result<Vec<MemoryKvRecord>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT key, value_json, updated_at FROM kv_namespace
+                 WHERE namespace = ?1
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| format!("prepare kv_records_namespace: {e}"))?;
+        let mut rows = stmt
+            .query(params![Self::sanitize_namespace(namespace)])
+            .map_err(|e| format!("query kv_records_namespace: {e}"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| format!("row kv_records_namespace: {e}"))?
+        {
+            let value_raw: String = row.get(1).map_err(|e| e.to_string())?;
+            out.push(MemoryKvRecord {
+                namespace: Some(Self::sanitize_namespace(namespace)),
+                key: row.get(0).map_err(|e| e.to_string())?,
+                value: serde_json::from_str(&value_raw).unwrap_or(serde_json::Value::Null),
+                updated_at: row.get(2).map_err(|e| e.to_string())?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub(crate) async fn kv_records_global(&self) -> Result<Vec<MemoryKvRecord>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT key, value_json, updated_at FROM kv_global
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| format!("prepare kv_records_global: {e}"))?;
+        let mut rows = stmt
+            .query([])
+            .map_err(|e| format!("query kv_records_global: {e}"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| format!("row kv_records_global: {e}"))?
+        {
+            let value_raw: String = row.get(1).map_err(|e| e.to_string())?;
+            out.push(MemoryKvRecord {
+                namespace: None,
+                key: row.get(0).map_err(|e| e.to_string())?,
+                value: serde_json::from_str(&value_raw).unwrap_or(serde_json::Value::Null),
+                updated_at: row.get(2).map_err(|e| e.to_string())?,
+            });
         }
         Ok(out)
     }

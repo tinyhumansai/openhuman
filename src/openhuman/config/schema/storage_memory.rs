@@ -109,7 +109,7 @@ fn default_true() -> bool {
 }
 
 fn default_embedding_provider() -> String {
-    "none".into()
+    "fastembed".into()
 }
 fn default_hygiene_enabled() -> bool {
     true
@@ -124,10 +124,10 @@ fn default_conversation_retention_days() -> u32 {
     30
 }
 fn default_embedding_model() -> String {
-    "text-embedding-3-small".into()
+    "BGESmallENV15".into()
 }
 fn default_embedding_dims() -> usize {
-    1536
+    384
 }
 fn default_vector_weight() -> f64 {
     0.7

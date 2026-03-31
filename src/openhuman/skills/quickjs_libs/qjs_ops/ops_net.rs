@@ -49,6 +49,13 @@ pub fn register<'js>(
                     .or_else(|| opts["timeout"].as_f64().map(|f| f as u64))
                     .unwrap_or(30);
 
+                log::debug!(
+                    "[net.fetch] {} {} (timeout={}s)",
+                    method,
+                    &url,
+                    timeout_secs
+                );
+
                 let client = get_http_client();
                 let mut req = match method {
                     "GET" => client.get(&url),
@@ -101,6 +108,8 @@ pub fn register<'js>(
                     .iter()
                     .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
                     .collect();
+                log::debug!("[net.fetch] response status={} from {}", status, &url);
+
                 let body_text = tokio::time::timeout(
                     std::time::Duration::from_secs(timeout_secs + 5),
                     response.text(),
@@ -108,6 +117,8 @@ pub fn register<'js>(
                 .await
                 .map_err(|_| js_err(format!("body read timed out after {}s", timeout_secs + 5)))?
                 .map_err(|e| js_err(e.to_string()))?;
+
+                log::debug!("[net.fetch] body read complete (len={})", body_text.len());
 
                 let result = serde_json::json!({
                     "status": status,

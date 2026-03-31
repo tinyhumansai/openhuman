@@ -63,6 +63,8 @@ describe('authSlice', () => {
         tasks: {
           accessibilityPermissionGranted: false,
           localModelConsentGiven: true,
+          localModelDownloadStarted: false,
+          enabledTools: [],
           connectedSources: [],
         },
       })
@@ -77,6 +79,8 @@ describe('authSlice', () => {
         tasks: {
           accessibilityPermissionGranted: true,
           localModelConsentGiven: true,
+          localModelDownloadStarted: true,
+          enabledTools: ['shell', 'file_read'],
           connectedSources: ['telegram'],
         },
       })

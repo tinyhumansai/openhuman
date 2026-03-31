@@ -94,6 +94,7 @@ pub fn all_tools_with_runtime(
             security.clone(),
             workspace_dir.to_path_buf(),
         )),
+        Box::new(SkillsCallTool::new()),
     ];
 
     if browser_config.enabled {
@@ -137,6 +138,7 @@ pub fn all_tools_with_runtime(
         tools.push(Box::new(WebSearchTool::new(
             root_config.web_search.provider.clone(),
             root_config.web_search.brave_api_key.clone(),
+            root_config.web_search.parallel_api_key.clone(),
             root_config.web_search.max_results,
             root_config.web_search.timeout_secs,
         )));
@@ -251,6 +253,7 @@ mod tests {
         assert!(names.contains(&"schedule"));
         assert!(names.contains(&"pushover"));
         assert!(names.contains(&"proxy_config"));
+        assert!(names.contains(&"skills_call"));
     }
 
     #[test]
@@ -290,6 +293,7 @@ mod tests {
         assert!(names.contains(&"browser_open"));
         assert!(names.contains(&"pushover"));
         assert!(names.contains(&"proxy_config"));
+        assert!(names.contains(&"skills_call"));
     }
 
     #[test]

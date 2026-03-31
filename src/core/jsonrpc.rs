@@ -253,6 +253,9 @@ pub async fn run_server(port: Option<u16>, socketio_enabled: bool) -> anyhow::Re
 
     let app = build_core_http_router(socketio_enabled);
 
+    // --- Skill runtime bootstrap -------------------------------------------
+    bootstrap_skill_runtime().await;
+
     log::info!(
         "[core] OpenHuman core is ready — listening on http://{bind_addr} (version {})",
         env!("CARGO_PKG_VERSION")
@@ -279,6 +282,57 @@ pub async fn run_server(port: Option<u16>, socketio_enabled: bool) -> anyhow::Re
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+/// Initialize the QuickJS skill runtime and register it globally so RPC
+/// handlers (`openhuman.skills_*`) can reach it.
+pub async fn bootstrap_skill_runtime() {
+    use crate::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
+    use std::sync::Arc;
+
+    // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
+    let base_dir = std::env::var("OPENHUMAN_WORKSPACE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".openhuman")
+        });
+
+    let skills_data_dir = base_dir.join("skills_data");
+    if let Err(e) = std::fs::create_dir_all(&skills_data_dir) {
+        log::error!("[runtime] Failed to create skills data dir: {e}");
+        return;
+    }
+
+    let engine = match RuntimeEngine::new(skills_data_dir) {
+        Ok(e) => Arc::new(e),
+        Err(e) => {
+            log::error!("[runtime] Failed to create RuntimeEngine: {e}");
+            return;
+        }
+    };
+
+    // Point the engine at the workspace directory for user-installed skills.
+    let workspace_dir = base_dir.join("workspace");
+    let _ = std::fs::create_dir_all(&workspace_dir);
+    engine.set_workspace_dir(workspace_dir);
+
+    // Register globally so RPC handlers can access it.
+    set_global_engine(engine.clone());
+
+    // Start the ping scheduler (background health checks).
+    engine.ping_scheduler().start();
+
+    // Start the cron scheduler.
+    engine.cron_scheduler().start();
+
+    log::info!("[runtime] Skill runtime initialized");
+
+    // Auto-start skills in the background so it doesn't block server startup.
+    tokio::spawn(async move {
+        engine.auto_start_skills().await;
+    });
 }
 
 #[derive(Serialize)]
@@ -420,6 +474,50 @@ mod tests {
         .await
         .expect_err("unknown param should fail");
         assert!(err.contains("unknown param 'x'"));
+    }
+
+    #[tokio::test]
+    async fn invoke_memory_init_missing_required_param_fails() {
+        let err = invoke_method(default_state(), "memory.init", json!({}))
+            .await
+            .expect_err("missing jwt_token should fail");
+        assert!(err.contains("missing field `jwt_token`") || err.contains("jwt_token"));
+    }
+
+    #[tokio::test]
+    async fn invoke_memory_list_namespaces_rejects_unknown_param() {
+        let err = invoke_method(
+            default_state(),
+            "memory.list_namespaces",
+            json!({ "extra": true }),
+        )
+        .await
+        .expect_err("unknown param should fail");
+        assert!(err.contains("unknown field `extra`") || err.contains("extra"));
+    }
+
+    #[tokio::test]
+    async fn invoke_memory_query_namespace_missing_namespace_fails() {
+        let err = invoke_method(
+            default_state(),
+            "memory.query_namespace",
+            json!({ "query": "who owns atlas" }),
+        )
+        .await
+        .expect_err("missing namespace should fail");
+        assert!(err.contains("missing field `namespace`") || err.contains("namespace"));
+    }
+
+    #[tokio::test]
+    async fn invoke_memory_recall_memories_rejects_unknown_param() {
+        let err = invoke_method(
+            default_state(),
+            "memory.recall_memories",
+            json!({ "namespace": "team", "extra": true }),
+        )
+        .await
+        .expect_err("unknown param should fail");
+        assert!(err.contains("unknown field `extra`") || err.contains("extra"));
     }
 
     #[tokio::test]

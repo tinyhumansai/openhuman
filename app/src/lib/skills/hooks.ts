@@ -1,115 +1,166 @@
 /**
- * React hooks for consuming skill state from Redux.
+ * React hooks for consuming skill state via RPC.
+ *
+ * All state is fetched from the Rust core sidecar and cached locally.
+ * Tauri events trigger re-fetches for instant reactivity.
  */
 
-import { useMemo } from "react";
-import { useAppSelector } from "../../store/hooks";
-import type {
-  SkillConnectionStatus,
-  SkillHostConnectionState,
-} from "./types";
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-/**
- * Derive a unified connection status from the skill's lifecycle status
- * and its self-reported connection/auth state.
- */
+import type { SkillConnectionStatus, SkillHostConnectionState } from './types';
+import { onSkillStateChange } from './skillEvents';
+import {
+  getAllSnapshots,
+  getSkillSnapshot,
+  listAvailable,
+  type AvailableSkillEntryRpc,
+  type SkillSnapshotRpc,
+} from './skillsApi';
+
+// ---------------------------------------------------------------------------
+// Legacy pure function kept for compatibility (used by sync.ts, skillsSyncUi)
+// ---------------------------------------------------------------------------
+
 export function deriveConnectionStatus(
   lifecycleStatus: string | undefined,
   setupComplete: boolean | undefined,
   skillState: Record<string, unknown> | undefined,
 ): SkillConnectionStatus {
-  // Skill not registered, not started, or shutting down
-  if (!lifecycleStatus || lifecycleStatus === "installed" || lifecycleStatus === "stopping") {
-    return "offline";
+  if (!lifecycleStatus || lifecycleStatus === 'installed' || lifecycleStatus === 'stopping') {
+    return 'offline';
   }
-
-  // Process-level errors (failed to spawn, etc.)
-  if (lifecycleStatus === "error") {
-    return "error";
+  if (lifecycleStatus === 'error') return 'error';
+  if (lifecycleStatus === 'setup_required' || lifecycleStatus === 'setup_in_progress') {
+    return 'setup_required';
   }
+  if (lifecycleStatus === 'starting') return 'connecting';
 
-  // Setup required
-  if (
-    lifecycleStatus === "setup_required" ||
-    lifecycleStatus === "setup_in_progress"
-  ) {
-    return "setup_required";
-  }
-
-  // Still starting up
-  if (lifecycleStatus === "starting") {
-    return "connecting";
-  }
-
-  // Process is running or ready — use the skill's self-reported state
   const hostState = skillState as SkillHostConnectionState | undefined;
   const connStatus = hostState?.connection_status;
   const authStatus = hostState?.auth_status;
 
-  // If the skill hasn't pushed any state, or pushed state without standard
-  // connection_status / auth_status fields, fall back to lifecycle + setupComplete.
   if (!connStatus && !authStatus) {
-    if (setupComplete && (lifecycleStatus === "ready" || lifecycleStatus === "running")) {
-      return "connected";
+    if (setupComplete && (lifecycleStatus === 'ready' || lifecycleStatus === 'running')) {
+      return 'connected';
     }
-    if (!hostState) {
-      return "connecting";
-    }
-    // Skill pushed custom state but no connection fields — treat as connecting
-    return "connecting";
+    if (!hostState) return 'connecting';
+    return 'connecting';
   }
 
-  // Check for errors first
-  if (connStatus === "error" || authStatus === "error") {
-    return "error";
+  if (connStatus === 'error' || authStatus === 'error') return 'error';
+  if (connStatus === 'connecting' || authStatus === 'authenticating') return 'connecting';
+  if (connStatus === 'connected') {
+    if (!authStatus || authStatus === 'authenticated') return 'connected';
+    if (authStatus === 'not_authenticated') return 'not_authenticated';
+  }
+  if (connStatus === 'disconnected') {
+    return setupComplete ? 'disconnected' : 'setup_required';
   }
 
-  // Connecting or authenticating
-  if (connStatus === "connecting" || authStatus === "authenticating") {
-    return "connecting";
-  }
+  return 'connecting';
+}
 
-  // Connected — check auth if the skill uses it
-  if (connStatus === "connected") {
-    if (!authStatus || authStatus === "authenticated") {
-      return "connected";
+// ---------------------------------------------------------------------------
+// RPC-backed hooks
+// ---------------------------------------------------------------------------
+
+/** Fetch a single skill snapshot, re-fetching on skill events. */
+export function useSkillSnapshot(skillId: string | undefined): SkillSnapshotRpc | null {
+  const [snap, setSnap] = useState<SkillSnapshotRpc | null>(null);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    if (!skillId) return;
+    try {
+      const s = await getSkillSnapshot(skillId);
+      if (mountedRef.current) setSnap(s);
+    } catch {
+      // Skill may not be running yet — that's OK
     }
-    if (authStatus === "not_authenticated") {
-      return "not_authenticated";
-    }
-  }
+  }, [skillId]);
 
-  // Disconnected from service
-  if (connStatus === "disconnected") {
-    if (setupComplete) {
-      return "disconnected";
-    }
-    return "setup_required";
-  }
+  useEffect(() => {
+    mountedRef.current = true;
+    refresh();
+    const unsub = onSkillStateChange((changedId) => {
+      if (!changedId || changedId === skillId) refresh();
+    });
+    return () => {
+      mountedRef.current = false;
+      unsub();
+    };
+  }, [skillId, refresh]);
 
-  // Fallback
-  return "connecting";
+  return snap;
+}
+
+/** Fetch all running skill snapshots, re-fetching on skill events. */
+export function useAllSkillSnapshots(): SkillSnapshotRpc[] {
+  const [snaps, setSnaps] = useState<SkillSnapshotRpc[]>([]);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await getAllSnapshots();
+      if (mountedRef.current) setSnaps(s);
+    } catch {
+      // Core not ready yet
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    refresh();
+    const unsub = onSkillStateChange(() => refresh());
+    return () => {
+      mountedRef.current = false;
+      unsub();
+    };
+  }, [refresh]);
+
+  return snaps;
+}
+
+/** Fetch available skills from registry. */
+export function useAvailableSkills(): {
+  skills: AvailableSkillEntryRpc[];
+  loading: boolean;
+  refresh: () => Promise<void>;
+} {
+  const [skills, setSkills] = useState<AvailableSkillEntryRpc[]>([]);
+  const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await listAvailable();
+      if (mountedRef.current) setSkills(s);
+    } catch {
+      // Registry not reachable
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    refresh();
+    return () => {
+      mountedRef.current = false;
+    };
+  }, [refresh]);
+
+  return { skills, loading, refresh };
 }
 
 /**
- * Returns the unified connection status for a skill.
- *
- * Combines the skill's lifecycle status (process running, setup needed, etc.)
- * with its self-reported connection/auth state (pushed via state/set reverse RPC).
+ * Returns the connection status for a skill.
+ * Reads from the Rust-derived `connection_status` field in the snapshot.
  */
-export function useSkillConnectionStatus(
-  skillId: string,
-): SkillConnectionStatus {
-  const skill = useAppSelector((state) => state.skills.skills[skillId]);
-  const skillState = useAppSelector(
-    (state) => state.skills.skillStates[skillId],
-  );
-
-  return useMemo(
-    () =>
-      deriveConnectionStatus(skill?.status, skill?.setupComplete, skillState),
-    [skill?.status, skill?.setupComplete, skillState],
-  );
+export function useSkillConnectionStatus(skillId: string): SkillConnectionStatus {
+  const snap = useSkillSnapshot(skillId);
+  if (!snap) return 'offline';
+  return (snap.connection_status as SkillConnectionStatus) || 'offline';
 }
 
 /**
@@ -118,9 +169,8 @@ export function useSkillConnectionStatus(
 export function useSkillState<T = Record<string, unknown>>(
   skillId: string,
 ): T | undefined {
-  return useAppSelector(
-    (state) => state.skills.skillStates[skillId] as T | undefined,
-  );
+  const snap = useSkillSnapshot(skillId);
+  return snap?.state as T | undefined;
 }
 
 /**
@@ -131,33 +181,23 @@ export function useSkillConnectionInfo(skillId: string): {
   error?: string | null;
   isInitialized: boolean;
 } {
-  const skill = useAppSelector((state) => state.skills.skills[skillId]);
-  const skillState = useAppSelector(
-    (state) => state.skills.skillStates[skillId],
-  );
+  const snap = useSkillSnapshot(skillId);
 
-  return useMemo(() => {
-    const status = deriveConnectionStatus(
-      skill?.status,
-      skill?.setupComplete,
-      skillState,
-    );
-    const hostState = skillState as SkillHostConnectionState | undefined;
+  if (!snap) {
+    return { status: 'offline', error: null, isInitialized: false };
+  }
 
-    let error: string | null | undefined;
-    if (status === "error") {
-      error =
-        hostState?.connection_error ??
-        hostState?.auth_error ??
-        skill?.error ??
-        null;
-    }
+  const status = (snap.connection_status as SkillConnectionStatus) || 'offline';
+  const hostState = snap.state as SkillHostConnectionState | undefined;
 
-    return {
-      status,
-      error,
-      isInitialized: !!hostState?.is_initialized,
-    };
-  }, [skill?.status, skill?.setupComplete, skill?.error, skillState]);
+  let error: string | null | undefined;
+  if (status === 'error') {
+    error = hostState?.connection_error ?? hostState?.auth_error ?? snap.error ?? null;
+  }
+
+  return {
+    status,
+    error,
+    isInitialized: !!hostState?.is_initialized,
+  };
 }
-

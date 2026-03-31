@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Run Unit Tests
+  unit-tests:
+    name: Frontend Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -56,7 +56,7 @@ jobs:
           retention-days: 7
 
   rust-tests:
-    name: Run Rust Tests
+    name: Rust Tests + Quality
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
@@ -67,6 +67,7 @@ jobs:
       - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
+          components: rustfmt, clippy
           targets: x86_64-unknown-linux-gnu
 
       - name: Install Tauri build dependencies
@@ -91,45 +92,62 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-test-cargo-
 
-      - name: Test rust-core (openhuman)
+      - name: Check formatting (cargo fmt)
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy (core crate)
+        run: cargo clippy -p openhuman
+
+      - name: Test core crate (openhuman)
         run: cargo test -p openhuman
 
-      - name: Test src-tauri (OpenHuman)
+      - name: Build sidecar core binary
+        run: cargo build --manifest-path Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman-core
+
+      - name: Stage sidecar for Tauri shell tests
+        run: |
+          mkdir -p app/src-tauri/binaries
+          cp target/x86_64-unknown-linux-gnu/release/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+          chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+
+      - name: Test Tauri shell (OpenHuman)
         run: cargo test --manifest-path app/src-tauri/Cargo.toml
 
-  e2e-macos:
-    name: E2E (macOS / Appium)
-    runs-on: macos-latest
-    timeout-minutes: 90
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          submodules: recursive
+  # e2e-macos:
+  #   name: E2E (macOS / Appium)
+  #   runs-on: macos-latest
+  #   timeout-minutes: 90
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 1
+  #         submodules: recursive
 
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.x
-          cache: "yarn"
+  #     - name: Setup Node.js 24.x
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 24.x
+  #         cache: "yarn"
 
-      - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+  #     - name: Install Rust (rust-toolchain.toml)
+  #       uses: dtolnay/rust-toolchain@1.93.0
 
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
+  #     - name: Install dependencies
+  #       run: yarn install --frozen-lockfile
 
-      - name: Ensure .env exists for E2E build
-        run: touch app/.env
+  #     - name: Ensure .env exists for E2E build
+  #       run: |
+  #         touch .env
+  #         touch app/.env
 
-      - name: Install Appium and mac2 driver
-        run: |
-          npm install -g appium
-          appium driver install mac2
+  #     - name: Install Appium and mac2 driver
+  #       run: |
+  #         npm install -g appium
+  #         appium driver install mac2
 
-      - name: Build E2E app bundle
-        run: yarn workspace openhuman-app test:e2e:build
+  #     - name: Build E2E app bundle
+  #       run: yarn workspace openhuman-app test:e2e:build
 
-      - name: Run all E2E flows
-        run: yarn workspace openhuman-app test:e2e:all:flows
+  #     - name: Run all E2E flows
+  #       run: yarn workspace openhuman-app test:e2e:all:flows

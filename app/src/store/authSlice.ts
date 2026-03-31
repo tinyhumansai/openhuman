@@ -24,6 +24,8 @@ export interface AuthState {
 export interface UserOnboardingTasks {
   accessibilityPermissionGranted: boolean;
   localModelConsentGiven: boolean;
+  localModelDownloadStarted: boolean;
+  enabledTools: string[];
   connectedSources: string[];
   updatedAtMs: number;
 }

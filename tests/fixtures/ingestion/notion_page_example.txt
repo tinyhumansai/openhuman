@@ -1,0 +1,132 @@
+# OpenHuman Memory Layer Roadmap
+
+Workspace: tinyhumans / engineering
+Owner: Sanil Jain
+Last edited: 2026-03-14
+Status: In Progress
+Tags: memory, rust-core, ingestion, neocortex
+
+## Overview
+
+This page tracks the work needed to complete the OpenHuman memory layer in the Rust core.
+
+The current direction is:
+- keep JSON-RPC as the transport
+- use namespace as the storage and retrieval scope key
+- avoid requiring user_id in local memory APIs
+- adopt Neocortex-style typed request and response models inside JSON-RPC result
+
+## Core Decisions
+
+### Decision 1: Transport
+We will keep JSON-RPC 2.0 as the transport for the desktop core.
+
+### Decision 2: Scope
+Namespace is the primary logical partition for local memory.
+Examples:
+- conversations
+- conscious
+- skill-gmail
+- skill-notion
+
+### Decision 3: Ingestion donor
+We will use neocortex_v2 as the donor path for better memory extraction.
+Important features to preserve:
+- joint entity and relation extraction
+- sentence-level extraction option
+- relation constraints
+- recipient relation synthesis
+- spatial relation synthesis
+
+## Deliverables
+
+### Thread 0: Contract
+Owner: Sanil Jain
+Deliverables:
+- final memory RPC names
+- request and response model table
+- decision on memory.init
+- decision on file APIs
+
+### Thread 1: Core Memory Domain
+Owner: Ravi Kulkarni
+Deliverables:
+- stable document storage semantics
+- stable namespace list and document list behavior
+- stable query and recall behavior
+- clarified graph and KV scope
+
+### Thread 3: Ingestion
+Owner: Asha Mehta
+Deliverables:
+- extraction adapter plan
+- mapping into memory_docs, vector_chunks, and graph_namespace
+- sample-data evaluation
+
+## Current Data Model Notes
+
+### Documents
+Documents should preserve:
+- document_id
+- namespace
+- title
+- content
+- metadata
+- created_at
+- updated_at
+
+### Graph facts
+Graph storage should capture facts like:
+- Ravi works_on memory-layer-completion
+- Asha evaluates neocortex_v2
+- OpenHuman uses JSON-RPC
+- memory-layer-completion depends_on API-contract
+
+### Durable preferences
+Examples of durable user or team memory:
+- Sanil prefers core-first delivery over UI-first delivery.
+- Ravi prefers strict ownership boundaries for parallel agents.
+- Asha prefers evaluation fixtures with realistic semi-structured text.
+
+## Milestones
+
+### Milestone A
+Name: Core contract locked
+Due date: 2026-03-18
+Success criteria:
+- final RPC method names agreed
+- JSON-RPC transport explicitly retained
+- response envelope strategy documented
+
+### Milestone B
+Name: Core memory operational
+Due date: 2026-03-22
+Success criteria:
+- list, delete, query, and recall work in Rust
+- stable outputs exist for frontend adaptation
+
+### Milestone C
+Name: Ingestion quality baseline
+Due date: 2026-03-26
+Success criteria:
+- Gmail-like and Notion-like fixtures ingest successfully
+- extracted entities and relations are reviewed manually
+
+## Risks
+
+- The frontend currently expects raw values for some memory methods.
+- neocortex_v2 preserves duplicate relation evidence, while OpenHuman may prefer aggregation.
+- If we do not define request and response models early, parallel agents may diverge.
+
+## Testing Notes
+
+Use these sample source types for ingestion tests:
+- Gmail thread as raw imported message text
+- Notion page as raw exported document text
+
+Assertions should check for:
+- person names
+- project names
+- ownership relations
+- deadlines and dates
+- decisions and preferences

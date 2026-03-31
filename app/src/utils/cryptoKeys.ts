@@ -7,11 +7,14 @@ import { HDKey } from '@scure/bip32';
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 
+/** Word count for newly generated recovery phrases (128-bit entropy, BIP39). */
+export const MNEMONIC_GENERATE_WORD_COUNT = 12;
+
 /**
- * Generate a 24-word BIP39 mnemonic phrase (256-bit entropy).
+ * Generate a 12-word BIP39 mnemonic phrase (128-bit entropy).
  */
 export function generateMnemonicPhrase(): string {
-  return generateMnemonic(wordlist, 256);
+  return generateMnemonic(wordlist, 128);
 }
 
 /**

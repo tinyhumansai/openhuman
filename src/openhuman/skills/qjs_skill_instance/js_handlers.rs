@@ -120,6 +120,12 @@ pub(crate) async fn start_async_tool_call(
     tool_name: &str,
     arguments: serde_json::Value,
 ) -> Result<Option<ToolResult>, String> {
+    log::info!(
+        "[tool_call] start_async_tool_call: tool='{}' args={}",
+        tool_name,
+        arguments
+    );
+
     let args_str =
         serde_json::to_string(&arguments).map_err(|e| format!("Failed to serialize args: {e}"))?;
     let tool_name = tool_name.to_string();
@@ -166,9 +172,20 @@ pub(crate) async fn start_async_tool_call(
             );
 
             match js_ctx.eval::<String, _>(code.as_bytes()) {
-                Ok(s) => Ok(s),
+                Ok(s) => {
+                    log::debug!(
+                        "[tool_call] JS eval succeeded: result_type={}",
+                        if s == "__PROMISE__" {
+                            "promise"
+                        } else {
+                            "sync"
+                        }
+                    );
+                    Ok(s)
+                }
                 Err(e) => {
                     let detail = format_js_exception(&js_ctx, &e);
+                    log::error!("[tool_call] JS eval failed: {}", detail);
                     Err(format!("Tool execution failed: {detail}"))
                 }
             }
@@ -176,10 +193,17 @@ pub(crate) async fn start_async_tool_call(
         .await?;
 
     if eval_result == "__PROMISE__" {
-        // Async — caller should poll __pendingToolDone via the event loop
+        log::info!(
+            "[tool_call] tool '{}' returned Promise — async mode",
+            tool_name
+        );
         Ok(None)
     } else {
-        // Sync — return immediately
+        log::info!(
+            "[tool_call] tool '{}' returned sync result (len={})",
+            tool_name,
+            eval_result.len()
+        );
         Ok(Some(ToolResult {
             content: vec![ToolContent::Text { text: eval_result }],
             is_error: false,

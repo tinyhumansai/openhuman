@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio::time::{timeout, Duration};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoreRunMode {
@@ -35,8 +37,19 @@ impl CoreProcessHandle {
         format!("http://127.0.0.1:{}/rpc", self.port)
     }
 
+    async fn is_rpc_port_open(&self) -> bool {
+        matches!(
+            timeout(
+                Duration::from_millis(150),
+                TcpStream::connect(("127.0.0.1", self.port)),
+            )
+            .await,
+            Ok(Ok(_))
+        )
+    }
+
     pub async fn ensure_running(&self) -> Result<(), String> {
-        if crate::core_rpc::ping().await {
+        if self.is_rpc_port_open().await {
             log::info!(
                 "[core] found existing core rpc endpoint at {}",
                 self.rpc_url()
@@ -115,7 +128,7 @@ impl CoreProcessHandle {
         }
 
         for _ in 0..40 {
-            if crate::core_rpc::ping().await {
+            if self.is_rpc_port_open().await {
                 log::info!("[core] core rpc became ready at {}", self.rpc_url());
                 return Ok(());
             }
@@ -245,9 +258,9 @@ pub fn default_core_bin() -> Option<PathBuf> {
                     continue;
                 };
                 #[cfg(windows)]
-                let matches = file_name.starts_with("openhuman-") && file_name.ends_with(".exe");
+                let matches = file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe");
                 #[cfg(not(windows))]
-                let matches = file_name.starts_with("openhuman-");
+                let matches = file_name.starts_with("openhuman-core-");
                 if matches {
                     return Some(path);
                 }
@@ -261,25 +274,25 @@ pub fn default_core_bin() -> Option<PathBuf> {
     let exe_dir = exe.parent()?;
 
     #[cfg(windows)]
-    let standalone = exe_dir.join("openhuman.exe");
+    let standalone = exe_dir.join("openhuman-core.exe");
     #[cfg(not(windows))]
-    let standalone = exe_dir.join("openhuman");
+    let standalone = exe_dir.join("openhuman-core");
 
     if standalone.exists() && !same_executable_path(&standalone, &exe) {
         return Some(standalone);
     }
 
     #[cfg(windows)]
-    let legacy_standalone = exe_dir.join("openhuman.exe");
+    let legacy_standalone = exe_dir.join("openhuman-core.exe");
     #[cfg(not(windows))]
-    let legacy_standalone = exe_dir.join("openhuman");
+    let legacy_standalone = exe_dir.join("openhuman-core");
 
     if legacy_standalone.exists() && !same_executable_path(&legacy_standalone, &exe) {
         return Some(legacy_standalone);
     }
 
-    // Sidecar layout: bundle.externalBin("binaries/openhuman") is emitted as
-    // openhuman-<target-triple>(.exe) under app resources.
+    // Sidecar layout: bundle.externalBin("binaries/openhuman-core") is emitted as
+    // openhuman-core-<target-triple>(.exe) under app resources.
     let search_dirs = {
         let mut dirs = vec![exe_dir.to_path_buf()];
         #[cfg(target_os = "macos")]
@@ -305,11 +318,11 @@ pub fn default_core_bin() -> Option<PathBuf> {
             };
 
             #[cfg(windows)]
-            let matches = (file_name.starts_with("openhuman-") && file_name.ends_with(".exe"))
-                || (file_name.starts_with("openhuman-") && file_name.ends_with(".exe"));
+            let matches = (file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe"))
+                || (file_name.starts_with("openhuman-core-") && file_name.ends_with(".exe"));
             #[cfg(not(windows))]
             let matches =
-                file_name.starts_with("openhuman-") || file_name.starts_with("openhuman-");
+                file_name.starts_with("openhuman-core-") || file_name.starts_with("openhuman-core-");
 
             if matches && !same_executable_path(&path, &exe) {
                 return Some(path);

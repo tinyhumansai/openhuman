@@ -6,8 +6,7 @@
  */
 
 import { socketService } from '../../services/socketService';
-import { store } from '../../store';
-import { deriveConnectionStatus } from './hooks';
+import { getAllSnapshots } from './skillsApi';
 import type { SkillConnectionStatus } from './types';
 
 interface ToolSyncEntry {
@@ -18,32 +17,22 @@ interface ToolSyncEntry {
 }
 
 /**
- * Read all skills from Redux, derive their connection status,
- * and emit a `tool:sync` event with the full list.
+ * Fetch all skill snapshots from the Rust engine and emit a `tool:sync`
+ * event with the full list.
  */
 export function syncToolsToBackend(): void {
-  const state = store.getState();
-  const skills = state.skills.skills;
-  const skillStates = state.skills.skillStates;
+  getAllSnapshots()
+    .then(snapshots => {
+      const tools: ToolSyncEntry[] = snapshots.map(snap => ({
+        skillId: snap.skill_id,
+        name: snap.name,
+        status: (snap.connection_status as SkillConnectionStatus) || 'offline',
+        tools: (snap.tools ?? []).map(t => t.name),
+      }));
 
-  const tools: ToolSyncEntry[] = [];
-
-  for (const [skillId, skill] of Object.entries(skills)) {
-    const connectionStatus = deriveConnectionStatus(
-      skill.status,
-      skill.setupComplete,
-      skillStates[skillId],
-    );
-
-    tools.push({
-      skillId,
-      name: skill.manifest.name,
-      status: connectionStatus,
-      tools: (skill.tools ?? []).map(t => t.name),
+      socketService.emit('tool:sync', { tools });
+    })
+    .catch(err => {
+      console.warn('[sync] Failed to fetch snapshots for tool:sync:', err);
     });
-  }
-
-  const payload = { tools };
-
-  socketService.emit('tool:sync', payload);
 }

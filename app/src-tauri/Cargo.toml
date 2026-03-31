@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.49.19"
+version = "0.49.32"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -26,29 +26,15 @@ serde_json = "1"
 
 [dependencies]
 # Tauri core and plugins
-tauri = { version = "2.10", features = ["macos-private-api"] }
-tauri-plugin-opener = "2"
+tauri = { version = "2.10", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-deep-link = "2.0.0"
-tauri-plugin-os = "2"
-serde = { version = "1", features = ["derive"] }
+tauri-plugin-opener = "2"
 serde_json = "1"
-
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls", "native-tls", "stream", "http2", "multipart", "socks"] }
-tokio = { version = "1", features = ["full", "sync"] }
-once_cell = "1.19"
+tokio = { version = "1", features = ["rt-multi-thread", "process", "sync", "time", "net"] }
 
 log = "0.4"
 env_logger = "0.11"
 
-dirs = "5"
-uuid = { version = "1", features = ["v4"] }
-anyhow = "1.0"
-chrono = { version = "0.4", features = ["serde"] }
-futures-util = "0.3"
-urlencoding = "2.1"
-rustls = { version = "0.23", features = ["ring"] }
-tauri-plugin-autostart = "2"
-tauri-plugin-notification = "2"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

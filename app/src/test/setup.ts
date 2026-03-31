@@ -57,10 +57,13 @@ vi.mock('../utils/tauriCommands', () => ({
 
 // Mock the config module
 vi.mock('../utils/config', () => ({
-  TELEGRAM_BOT_USERNAME: 'test_bot',
-  TELEGRAM_BOT_ID: '12345',
+  CORE_RPC_URL: 'http://127.0.0.1:7788/rpc',
   IS_DEV: true,
+  DEV_FORCE_ONBOARDING: false,
   SKILLS_GITHUB_REPO: 'test/skills',
+  SENTRY_DSN: undefined,
+  BACKEND_URL: 'http://localhost:5005',
+  DEV_JWT_TOKEN: undefined,
 }));
 
 vi.mock('../services/backendUrl', () => ({

@@ -1,4 +1,4 @@
-//! Persistent skill enable/disable preferences.
+//! Persistent skill preferences (enable/disable, setup completion).
 //!
 //! Stores user preferences in `{app_data_dir}/skill-preferences.json`.
 //! These preferences override the manifest's `auto_start` field,
@@ -13,9 +13,11 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillPreference {
     pub enabled: bool,
+    #[serde(default)]
+    pub setup_complete: bool,
 }
 
-/// Persistent store for skill enable/disable preferences.
+/// Persistent store for skill preferences.
 pub struct PreferencesStore {
     path: PathBuf,
     cache: RwLock<HashMap<String, SkillPreference>>,
@@ -42,7 +44,6 @@ impl PreferencesStore {
                 return;
             }
         }
-        // Start empty if file doesn't exist or is corrupt
         *self.cache.write() = HashMap::new();
     }
 
@@ -50,7 +51,6 @@ impl PreferencesStore {
     fn save(&self) {
         let cache = self.cache.read();
         if let Ok(json) = serde_json::to_string_pretty(&*cache) {
-            // Ensure parent directory exists
             if let Some(parent) = self.path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -60,6 +60,30 @@ impl PreferencesStore {
         }
     }
 
+    fn get_or_default(&self, skill_id: &str) -> SkillPreference {
+        self.cache
+            .read()
+            .get(skill_id)
+            .cloned()
+            .unwrap_or(SkillPreference {
+                enabled: false,
+                setup_complete: false,
+            })
+    }
+
+    fn update<F: FnOnce(&mut SkillPreference)>(&self, skill_id: &str, f: F) {
+        let mut cache = self.cache.write();
+        let pref = cache
+            .entry(skill_id.to_string())
+            .or_insert(SkillPreference {
+                enabled: false,
+                setup_complete: false,
+            });
+        f(pref);
+        drop(cache);
+        self.save();
+    }
+
     /// Check if a skill has a user preference set. Returns `None` if no preference exists.
     pub fn is_enabled(&self, skill_id: &str) -> Option<bool> {
         self.cache.read().get(skill_id).map(|p| p.enabled)
@@ -67,10 +91,22 @@ impl PreferencesStore {
 
     /// Set the enabled preference for a skill. Persists immediately.
     pub fn set_enabled(&self, skill_id: &str, enabled: bool) {
-        self.cache
-            .write()
-            .insert(skill_id.to_string(), SkillPreference { enabled });
-        self.save();
+        self.update(skill_id, |p| p.enabled = enabled);
+    }
+
+    /// Get whether a skill's setup has been completed.
+    pub fn is_setup_complete(&self, skill_id: &str) -> bool {
+        self.get_or_default(skill_id).setup_complete
+    }
+
+    /// Set the setup completion flag for a skill. Persists immediately.
+    pub fn set_setup_complete(&self, skill_id: &str, complete: bool) {
+        self.update(skill_id, |p| p.setup_complete = complete);
+        log::info!(
+            "[preferences] setup_complete for '{}' set to {}",
+            skill_id,
+            complete
+        );
     }
 
     /// Get all preferences as a map.
@@ -79,7 +115,6 @@ impl PreferencesStore {
     }
 
     /// Resolve whether a skill should start, considering user preference and manifest default.
-    /// User preference always wins; falls back to `manifest_auto_start` if no preference set.
     pub fn resolve_should_start(&self, skill_id: &str, manifest_auto_start: bool) -> bool {
         match self.is_enabled(skill_id) {
             Some(enabled) => enabled,

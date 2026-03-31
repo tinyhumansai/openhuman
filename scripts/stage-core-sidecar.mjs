@@ -34,12 +34,12 @@ function rustHostTriple() {
 
 const triple = rustHostTriple();
 const isWindows = process.platform === "win32";
-const binName = isWindows ? "openhuman.exe" : "openhuman";
+const binName = isWindows ? "openhuman-core.exe" : "openhuman-core";
 
 console.log(
-  `[core:stage] Building openhuman standalone binary for ${triple}...`,
+  `[core:stage] Building openhuman-core standalone binary for ${triple}...`,
 );
-run("cargo", ["build", "--manifest-path", "Cargo.toml", "--bin", "openhuman"]);
+run("cargo", ["build", "--manifest-path", "Cargo.toml", "--bin", "openhuman-core"]);
 
 const targetDir = process.env.CARGO_TARGET_DIR
   ? resolve(process.env.CARGO_TARGET_DIR)
@@ -53,8 +53,8 @@ if (!existsSync(source)) {
 const outputDir = join(root, "app", "src-tauri", "binaries");
 mkdirSync(outputDir, { recursive: true });
 const sidecarName = isWindows
-  ? `openhuman-${triple}.exe`
-  : `openhuman-${triple}`;
+  ? `openhuman-core-${triple}.exe`
+  : `openhuman-core-${triple}`;
 const dest = join(outputDir, sidecarName);
 copyFileSync(source, dest);
 if (!isWindows) {

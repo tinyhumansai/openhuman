@@ -16,7 +16,6 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use serde_json::json;
-use tauri::{AppHandle, Emitter};
 
 use crate::api::models::socket::{ConnectionStatus, SocketState};
 
@@ -46,7 +45,6 @@ pub mod events {
 // ---------------------------------------------------------------------------
 
 struct SharedState {
-    app_handle: RwLock<Option<AppHandle>>,
     registry: RwLock<Option<Arc<SkillRegistry>>>,
     status: RwLock<ConnectionStatus>,
     socket_id: RwLock<Option<String>>,
@@ -85,7 +83,6 @@ impl SocketManager {
     pub fn new() -> Self {
         Self {
             shared: Arc::new(SharedState {
-                app_handle: RwLock::new(None),
                 registry: RwLock::new(None),
                 status: RwLock::new(ConnectionStatus::Disconnected),
                 socket_id: RwLock::new(None),
@@ -96,12 +93,7 @@ impl SocketManager {
         }
     }
 
-    /// Set the Tauri app handle for emitting frontend events.
-    pub fn set_app_handle(&self, handle: AppHandle) {
-        *self.shared.app_handle.write() = Some(handle);
-    }
-
-    /// Set the skill registry for MCP tool handling (desktop only).
+    /// Set the skill registry for MCP tool handling.
     pub fn set_registry(&self, registry: Arc<SkillRegistry>) {
         *self.shared.registry.write() = Some(registry);
     }
@@ -193,23 +185,17 @@ impl SocketManager {
     // -----------------------------------------------------------------------
 
     fn emit_state_change(shared: &SharedState) {
-        if let Some(ref app) = *shared.app_handle.read() {
-            let state = SocketState {
-                status: *shared.status.read(),
-                socket_id: shared.socket_id.read().clone(),
-                error: None,
-            };
-            let _ = app.emit(events::SOCKET_STATE_CHANGED, &state);
-        }
+        let status = *shared.status.read();
+        let socket_id = shared.socket_id.read().clone();
+        log::debug!(
+            "[socket-mgr] State changed: {:?}, sid={:?}",
+            status,
+            socket_id
+        );
     }
 
-    fn emit_server_event(shared: &SharedState, event_name: &str, data: serde_json::Value) {
-        if let Some(ref app) = *shared.app_handle.read() {
-            let _ = app.emit(
-                events::SERVER_EVENT,
-                json!({ "event": event_name, "data": data }),
-            );
-        }
+    fn emit_server_event(_shared: &SharedState, event_name: &str, _data: serde_json::Value) {
+        log::debug!("[socket-mgr] Server event: {}", event_name);
     }
 }
 

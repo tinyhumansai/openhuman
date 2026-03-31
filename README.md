@@ -1,7 +1,7 @@
 <h1 align="center">OpenHuman</h1>
 
 <p align="center">
-  <strong>The age of super intelligence is here. OpenHuman is your artificially conscious human.</strong>
+  <strong>The age of super intelligence is here. OpenHuman is your Personal AI super intelligence. Private, Simple and extremely powerful.</strong>
 </p>
 
 <p align="center">
@@ -22,8 +22,10 @@
 </p>
 
 <p align="center" style="font-style: italic">
-  "The Tet. What a brilliant machine" — Morgan Freeman as he recalls about <a href="https://youtu.be/SveLVpqy_Rc?si=y83aZNokPiUjILN0&t=60">alien superintelligence</a> in the movie <em>Oblivion</em>
+  "The Tet. What a brilliant machine" — Morgan Freeman as he reminisces about <a href="https://youtu.be/SveLVpqy_Rc?si=y83aZNokPiUjILN0&t=60">alien superintelligence</a> in the movie <em>Oblivion</em>
 </p>
+
+> **Early Beta** — Under active development. Expect rough edges.
 
 OpenHuman is an open-source agentic assistant that is designed to integrate with you in your daily life. Here's what makes OpenHuman special:
 
@@ -47,16 +49,29 @@ Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Contributor orient
 
 > **Early Beta** — Under active development. Expect rough edges.
 
-| Platform    | Variant                     | Download                                                                                                     |
-| ----------- | --------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **macOS**   | Apple Silicon (M1/M2/M3/M4) | [`.dmg` (aarch64)](https://github.com/tinyhumansai/openhuman/releases/latest/download/OpenHuman_aarch64.dmg) |
-| **macOS**   | Intel                       | [`.dmg` (x64)](https://github.com/tinyhumansai/openhuman/releases/latest/download/OpenHuman_x64.dmg)         |
-| **Windows** | x64                         | [`.msi`](https://github.com/tinyhumansai/openhuman/releases/latest/download/OpenHuman_x64_en-US.msi)         |
-| **Linux**   | Debian / Ubuntu             | [`.deb` (amd64)](https://github.com/tinyhumansai/openhuman/releases/latest/download/OpenHuman_amd64.deb)     |
-| **Linux**   | Fedora / RHEL               | [`.rpm` (x86_64)](https://github.com/tinyhumansai/openhuman/releases/latest/download/OpenHuman_x86_64.rpm)   |
-| **Linux**   | Universal                   | [`.AppImage`](https://github.com/tinyhumansai/openhuman/releases/latest/download/OpenHuman_amd64.AppImage)   |
+You can download the latest desktop build from the website at [tinyhuman.ai/openhuman](https://tinyhuman.ai/openhuman). You can also grab it from the [latest GitHub release](https://github.com/tinyhumansai/openhuman/releases/latest), which includes all current artifacts (`.dmg`, `.deb`, `.AppImage`, `.app.tar.gz`, and more).
 
-Browse all releases: [github.com/tinyhumansai/openhuman/releases](https://github.com/tinyhumansai/openhuman/releases)
+If you need an older version, browse [all releases](https://github.com/tinyhumansai/openhuman/releases).
+
+If you want to build from source, see [`docs/BUILDING.md`](docs/BUILDING.md).
+
+Install with one command:
+
+```
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+```
+
+On Windows, use PowerShell:
+`irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex`
+
+What setup does:
+
+- Resolves the latest stable release for your OS/arch
+- Verifies release digest when available
+- Installs locally without requiring system-wide admin rights by default
+- macOS: installs `OpenHuman.app` in `~/Applications`
+- Linux: installs `openhuman` AppImage in `~/.local/bin/openhuman` and creates a desktop entry
+- Windows: installs from latest release MSI/EXE in per-user mode where supported
 
 # Under the hood (Architecture)
 

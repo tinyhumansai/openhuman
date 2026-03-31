@@ -9,11 +9,11 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test-build:
+  build:
     name: Build Tauri App
     runs-on: ubuntu-22.04
     steps:
@@ -29,7 +29,7 @@ jobs:
           node-version: 24.x
           cache: "yarn"
 
-      - name: Install Rust stable
+      - name: Install Rust (rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@1.93.0
         with:
           targets: x86_64-unknown-linux-gnu
@@ -70,19 +70,18 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Build sidecar core binary
-        run: cargo build --manifest-path Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman
+        run: cargo build --manifest-path Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman-core
 
       - name: Stage sidecar for Tauri bundler
         run: |
           mkdir -p app/src-tauri/binaries
-          # Release artifacts for the root package land in repo root target/
-          cp target/x86_64-unknown-linux-gnu/release/openhuman app/src-tauri/binaries/openhuman-x86_64-unknown-linux-gnu
-          chmod +x app/src-tauri/binaries/openhuman-x86_64-unknown-linux-gnu
+          cp target/x86_64-unknown-linux-gnu/release/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+          chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
 
       - name: Build Tauri app
         working-directory: app
         run: |
-          TAURI_CONFIG_OVERRIDE='{"bundle":{"createUpdaterArtifacts":false}}'
-          yarn tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles none -- --target x86_64-unknown-linux-gnu
+          TAURI_CONFIG_OVERRIDE='{"plugins":{"updater":{"active":false}}}'
+          yarn tauri build -c "$TAURI_CONFIG_OVERRIDE"
         env:
           NODE_ENV: production

@@ -147,6 +147,68 @@ pub struct SkillSnapshot {
     /// Arbitrary state the skill has published for the frontend.
     #[serde(default)]
     pub state: HashMap<String, serde_json::Value>,
+    /// Whether the skill's setup/OAuth flow has been completed (persisted).
+    #[serde(default)]
+    pub setup_complete: bool,
+    /// Derived connection status for the frontend UI.
+    #[serde(default)]
+    pub connection_status: String,
+}
+
+/// Derive a unified connection status string from skill state.
+/// Mirrors the logic in `app/src/lib/skills/hooks.ts:deriveConnectionStatus`.
+pub fn derive_connection_status(
+    status: SkillStatus,
+    setup_complete: bool,
+    published_state: &HashMap<String, serde_json::Value>,
+) -> String {
+    match status {
+        SkillStatus::Pending | SkillStatus::Stopped | SkillStatus::Stopping => {
+            return "offline".to_string()
+        }
+        SkillStatus::Error => return "error".to_string(),
+        SkillStatus::Initializing => return "connecting".to_string(),
+        _ => {}
+    }
+
+    let conn = published_state
+        .get("connection_status")
+        .and_then(|v| v.as_str());
+    let auth = published_state.get("auth_status").and_then(|v| v.as_str());
+
+    // No self-reported state — derive from lifecycle + setup
+    if conn.is_none() && auth.is_none() {
+        if setup_complete && matches!(status, SkillStatus::Running) {
+            return "connected".to_string();
+        }
+        if !setup_complete {
+            return "setup_required".to_string();
+        }
+        return "connecting".to_string();
+    }
+
+    if conn == Some("error") || auth == Some("error") {
+        return "error".to_string();
+    }
+    if conn == Some("connecting") || auth == Some("authenticating") {
+        return "connecting".to_string();
+    }
+    if conn == Some("connected") {
+        if auth.is_none() || auth == Some("authenticated") {
+            return "connected".to_string();
+        }
+        if auth == Some("not_authenticated") {
+            return "not_authenticated".to_string();
+        }
+    }
+    if conn == Some("disconnected") {
+        if setup_complete {
+            return "disconnected".to_string();
+        }
+        return "setup_required".to_string();
+    }
+
+    "connecting".to_string()
 }
 
 /// Configuration for a skill instance, derived from its manifest.

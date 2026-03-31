@@ -351,6 +351,11 @@ impl Config {
             )?;
             decrypt_optional_secret(
                 &store,
+                &mut config.web_search.parallel_api_key,
+                "config.web_search.parallel_api_key",
+            )?;
+            decrypt_optional_secret(
+                &store,
                 &mut config.storage.provider.config.db_url,
                 "config.storage.provider.config.db_url",
             )?;
@@ -451,6 +456,15 @@ impl Config {
             let api_key = api_key.trim();
             if !api_key.is_empty() {
                 self.web_search.brave_api_key = Some(api_key.to_string());
+            }
+        }
+
+        if let Ok(api_key) = std::env::var("OPENHUMAN_PARALLEL_API_KEY")
+            .or_else(|_| std::env::var("PARALLEL_API_KEY"))
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                self.web_search.parallel_api_key = Some(api_key.to_string());
             }
         }
 
@@ -556,6 +570,28 @@ impl Config {
             self.proxy.enabled = false;
         }
 
+        if let Ok(tier_str) = std::env::var("OPENHUMAN_LOCAL_AI_TIER") {
+            let tier_str = tier_str.trim().to_ascii_lowercase();
+            if !tier_str.is_empty() {
+                if let Some(tier) =
+                    crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
+                {
+                    if tier != crate::openhuman::local_ai::presets::ModelTier::Custom {
+                        crate::openhuman::local_ai::presets::apply_preset_to_config(
+                            &mut self.local_ai,
+                            tier,
+                        );
+                        tracing::debug!(tier = %tier_str, "applied local AI tier from OPENHUMAN_LOCAL_AI_TIER");
+                    }
+                } else {
+                    tracing::warn!(
+                        tier = %tier_str,
+                        "ignoring invalid OPENHUMAN_LOCAL_AI_TIER (valid: low, medium, high)"
+                    );
+                }
+            }
+        }
+
         if self.proxy.enabled && self.proxy.scope == ProxyScope::Environment {
             self.proxy.apply_to_process_env();
         }
@@ -587,6 +623,11 @@ impl Config {
             &store,
             &mut config_to_save.web_search.brave_api_key,
             "config.web_search.brave_api_key",
+        )?;
+        encrypt_optional_secret(
+            &store,
+            &mut config_to_save.web_search.parallel_api_key,
+            "config.web_search.parallel_api_key",
         )?;
         encrypt_optional_secret(
             &store,

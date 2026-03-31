@@ -5,10 +5,9 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::openhuman::memory::MemoryState;
+use crate::openhuman::memory::MemoryClientRef;
 use crate::openhuman::skills::quickjs_libs::qjs_ops;
 use crate::openhuman::skills::types::{SkillMessage, SkillStatus, ToolResult};
-use tauri::Manager;
 
 use super::js_handlers::{
     call_lifecycle, handle_cron_trigger, handle_js_call, handle_js_void_call, handle_server_event,
@@ -29,7 +28,7 @@ struct PendingToolCall {
 /// 2. Checks for incoming messages (non-blocking)
 /// 3. Runs the QuickJS job queue for promises/async ops
 /// 4. Checks if a pending async tool call has completed
-/// 5. Syncs published state from ops → instance and emits Tauri events
+/// 5. Syncs published state from ops → instance
 /// 6. Sleeps efficiently when idle
 pub(crate) async fn run_event_loop(
     rt: &rquickjs::AsyncRuntime,
@@ -39,7 +38,7 @@ pub(crate) async fn run_event_loop(
     skill_id: &str,
     timer_state: &Arc<RwLock<qjs_ops::TimerState>>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
-    app_handle: Option<&tauri::AppHandle>,
+    memory_client: Option<MemoryClientRef>,
 ) {
     // Maximum sleep duration when no timers are pending
     const MAX_IDLE_SLEEP: Duration = Duration::from_millis(100);
@@ -75,7 +74,7 @@ pub(crate) async fn run_event_loop(
                     state,
                     skill_id,
                     &mut pending_tool,
-                    app_handle,
+                    &memory_client,
                     ops_state,
                 )
                 .await;
@@ -110,14 +109,44 @@ pub(crate) async fn run_event_loop(
                 .await;
 
             if done {
-                // Read the resolved value and send it back
+                log::info!("[skill:{}] Pending async tool call completed", skill_id);
                 let result = read_pending_tool_result(ctx).await;
                 if let Some(ptc) = pending_tool.take() {
+                    log::info!(
+                        "[skill:{}] Sending tool result (is_err={})",
+                        skill_id,
+                        result.is_err()
+                    );
                     let _ = ptc.reply.send(result);
                 }
             } else if let Some(ref ptc) = pending_tool {
+                let remaining = ptc
+                    .deadline
+                    .saturating_duration_since(tokio::time::Instant::now());
+                if remaining.as_secs() % 10 == 0 && remaining.as_millis() % 10000 < 100 {
+                    log::debug!(
+                        "[skill:{}] Still waiting for async tool result ({:.0}s remaining)",
+                        skill_id,
+                        remaining.as_secs_f32()
+                    );
+                }
                 if tokio::time::Instant::now() >= ptc.deadline {
-                    log::error!("[skill:{}] Async tool call timed out", skill_id);
+                    log::error!("[skill:{}] Async tool call timed out after 120s", skill_id);
+                    // Dump JS error state for debugging
+                    let error_info = ctx
+                        .with(|js_ctx| {
+                            js_ctx
+                                .eval::<String, _>(
+                                    b"JSON.stringify({ done: globalThis.__pendingToolDone, result: typeof globalThis.__pendingToolResult, error: globalThis.__pendingToolError ? String(globalThis.__pendingToolError) : null })",
+                                )
+                                .unwrap_or_else(|_| "eval failed".to_string())
+                        })
+                        .await;
+                    log::error!(
+                        "[skill:{}] Tool timeout debug state: {}",
+                        skill_id,
+                        error_info
+                    );
                     if let Some(ptc) = pending_tool.take() {
                         let _ = ptc
                             .reply
@@ -138,23 +167,7 @@ pub(crate) async fn run_event_loop(
                     .iter()
                     .map(|(k, v): (&String, &serde_json::Value)| (k.clone(), v.clone()))
                     .collect();
-                state.write().published_state = new_map.clone();
-
-                // Emit Tauri event to the main window so the frontend receives it (Tauri 2: target explicitly)
-                if let Some(handle) = app_handle {
-                    use tauri::Emitter;
-                    let payload = serde_json::json!({
-                        "skillId": skill_id,
-                        "state": new_map,
-                    });
-                    if let Err(e) = handle.emit_to("main", "skill-state-changed", payload) {
-                        log::warn!(
-                            "[skill:{}] Failed to emit skill-state-changed to main: {}",
-                            skill_id,
-                            e
-                        );
-                    }
-                }
+                state.write().published_state = new_map;
             }
         }
 
@@ -197,7 +210,7 @@ async fn handle_message(
     state: &Arc<RwLock<SkillState>>,
     skill_id: &str,
     pending_tool: &mut Option<PendingToolCall>,
-    app_handle: Option<&tauri::AppHandle>,
+    memory_client: &Option<MemoryClientRef>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
 ) -> bool {
     match msg {
@@ -206,24 +219,50 @@ async fn handle_message(
             arguments,
             reply,
         } => {
+            log::info!(
+                "[skill:{}] event_loop: CallTool '{}' received",
+                skill_id,
+                tool_name
+            );
+
             // Lazy-load persisted OAuth credential before calling the tool
             restore_oauth_credential(ctx, skill_id).await;
+            log::debug!(
+                "[skill:{}] event_loop: OAuth credential restored for tool '{}'",
+                skill_id,
+                tool_name
+            );
 
             // Start the async tool execution. The JS code stores the result
             // in globals when done. The main event loop checks for completion.
             match start_async_tool_call(ctx, &tool_name, arguments).await {
                 Ok(Some(sync_result)) => {
-                    // Tool returned synchronously (non-Promise)
+                    log::info!(
+                        "[skill:{}] event_loop: tool '{}' completed synchronously (blocks={})",
+                        skill_id,
+                        tool_name,
+                        sync_result.content.len()
+                    );
                     let _ = reply.send(Ok(sync_result));
                 }
                 Ok(None) => {
-                    // Tool returned a Promise — event loop will drive it
+                    log::info!(
+                        "[skill:{}] event_loop: tool '{}' returned Promise, waiting async",
+                        skill_id,
+                        tool_name
+                    );
                     *pending_tool = Some(PendingToolCall {
                         reply,
                         deadline: tokio::time::Instant::now() + Duration::from_secs(120),
                     });
                 }
                 Err(e) => {
+                    log::error!(
+                        "[skill:{}] event_loop: tool '{}' failed: {}",
+                        skill_id,
+                        tool_name,
+                        e
+                    );
                     let _ = reply.send(Err(e));
                 }
             }
@@ -327,13 +366,7 @@ async fn handle_message(
             params,
             reply,
         } => {
-            // Resolve the optional memory client once for this RPC call.
-            // State is registered as MemoryState(Mutex<Option<MemoryClientRef>>), not
-            // Option<MemoryClientRef> directly, so we must use the newtype wrapper.
-            let memory_client_opt = app_handle.and_then(|ah| {
-                ah.try_state::<MemoryState>()
-                    .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()))
-            });
+            let memory_client_opt = memory_client.clone();
 
             let result = match method.as_str() {
                 "oauth/complete" => {

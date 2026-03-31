@@ -12,7 +12,7 @@ import {
 } from 'redux-persist';
 import storage from 'redux-persist/lib/storage';
 
-import { IS_DEV } from '../utils/config';
+import { DEV_JWT_TOKEN, IS_DEV } from '../utils/config';
 import {
   logout as clearRustSession,
   storeSession,
@@ -25,7 +25,6 @@ import channelConnectionsReducer from './channelConnectionsSlice';
 import daemonReducer from './daemonSlice';
 import intelligenceReducer from './intelligenceSlice';
 import inviteReducer from './inviteSlice';
-import skillsReducer from './skillsSlice';
 import socketReducer from './socketSlice';
 import teamReducer from './teamSlice';
 import threadReducer from './threadSlice';
@@ -49,9 +48,6 @@ const authPersistConfig = {
 // Persist config for AI state (config only)
 const aiPersistConfig = { key: 'ai', storage, whitelist: ['config'] };
 
-// Persist config for skills state (setupComplete + sync metrics per skill)
-const skillsPersistConfig = { key: 'skills', storage, whitelist: ['skills', 'syncStatsBySkill'] };
-
 // Persist config for thread data and UI prefs (includes threads and messages)
 // Note: activeThreadId is intentionally excluded as it's transient state
 const threadPersistConfig = {
@@ -62,7 +58,6 @@ const threadPersistConfig = {
 
 const persistedAuthReducer = persistReducer(authPersistConfig, authReducer);
 const persistedAiReducer = persistReducer(aiPersistConfig, aiReducer);
-const persistedSkillsReducer = persistReducer(skillsPersistConfig, skillsReducer);
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
@@ -130,7 +125,6 @@ export const store = configureStore({
     user: userReducer,
     daemon: daemonReducer,
     ai: persistedAiReducer,
-    skills: persistedSkillsReducer,
     team: teamReducer,
     thread: persistedThreadReducer,
     intelligence: intelligenceReducer,
@@ -153,9 +147,8 @@ export const store = configureStore({
 
 export const persistor = persistStore(store, null, () => {
   // Dev-only: auto-inject JWT token for local testing without login flow.
-  const devToken = import.meta.env.VITE_DEV_JWT_TOKEN;
-  if (devToken && !store.getState().auth.token) {
-    store.dispatch(setToken(devToken));
+  if (DEV_JWT_TOKEN && !store.getState().auth.token) {
+    store.dispatch(setToken(DEV_JWT_TOKEN));
     console.log('[dev] Auto-injected JWT token from VITE_DEV_JWT_TOKEN');
 
     // Auto-mark user as onboarded once their profile is fetched

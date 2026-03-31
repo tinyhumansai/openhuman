@@ -8,13 +8,13 @@ This file orients contributors and coding agents. Authoritative narrative archit
 
 ## Repository layout
 
-| Path                    | Role                                                                                                                                                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`app/`**              | Yarn workspace **`openhuman-app`**: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests                                                                                        |
+| Path                    | Role                                                                                                                                                                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`app/`**              | Yarn workspace **`openhuman-app`**: Vite + React (`app/src/`), Tauri desktop host (`app/src-tauri/`), Vitest tests                                                                                          |
 | **Repo root `src/`**    | Rust library **`openhuman_core`** and **`openhuman`** CLI binary entrypoint (`src/main.rs`) — `core_server`, `openhuman::*` domains, skills runtime (QuickJS / `rquickjs`), MCP routing in the core process |
-| **Skills registry**     | **[`tinyhumansai/openhuman-skills`](https://github.com/tinyhumansai/openhuman-skills)** on GitHub — canonical skill packages and TS build; not vendored in this tree (see blurb below).                                                                                                                                                    |
-| **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar the UI stages via `app`’s `core:stage`                                                                                                     |
-| **`docs/`**             | Architecture and module guides (numbered pages under `docs/src/`, `docs/src-tauri/`)                                                                                                                      |
+| **Skills registry**     | **[`tinyhumansai/openhuman-skills`](https://github.com/tinyhumansai/openhuman-skills)** on GitHub — canonical skill packages and TS build; not vendored in this tree (see blurb below).                     |
+| **`Cargo.toml`** (root) | Core crate; `cargo build --bin openhuman` produces the sidecar the UI stages via `app`’s `core:stage`                                                                                                       |
+| **`docs/`**             | Architecture and module guides (numbered pages under `docs/src/`, `docs/src-tauri/`)                                                                                                                        |
 
 Commands in documentation assume the **repo root** unless noted: `yarn dev` runs the `app` workspace.
 
@@ -72,6 +72,19 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 **Tests**: Vitest in `app/` (`yarn test`, `yarn test:coverage`). Rust tests via `cargo test` at repo root as wired in `app/package.json`.
 
 **Quality**: ESLint + Prettier + Husky in the `app` workspace.
+
+---
+
+## Configuration
+
+Environment variables are documented in two `.env.example` files:
+
+- **[`.env.example`](.env.example)** (repo root) — Rust core, Tauri shell, backend URL, logging, proxy, storage, web search, local AI binary overrides. Loaded via `source scripts/load-dotenv.sh`.
+- **[`app/.env.example`](app/.env.example)** — Frontend `VITE_*` vars (core RPC URL, backend URL, Sentry DSN, skills repo, dev helpers). Copy to `app/.env.local` for local overrides.
+
+**Frontend config** is centralized in [`app/src/utils/config.ts`](app/src/utils/config.ts). All `VITE_*` env vars should be read there and re-exported — do not read `import.meta.env` directly in other files.
+
+**Rust config** uses a TOML-based `Config` struct (`src/openhuman/config/schema/types.rs`) with env var overrides applied in `src/openhuman/config/schema/load.rs`. Env vars override config file values at runtime (e.g. `OPENHUMAN_API_KEY` overrides `config.api_key`).
 
 ---
 
@@ -266,13 +279,17 @@ Skills runtime uses **QuickJS** (`rquickjs`) in **`src/openhuman/skills/`** (e.g
 
 **Design intent**: Premium, calm visual language — ocean primary (`#4A83DD`), sage / amber / coral semantic colors, Inter + Cabinet Grotesk + JetBrains Mono, Tailwind with custom radii/spacing/shadows. Details: [`docs/DESIGN_GUIDELINES.md`](docs/DESIGN_GUIDELINES.md).
 
----
+## Desktop shell (Tauri) vs application code
+
+In the parent **OpenHuman** desktop app, **Tauri / Rust is a delivery vehicle**: windowing, process lifecycle, IPC to the core sidecar, and other host concerns. **Keep as much UI behavior and product logic as practical in TypeScript/React** (`app/`). Avoid growing Rust in the shell for flows that belong in the web layer unless there is a hard platform or security reason.
 
 ## Git workflow
 
+- **GitHub issues on upstream** — File and track issues on **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman/)** ([Issues](https://github.com/tinyhumansai/openhuman/issues)), not only a fork’s tracker, unless the workflow explicitly says otherwise.
+- **GitHub issue templates** — Use **[`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md)** for new features and **[`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md)** for bugs; keep the same section structure and fill every required part. AI-authored issues should follow those templates verbatim.
 - **Open pull requests on upstream** — Always create PRs against **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** ([pull requests](https://github.com/tinyhumansai/openhuman/pulls)), not only a fork’s default remote, unless the workflow explicitly says otherwise.
 - **Public repo**; push to your working branch; PRs target **`main`**.
-- Use [`.github/pull_request_template.md`](.github/pull_request_template.md); AI-generated PR text should follow its sections and checklist.
+- Use [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md); AI-generated PR text should follow its sections and checklist.
 
 ---
 
@@ -306,8 +323,7 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 - **`src/openhuman/`**: New features go in a **folder/module**, not new root-level `src/openhuman/*.rs` files (see Rust core section).
 - **File size**: Prefer ≤ ~500 lines per source file; split modules when growing.
 - **Pre-merge checks** (when touching code): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust (`Cargo.toml` at root and/or `app/src-tauri/Cargo.toml` as appropriate).
-- **No dynamic imports** in app code (static `import` only); use try/catch around Tauri APIs where needed.
-- **Type-only imports**: `import type` where appropriate.
+- **No dynamic imports** in production **`app/src`** code — use **static** `import` / `import type` at the top of the module. Do **not** use `import()` (async dynamic import), `React.lazy(() => import(...))`, or `await import('…')` to load app modules, Tauri APIs, or RPC clients. **Why:** predictable chunk graph, simpler static analysis, fewer surprises in Tauri + Vite, and easier code review. **If a module must not run at load time** (e.g. heavy optional path), use a static import and **guard the call site** with `try/catch` or an explicit runtime check instead of deferring module load via dynamic import. **Exceptions:** Vitest harness patterns (`vi.importActual`, dynamic imports **only** inside `*.test.ts` / `__tests__` / `test/setup.ts` when required by the runner); ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).- **Type-only imports**: `import type` where appropriate.
 - **Dual socket / tool sync**: If you change realtime protocol, keep **frontend** (`socketService` / MCP transport) and **core** socket behavior aligned (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) dual-socket section).
 
 ---

@@ -864,7 +864,9 @@ globalThis.data = {
         timeout: options ? options.timeout : undefined,
       };
 
+      console.log('[oauth.fetch] ' + method + ' ' + proxyUrl + ' (credentialId=' + globalThis.__oauthCredential.credentialId + ')');
       var result = await net.fetch(proxyUrl, fetchOpts);
+      console.log('[oauth.fetch] response status=' + result.status + ' body_len=' + (result.body ? result.body.length : 0));
       return result;
     },
 

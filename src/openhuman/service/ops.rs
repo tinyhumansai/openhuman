@@ -1,7 +1,8 @@
 //! JSON-RPC / CLI controller surface for platform service install/lifecycle.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::service::{self, ServiceStatus};
+use crate::openhuman::service::daemon_host::DaemonHostConfig;
+use crate::openhuman::service::{self, daemon_host, ServiceStatus};
 use crate::rpc::RpcOutcome;
 
 pub async fn service_install(config: &Config) -> Result<RpcOutcome<ServiceStatus>, String> {
@@ -30,4 +31,26 @@ pub async fn service_uninstall(config: &Config) -> Result<RpcOutcome<ServiceStat
         status,
         "service uninstall completed",
     ))
+}
+
+pub async fn daemon_host_get(config: &Config) -> Result<RpcOutcome<DaemonHostConfig>, String> {
+    let config_dir = config
+        .config_path
+        .parent()
+        .ok_or_else(|| "failed to resolve config directory".to_string())?;
+    let current = daemon_host::load_for_config_dir(config_dir).await;
+    Ok(RpcOutcome::single_log(current, "daemon host config loaded"))
+}
+
+pub async fn daemon_host_set(
+    config: &Config,
+    show_tray: bool,
+) -> Result<RpcOutcome<DaemonHostConfig>, String> {
+    let config_dir = config
+        .config_path
+        .parent()
+        .ok_or_else(|| "failed to resolve config directory".to_string())?;
+    let next = DaemonHostConfig { show_tray };
+    daemon_host::save_for_config_dir(config_dir, &next).await?;
+    Ok(RpcOutcome::single_log(next, "daemon host config saved"))
 }

@@ -1,5 +1,6 @@
 import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
 
+import { BACKEND_URL } from '../utils/config';
 import { callCoreRpc } from './coreRpcClient';
 
 let resolvedBackendUrl: string | null = null;
@@ -10,10 +11,7 @@ function normalizeBaseUrl(url: string): string {
 }
 
 function webFallbackBackendUrl(): string {
-  const fromVite =
-    typeof import.meta.env.VITE_BACKEND_URL === 'string'
-      ? import.meta.env.VITE_BACKEND_URL.trim()
-      : '';
+  const fromVite = typeof BACKEND_URL === 'string' ? BACKEND_URL.trim() : '';
   if (fromVite) {
     return normalizeBaseUrl(fromVite);
   }

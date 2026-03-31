@@ -6,16 +6,10 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-unminimize",
     "deep-link:default",
-    "os:default",
-    "autostart:default",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled",
-    "notification:default",
-    "notification:allow-notify",
-    "notification:allow-request-permission",
-    "notification:allow-is-permission-granted"
+    "opener:default"
   ]
 }

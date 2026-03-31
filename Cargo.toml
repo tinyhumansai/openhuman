@@ -3,14 +3,17 @@ name = "openhuman"
 version = "0.49.17"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
-autobins = true
+autobins = false
+
+[[bin]]
+name = "openhuman-core"
+path = "src/main.rs"
 
 [lib]
 name = "openhuman_core"
 crate-type = ["rlib"]
 
 [dependencies]
-tauri = { version = "2.10", features = ["tray-icon"] }
 rquickjs = { version = "0.9", features = ["futures", "parallel"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -33,6 +36,8 @@ anyhow = "1.0"
 async-trait = "0.1"
 chacha20poly1305 = "0.10"
 hex = "0.4"
+fastembed = { version = "5.13", default-features = false, features = ["hf-hub-native-tls", "ort-load-dynamic"] }
+ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
@@ -58,11 +63,15 @@ dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 console = "0.16"
 glob = "0.3"
 regex = "1.10"
+ndarray = "0.17.2"
+tokenizers = "0.21.0"
 hostname = "0.4.2"
+rustyline = { version = "15", features = ["with-file-history"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-pki-types = "1.14.0"
 tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 clap = { version = "4.5", features = ["derive"] }
 clap_complete = "4.5"
 lettre = { version = "0.11.19", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
@@ -75,7 +84,6 @@ opentelemetry_sdk = { version = "0.31", default-features = false, features = ["t
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "metrics", "http-proto", "reqwest-client", "reqwest-rustls-webpki-roots"] }
 tokio-stream = { version = "0.1.18", features = ["full"] }
 url = "2"
-openssl = "0.10"
 socketioxide = { version = "0.15", features = ["extensions"] }
 
 matrix-sdk = { version = "0.16", optional = true, default-features = false, features = ["e2e-encryption", "rustls-tls", "markdown"] }

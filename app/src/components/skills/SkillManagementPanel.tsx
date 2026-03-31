@@ -4,8 +4,8 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { useAppSelector } from "../../store/hooks";
 import {
+  useSkillSnapshot,
   useSkillConnectionStatus,
   useSkillConnectionInfo,
   useSkillState,
@@ -28,7 +28,8 @@ export default function SkillManagementPanel({
   onClose,
   onReconfigure,
 }: SkillManagementPanelProps) {
-  const skill = useAppSelector((state) => state.skills.skills[skillId]);
+  const snap = useSkillSnapshot(skillId);
+  const skill = snap ? { manifest: { id: snap.skill_id, name: snap.name }, tools: snap.tools } : undefined;
   const connectionStatus = useSkillConnectionStatus(skillId);
   const connectionInfo = useSkillConnectionInfo(skillId);
   const skillState = useSkillState<{

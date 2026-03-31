@@ -9,10 +9,14 @@ import {
   deriveAesKeyFromMnemonic,
   deriveEvmAddressFromMnemonic,
   generateMnemonicPhrase,
+  MNEMONIC_GENERATE_WORD_COUNT,
   validateMnemonicPhrase,
 } from '../utils/cryptoKeys';
 
-const WORD_COUNT = 24;
+/** Allowed BIP39 phrase lengths for import (includes legacy 24-word backups). */
+const BIP39_IMPORT_LENGTHS = [12, 15, 18, 21, 24] as const;
+
+const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const Mnemonic = () => {
   const navigate = useNavigate();
@@ -29,7 +33,7 @@ const Mnemonic = () => {
   const words = useMemo(() => mnemonic.split(' '), [mnemonic]);
 
   // Import mode state
-  const [importWords, setImportWords] = useState<string[]>(Array(WORD_COUNT).fill(''));
+  const [importWords, setImportWords] = useState<string[]>(Array(IMPORT_SLOTS_INITIAL).fill(''));
   const [importValid, setImportValid] = useState<boolean | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -45,6 +49,7 @@ const Mnemonic = () => {
     setConfirmed(false);
     setError(null);
     setImportValid(null);
+    setImportWords(Array(IMPORT_SLOTS_INITIAL).fill(''));
   }, [mode]);
 
   const handleCopy = useCallback(async () => {
@@ -66,18 +71,24 @@ const Mnemonic = () => {
 
   const handleImportWordChange = useCallback(
     (index: number, value: string) => {
-      // Handle paste of full mnemonic phrase
-      const pastedWords = value.trim().split(/\s+/);
+      const pastedWords = value.trim().split(/\s+/).filter(Boolean);
       if (pastedWords.length > 1) {
+        const fullPhraseLen = pastedWords.length;
+        if (BIP39_IMPORT_LENGTHS.includes(fullPhraseLen as (typeof BIP39_IMPORT_LENGTHS)[number])) {
+          setImportWords(pastedWords.map(w => w.toLowerCase()));
+          setImportValid(null);
+          inputRefs.current[fullPhraseLen - 1]?.focus();
+          return;
+        }
         const newWords = [...importWords];
-        for (let i = 0; i < Math.min(pastedWords.length, WORD_COUNT - index); i++) {
+        const slotCount = newWords.length;
+        for (let i = 0; i < Math.min(pastedWords.length, slotCount - index); i++) {
           newWords[index + i] = pastedWords[i].toLowerCase();
         }
         setImportWords(newWords);
         setImportValid(null);
-        // Focus the next empty field or the last filled field
         const nextEmpty = newWords.findIndex(w => !w);
-        const focusIndex = nextEmpty === -1 ? WORD_COUNT - 1 : nextEmpty;
+        const focusIndex = nextEmpty === -1 ? slotCount - 1 : nextEmpty;
         inputRefs.current[focusIndex]?.focus();
         return;
       }
@@ -87,8 +98,7 @@ const Mnemonic = () => {
       setImportWords(newWords);
       setImportValid(null);
 
-      // Auto-advance to next input when a word is entered
-      if (value.trim() && index < WORD_COUNT - 1) {
+      if (value.trim() && index < newWords.length - 1) {
         inputRefs.current[index + 1]?.focus();
       }
     },
@@ -107,9 +117,10 @@ const Mnemonic = () => {
   const handleValidateImport = useCallback(() => {
     const phrase = importWords.join(' ').trim();
     const filledWords = importWords.filter(w => w.trim());
+    const n = filledWords.length;
 
-    if (filledWords.length !== WORD_COUNT) {
-      setError(`Please enter all ${WORD_COUNT} words.`);
+    if (!BIP39_IMPORT_LENGTHS.includes(n as (typeof BIP39_IMPORT_LENGTHS)[number])) {
+      setError(`Recovery phrase must be ${BIP39_IMPORT_LENGTHS.join(', ')} words (you have ${n}).`);
       setImportValid(false);
       return false;
     }
@@ -166,7 +177,10 @@ const Mnemonic = () => {
     }
   };
 
-  const isImportComplete = importWords.every(w => w.trim());
+  const importWordCount = importWords.filter(w => w.trim()).length;
+  const isImportComplete =
+    importWords.every(w => w.trim()) &&
+    BIP39_IMPORT_LENGTHS.includes(importWordCount as (typeof BIP39_IMPORT_LENGTHS)[number]);
   const canContinue = mode === 'generate' ? confirmed : isImportComplete;
 
   return (
@@ -182,8 +196,9 @@ const Mnemonic = () => {
               <div className="text-center mb-4">
                 <h1 className="text-xl font-bold mb-2">Your Recovery Phrase</h1>
                 <p className="opacity-70 text-sm">
-                  Write down these 24 words in order and store them somewhere safe. This phrase is
-                  used to encrypt your data and can never be recovered if lost.
+                  Write down these {MNEMONIC_GENERATE_WORD_COUNT} words in order and store them
+                  somewhere safe. This phrase is used to encrypt your data and can never be
+                  recovered if lost.
                 </p>
               </div>
 
@@ -245,26 +260,6 @@ const Mnemonic = () => {
                 I already have a recovery phrase
               </button>
 
-              {/* Warning */}
-              <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
-                <svg
-                  className="w-5 h-5 text-amber-500 shrink-0 mt-0.5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}>
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
-                  />
-                </svg>
-                <p className="text-xs text-amber-800">
-                  Never share your recovery phrase with anyone. Anyone with these words can access
-                  your encrypted data. OpenHuman will never ask for your recovery phrase.
-                </p>
-              </div>
-
               {/* Confirmation Checkbox */}
               <label className="flex items-start gap-3 cursor-pointer mb-4">
                 <input
@@ -283,8 +278,8 @@ const Mnemonic = () => {
               <div className="text-center mb-4">
                 <h1 className="text-xl font-bold mb-2">Import Recovery Phrase</h1>
                 <p className="opacity-70 text-sm">
-                  Enter your existing 24-word recovery phrase below. You can also paste the full
-                  phrase into the first field.
+                  Enter your recovery phrase below, or paste the full phrase into any field (12
+                  words for new backups; 24-word phrases from older versions still work).
                 </p>
               </div>
 

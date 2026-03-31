@@ -1,18 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-import { deriveConnectionStatus, useSkillConnectionStatus } from '../lib/skills/hooks';
+import { useAvailableSkills, useSkillConnectionStatus } from '../lib/skills/hooks';
 import { deriveSkillSyncSummaryText } from '../pages/skillsSyncUi';
-import { useAppSelector } from '../store/hooks';
 import { IS_DEV } from '../utils/config';
-import { runtimeDiscoverSkills } from '../utils/tauriCommands';
-import {
-  DefaultIcon,
-  SKILL_ICONS,
-  type SkillListEntry,
-  STATUS_DISPLAY,
-  STATUS_PRIORITY,
-} from './skills/shared';
+import { DefaultIcon, SKILL_ICONS, type SkillListEntry, STATUS_DISPLAY } from './skills/shared';
 import SkillSetupModal from './skills/SkillSetupModal';
 
 interface SkillRowProps {
@@ -97,76 +89,43 @@ export default function SkillsGrid() {
   const [activeSkillHasSetup, setActiveSkillHasSetup] = useState(false);
   const [activeSkillType, setActiveSkillType] = useState<'openhuman' | 'openclaw'>('openhuman');
 
-  const skillsState = useAppSelector(state => state.skills.skills);
-  const skillStates = useAppSelector(state => state.skills.skillStates);
-  const syncStatsBySkill = useAppSelector(state => state.skills.syncStatsBySkill);
+  const { skills: availableSkills, loading: registryLoading } = useAvailableSkills();
 
-  const refreshSkills = async () => {
-    try {
-      const manifests = await runtimeDiscoverSkills();
-      const processed: SkillListEntry[] = manifests
-        .filter(m => {
-          const id = m.id as string;
-          if (id.includes('_')) {
-            console.warn(
-              `Skill "${id}" contains underscore and will be skipped. Skill IDs cannot contain underscores.`
-            );
-            return false;
-          }
-          return true;
-        })
-        .map(m => {
-          const setup = m.setup as { required?: boolean; oauth?: unknown } | undefined;
-          const hasSetup =
-            !!setup &&
-            (setup.required === true ||
-              // OAuth-only skills still need a setup/connect flow
-              !!setup.oauth);
-          return {
-            id: m.id as string,
-            name: (m.name as string) || (m.id as string),
-            description: (m.description as string) || '',
-            icon: SKILL_ICONS[m.id as string],
-            ignoreInProduction: (m.ignoreInProduction as boolean) ?? false,
-            hasSetup,
-            skill_type: 'openhuman' as const,
-          };
-        })
-        .filter(s => IS_DEV || !s.ignoreInProduction);
-      setSkillsList(processed);
-    } catch (err) {
-      console.warn('Could not load skills:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Derive SkillListEntry from registry
+  const derivedSkillsList: SkillListEntry[] = useMemo(() => {
+    return availableSkills
+      .filter(e => {
+        if (e.id.includes('_')) return false;
+        if (!IS_DEV && e.ignore_in_production) return false;
+        return true;
+      })
+      .map(e => {
+        const setup = e.setup as { required?: boolean; oauth?: unknown } | undefined;
+        const hasSetup = !!setup && (setup.required === true || !!setup.oauth);
+        return {
+          id: e.id,
+          name: e.name || e.id,
+          description: e.description || '',
+          icon: SKILL_ICONS[e.id],
+          ignoreInProduction: e.ignore_in_production,
+          hasSetup,
+          skill_type: 'openhuman' as const,
+        };
+      });
+  }, [availableSkills]);
 
-  useEffect(() => {
-    refreshSkills();
-  }, []);
+  // Update local state when registry loads (for compatibility with existing code below)
+  if (!registryLoading && skillsList.length === 0 && derivedSkillsList.length > 0) {
+    setSkillsList(derivedSkillsList);
+    setLoading(false);
+  }
 
   const sortedSkillsList = useMemo(() => {
-    return [...skillsList]
-      .sort((a, b) => {
-        const skillA = skillsState[a.id];
-        const skillB = skillsState[b.id];
-        const stateA = skillStates[a.id];
-        const stateB = skillStates[b.id];
-
-        const statusA = deriveConnectionStatus(skillA?.status, skillA?.setupComplete, stateA);
-        const statusB = deriveConnectionStatus(skillB?.status, skillB?.setupComplete, stateB);
-
-        const priorityA = STATUS_PRIORITY[statusA] ?? 999;
-        const priorityB = STATUS_PRIORITY[statusB] ?? 999;
-
-        if (priorityA === priorityB) {
-          return a.name.localeCompare(b.name);
-        }
-
-        return priorityA - priorityB;
-      })
+    const list = skillsList.length > 0 ? skillsList : derivedSkillsList;
+    return [...list]
+      .sort((a, b) => a.name.localeCompare(b.name))
       .filter(s => IS_DEV || !s.ignoreInProduction);
-  }, [skillsList, skillsState, skillStates]);
+  }, [skillsList, derivedSkillsList]);
 
   if (loading || skillsList.length === 0) {
     return null;
@@ -214,9 +173,7 @@ export default function SkillsGrid() {
               </thead>
               <tbody className="skills-table-body">
                 {sortedSkillsList.map(skill => {
-                  const skillState = skillStates[skill.id] as Record<string, unknown> | undefined;
-                  const syncStats = syncStatsBySkill[skill.id];
-                  const syncSummaryText = deriveSkillSyncSummaryText(skillState, syncStats);
+                  const syncSummaryText = deriveSkillSyncSummaryText(undefined, undefined);
 
                   return (
                     <SkillRow

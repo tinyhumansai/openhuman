@@ -69,14 +69,7 @@ impl SkillRegistry {
             .iter()
             .map(|(skill_id, entry)| {
                 let state = entry.state.read();
-                SkillSnapshot {
-                    skill_id: skill_id.clone(),
-                    name: entry.config.name.clone(),
-                    status: state.status,
-                    tools: state.tools.clone(),
-                    error: state.error.clone(),
-                    state: state.published_state.clone(),
-                }
+                Self::build_snapshot(skill_id, entry, &state)
             })
             .collect()
     }
@@ -86,15 +79,28 @@ impl SkillRegistry {
         let skills = self.skills.read();
         skills.get(skill_id).map(|entry| {
             let state = entry.state.read();
-            SkillSnapshot {
-                skill_id: skill_id.to_string(),
-                name: entry.config.name.clone(),
-                status: state.status,
-                tools: state.tools.clone(),
-                error: state.error.clone(),
-                state: state.published_state.clone(),
-            }
+            Self::build_snapshot(skill_id, entry, &state)
         })
+    }
+
+    fn build_snapshot(skill_id: &str, entry: &RegistryEntry, state: &SkillState) -> SkillSnapshot {
+        use crate::openhuman::skills::types::derive_connection_status;
+
+        // setup_complete is populated later by the caller who has access to PreferencesStore
+        let setup_complete = false;
+        let connection_status =
+            derive_connection_status(state.status, setup_complete, &state.published_state);
+
+        SkillSnapshot {
+            skill_id: skill_id.to_string(),
+            name: entry.config.name.clone(),
+            status: state.status,
+            tools: state.tools.clone(),
+            error: state.error.clone(),
+            state: state.published_state.clone(),
+            setup_complete,
+            connection_status,
+        }
     }
 
     /// Get the status of a skill.
@@ -113,6 +119,11 @@ impl SkillRegistry {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<ToolResult, String> {
+        log::info!(
+            "[skill:{}] call_tool '{}' — dispatching to event loop",
+            skill_id,
+            tool_name
+        );
         let sender = {
             let skills = self.skills.read();
             let entry = skills
@@ -120,6 +131,12 @@ impl SkillRegistry {
                 .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
             let status = entry.state.read().status;
             if status != SkillStatus::Running {
+                log::warn!(
+                    "[skill:{}] call_tool '{}' — skill not running (status: {:?})",
+                    skill_id,
+                    tool_name,
+                    status
+                );
                 return Err(format!(
                     "Skill '{}' is not running (status: {:?})",
                     skill_id, status
@@ -136,11 +153,43 @@ impl SkillRegistry {
                 reply: reply_tx,
             })
             .await
-            .map_err(|_| format!("Skill '{}' message channel closed", skill_id))?;
+            .map_err(|_| {
+                log::error!(
+                    "[skill:{}] call_tool '{}' — message channel closed",
+                    skill_id,
+                    tool_name
+                );
+                format!("Skill '{}' message channel closed", skill_id)
+            })?;
 
-        reply_rx
-            .await
-            .map_err(|_| format!("Skill '{}' did not respond to tool call", skill_id))?
+        log::debug!(
+            "[skill:{}] call_tool '{}' — message sent, waiting for reply",
+            skill_id,
+            tool_name
+        );
+
+        match reply_rx.await {
+            Ok(result) => {
+                log::info!(
+                    "[skill:{}] call_tool '{}' — got reply (is_err: {})",
+                    skill_id,
+                    tool_name,
+                    result.is_err()
+                );
+                result
+            }
+            Err(_) => {
+                log::error!(
+                    "[skill:{}] call_tool '{}' — reply channel dropped (skill event loop may have crashed or tool timed out)",
+                    skill_id,
+                    tool_name
+                );
+                Err(format!(
+                    "Skill '{}' did not respond to tool call '{}'",
+                    skill_id, tool_name
+                ))
+            }
+        }
     }
 
     /// Send a server event to all running skills.

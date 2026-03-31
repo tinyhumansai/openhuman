@@ -35,10 +35,25 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 ```bash
 git clone https://github.com/YOUR_USERNAME/openhuman.git
 cd openhuman
+git submodule update --init --recursive   # pulls openhuman-skills
 yarn install
 ```
 
 Use your own fork in place of `YOUR_USERNAME` when cloning.
+
+The `openhuman-skills` submodule contains the built skill bundles used by the runtime. After cloning you must initialise it (the command above does this). If you forget, the runtime will fall back to fetching skills from the remote registry, which is slower and requires network access.
+
+### Updating Skills
+
+When the `openhuman-skills` submodule is updated upstream, run:
+
+```bash
+git submodule update --remote openhuman-skills
+cd openhuman-skills && yarn install && yarn build
+cd ..
+git add openhuman-skills
+git commit -m "chore: update openhuman-skills submodule"
+```
 
 ### Run the App
 

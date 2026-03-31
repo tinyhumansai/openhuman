@@ -1,4 +1,4 @@
-export type ChannelType = 'telegram' | 'discord';
+export type ChannelType = 'telegram' | 'discord' | 'web';
 
 export type ChannelAuthMode = 'managed_dm' | 'oauth' | 'bot_token' | 'api_key';
 
@@ -31,4 +31,54 @@ export interface ChannelConnectionsState {
 export interface OutboundRoute {
   channel: ChannelType;
   authMode: ChannelAuthMode;
+}
+
+// --- Backend-driven definitions (from openhuman.channels_list) ---
+
+export interface FieldRequirement {
+  key: string;
+  label: string;
+  field_type: string; // "string" | "secret" | "boolean"
+  required: boolean;
+  placeholder: string;
+}
+
+export interface AuthModeSpec {
+  mode: ChannelAuthMode;
+  description: string;
+  fields: FieldRequirement[];
+  auth_action?: string; // e.g. "telegram_managed_dm", "discord_oauth"
+}
+
+export type ChannelCapability =
+  | 'send_text'
+  | 'send_rich_text'
+  | 'receive_text'
+  | 'typing'
+  | 'draft_updates'
+  | 'threaded_replies'
+  | 'file_attachments'
+  | 'reactions';
+
+export interface ChannelDefinition {
+  id: string;
+  display_name: string;
+  description: string;
+  icon: string;
+  auth_modes: AuthModeSpec[];
+  capabilities: ChannelCapability[];
+}
+
+export interface ChannelStatusEntry {
+  channel_id: string;
+  auth_mode: ChannelAuthMode;
+  connected: boolean;
+  has_credentials: boolean;
+}
+
+export interface ChannelConnectionResult {
+  status: string; // "connected" | "pending_auth"
+  restart_required: boolean;
+  auth_action?: string;
+  message?: string;
 }

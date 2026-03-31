@@ -7,7 +7,8 @@
  * that the SkillManager expects.
  */
 
-import { runtimeSkillDataDir, runtimeStartSkill } from "../../utils/tauriCommands";
+import { callCoreRpc } from "../../services/coreRpcClient";
+import { runtimeSkillDataDir } from "../../utils/tauriCommands";
 import { SkillTransport, type ReverseRpcHandler } from "./transport";
 import type {
   SkillManifest,
@@ -44,8 +45,11 @@ export class SkillRuntime {
    * and then initialize the transport for RPC routing.
    */
   async start(): Promise<void> {
-    // Start the skill in the Rust QuickJS runtime
-    await runtimeStartSkill(this.manifest.id);
+    // Start the skill in the Rust QuickJS runtime via core RPC
+    await callCoreRpc({
+      method: 'openhuman.skills_start',
+      params: { skill_id: this.manifest.id },
+    });
 
     // Initialize the transport for RPC routing
     await this.transport.start(this.manifest.id);

@@ -5,7 +5,10 @@
  * and tool invocation. Dispatches status changes to Redux.
  */
 
+import { callCoreRpc } from "../../services/coreRpcClient";
 import { SkillRuntime } from "./runtime";
+import { emitSkillStateChange } from "./skillEvents";
+import { setSetupComplete as rpcSetSetupComplete } from "./skillsApi";
 import { syncToolsToBackend } from "./sync";
 import type {
   SkillManifest,
@@ -18,19 +21,8 @@ import type {
 import { store } from "../../store";
 import { setPrimaryWalletAddressForUser } from "../../store/authSlice";
 import {
-  addSkill,
-  setSkillStatus,
-  setSkillError,
-  setSkillSetupComplete,
-  setSkillOAuthCredential,
-  setSkillTools,
-  setSkillState,
-  upsertSkillSyncStats,
-} from "../../store/skillsSlice";
-import {
   runtimeSkillDataDir,
   runtimeSkillDataRead,
-  runtimeSkillDataStats,
   runtimeSkillDataWrite,
 } from "../../utils/tauriCommands";
 // Env vars kept for reverse RPC compatibility (may be used by skills via state)
@@ -62,14 +54,14 @@ class SkillManager {
    * Add a discovered skill manifest to Redux.
    */
   registerSkill(manifest: SkillManifest): void {
-    // Validate that skill name doesn't contain underscores (used for tool namespacing)
     if (manifest.id.includes("_")) {
       console.error(
         `Skill name "${manifest.id}" contains underscore. Skill names cannot contain underscores as they are used for tool namespacing (skillId__toolName).`
       );
       return;
     }
-    store.dispatch(addSkill({ manifest }));
+    // Registration is now handled by the Rust engine; just notify hooks
+    emitSkillStateChange(manifest.id);
   }
 
   /**
@@ -79,26 +71,15 @@ class SkillManager {
   async startSkill(manifest: SkillManifest): Promise<void> {
     const skillId = manifest.id;
 
-    // Check if already running
     if (this.runtimes.has(skillId)) {
       const existing = this.runtimes.get(skillId)!;
       if (existing.isRunning) return;
-      // Dead runtime — clean up
       this.runtimes.delete(skillId);
     }
-// Ensure the skill is registered in Redux before dispatching status updates.
-    // Self-evolved skills are started directly by the Rust engine and never go
-    // through registerSkill(), so state.skills[skillId] is undefined. Every
-    // setSkillStatus / setSkillSetupComplete / setSkillTools reducer silently
-    // no-ops when the key is missing, making the Enable button appear broken.
-    if (!store.getState().skills.skills[skillId]) {
-      store.dispatch(addSkill({ manifest }));
-    }
-    store.dispatch(setSkillStatus({ skillId, status: "starting" }));
+
+    emitSkillStateChange(skillId);
 
     const runtime = new SkillRuntime(manifest);
-
-    // Wire up reverse RPC handler
     runtime.onReverseRpc(async (method, params) => {
       return this.handleReverseRpc(skillId, method, params);
     });
@@ -107,42 +88,19 @@ class SkillManager {
       await runtime.start();
       this.runtimes.set(skillId, runtime);
 
-      store.dispatch(setSkillStatus({ skillId, status: "running" }));
-
-      // Load the skill with additional parameters based on skill type
       const loadParams = this.getSkillLoadParams(manifest.id);
       await runtime.load(loadParams);
 
-      // Check if setup is needed
-      const state = store.getState();
-      const skillState = state.skills.skills[skillId];
-      const setupRequired = manifest.setup?.required && !skillState?.setupComplete;
-
-      if (setupRequired) {
-        store.dispatch(setSkillStatus({ skillId, status: "setup_required" }));
-      } else {
-        // Mark setup as complete for skills that don't require a setup flow.
-        // Without this, deriveConnectionStatus("ready", false, undefined) returns
-        // "connecting" even after the skill is fully running.
-        if (!skillState?.setupComplete) {
-          store.dispatch(setSkillSetupComplete({ skillId, complete: true }));
-        }
-        // Re-inject persisted OAuth credential if available
-        const oauthCred = skillState?.oauthCredential;
-        if (oauthCred) {
-          try {
-            await runtime.oauthComplete(oauthCred);
-          } catch (err) {
-            console.warn(`[SkillManager] Failed to restore OAuth credential for ${skillId}:`, err);
-          }
-        }
-        // Skill is ready — list tools
+      // If no setup required, mark complete and activate
+      if (!manifest.setup?.required) {
+        await rpcSetSetupComplete(skillId, true).catch(() => {});
         await this.activateSkill(skillId);
       }
+
+      emitSkillStateChange(skillId);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      store.dispatch(setSkillError({ skillId, error: msg }));
       this.runtimes.delete(skillId);
+      emitSkillStateChange(skillId);
       throw err;
     }
   }
@@ -155,31 +113,13 @@ class SkillManager {
     if (!runtime) return;
 
     try {
-      const tools = await runtime.listTools();
-      store.dispatch(setSkillTools({ skillId, tools }));
-      store.dispatch(setSkillStatus({ skillId, status: "ready" }));
-      void this.refreshSkillLocalDataStats(skillId);
+      await runtime.listTools();
+      // Tools are tracked by the Rust engine; just sync to backend and notify hooks
       syncToolsToBackend();
+      emitSkillStateChange(skillId);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      store.dispatch(setSkillError({ skillId, error: msg }));
-    }
-  }
-
-  private async refreshSkillLocalDataStats(skillId: string): Promise<void> {
-    try {
-      const stats = await runtimeSkillDataStats(skillId);
-      store.dispatch(
-        upsertSkillSyncStats({
-          skillId,
-          patch: {
-            localDataBytes: Number.isFinite(stats.total_bytes) ? stats.total_bytes : null,
-            localFileCount: Number.isFinite(stats.file_count) ? stats.file_count : null,
-          },
-        })
-      );
-    } catch (err) {
-      console.debug(`[SkillManager] Could not read local data stats for ${skillId}:`, err);
+      console.error(`[SkillManager] Failed to activate skill ${skillId}:`, err);
+      emitSkillStateChange(skillId);
     }
   }
 
@@ -195,9 +135,7 @@ class SkillManager {
       throw new Error(`Skill ${skillId} runtime not found`);
     }
 
-    store.dispatch(
-      setSkillStatus({ skillId, status: "setup_in_progress" }),
-    );
+    emitSkillStateChange(skillId);
     console.log("[SkillManager] setup started", skillId);
     return runtime.setupStart();
   }
@@ -218,8 +156,7 @@ class SkillManager {
     const result = await runtime.setupSubmit(stepId, values);
 
     if (result.status === "complete") {
-      store.dispatch(setSkillSetupComplete({ skillId, complete: true }));
-      // Activate the skill now that setup is done
+      await rpcSetSetupComplete(skillId, true).catch(() => {});
       await this.activateSkill(skillId);
     }
 
@@ -238,7 +175,7 @@ class SkillManager {
     } catch {
       // Ignore errors on cancel
     }
-    store.dispatch(setSkillStatus({ skillId, status: "setup_required" }));
+    emitSkillStateChange(skillId);
   }
 
   /**
@@ -288,10 +225,19 @@ class SkillManager {
    */
   async triggerSync(skillId: string): Promise<void> {
     const runtime = this.runtimes.get(skillId);
-    if (!runtime) {
-      throw new Error(`Skill ${skillId} is not running`);
+    if (runtime) {
+      await runtime.triggerSync();
+    } else {
+      // Try via core RPC pass-through
+      try {
+        await callCoreRpc({
+          method: "openhuman.skills_sync",
+          params: { skill_id: skillId },
+        });
+      } catch {
+        // Skill not running — skip sync silently
+      }
     }
-    await runtime.triggerSync();
   }
 
   /**
@@ -318,28 +264,42 @@ class SkillManager {
     provider?: string,
     extraCredential?: { accessToken?: string },
   ): Promise<void> {
+    // Persist setup completion via RPC (always, regardless of runtime)
+    await rpcSetSetupComplete(skillId, true).catch(() => {});
+
+    // Try to notify the local runtime if one exists
     const runtime = this.runtimes.get(skillId);
-    if (!runtime || !runtime.isRunning) {
-      console.warn(`[SkillManager] Cannot notify OAuth complete: skill ${skillId} not running`);
-      return;
+    if (runtime?.isRunning) {
+      const credential = {
+        credentialId: integrationId,
+        provider: provider ?? "unknown",
+        grantedScopes: [] as string[],
+        ...extraCredential,
+      };
+      try {
+        await runtime.oauthComplete(credential);
+      } catch (err) {
+        console.warn(`[SkillManager] oauthComplete RPC failed for ${skillId}:`, err);
+      }
+      await this.activateSkill(skillId);
+    } else {
+      // No local runtime — try notifying via core RPC pass-through
+      try {
+        await callCoreRpc({
+          method: "openhuman.skills_rpc",
+          params: {
+            skill_id: skillId,
+            method: "oauth/complete",
+            params: { integrationId, provider, ...extraCredential },
+          },
+        });
+      } catch {
+        // Skill may not be running in the core either — that's OK,
+        // setup_complete is already persisted above
+      }
     }
 
-    const manifest = store.getState().skills.skills[skillId]?.manifest;
-
-    const credential = {
-      credentialId: integrationId,
-      provider: provider ?? manifest?.setup?.oauth?.provider ?? "unknown",
-      grantedScopes: manifest?.setup?.oauth?.scopes ?? [],
-      ...extraCredential,
-    };
-
-    await runtime.oauthComplete(credential);
-
-    // Persist credential so it survives app restarts
-    store.dispatch(setSkillOAuthCredential({ skillId, credential }));
-    // Mark setup as complete and activate
-    store.dispatch(setSkillSetupComplete({ skillId, complete: true }));
-    await this.activateSkill(skillId);
+    emitSkillStateChange(skillId);
   }
 
   /**
@@ -377,9 +337,8 @@ class SkillManager {
    */
   async disconnectSkill(skillId: string): Promise<void> {
     await this.stopSkill(skillId);
-    store.dispatch(setSkillSetupComplete({ skillId, complete: false }));
-    store.dispatch(setSkillOAuthCredential({ skillId, credential: undefined }));
-    store.dispatch(setSkillState({ skillId, state: {} }));
+    await rpcSetSetupComplete(skillId, false).catch(() => {});
+    emitSkillStateChange(skillId);
     syncToolsToBackend();
   }
 
@@ -390,14 +349,13 @@ class SkillManager {
     const runtime = this.runtimes.get(skillId);
     if (!runtime) return;
 
-    store.dispatch(setSkillStatus({ skillId, status: "stopping" }));
     try {
       await runtime.stop();
     } catch {
       // Ignore stop errors
     }
     this.runtimes.delete(skillId);
-    store.dispatch(setSkillStatus({ skillId, status: "installed" }));
+    emitSkillStateChange(skillId);
     syncToolsToBackend();
   }
 
@@ -419,8 +377,9 @@ class SkillManager {
   /**
    * Get the current status of a skill from Redux.
    */
-  getSkillStatus(skillId: string): SkillStatus | undefined {
-    return store.getState().skills.skills[skillId]?.status;
+  getSkillStatus(_skillId: string): SkillStatus | undefined {
+    // Status is now tracked by the Rust engine; use useSkillSnapshot() hook for reads
+    return undefined;
   }
 
   /**
@@ -439,12 +398,7 @@ class SkillManager {
       // Reload the skill with new parameters
       await runtime.load(loadParams);
 
-      // Check if skill needs activation
-      const state = store.getState();
-      const skillState = state.skills.skills[skillId];
-      if (skillState?.setupComplete) {
-        await this.activateSkill(skillId);
-      }
+      await this.activateSkill(skillId);
     } catch (err) {
       console.error(`Error reloading skill ${skillId}:`, err);
     }
@@ -479,51 +433,12 @@ class SkillManager {
   ): Promise<unknown> {
     switch (method) {
       case "state/get":
-        return { state: store.getState().skills.skillStates[skillId] ?? {} };
+        // State is managed by the Rust engine's published_state
+        return { state: {} };
 
       case "state/set": {
-        // For now, store in Redux
-        // The skill's state is stored in skillStates[skillId]
-        const partial = params.partial as Record<string, unknown>;
-        const currentState =
-          store.getState().skills.skillStates[skillId] ?? {};
-        const prevSyncInProgress = currentState.syncInProgress === true;
-        const newState = { ...currentState, ...partial };
-        const nextSyncInProgress = newState.syncInProgress === true;
-        // We need a setSkillState action for this
-        store.dispatch({
-          type: "skills/setSkillState",
-          payload: { skillId, state: newState },
-        });
-
-        if (!prevSyncInProgress && nextSyncInProgress) {
-          store.dispatch(
-            upsertSkillSyncStats({
-              skillId,
-              patch: { lastSyncStartedAtMs: Date.now() },
-            })
-          );
-        }
-
-        if (prevSyncInProgress && !nextSyncInProgress) {
-          const now = Date.now();
-          const startedAtMs = store.getState().skills.syncStatsBySkill[skillId]?.lastSyncStartedAtMs;
-          const durationMs =
-            typeof startedAtMs === "number" && startedAtMs > 0 ? Math.max(0, now - startedAtMs) : null;
-          store.dispatch(
-            upsertSkillSyncStats({
-              skillId,
-              patch: {
-                syncCountDelta: 1,
-                lastSyncAtMs: now,
-                lastSyncDurationMs: durationMs,
-                lastSyncStartedAtMs: null,
-              },
-            })
-          );
-          void this.refreshSkillLocalDataStats(skillId);
-        }
-
+        // State is managed by the Rust engine; just notify hooks to re-fetch
+        emitSkillStateChange(skillId);
         syncToolsToBackend();
         return { ok: true };
       }
@@ -584,9 +499,8 @@ class SkillManager {
       // Stop all running skills first
       await this.stopAll();
 
-      // Get all skill IDs from Redux state
-      const state = store.getState();
-      const skillIds = Object.keys(state.skills.skills);
+      // Get all skill IDs from runtime map
+      const skillIds = Array.from(this.runtimes.keys());
 
       // Clear data for each skill
       const clearPromises = skillIds.map(async (skillId) => {

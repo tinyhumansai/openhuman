@@ -3,9 +3,10 @@
 use serde_json::json;
 
 use crate::openhuman::screen_intelligence::{
-    self, AccessibilityStatus, CaptureImageRefResult, CaptureNowResult, InputActionParams,
-    InputActionResult, PermissionRequestParams, PermissionState, PermissionStatus, SessionStatus,
-    StartSessionParams, StopSessionParams, VisionFlushResult, VisionRecentResult,
+    self, AccessibilityStatus, CaptureImageRefResult, CaptureNowResult, CaptureTestResult,
+    InputActionParams, InputActionResult, PermissionRequestParams, PermissionState,
+    PermissionStatus, SessionStatus, StartSessionParams, StopSessionParams, VisionFlushResult,
+    VisionRecentResult,
 };
 use crate::rpc::RpcOutcome;
 
@@ -174,5 +175,13 @@ pub async fn accessibility_vision_flush() -> Result<RpcOutcome<VisionFlushResult
     Ok(RpcOutcome::single_log(
         result,
         "screen intelligence vision flush completed",
+    ))
+}
+
+pub async fn accessibility_capture_test() -> Result<RpcOutcome<CaptureTestResult>, String> {
+    let result: CaptureTestResult = screen_intelligence::global_engine().capture_test().await;
+    Ok(RpcOutcome::single_log(
+        result,
+        "screen intelligence capture test completed",
     ))
 }

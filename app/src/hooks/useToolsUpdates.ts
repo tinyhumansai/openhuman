@@ -6,6 +6,8 @@
  */
 import { useEffect, useState } from 'react';
 
+import { forceToolsCacheRefresh } from '../lib/tools/file-watcher';
+
 interface ToolsUpdateEvent {
   timestamp: number;
 }
@@ -40,7 +42,6 @@ export function useToolsUpdates(): number {
  */
 export function useForceToolsRefresh(): () => Promise<void> {
   const forceRefresh = async () => {
-    const { forceToolsCacheRefresh } = await import('../lib/tools/file-watcher');
     return forceToolsCacheRefresh();
   };
 

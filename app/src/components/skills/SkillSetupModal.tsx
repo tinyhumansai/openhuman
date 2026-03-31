@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useAppSelector } from "../../store/hooks";
+import { useSkillSnapshot } from "../../lib/skills/hooks";
 import SkillSetupWizard from "./SkillSetupWizard";
 import SkillManagementPanel from "./SkillManagementPanel";
 
@@ -29,9 +29,8 @@ export default function SkillSetupModal({
   onClose,
 }: SkillSetupModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  const setupComplete = useAppSelector(
-    (state) => state.skills.skills[skillId]?.setupComplete,
-  );
+  const snap = useSkillSnapshot(skillId);
+  const setupComplete = snap?.setup_complete ?? false;
   // Skills without setup hooks always go straight to manage mode.
   const [mode, setMode] = useState<"manage" | "setup">(
     !hasSetup || setupComplete ? "manage" : "setup",

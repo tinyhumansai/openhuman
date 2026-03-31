@@ -388,6 +388,43 @@ pub fn workspace_onboarding_flag_exists(
     ))
 }
 
+/// Creates or removes the workspace onboarding flag file.
+pub async fn workspace_onboarding_flag_set(
+    flag_name: Option<String>,
+    default_name: &str,
+    value: bool,
+) -> Result<RpcOutcome<bool>, String> {
+    let name = flag_name.unwrap_or_else(|| default_name.to_string());
+    let trimmed = name.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
+    {
+        return Err("Invalid onboarding flag name".to_string());
+    }
+    let workspace_dir = match load_config_with_timeout().await {
+        Ok(cfg) => cfg.workspace_dir,
+        Err(_) => fallback_workspace_dir(),
+    };
+    let flag_path = workspace_dir.join(trimmed);
+    if value {
+        if let Some(parent) = flag_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create workspace dir: {e}"))?;
+        }
+        std::fs::write(&flag_path, "")
+            .map_err(|e| format!("Failed to create onboarding flag: {e}"))?;
+    } else if flag_path.is_file() {
+        std::fs::remove_file(&flag_path)
+            .map_err(|e| format!("Failed to remove onboarding flag: {e}"))?;
+    }
+    Ok(RpcOutcome::single_log(
+        flag_path.is_file(),
+        "onboarding flag updated",
+    ))
+}
+
 pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
     let running = crate::openhuman::service::mock::mock_agent_running().unwrap_or(true);
     log::info!("[config] agent_server_status requested: running={running}");

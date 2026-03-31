@@ -49,6 +49,8 @@ pub struct LocalAiConfig {
     pub context_compaction_threshold_tokens: usize,
     #[serde(default = "default_max_suggestions")]
     pub max_suggestions: usize,
+    #[serde(default)]
+    pub selected_tier: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -169,6 +171,7 @@ impl Default for LocalAiConfig {
             autosummary_debounce_ms: default_autosummary_debounce_ms(),
             context_compaction_threshold_tokens: default_context_compaction_threshold_tokens(),
             max_suggestions: default_max_suggestions(),
+            selected_tier: None,
         }
     }
 }

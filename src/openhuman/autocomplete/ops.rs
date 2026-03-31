@@ -1,12 +1,13 @@
 //! JSON-RPC / CLI controller surface for inline autocomplete.
 
 use crate::openhuman::autocomplete::{
-    self, AutocompleteAcceptParams, AutocompleteAcceptResult, AutocompleteCurrentParams,
-    AutocompleteCurrentResult, AutocompleteDebugFocusResult, AutocompleteSetStyleParams,
-    AutocompleteSetStyleResult, AutocompleteStartParams, AutocompleteStartResult,
-    AutocompleteStatus, AutocompleteStopParams, AutocompleteStopResult,
+    self, AcceptedCompletion, AutocompleteAcceptParams, AutocompleteAcceptResult,
+    AutocompleteCurrentParams, AutocompleteCurrentResult, AutocompleteDebugFocusResult,
+    AutocompleteSetStyleParams, AutocompleteSetStyleResult, AutocompleteStartParams,
+    AutocompleteStartResult, AutocompleteStatus, AutocompleteStopParams, AutocompleteStopResult,
 };
 use crate::rpc::RpcOutcome;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::process::Stdio;
 use tokio::time::{self, Duration};
@@ -76,6 +77,41 @@ pub async fn autocomplete_set_style(
     Ok(RpcOutcome::single_log(
         result,
         "autocomplete style settings updated",
+    ))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutocompleteHistoryParams {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutocompleteHistoryResult {
+    pub entries: Vec<AcceptedCompletion>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutocompleteClearHistoryResult {
+    pub cleared: usize,
+}
+
+pub async fn autocomplete_history(
+    payload: AutocompleteHistoryParams,
+) -> Result<RpcOutcome<AutocompleteHistoryResult>, String> {
+    let entries =
+        crate::openhuman::autocomplete::history::list_history(payload.limit.unwrap_or(20)).await?;
+    Ok(RpcOutcome::single_log(
+        AutocompleteHistoryResult { entries },
+        "autocomplete history listed",
+    ))
+}
+
+pub async fn autocomplete_clear_history(
+) -> Result<RpcOutcome<AutocompleteClearHistoryResult>, String> {
+    let cleared = crate::openhuman::autocomplete::history::clear_history().await?;
+    Ok(RpcOutcome::single_log(
+        AutocompleteClearHistoryResult { cleared },
+        "autocomplete history cleared",
     ))
 }
 

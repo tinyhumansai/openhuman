@@ -1,11 +1,9 @@
 /**
  * Daemon Health Service
  *
- * Manages health monitoring for the openhuman daemon by listening to
- * 'openhuman:health' events emitted by the Rust backend every 5 seconds.
+ * Manages health monitoring for the openhuman daemon by polling
+ * `openhuman.health_snapshot` over core RPC from the frontend.
  */
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-
 import { store } from '../store';
 import {
   type ComponentHealth,
@@ -14,55 +12,52 @@ import {
   setHealthTimeoutId,
   updateHealthSnapshot,
 } from '../store/daemonSlice';
+import { callCoreRpc } from './coreRpcClient';
 
 export class DaemonHealthService {
   private healthTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private readonly HEALTH_TIMEOUT_MS = 30000; // 30 seconds
-  private healthEventListener: UnlistenFn | null = null;
+  private pollingIntervalId: ReturnType<typeof setInterval> | null = null;
+  private readonly POLL_MS = 2000;
 
   /**
    * Setup health event listener from the Rust daemon.
    * Should be called once when the app starts in Tauri mode.
    */
-  async setupHealthListener(): Promise<UnlistenFn | null> {
-    console.log('[DaemonHealth] setupHealthListener() called - starting setup process');
-    try {
-      // console.log('[DaemonHealth] About to call listen() for openhuman:health event');
-      // console.log('[DaemonHealth] Setting up openhuman:health event listener');
+  async setupHealthListener(): Promise<(() => void) | null> {
+    if (this.pollingIntervalId) {
+      return () => this.cleanup();
+    }
 
-      this.healthEventListener = await listen<unknown>('openhuman:health', event => {
-        // console.log('[DaemonHealth] Received health event:', event.payload);
-
-        const healthSnapshot = this.parseHealthSnapshot(event.payload);
+    const pollOnce = async () => {
+      try {
+        const payload = await callCoreRpc<unknown>({ method: 'openhuman.health_snapshot' });
+        const healthSnapshot = this.parseHealthSnapshot(payload);
         if (healthSnapshot) {
           this.updateReduxFromHealth(healthSnapshot);
           this.startHealthTimeout();
-        } else {
-          console.warn('[DaemonHealth] Failed to parse health snapshot:', event.payload);
         }
-      });
-      console.log('[DaemonHealth] openhuman:health listener created successfully');
+      } catch {
+        // Health endpoint can fail while sidecar is starting; timeout will mark disconnected.
+      }
+    };
 
-      // Start initial timeout
-      // console.log('[DaemonHealth] Starting health timeout');
-      this.startHealthTimeout();
-      // console.log('[DaemonHealth] Health timeout started');
+    await pollOnce();
+    this.pollingIntervalId = setInterval(() => {
+      void pollOnce();
+    }, this.POLL_MS);
+    this.startHealthTimeout();
 
-      // console.log('[DaemonHealth] Health listener setup complete');
-      return this.healthEventListener;
-    } catch (error) {
-      console.error('[DaemonHealth] Failed to setup health listener:', error);
-      return null;
-    }
+    return () => this.cleanup();
   }
 
   /**
    * Cleanup the health event listener.
    */
   cleanup(): void {
-    if (this.healthEventListener) {
-      this.healthEventListener();
-      this.healthEventListener = null;
+    if (this.pollingIntervalId) {
+      clearInterval(this.pollingIntervalId);
+      this.pollingIntervalId = null;
     }
 
     if (this.healthTimeoutId) {

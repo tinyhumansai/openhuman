@@ -92,18 +92,17 @@ describe('ProtectedRoute', () => {
     expect(screen.getByText('Login Page')).toBeInTheDocument();
   });
 
-  it('redirects to /onboarding when requireOnboarded but not onboarded', () => {
+  it('renders children when authenticated (onboarding handled by overlay)', () => {
     renderWithProviders(
       <Routes>
         <Route
           path="/home"
           element={
-            <ProtectedRoute requireOnboarded>
+            <ProtectedRoute>
               <div>Home Content</div>
             </ProtectedRoute>
           }
         />
-        <Route path="/onboarding" element={<div>Onboarding</div>} />
       </Routes>,
       {
         initialEntries: ['/home'],
@@ -119,6 +118,6 @@ describe('ProtectedRoute', () => {
       }
     );
 
-    expect(screen.getByText('Onboarding')).toBeInTheDocument();
+    expect(screen.getByText('Home Content')).toBeInTheDocument();
   });
 });
