@@ -116,8 +116,12 @@ fi
 # Tauri picks up signing identity from env
 export APPLE_SIGNING_IDENTITY
 
+env | grep -E 'APPLE|TAURI|VITE'
+
 cd app
+echo "Building now... ${BUILD_ARGS[@]}"
 npx tauri build "${BUILD_ARGS[@]}"
+echo "Done building"
 cd ..
 
 # ── Locate artifacts ─────────────────────────────────────────────────
