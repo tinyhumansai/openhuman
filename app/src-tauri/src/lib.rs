@@ -3,7 +3,11 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 mod core_process;
 
-use tauri::{Manager, RunEvent};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, RunEvent,
+};
 
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
@@ -16,6 +20,65 @@ fn core_rpc_url() -> String {
 
 fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(err) = window.show() {
+            log::error!("[tray] failed to show main window: {err}");
+        }
+        if let Err(err) = window.unminimize() {
+            log::error!("[tray] failed to unminimize main window: {err}");
+        }
+        if let Err(err) = window.set_focus() {
+            log::error!("[tray] failed to focus main window: {err}");
+        }
+    } else {
+        log::error!("[tray] main window not found");
+    }
+}
+
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    log::info!("[tray] setting up tray icon");
+
+    let show_item = MenuItem::with_id(app, "tray_show_window", "Open OpenHuman", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "tray_quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".to_string()))?;
+
+    TrayIconBuilder::with_id("openhuman-tray")
+        .icon(icon)
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "tray_show_window" => {
+                log::info!("[tray] action=show_window source=menu");
+                show_main_window(app);
+            }
+            "tray_quit" => {
+                log::info!("[tray] action=quit source=menu");
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                log::info!("[tray] action=show_window source=left_click");
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+
+    log::info!("[tray] tray icon ready");
+    Ok(())
 }
 
 pub fn run() {
@@ -59,30 +122,23 @@ pub fn run() {
             if daemon_mode {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
+                    log::info!("[tray] daemon_mode=true window_hidden_on_startup");
                 }
+            }
+
+            if let Err(err) = setup_tray(app.handle()) {
+                log::error!("[tray] failed to setup tray icon: {err}");
             }
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![core_rpc_url])
-        .build({
-            let mut context = tauri::generate_context!();
-            if daemon_mode {
-                context.config_mut().app.windows.clear();
-            }
-            context
-        })
+        .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| match event {
             #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
-                if !daemon_mode {
-                    if let Some(window) = app_handle.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.unminimize();
-                        let _ = window.set_focus();
-                    }
-                }
+                show_main_window(app_handle);
             }
             RunEvent::Exit => {
                 if let Some(core) = app_handle.try_state::<core_process::CoreProcessHandle>() {
