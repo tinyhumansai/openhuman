@@ -350,6 +350,115 @@ impl LocalAiService {
         Ok(())
     }
 
+    /// Run full diagnostics: check Ollama server health, list installed models,
+    /// and verify expected models are present. Returns a JSON-serializable report.
+    pub async fn diagnostics(
+        &self,
+        config: &Config,
+    ) -> Result<serde_json::Value, String> {
+        let healthy = self.ollama_healthy().await;
+
+        let (models, tags_error) = if healthy {
+            match self.list_models().await {
+                Ok(models) => (models, None),
+                Err(e) => (vec![], Some(e)),
+            }
+        } else {
+            (vec![], None)
+        };
+
+        let expected_chat = model_ids::effective_chat_model_id(config);
+        let expected_embedding = model_ids::effective_embedding_model_id(config);
+        let expected_vision = model_ids::effective_vision_model_id(config);
+
+        let model_names: Vec<String> = models.iter().map(|m| m.name.to_ascii_lowercase()).collect();
+        let has = |target: &str| -> bool {
+            let t = target.to_ascii_lowercase();
+            model_names.iter().any(|n| *n == t || n.starts_with(&(t.clone() + ":")))
+        };
+
+        let chat_found = has(&expected_chat);
+        let embedding_found = has(&expected_embedding);
+        let vision_found = has(&expected_vision);
+
+        let binary_path = self.resolve_binary_path(config);
+
+        let mut issues: Vec<String> = Vec::new();
+        if !healthy {
+            issues.push("Ollama server is not running or not reachable at http://127.0.0.1:11434".to_string());
+        }
+        if healthy && !chat_found {
+            issues.push(format!("Chat model `{}` is not installed", expected_chat));
+        }
+        if healthy && config.local_ai.preload_embedding_model && !embedding_found {
+            issues.push(format!("Embedding model `{}` is not installed", expected_embedding));
+        }
+        if healthy && config.local_ai.preload_vision_model && !vision_found {
+            issues.push(format!("Vision model `{}` is not installed", expected_vision));
+        }
+        if let Some(ref e) = tags_error {
+            issues.push(format!("Failed to list models: {e}"));
+        }
+
+        log::debug!(
+            "[local_ai] diagnostics: healthy={} models={} issues={}",
+            healthy,
+            models.len(),
+            issues.len(),
+        );
+
+        Ok(serde_json::json!({
+            "ollama_running": healthy,
+            "ollama_binary_path": binary_path,
+            "installed_models": models,
+            "expected": {
+                "chat_model": expected_chat,
+                "chat_found": chat_found,
+                "embedding_model": expected_embedding,
+                "embedding_found": embedding_found,
+                "vision_model": expected_vision,
+                "vision_found": vision_found,
+            },
+            "issues": issues,
+            "ok": issues.is_empty(),
+        }))
+    }
+
+    async fn list_models(&self) -> Result<Vec<OllamaModelTag>, String> {
+        let response = self
+            .http
+            .get(format!("{OLLAMA_BASE_URL}/api/tags"))
+            .timeout(std::time::Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|e| format!("ollama tags request failed: {e}"))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("ollama tags failed with status {}: {}", status, body.trim()));
+        }
+        let payload: OllamaTagsResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("ollama tags parse failed: {e}"))?;
+        Ok(payload.models)
+    }
+
+    fn resolve_binary_path(&self, config: &Config) -> Option<String> {
+        if let Some(ref custom) = config.local_ai.ollama_binary_path {
+            let p = PathBuf::from(custom);
+            if p.is_file() {
+                return Some(custom.clone());
+            }
+        }
+        let workspace_bin = workspace_ollama_binary(config);
+        if workspace_bin.is_file() {
+            return Some(workspace_bin.display().to_string());
+        }
+        crate::openhuman::local_ai::install::find_system_ollama_binary()
+            .map(|p| p.display().to_string())
+    }
+
     pub(in crate::openhuman::local_ai::service) async fn has_model(
         &self,
         model: &str,

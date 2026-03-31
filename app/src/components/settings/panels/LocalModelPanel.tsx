@@ -10,6 +10,8 @@ import {
   type LocalAiSuggestion,
   type LocalAiTtsResult,
   openhumanLocalAiApplyPreset,
+  type LocalAiDiagnostics,
+  openhumanLocalAiDiagnostics,
   openhumanLocalAiSetOllamaPath,
   openhumanLocalAiAssetsStatus,
   openhumanLocalAiDownload,
@@ -158,6 +160,10 @@ const LocalModelPanel = () => {
   const [ttsOutput, setTtsOutput] = useState<LocalAiTtsResult | null>(null);
   const [isTtsLoading, setIsTtsLoading] = useState(false);
 
+  const [diagnostics, setDiagnostics] = useState<LocalAiDiagnostics | null>(null);
+  const [isDiagnosticsLoading, setIsDiagnosticsLoading] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState('');
+
   const [presetsData, setPresetsData] = useState<PresetsResponse | null>(null);
   const [presetsLoading, setPresetsLoading] = useState(true);
   const [isApplyingPreset, setIsApplyingPreset] = useState(false);
@@ -305,18 +311,20 @@ const LocalModelPanel = () => {
     }
   };
 
+  const [promptError, setPromptError] = useState('');
+
   const runPromptTest = async () => {
     if (!promptInput.trim()) return;
     setIsPromptLoading(true);
     setPromptOutput('');
-    setStatusError('');
+    setPromptError('');
     try {
       const result = await openhumanLocalAiPrompt(promptInput.trim(), 180, promptNoThink);
       setPromptOutput(result.result);
       await loadStatus();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Prompt test failed';
-      setStatusError(message);
+      setPromptError(message);
     } finally {
       setIsPromptLoading(false);
     }
@@ -870,11 +878,19 @@ const LocalModelPanel = () => {
                     {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
                   </button>
                 </div>
-                <div className="text-xs text-stone-400">
-                  Calls `openhuman.local_ai_prompt` via Rust core
-                </div>
+                {isPromptLoading && (
+                  <div className="flex items-center gap-2 text-xs text-blue-300">
+                    <div className="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                    Running prompt against local model...
+                  </div>
+                )}
+                {promptError && (
+                  <div className="rounded-md bg-red-950/50 border border-red-800/50 p-3 text-xs text-red-300">
+                    {promptError}
+                  </div>
+                )}
                 {promptOutput && (
-                  <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
+                  <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 max-h-64 overflow-auto">
                     {promptOutput}
                   </pre>
                 )}

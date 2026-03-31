@@ -124,6 +124,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("local_ai_presets"),
         schemas("local_ai_apply_preset"),
         schemas("local_ai_set_ollama_path"),
+        schemas("local_ai_diagnostics"),
     ]
 }
 
@@ -220,6 +221,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_set_ollama_path"),
             handler: handle_local_ai_set_ollama_path,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_diagnostics"),
+            handler: handle_local_ai_diagnostics,
         },
     ]
 }
@@ -436,6 +441,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Apply a model tier preset to local AI config and persist.",
             inputs: vec![required_string("tier", "Tier to apply: low, medium, high.")],
             outputs: vec![json_output("result", "Applied tier status.")],
+        },
+        "local_ai_diagnostics" => ControllerSchema {
+            namespace: "local_ai",
+            function: "diagnostics",
+            description: "Run Ollama diagnostics: check server health, list installed models, verify expected models.",
+            inputs: vec![],
+            outputs: vec![json_output("diagnostics", "Diagnostic report.")],
         },
         "local_ai_set_ollama_path" => ControllerSchema {
             namespace: "local_ai",
@@ -753,6 +765,14 @@ fn handle_local_ai_apply_preset(params: Map<String, Value>) -> ControllerFuture 
             "embedding_model_id": config.local_ai.embedding_model_id,
             "quantization": config.local_ai.quantization,
         }))
+    })
+}
+
+fn handle_local_ai_diagnostics(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let service = crate::openhuman::local_ai::global(&config);
+        service.diagnostics(&config).await
     })
 }
 
