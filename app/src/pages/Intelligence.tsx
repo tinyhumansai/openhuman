@@ -27,9 +27,13 @@ import type {
   ToastNotification,
 } from '../types/intelligence';
 
+type IntelligenceTab = 'memory' | 'subconscious' | 'dreams';
+
 export default function Intelligence() {
   const dispatch = useDispatch();
   const { aiStatus } = useIntelligenceStats();
+
+  const [activeTab, setActiveTab] = useState<IntelligenceTab>('memory');
 
   // Redux state
   const intelligenceState = useSelector((state: RootState) => state.intelligence);
