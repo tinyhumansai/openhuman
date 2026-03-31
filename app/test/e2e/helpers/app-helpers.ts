@@ -1,41 +1,61 @@
 /**
- * Shared utilities for Appium mac2 + WebDriverIO E2E tests.
+ * Cross-platform app lifecycle helpers for E2E tests.
  *
- * The mac2 driver uses Apple's XCUITest to automate macOS apps.
- * It sees the WKWebView content through the accessibility tree.
+ * ## Appium Mac2 (macOS)
+ * XCUITest launches the .app bundle.  The app starts with visible:false
+ * (tray app) — only the menu bar is visible until a deep link shows the window.
+ * Readiness is detected by polling the accessibility tree element count.
  *
- * NOTE: The OpenHuman app starts with visible:false (tray app).
- * The window is hidden by default — only the menu bar is visible.
- * Tests should account for this.
+ * ## tauri-driver (Linux)
+ * tauri-driver launches the debug binary directly and exposes the WebView
+ * DOM via W3C WebDriver.  Readiness is detected by checking document state
+ * and the presence of the React root element.
  */
 
-// `browser` is a global injected by WebDriverIO at runtime — do not redefine it.
+import { isTauriDriver } from './platform';
 
 /**
  * Wait for the app process to be ready.
  * The app starts with a hidden window, so we just wait for the process
- * to initialize (XCUITest has already launched it).
+ * to initialize (driver has already launched it).
  */
 export async function waitForApp(): Promise<void> {
   await browser.pause(5_000);
 }
 
 /**
- * Wait for the accessibility tree to populate with WebView content.
+ * Wait for the app to be ready for interaction.
  *
- * More reliable than a fixed pause — polls until the tree has a reasonable
- * number of elements (indicating the WebView has rendered and the
- * accessibility bridge has exposed them).
- *
- * @param {number} [timeout=15000] - Maximum time to wait in milliseconds.
- * @param {number} [minElements=5] - Minimum element count to consider "ready".
- * @returns {Promise<void>}
+ * - Mac2: Poll accessibility tree until it has enough elements
+ * - tauri-driver: Wait for document.readyState and React root
  */
 export async function waitForAppReady(
   timeout: number = 15_000,
   minElements: number = 5
 ): Promise<void> {
   const start = Date.now();
+
+  if (isTauriDriver()) {
+    // Wait for the DOM to be ready and have meaningful content
+    while (Date.now() - start < timeout) {
+      try {
+        const ready = await browser.execute(() => {
+          if (document.readyState !== 'complete') return false;
+          // Check for React root or enough DOM elements
+          const root = document.getElementById('root');
+          if (root && root.children.length > 0) return true;
+          return document.querySelectorAll('*').length >= 10;
+        });
+        if (ready) return;
+      } catch {
+        // WebView not yet available
+      }
+      await browser.pause(500);
+    }
+    throw new Error(`waitForAppReady timed out after ${timeout}ms (tauri-driver)`);
+  }
+
+  // Mac2 path: poll accessibility tree
   let lastCount = 0;
   while (Date.now() - start < timeout) {
     try {
@@ -54,13 +74,22 @@ export async function waitForAppReady(
 }
 
 /**
- * Check if any element matching the predicate exists.
+ * Check if any element matching the given selector exists.
  *
- * @param {string} predicate
- * @returns {Promise<boolean>}
+ * - Mac2: `predicate` is an iOS predicate string (e.g. `elementType == 56`)
+ * - tauri-driver: `predicate` is a CSS selector (e.g. `button`, `#root`)
+ *
+ * For cross-platform specs, prefer the helpers in element-helpers.ts
+ * (hasAppChrome, textExists, etc.) over calling this directly.
  */
 export async function elementExists(predicate: string): Promise<boolean> {
   try {
+    if (isTauriDriver()) {
+      // Treat predicate as a CSS selector on Linux
+      const el = await browser.$(predicate);
+      return await el.isExisting();
+    }
+
     const el = await browser.$(`-ios predicate string:${predicate}`);
     return await el.isExisting();
   } catch {

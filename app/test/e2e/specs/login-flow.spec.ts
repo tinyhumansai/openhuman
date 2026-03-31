@@ -24,6 +24,7 @@ import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickText,
   dumpAccessibilityTree,
+  hasAppChrome,
   textExists,
   waitForText,
   waitForWebView,
@@ -75,8 +76,8 @@ describe('Login flow — complete with mock data', () => {
   // -----------------------------------------------------------------------
 
   it('app starts with window hidden (tray app)', async () => {
-    const menuBar = await browser.$('//XCUIElementTypeMenuBar');
-    expect(await menuBar.isExisting()).toBe(true);
+    const hasChrome = await hasAppChrome();
+    expect(hasChrome).toBe(true);
   });
 
   it('deep link triggers login and shows the app window', async () => {
@@ -129,8 +130,9 @@ describe('Login flow — complete with mock data', () => {
       console.log('[LoginFlow] InviteCodeStep text not found. Tree:\n', tree.slice(0, 3000));
     }
 
-    const webView = await browser.$('//XCUIElementTypeWebView');
-    expect(await webView.isExisting()).toBe(true);
+    const webView = await waitForWebView();
+    // waitForWebView resolves when the WebView is ready (null on tauri-driver = DOM ready)
+    expect(webView === null || (webView && (await webView.isExisting()))).toBe(true);
   });
 
   it('skip invite code step → advances to FeaturesStep', async () => {

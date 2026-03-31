@@ -1,17 +1,21 @@
 /**
  * Deep-link trigger utilities for E2E tests.
  *
- * Preferred path: run `window.__simulateDeepLink(url)` inside the Tauri WKWebView
- * (same handler as `onOpenUrl` in desktopDeepLinkListener). This matches real auth
- * routing without relying on OS URL-handler registration.
+ * ## tauri-driver (Linux — preferred CI path)
+ * `browser.execute()` is fully supported, so `window.__simulateDeepLink()` is
+ * the primary strategy.  Shell fallback uses `xdg-open`.
  *
- * Fallback: Appium `macos: deepLink` / macOS `open` when JS execution in the WebView
- * is unavailable.
+ * ## Appium Mac2 (macOS — local dev path)
+ * Mac2 does NOT support W3C Execute Script in WKWebView.  Strategies (in order):
+ * 1. `macos: activateApp` + `macos: deepLink` extension commands
+ * 2. Shell `open -a ... "url"` fallback
  */
 import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+import { isTauriDriver } from './platform';
 
 /** Set `DEBUG_E2E_DEEPLINK=0` to silence deep-link helper logs (default: verbose for debugging). */
 function deepLinkDebug(...args: unknown[]): void {
@@ -30,32 +34,20 @@ function execCommand(command: string): Promise<void> {
 }
 
 /**
- * Appium mac2-driver only implements `browser.execute('macos: …')` — it does not support
- * W3C Execute Script / JS in WKWebView, so `browser.execute(() => …)` always fails with
- * "Unsupported execute method". Skip the WebView simulate path in that case.
+ * Check if the WebDriver session supports `browser.execute()` for running
+ * JS inside the WebView.
+ *
+ * - tauri-driver: YES
+ * - Appium Mac2: NO
  */
 function supportsWebDriverScriptExecute(): boolean {
   if (typeof browser === 'undefined') return false;
-  const caps = browser.capabilities as Record<string, unknown>;
-  const automation = String(
-    caps['appium:automationName'] ?? caps['automationName'] ?? ''
-  ).toLowerCase();
-  if (automation === 'mac2' || automation.includes('mac2')) {
-    deepLinkDebug('WebView script execute skipped (Appium Mac2 has no W3C executeScript).', {
-      automation,
-    });
-    return false;
-  }
-  const platform = String(caps.platformName ?? caps['appium:platformName'] ?? '').toLowerCase();
-  // macOS desktop E2E uses Appium Mac2 (no W3C execute in WebView); avoid failed pings when
-  // automationName is missing from the session object.
-  if (platform === 'mac' && automation === '') {
-    deepLinkDebug('WebView script execute skipped (mac platform, empty automationName).', {
-      platform,
-    });
-    return false;
-  }
-  return true;
+
+  // tauri-driver supports full W3C Execute Script
+  if (isTauriDriver()) return true;
+
+  // Mac2 does not support W3C Execute Script in WKWebView
+  return false;
 }
 
 /**
@@ -121,6 +113,20 @@ function resolveBuiltAppPath(): string | null {
   const helperDir = path.dirname(fileURLToPath(import.meta.url));
   const appDir = path.resolve(helperDir, '..', '..');
   const repoRoot = path.resolve(appDir, '..');
+
+  if (process.platform === 'linux') {
+    // tauri-driver launches the binary directly — look for the debug binary
+    const candidates = [
+      path.join(repoRoot, 'target', 'debug', 'OpenHuman'),
+      path.join(appDir, 'src-tauri', 'target', 'debug', 'OpenHuman'),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  // macOS: look for the .app bundle
   const candidates = [
     path.join(appDir, 'src-tauri', 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
     path.join(repoRoot, 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
@@ -134,58 +140,78 @@ function resolveBuiltAppPath(): string | null {
 }
 
 /**
- * Trigger a deep link URL via the macOS `open` command.
- * Resolves once the OS has dispatched the URL (does NOT wait for the app to
- * finish handling it).
+ * Trigger a deep link URL.
  *
- * @param {string} url
- * @returns {Promise<void>}
+ * Strategy order:
+ * 1. WebView `__simulateDeepLink()` (tauri-driver primary, Mac2 skip)
+ * 2. Appium `macos: deepLink` extension (Mac2 only)
+ * 3. Shell fallback: `xdg-open` (Linux) or `open` (macOS)
  */
 export async function triggerDeepLink(url: string): Promise<void> {
   const appPath = resolveBuiltAppPath();
-  deepLinkDebug('triggerDeepLink', { url, appPath: appPath ?? '(none)' });
+  deepLinkDebug('triggerDeepLink', { url, appPath: appPath ?? '(none)', platform: process.platform });
 
   if (typeof browser !== 'undefined') {
-    try {
-      await browser.execute('macos: activateApp', { bundleId: 'com.openhuman.app' } as Record<
-        string,
-        unknown
-      >);
-      deepLinkDebug('macos: activateApp OK');
-    } catch (err) {
-      deepLinkDebug(
-        'macos: activateApp failed (non-fatal)',
-        err instanceof Error ? err.message : err
-      );
-    }
-
+    // Strategy 1: WebView simulate (works on tauri-driver, skipped on Mac2)
     if (await trySimulateDeepLinkInWebView(url)) {
       deepLinkDebug('deep link delivered via WebView simulate');
       return;
     }
 
-    try {
-      await browser.execute('macos: launchApp', {
-        bundleId: 'com.openhuman.app',
-        arguments: [url],
-      } as Record<string, unknown>);
-      deepLinkDebug('macos: launchApp OK');
-    } catch (err) {
-      deepLinkDebug('macos: launchApp failed', err instanceof Error ? err.message : err);
-    }
-    try {
-      await browser.execute('macos: deepLink', { url, bundleId: 'com.openhuman.app' } as Record<
-        string,
-        unknown
-      >);
-      deepLinkDebug('macos: deepLink OK');
-      return;
-    } catch (err) {
-      deepLinkDebug('macos: deepLink failed', err instanceof Error ? err.message : err);
+    // Strategy 2: Appium Mac2 extension commands (macOS only)
+    if (!isTauriDriver()) {
+      try {
+        await browser.execute('macos: activateApp', { bundleId: 'com.openhuman.app' } as Record<
+          string,
+          unknown
+        >);
+        deepLinkDebug('macos: activateApp OK');
+      } catch (err) {
+        deepLinkDebug(
+          'macos: activateApp failed (non-fatal)',
+          err instanceof Error ? err.message : err
+        );
+      }
+
+      try {
+        await browser.execute('macos: launchApp', {
+          bundleId: 'com.openhuman.app',
+          arguments: [url],
+        } as Record<string, unknown>);
+        deepLinkDebug('macos: launchApp OK');
+      } catch (err) {
+        deepLinkDebug('macos: launchApp failed', err instanceof Error ? err.message : err);
+      }
+      try {
+        await browser.execute('macos: deepLink', { url, bundleId: 'com.openhuman.app' } as Record<
+          string,
+          unknown
+        >);
+        deepLinkDebug('macos: deepLink OK');
+        return;
+      } catch (err) {
+        deepLinkDebug('macos: deepLink failed', err instanceof Error ? err.message : err);
+      }
     }
   }
 
-  // Ensure the app receives a reopen event so hidden tray-mode windows are shown.
+  // Strategy 3: Shell fallback
+  if (process.platform === 'linux') {
+    // On Linux, use xdg-open for URL scheme dispatch
+    try {
+      deepLinkDebug('fallback shell: xdg-open', url);
+      await execCommand(`xdg-open "${url}"`);
+      deepLinkDebug('deep link dispatched via xdg-open');
+      return;
+    } catch (err) {
+      deepLinkDebug('xdg-open failed', err instanceof Error ? err.message : err);
+      throw new Error(
+        `Failed to trigger deep link: ${err instanceof Error ? err.message : err}`
+      );
+    }
+  }
+
+  // macOS shell fallback
   if (appPath) {
     try {
       await execCommand(`open -a "${appPath}"`);
@@ -216,9 +242,6 @@ export async function triggerDeepLink(url: string): Promise<void> {
 
 /**
  * Convenience wrapper for auth deep links.
- *
- * @param {string} token - The login token to embed in the URL.
- * @returns {Promise<void>}
  */
 export function triggerAuthDeepLink(token: string): Promise<void> {
   const envBypassToken = (process.env.OPENHUMAN_E2E_AUTH_BYPASS_TOKEN || '').trim();

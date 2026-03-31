@@ -26,6 +26,7 @@ import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickButton,
+  clickNativeButton,
   clickText,
   dumpAccessibilityTree,
   textExists,
@@ -45,38 +46,6 @@ import {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Click a native XCUIElementTypeButton by its label/title attribute.
- * Unlike clickText which matches any element, this targets only buttons.
- * Required when text labels sit next to (but outside) the button bounds.
- */
-async function clickNativeButton(text, timeout = 10_000) {
-  const selector =
-    `//XCUIElementTypeButton[contains(@label, "${text}") or ` + `contains(@title, "${text}")]`;
-  const el = await browser.$(selector);
-  await el.waitForExist({ timeout, timeoutMsg: `Button "${text}" not found within ${timeout}ms` });
-
-  const location = await el.getLocation();
-  const size = await el.getSize();
-  const centerX = Math.round(location.x + size.width / 2);
-  const centerY = Math.round(location.y + size.height / 2);
-
-  await browser.performActions([
-    {
-      type: 'pointer',
-      id: 'mouse1',
-      parameters: { pointerType: 'mouse' },
-      actions: [
-        { type: 'pointerMove', duration: 10, x: centerX, y: centerY },
-        { type: 'pointerDown', button: 0 },
-        { type: 'pause', duration: 50 },
-        { type: 'pointerUp', button: 0 },
-      ],
-    },
-  ]);
-  await browser.releaseActions();
-}
 
 /**
  * Poll the mock server request log until a matching request appears.
@@ -600,28 +569,33 @@ describe('Auth & Access Control', () => {
       // Use mouse wheel scroll inside the content area.
       console.log('[AuthAccess] Log out not visible, attempting scroll...');
       try {
-        const webView = await browser.$('//XCUIElementTypeWebView');
-        const loc = await webView.getLocation();
-        const size = await webView.getSize();
-        // Scroll inside the right content area (not the sidebar)
-        const scrollX = Math.round(loc.x + size.width * 0.65);
-        const startY = Math.round(loc.y + size.height * 0.8);
-        const endY = Math.round(loc.y + size.height * 0.2);
+        const webView = await waitForWebView();
+        if (webView) {
+          const loc = await webView.getLocation();
+          const size = await webView.getSize();
+          // Scroll inside the right content area (not the sidebar)
+          const scrollX = Math.round(loc.x + size.width * 0.65);
+          const startY = Math.round(loc.y + size.height * 0.8);
+          const endY = Math.round(loc.y + size.height * 0.2);
 
-        await browser.performActions([
-          {
-            type: 'pointer',
-            id: 'scroll1',
-            parameters: { pointerType: 'mouse' },
-            actions: [
-              { type: 'pointerMove', duration: 10, x: scrollX, y: startY },
-              { type: 'pointerDown', button: 0 },
-              { type: 'pointerMove', duration: 300, x: scrollX, y: endY },
-              { type: 'pointerUp', button: 0 },
-            ],
-          },
-        ]);
-        await browser.releaseActions();
+          await browser.performActions([
+            {
+              type: 'pointer',
+              id: 'scroll1',
+              parameters: { pointerType: 'mouse' },
+              actions: [
+                { type: 'pointerMove', duration: 10, x: scrollX, y: startY },
+                { type: 'pointerDown', button: 0 },
+                { type: 'pointerMove', duration: 300, x: scrollX, y: endY },
+                { type: 'pointerUp', button: 0 },
+              ],
+            },
+          ]);
+          await browser.releaseActions();
+        } else {
+          // tauri-driver: use keyboard scroll
+          await browser.execute(() => window.scrollBy(0, 500));
+        }
         await browser.pause(2_000);
       } catch (scrollErr) {
         console.log('[AuthAccess] Scroll attempt failed:', scrollErr);

@@ -1,0 +1,36 @@
+##
+# Run Linux E2E tests locally from macOS via Docker.
+#
+# Usage:
+#   # Build + run all E2E flows
+#   docker compose -f e2e/docker-compose.yml run --rm e2e
+#
+#   # Run a specific spec
+#   docker compose -f e2e/docker-compose.yml run --rm e2e \
+#     bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
+#
+#   # Build the E2E app first (if not already built)
+#   docker compose -f e2e/docker-compose.yml run --rm e2e \
+#     yarn workspace openhuman-app test:e2e:build
+#
+# Notes:
+#   - The repo is bind-mounted at /app so builds persist between runs
+#   - Rust target/ and node_modules/ are cached via named volumes
+#   - Xvfb provides a virtual display for webkit2gtk rendering
+#
+services:
+  e2e:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    volumes:
+      - ..:/app
+      - e2e-cargo-registry:/root/.cargo/registry
+      - e2e-cargo-git:/root/.cargo/git
+    environment:
+      - DISPLAY=:99
+      - CI=true
+
+volumes:
+  e2e-cargo-registry:
+  e2e-cargo-git:

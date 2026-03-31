@@ -21,7 +21,9 @@ import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickButton,
+  clickNativeButton,
   clickText,
+  clickToggle,
   dumpAccessibilityTree,
   textExists,
   waitForText,
@@ -42,36 +44,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const LOG_PREFIX = '[CryptoPayment]';
-
-/**
- * Click a native XCUIElementTypeButton by its label/title attribute.
- */
-async function clickNativeButton(text, timeout = 10_000) {
-  const selector =
-    `//XCUIElementTypeButton[contains(@label, "${text}") or ` + `contains(@title, "${text}")]`;
-  const el = await browser.$(selector);
-  await el.waitForExist({ timeout, timeoutMsg: `Button "${text}" not found within ${timeout}ms` });
-
-  const location = await el.getLocation();
-  const size = await el.getSize();
-  const centerX = Math.round(location.x + size.width / 2);
-  const centerY = Math.round(location.y + size.height / 2);
-
-  await browser.performActions([
-    {
-      type: 'pointer',
-      id: 'mouse1',
-      parameters: { pointerType: 'mouse' },
-      actions: [
-        { type: 'pointerMove', duration: 10, x: centerX, y: centerY },
-        { type: 'pointerDown', button: 0 },
-        { type: 'pause', duration: 50 },
-        { type: 'pointerUp', button: 0 },
-      ],
-    },
-  ]);
-  await browser.releaseActions();
-}
 
 /**
  * Poll the mock server request log until a matching request appears.
@@ -300,85 +272,11 @@ async function reAuthAndGoToBilling(token = 'e2e-crypto-payment-token') {
 
 /**
  * Toggle the "Pay with Crypto" switch ON.
- * Uses multiple strategies because the <button role="switch"> may map to
- * different accessibility element types in WKWebView.
  */
 async function enableCryptoToggle() {
-  let toggled = false;
-
-  // Strategy 1: Click a native switch element
-  const switchSelectors = [
-    '//XCUIElementTypeSwitch',
-    '//XCUIElementTypeCheckBox',
-    `//*[@role="switch"]`,
-  ];
-  for (const sel of switchSelectors) {
-    try {
-      const switchEl = await browser.$(sel);
-      if (await switchEl.isExisting()) {
-        const loc = await switchEl.getLocation();
-        const sz = await switchEl.getSize();
-        const cx = Math.round(loc.x + sz.width / 2);
-        const cy = Math.round(loc.y + sz.height / 2);
-        await browser.performActions([
-          {
-            type: 'pointer',
-            id: 'mouse1',
-            parameters: { pointerType: 'mouse' },
-            actions: [
-              { type: 'pointerMove', duration: 10, x: cx, y: cy },
-              { type: 'pointerDown', button: 0 },
-              { type: 'pause', duration: 50 },
-              { type: 'pointerUp', button: 0 },
-            ],
-          },
-        ]);
-        await browser.releaseActions();
-        console.log(`${LOG_PREFIX} Toggled crypto via ${sel}`);
-        toggled = true;
-        break;
-      }
-    } catch {
-      // Try next selector
-    }
-  }
-
-  // Strategy 2: Positional click at the far right of the "Pay with Crypto" row
-  if (!toggled) {
-    const labelEl = await waitForText('Pay with Crypto', 10_000);
-    const loc = await labelEl.getLocation();
-    const sz = await labelEl.getSize();
-
-    const webView = await browser.$('//XCUIElementTypeWebView');
-    const wvLoc = await webView.getLocation();
-    const wvSz = await webView.getSize();
-    const toggleX = Math.round(wvLoc.x + wvSz.width - 60);
-    const toggleY = Math.round(loc.y + sz.height / 2);
-    console.log(
-      `${LOG_PREFIX} Positional click at (${toggleX}, ${toggleY}), ` +
-        `label at (${loc.x}, ${loc.y}), webview right edge: ${wvLoc.x + wvSz.width}`
-    );
-
-    await browser.performActions([
-      {
-        type: 'pointer',
-        id: 'mouse1',
-        parameters: { pointerType: 'mouse' },
-        actions: [
-          { type: 'pointerMove', duration: 10, x: toggleX, y: toggleY },
-          { type: 'pointerDown', button: 0 },
-          { type: 'pause', duration: 50 },
-          { type: 'pointerUp', button: 0 },
-        ],
-      },
-    ]);
-    await browser.releaseActions();
-    console.log(`${LOG_PREFIX} Toggled crypto via positional click`);
-    toggled = true;
-  }
-
+  await clickToggle();
   await browser.pause(1_000);
-  return toggled;
+  return true;
 }
 
 /**

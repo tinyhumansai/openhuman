@@ -23,6 +23,7 @@ import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickButton,
+  clickNativeButton,
   clickText,
   dumpAccessibilityTree,
   textExists,
@@ -44,36 +45,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const LOG_PREFIX = '[NotionFlow]';
-
-/**
- * Click a native XCUIElementTypeButton by its label/title attribute.
- */
-async function clickNativeButton(text, timeout = 10_000) {
-  const selector =
-    `//XCUIElementTypeButton[contains(@label, "${text}") or ` + `contains(@title, "${text}")]`;
-  const el = await browser.$(selector);
-  await el.waitForExist({ timeout, timeoutMsg: `Button "${text}" not found within ${timeout}ms` });
-
-  const location = await el.getLocation();
-  const size = await el.getSize();
-  const centerX = Math.round(location.x + size.width / 2);
-  const centerY = Math.round(location.y + size.height / 2);
-
-  await browser.performActions([
-    {
-      type: 'pointer',
-      id: 'mouse1',
-      parameters: { pointerType: 'mouse' },
-      actions: [
-        { type: 'pointerMove', duration: 10, x: centerX, y: centerY },
-        { type: 'pointerDown', button: 0 },
-        { type: 'pause', duration: 50 },
-        { type: 'pointerUp', button: 0 },
-      ],
-    },
-  ]);
-  await browser.releaseActions();
-}
 
 /**
  * Poll the mock server request log until a matching request appears.
