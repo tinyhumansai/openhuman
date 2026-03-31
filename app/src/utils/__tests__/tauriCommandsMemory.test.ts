@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { memoryDocIngest, memoryGraphQuery } from '../tauriCommands';
+
 // The global setup mocks isTauri to return false by default.
 // We need to selectively override it for these tests.
 
@@ -12,18 +14,13 @@ vi.mock('../tauriCommands', async () => {
 
 // Mock @tauri-apps/api/core — isTauri controls the guard in each function
 const mockIsTauri = vi.fn(() => false);
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
-  isTauri: () => mockIsTauri(),
-}));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: () => mockIsTauri() }));
 
 // Mock callCoreRpc — the underlying transport for all memory commands
 const mockCallCoreRpc = vi.fn();
 vi.mock('../../services/coreRpcClient', () => ({
   callCoreRpc: (...args: unknown[]) => mockCallCoreRpc(...args),
 }));
-
-import { memoryDocIngest, memoryGraphQuery } from '../tauriCommands';
 
 describe('memoryGraphQuery', () => {
   it('throws when not running in Tauri', async () => {
@@ -81,7 +78,12 @@ describe('memoryDocIngest', () => {
 
   it('calls core RPC with memory.doc.ingest and forwards all params', async () => {
     mockIsTauri.mockReturnValue(true);
-    const ingestResult = { document_id: 'doc-123', entity_count: 3, relation_count: 2, chunk_count: 5 };
+    const ingestResult = {
+      document_id: 'doc-123',
+      entity_count: 3,
+      relation_count: 2,
+      chunk_count: 5,
+    };
     mockCallCoreRpc.mockResolvedValue(ingestResult);
 
     const params = {
@@ -98,10 +100,7 @@ describe('memoryDocIngest', () => {
 
     const result = await memoryDocIngest(params);
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'memory.doc.ingest',
-      params,
-    });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'memory.doc.ingest', params });
     expect(result).toEqual(ingestResult);
   });
 
@@ -112,9 +111,6 @@ describe('memoryDocIngest', () => {
     const params = { namespace: 'ns', key: 'k', title: 't', content: 'c' };
     await memoryDocIngest(params);
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'memory.doc.ingest',
-      params,
-    });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'memory.doc.ingest', params });
   });
 });
