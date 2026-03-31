@@ -124,18 +124,30 @@ impl LocalAiService {
             ));
         }
 
-        if let Err(err) = self.ensure_ollama_server(config).await {
-            let mut status = self.status.lock();
-            status.state = "degraded".to_string();
-            // Only append tier hints for model-related errors, not install errors.
-            let is_install_error = status.error_category.as_deref() == Some("install");
-            if is_install_error {
-                status.warning = Some(err);
-            } else {
-                status.error_category = Some("server".to_string());
-                status.warning = Some(format_degraded_warning(&err, config));
+        if let Err(first_err) = self.ensure_ollama_server(config).await {
+            log::warn!(
+                "[local_ai] ensure_ollama_server failed, retrying with fresh install: {first_err}"
+            );
+            // Force a fresh install attempt before giving up.
+            {
+                let mut status = self.status.lock();
+                status.state = "installing".to_string();
+                status.warning = Some("Retrying Ollama installation...".to_string());
+                status.error_detail = None;
+                status.error_category = None;
             }
-            return;
+            if let Err(err) = self.ensure_ollama_server_fresh(config).await {
+                let mut status = self.status.lock();
+                status.state = "degraded".to_string();
+                let is_install_error = status.error_category.as_deref() == Some("install");
+                if is_install_error {
+                    status.warning = Some(err);
+                } else {
+                    status.error_category = Some("server".to_string());
+                    status.warning = Some(format_degraded_warning(&err, config));
+                }
+                return;
+            }
         }
 
         if let Err(err) = self.ensure_models_available(config).await {

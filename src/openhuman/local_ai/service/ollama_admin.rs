@@ -6,7 +6,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::local_ai::install::{find_system_ollama_binary, run_ollama_install_script};
 use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::ollama_api::{
-    OllamaPullEvent, OllamaPullRequest, OllamaTagsResponse, OLLAMA_BASE_URL,
+    OllamaModelTag, OllamaPullEvent, OllamaPullRequest, OllamaTagsResponse, OLLAMA_BASE_URL,
 };
 use crate::openhuman::local_ai::paths::workspace_ollama_binary;
 
@@ -50,6 +50,61 @@ impl LocalAiService {
         }
 
         Err("Ollama runtime is not reachable at http://127.0.0.1:11434. Start `ollama serve` and retry.".to_string())
+    }
+
+    /// Like `ensure_ollama_server`, but forces a fresh install of the Ollama binary
+    /// (ignoring cached/workspace binaries). Used as a retry after the first attempt fails.
+    pub(in crate::openhuman::local_ai::service) async fn ensure_ollama_server_fresh(
+        &self,
+        config: &Config,
+    ) -> Result<(), String> {
+        // Force a fresh download regardless of existing binaries.
+        self.download_and_install_ollama(config).await?;
+
+        let ollama_cmd = workspace_ollama_binary(config);
+        if !ollama_cmd.is_file() {
+            // Also check system path after install.
+            let system_bin = find_system_ollama_binary()
+                .ok_or_else(|| "Ollama installed but binary not found on system".to_string())?;
+            // Try to use the system binary directly.
+            return self.start_and_wait_for_server(&system_bin).await;
+        }
+
+        self.start_and_wait_for_server(&ollama_cmd).await
+    }
+
+    async fn start_and_wait_for_server(&self, ollama_cmd: &Path) -> Result<(), String> {
+        if self.ollama_healthy().await {
+            return Ok(());
+        }
+
+        if let Err(err) = tokio::process::Command::new(ollama_cmd)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+        {
+            return Err(format!(
+                "Ollama binary not available ({}; error: {err}).",
+                ollama_cmd.display()
+            ));
+        }
+
+        let _ = tokio::process::Command::new(ollama_cmd)
+            .arg("serve")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        for _ in 0..20 {
+            if self.ollama_healthy().await {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+
+        Err("Ollama runtime is not reachable after fresh install. Start `ollama serve` manually and retry.".to_string())
     }
 
     async fn resolve_or_install_ollama_binary(&self, config: &Config) -> Result<PathBuf, String> {

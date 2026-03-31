@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import ConnectionIndicator from '../components/ConnectionIndicator';
@@ -60,6 +60,7 @@ const Home = () => {
   const userName = user?.firstName || 'User';
   const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const autoRetryDoneRef = useRef(false);
 
   // Get greeting based on time
   const getGreeting = () => {
@@ -80,7 +81,17 @@ const Home = () => {
     const load = async () => {
       try {
         const status = await openhumanLocalAiStatus();
-        if (mounted) setLocalAiStatus(status.result);
+        if (mounted) {
+          setLocalAiStatus(status.result);
+          // Auto-retry bootstrap once if Ollama is degraded (install/server issue).
+          if (
+            status.result?.state === 'degraded' &&
+            !autoRetryDoneRef.current
+          ) {
+            autoRetryDoneRef.current = true;
+            void openhumanLocalAiDownload(true).catch(() => {});
+          }
+        }
       } catch {
         if (mounted) setLocalAiStatus(null);
       }
