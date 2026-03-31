@@ -1,3 +1,6 @@
+# Workflow docs (local only)
+workflow/
+
 # Logs
 logs
 *.log
