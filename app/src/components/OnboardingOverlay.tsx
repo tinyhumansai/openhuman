@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import Onboarding from '../pages/onboarding/Onboarding';
-import { selectIsOnboarded } from '../store/authSelectors';
-import { useAppSelector } from '../store/hooks';
+import { selectIsOnboarded, selectOnboardingDeferred } from '../store/authSelectors';
+import { setOnboardingDeferredForUser } from '../store/authSlice';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { DEV_FORCE_ONBOARDING } from '../utils/config';
 import {
   DEFAULT_WORKSPACE_ONBOARDING_FLAG,
@@ -18,10 +19,12 @@ import {
  * Waits for the user profile to load before making a decision.
  */
 const OnboardingOverlay = () => {
+  const dispatch = useAppDispatch();
   const token = useAppSelector(state => state.auth.token);
   const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
   const user = useAppSelector(state => state.user.user);
   const isOnboarded = useAppSelector(selectIsOnboarded);
+  const isDeferred = useAppSelector(selectOnboardingDeferred);
   const [hasWorkspaceFlag, setHasWorkspaceFlag] = useState<boolean | null>(null);
   const [dismissed, setDismissed] = useState(false);
 
@@ -50,6 +53,13 @@ const OnboardingOverlay = () => {
     setDismissed(true);
   }, []);
 
+  const handleDefer = useCallback(() => {
+    if (user?._id) {
+      dispatch(setOnboardingDeferredForUser({ userId: user._id, deferred: true }));
+    }
+    setDismissed(true);
+  }, [dispatch, user]);
+
   // Don't show if not logged in, bootstrap not complete, or user not loaded
   if (!token || !isAuthBootstrapComplete || !user?._id) return null;
 
@@ -59,13 +69,13 @@ const OnboardingOverlay = () => {
   // Determine if onboarding should show
   const shouldShow = DEV_FORCE_ONBOARDING
     ? !dismissed
-    : !isOnboarded && !hasWorkspaceFlag && !dismissed;
+    : !isOnboarded && !hasWorkspaceFlag && !isDeferred && !dismissed;
 
   if (!shouldShow) return null;
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-canvas-900/95 backdrop-blur-md flex items-center justify-center">
-      <Onboarding onComplete={handleComplete} />
+      <Onboarding onComplete={handleComplete} onDefer={handleDefer} />
     </div>,
     document.body
   );

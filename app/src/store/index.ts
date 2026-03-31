@@ -42,6 +42,7 @@ const authPersistConfig = {
     'isAnalyticsEnabledByUser',
     'encryptionKeyByUser',
     'primaryWalletAddressByUser',
+    'onboardingDeferredByUser',
   ],
 };
 
