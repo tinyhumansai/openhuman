@@ -283,14 +283,21 @@ class SkillManager {
       }
       await this.activateSkill(skillId);
     } else {
-      // No local runtime — try notifying via core RPC pass-through
+      // No local runtime — try notifying via core RPC pass-through.
+      // The credential object must use `credentialId` (not `integrationId`)
+      // to match what the JS bootstrap's oauth.fetch expects.
       try {
         await callCoreRpc({
           method: "openhuman.skills_rpc",
           params: {
             skill_id: skillId,
             method: "oauth/complete",
-            params: { integrationId, provider, ...extraCredential },
+            params: {
+              credentialId: integrationId,
+              provider: provider ?? "unknown",
+              grantedScopes: [] as string[],
+              ...extraCredential,
+            },
           },
         });
       } catch {
