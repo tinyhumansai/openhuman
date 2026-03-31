@@ -49,7 +49,7 @@ describe('memoryGraphQuery', () => {
     const result = await memoryGraphQuery('team', 'Alice', 'OWNS');
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'memory.graph.query',
+      method: 'openhuman.memory_graph_query',
       params: { namespace: 'team', subject: 'Alice', predicate: 'OWNS' },
     });
     expect(result).toEqual(mockRelations);
@@ -62,7 +62,7 @@ describe('memoryGraphQuery', () => {
     await memoryGraphQuery();
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'memory.graph.query',
+      method: 'openhuman.memory_graph_query',
       params: { namespace: undefined, subject: undefined, predicate: undefined },
     });
   });
@@ -100,7 +100,7 @@ describe('memoryDocIngest', () => {
 
     const result = await memoryDocIngest(params);
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'memory.doc.ingest', params });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_doc_ingest', params });
     expect(result).toEqual(ingestResult);
   });
 
@@ -111,6 +111,6 @@ describe('memoryDocIngest', () => {
     const params = { namespace: 'ns', key: 'k', title: 't', content: 'c' };
     await memoryDocIngest(params);
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'memory.doc.ingest', params });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.memory_doc_ingest', params });
   });
 });
