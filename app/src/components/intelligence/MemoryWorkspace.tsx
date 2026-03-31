@@ -13,8 +13,8 @@ import {
   memoryListNamespaces,
   memoryQueryNamespace,
   memoryRecallNamespace,
+  type GraphRelation,
 } from '../../utils/tauriCommands';
-import type { GraphRelation } from '../../utils/tauriCommands';
 
 type MemoryDoc = { documentId: string; namespace: string; title?: string; raw: unknown };
 
