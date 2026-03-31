@@ -11,7 +11,7 @@ vi.mock('../../utils/tauriCommands', () => ({
   DEFAULT_WORKSPACE_ONBOARDING_FLAG: '.skip_onboarding',
 }));
 
-vi.mock('../../utils/config', () => ({ DEV_FORCE_ONBOARDING: false }));
+// DEV_FORCE_ONBOARDING is already mocked as false in test/setup.ts
 
 const baseAuth = {
   token: 'test-jwt',
