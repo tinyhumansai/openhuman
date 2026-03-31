@@ -5,9 +5,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(target_os = "macos")]
 use uuid::Uuid;
 
-use super::context::AppContext;
-#[cfg(target_os = "macos")]
-use super::context::WindowBounds;
+use super::context::{AppContext, WindowBounds};
 #[cfg(target_os = "macos")]
 use super::limits::MAX_SCREENSHOT_BYTES;
 
