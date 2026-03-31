@@ -317,16 +317,58 @@ pub async fn list_history(limit: usize) -> Result<Vec<AcceptedCompletion>, Strin
     Ok(entries)
 }
 
-/// Delete all accepted-completion entries. Returns the number of entries removed.
+/// Delete all accepted-completion entries across all layers.
+/// Returns the total number of entries removed (KV + local docs).
 pub async fn clear_history() -> Result<usize, String> {
     let client = MemoryClient::new_local()?;
+
+    // 1. Clear KV entries (existing behaviour — powers the UI list).
     let rows = client.kv_list_namespace(AUTOCOMPLETE_KV_NAMESPACE).await?;
-    let count = rows.len();
+    let kv_count = rows.len();
     for row in &rows {
         if let Some(k) = row["key"].as_str() {
             let _ = client.kv_delete(Some(AUTOCOMPLETE_KV_NAMESPACE), k).await;
         }
     }
-    log::debug!("[autocomplete:history] cleared {count} entries");
-    Ok(count)
+
+    // 2. Clear local document entries (semantic search layer).
+    let doc_count = match client
+        .list_documents(Some(AUTOCOMPLETE_DOC_NAMESPACE))
+        .await
+    {
+        Ok(docs) => {
+            let items = docs
+                .get("documents")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let count = items.len();
+            for item in items {
+                if let Some(doc_id) = item.get("documentId").and_then(serde_json::Value::as_str) {
+                    let _ = client
+                        .delete_document(AUTOCOMPLETE_DOC_NAMESPACE, doc_id)
+                        .await;
+                }
+            }
+            count
+        }
+        Err(e) => {
+            log::warn!("[autocomplete:history] clear docs — list_documents failed: {e}");
+            0
+        }
+    };
+
+    // 3. Clear cloud Neocortex entries (best-effort, no-op if unauthenticated).
+    if let Err(e) = client
+        .delete_cloud_namespace(AUTOCOMPLETE_CLOUD_NAMESPACE)
+        .await
+    {
+        log::warn!("[autocomplete:history] clear cloud namespace failed: {e}");
+    }
+
+    let total = kv_count + doc_count;
+    log::debug!(
+        "[autocomplete:history] cleared {kv_count} KV + {doc_count} doc entries ({total} total)"
+    );
+    Ok(total)
 }
