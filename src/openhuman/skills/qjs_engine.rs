@@ -165,16 +165,16 @@ impl RuntimeEngine {
         let current =
             std::env::current_dir().map_err(|e| format!("Failed to get current dir: {e}"))?;
 
-        // 2. Dev: cwd/skills/skills
-        let dev_skills = current.join("skills").join("skills");
+        // 2. Dev: cwd/openhuman-skills/skills
+        let dev_skills = current.join("openhuman-skills").join("skills");
         if dev_skills.exists() {
             log::info!("[runtime] Using dev skills dir: {:?}", dev_skills);
             return Ok(dev_skills);
         }
 
-        // 3. Dev: ../skills/skills
+        // 3. Dev: ../openhuman-skills/skills
         if let Some(parent) = current.parent() {
-            let parent_skills = parent.join("skills").join("skills");
+            let parent_skills = parent.join("openhuman-skills").join("skills");
             if parent_skills.exists() {
                 log::info!("[runtime] Using parent dev skills dir: {:?}", parent_skills);
                 return Ok(parent_skills);
@@ -183,7 +183,7 @@ impl RuntimeEngine {
 
         // 4. Production: bundled resources
         if let Some(resource_dir) = self.resource_dir.read().as_ref() {
-            let bundled_skills = resource_dir.join("_up_").join("skills").join("skills");
+            let bundled_skills = resource_dir.join("_up_").join("openhuman-skills").join("skills");
             if bundled_skills.exists() {
                 log::info!(
                     "[runtime] Using bundled skills from resources: {:?}",
