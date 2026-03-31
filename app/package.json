@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.49.28",
+  "version": "0.49.29",
   "type": "module",
   "scripts": {
     "dev": "vite",
