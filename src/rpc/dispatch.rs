@@ -264,10 +264,7 @@ mod tests {
     #[tokio::test]
     async fn dispatch_returns_none_for_unknown_method() {
         let result = try_dispatch("nonexistent.method", json!({})).await;
-        assert!(
-            result.is_none(),
-            "unknown methods should return None"
-        );
+        assert!(result.is_none(), "unknown methods should return None");
     }
 
     /// Verify that params deserialization errors surface as `Some(Err(...))`.
