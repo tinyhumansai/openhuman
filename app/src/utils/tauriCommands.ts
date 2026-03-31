@@ -828,6 +828,8 @@ export interface LocalAiStatus {
   download_speed_bps?: number | null;
   eta_seconds?: number | null;
   warning?: string | null;
+  error_detail?: string | null;
+  error_category?: string | null;
   model_path?: string | null;
   active_backend: string;
   backend_reason?: string | null;
@@ -1417,6 +1419,38 @@ export async function openhumanLocalAiApplyPreset(tier: string): Promise<ApplyPr
   return await callCoreRpc<ApplyPresetResult>({
     method: 'openhuman.local_ai_apply_preset',
     params: { tier },
+  });
+}
+
+export interface LocalAiDiagnostics {
+  ollama_running: boolean;
+  ollama_binary_path: string | null;
+  installed_models: Array<{ name: string; size?: number | null; modified_at?: string | null }>;
+  expected: {
+    chat_model: string;
+    chat_found: boolean;
+    embedding_model: string;
+    embedding_found: boolean;
+    vision_model: string;
+    vision_found: boolean;
+  };
+  issues: string[];
+  ok: boolean;
+}
+
+export async function openhumanLocalAiDiagnostics(): Promise<LocalAiDiagnostics> {
+  return await callCoreRpc<LocalAiDiagnostics>({
+    method: 'openhuman.local_ai_diagnostics',
+    params: {},
+  });
+}
+
+export async function openhumanLocalAiSetOllamaPath(
+  path: string
+): Promise<{ ollama_binary_path: string | null; status: LocalAiStatus }> {
+  return await callCoreRpc<{ ollama_binary_path: string | null; status: LocalAiStatus }>({
+    method: 'openhuman.local_ai_set_ollama_path',
+    params: { path },
   });
 }
 

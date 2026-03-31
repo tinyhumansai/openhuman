@@ -25,9 +25,13 @@ pub(crate) struct OllamaTagsResponse {
     pub models: Vec<OllamaModelTag>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct OllamaModelTag {
     pub name: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

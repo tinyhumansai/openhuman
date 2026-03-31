@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   type ApplyPresetResult,
   type LocalAiAssetsStatus,
+  type LocalAiDiagnostics,
   type LocalAiDownloadsProgress,
   type LocalAiEmbeddingResult,
   type LocalAiSpeechResult,
@@ -11,6 +12,7 @@ import {
   type LocalAiTtsResult,
   openhumanLocalAiApplyPreset,
   openhumanLocalAiAssetsStatus,
+  openhumanLocalAiDiagnostics,
   openhumanLocalAiDownload,
   openhumanLocalAiDownloadAllAssets,
   openhumanLocalAiDownloadAsset,
@@ -18,6 +20,7 @@ import {
   openhumanLocalAiEmbed,
   openhumanLocalAiPresets,
   openhumanLocalAiPrompt,
+  openhumanLocalAiSetOllamaPath,
   openhumanLocalAiStatus,
   openhumanLocalAiSuggestQuestions,
   openhumanLocalAiSummarize,
@@ -35,6 +38,8 @@ const statusLabel = (state: string): string => {
       return 'Ready';
     case 'downloading':
       return 'Downloading';
+    case 'installing':
+      return 'Installing Runtime';
     case 'loading':
       return 'Loading';
     case 'degraded':
@@ -53,6 +58,7 @@ const statusTone = (state: string): string => {
     case 'ready':
       return 'text-green-300';
     case 'downloading':
+    case 'installing':
     case 'loading':
       return 'text-blue-300';
     case 'degraded':
@@ -76,6 +82,8 @@ const progressFromStatus = (status: LocalAiStatus | null): number => {
       return 0.92;
     case 'downloading':
       return 0.25;
+    case 'installing':
+      return 0.1;
     case 'idle':
       return 0;
     default:
@@ -152,6 +160,10 @@ const LocalModelPanel = () => {
   const [ttsOutput, setTtsOutput] = useState<LocalAiTtsResult | null>(null);
   const [isTtsLoading, setIsTtsLoading] = useState(false);
 
+  const [diagnostics, setDiagnostics] = useState<LocalAiDiagnostics | null>(null);
+  const [isDiagnosticsLoading, setIsDiagnosticsLoading] = useState(false);
+  const [diagnosticsError, setDiagnosticsError] = useState('');
+
   const [presetsData, setPresetsData] = useState<PresetsResponse | null>(null);
   const [presetsLoading, setPresetsLoading] = useState(true);
   const [isApplyingPreset, setIsApplyingPreset] = useState(false);
@@ -164,10 +176,17 @@ const LocalModelPanel = () => {
     if (downloadProgress != null) return downloadProgress;
     return progressFromStatus(status);
   }, [downloads, status]);
+  const currentState = downloads?.state ?? status?.state;
+  const isInstalling = currentState === 'installing';
   const isIndeterminateDownload =
-    (downloads?.state ?? status?.state) === 'downloading' &&
-    typeof downloads?.progress !== 'number' &&
-    typeof status?.download_progress !== 'number';
+    isInstalling ||
+    (currentState === 'downloading' &&
+      typeof downloads?.progress !== 'number' &&
+      typeof status?.download_progress !== 'number');
+  const isInstallError = status?.state === 'degraded' && status?.error_category === 'install';
+  const [showErrorDetail, setShowErrorDetail] = useState(false);
+  const [ollamaPathInput, setOllamaPathInput] = useState('');
+  const [isSettingPath, setIsSettingPath] = useState(false);
   const downloadedBytes = downloads?.downloaded_bytes ?? status?.downloaded_bytes;
   const totalBytes = downloads?.total_bytes ?? status?.total_bytes;
   const speedBps = downloads?.speed_bps ?? status?.download_speed_bps;
@@ -291,18 +310,20 @@ const LocalModelPanel = () => {
     }
   };
 
+  const [promptError, setPromptError] = useState('');
+
   const runPromptTest = async () => {
     if (!promptInput.trim()) return;
     setIsPromptLoading(true);
     setPromptOutput('');
-    setStatusError('');
+    setPromptError('');
     try {
       const result = await openhumanLocalAiPrompt(promptInput.trim(), 180, promptNoThink);
       setPromptOutput(result.result);
       await loadStatus();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Prompt test failed';
-      setStatusError(message);
+      setPromptError(message);
     } finally {
       setIsPromptLoading(false);
     }
@@ -570,9 +591,11 @@ const LocalModelPanel = () => {
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-400">
                   <span>
                     Progress:{' '}
-                    {isIndeterminateDownload
-                      ? 'Downloading (size unknown)'
-                      : `${Math.round(progress * 100)}%`}
+                    {isInstalling
+                      ? 'Installing Ollama runtime...'
+                      : isIndeterminateDownload
+                        ? 'Downloading (size unknown)'
+                        : `${Math.round(progress * 100)}%`}
                   </span>
                   {downloadedText && <span className="text-stone-300">{downloadedText}</span>}
                   {speedText && <span className="text-blue-300">{speedText}</span>}
@@ -629,6 +652,87 @@ const LocalModelPanel = () => {
                 {status?.warning && <div className="text-xs text-amber-300">{status.warning}</div>}
                 {statusError && <div className="text-xs text-red-300">{statusError}</div>}
 
+                {isInstallError && status?.error_detail && (
+                  <div className="space-y-1">
+                    <button
+                      onClick={() => setShowErrorDetail(v => !v)}
+                      className="text-xs text-red-400 hover:text-red-300 underline">
+                      {showErrorDetail ? 'Hide error details' : 'Show error details'}
+                    </button>
+                    {showErrorDetail && (
+                      <pre className="max-h-40 overflow-auto rounded bg-black/60 p-2 text-[10px] text-red-300 leading-tight whitespace-pre-wrap break-words">
+                        {status.error_detail}
+                      </pre>
+                    )}
+                    <p className="text-xs text-stone-400">
+                      Install Ollama manually from{' '}
+                      <a
+                        href="https://ollama.com"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-cyan-300 hover:text-cyan-200 underline">
+                        ollama.com
+                      </a>{' '}
+                      then set its path below.
+                    </p>
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <div className="text-stone-400 text-xs uppercase tracking-wide">
+                    Ollama Binary Path (optional)
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={ollamaPathInput}
+                      onChange={e => setOllamaPathInput(e.target.value)}
+                      placeholder="/usr/local/bin/ollama"
+                      className="flex-1 rounded-md border border-gray-600 bg-gray-800 px-2 py-1.5 text-xs text-stone-100 placeholder:text-stone-500 focus:border-blue-500 focus:outline-none"
+                    />
+                    <button
+                      onClick={async () => {
+                        setIsSettingPath(true);
+                        setStatusError('');
+                        try {
+                          await openhumanLocalAiSetOllamaPath(ollamaPathInput);
+                          await loadStatus();
+                        } catch (err) {
+                          setStatusError(
+                            err instanceof Error ? err.message : 'Failed to set Ollama path'
+                          );
+                        } finally {
+                          setIsSettingPath(false);
+                        }
+                      }}
+                      disabled={isSettingPath}
+                      className="px-2 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white whitespace-nowrap">
+                      {isSettingPath ? 'Setting...' : 'Set Path'}
+                    </button>
+                    {ollamaPathInput && (
+                      <button
+                        onClick={async () => {
+                          setOllamaPathInput('');
+                          setIsSettingPath(true);
+                          try {
+                            await openhumanLocalAiSetOllamaPath('');
+                            await loadStatus();
+                          } catch (err) {
+                            setStatusError(
+                              err instanceof Error ? err.message : 'Failed to clear Ollama path'
+                            );
+                          } finally {
+                            setIsSettingPath(false);
+                          }
+                        }}
+                        disabled={isSettingPath}
+                        className="px-2 py-1.5 text-xs rounded-md border border-gray-600 hover:border-gray-500 disabled:opacity-60 text-stone-300 whitespace-nowrap">
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={() => void triggerDownload(false)}
@@ -643,6 +747,167 @@ const LocalModelPanel = () => {
                     Force Re-bootstrap
                   </button>
                 </div>
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-white">Ollama Diagnostics</h3>
+                <button
+                  onClick={async () => {
+                    setIsDiagnosticsLoading(true);
+                    setDiagnosticsError('');
+                    try {
+                      const result = await openhumanLocalAiDiagnostics();
+                      setDiagnostics(result);
+                    } catch (err) {
+                      setDiagnosticsError(
+                        err instanceof Error ? err.message : 'Diagnostics failed'
+                      );
+                    } finally {
+                      setIsDiagnosticsLoading(false);
+                    }
+                  }}
+                  disabled={isDiagnosticsLoading}
+                  className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
+                  {isDiagnosticsLoading ? 'Checking...' : 'Run Diagnostics'}
+                </button>
+              </div>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                {!diagnostics && !diagnosticsError && (
+                  <p className="text-xs text-stone-400">
+                    Click &ldquo;Run Diagnostics&rdquo; to verify Ollama is running and models are
+                    installed.
+                  </p>
+                )}
+                {isDiagnosticsLoading && (
+                  <div className="flex items-center gap-2 text-xs text-blue-300">
+                    <div className="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                    Checking Ollama server and models...
+                  </div>
+                )}
+                {diagnosticsError && (
+                  <div className="rounded-md bg-red-950/50 border border-red-800/50 p-3 text-xs text-red-300">
+                    {diagnosticsError}
+                  </div>
+                )}
+                {diagnostics && (
+                  <>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 rounded-full ${diagnostics.ok ? 'bg-green-400' : 'bg-red-400'}`}
+                      />
+                      <span className={diagnostics.ok ? 'text-green-300' : 'text-red-300'}>
+                        {diagnostics.ok
+                          ? 'All checks passed'
+                          : `${diagnostics.issues.length} issue(s) found`}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded-md border border-gray-700 p-2">
+                        <div className="text-stone-400 uppercase tracking-wide text-[10px]">
+                          Server
+                        </div>
+                        <div
+                          className={`mt-1 font-medium ${diagnostics.ollama_running ? 'text-green-300' : 'text-red-300'}`}>
+                          {diagnostics.ollama_running ? 'Running' : 'Not running'}
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-gray-700 p-2">
+                        <div className="text-stone-400 uppercase tracking-wide text-[10px]">
+                          Binary
+                        </div>
+                        <div
+                          className="mt-1 text-stone-200 truncate"
+                          title={diagnostics.ollama_binary_path ?? 'Not found'}>
+                          {diagnostics.ollama_binary_path ?? 'Not found'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {diagnostics.installed_models.length > 0 && (
+                      <div>
+                        <div className="text-stone-400 uppercase tracking-wide text-[10px] mb-1">
+                          Installed Models ({diagnostics.installed_models.length})
+                        </div>
+                        <div className="space-y-1">
+                          {diagnostics.installed_models.map(m => (
+                            <div
+                              key={m.name}
+                              className="flex items-center justify-between rounded border border-gray-700 px-2 py-1.5 text-xs">
+                              <span className="text-stone-100 font-medium">{m.name}</span>
+                              <span className="text-stone-400">
+                                {typeof m.size === 'number' ? formatBytes(m.size) : ''}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div>
+                      <div className="text-stone-400 uppercase tracking-wide text-[10px] mb-1">
+                        Expected Models
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={
+                              diagnostics.expected.chat_found ? 'text-green-300' : 'text-red-300'
+                            }>
+                            {diagnostics.expected.chat_found ? '\u2713' : '\u2717'}
+                          </span>
+                          <span className="text-stone-200">
+                            Chat: {diagnostics.expected.chat_model}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={
+                              diagnostics.expected.embedding_found
+                                ? 'text-green-300'
+                                : 'text-red-300'
+                            }>
+                            {diagnostics.expected.embedding_found ? '\u2713' : '\u2717'}
+                          </span>
+                          <span className="text-stone-200">
+                            Embedding: {diagnostics.expected.embedding_model}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={
+                              diagnostics.expected.vision_found
+                                ? 'text-green-300'
+                                : 'text-amber-300'
+                            }>
+                            {diagnostics.expected.vision_found ? '\u2713' : '\u2013'}
+                          </span>
+                          <span className="text-stone-200">
+                            Vision: {diagnostics.expected.vision_model}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {diagnostics.issues.length > 0 && (
+                      <div>
+                        <div className="text-red-400 uppercase tracking-wide text-[10px] mb-1">
+                          Issues
+                        </div>
+                        <ul className="space-y-1 text-xs text-red-300">
+                          {diagnostics.issues.map((issue, i) => (
+                            <li key={i} className="flex gap-1.5">
+                              <span className="shrink-0">&bull;</span>
+                              <span>{issue}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </section>
 
@@ -773,11 +1038,19 @@ const LocalModelPanel = () => {
                     {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
                   </button>
                 </div>
-                <div className="text-xs text-stone-400">
-                  Calls `openhuman.local_ai_prompt` via Rust core
-                </div>
+                {isPromptLoading && (
+                  <div className="flex items-center gap-2 text-xs text-blue-300">
+                    <div className="h-3 w-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+                    Running prompt against local model...
+                  </div>
+                )}
+                {promptError && (
+                  <div className="rounded-md bg-red-950/50 border border-red-800/50 p-3 text-xs text-red-300">
+                    {promptError}
+                  </div>
+                )}
                 {promptOutput && (
-                  <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
+                  <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 max-h-64 overflow-auto">
                     {promptOutput}
                   </pre>
                 )}

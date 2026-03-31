@@ -94,6 +94,11 @@ struct LocalAiApplyPresetParams {
     tier: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct LocalAiSetOllamaPathParams {
+    path: String,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("agent_chat"),
@@ -118,6 +123,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("local_ai_device_profile"),
         schemas("local_ai_presets"),
         schemas("local_ai_apply_preset"),
+        schemas("local_ai_set_ollama_path"),
+        schemas("local_ai_diagnostics"),
     ]
 }
 
@@ -210,6 +217,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_apply_preset"),
             handler: handle_local_ai_apply_preset,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_set_ollama_path"),
+            handler: handle_local_ai_set_ollama_path,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_diagnostics"),
+            handler: handle_local_ai_diagnostics,
         },
     ]
 }
@@ -426,6 +441,20 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Apply a model tier preset to local AI config and persist.",
             inputs: vec![required_string("tier", "Tier to apply: low, medium, high.")],
             outputs: vec![json_output("result", "Applied tier status.")],
+        },
+        "local_ai_diagnostics" => ControllerSchema {
+            namespace: "local_ai",
+            function: "diagnostics",
+            description: "Run Ollama diagnostics: check server health, list installed models, verify expected models.",
+            inputs: vec![],
+            outputs: vec![json_output("diagnostics", "Diagnostic report.")],
+        },
+        "local_ai_set_ollama_path" => ControllerSchema {
+            namespace: "local_ai",
+            function: "set_ollama_path",
+            description: "Set a custom Ollama binary path, persist to config, and trigger re-bootstrap.",
+            inputs: vec![required_string("path", "Absolute path to Ollama binary. Empty string to clear.")],
+            outputs: vec![json_output("result", "Updated status.")],
         },
         _ => ControllerSchema {
             namespace: "local_ai",
@@ -735,6 +764,58 @@ fn handle_local_ai_apply_preset(params: Map<String, Value>) -> ControllerFuture 
             "vision_model_id": config.local_ai.vision_model_id,
             "embedding_model_id": config.local_ai.embedding_model_id,
             "quantization": config.local_ai.quantization,
+        }))
+    })
+}
+
+fn handle_local_ai_diagnostics(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let service = crate::openhuman::local_ai::global(&config);
+        service.diagnostics(&config).await
+    })
+}
+
+fn handle_local_ai_set_ollama_path(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiSetOllamaPathParams>(params)?;
+        let path_str = p.path.trim().to_string();
+        tracing::debug!(path = %path_str, "[local_ai] set_ollama_path: validating");
+
+        let new_value = if path_str.is_empty() {
+            None
+        } else {
+            let path = std::path::Path::new(&path_str);
+            if !path.is_file() {
+                return Err(format!(
+                    "Ollama binary not found at '{}'. Provide a valid path to the ollama executable.",
+                    path_str
+                ));
+            }
+            Some(path_str.clone())
+        };
+
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        config.local_ai.ollama_binary_path = new_value.clone();
+        config
+            .save()
+            .await
+            .map_err(|e| format!("save config: {e}"))?;
+        tracing::debug!(path = ?new_value, "[local_ai] set_ollama_path: config saved, triggering re-bootstrap");
+
+        let service = crate::openhuman::local_ai::global(&config);
+        service.reset_to_idle(&config);
+        let service_clone = service.clone();
+        let config_clone = config.clone();
+        tokio::spawn(async move {
+            service_clone.bootstrap(&config_clone).await;
+        });
+
+        let current_status =
+            serde_json::to_value(&service.status()).map_err(|e| format!("serialize: {e}"))?;
+        Ok(serde_json::json!({
+            "ollama_binary_path": new_value,
+            "status": current_status,
         }))
     })
 }

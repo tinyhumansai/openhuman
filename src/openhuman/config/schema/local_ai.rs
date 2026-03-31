@@ -51,6 +51,9 @@ pub struct LocalAiConfig {
     pub max_suggestions: usize,
     #[serde(default)]
     pub selected_tier: Option<String>,
+    /// Optional path to a manually-installed Ollama binary.
+    #[serde(default)]
+    pub ollama_binary_path: Option<String>,
 }
 
 fn default_enabled() -> bool {
@@ -172,6 +175,7 @@ impl Default for LocalAiConfig {
             context_compaction_threshold_tokens: default_context_compaction_threshold_tokens(),
             max_suggestions: default_max_suggestions(),
             selected_tier: None,
+            ollama_binary_path: None,
         }
     }
 }

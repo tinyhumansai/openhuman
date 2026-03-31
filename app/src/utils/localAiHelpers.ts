@@ -37,6 +37,8 @@ export const progressFromStatus = (status: LocalAiStatus | null): number => {
       return 0.92;
     case 'downloading':
       return 0.25;
+    case 'installing':
+      return 0.1;
     case 'idle':
       return 0;
     default:
@@ -58,6 +60,8 @@ export const statusLabel = (state: string): string => {
       return 'Ready';
     case 'downloading':
       return 'Downloading';
+    case 'installing':
+      return 'Installing Runtime';
     case 'loading':
       return 'Loading model...';
     case 'degraded':

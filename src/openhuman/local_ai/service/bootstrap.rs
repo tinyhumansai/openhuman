@@ -30,6 +30,8 @@ impl LocalAiService {
                 download_speed_bps: None,
                 eta_seconds: None,
                 warning: None,
+                error_detail: None,
+                error_category: None,
                 model_path: Some(format!("ollama://{}", model_id)),
                 active_backend: "ollama".to_string(),
                 backend_reason: None,
@@ -69,6 +71,8 @@ impl LocalAiService {
         status.download_speed_bps = None;
         status.eta_seconds = None;
         status.warning = None;
+        status.error_detail = None;
+        status.error_category = None;
         status.model_path = Some(format!("ollama://{}", model_id));
         status.active_backend = "ollama".to_string();
         status.backend_reason = None;
@@ -110,6 +114,8 @@ impl LocalAiService {
             status.total_bytes = None;
             status.download_speed_bps = None;
             status.eta_seconds = None;
+            status.error_detail = None;
+            status.error_category = None;
             status.active_backend = "ollama".to_string();
             status.backend_reason = Some("Inference delegated to Ollama runtime".to_string());
             status.model_path = Some(format!(
@@ -118,16 +124,36 @@ impl LocalAiService {
             ));
         }
 
-        if let Err(err) = self.ensure_ollama_server(config).await {
-            let mut status = self.status.lock();
-            status.state = "degraded".to_string();
-            status.warning = Some(format_degraded_warning(&err, config));
-            return;
+        if let Err(first_err) = self.ensure_ollama_server(config).await {
+            log::warn!(
+                "[local_ai] ensure_ollama_server failed, retrying with fresh install: {first_err}"
+            );
+            // Force a fresh install attempt before giving up.
+            {
+                let mut status = self.status.lock();
+                status.state = "installing".to_string();
+                status.warning = Some("Retrying Ollama installation...".to_string());
+                status.error_detail = None;
+                status.error_category = None;
+            }
+            if let Err(err) = self.ensure_ollama_server_fresh(config).await {
+                let mut status = self.status.lock();
+                status.state = "degraded".to_string();
+                let is_install_error = status.error_category.as_deref() == Some("install");
+                if is_install_error {
+                    status.warning = Some(err);
+                } else {
+                    status.error_category = Some("server".to_string());
+                    status.warning = Some(format_degraded_warning(&err, config));
+                }
+                return;
+            }
         }
 
         if let Err(err) = self.ensure_models_available(config).await {
             let mut status = self.status.lock();
             status.state = "degraded".to_string();
+            status.error_category = Some("download".to_string());
             status.warning = Some(format_degraded_warning(&err, config));
             return;
         }
@@ -151,6 +177,8 @@ impl LocalAiService {
             status.tts_state = "idle".to_string();
         }
         status.warning = None;
+        status.error_detail = None;
+        status.error_category = None;
         status.download_progress = None;
         status.downloaded_bytes = None;
         status.total_bytes = None;
