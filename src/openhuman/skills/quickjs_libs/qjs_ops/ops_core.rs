@@ -7,6 +7,36 @@ use std::time::{Duration, Instant};
 
 use super::types::{TimerEntry, TimerState, ALLOWED_ENV_VARS};
 
+/// Read the session JWT from the on-disk credentials store.
+///
+/// Returns `None` on any failure so the caller can fall back to env vars.
+fn token_from_credentials_store() -> Option<String> {
+    use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
+
+    let home = directories::UserDirs::new()?.home_dir().to_path_buf();
+    let default_dir = home.join(".openhuman");
+
+    let state_dir = match std::env::var("OPENHUMAN_WORKSPACE") {
+        Ok(ws) if !ws.is_empty() => {
+            let ws_path = std::path::PathBuf::from(&ws);
+            if ws_path.join("config.toml").exists() {
+                ws_path
+            } else {
+                default_dir
+            }
+        }
+        _ => default_dir,
+    };
+
+    if !state_dir.exists() {
+        return None;
+    }
+
+    let auth = AuthService::new(&state_dir, true);
+    let profile = auth.get_profile(APP_SESSION_PROVIDER, None).ok()??;
+    profile.token.filter(|t| !t.trim().is_empty())
+}
+
 pub fn register<'js>(
     ctx: &Ctx<'js>,
     ops: &Object<'js>,
@@ -115,6 +145,11 @@ pub fn register<'js>(
     ops.set(
         "get_session_token",
         Function::new(ctx.clone(), || -> String {
+            // Try the on-disk credentials store first (where login actually persists
+            // the JWT), then fall back to the legacy JWT_TOKEN env var.
+            if let Some(token) = token_from_credentials_store() {
+                return token;
+            }
             std::env::var("JWT_TOKEN").unwrap_or_default()
         }),
     )?;

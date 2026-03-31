@@ -291,10 +291,15 @@ export async function memoryGraphQuery(
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<GraphRelation[]>({
+  const raw = await callCoreRpc<GraphRelation[] | { result: GraphRelation[] }>({
     method: 'openhuman.memory_graph_query',
     params: { namespace, subject, predicate },
   });
+  // RpcOutcome wraps with { result, logs } when logs are present — unwrap if needed.
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === 'object' && 'result' in raw && Array.isArray(raw.result))
+    return raw.result;
+  return [];
 }
 
 export async function memoryDocIngest(params: {

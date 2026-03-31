@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { apiClient } from '../services/apiClient';
 import { callCoreRpc } from '../services/coreRpcClient';
 import type { AIStatus } from '../store/aiSlice';
 import { useAppSelector } from '../store/hooks';
-import { aiListMemoryFiles } from '../utils/tauriCommands';
+import { aiListMemoryFiles, type GraphRelation, memoryGraphQuery } from '../utils/tauriCommands';
 
 interface SessionEntry {
   sessionId: string;
@@ -33,7 +32,18 @@ export interface IntelligenceStats {
   refetch: () => void;
 }
 
-const ENTITY_TYPES = ['contact', 'chat', 'message', 'wallet', 'token', 'transaction'];
+/** Derive entity-type counts from local graph relations. */
+function entityCountsFromRelations(relations: GraphRelation[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const rel of relations) {
+    const types = (rel.attrs?.entity_types ?? {}) as Record<string, string>;
+    const subjectType = types.subject ?? 'entity';
+    const objectType = types.object ?? 'entity';
+    counts[subjectType] = (counts[subjectType] ?? 0) + 1;
+    counts[objectType] = (counts[objectType] ?? 0) + 1;
+  }
+  return counts;
+}
 
 export function useIntelligenceStats(): IntelligenceStats {
   const aiStatus = useAppSelector(state => state.ai.status);
@@ -69,32 +79,16 @@ export function useIntelligenceStats(): IntelligenceStats {
       setMemoryFiles(null);
     }
 
-    // Fetch entity counts from backend API (graceful degradation)
+    // Derive entity counts from local graph store
     try {
-      const counts: Record<string, number> = {};
-      const results = await Promise.allSettled(
-        ENTITY_TYPES.map(async type => {
-          const resp = await apiClient.get<{ count?: number; total?: number; data?: unknown[] }>(
-            `/api/entity-graph/entities?type=${type}&limit=1`
-          );
-          return { type, count: resp.count ?? resp.total ?? (resp.data ? resp.data.length : 0) };
-        })
-      );
-
-      let anySuccess = false;
-      for (const result of results) {
-        if (result.status === 'fulfilled') {
-          counts[result.value.type] = result.value.count;
-          anySuccess = true;
-        }
-      }
-
-      if (anySuccess) {
+      const relations = await memoryGraphQuery();
+      const counts = entityCountsFromRelations(relations);
+      if (Object.keys(counts).length > 0) {
         setEntities(counts);
         setEntityError(false);
       } else {
         setEntities(null);
-        setEntityError(true);
+        setEntityError(false);
       }
     } catch {
       setEntities(null);

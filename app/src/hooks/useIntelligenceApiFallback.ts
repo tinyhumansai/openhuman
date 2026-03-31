@@ -1,72 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 
-import { MOCK_ACTIONABLE_ITEMS } from '../components/intelligence/mockData';
-import { type ConnectedTool, intelligenceApi } from '../services/intelligenceApi';
-import type { ActionableItem, ActionableItemStatus, ChatMessage } from '../types/intelligence';
-import {
-  transformBackendItemsToFrontend,
-  transformBackendMessagesToFrontend,
-} from '../utils/intelligenceTransforms';
+import type { ConnectedTool } from '../services/intelligenceApi';
+import type { ActionableItemStatus, ChatMessage } from '../types/intelligence';
 
 /**
- * Fallback implementation of Intelligence API hooks without React Query
- * Used when React Query is not available
+ * Local-only implementations of Intelligence action hooks.
+ * Items come from the local conscious memory layer — actions are applied in-memory.
  */
-
-interface UseActionableItemsResult {
-  data: ActionableItem[] | undefined;
-  loading: boolean;
-  error: string | null;
-  refetch: () => Promise<void>;
-}
-
-/**
- * Hook for fetching actionable items (fallback version)
- * TODO: Remove MOCK_ACTIONABLE_ITEMS once backend APIs are ready
- */
-export const useActionableItems = (options?: {
-  refetchInterval?: number;
-  enabled?: boolean;
-}): UseActionableItemsResult => {
-  const [data, setData] = useState<ActionableItem[] | undefined>(MOCK_ACTIONABLE_ITEMS);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchItems = useCallback(async () => {
-    if (options?.enabled === false) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-      const backendItems = await intelligenceApi.getActionableItems();
-      const items = transformBackendItemsToFrontend(backendItems);
-      setData(items.length > 0 ? items : MOCK_ACTIONABLE_ITEMS);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch items';
-      setError(errorMessage);
-      console.error('Failed to fetch actionable items:', err);
-      // TODO: Replace with actual data
-      setData(MOCK_ACTIONABLE_ITEMS);
-    } finally {
-      setLoading(false);
-    }
-  }, [options?.enabled]);
-
-  // Initial fetch
-  useEffect(() => {
-    fetchItems();
-  }, [fetchItems]);
-
-  // Set up refetch interval
-  useEffect(() => {
-    if (options?.refetchInterval) {
-      const interval = setInterval(fetchItems, options.refetchInterval);
-      return () => clearInterval(interval);
-    }
-  }, [options?.refetchInterval, fetchItems]);
-
-  return { data, loading, error, refetch: fetchItems };
-};
 
 interface UseUpdateActionableItemResult {
   mutateAsync: (variables: {
@@ -78,7 +18,7 @@ interface UseUpdateActionableItemResult {
 }
 
 /**
- * Hook for updating actionable item status (fallback version)
+ * Hook for updating actionable item status (local-only).
  */
 export const useUpdateActionableItem = (): UseUpdateActionableItemResult => {
   const [loading, setLoading] = useState(false);
@@ -86,15 +26,11 @@ export const useUpdateActionableItem = (): UseUpdateActionableItemResult => {
 
   const mutateAsync = useCallback(
     async (variables: { itemId: string; status: ActionableItemStatus }) => {
+      setLoading(true);
+      setError(null);
       try {
-        setLoading(true);
-        setError(null);
-        await intelligenceApi.updateItemStatus(variables.itemId, variables.status);
+        // Items are managed locally; just acknowledge the status change.
         return { ...variables, updatedAt: new Date() };
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to update item';
-        setError(errorMessage);
-        throw err;
       } finally {
         setLoading(false);
       }
@@ -115,22 +51,17 @@ interface UseSnoozeActionableItemResult {
 }
 
 /**
- * Hook for snoozing actionable item (fallback version)
+ * Hook for snoozing actionable item (local-only).
  */
 export const useSnoozeActionableItem = (): UseSnoozeActionableItemResult => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const mutateAsync = useCallback(async (variables: { itemId: string; snoozeUntil: Date }) => {
+    setLoading(true);
+    setError(null);
     try {
-      setLoading(true);
-      setError(null);
-      await intelligenceApi.snoozeItem(variables.itemId, variables.snoozeUntil);
       return { ...variables, updatedAt: new Date() };
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to snooze item';
-      setError(errorMessage);
-      throw err;
     } finally {
       setLoading(false);
     }
@@ -146,38 +77,10 @@ interface UseChatSessionResult {
 }
 
 /**
- * Hook for creating or getting chat session (fallback version)
+ * Chat session stub (local-only — no remote thread API).
  */
-export const useChatSession = (itemId: string | null): UseChatSessionResult => {
-  const [data, setData] = useState<{ threadId: string; messages: ChatMessage[] } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!itemId) return;
-
-    const fetchSession = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const response = await intelligenceApi.getOrCreateThread(itemId);
-        setData({
-          threadId: response.threadId,
-          messages: transformBackendMessagesToFrontend(response.messages),
-        });
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to create session';
-        setError(errorMessage);
-        console.error('Failed to create chat session:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchSession();
-  }, [itemId]);
-
-  return { data, loading, error };
+export const useChatSession = (_itemId: string | null): UseChatSessionResult => {
+  return { data: null, loading: false, error: null };
 };
 
 interface UseExecuteTaskResult {
@@ -190,34 +93,17 @@ interface UseExecuteTaskResult {
 }
 
 /**
- * Hook for executing tasks (fallback version)
+ * Task execution stub (local-only — no remote execution API).
  */
 export const useExecuteTask = (): UseExecuteTaskResult => {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const mutateAsync = useCallback(
-    async (variables: { itemId: string; connectedTools: ConnectedTool[] }) => {
-      try {
-        setLoading(true);
-        setError(null);
-        const result = await intelligenceApi.executeTask(
-          variables.itemId,
-          variables.connectedTools
-        );
-        return result;
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to execute task';
-        setError(errorMessage);
-        throw err;
-      } finally {
-        setLoading(false);
-      }
+    async (_variables: { itemId: string; connectedTools: ConnectedTool[] }) => {
+      return { executionId: '', sessionId: '', status: 'unsupported' };
     },
     []
   );
 
-  return { mutateAsync, loading, error };
+  return { mutateAsync, loading: false, error: null };
 };
 
 // Export query key utilities for consistency

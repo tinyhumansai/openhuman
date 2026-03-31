@@ -191,7 +191,7 @@ impl QjsSkillInstance {
                 return;
             }
 
-            restore_oauth_credential(&ctx, &config.skill_id).await;
+            restore_oauth_credential(&ctx, &config.skill_id, &data_dir).await;
 
             // Call init() lifecycle
             if let Err(e) = call_lifecycle(&rt, &ctx, "init").await {
@@ -242,6 +242,7 @@ impl QjsSkillInstance {
                 &timer_state,
                 &published_state,
                 _deps.memory_client.clone(),
+                &data_dir,
             )
             .await;
         })
