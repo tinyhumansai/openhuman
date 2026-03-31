@@ -1,8 +1,7 @@
 import { syncAnalyticsConsent } from '../../../services/analytics';
 import { setAnalyticsForUser } from '../../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { isTauri } from '../../../utils/isTauri';
-import { openhumanUpdateAnalyticsSettings } from '../../../utils/tauriCommands';
+import { isTauri, openhumanUpdateAnalyticsSettings } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 

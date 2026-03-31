@@ -1,5 +1,7 @@
 import { useState } from 'react';
 
+import { isTauri, openhumanUpdateAnalyticsSettings } from '../../../utils/tauriCommands';
+
 interface AnalyticsStepProps {
   onNext: (analyticsEnabled: boolean) => void;
 }
@@ -7,13 +9,26 @@ interface AnalyticsStepProps {
 const AnalyticsStep = ({ onNext }: AnalyticsStepProps) => {
   const [selectedOption, setSelectedOption] = useState('shareAnalytics');
 
+  const handleContinue = () => {
+    const enabled = selectedOption === 'shareAnalytics';
+
+    // Sync to core config so the Rust process also respects the setting
+    if (isTauri()) {
+      openhumanUpdateAnalyticsSettings({ enabled }).catch(() => {
+        /* best-effort */
+      });
+    }
+
+    onNext(enabled);
+  };
+
   return (
     <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2">Analytics</h1>
+        <h1 className="text-xl font-bold mb-2">Anonymized Analytics</h1>
         <p className="opacity-70 text-sm">
-          We collect anonymized usage data to help us improve the app for you and for others. You
-          can choose to skip this.
+          We collect fully anonymized usage data to help improve the app. No personal data,
+          messages, or wallet keys are ever collected. You can change this anytime in Settings.
         </p>
       </div>
 
@@ -41,8 +56,8 @@ const AnalyticsStep = ({ onNext }: AnalyticsStepProps) => {
             <div>
               <h3 className="font-semibold mb-1 text-sm">Share Anonymized Usage Data</h3>
               <p className="opacity-70 text-xs leading-relaxed">
-                Share anonymized usage data to help us improve features and performance of the app.
-                This helps us improve the app for you and for others.
+                Share anonymized crash reports and usage analytics to help us improve features and
+                performance. All data is fully anonymized.
               </p>
             </div>
           </div>
@@ -71,8 +86,8 @@ const AnalyticsStep = ({ onNext }: AnalyticsStepProps) => {
             <div>
               <h3 className="font-semibold mb-1 text-sm">Don't Collect Anything</h3>
               <p className="opacity-70 text-xs leading-relaxed">
-                We won't collect any usage analytics, ensuring total anonymity. Keep all your data
-                completely private.
+                We won't collect any usage analytics or crash reports. Keep all your data completely
+                private.
               </p>
             </div>
           </div>
@@ -91,14 +106,14 @@ const AnalyticsStep = ({ onNext }: AnalyticsStepProps) => {
           <div>
             <p className="font-medium text-sm">You can change this setting anytime</p>
             <p className="opacity-70 text-xs mt-1">
-              Your privacy preferences can be updated in your account settings
+              Your privacy preferences can be updated in Settings &gt; Privacy &amp; Security
             </p>
           </div>
         </div>
       </div>
 
       <button
-        onClick={() => onNext(selectedOption === 'shareAnalytics')}
+        onClick={handleContinue}
         className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl">
         Continue
       </button>
