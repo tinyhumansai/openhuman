@@ -83,7 +83,11 @@ pub async fn save_accepted_completion(context: &str, suggestion: &str, app_name:
 /// Documents are stored in the `"autocomplete-memory"` namespace and are
 /// searchable via `query_namespace`, enabling semantic matching of past
 /// completions against the current typing context.
-pub async fn save_completion_to_local_docs(context: &str, suggestion: &str, app_name: Option<&str>) {
+pub async fn save_completion_to_local_docs(
+    context: &str,
+    suggestion: &str,
+    app_name: Option<&str>,
+) {
     let client = match MemoryClient::new_local() {
         Ok(c) => c,
         Err(e) => {
