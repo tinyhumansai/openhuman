@@ -6,6 +6,7 @@ import {
   aiListMemoryFiles,
   aiReadMemoryFile,
   aiWriteMemoryFile,
+  type GraphRelation,
   isTauri,
   memoryDeleteDocument,
   memoryGraphQuery,
@@ -13,7 +14,6 @@ import {
   memoryListNamespaces,
   memoryQueryNamespace,
   memoryRecallNamespace,
-  type GraphRelation,
 } from '../../utils/tauriCommands';
 
 type MemoryDoc = { documentId: string; namespace: string; title?: string; raw: unknown };
