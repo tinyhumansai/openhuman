@@ -55,11 +55,23 @@ If you need an older version, browse [all releases](https://github.com/tinyhuman
 
 If you want to build from source, see [`docs/BUILDING.md`](docs/BUILDING.md).
 
-Or you can basically run this global install script
+Install with one command:
 
 ```
-COMING SOON curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
 ```
+
+On Windows, use PowerShell:
+`irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex`
+
+What setup does:
+
+- Resolves the latest stable release for your OS/arch
+- Verifies release digest when available
+- Installs locally without requiring system-wide admin rights by default
+- macOS: installs `OpenHuman.app` in `~/Applications`
+- Linux: installs `openhuman` AppImage in `~/.local/bin/openhuman` and creates a desktop entry
+- Windows: installs from latest release MSI/EXE in per-user mode where supported
 
 # Under the hood (Architecture)
 

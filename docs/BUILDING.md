@@ -42,55 +42,43 @@ yarn dev
 
 ## Install latest stable release (macOS/Linux)
 
-Use this basic script to detect platform/arch and download the latest stable artifact from GitHub Releases:
+Primary install command:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-REPO="tinyhumansai/openhuman"
-BASE="https://github.com/${REPO}/releases/latest/download"
-OS="$(uname -s)"
-ARCH="$(uname -m)"
-
-if [[ "$OS" == "Darwin" ]]; then
-  if [[ "$ARCH" == "arm64" ]]; then
-    FILE="OpenHuman_0.49.32_aarch64.dmg"
-  else
-    FILE="OpenHuman_0.49.32_x64.dmg"
-  fi
-elif [[ "$OS" == "Linux" ]]; then
-  # Prefer AppImage for broad compatibility.
-  FILE="OpenHuman_0.49.32_amd64.AppImage"
-else
-  echo "Unsupported OS: $OS"
-  exit 1
-fi
-
-URL="${BASE}/${FILE}"
-echo "Downloading: $URL"
-curl -fL "$URL" -o "$FILE"
-
-echo "Downloaded $FILE"
-echo "Install it with your platform's normal installer flow."
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
 ```
 
-Notes:
+Installer behavior:
 
-- The filename includes the release version and should be updated when a new stable release is cut.
-- You can always manually download from:
-  - Website: https://tinyhuman.ai/openhuman
-  - Latest release: https://github.com/tinyhumansai/openhuman/releases/latest
+- Resolves latest stable OpenHuman release for your platform
+- Validates artifact digest when available
+- Installs locally (no sudo by default)
+- macOS: installs `OpenHuman.app` into `~/Applications`
+- Linux: installs AppImage as `~/.local/bin/openhuman` and writes a desktop entry
+
+Useful flags:
+
+```bash
+# Preview actions without writing files
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash -s -- --dry-run
+```
 
 ## Windows (latest stable)
 
-Download directly from the website or latest release page:
+Use PowerShell:
 
-- https://tinyhuman.ai/openhuman
-- https://github.com/tinyhumansai/openhuman/releases/latest
+```powershell
+irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
+```
 
-## Future improvements
+Windows installer behavior:
 
-- Replace hardcoded filenames with `latest.json` parsing
-- Add checksum/signature verification
-- Publish one-step global installers for all platforms
+- Resolves latest stable release
+- Downloads MSI/EXE for x64
+- Verifies digest when available
+- Runs per-user install where supported by installer package
+
+Manual download links (all platforms):
+
+- Website: https://tinyhuman.ai/openhuman
+- Latest release: https://github.com/tinyhumansai/openhuman/releases/latest
