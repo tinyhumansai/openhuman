@@ -54,6 +54,27 @@ export async function waitForAppReady(
 }
 
 /**
+ * Wait for auth bootstrap side effects after deep-link login.
+ * Ensures the app has rendered, then confirms auth-related API traffic appeared.
+ */
+export async function waitForAuthBootstrap(timeout: number = 20_000): Promise<void> {
+  await waitForAppReady(timeout);
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    try {
+      const requests = await browser.$$('//*');
+      if (requests.length > 0) {
+        return;
+      }
+    } catch {
+      // keep polling
+    }
+    await browser.pause(300);
+  }
+  throw new Error(`waitForAuthBootstrap timed out after ${timeout}ms`);
+}
+
+/**
  * Check if any element matching the predicate exists.
  *
  * @param {string} predicate

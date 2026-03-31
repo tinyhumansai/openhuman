@@ -22,7 +22,7 @@
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickButton,
@@ -237,6 +237,24 @@ async function performFullLogin(token = 'e2e-test-token') {
   await waitForWindowVisible(25_000);
   await waitForWebView(15_000);
   await waitForAppReady(15_000);
+  await waitForAuthBootstrap(15_000);
+
+  const consumeCall = await waitForRequest('POST', '/telegram/login-tokens/', 20_000);
+  if (!consumeCall) {
+    console.log(
+      '[AuthAccess] Missing consume call. Request log:',
+      JSON.stringify(getRequestLog(), null, 2)
+    );
+    throw new Error('Auth consume call missing in performFullLogin');
+  }
+  const meCall = await waitForRequest('GET', '/telegram/me', 20_000);
+  if (!meCall) {
+    console.log(
+      '[AuthAccess] Missing /telegram/me call. Request log:',
+      JSON.stringify(getRequestLog(), null, 2)
+    );
+    throw new Error('/telegram/me call missing in performFullLogin');
+  }
 
   // Onboarding Step 1: InviteCodeStep — skip
   await clickText('Skip for now', 10_000);

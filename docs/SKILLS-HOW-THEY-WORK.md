@@ -201,6 +201,13 @@ Typical operations:
 
 Tool calls can be sync or async in JS. Async calls are awaited with runtime polling and timeout handling in the QuickJS event loop layer.
 
+### Isolation guarantees
+
+- Each started skill runs in its own QuickJS context (`AsyncContext`) and does not share mutable JS globals with other skills.
+- Restarting a skill creates a fresh context; prior `globalThis` mutations are not retained.
+- Host-level policy blocks skill-to-skill tool invocation. A running skill can only invoke its own tool surface.
+- External orchestrators (UI/RPC/socket MCP) can still target tools on any running skill by explicit `skill_id`.
+
 ---
 
 ## 8) JSON-RPC Surface (`openhuman.skills_*`)
@@ -283,6 +290,8 @@ High-level pattern:
 3. Incoming tool calls route to `skill_id` + `tool_name`.
 4. Core executes via runtime and returns `ToolResult`.
 
+Tool naming over MCP remains `skillId__toolName` for external orchestration.
+
 ---
 
 ## 12) Environment Variables and Configuration
@@ -345,6 +354,7 @@ High-level pattern:
 5. Tool-call failures:
    - verify skill status is `Running`
    - inspect skill error in snapshot
+   - cross-skill denied errors mean a skill attempted to invoke another skill's tool; this is blocked by design
 
 ### Useful runtime truths
 
@@ -398,4 +408,23 @@ When changing behavior, test both:
 - Preserve setup + enabled flags coherently across restarts.
 - Avoid introducing new legacy skill metadata paths.
 - Add traceable logs around install/start/setup/tool call boundaries.
+
+---
+
+## 18) Skill Author Isolation Contract
+
+### Guaranteed
+
+- Your skill runs in its own QuickJS context and event loop when started.
+- Your skill's `globalThis` state is isolated from other running skills.
+- Your skill can publish state only for itself; state is namespaced by `skill_id`.
+- Cross-skill tool invocation from within a skill is denied by host policy.
+- External host orchestration (UI/RPC/socket MCP) may call your tools by explicit `skill_id`.
+
+### Not supported / undefined behavior
+
+- Do not rely on `globalThis.skills.callTool` for inter-skill calls.
+- Do not rely on in-memory JS globals surviving a stop/restart cycle.
+- Do not assume execution ordering across different skills.
+- Do not treat runtime-internal bridge objects as stable public APIs.
 

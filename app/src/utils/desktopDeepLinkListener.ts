@@ -20,6 +20,22 @@ const focusMainWindow = async () => {
   }
 };
 
+const waitForAuthReadiness = async (maxAttempts = 10, delayMs = 150) => {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const authState = store.getState().auth;
+    if (authState.isAuthBootstrapComplete || authState.token) {
+      console.log('[DeepLink][auth] app ready', {
+        attempt,
+        hasToken: Boolean(authState.token),
+        authBootstrapComplete: authState.isAuthBootstrapComplete,
+      });
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+  console.warn('[DeepLink][auth] readiness timeout; continuing');
+};
+
 /**
  * Handle an `openhuman://auth?token=...` deep link for login.
  */
@@ -31,16 +47,22 @@ const handleAuthDeepLink = async (parsed: URL) => {
     return;
   }
 
-  console.log('[DeepLink] Received auth token', token);
+  console.log('[DeepLink][auth] received', {
+    tokenLength: token.length,
+    keyMode: parsed.searchParams.get('key') ?? 'consume',
+  });
 
   await focusMainWindow();
+  await waitForAuthReadiness();
 
   if (key === 'auth') {
     store.dispatch(setToken(token));
+    console.log('[DeepLink][auth] bypass token applied');
     window.location.hash = '/home';
   } else {
     const jwtToken = await consumeLoginToken(token);
     store.dispatch(setToken(jwtToken));
+    console.log('[DeepLink][auth] login token consumed');
     window.location.hash = '/home';
   }
 };
@@ -157,7 +179,8 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
 
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'openhuman:' && parsed.protocol !== 'openhuman:') {
+    if (parsed.protocol !== 'openhuman:') {
+      console.warn('[DeepLink] Ignoring unsupported protocol:', parsed.protocol);
       return;
     }
 

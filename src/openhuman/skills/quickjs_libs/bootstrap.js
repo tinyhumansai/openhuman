@@ -927,12 +927,12 @@ globalThis.cron = {
 // ============================================================================
 globalThis.skills = {
   list: function () {
-    console.warn('[skills] list not implemented in QuickJS runtime yet');
+    console.warn('[skills] list is intentionally unavailable in isolated runtime');
     return [];
   },
   callTool: function (skillId, toolName, args) {
-    console.warn('[skills] callTool not implemented in QuickJS runtime yet');
-    return { error: 'Not implemented' };
+    console.warn('[skills] callTool is disabled by runtime isolation policy');
+    return { error: 'Cross-skill invocation is disabled' };
   },
 };
 

@@ -29,7 +29,6 @@ pub mod schema;
 mod schemas;
 pub mod screenshot;
 pub mod shell;
-pub mod skills_call;
 pub mod traits;
 pub mod web_search_tool;
 
@@ -66,7 +65,6 @@ pub use schemas::{
 };
 pub use screenshot::ScreenshotTool;
 pub use shell::ShellTool;
-pub use skills_call::SkillsCallTool;
 pub use traits::Tool;
 #[allow(unused_imports)]
 pub use traits::{ToolResult, ToolSpec};

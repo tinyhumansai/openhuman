@@ -51,6 +51,7 @@
       background-repeat: repeat;
       background-position: top right;
       background-size: 510px auto;
+      pointer-events: none;
     }
   }
 

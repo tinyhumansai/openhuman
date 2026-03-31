@@ -18,6 +18,84 @@ fn core_rpc_url() -> String {
         .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
 }
 
+/// Resolve the core binary, preferring the staged sidecar.
+fn resolve_core_bin() -> Result<std::path::PathBuf, String> {
+    if let Some(bin) = core_process::default_core_bin() {
+        return Ok(bin);
+    }
+    std::env::current_exe().map_err(|e| format!("cannot resolve executable: {e}"))
+}
+
+/// Run the core binary with the given CLI args and return its stdout.
+async fn run_core_cli(args: Vec<String>) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        let bin = resolve_core_bin()?;
+        let is_self = {
+            let current = std::env::current_exe().ok();
+            current
+                .as_ref()
+                .and_then(|c| std::fs::canonicalize(c).ok())
+                .zip(std::fs::canonicalize(&bin).ok())
+                .map_or(false, |(a, b)| a == b)
+        };
+
+        let mut cmd = std::process::Command::new(&bin);
+        if is_self {
+            cmd.arg("core");
+        }
+        cmd.args(&args);
+
+        log::info!(
+            "[service-direct] running {:?} {}{}",
+            bin,
+            if is_self { "core " } else { "" },
+            args.join(" ")
+        );
+
+        let output = cmd
+            .output()
+            .map_err(|e| format!("failed to execute core binary: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!(
+                "core binary exited with {}: {}",
+                output.status,
+                stderr.trim()
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    })
+    .await
+    .map_err(|e| format!("task join error: {e}"))?
+}
+
+#[tauri::command]
+async fn service_install_direct() -> Result<String, String> {
+    run_core_cli(vec!["service".into(), "install".into()]).await
+}
+
+#[tauri::command]
+async fn service_start_direct() -> Result<String, String> {
+    run_core_cli(vec!["service".into(), "start".into()]).await
+}
+
+#[tauri::command]
+async fn service_stop_direct() -> Result<String, String> {
+    run_core_cli(vec!["service".into(), "stop".into()]).await
+}
+
+#[tauri::command]
+async fn service_status_direct() -> Result<String, String> {
+    run_core_cli(vec!["service".into(), "status".into()]).await
+}
+
+#[tauri::command]
+async fn service_uninstall_direct() -> Result<String, String> {
+    run_core_cli(vec!["service".into(), "uninstall".into()]).await
+}
+
 fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
@@ -138,7 +216,14 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![core_rpc_url])
+        .invoke_handler(tauri::generate_handler![
+            core_rpc_url,
+            service_install_direct,
+            service_start_direct,
+            service_stop_direct,
+            service_status_direct,
+            service_uninstall_direct
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| match event {

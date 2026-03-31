@@ -8,10 +8,9 @@
  * Fallback: Appium `macos: deepLink` / macOS `open` when JS execution in the WebView
  * is unavailable.
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import { exec } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 /** Set `DEBUG_E2E_DEEPLINK=0` to silence deep-link helper logs (default: verbose for debugging). */
 function deepLinkDebug(...args: unknown[]): void {
@@ -118,9 +117,8 @@ async function trySimulateDeepLinkInWebView(url: string): Promise<boolean> {
 }
 
 function resolveBuiltAppPath(): string | null {
-  const helperDir = path.dirname(fileURLToPath(import.meta.url));
-  const appDir = path.resolve(helperDir, '..', '..');
-  const repoRoot = path.resolve(appDir, '..');
+  const repoRoot = process.cwd();
+  const appDir = path.join(repoRoot, 'app');
   const candidates = [
     path.join(appDir, 'src-tauri', 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
     path.join(repoRoot, 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
@@ -173,15 +171,22 @@ export async function triggerDeepLink(url: string): Promise<void> {
     } catch (err) {
       deepLinkDebug('macos: launchApp failed', err instanceof Error ? err.message : err);
     }
-    try {
-      await browser.execute('macos: deepLink', { url, bundleId: 'com.openhuman.app' } as Record<
-        string,
-        unknown
-      >);
-      deepLinkDebug('macos: deepLink OK');
-      return;
-    } catch (err) {
-      deepLinkDebug('macos: deepLink failed', err instanceof Error ? err.message : err);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await browser.execute('macos: deepLink', { url, bundleId: 'com.openhuman.app' } as Record<
+          string,
+          unknown
+        >);
+        deepLinkDebug('macos: deepLink OK', { attempt });
+        await browser.pause(300);
+        return;
+      } catch (err) {
+        deepLinkDebug('macos: deepLink failed', {
+          attempt,
+          error: err instanceof Error ? err.message : err,
+        });
+        await browser.pause(250);
+      }
     }
   }
 
@@ -197,12 +202,17 @@ export async function triggerDeepLink(url: string): Promise<void> {
   }
 
   let openError: unknown = null;
-  try {
-    const command = appPath ? `open -a "${appPath}" "${url}"` : `open "${url}"`;
-    deepLinkDebug('fallback shell', command);
-    await execCommand(command);
-  } catch (err) {
-    openError = err;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const command = appPath ? `open -a "${appPath}" "${url}"` : `open "${url}"`;
+      deepLinkDebug('fallback shell', { attempt, command });
+      await execCommand(command);
+      openError = null;
+      break;
+    } catch (err) {
+      openError = err;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
   }
 
   if (!openError) {

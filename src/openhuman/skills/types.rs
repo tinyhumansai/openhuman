@@ -1,4 +1,4 @@
-//! Core type definitions for the V8 skill runtime.
+//! Core type definitions for the QuickJS skill runtime.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -99,6 +99,15 @@ pub enum SkillMessage {
     /// Load params from frontend (e.g. wallet address for wallet skill).
     /// Delivered after skill/load RPC; skill may export onLoad(params) to receive them.
     LoadParams { params: serde_json::Value },
+}
+
+/// Origin of a tool-call request entering the skill runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolCallOrigin {
+    /// Calls initiated by trusted host surfaces (RPC/UI/socket MCP).
+    External,
+    /// Calls initiated from inside a running skill.
+    SkillSelf { skill_id: String },
 }
 
 /// Result of executing a tool.

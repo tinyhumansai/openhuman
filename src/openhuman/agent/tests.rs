@@ -159,54 +159,6 @@ impl Tool for EchoTool {
     }
 }
 
-/// A generic skills bridge test-double tool.
-struct SkillsCallEchoTool;
-
-#[async_trait]
-impl Tool for SkillsCallEchoTool {
-    fn name(&self) -> &str {
-        "skills_call"
-    }
-
-    fn description(&self) -> &str {
-        "Calls a skill tool"
-    }
-
-    fn parameters_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "skill_id": {"type": "string"},
-                "tool_name": {"type": "string"},
-                "arguments": {"type": "object"}
-            },
-            "required": ["skill_id", "tool_name"]
-        })
-    }
-
-    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
-        let skill_id = args
-            .get("skill_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let tool_name = args
-            .get("tool_name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let message = args
-            .get("arguments")
-            .and_then(|v| v.get("message"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("empty");
-
-        Ok(ToolResult {
-            success: true,
-            output: format!("{skill_id}:{tool_name}:{message}"),
-            error: None,
-        })
-    }
-}
-
 /// A tool that always fails execution.
 struct FailingTool;
 
@@ -1335,54 +1287,6 @@ fn native_dispatcher_converts_tool_results_to_tool_messages() {
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].role, "tool");
     assert_eq!(messages[1].role, "tool");
-}
-
-#[tokio::test]
-async fn native_dispatcher_executes_generic_skills_call_tool() {
-    let provider = Box::new(ScriptedProvider::new(vec![
-        tool_response(vec![ToolCall {
-            id: "tc-skills-1".into(),
-            name: "skills_call".into(),
-            arguments: serde_json::json!({
-                "skill_id": "e2e-runtime",
-                "tool_name": "echo",
-                "arguments": { "message": "hello from agent test" }
-            })
-            .to_string(),
-        }]),
-        text_response("skills call done"),
-    ]));
-
-    let (mut agent, _tmp) = build_agent_with(
-        provider,
-        vec![Box::new(SkillsCallEchoTool)],
-        Box::new(NativeToolDispatcher),
-    );
-
-    let response = agent.turn("Use skills_call").await.unwrap();
-    assert_eq!(response, "skills call done");
-
-    let result_payloads: Vec<String> = agent
-        .history()
-        .iter()
-        .filter_map(|msg| match msg {
-            ConversationMessage::ToolResults(results) => Some(
-                results
-                    .iter()
-                    .map(|r| r.content.clone())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            ),
-            _ => None,
-        })
-        .collect();
-
-    assert!(
-        result_payloads
-            .iter()
-            .any(|payload| payload.contains("e2e-runtime:echo:hello from agent test")),
-        "expected skills_call output in tool results, got: {result_payloads:?}"
-    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

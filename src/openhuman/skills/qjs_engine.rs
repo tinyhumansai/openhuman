@@ -38,7 +38,7 @@ use crate::openhuman::skills::preferences::PreferencesStore;
 use crate::openhuman::skills::qjs_skill_instance::{BridgeDeps, QjsSkillInstance};
 use crate::openhuman::skills::skill_registry::SkillRegistry;
 use crate::openhuman::skills::socket_manager::SocketManager;
-use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolResult};
+use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin, ToolResult};
 // IdbStorage removed during runtime cleanup
 
 /// The central runtime engine using QuickJS.
@@ -503,6 +503,26 @@ impl RuntimeEngine {
     ) -> Result<ToolResult, String> {
         self.registry
             .call_tool(skill_id, tool_name, arguments)
+            .await
+    }
+
+    /// Call a tool from inside a running skill. Enforces self-only invocation.
+    pub async fn call_tool_as_skill(
+        &self,
+        caller_skill_id: &str,
+        target_skill_id: &str,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, String> {
+        self.registry
+            .call_tool_scoped(
+                ToolCallOrigin::SkillSelf {
+                    skill_id: caller_skill_id.to_string(),
+                },
+                target_skill_id,
+                tool_name,
+                arguments,
+            )
             .await
     }
 

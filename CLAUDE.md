@@ -300,6 +300,17 @@ In the parent **OpenHuman** desktop app, **Tauri / Rust is a delivery vehicle**:
 
 ---
 
+## Debug logging rule (must follow)
+
+- **Default to verbose diagnostics on new/changed flows**: Add substantial, development-oriented logs while implementing features or fixes so issues are easy to trace end-to-end.
+- **Log critical checkpoints**: Include logs at entry/exit points, branch decisions, external calls, retries/timeouts, state transitions, and error handling paths.
+- **Use structured, grep-friendly context**: Prefer stable prefixes (for example `[domain]`, `[rpc]`, `[ui-flow]`) and include correlation fields such as request IDs, method names, and entity IDs when available.
+- **Platform conventions**: In Rust, use `log` / `tracing` at `debug` or `trace`; in `app/`, use namespaced `debug` logs and dev-only detail as needed.
+- **Keep logs safe**: Never log secrets or sensitive payloads (API keys, JWTs, credentials, full PII). Redact or omit sensitive fields.
+- **Treat debuggability as a deliverable**: Changes lacking sufficient logging for diagnosis are incomplete and should be updated before handoff.
+
+---
+
 ## Feature design workflow (new capabilities)
 
 Follow this order so behavior is **specified**, **proven in Rust**, **proven over RPC**, then **surfaced in the UI** with matching tests.
