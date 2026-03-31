@@ -8,7 +8,8 @@ use crate::openhuman::memory::{
     ApiEnvelope, ApiError, ApiMeta, DeleteDocumentRequest, DeleteDocumentResponse, EmptyRequest,
     ListDocumentsRequest, ListDocumentsResponse, ListMemoryFilesRequest, ListMemoryFilesResponse,
     ListNamespacesResponse, MemoryClient, MemoryClientRef, MemoryDocumentSummary,
-    MemoryInitRequest, MemoryInitResponse, MemoryItemKind, MemoryRecallItem, MemoryRetrievalChunk,
+    MemoryIngestionConfig, MemoryIngestionRequest, MemoryIngestionResult, MemoryInitRequest,
+    MemoryInitResponse, MemoryItemKind, MemoryRecallItem, MemoryRetrievalChunk,
     MemoryRetrievalContext, MemoryRetrievalEntity, MemoryRetrievalRelation, NamespaceDocumentInput,
     NamespaceMemoryHit, NamespaceRetrievalContext, PaginationMeta, QueryNamespaceRequest,
     QueryNamespaceResponse, ReadMemoryFileRequest, ReadMemoryFileResponse, RecallContextRequest,
@@ -450,6 +451,30 @@ pub struct PutDocParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct IngestDocParams {
+    pub namespace: String,
+    pub key: String,
+    pub title: String,
+    pub content: String,
+    #[serde(default = "default_source_type")]
+    pub source_type: String,
+    #[serde(default = "default_priority")]
+    pub priority: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+    #[serde(default = "default_category")]
+    pub category: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub document_id: Option<String>,
+    #[serde(default)]
+    pub config: Option<MemoryIngestionConfig>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NamespaceOnlyParams {
     pub namespace: String,
 }
@@ -558,6 +583,35 @@ pub async fn doc_put(params: PutDocParams) -> Result<RpcOutcome<PutDocResult>, S
         PutDocResult { document_id },
         "memory document upserted",
     ))
+}
+
+pub async fn doc_ingest(
+    params: IngestDocParams,
+) -> Result<RpcOutcome<MemoryIngestionResult>, String> {
+    let client = active_memory_client().await?;
+    let result = client
+        .ingest_doc(MemoryIngestionRequest {
+            document: NamespaceDocumentInput {
+                namespace: params.namespace,
+                key: params.key,
+                title: params.title,
+                content: params.content,
+                source_type: params.source_type,
+                priority: params.priority,
+                tags: params.tags,
+                metadata: params.metadata,
+                category: params.category,
+                session_id: params.session_id,
+                document_id: params.document_id,
+            },
+            config: params.config.unwrap_or_default(),
+        })
+        .await?;
+    let msg = format!(
+        "ingested document {} — {} entities, {} relations, {} chunks",
+        result.document_id, result.entity_count, result.relation_count, result.chunk_count,
+    );
+    Ok(RpcOutcome::single_log(result, &msg))
 }
 
 pub async fn doc_list(

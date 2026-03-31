@@ -119,6 +119,14 @@ pub async fn try_dispatch(
             .await,
         ),
 
+        "memory.doc.ingest" => Some(
+            async move {
+                let payload: crate::openhuman::memory::rpc::IngestDocParams = parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::doc_ingest(payload).await?)
+            }
+            .await,
+        ),
+
         "memory.doc.list" => Some(
             async move {
                 let payload: MemoryDocListParams = parse_params(params)?;
@@ -214,5 +222,66 @@ pub async fn try_dispatch(
         )),
 
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::try_dispatch;
+
+    /// Verify that the dispatcher recognises `memory.doc.ingest` (returns `Some`).
+    /// The inner handler will fail because no memory client is initialised,
+    /// but the route being present (not `None`) is what we need to assert.
+    #[tokio::test]
+    async fn dispatch_routes_memory_doc_ingest() {
+        let params = json!({
+            "namespace": "test",
+            "key": "k1",
+            "title": "Title",
+            "content": "body"
+        });
+        let result = try_dispatch("memory.doc.ingest", params).await;
+        assert!(
+            result.is_some(),
+            "memory.doc.ingest should be routed by dispatch"
+        );
+    }
+
+    /// Verify that `memory.graph.query` is routed.
+    #[tokio::test]
+    async fn dispatch_routes_memory_graph_query() {
+        let params = json!({});
+        let result = try_dispatch("memory.graph.query", params).await;
+        assert!(
+            result.is_some(),
+            "memory.graph.query should be routed by dispatch"
+        );
+    }
+
+    /// Unknown methods must return `None` so callers can fall through.
+    #[tokio::test]
+    async fn dispatch_returns_none_for_unknown_method() {
+        let result = try_dispatch("nonexistent.method", json!({})).await;
+        assert!(result.is_none(), "unknown methods should return None");
+    }
+
+    /// Verify that params deserialization errors surface as `Some(Err(...))`.
+    #[tokio::test]
+    async fn dispatch_memory_doc_ingest_rejects_invalid_params() {
+        // Missing required fields → should be Some(Err)
+        let result = try_dispatch("memory.doc.ingest", json!({})).await;
+        assert!(result.is_some());
+        let inner = result.unwrap();
+        assert!(
+            inner.is_err(),
+            "missing required fields should produce a deserialization error"
+        );
+        let err_msg = inner.unwrap_err();
+        assert!(
+            err_msg.contains("invalid params"),
+            "error should mention invalid params, got: {err_msg}"
+        );
     }
 }
