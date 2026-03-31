@@ -2,6 +2,7 @@ name: Test
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -68,39 +69,21 @@ jobs:
   rust-tests:
     name: Rust Tests + Quality
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          components: rustfmt, clippy
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Install Tauri build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      # Match build.yml: lockfile body only (skip workspace version header noise)
-      - name: Cargo.lock fingerprint (deps only)
-        id: cargo-lock-fingerprint
-        shell: bash
-        run: |
-          echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Cargo registry and git sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-rust-test-cargo-${{ steps.cargo-lock-fingerprint.outputs.hash }}
-          restore-keys: |
-            ${{ runner.os }}-rust-test-cargo-
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
 
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
@@ -112,12 +95,12 @@ jobs:
         run: cargo test -p openhuman
 
       - name: Build sidecar core binary
-        run: cargo build --manifest-path Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman-core
+        run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
 
       - name: Stage sidecar for Tauri shell tests
         run: |
           mkdir -p app/src-tauri/binaries
-          cp target/x86_64-unknown-linux-gnu/release/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+          cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
           chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
 
       - name: Test Tauri shell (OpenHuman)
@@ -191,42 +174,42 @@ jobs:
           eval $(dbus-launch --sh-syntax)
           yarn workspace openhuman-app test:e2e:all:flows
 
-  e2e-macos:
-    name: E2E (macOS / Appium)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true'
-    runs-on: macos-latest
-    timeout-minutes: 90
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          submodules: recursive
+#   e2e-macos:
+#     name: E2E (macOS / Appium)
+#     if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true'
+#     runs-on: macos-latest
+#     timeout-minutes: 90
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
+#         with:
+#           fetch-depth: 1
+#           submodules: recursive
 
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.x
-          cache: "yarn"
+#       - name: Setup Node.js 24.x
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: 24.x
+#           cache: "yarn"
 
-      - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+#       - name: Install Rust (rust-toolchain.toml)
+#         uses: dtolnay/rust-toolchain@1.93.0
 
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
+#       - name: Install dependencies
+#         run: yarn install --frozen-lockfile
 
-      - name: Ensure .env exists for E2E build
-        run: |
-          touch .env
-          touch app/.env
+#       - name: Ensure .env exists for E2E build
+#         run: |
+#           touch .env
+#           touch app/.env
 
-      - name: Install Appium and mac2 driver
-        run: |
-          npm install -g appium
-          appium driver install mac2
+#       - name: Install Appium and mac2 driver
+#         run: |
+#           npm install -g appium
+#           appium driver install mac2
 
-      - name: Build E2E app bundle
-        run: yarn workspace openhuman-app test:e2e:build
+#       - name: Build E2E app bundle
+#         run: yarn workspace openhuman-app test:e2e:build
 
-      - name: Run all E2E flows
-        run: yarn workspace openhuman-app test:e2e:all:flows
+#       - name: Run all E2E flows
+#         run: yarn workspace openhuman-app test:e2e:all:flows

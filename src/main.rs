@@ -8,6 +8,8 @@ fn main() {
         dsn: std::env::var("OPENHUMAN_SENTRY_DSN")
             .ok()
             .filter(|s| !s.is_empty())
+            .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()))
+            .filter(|s| !s.is_empty())
             .and_then(|s| s.parse().ok()),
         release: Some(std::borrow::Cow::Borrowed(env!("CARGO_PKG_VERSION"))),
         environment: Some(if cfg!(debug_assertions) {

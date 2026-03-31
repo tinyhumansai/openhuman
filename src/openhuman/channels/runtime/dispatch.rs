@@ -145,7 +145,7 @@ pub(crate) async fn process_channel_message(
     // Determine if this channel supports streaming draft updates
     let use_streaming = target_channel
         .as_ref()
-        .map_or(false, |ch| ch.supports_draft_updates());
+        .is_some_and(|ch| ch.supports_draft_updates());
 
     // Set up streaming channel if supported
     let (delta_tx, delta_rx) = if use_streaming {

@@ -130,7 +130,7 @@ impl ChannelDefinition {
             .filter(|f| {
                 credentials
                     .get(f.key)
-                    .map_or(true, |v| v.as_str().map_or(false, |s| s.is_empty()))
+                    .is_none_or(|v| v.as_str().is_some_and(|s| s.is_empty()))
             })
             .map(|f| f.key)
             .collect();

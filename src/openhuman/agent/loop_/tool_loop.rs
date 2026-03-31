@@ -226,7 +226,7 @@ pub(crate) async fn run_tool_call_loop(
                         if r.success {
                             scrub_credentials(&r.output)
                         } else {
-                            format!("Error: {}", r.error.unwrap_or_else(|| r.output))
+                            format!("Error: {}", r.error.unwrap_or(r.output))
                         }
                     }
                     Err(e) => {

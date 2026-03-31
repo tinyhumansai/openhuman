@@ -592,7 +592,10 @@ impl Config {
             }
         }
 
-        if let Ok(dsn) = std::env::var("OPENHUMAN_SENTRY_DSN") {
+        let dsn_value = std::env::var("OPENHUMAN_SENTRY_DSN")
+            .ok()
+            .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()));
+        if let Some(dsn) = dsn_value {
             let dsn = dsn.trim();
             if !dsn.is_empty() {
                 self.observability.sentry_dsn = Some(dsn.to_string());

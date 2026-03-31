@@ -364,10 +364,7 @@ fn validate_size(source: &str, size_bytes: usize, max_bytes: usize) -> anyhow::R
 }
 
 fn validate_mime(source: &str, mime: &str) -> anyhow::Result<()> {
-    if ALLOWED_IMAGE_MIME_TYPES
-        .iter()
-        .any(|allowed| *allowed == mime)
-    {
+    if ALLOWED_IMAGE_MIME_TYPES.contains(&mime) {
         return Ok(());
     }
 

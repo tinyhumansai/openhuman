@@ -7,6 +7,12 @@ pub use crate::openhuman::agent::traits::RuntimeAdapter;
 
 pub struct NativeRuntime;
 
+impl Default for NativeRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NativeRuntime {
     pub const fn new() -> Self {
         Self

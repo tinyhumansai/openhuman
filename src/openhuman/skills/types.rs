@@ -6,8 +6,10 @@ use std::collections::HashMap;
 /// Status of a running skill instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SkillStatus {
     /// Skill is registered but not yet started.
+    #[default]
     Pending,
     /// Skill is currently initializing (loading JS, running init()).
     Initializing,
@@ -19,12 +21,6 @@ pub enum SkillStatus {
     Stopped,
     /// Skill encountered a fatal error.
     Error,
-}
-
-impl Default for SkillStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 /// Messages sent to a skill instance's message loop.

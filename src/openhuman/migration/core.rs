@@ -385,12 +385,10 @@ fn pick_column_expr<'a>(
 }
 
 fn pick_optional_column_expr<'a>(columns: &'a [String], candidates: &[&'a str]) -> Option<&'a str> {
-    for candidate in candidates {
-        if columns.iter().any(|c| c.eq_ignore_ascii_case(candidate)) {
-            return Some(candidate);
-        }
-    }
-    None
+    candidates
+        .iter()
+        .find(|&candidate| columns.iter().any(|c| c.eq_ignore_ascii_case(candidate)))
+        .map(|v| v as _)
 }
 
 async fn next_available_key(memory: &dyn Memory, key: &str) -> Result<String> {

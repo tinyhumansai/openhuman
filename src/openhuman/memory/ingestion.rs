@@ -14,15 +14,11 @@ const DEFAULT_CHUNK_TOKENS: usize = 225;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ExtractionMode {
+    #[default]
     Sentence,
     Chunk,
-}
-
-impl Default for ExtractionMode {
-    fn default() -> Self {
-        Self::Sentence
-    }
 }
 
 impl ExtractionMode {
@@ -282,7 +278,7 @@ fn type_allowed(actual: &str, allowed: &[&str]) -> bool {
 
 fn resolve_person_alias(name: &str, known_people: &HashMap<String, String>) -> String {
     let upper = name.to_uppercase();
-    known_people.get(&upper).cloned().unwrap_or_else(|| upper)
+    known_people.get(&upper).cloned().unwrap_or(upper)
 }
 
 impl ExtractionAccumulator {
@@ -1297,7 +1293,7 @@ async fn parse_document(
 
     for unit in build_units(&chunks, config.extraction_mode) {
         if let Some(ref runtime) = relex_runtime {
-            apply_model_extraction(&runtime, &unit, &mut accumulator, config);
+            apply_model_extraction(runtime, &unit, &mut accumulator, config);
         }
 
         if let Some(captures) = recipient_regex().captures(&unit.text) {

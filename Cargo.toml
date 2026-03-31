@@ -120,3 +120,13 @@ landlock = ["sandbox-landlock"]
 probe = ["dep:probe-rs"]
 rag-pdf = ["dep:pdf-extract"]
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "serde-big-array"]
+
+# Fast CI builds: trade runtime perf for compile speed
+[profile.ci]
+inherits = "release"
+opt-level = 1
+codegen-units = 16
+lto = false
+incremental = false
+strip = true
+debug = false

@@ -146,7 +146,7 @@ pub(crate) fn capture_screen_image_ref_for_context(
         }
 
         let encoded = BASE64_STANDARD.encode(bytes);
-        return Ok(format!("data:image/png;base64,{encoded}"));
+        Ok(format!("data:image/png;base64,{encoded}"))
     }
 
     #[cfg(not(target_os = "macos"))]

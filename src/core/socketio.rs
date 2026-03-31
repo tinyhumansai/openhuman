@@ -247,7 +247,7 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
 }
 
 fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde_json::Value) {
-    let _ = io.to(room.to_string()).emit(name.to_string(), payload);
+    let _ = io.to(room.to_string()).emit(name, payload);
     if let Some(alias) = event_alias(name) {
         let _ = io.to(room.to_string()).emit(alias, payload);
     }

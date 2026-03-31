@@ -40,3 +40,13 @@ env_logger = "0.11"
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 sandbox-bubblewrap = []
+
+# Fast CI builds: trade runtime perf for compile speed
+[profile.ci]
+inherits = "release"
+opt-level = 1
+codegen-units = 16
+lto = false
+incremental = false
+strip = true
+debug = false

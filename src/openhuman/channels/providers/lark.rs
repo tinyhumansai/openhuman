@@ -288,7 +288,7 @@ impl LarkChannel {
             payload: None,
         };
         if write
-            .send(WsMsg::Binary(initial_ping.encode_to_vec().into()))
+            .send(WsMsg::Binary(initial_ping.encode_to_vec()))
             .await
             .is_err()
         {
@@ -309,7 +309,7 @@ impl LarkChannel {
                         headers: vec![PbHeader { key: "type".into(), value: "ping".into() }],
                         payload: None,
                     };
-                    if write.send(WsMsg::Binary(ping.encode_to_vec().into())).await.is_err() {
+                    if write.send(WsMsg::Binary(ping.encode_to_vec())).await.is_err() {
                         tracing::warn!("Lark: ping failed, reconnecting");
                         break;
                     }
@@ -378,7 +378,7 @@ impl LarkChannel {
                         let mut ack = frame.clone();
                         ack.payload = Some(br#"{"code":200,"headers":{},"data":[]}"#.to_vec());
                         ack.headers.push(PbHeader { key: "biz_rt".into(), value: "0".into() });
-                        let _ = write.send(WsMsg::Binary(ack.encode_to_vec().into())).await;
+                        let _ = write.send(WsMsg::Binary(ack.encode_to_vec())).await;
                     }
 
                     // Fragment reassembly
@@ -739,7 +739,7 @@ impl LarkChannel {
                 let token_ok = payload
                     .get("token")
                     .and_then(|t| t.as_str())
-                    .map_or(true, |t| t == state.verification_token);
+                    .is_none_or(|t| t == state.verification_token);
 
                 if !token_ok {
                     return (StatusCode::FORBIDDEN, "invalid token").into_response();

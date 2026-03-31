@@ -33,7 +33,7 @@ pub fn install(config: &Config) -> Result<ServiceStatus> {
     #[cfg(target_os = "macos")]
     {
         macos::install(config)?;
-        return status(config);
+        status(config)
     }
     #[cfg(target_os = "linux")]
     {
@@ -72,7 +72,7 @@ pub fn stop(config: &Config) -> Result<ServiceStatus> {
     #[cfg(target_os = "macos")]
     {
         macos::stop(config)?;
-        return status(config);
+        status(config)
     }
     #[cfg(target_os = "linux")]
     {

@@ -150,7 +150,6 @@ fn ensure_fastembed_ort_dylib_path() {
 
         if bundled.exists() {
             env::set_var("ORT_DYLIB_PATH", bundled);
-            return;
         }
     }
 

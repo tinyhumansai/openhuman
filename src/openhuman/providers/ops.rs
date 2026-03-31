@@ -170,7 +170,7 @@ pub fn create_backend_inference_provider(
 ) -> anyhow::Result<Box<dyn Provider>> {
     let resolved = resolve_provider_credential(INFERENCE_BACKEND_ID, api_key)
         .map(|v| String::from_utf8(v.into_bytes()).unwrap_or_default());
-    let key = resolved.as_ref().map(String::as_str);
+    let key = resolved.as_deref();
     Ok(Box::new(openhuman_backend::OpenHumanBackendProvider::new(
         api_url, key, options,
     )))

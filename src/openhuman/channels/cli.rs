@@ -6,6 +6,12 @@ use uuid::Uuid;
 /// Console channel — stdin/stdout, not used in the web UI, zero deps
 pub struct CliChannel;
 
+impl Default for CliChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CliChannel {
     pub fn new() -> Self {
         Self

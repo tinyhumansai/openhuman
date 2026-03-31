@@ -327,7 +327,7 @@ async fn run_connection(
     // 5. Send Socket.IO CONNECT with auth
     let connect_payload = json!({"token": token});
     let connect_msg = format!("40{}", serde_json::to_string(&connect_payload).unwrap());
-    if let Err(e) = ws_write.send(WsMessage::Text(connect_msg.into())).await {
+    if let Err(e) = ws_write.send(WsMessage::Text(connect_msg)).await {
         return ConnectionOutcome::Failed(format!("Send SIO CONNECT: {e}"));
     }
 
@@ -386,7 +386,7 @@ async fn run_connection(
             outgoing = emit_rx.recv() => {
                 match outgoing {
                     Some(msg) => {
-                        if let Err(e) = ws_write.send(WsMessage::Text(msg.into())).await {
+                        if let Err(e) = ws_write.send(WsMessage::Text(msg)).await {
                             return ConnectionOutcome::Lost(format!("Send failed: {e}"));
                         }
                     }

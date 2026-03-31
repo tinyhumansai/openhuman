@@ -241,6 +241,12 @@ pub struct AutocompleteEngine {
     inner: Mutex<EngineState>,
 }
 
+impl Default for AutocompleteEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutocompleteEngine {
     pub fn new() -> Self {
         Self {
@@ -908,8 +914,7 @@ fn show_overflow_badge(
 fn escape_osascript_text(raw: &str) -> String {
     raw.replace('\\', "\\\\")
         .replace('\"', "\\\"")
-        .replace('\n', " ")
-        .replace('\r', " ")
+        .replace(['\n', '\r'], " ")
 }
 
 #[cfg(target_os = "macos")]

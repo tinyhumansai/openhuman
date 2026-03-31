@@ -2,6 +2,7 @@ name: Type Check
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -61,37 +62,20 @@ jobs:
   rust-quality:
     name: Rust Quality (fmt + clippy)
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          components: rustfmt, clippy
-
-      - name: Install Tauri build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Cargo.lock fingerprint (deps only)
-        id: cargo-lock-fingerprint
-        shell: bash
-        run: |
-          echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Cargo registry and git sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+          workspaces: |
+            . -> target
+          cache-on-failure: true
 
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check

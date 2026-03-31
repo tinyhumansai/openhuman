@@ -195,7 +195,7 @@ impl Channel for DingTalkChannel {
                         "data": "",
                     });
 
-                    if let Err(e) = write.send(Message::Text(pong.to_string().into())).await {
+                    if let Err(e) = write.send(Message::Text(pong.to_string())).await {
                         tracing::warn!("DingTalk: failed to send pong: {e}");
                         break;
                     }
@@ -262,7 +262,7 @@ impl Channel for DingTalkChannel {
                         "message": "OK",
                         "data": "",
                     });
-                    let _ = write.send(Message::Text(ack.to_string().into())).await;
+                    let _ = write.send(Message::Text(ack.to_string())).await;
 
                     let channel_msg = ChannelMessage {
                         id: Uuid::new_v4().to_string(),

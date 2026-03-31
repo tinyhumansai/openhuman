@@ -131,8 +131,8 @@ pub async fn registry_search(
 
     let mut results: Vec<RegistrySkillEntry> = Vec::new();
 
-    let include_core = category.map_or(true, |c| c == "core");
-    let include_third_party = category.map_or(true, |c| c == "third_party");
+    let include_core = category.is_none_or(|c| c == "core");
+    let include_third_party = category.is_none_or(|c| c == "third_party");
 
     if include_core {
         results.extend(
@@ -343,7 +343,7 @@ pub async fn skills_list_available(
             .map(|s| s.version.clone());
         let update_available = installed_version
             .as_ref()
-            .map_or(false, |v| !v.is_empty() && *v != entry.version);
+            .is_some_and(|v| !v.is_empty() && *v != entry.version);
 
         available.push(AvailableSkillEntry {
             registry: entry,

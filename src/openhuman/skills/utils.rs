@@ -62,7 +62,7 @@ where
             .enable_all()
             .build()
             .map_err(|e| format!("Failed to create runtime: {}", e))
-            .and_then(|rt| Ok(rt.block_on(future)));
+            .map(|rt| rt.block_on(future));
 
         let result = match runtime_result {
             Ok(value) => Ok(value),

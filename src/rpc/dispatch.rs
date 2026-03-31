@@ -21,7 +21,9 @@ pub async fn try_dispatch(
 
 #[cfg(test)]
 mod tests {
+    use futures_util::FutureExt;
     use serde_json::json;
+    use std::panic::AssertUnwindSafe;
 
     use super::try_dispatch;
 

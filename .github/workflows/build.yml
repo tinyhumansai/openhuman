@@ -2,6 +2,7 @@ name: Build
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
@@ -16,6 +17,8 @@ jobs:
   build:
     name: Build Tauri App
     runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,38 +26,13 @@ jobs:
           fetch-depth: 1
           submodules: true
 
-      - name: Setup Node.js 24.x
-        uses: actions/setup-node@v4
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          node-version: 24.x
-          cache: "yarn"
-
-      - name: Install Rust (rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.93.0
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Install Tauri dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      # Skip first 7 lines of Cargo.lock (workspace package version bumps) so the key tracks dependency changes only
-      - name: Cargo.lock fingerprint (deps only)
-        id: cargo-lock-fingerprint
-        shell: bash
-        run: |
-          echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Cargo registry and git sources
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
 
       - name: Cache node modules
         id: yarn-cache
@@ -70,18 +48,23 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Build sidecar core binary
-        run: cargo build --manifest-path Cargo.toml --release --target x86_64-unknown-linux-gnu --bin openhuman-core
+        run: cargo build --profile ci --target x86_64-unknown-linux-gnu --bin openhuman-core
 
       - name: Stage sidecar for Tauri bundler
         run: |
           mkdir -p app/src-tauri/binaries
-          cp target/x86_64-unknown-linux-gnu/release/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
+          cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
           chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
 
       - name: Build Tauri app
         working-directory: app
         run: |
           TAURI_CONFIG_OVERRIDE='{"plugins":{"updater":{"active":false}}}'
-          yarn tauri build -c "$TAURI_CONFIG_OVERRIDE"
+          yarn tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_STRIP: "true"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"

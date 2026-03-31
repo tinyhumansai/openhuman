@@ -375,6 +375,7 @@ jobs:
           MATRIX_TARGET: ${{ matrix.settings.target }}
           CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
           CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
+          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
 
       - name: Stage sidecar for Tauri bundler
         shell: bash
