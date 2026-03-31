@@ -334,6 +334,47 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
     rpc_join.abort();
 }
 
+#[tokio::test]
+async fn json_rpc_rejects_non_object_params_with_clear_error() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let invalid = post_json_rpc(
+        &rpc_base,
+        1001,
+        "openhuman.auth_get_state",
+        json!(["invalid", "params"]),
+    )
+    .await;
+    let err_message = invalid
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        !err_message.is_empty(),
+        "expected non-empty JSON-RPC error message: {invalid}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 // ---------------------------------------------------------------------------
 // Skills registry E2E: fetch, search, install, list, uninstall
 // ---------------------------------------------------------------------------

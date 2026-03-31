@@ -376,7 +376,10 @@ fn is_help(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::grouped_schemas;
+    use super::{
+        grouped_schemas, parse_autocomplete_start_cli_options, parse_function_params, parse_input_value,
+    };
+    use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
     #[test]
     fn grouped_schemas_contains_migrated_namespaces() {
@@ -391,5 +394,42 @@ mod tests {
         assert!(grouped.contains_key("service"));
         assert!(grouped.contains_key("migrate"));
         assert!(grouped.contains_key("local_ai"));
+    }
+
+    #[test]
+    fn parse_autocomplete_start_cli_options_rejects_serve_and_spawn() {
+        let args = vec!["--serve".to_string(), "--spawn".to_string()];
+        let err = parse_autocomplete_start_cli_options(&args).expect_err("must reject mutually exclusive flags");
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn parse_function_params_rejects_unknown_param() {
+        let schema = ControllerSchema {
+            namespace: "test",
+            function: "echo",
+            description: "test schema",
+            inputs: vec![FieldSchema {
+                name: "message",
+                ty: TypeSchema::String,
+                required: true,
+                comment: "message text",
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::String,
+                required: true,
+                comment: "echo response",
+            }],
+        };
+        let args = vec!["--unknown".to_string(), "value".to_string()];
+        let err = parse_function_params(&schema, &args).expect_err("unknown param should fail");
+        assert!(err.contains("unknown param"));
+    }
+
+    #[test]
+    fn parse_input_value_rejects_invalid_bool() {
+        let err = parse_input_value(&TypeSchema::Bool, "not-a-bool").expect_err("invalid bool should fail");
+        assert!(err.contains("expected bool"));
     }
 }

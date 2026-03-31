@@ -15,12 +15,12 @@
  *  - Navigation to /home on success
  *  - Redux dispatch of setEncryptionKeyForUser
  */
-import type { User } from '../src/types/api';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderWithProviders } from '../src/test/test-utils';
 import Mnemonic from '../src/pages/Mnemonic';
+import { renderWithProviders } from '../src/test/test-utils';
+import type { User } from '../src/types/api';
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -80,8 +80,7 @@ const renderWithUser = () =>
 const renderWithoutUser = () => renderWithProviders(<Mnemonic />);
 
 /** Switch to import mode. */
-const switchToImport = () =>
-  fireEvent.click(screen.getByText('I already have a recovery phrase'));
+const switchToImport = () => fireEvent.click(screen.getByText('I already have a recovery phrase'));
 
 /** Fill all 24 import inputs with the words from `phrase`. */
 const fillAllImportWords = (phrase = FIXED_MNEMONIC) => {
@@ -188,9 +187,7 @@ describe('Mnemonic — generate mode: copy to clipboard', () => {
       fireEvent.click(screen.getByRole('button', { name: /copy to clipboard/i }));
     });
 
-    await waitFor(() =>
-      expect(screen.getByText('Copied to Clipboard')).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText('Copied to Clipboard')).toBeInTheDocument());
   });
 
   it('resets "Copied" text back to "Copy to Clipboard" after 3 s', async () => {
@@ -203,7 +200,9 @@ describe('Mnemonic — generate mode: copy to clipboard', () => {
     });
 
     // Flush the resolved clipboard promise so setCopied(true) fires
-    await act(async () => { await vi.runAllTimersAsync(); });
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
 
     // Now the 3-second reset timer has also been run
     expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
@@ -373,35 +372,33 @@ describe('Mnemonic — import mode: validation', () => {
     mockValidateMnemonicPhrase.mockReturnValueOnce(false);
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(screen.getByText(/invalid recovery phrase/i)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/invalid recovery phrase/i)).toBeInTheDocument());
   });
 
   it('shows error when the 24-word phrase is invalid (BIP39)', async () => {
     mockValidateMnemonicPhrase.mockReturnValueOnce(false);
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(
-        screen.getByText(/invalid recovery phrase/i)
-      ).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/invalid recovery phrase/i)).toBeInTheDocument());
   });
 
   it('shows "Valid recovery phrase" text when phrase passes BIP39 validation', async () => {
     mockValidateMnemonicPhrase.mockReturnValue(true);
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(screen.getByText('Valid recovery phrase')).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText('Valid recovery phrase')).toBeInTheDocument());
   });
 });
 
@@ -414,26 +411,32 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     // Make setWalletAddress hang so we can observe the loading state
     let resolveWallet!: () => void;
     mockSetWalletAddress.mockReturnValueOnce(
-      new Promise<void>(res => { resolveWallet = res; })
+      new Promise<void>(res => {
+        resolveWallet = res;
+      })
     );
 
     renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(screen.getByText('Securing Your Data...')).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText('Securing Your Data...')).toBeInTheDocument());
 
-    await act(async () => { resolveWallet(); });
+    await act(async () => {
+      resolveWallet();
+    });
   });
 
   it('dispatches setEncryptionKeyForUser with userId and derived AES key', async () => {
     const { store } = renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
     await waitFor(() => expect(mockSetWalletAddress).toHaveBeenCalled());
 
@@ -446,7 +449,9 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
     await waitFor(() => expect(mockSetWalletAddress).toHaveBeenCalled());
     expect(mockDeriveAesKey).toHaveBeenCalledWith(FIXED_MNEMONIC);
@@ -457,7 +462,9 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
     await waitFor(() => expect(mockSetWalletAddress).toHaveBeenCalledWith('0xDeAdBeEf'));
   });
@@ -474,11 +481,11 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     const checkboxes = screen.getAllByRole('checkbox');
     fireEvent.click(checkboxes[checkboxes.length - 1]);
     const buttons = screen.getAllByRole('button', { name: /let's go/i });
-    await act(async () => { fireEvent.click(buttons[buttons.length - 1]); });
+    await act(async () => {
+      fireEvent.click(buttons[buttons.length - 1]);
+    });
 
-    await waitFor(() =>
-      expect(screen.getAllByText(/user not loaded/i).length).toBeGreaterThan(0)
-    );
+    await waitFor(() => expect(screen.getAllByText(/user not loaded/i).length).toBeGreaterThan(0));
   });
 
   it('shows an error message when deriveAesKeyFromMnemonic throws', async () => {
@@ -489,24 +496,26 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(screen.getByText('crypto failure')).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText('crypto failure')).toBeInTheDocument());
   });
 
   it('does not navigate when unconfirmed in generate mode', async () => {
     const { store } = renderWithUser();
     // Do NOT check the checkbox
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
     // No dispatch should have happened
     await new Promise(r => setTimeout(r, 50));
     expect(mockSetWalletAddress).not.toHaveBeenCalled();
-    expect((store.getState().auth as unknown as Record<string, unknown>).encryptionKeyByUser ?? {}).not.toMatchObject(
-      { 'user-123': expect.anything() }
-    );
+    expect(
+      (store.getState().auth as unknown as Record<string, unknown>).encryptionKeyByUser ?? {}
+    ).not.toMatchObject({ 'user-123': expect.anything() });
   });
 });
 
@@ -524,7 +533,9 @@ describe('Mnemonic — handleContinue: import mode', () => {
     switchToImport();
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
     await waitFor(() => expect(mockSetWalletAddress).toHaveBeenCalledWith('0xDeAdBeEf'));
     expect(mockDeriveAesKey).toHaveBeenCalledWith(FIXED_MNEMONIC);
@@ -535,7 +546,9 @@ describe('Mnemonic — handleContinue: import mode', () => {
     switchToImport();
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
     await waitFor(() => expect(mockSetWalletAddress).toHaveBeenCalled());
     const authState = store.getState().auth as unknown as Record<string, unknown>;
@@ -549,11 +562,11 @@ describe('Mnemonic — handleContinue: import mode', () => {
     switchToImport();
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(screen.getByText(/invalid recovery phrase/i)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/invalid recovery phrase/i)).toBeInTheDocument());
     expect(mockDeriveAesKey).not.toHaveBeenCalled();
   });
 
@@ -566,11 +579,11 @@ describe('Mnemonic — handleContinue: import mode', () => {
     switchToImport();
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(screen.getByText(/user not loaded/i)).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText(/user not loaded/i)).toBeInTheDocument());
   });
 
   it('shows an error when skillManager.setWalletAddress throws during import', async () => {
@@ -580,11 +593,11 @@ describe('Mnemonic — handleContinue: import mode', () => {
     switchToImport();
     fillAllImportWords();
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
-    await waitFor(() =>
-      expect(screen.getByText('wallet error')).toBeInTheDocument()
-    );
+    await waitFor(() => expect(screen.getByText('wallet error')).toBeInTheDocument());
   });
 });
 
@@ -596,29 +609,37 @@ describe('Mnemonic — loading state', () => {
   it('disables Continue button while loading', async () => {
     let resolveWallet!: () => void;
     mockSetWalletAddress.mockReturnValueOnce(
-      new Promise<void>(res => { resolveWallet = res; })
+      new Promise<void>(res => {
+        resolveWallet = res;
+      })
     );
 
     renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
     const btn = continueButton();
 
-    await act(async () => { fireEvent.click(btn); });
-    await waitFor(() =>
-      expect(screen.getByText('Securing Your Data...')).toBeInTheDocument()
-    );
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    await waitFor(() => expect(screen.getByText('Securing Your Data...')).toBeInTheDocument());
     expect(btn).toBeDisabled();
 
-    await act(async () => { resolveWallet(); });
+    await act(async () => {
+      resolveWallet();
+    });
   });
 
   it('restores button label after an error', async () => {
-    mockDeriveAesKey.mockImplementationOnce(() => { throw new Error('oops'); });
+    mockDeriveAesKey.mockImplementationOnce(() => {
+      throw new Error('oops');
+    });
 
     renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
 
-    await act(async () => { fireEvent.click(continueButton()); });
+    await act(async () => {
+      fireEvent.click(continueButton());
+    });
 
     await waitFor(() => expect(screen.getByText('oops')).toBeInTheDocument());
     expect(screen.queryByText('Securing Your Data...')).not.toBeInTheDocument();
