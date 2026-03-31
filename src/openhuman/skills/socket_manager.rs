@@ -29,7 +29,7 @@ use {
 
 // SkillRegistry only available on desktop
 use crate::openhuman::skills::skill_registry::SkillRegistry;
-use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus};
+use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin};
 
 /// Events emitted to the frontend via Tauri.
 #[allow(dead_code)]
@@ -727,7 +727,10 @@ async fn handle_mcp_tool_call(
 
             let registry = shared.registry.read().clone();
             if let Some(registry) = registry {
-                match registry.call_tool(skill_id, tool_name, arguments).await {
+                match registry
+                    .call_tool_scoped(ToolCallOrigin::External, skill_id, tool_name, arguments)
+                    .await
+                {
                     Ok(tool_result) => json!({
                         "content": tool_result.content,
                         "isError": tool_result.is_error,

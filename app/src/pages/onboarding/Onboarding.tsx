@@ -14,6 +14,7 @@ import WelcomeStep from './steps/WelcomeStep';
 
 interface OnboardingProps {
   onComplete?: () => void;
+  onDefer?: () => void;
 }
 
 interface OnboardingDraft {
@@ -24,7 +25,7 @@ interface OnboardingDraft {
   connectedSources: string[];
 }
 
-const Onboarding = ({ onComplete }: OnboardingProps) => {
+const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.user.user);
   const [currentStep, setCurrentStep] = useState(0);
@@ -137,6 +138,15 @@ const Onboarding = ({ onComplete }: OnboardingProps) => {
   return (
     <div className="min-h-full relative flex items-center justify-center">
       <div className="relative z-10 max-w-lg w-full mx-4">
+        {onDefer && (
+          <div className="flex justify-end mb-2">
+            <button
+              onClick={onDefer}
+              className="text-sm text-stone-400 hover:text-stone-200 transition-colors">
+              Set up later
+            </button>
+          </div>
+        )}
         <ProgressIndicator currentStep={currentStep} totalSteps={totalSteps} />
         {renderStep()}
       </div>

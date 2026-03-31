@@ -70,7 +70,7 @@ impl Memory for UnifiedMemory {
                 category: memory_category_from_stored(&r.category),
                 timestamp: Utc::now().to_rfc3339(),
                 session_id: None,
-                score: Some(r.score * 100.0),
+                score: Some(r.score),
             })
             .collect();
         Ok(out)

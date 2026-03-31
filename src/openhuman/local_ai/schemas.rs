@@ -89,6 +89,11 @@ struct LocalAiDownloadAssetParams {
     capability: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct LocalAiApplyPresetParams {
+    tier: String,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("agent_chat"),
@@ -110,6 +115,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("local_ai_assets_status"),
         schemas("local_ai_downloads_progress"),
         schemas("local_ai_download_asset"),
+        schemas("local_ai_device_profile"),
+        schemas("local_ai_presets"),
+        schemas("local_ai_apply_preset"),
     ]
 }
 
@@ -190,6 +198,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_download_asset"),
             handler: handle_local_ai_download_asset,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_device_profile"),
+            handler: handle_local_ai_device_profile,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_presets"),
+            handler: handle_local_ai_presets,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_apply_preset"),
+            handler: handle_local_ai_apply_preset,
         },
     ]
 }
@@ -382,6 +402,30 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Trigger download for one local AI asset capability.",
             inputs: vec![required_string("capability", "Asset capability id.")],
             outputs: vec![json_output("status", "Assets status payload.")],
+        },
+        "local_ai_device_profile" => ControllerSchema {
+            namespace: "local_ai",
+            function: "device_profile",
+            description: "Detect local device hardware profile (RAM, CPU, GPU).",
+            inputs: vec![],
+            outputs: vec![json_output("profile", "Device hardware profile.")],
+        },
+        "local_ai_presets" => ControllerSchema {
+            namespace: "local_ai",
+            function: "presets",
+            description: "List model tier presets with recommendation and current selection.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "presets",
+                "Presets, recommended tier, current tier.",
+            )],
+        },
+        "local_ai_apply_preset" => ControllerSchema {
+            namespace: "local_ai",
+            function: "apply_preset",
+            description: "Apply a model tier preset to local AI config and persist.",
+            inputs: vec![required_string("tier", "Tier to apply: low, medium, high.")],
+            outputs: vec![json_output("result", "Applied tier status.")],
         },
         _ => ControllerSchema {
             namespace: "local_ai",
@@ -621,6 +665,77 @@ fn handle_local_ai_download_asset(params: Map<String, Value>) -> ControllerFutur
             crate::openhuman::local_ai::rpc::local_ai_download_asset(&config, p.capability.trim())
                 .await?,
         )
+    })
+}
+
+fn handle_local_ai_device_profile(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        tracing::debug!("[local_ai] device_profile: detecting hardware");
+        let profile = crate::openhuman::local_ai::device::detect_device_profile();
+        tracing::debug!("[local_ai] device_profile: done");
+        let value = serde_json::to_value(&profile).map_err(|e| format!("serialize: {e}"))?;
+        Ok(value)
+    })
+}
+
+fn handle_local_ai_presets(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        tracing::debug!("[local_ai] presets: loading config and computing tiers");
+        let config = config_rpc::load_config_with_timeout().await?;
+        let device = crate::openhuman::local_ai::device::detect_device_profile();
+        let recommended = crate::openhuman::local_ai::presets::recommend_tier(&device);
+        let current =
+            crate::openhuman::local_ai::presets::current_tier_from_config(&config.local_ai);
+        let presets = crate::openhuman::local_ai::presets::all_presets();
+        tracing::debug!(
+            ?recommended,
+            ?current,
+            preset_count = presets.len(),
+            "[local_ai] presets: returning"
+        );
+        let value = serde_json::json!({
+            "presets": presets,
+            "recommended_tier": recommended,
+            "current_tier": current,
+            "device": device,
+        });
+        Ok(value)
+    })
+}
+
+fn handle_local_ai_apply_preset(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiApplyPresetParams>(params)?;
+        let tier_str = p.tier.trim().to_ascii_lowercase();
+        tracing::debug!(tier = %tier_str, "[local_ai] apply_preset: parsing tier");
+
+        let tier = crate::openhuman::local_ai::presets::ModelTier::from_str_opt(&tier_str)
+            .ok_or_else(|| {
+                format!(
+                    "invalid tier '{}': expected one of low, medium, high",
+                    tier_str
+                )
+            })?;
+
+        if tier == crate::openhuman::local_ai::presets::ModelTier::Custom {
+            return Err("cannot apply 'custom' tier; set model IDs directly".to_string());
+        }
+
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        crate::openhuman::local_ai::presets::apply_preset_to_config(&mut config.local_ai, tier);
+        config
+            .save()
+            .await
+            .map_err(|e| format!("save config: {e}"))?;
+        tracing::debug!(tier = %tier_str, "[local_ai] apply_preset: config saved");
+
+        Ok(serde_json::json!({
+            "applied_tier": tier,
+            "chat_model_id": config.local_ai.chat_model_id,
+            "vision_model_id": config.local_ai.vision_model_id,
+            "embedding_model_id": config.local_ai.embedding_model_id,
+            "quantization": config.local_ai.quantization,
+        }))
     })
 }
 

@@ -1,3 +1,5 @@
+use crate::openhuman::memory::chunker::chunk_markdown;
+
 use super::UnifiedMemory;
 
 impl UnifiedMemory {
@@ -74,29 +76,114 @@ impl UnifiedMemory {
         (dot / denom).clamp(0.0, 1.0)
     }
 
-    pub(crate) fn split_chunks(content: &str, max_len: usize) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut current = String::new();
-        for para in content.split("\n\n") {
-            let p = para.trim();
-            if p.is_empty() {
-                continue;
-            }
-            if current.is_empty() {
-                current.push_str(p);
-                continue;
-            }
-            if current.len() + 2 + p.len() <= max_len {
-                current.push_str("\n\n");
-                current.push_str(p);
-            } else {
-                out.push(std::mem::take(&mut current));
-                current.push_str(p);
+    pub(crate) fn chunk_document_content(content: &str, max_tokens: usize) -> Vec<String> {
+        let mut chunks: Vec<String> = chunk_markdown(content, max_tokens.max(1))
+            .into_iter()
+            .map(|chunk| chunk.content.trim().to_string())
+            .filter(|chunk: &String| !chunk.is_empty())
+            .collect();
+        if chunks.is_empty() && !content.trim().is_empty() {
+            chunks.push(content.trim().to_string());
+        }
+        chunks
+    }
+
+    pub(crate) fn collapse_whitespace(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    pub(crate) fn normalize_search_text(text: &str) -> String {
+        let collapsed = Self::collapse_whitespace(text);
+        let mut normalized = String::with_capacity(collapsed.len());
+        for ch in collapsed.chars() {
+            if ch.is_alphanumeric() {
+                normalized.extend(ch.to_lowercase());
+            } else if ch.is_whitespace() || matches!(ch, '_' | '-' | '/' | '.') {
+                normalized.push(' ');
             }
         }
-        if !current.trim().is_empty() {
-            out.push(current);
+        normalized.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    pub(crate) fn tokenize_search_terms(text: &str) -> Vec<String> {
+        Self::normalize_search_text(text)
+            .split_whitespace()
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    pub(crate) fn normalize_graph_entity(text: &str) -> String {
+        Self::collapse_whitespace(text.trim()).to_uppercase()
+    }
+
+    pub(crate) fn normalize_graph_predicate(text: &str) -> String {
+        let mut out = String::new();
+        let mut last_was_sep = false;
+        for ch in Self::collapse_whitespace(text.trim()).chars() {
+            if ch.is_alphanumeric() {
+                out.extend(ch.to_uppercase());
+                last_was_sep = false;
+            } else if !last_was_sep {
+                out.push('_');
+                last_was_sep = true;
+            }
         }
-        out
+        out.trim_matches('_').to_string()
+    }
+
+    pub(crate) fn json_string_array(
+        value: &serde_json::Value,
+        primary_key: &str,
+        singular_key: &str,
+    ) -> Vec<String> {
+        let mut items = Vec::new();
+        if let Some(array) = value.get(primary_key).and_then(serde_json::Value::as_array) {
+            for item in array {
+                if let Some(text) = item.as_str() {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        items.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+        if let Some(text) = value.get(singular_key).and_then(serde_json::Value::as_str) {
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                items.push(trimmed.to_string());
+            }
+        }
+        items.sort();
+        items.dedup();
+        items
+    }
+
+    pub(crate) fn merge_unique_string_arrays(
+        current: &serde_json::Value,
+        incoming: &serde_json::Value,
+        primary_key: &str,
+        singular_key: &str,
+    ) -> Vec<String> {
+        let mut merged = Self::json_string_array(current, primary_key, singular_key);
+        merged.extend(Self::json_string_array(incoming, primary_key, singular_key));
+        merged.sort();
+        merged.dedup();
+        merged
+    }
+
+    pub(crate) fn json_i64(value: &serde_json::Value, key: &str) -> Option<i64> {
+        value.get(key).and_then(|raw| {
+            raw.as_i64().or_else(|| {
+                raw.as_u64()
+                    .and_then(|v| i64::try_from(v).ok())
+                    .or_else(|| raw.as_f64().map(|v| v as i64))
+            })
+        })
+    }
+
+    pub(crate) fn recency_score(updated_at: f64, now: f64) -> f64 {
+        let age_secs = (now - updated_at).max(0.0);
+        let age_hours = age_secs / 3600.0;
+        (1.0 / (1.0 + age_hours / 24.0)).clamp(0.0, 1.0)
     }
 }

@@ -388,15 +388,23 @@ pub fn decrypt_handoff_blob(b64_ciphertext: &str, key_str: &str) -> Result<Strin
     let tag = &combined[16..32];
     let ciphertext = &combined[32..];
 
-    let plain = openssl::symm::decrypt_aead(
-        openssl::symm::Cipher::aes_256_gcm(),
-        &key,
-        Some(iv),
-        &[],
-        ciphertext,
-        tag,
-    )
-    .map_err(|e| anyhow::anyhow!("AES-GCM decrypt failed: {e}"))?;
+    // aes-gcm expects ciphertext || tag
+    let mut ct_with_tag = Vec::with_capacity(ciphertext.len() + tag.len());
+    ct_with_tag.extend_from_slice(ciphertext);
+    ct_with_tag.extend_from_slice(tag);
+
+    use aes_gcm::aead::generic_array::typenum::U16;
+    use aes_gcm::aead::{Aead, KeyInit};
+    use aes_gcm::aes::Aes256;
+    use aes_gcm::AesGcm;
+    type Aes256Gcm16 = AesGcm<Aes256, U16>;
+
+    let cipher =
+        Aes256Gcm16::new_from_slice(&key).map_err(|e| anyhow::anyhow!("invalid AES key: {e}"))?;
+    let nonce = aes_gcm::aead::generic_array::GenericArray::from_slice(iv);
+    let plain = cipher
+        .decrypt(nonce, ct_with_tag.as_ref())
+        .map_err(|e| anyhow::anyhow!("AES-GCM decrypt failed: {e}"))?;
 
     String::from_utf8(plain).context("handoff plaintext is not UTF-8")
 }

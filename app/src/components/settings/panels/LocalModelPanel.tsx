@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import {
+  type ApplyPresetResult,
   type LocalAiAssetsStatus,
   type LocalAiDownloadsProgress,
   type LocalAiEmbeddingResult,
@@ -8,12 +9,14 @@ import {
   type LocalAiStatus,
   type LocalAiSuggestion,
   type LocalAiTtsResult,
+  openhumanLocalAiApplyPreset,
   openhumanLocalAiAssetsStatus,
   openhumanLocalAiDownload,
   openhumanLocalAiDownloadAllAssets,
   openhumanLocalAiDownloadAsset,
   openhumanLocalAiDownloadsProgress,
   openhumanLocalAiEmbed,
+  openhumanLocalAiPresets,
   openhumanLocalAiPrompt,
   openhumanLocalAiStatus,
   openhumanLocalAiSuggestQuestions,
@@ -21,6 +24,7 @@ import {
   openhumanLocalAiTranscribe,
   openhumanLocalAiTts,
   openhumanLocalAiVisionPrompt,
+  type PresetsResponse,
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -148,6 +152,13 @@ const LocalModelPanel = () => {
   const [ttsOutput, setTtsOutput] = useState<LocalAiTtsResult | null>(null);
   const [isTtsLoading, setIsTtsLoading] = useState(false);
 
+  const [presetsData, setPresetsData] = useState<PresetsResponse | null>(null);
+  const [presetsLoading, setPresetsLoading] = useState(true);
+  const [isApplyingPreset, setIsApplyingPreset] = useState(false);
+  const [presetError, setPresetError] = useState('');
+  const [presetSuccess, setPresetSuccess] = useState<ApplyPresetResult | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const progress = useMemo(() => {
     const downloadProgress = progressFromDownloads(downloads);
     if (downloadProgress != null) return downloadProgress;
@@ -189,8 +200,41 @@ const LocalModelPanel = () => {
     }
   };
 
+  const loadPresets = async () => {
+    setPresetsLoading(true);
+    try {
+      const data = await openhumanLocalAiPresets();
+      setPresetsData(data);
+      setPresetError('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load presets';
+      console.warn('[LocalModelPanel] failed to load presets:', msg);
+      setPresetError(msg);
+    } finally {
+      setPresetsLoading(false);
+    }
+  };
+
+  const applyPreset = async (tier: string) => {
+    setIsApplyingPreset(true);
+    setPresetError('');
+    setPresetSuccess(null);
+    try {
+      const result = await openhumanLocalAiApplyPreset(tier);
+      setPresetSuccess(result);
+      await loadPresets();
+      await loadStatus();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to apply preset';
+      setPresetError(msg);
+    } finally {
+      setIsApplyingPreset(false);
+    }
+  };
+
   useEffect(() => {
     void loadStatus();
+    void loadPresets();
     const timer = setInterval(() => {
       void loadStatus();
     }, 1500);
@@ -360,356 +404,497 @@ const LocalModelPanel = () => {
     }
   };
 
+  const formatRamGb = (bytes: number): string => {
+    const gb = bytes / (1024 * 1024 * 1024);
+    return gb >= 10 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
+  };
+
   return (
     <div className="h-full flex flex-col">
       <SettingsHeader title="Local Model" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto px-6 pb-10 space-y-6">
+        {/* --- Model Tier Selection --- */}
         <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-white">Runtime Status</h3>
-            <button
-              onClick={() => void loadStatus()}
-              className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
-              Refresh
-            </button>
-          </div>
+          <h3 className="text-lg font-semibold text-white">Model Tier</h3>
 
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-400">State</span>
-              <span className={`font-medium ${statusTone(status?.state ?? 'idle')}`}>
-                {status ? statusLabel(downloads?.state ?? status.state) : 'Unavailable'}
-              </span>
+          {/* Loading / error states */}
+          {presetsLoading && !presetsData && (
+            <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 text-sm text-stone-400 animate-pulse">
+              Loading device info and presets…
             </div>
-
-            <div className="h-2 rounded-full bg-stone-800 overflow-hidden">
-              <div
-                className={`h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500 ${
-                  isIndeterminateDownload ? 'animate-pulse' : ''
-                }`}
-                style={{ width: `${Math.round((isIndeterminateDownload ? 1 : progress) * 100)}%` }}
-              />
+          )}
+          {!presetsLoading && !presetsData && presetError && (
+            <div className="bg-gray-900 rounded-lg border border-red-700/40 p-4 text-sm text-red-300">
+              Could not load presets: {presetError}
             </div>
+          )}
 
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-400">
-              <span>
-                Progress:{' '}
-                {isIndeterminateDownload
-                  ? 'Downloading (size unknown)'
-                  : `${Math.round(progress * 100)}%`}
-              </span>
-              {downloadedText && <span className="text-stone-300">{downloadedText}</span>}
-              {speedText && <span className="text-blue-300">{speedText}</span>}
-              {etaText && <span className="text-cyan-300">ETA {etaText}</span>}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <div className="rounded-md border border-gray-700 p-2">
-                <div className="text-stone-400 text-xs uppercase tracking-wide">Provider</div>
-                <div className="text-stone-100 mt-1">{status?.provider ?? 'n/a'}</div>
-              </div>
-              <div className="rounded-md border border-gray-700 p-2">
-                <div className="text-stone-400 text-xs uppercase tracking-wide">Model</div>
-                <div className="text-stone-100 mt-1">{status?.model_id ?? 'n/a'}</div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-              <div className="rounded-md border border-gray-700 p-2">
-                <div className="text-stone-400 text-xs uppercase tracking-wide">Backend</div>
-                <div className="text-stone-100 mt-1">{status?.active_backend ?? 'cpu'}</div>
-              </div>
-              <div className="rounded-md border border-gray-700 p-2">
-                <div className="text-stone-400 text-xs uppercase tracking-wide">Last Latency</div>
-                <div className="text-stone-100 mt-1">
-                  {typeof status?.last_latency_ms === 'number'
-                    ? `${status.last_latency_ms} ms`
-                    : 'n/a'}
-                </div>
-              </div>
-              <div className="rounded-md border border-gray-700 p-2">
-                <div className="text-stone-400 text-xs uppercase tracking-wide">Generation TPS</div>
-                <div className="text-stone-100 mt-1">
-                  {typeof status?.gen_toks_per_sec === 'number'
-                    ? `${status.gen_toks_per_sec.toFixed(1)} tok/s`
-                    : 'n/a'}
-                </div>
-              </div>
-            </div>
-
-            {status?.model_path && (
-              <div className="text-xs text-stone-400 break-all">Artifact: {status.model_path}</div>
-            )}
-
-            {status?.backend_reason && (
-              <div className="text-xs text-blue-300">{status.backend_reason}</div>
-            )}
-            {status?.warning && <div className="text-xs text-amber-300">{status.warning}</div>}
-            {statusError && <div className="text-xs text-red-300">{statusError}</div>}
-
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                onClick={() => void triggerDownload(false)}
-                disabled={isTriggeringDownload}
-                className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
-                {isTriggeringDownload ? 'Triggering...' : 'Bootstrap / Resume'}
-              </button>
-              <button
-                onClick={() => void triggerDownload(true)}
-                disabled={isTriggeringDownload}
-                className="px-3 py-1.5 text-xs rounded-md border border-gray-600 hover:border-gray-500 disabled:opacity-60 text-stone-200">
-                Force Re-bootstrap
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Capability Assets</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <div className="text-xs text-stone-400">
-              Quantization preference: {assets?.quantization ?? 'q4'}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              {[
-                { label: 'Chat', key: 'chat' as const, item: assets?.chat },
-                { label: 'Vision', key: 'vision' as const, item: assets?.vision },
-                { label: 'Embedding', key: 'embedding' as const, item: assets?.embedding },
-                { label: 'STT', key: 'stt' as const, item: assets?.stt },
-                { label: 'TTS', key: 'tts' as const, item: assets?.tts },
-              ].map(({ label, key, item }) => (
-                <div key={String(label)} className="rounded-md border border-gray-700 p-2">
-                  <div className="text-stone-400 text-xs uppercase tracking-wide">{label}</div>
-                  <div className="text-stone-100 mt-1 break-all">{item?.id ?? 'n/a'}</div>
-                  <div className={`text-xs mt-1 ${statusTone(item?.state ?? 'idle')}`}>
-                    {statusLabel(item?.state ?? 'idle')}
+          {/* Device info */}
+          {presetsData?.device && (
+            <div className="bg-gray-900 rounded-lg border border-gray-700 p-3">
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <div className="text-stone-400 uppercase tracking-wide">RAM</div>
+                  <div className="text-stone-100 mt-0.5 font-medium">
+                    {formatRamGb(presetsData.device.total_ram_bytes)}
                   </div>
-                  {item?.path && (
-                    <div className="text-[10px] text-stone-500 mt-1 break-all">{item.path}</div>
-                  )}
-                  <button
-                    onClick={() => void triggerAssetDownload(key)}
-                    disabled={assetDownloadBusy[key]}
-                    className="mt-2 px-2 py-1 text-[10px] rounded border border-gray-600 hover:border-gray-500 disabled:opacity-60 text-stone-200">
-                    {assetDownloadBusy[key] ? 'Downloading...' : 'Download'}
-                  </button>
                 </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Test Summarization</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <textarea
-              value={summaryInput}
-              onChange={e => setSummaryInput(e.target.value)}
-              placeholder="Paste text to summarize with the local model..."
-              className="w-full min-h-28 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-stone-400">
-                Calls `openhuman.local_ai_summarize` via Rust core
-              </div>
-              <button
-                onClick={() => void runSummaryTest()}
-                disabled={isSummaryLoading || !summaryInput.trim()}
-                className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
-                {isSummaryLoading ? 'Running...' : 'Run Summary Test'}
-              </button>
-            </div>
-            {summaryOutput && (
-              <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
-                {summaryOutput}
-              </pre>
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Test Suggested Prompts</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <textarea
-              value={suggestInput}
-              onChange={e => setSuggestInput(e.target.value)}
-              placeholder="Paste conversation context to generate suggestions..."
-              className="w-full min-h-28 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-stone-400">
-                Calls `openhuman.local_ai_suggest_questions` via Rust core
-              </div>
-              <button
-                onClick={() => void runSuggestTest()}
-                disabled={isSuggestLoading || !suggestInput.trim()}
-                className="px-3 py-1.5 text-xs rounded-md bg-cyan-600 hover:bg-cyan-700 disabled:opacity-60 text-white">
-                {isSuggestLoading ? 'Running...' : 'Run Suggestion Test'}
-              </button>
-            </div>
-
-            {suggestions.length > 0 && (
-              <div className="space-y-2">
-                {suggestions.map(suggestion => (
+                <div>
+                  <div className="text-stone-400 uppercase tracking-wide">CPU</div>
                   <div
-                    key={`${suggestion.text}-${suggestion.confidence}`}
-                    className="rounded-md border border-gray-700 bg-stone-950 p-3">
-                    <div className="text-sm text-stone-100">{suggestion.text}</div>
-                    <div className="text-xs text-stone-500 mt-1">
-                      Confidence: {(suggestion.confidence * 100).toFixed(0)}%
+                    className="text-stone-100 mt-0.5 font-medium truncate"
+                    title={presetsData.device.cpu_brand}>
+                    {presetsData.device.cpu_count} cores
+                  </div>
+                </div>
+                <div>
+                  <div className="text-stone-400 uppercase tracking-wide">GPU</div>
+                  <div
+                    className="text-stone-100 mt-0.5 font-medium truncate"
+                    title={presetsData.device.gpu_description ?? undefined}>
+                    {presetsData.device.has_gpu
+                      ? (presetsData.device.gpu_description ?? 'Detected')
+                      : 'Not detected'}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tier cards */}
+          {presetsData && (
+            <div className="space-y-2">
+              {presetsData.presets.map(preset => {
+                const isRecommended = preset.tier === presetsData.recommended_tier;
+                const isCurrent = preset.tier === presetsData.current_tier;
+                return (
+                  <button
+                    key={preset.tier}
+                    type="button"
+                    onClick={() => void applyPreset(preset.tier)}
+                    disabled={isApplyingPreset || isCurrent}
+                    className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                      isCurrent
+                        ? 'border-blue-500 bg-blue-500/10'
+                        : 'border-gray-700 bg-gray-900 hover:border-gray-500'
+                    } ${isApplyingPreset ? 'opacity-60' : ''}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">{preset.label}</span>
+                        {isRecommended && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-600/30 text-emerald-300 uppercase tracking-wide">
+                            Recommended
+                          </span>
+                        )}
+                        {isCurrent && (
+                          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-blue-600/30 text-blue-300 uppercase tracking-wide">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-stone-400">
+                        ~{preset.approx_download_gb} GB
+                      </span>
+                    </div>
+                    <div className="text-xs text-stone-400 mt-1">{preset.description}</div>
+                    <div className="text-[10px] text-stone-500 mt-1">
+                      Chat: {preset.chat_model_id} &middot; Min RAM: {preset.min_ram_gb} GB
+                    </div>
+                  </button>
+                );
+              })}
+
+              {presetsData.current_tier === 'custom' && (
+                <div className="rounded-lg border border-amber-600/30 bg-amber-600/5 p-3 text-xs text-amber-300">
+                  You are using custom model IDs that do not match any built-in preset.
+                </div>
+              )}
+            </div>
+          )}
+
+          {presetError && <div className="text-xs text-red-300">{presetError}</div>}
+          {presetSuccess && (
+            <div className="text-xs text-green-300">
+              Applied {presetSuccess.applied_tier} tier: {presetSuccess.chat_model_id}
+            </div>
+          )}
+        </section>
+
+        {/* Advanced toggle */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(prev => !prev)}
+          className="flex items-center gap-2 text-sm text-stone-400 hover:text-stone-200 transition-colors">
+          <svg
+            className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          {showAdvanced ? 'Hide Advanced' : 'Show Advanced'}
+        </button>
+
+        {showAdvanced && (
+          <>
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-white">Runtime Status</h3>
+                <button
+                  onClick={() => void loadStatus()}
+                  className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                  Refresh
+                </button>
+              </div>
+
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">State</span>
+                  <span className={`font-medium ${statusTone(status?.state ?? 'idle')}`}>
+                    {status ? statusLabel(downloads?.state ?? status.state) : 'Unavailable'}
+                  </span>
+                </div>
+
+                <div className="h-2 rounded-full bg-stone-800 overflow-hidden">
+                  <div
+                    className={`h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500 ${
+                      isIndeterminateDownload ? 'animate-pulse' : ''
+                    }`}
+                    style={{
+                      width: `${Math.round((isIndeterminateDownload ? 1 : progress) * 100)}%`,
+                    }}
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-stone-400">
+                  <span>
+                    Progress:{' '}
+                    {isIndeterminateDownload
+                      ? 'Downloading (size unknown)'
+                      : `${Math.round(progress * 100)}%`}
+                  </span>
+                  {downloadedText && <span className="text-stone-300">{downloadedText}</span>}
+                  {speedText && <span className="text-blue-300">{speedText}</span>}
+                  {etaText && <span className="text-cyan-300">ETA {etaText}</span>}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-md border border-gray-700 p-2">
+                    <div className="text-stone-400 text-xs uppercase tracking-wide">Provider</div>
+                    <div className="text-stone-100 mt-1">{status?.provider ?? 'n/a'}</div>
+                  </div>
+                  <div className="rounded-md border border-gray-700 p-2">
+                    <div className="text-stone-400 text-xs uppercase tracking-wide">Model</div>
+                    <div className="text-stone-100 mt-1">{status?.model_id ?? 'n/a'}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                  <div className="rounded-md border border-gray-700 p-2">
+                    <div className="text-stone-400 text-xs uppercase tracking-wide">Backend</div>
+                    <div className="text-stone-100 mt-1">{status?.active_backend ?? 'cpu'}</div>
+                  </div>
+                  <div className="rounded-md border border-gray-700 p-2">
+                    <div className="text-stone-400 text-xs uppercase tracking-wide">
+                      Last Latency
+                    </div>
+                    <div className="text-stone-100 mt-1">
+                      {typeof status?.last_latency_ms === 'number'
+                        ? `${status.last_latency_ms} ms`
+                        : 'n/a'}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
+                  <div className="rounded-md border border-gray-700 p-2">
+                    <div className="text-stone-400 text-xs uppercase tracking-wide">
+                      Generation TPS
+                    </div>
+                    <div className="text-stone-100 mt-1">
+                      {typeof status?.gen_toks_per_sec === 'number'
+                        ? `${status.gen_toks_per_sec.toFixed(1)} tok/s`
+                        : 'n/a'}
+                    </div>
+                  </div>
+                </div>
 
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Test Custom Prompt</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <textarea
-              value={promptInput}
-              onChange={e => setPromptInput(e.target.value)}
-              placeholder="Type any prompt and run it against the local model..."
-              className="w-full min-h-28 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="flex items-center gap-2 text-xs text-stone-300">
-                <input
-                  type="checkbox"
-                  checked={promptNoThink}
-                  onChange={e => setPromptNoThink(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-gray-600 bg-stone-900 text-blue-500 focus:ring-blue-500"
+                {status?.model_path && (
+                  <div className="text-xs text-stone-400 break-all">
+                    Artifact: {status.model_path}
+                  </div>
+                )}
+
+                {status?.backend_reason && (
+                  <div className="text-xs text-blue-300">{status.backend_reason}</div>
+                )}
+                {status?.warning && <div className="text-xs text-amber-300">{status.warning}</div>}
+                {statusError && <div className="text-xs text-red-300">{statusError}</div>}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => void triggerDownload(false)}
+                    disabled={isTriggeringDownload}
+                    className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
+                    {isTriggeringDownload ? 'Triggering...' : 'Bootstrap / Resume'}
+                  </button>
+                  <button
+                    onClick={() => void triggerDownload(true)}
+                    disabled={isTriggeringDownload}
+                    className="px-3 py-1.5 text-xs rounded-md border border-gray-600 hover:border-gray-500 disabled:opacity-60 text-stone-200">
+                    Force Re-bootstrap
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Capability Assets</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <div className="text-xs text-stone-400">
+                  Quantization preference: {assets?.quantization ?? 'q4'}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  {[
+                    { label: 'Chat', key: 'chat' as const, item: assets?.chat },
+                    { label: 'Vision', key: 'vision' as const, item: assets?.vision },
+                    { label: 'Embedding', key: 'embedding' as const, item: assets?.embedding },
+                    { label: 'STT', key: 'stt' as const, item: assets?.stt },
+                    { label: 'TTS', key: 'tts' as const, item: assets?.tts },
+                  ].map(({ label, key, item }) => (
+                    <div key={String(label)} className="rounded-md border border-gray-700 p-2">
+                      <div className="text-stone-400 text-xs uppercase tracking-wide">{label}</div>
+                      <div className="text-stone-100 mt-1 break-all">{item?.id ?? 'n/a'}</div>
+                      <div className={`text-xs mt-1 ${statusTone(item?.state ?? 'idle')}`}>
+                        {statusLabel(item?.state ?? 'idle')}
+                      </div>
+                      {item?.path && (
+                        <div className="text-[10px] text-stone-500 mt-1 break-all">{item.path}</div>
+                      )}
+                      <button
+                        onClick={() => void triggerAssetDownload(key)}
+                        disabled={assetDownloadBusy[key]}
+                        className="mt-2 px-2 py-1 text-[10px] rounded border border-gray-600 hover:border-gray-500 disabled:opacity-60 text-stone-200">
+                        {assetDownloadBusy[key] ? 'Downloading...' : 'Download'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Test Summarization</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <textarea
+                  value={summaryInput}
+                  onChange={e => setSummaryInput(e.target.value)}
+                  placeholder="Paste text to summarize with the local model..."
+                  className="w-full min-h-28 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
-                No-think mode
-              </label>
-              <button
-                onClick={() => void runPromptTest()}
-                disabled={isPromptLoading || !promptInput.trim()}
-                className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
-                {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
-              </button>
-            </div>
-            <div className="text-xs text-stone-400">
-              Calls `openhuman.local_ai_prompt` via Rust core
-            </div>
-            {promptOutput && (
-              <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
-                {promptOutput}
-              </pre>
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Test Vision Prompt</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <textarea
-              value={visionPromptInput}
-              onChange={e => setVisionPromptInput(e.target.value)}
-              placeholder="Enter a prompt for the vision model..."
-              className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <textarea
-              value={visionImageInput}
-              onChange={e => setVisionImageInput(e.target.value)}
-              placeholder="One image reference per line (data URI, URL, or local path marker)"
-              className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <button
-              onClick={() => void runVisionTest()}
-              disabled={isVisionLoading || !visionPromptInput.trim() || !visionImageInput.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
-              {isVisionLoading ? 'Running...' : 'Run Vision Test'}
-            </button>
-            {visionOutput && (
-              <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
-                {visionOutput}
-              </pre>
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Test Embeddings</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <textarea
-              value={embeddingInput}
-              onChange={e => setEmbeddingInput(e.target.value)}
-              placeholder="One input string per line..."
-              className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <button
-              onClick={() => void runEmbeddingTest()}
-              disabled={isEmbeddingLoading || !embeddingInput.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white">
-              {isEmbeddingLoading ? 'Running...' : 'Run Embedding Test'}
-            </button>
-            {embeddingOutput && (
-              <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-1">
-                <div>Model: {embeddingOutput.model_id}</div>
-                <div>Dimensions: {embeddingOutput.dimensions}</div>
-                <div>Vectors: {embeddingOutput.vectors.length}</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-stone-400">
+                    Calls `openhuman.local_ai_summarize` via Rust core
+                  </div>
+                  <button
+                    onClick={() => void runSummaryTest()}
+                    disabled={isSummaryLoading || !summaryInput.trim()}
+                    className="px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white">
+                    {isSummaryLoading ? 'Running...' : 'Run Summary Test'}
+                  </button>
+                </div>
+                {summaryOutput && (
+                  <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
+                    {summaryOutput}
+                  </pre>
+                )}
               </div>
-            )}
-          </div>
-        </section>
+            </section>
 
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Test Voice Input (STT)</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <input
-              value={audioPathInput}
-              onChange={e => setAudioPathInput(e.target.value)}
-              placeholder="Absolute path to audio file"
-              className="w-full rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <button
-              onClick={() => void runTranscribeTest()}
-              disabled={isTranscribeLoading || !audioPathInput.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white">
-              {isTranscribeLoading ? 'Running...' : 'Run Transcription Test'}
-            </button>
-            {transcribeOutput && (
-              <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-1">
-                <div>Model: {transcribeOutput.model_id}</div>
-                <pre className="whitespace-pre-wrap">{transcribeOutput.text}</pre>
-              </div>
-            )}
-          </div>
-        </section>
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Test Suggested Prompts</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <textarea
+                  value={suggestInput}
+                  onChange={e => setSuggestInput(e.target.value)}
+                  placeholder="Paste conversation context to generate suggestions..."
+                  className="w-full min-h-28 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-stone-400">
+                    Calls `openhuman.local_ai_suggest_questions` via Rust core
+                  </div>
+                  <button
+                    onClick={() => void runSuggestTest()}
+                    disabled={isSuggestLoading || !suggestInput.trim()}
+                    className="px-3 py-1.5 text-xs rounded-md bg-cyan-600 hover:bg-cyan-700 disabled:opacity-60 text-white">
+                    {isSuggestLoading ? 'Running...' : 'Run Suggestion Test'}
+                  </button>
+                </div>
 
-        <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Test Voice Output (TTS)</h3>
-          <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
-            <textarea
-              value={ttsInput}
-              onChange={e => setTtsInput(e.target.value)}
-              placeholder="Enter text to synthesize..."
-              className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <input
-              value={ttsOutputPath}
-              onChange={e => setTtsOutputPath(e.target.value)}
-              placeholder="Optional output WAV path"
-              className="w-full rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            />
-            <button
-              onClick={() => void runTtsTest()}
-              disabled={isTtsLoading || !ttsInput.trim()}
-              className="px-3 py-1.5 text-xs rounded-md bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white">
-              {isTtsLoading ? 'Running...' : 'Run TTS Test'}
-            </button>
-            {ttsOutput && (
-              <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-1">
-                <div>Voice: {ttsOutput.voice_id}</div>
-                <div className="break-all">Output: {ttsOutput.output_path}</div>
+                {suggestions.length > 0 && (
+                  <div className="space-y-2">
+                    {suggestions.map(suggestion => (
+                      <div
+                        key={`${suggestion.text}-${suggestion.confidence}`}
+                        className="rounded-md border border-gray-700 bg-stone-950 p-3">
+                        <div className="text-sm text-stone-100">{suggestion.text}</div>
+                        <div className="text-xs text-stone-500 mt-1">
+                          Confidence: {(suggestion.confidence * 100).toFixed(0)}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </section>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Test Custom Prompt</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <textarea
+                  value={promptInput}
+                  onChange={e => setPromptInput(e.target.value)}
+                  placeholder="Type any prompt and run it against the local model..."
+                  className="w-full min-h-28 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex items-center gap-2 text-xs text-stone-300">
+                    <input
+                      type="checkbox"
+                      checked={promptNoThink}
+                      onChange={e => setPromptNoThink(e.target.checked)}
+                      className="h-3.5 w-3.5 rounded border-gray-600 bg-stone-900 text-blue-500 focus:ring-blue-500"
+                    />
+                    No-think mode
+                  </label>
+                  <button
+                    onClick={() => void runPromptTest()}
+                    disabled={isPromptLoading || !promptInput.trim()}
+                    className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white">
+                    {isPromptLoading ? 'Running...' : 'Run Prompt Test'}
+                  </button>
+                </div>
+                <div className="text-xs text-stone-400">
+                  Calls `openhuman.local_ai_prompt` via Rust core
+                </div>
+                {promptOutput && (
+                  <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
+                    {promptOutput}
+                  </pre>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Test Vision Prompt</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <textarea
+                  value={visionPromptInput}
+                  onChange={e => setVisionPromptInput(e.target.value)}
+                  placeholder="Enter a prompt for the vision model..."
+                  className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <textarea
+                  value={visionImageInput}
+                  onChange={e => setVisionImageInput(e.target.value)}
+                  placeholder="One image reference per line (data URI, URL, or local path marker)"
+                  className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button
+                  onClick={() => void runVisionTest()}
+                  disabled={
+                    isVisionLoading || !visionPromptInput.trim() || !visionImageInput.trim()
+                  }
+                  className="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white">
+                  {isVisionLoading ? 'Running...' : 'Run Vision Test'}
+                </button>
+                {visionOutput && (
+                  <pre className="whitespace-pre-wrap rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200">
+                    {visionOutput}
+                  </pre>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Test Embeddings</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <textarea
+                  value={embeddingInput}
+                  onChange={e => setEmbeddingInput(e.target.value)}
+                  placeholder="One input string per line..."
+                  className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button
+                  onClick={() => void runEmbeddingTest()}
+                  disabled={isEmbeddingLoading || !embeddingInput.trim()}
+                  className="px-3 py-1.5 text-xs rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white">
+                  {isEmbeddingLoading ? 'Running...' : 'Run Embedding Test'}
+                </button>
+                {embeddingOutput && (
+                  <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-1">
+                    <div>Model: {embeddingOutput.model_id}</div>
+                    <div>Dimensions: {embeddingOutput.dimensions}</div>
+                    <div>Vectors: {embeddingOutput.vectors.length}</div>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Test Voice Input (STT)</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <input
+                  value={audioPathInput}
+                  onChange={e => setAudioPathInput(e.target.value)}
+                  placeholder="Absolute path to audio file"
+                  className="w-full rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button
+                  onClick={() => void runTranscribeTest()}
+                  disabled={isTranscribeLoading || !audioPathInput.trim()}
+                  className="px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 disabled:opacity-60 text-white">
+                  {isTranscribeLoading ? 'Running...' : 'Run Transcription Test'}
+                </button>
+                {transcribeOutput && (
+                  <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-1">
+                    <div>Model: {transcribeOutput.model_id}</div>
+                    <pre className="whitespace-pre-wrap">{transcribeOutput.text}</pre>
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <h3 className="text-lg font-semibold text-white">Test Voice Output (TTS)</h3>
+              <div className="bg-gray-900 rounded-lg border border-gray-700 p-4 space-y-3">
+                <textarea
+                  value={ttsInput}
+                  onChange={e => setTtsInput(e.target.value)}
+                  placeholder="Enter text to synthesize..."
+                  className="w-full min-h-20 rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <input
+                  value={ttsOutputPath}
+                  onChange={e => setTtsOutputPath(e.target.value)}
+                  placeholder="Optional output WAV path"
+                  className="w-full rounded-md bg-stone-950 border border-gray-700 px-3 py-2 text-sm text-stone-100 placeholder:text-stone-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button
+                  onClick={() => void runTtsTest()}
+                  disabled={isTtsLoading || !ttsInput.trim()}
+                  className="px-3 py-1.5 text-xs rounded-md bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white">
+                  {isTtsLoading ? 'Running...' : 'Run TTS Test'}
+                </button>
+                {ttsOutput && (
+                  <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-1">
+                    <div>Voice: {ttsOutput.voice_id}</div>
+                    <div className="break-all">Output: {ttsOutput.output_path}</div>
+                  </div>
+                )}
+              </div>
+            </section>
+          </>
+        )}
       </div>
     </div>
   );

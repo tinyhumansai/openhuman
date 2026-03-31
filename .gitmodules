@@ -1,0 +1,3 @@
+[submodule "openhuman-skills"]
+	path = openhuman-skills
+	url = https://github.com/tinyhumansai/openhuman-skills

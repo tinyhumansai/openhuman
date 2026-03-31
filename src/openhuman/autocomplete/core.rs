@@ -418,6 +418,7 @@ impl AutocompleteEngine {
         show_overflow_badge("accepted", Some(&cleaned), None, None, None);
 
         // Persist acceptance for personalisation (fire-and-forget).
+        // Dual-write: KV (UI list) + local docs (semantic search).
         {
             let (ctx, app) = {
                 let s = self.inner.lock().await;
@@ -426,6 +427,12 @@ impl AutocompleteEngine {
             let sug = cleaned.clone();
             tokio::spawn(async move {
                 crate::openhuman::autocomplete::history::save_accepted_completion(
+                    &ctx,
+                    &sug,
+                    app.as_deref(),
+                )
+                .await;
+                crate::openhuman::autocomplete::history::save_completion_to_local_docs(
                     &ctx,
                     &sug,
                     app.as_deref(),
@@ -593,13 +600,32 @@ impl AutocompleteEngine {
         }
         let service = local_ai::global(&config);
 
-        // Build personalised style examples: dynamic (from accepted-history) + static (user config).
-        let dynamic_examples =
-            crate::openhuman::autocomplete::history::load_recent_examples(6).await;
+        // Build personalised style examples from three sources:
+        //  1. Semantically relevant past completions (local doc query)
+        //  2. Most recent past completions (KV recency signal / fallback)
+        //  3. Static user-configured examples
+        // Deduplicated and capped at 8 total.
+        let relevant_examples =
+            crate::openhuman::autocomplete::history::query_relevant_examples(&context, 4).await;
+        let recent_examples =
+            crate::openhuman::autocomplete::history::load_recent_examples(4).await;
+        let static_examples = config.autocomplete.style_examples.clone();
+
         let merged_examples: Vec<String> = {
-            let mut v = dynamic_examples;
-            v.extend(config.autocomplete.style_examples.iter().cloned());
-            v.truncate(8);
+            let mut seen = std::collections::HashSet::new();
+            let mut v = Vec::new();
+            for ex in relevant_examples
+                .into_iter()
+                .chain(recent_examples)
+                .chain(static_examples)
+            {
+                if seen.insert(ex.clone()) {
+                    v.push(ex);
+                }
+                if v.len() >= 8 {
+                    break;
+                }
+            }
             v
         };
 
@@ -695,6 +721,7 @@ impl AutocompleteEngine {
                 show_overflow_badge("accepted", Some(&cleaned), None, None, None);
 
                 // Persist acceptance for personalisation (fire-and-forget).
+                // Dual-write: KV (UI list) + local docs (semantic search).
                 {
                     let (ctx, app) = {
                         let s = self.inner.lock().await;
@@ -703,6 +730,12 @@ impl AutocompleteEngine {
                     let sug = cleaned.clone();
                     tokio::spawn(async move {
                         crate::openhuman::autocomplete::history::save_accepted_completion(
+                            &ctx,
+                            &sug,
+                            app.as_deref(),
+                        )
+                        .await;
+                        crate::openhuman::autocomplete::history::save_completion_to_local_docs(
                             &ctx,
                             &sug,
                             app.as_deref(),

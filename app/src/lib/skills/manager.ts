@@ -5,6 +5,7 @@
  * and tool invocation. Dispatches status changes to Redux.
  */
 
+import { callCoreRpc } from "../../services/coreRpcClient";
 import { SkillRuntime } from "./runtime";
 import { emitSkillStateChange } from "./skillEvents";
 import { setSetupComplete as rpcSetSetupComplete } from "./skillsApi";
@@ -229,7 +230,6 @@ class SkillManager {
     } else {
       // Try via core RPC pass-through
       try {
-        const { callCoreRpc } = await import("../../services/coreRpcClient");
         await callCoreRpc({
           method: "openhuman.skills_sync",
           params: { skill_id: skillId },
@@ -285,7 +285,6 @@ class SkillManager {
     } else {
       // No local runtime — try notifying via core RPC pass-through
       try {
-        const { callCoreRpc } = await import("../../services/coreRpcClient");
         await callCoreRpc({
           method: "openhuman.skills_rpc",
           params: {

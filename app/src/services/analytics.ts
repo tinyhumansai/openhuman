@@ -21,10 +21,8 @@
 import * as Sentry from '@sentry/react';
 
 import { store } from '../store';
-import { IS_DEV } from '../utils/config';
+import { IS_DEV, SENTRY_DSN } from '../utils/config';
 import { enqueueError, registerSentrySender, type SanitizedSentryEvent } from './errorReportQueue';
-
-const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
 
 // ---------------------------------------------------------------------------
 // Helpers

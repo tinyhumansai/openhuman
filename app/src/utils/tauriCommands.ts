@@ -199,7 +199,7 @@ export async function syncMemoryClientToken(token: string): Promise<void> {
   }
   try {
     console.debug('[memory] syncMemoryClientToken: payload → memory.init');
-    await callCoreRpc<boolean>({ method: 'memory.init', params: { jwt_token: token } });
+    await callCoreRpc<boolean>({ method: 'openhuman.memory_init', params: { jwt_token: token } });
     console.info('[memory] syncMemoryClientToken: exit — ok');
   } catch (err) {
     console.warn('[memory] syncMemoryClientToken: exit — error:', err);
@@ -217,14 +217,17 @@ export async function memoryListDocuments(namespace?: string): Promise<unknown> 
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<unknown>({ method: 'memory.list_documents', params: { namespace } });
+  return await callCoreRpc<unknown>({
+    method: 'openhuman.memory_list_documents',
+    params: { namespace },
+  });
 }
 
 export async function memoryListNamespaces(): Promise<string[]> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<string[]>({ method: 'memory.list_namespaces' });
+  return await callCoreRpc<string[]>({ method: 'openhuman.memory_list_namespaces' });
 }
 
 export async function memoryDeleteDocument(
@@ -235,7 +238,7 @@ export async function memoryDeleteDocument(
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<unknown>({
-    method: 'memory.delete_document',
+    method: 'openhuman.memory_delete_document',
     params: { document_id: documentId, namespace },
   });
 }
@@ -249,7 +252,7 @@ export async function memoryQueryNamespace(
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<string>({
-    method: 'memory.query_namespace',
+    method: 'openhuman.memory_query_namespace',
     params: { namespace, query, max_chunks: maxChunks },
   });
 }
@@ -262,9 +265,55 @@ export async function memoryRecallNamespace(
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<string | null>({
-    method: 'memory.recall_namespace',
+    method: 'openhuman.memory_recall_context',
     params: { namespace, max_chunks: maxChunks },
   });
+}
+
+export interface GraphRelation {
+  namespace: string | null;
+  subject: string;
+  predicate: string;
+  object: string;
+  attrs: Record<string, unknown>;
+  updatedAt: number;
+  evidenceCount: number;
+  orderIndex: number | null;
+  documentIds: string[];
+  chunkIds: string[];
+}
+
+export async function memoryGraphQuery(
+  namespace?: string,
+  subject?: string,
+  predicate?: string
+): Promise<GraphRelation[]> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<GraphRelation[]>({
+    method: 'openhuman.memory_graph_query',
+    params: { namespace, subject, predicate },
+  });
+}
+
+export async function memoryDocIngest(params: {
+  namespace: string;
+  key: string;
+  title: string;
+  content: string;
+  source_type?: string;
+  priority?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  category?: string;
+  session_id?: string;
+  document_id?: string;
+}): Promise<unknown> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<unknown>({ method: 'openhuman.memory_doc_ingest', params });
 }
 
 export async function aiListMemoryFiles(relativeDir = 'memory'): Promise<string[]> {
@@ -272,7 +321,7 @@ export async function aiListMemoryFiles(relativeDir = 'memory'): Promise<string[
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<string[]>({
-    method: 'ai.list_memory_files',
+    method: 'openhuman.memory_list_files',
     params: { relative_dir: relativeDir },
   });
 }
@@ -282,7 +331,7 @@ export async function aiReadMemoryFile(relativePath: string): Promise<string> {
     throw new Error('Not running in Tauri');
   }
   return await callCoreRpc<string>({
-    method: 'ai.read_memory_file',
+    method: 'openhuman.memory_read_file',
     params: { relative_path: relativePath },
   });
 }
@@ -292,7 +341,7 @@ export async function aiWriteMemoryFile(relativePath: string, content: string): 
     throw new Error('Not running in Tauri');
   }
   await callCoreRpc<boolean>({
-    method: 'ai.write_memory_file',
+    method: 'openhuman.memory_write_file',
     params: { relative_path: relativePath, content },
   });
 }
@@ -1019,6 +1068,29 @@ export async function openhumanUpdateScreenIntelligenceSettings(
   });
 }
 
+export async function openhumanUpdateAnalyticsSettings(update: {
+  enabled?: boolean;
+}): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: 'openhuman.update_analytics_settings',
+    params: update,
+  });
+}
+
+export async function openhumanGetAnalyticsSettings(): Promise<
+  CommandResponse<{ enabled: boolean }>
+> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<{ enabled: boolean }>>({
+    method: 'openhuman.get_analytics_settings',
+  });
+}
+
 export async function openhumanGetRuntimeFlags(): Promise<CommandResponse<RuntimeFlags>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
@@ -1294,6 +1366,60 @@ export async function openhumanLocalAiDownloadAsset(
   });
 }
 
+// --- Device profile & model tier presets ---
+
+export interface DeviceProfileResult {
+  total_ram_bytes: number;
+  cpu_count: number;
+  cpu_brand: string;
+  os_name: string;
+  os_version: string;
+  has_gpu: boolean;
+  gpu_description: string | null;
+}
+
+export interface ModelPresetResult {
+  tier: string;
+  label: string;
+  description: string;
+  chat_model_id: string;
+  vision_model_id: string;
+  embedding_model_id: string;
+  quantization: string;
+  min_ram_gb: number;
+  approx_download_gb: number;
+}
+
+export interface PresetsResponse {
+  presets: ModelPresetResult[];
+  recommended_tier: string;
+  current_tier: string;
+  device: DeviceProfileResult;
+}
+
+export interface ApplyPresetResult {
+  applied_tier: string;
+  chat_model_id: string;
+  vision_model_id: string;
+  embedding_model_id: string;
+  quantization: string;
+}
+
+export async function openhumanLocalAiDeviceProfile(): Promise<DeviceProfileResult> {
+  return await callCoreRpc<DeviceProfileResult>({ method: 'openhuman.local_ai_device_profile' });
+}
+
+export async function openhumanLocalAiPresets(): Promise<PresetsResponse> {
+  return await callCoreRpc<PresetsResponse>({ method: 'openhuman.local_ai_presets' });
+}
+
+export async function openhumanLocalAiApplyPreset(tier: string): Promise<ApplyPresetResult> {
+  return await callCoreRpc<ApplyPresetResult>({
+    method: 'openhuman.local_ai_apply_preset',
+    params: { tier },
+  });
+}
+
 export async function aiGetConfig(): Promise<AIPreview> {
   return {
     soul: {
@@ -1392,41 +1518,78 @@ export async function openhumanHardwareIntrospect(
   });
 }
 
+/**
+ * Parse CLI JSON output from a direct service command into CommandResponse shape.
+ */
+function parseServiceCliOutput(raw: string): CommandResponse<ServiceStatus> {
+  const parsed = JSON.parse(raw) as CommandResponse<ServiceStatus>;
+  return parsed;
+}
+
 export async function openhumanServiceInstall(): Promise<CommandResponse<ServiceStatus>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ServiceStatus>>({ method: 'openhuman.service_install' });
+  try {
+    return await callCoreRpc<CommandResponse<ServiceStatus>>({
+      method: 'openhuman.service_install',
+    });
+  } catch {
+    const raw = await invoke<string>('service_install_direct');
+    return parseServiceCliOutput(raw);
+  }
 }
 
 export async function openhumanServiceStart(): Promise<CommandResponse<ServiceStatus>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ServiceStatus>>({ method: 'openhuman.service_start' });
+  try {
+    return await callCoreRpc<CommandResponse<ServiceStatus>>({ method: 'openhuman.service_start' });
+  } catch {
+    const raw = await invoke<string>('service_start_direct');
+    return parseServiceCliOutput(raw);
+  }
 }
 
 export async function openhumanServiceStop(): Promise<CommandResponse<ServiceStatus>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ServiceStatus>>({ method: 'openhuman.service_stop' });
+  try {
+    return await callCoreRpc<CommandResponse<ServiceStatus>>({ method: 'openhuman.service_stop' });
+  } catch {
+    const raw = await invoke<string>('service_stop_direct');
+    return parseServiceCliOutput(raw);
+  }
 }
 
 export async function openhumanServiceStatus(): Promise<CommandResponse<ServiceStatus>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ServiceStatus>>({ method: 'openhuman.service_status' });
+  try {
+    return await callCoreRpc<CommandResponse<ServiceStatus>>({
+      method: 'openhuman.service_status',
+    });
+  } catch {
+    const raw = await invoke<string>('service_status_direct');
+    return parseServiceCliOutput(raw);
+  }
 }
 
 export async function openhumanServiceUninstall(): Promise<CommandResponse<ServiceStatus>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<CommandResponse<ServiceStatus>>({
-    method: 'openhuman.service_uninstall',
-  });
+  try {
+    return await callCoreRpc<CommandResponse<ServiceStatus>>({
+      method: 'openhuman.service_uninstall',
+    });
+  } catch {
+    const raw = await invoke<string>('service_uninstall_direct');
+    return parseServiceCliOutput(raw);
+  }
 }
 
 export async function openhumanAgentServerStatus(): Promise<CommandResponse<AgentServerStatus>> {

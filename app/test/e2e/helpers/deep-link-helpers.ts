@@ -10,10 +10,9 @@
  * 1. `macos: activateApp` + `macos: deepLink` extension commands
  * 2. Shell `open -a ... "url"` fallback
  */
+import * as fs from 'fs';
+import * as path from 'path';
 import { exec } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 import { isTauriDriver } from './platform';
 
@@ -110,23 +109,8 @@ async function trySimulateDeepLinkInWebView(url: string): Promise<boolean> {
 }
 
 function resolveBuiltAppPath(): string | null {
-  const helperDir = path.dirname(fileURLToPath(import.meta.url));
-  const appDir = path.resolve(helperDir, '..', '..');
-  const repoRoot = path.resolve(appDir, '..');
-
-  if (process.platform === 'linux') {
-    // tauri-driver launches the binary directly — look for the debug binary
-    const candidates = [
-      path.join(repoRoot, 'target', 'debug', 'OpenHuman'),
-      path.join(appDir, 'src-tauri', 'target', 'debug', 'OpenHuman'),
-    ];
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) return candidate;
-    }
-    return null;
-  }
-
-  // macOS: look for the .app bundle
+  const repoRoot = process.cwd();
+  const appDir = path.join(repoRoot, 'app');
   const candidates = [
     path.join(appDir, 'src-tauri', 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
     path.join(repoRoot, 'target', 'debug', 'bundle', 'macos', 'OpenHuman.app'),
@@ -158,39 +142,30 @@ export async function triggerDeepLink(url: string): Promise<void> {
       return;
     }
 
-    // Strategy 2: Appium Mac2 extension commands (macOS only)
-    if (!isTauriDriver()) {
-      try {
-        await browser.execute('macos: activateApp', { bundleId: 'com.openhuman.app' } as Record<
-          string,
-          unknown
-        >);
-        deepLinkDebug('macos: activateApp OK');
-      } catch (err) {
-        deepLinkDebug(
-          'macos: activateApp failed (non-fatal)',
-          err instanceof Error ? err.message : err
-        );
-      }
-
-      try {
-        await browser.execute('macos: launchApp', {
-          bundleId: 'com.openhuman.app',
-          arguments: [url],
-        } as Record<string, unknown>);
-        deepLinkDebug('macos: launchApp OK');
-      } catch (err) {
-        deepLinkDebug('macos: launchApp failed', err instanceof Error ? err.message : err);
-      }
+    try {
+      await browser.execute('macos: launchApp', {
+        bundleId: 'com.openhuman.app',
+        arguments: [url],
+      } as Record<string, unknown>);
+      deepLinkDebug('macos: launchApp OK');
+    } catch (err) {
+      deepLinkDebug('macos: launchApp failed', err instanceof Error ? err.message : err);
+    }
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         await browser.execute('macos: deepLink', { url, bundleId: 'com.openhuman.app' } as Record<
           string,
           unknown
         >);
-        deepLinkDebug('macos: deepLink OK');
+        deepLinkDebug('macos: deepLink OK', { attempt });
+        await browser.pause(300);
         return;
       } catch (err) {
-        deepLinkDebug('macos: deepLink failed', err instanceof Error ? err.message : err);
+        deepLinkDebug('macos: deepLink failed', {
+          attempt,
+          error: err instanceof Error ? err.message : err,
+        });
+        await browser.pause(250);
       }
     }
   }
@@ -223,12 +198,17 @@ export async function triggerDeepLink(url: string): Promise<void> {
   }
 
   let openError: unknown = null;
-  try {
-    const command = appPath ? `open -a "${appPath}" "${url}"` : `open "${url}"`;
-    deepLinkDebug('fallback shell', command);
-    await execCommand(command);
-  } catch (err) {
-    openError = err;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const command = appPath ? `open -a "${appPath}" "${url}"` : `open "${url}"`;
+      deepLinkDebug('fallback shell', { attempt, command });
+      await execCommand(command);
+      openError = null;
+      break;
+    } catch (err) {
+      openError = err;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
   }
 
   if (!openError) {

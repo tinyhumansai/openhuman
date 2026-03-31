@@ -5,10 +5,11 @@ use serde_json::json;
 use std::time::Duration;
 
 /// Web search tool for searching the internet.
-/// Supports multiple providers: DuckDuckGo (free), Brave (requires API key).
+/// Supports multiple providers: DuckDuckGo (free), Brave (requires API key), Parallel (requires API key).
 pub struct WebSearchTool {
     provider: String,
     brave_api_key: Option<String>,
+    parallel_api_key: Option<String>,
     max_results: usize,
     timeout_secs: u64,
 }
@@ -17,12 +18,14 @@ impl WebSearchTool {
     pub fn new(
         provider: String,
         brave_api_key: Option<String>,
+        parallel_api_key: Option<String>,
         max_results: usize,
         timeout_secs: u64,
     ) -> Self {
         Self {
             provider: provider.trim().to_lowercase(),
             brave_api_key,
+            parallel_api_key,
             max_results: max_results.clamp(1, 10),
             timeout_secs: timeout_secs.max(1),
         }
@@ -129,6 +132,95 @@ impl WebSearchTool {
         self.parse_brave_results(&json, query)
     }
 
+    async fn search_parallel(&self, query: &str) -> anyhow::Result<String> {
+        let api_key = self
+            .parallel_api_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Parallel API key not configured"))?;
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(self.timeout_secs))
+            .build()?;
+
+        let body = json!({
+            "objective": query,
+            "search_queries": [query],
+            "mode": "fast",
+            "excerpts": {
+                "max_chars_per_result": 10000
+            }
+        });
+
+        tracing::debug!(
+            "[web_search] parallel: POST /v1beta/search for query={:?}",
+            query
+        );
+
+        let response = client
+            .post("https://api.parallel.ai/v1beta/search")
+            .header("Content-Type", "application/json")
+            .header("x-api-key", api_key)
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            // Consume body without logging it — it may echo auth metadata.
+            let _ = response.bytes().await;
+            anyhow::bail!("Parallel search failed with status: {}", status);
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        self.parse_parallel_results(&json, query)
+    }
+
+    fn parse_parallel_results(
+        &self,
+        json: &serde_json::Value,
+        query: &str,
+    ) -> anyhow::Result<String> {
+        let results = json
+            .get("results")
+            .and_then(|r| r.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Invalid Parallel API response: missing 'results'"))?;
+
+        if results.is_empty() {
+            return Ok(format!("No results found for: {}", query));
+        }
+
+        let mut lines = vec![format!("Search results for: {} (via Parallel)", query)];
+
+        for (i, result) in results.iter().take(self.max_results).enumerate() {
+            let title = result
+                .get("title")
+                .and_then(|t| t.as_str())
+                .unwrap_or("No title");
+            let url = result.get("url").and_then(|u| u.as_str()).unwrap_or("");
+
+            lines.push(format!("{}. {}", i + 1, title));
+            lines.push(format!("   {}", url));
+
+            // Include the first excerpt (evidence-oriented text, LLM-ready).
+            if let Some(excerpts) = result.get("excerpts").and_then(|e| e.as_array()) {
+                if let Some(first) = excerpts.first().and_then(|e| e.as_str()) {
+                    let excerpt = first.trim();
+                    if !excerpt.is_empty() {
+                        // Truncate very long excerpts to keep tool output reasonable.
+                        let truncated = if excerpt.len() > 500 {
+                            format!("{}...", &excerpt[..500])
+                        } else {
+                            excerpt.to_string()
+                        };
+                        lines.push(format!("   {}", truncated));
+                    }
+                }
+            }
+        }
+
+        Ok(lines.join("\n"))
+    }
+
     fn parse_brave_results(&self, json: &serde_json::Value, query: &str) -> anyhow::Result<String> {
         let results = json
             .get("web")
@@ -219,6 +311,7 @@ impl Tool for WebSearchTool {
         let result = match self.provider.as_str() {
             "duckduckgo" | "ddg" => self.search_duckduckgo(query).await?,
             "brave" => self.search_brave(query).await?,
+            "parallel" => self.search_parallel(query).await?,
             _ => anyhow::bail!("Unknown search provider: {}", self.provider),
         };
 
@@ -234,22 +327,23 @@ impl Tool for WebSearchTool {
 mod tests {
     use super::*;
 
+    fn ddg_tool() -> WebSearchTool {
+        WebSearchTool::new("duckduckgo".to_string(), None, None, 5, 15)
+    }
+
     #[test]
     fn test_tool_name() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
-        assert_eq!(tool.name(), "web_search_tool");
+        assert_eq!(ddg_tool().name(), "web_search_tool");
     }
 
     #[test]
     fn test_tool_description() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
-        assert!(tool.description().contains("Search the web"));
+        assert!(ddg_tool().description().contains("Search the web"));
     }
 
     #[test]
     fn test_parameters_schema() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
-        let schema = tool.parameters_schema();
+        let schema = ddg_tool().parameters_schema();
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["query"].is_object());
     }
@@ -262,8 +356,7 @@ mod tests {
 
     #[test]
     fn test_parse_duckduckgo_results_empty() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
-        let result = tool
+        let result = ddg_tool()
             .parse_duckduckgo_results("<html>No results here</html>", "test")
             .unwrap();
         assert!(result.contains("No results found"));
@@ -271,31 +364,29 @@ mod tests {
 
     #[test]
     fn test_parse_duckduckgo_results_with_data() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
         let html = r#"
             <a class="result__a" href="https://example.com">Example Title</a>
             <a class="result__snippet">This is a description</a>
         "#;
-        let result = tool.parse_duckduckgo_results(html, "test").unwrap();
+        let result = ddg_tool().parse_duckduckgo_results(html, "test").unwrap();
         assert!(result.contains("Example Title"));
         assert!(result.contains("https://example.com"));
     }
 
     #[test]
     fn test_parse_duckduckgo_results_decodes_redirect_url() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
         let html = r#"
             <a class="result__a" href="https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fpath%3Fa%3D1&amp;rut=test">Example Title</a>
             <a class="result__snippet">This is a description</a>
         "#;
-        let result = tool.parse_duckduckgo_results(html, "test").unwrap();
+        let result = ddg_tool().parse_duckduckgo_results(html, "test").unwrap();
         assert!(result.contains("https://example.com/path?a=1"));
         assert!(!result.contains("rut=test"));
     }
 
     #[test]
     fn test_constructor_clamps_web_search_limits() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 0, 0);
+        let tool = WebSearchTool::new("duckduckgo".to_string(), None, None, 0, 0);
         let html = r#"
             <a class="result__a" href="https://example.com">Example Title</a>
             <a class="result__snippet">This is a description</a>
@@ -306,23 +397,122 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_missing_query() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
-        let result = tool.execute(json!({})).await;
+        let result = ddg_tool().execute(json!({})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_empty_query() {
-        let tool = WebSearchTool::new("duckduckgo".to_string(), None, 5, 15);
-        let result = tool.execute(json!({"query": ""})).await;
+        let result = ddg_tool().execute(json!({"query": ""})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_brave_without_api_key() {
-        let tool = WebSearchTool::new("brave".to_string(), None, 5, 15);
+        let tool = WebSearchTool::new("brave".to_string(), None, None, 5, 15);
         let result = tool.execute(json!({"query": "test"})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("API key"));
+    }
+
+    // --- Parallel provider tests (mocked) ---
+
+    #[tokio::test]
+    async fn test_execute_parallel_without_api_key() {
+        let tool = WebSearchTool::new("parallel".to_string(), None, None, 5, 15);
+        let result = tool.execute(json!({"query": "test"})).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("API key"));
+    }
+
+    #[test]
+    fn test_parse_parallel_results_empty() {
+        let tool = WebSearchTool::new("parallel".to_string(), None, Some("key".to_string()), 5, 15);
+        let json = serde_json::json!({ "results": [] });
+        let result = tool.parse_parallel_results(&json, "test query").unwrap();
+        assert!(result.contains("No results found"));
+    }
+
+    #[test]
+    fn test_parse_parallel_results_with_data() {
+        let tool = WebSearchTool::new("parallel".to_string(), None, Some("key".to_string()), 5, 15);
+        let json = serde_json::json!({
+            "search_id": "abc-123",
+            "results": [
+                {
+                    "title": "Parallel AI Docs",
+                    "url": "https://docs.parallel.ai/home",
+                    "publish_date": null,
+                    "excerpts": ["Parallel provides infrastructure for AI web search."]
+                },
+                {
+                    "title": "Parallel Search Quickstart",
+                    "url": "https://docs.parallel.ai/search",
+                    "publish_date": "2024-01-01",
+                    "excerpts": ["Use POST /v1beta/search to retrieve results."]
+                }
+            ],
+            "warnings": null,
+            "usage": [{ "name": "search", "count": 1 }]
+        });
+        let result = tool.parse_parallel_results(&json, "parallel ai").unwrap();
+        assert!(result.contains("via Parallel"));
+        assert!(result.contains("Parallel AI Docs"));
+        assert!(result.contains("https://docs.parallel.ai/home"));
+        assert!(result.contains("infrastructure for AI web search"));
+        assert!(result.contains("Parallel Search Quickstart"));
+    }
+
+    #[test]
+    fn test_parse_parallel_results_respects_max_results() {
+        let tool = WebSearchTool::new(
+            "parallel".to_string(),
+            None,
+            Some("key".to_string()),
+            2, // max_results = 2
+            15,
+        );
+        let json = serde_json::json!({
+            "results": [
+                { "title": "Result 1", "url": "https://a.com", "excerpts": [] },
+                { "title": "Result 2", "url": "https://b.com", "excerpts": [] },
+                { "title": "Result 3", "url": "https://c.com", "excerpts": [] }
+            ]
+        });
+        let result = tool.parse_parallel_results(&json, "q").unwrap();
+        assert!(result.contains("Result 1"));
+        assert!(result.contains("Result 2"));
+        assert!(!result.contains("Result 3"));
+    }
+
+    #[test]
+    fn test_parse_parallel_results_missing_results_field() {
+        let tool = WebSearchTool::new("parallel".to_string(), None, Some("key".to_string()), 5, 15);
+        let json = serde_json::json!({ "search_id": "abc" });
+        let result = tool.parse_parallel_results(&json, "q");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("missing 'results'"));
+    }
+
+    #[test]
+    fn test_parse_parallel_results_truncates_long_excerpt() {
+        let tool = WebSearchTool::new("parallel".to_string(), None, Some("key".to_string()), 5, 15);
+        let long_excerpt = "x".repeat(600);
+        let json = serde_json::json!({
+            "results": [{
+                "title": "T",
+                "url": "https://t.com",
+                "excerpts": [long_excerpt]
+            }]
+        });
+        let result = tool.parse_parallel_results(&json, "q").unwrap();
+        // Should contain truncated text ending with "..."
+        assert!(result.contains("..."));
+        // The excerpt portion in the output should not exceed 503 chars ("x"*500 + "...")
+        let excerpt_line = result.lines().find(|l| l.trim().starts_with('x')).unwrap();
+        assert!(excerpt_line.trim().len() <= 503);
     }
 }

@@ -137,6 +137,7 @@ pub fn all_tools_with_runtime(
         tools.push(Box::new(WebSearchTool::new(
             root_config.web_search.provider.clone(),
             root_config.web_search.brave_api_key.clone(),
+            root_config.web_search.parallel_api_key.clone(),
             root_config.web_search.max_results,
             root_config.web_search.timeout_secs,
         )));

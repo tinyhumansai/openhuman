@@ -19,7 +19,7 @@
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickText,
@@ -59,6 +59,36 @@ async function waitForTextToDisappear(text, timeout = 10_000) {
   return false;
 }
 
+async function waitForAuthCalls() {
+  const consumeCall = await waitForRequest('POST', '/telegram/login-tokens/', 20_000);
+  if (!consumeCall) {
+    console.log(
+      '[LoginFlow] Missing consume call. Request log:',
+      JSON.stringify(getRequestLog(), null, 2)
+    );
+    throw new Error('Deep-link login token consume call missing');
+  }
+  const meCall = await waitForRequest('GET', '/telegram/me', 20_000);
+  if (!meCall) {
+    console.log(
+      '[LoginFlow] Missing /telegram/me call. Request log:',
+      JSON.stringify(getRequestLog(), null, 2)
+    );
+    throw new Error('User profile call missing after deep-link auth');
+  }
+}
+
+async function maybeAlreadyOnHome(): Promise<boolean> {
+  const homeMarkers = ['Message OpenHuman', 'Upgrade to Premium', 'Good morning', 'Good afternoon'];
+  for (const marker of homeMarkers) {
+    if (await textExists(marker)) {
+      console.log(`[LoginFlow] Home marker visible early: "${marker}"`);
+      return true;
+    }
+  }
+  return false;
+}
+
 describe('Login flow — complete with mock data', () => {
   before(async () => {
     await startMockServer();
@@ -91,14 +121,11 @@ describe('Login flow — complete with mock data', () => {
 
     // Wait for the accessibility tree to populate
     await waitForAppReady(15_000);
+    await waitForAuthBootstrap(15_000);
   });
 
   it('mock server received the token-consume call', async () => {
-    const call = await waitForRequest('POST', '/telegram/login-tokens/');
-    if (!call) {
-      console.log('[LoginFlow] Request log:', JSON.stringify(getRequestLog(), null, 2));
-    }
-    expect(call).toBeDefined();
+    await waitForAuthCalls();
   });
 
   it('mock server received the user-profile call', async () => {
@@ -162,13 +189,44 @@ describe('Login flow — complete with mock data', () => {
       }
     }
 
-    if (!foundOnboarding) {
-      for (const text of homeCandidates) {
-        if (await textExists(text)) {
-          console.log(`[LoginFlow] Home page visible: "${text}" (onboarding overlay may be hidden from accessibility tree)`);
-          foundHome = true;
-          break;
-        }
+    if (!found) {
+      const tree = await dumpAccessibilityTree();
+      console.log('[LoginFlow] InviteCodeStep text not found. Tree:\n', tree.slice(0, 3000));
+    }
+
+    const webView = await browser.$('//XCUIElementTypeWebView');
+    expect(await webView.isExisting()).toBe(true);
+  });
+
+  it('skip invite code step → advances to FeaturesStep', async () => {
+    if (await maybeAlreadyOnHome()) {
+      return;
+    }
+    // Click "Skip for now"
+    await clickText('Skip for now', 10_000);
+    console.log("[LoginFlow] Clicked 'Skip for now'");
+
+    // Verify the step actually changed — wait for InviteCodeStep content to
+    // disappear and FeaturesStep content to appear.
+    const stepChanged = await waitForTextToDisappear('Skip for now', 8_000);
+    if (stepChanged) {
+      console.log('[LoginFlow] InviteCodeStep content disappeared — step advanced');
+    } else {
+      // If text didn't disappear, try clicking again (first click may have
+      // hit the wrong area)
+      console.log("[LoginFlow] Step didn't advance, retrying click...");
+      await clickText('Skip', 5_000);
+      const retryWorked = await waitForTextToDisappear('Skip', 5_000);
+      if (!retryWorked) {
+        const tree = await dumpAccessibilityTree();
+        console.log(
+          '[LoginFlow] InviteCodeStep still visible after retry. Tree:\n',
+          tree.slice(0, 4000)
+        );
+        throw new Error(
+          'InviteCodeStep did not advance after two click attempts — ' +
+            "'Skip' text still visible in accessibility tree"
+        );
       }
     }
 
@@ -176,12 +234,13 @@ describe('Login flow — complete with mock data', () => {
     expect(foundOnboarding || foundHome).toBe(true);
   });
 
-  it('walk through onboarding steps (if overlay is visible)', async () => {
-    // The onboarding overlay uses a React portal. On Mac2, portal content
-    // may not appear in the accessibility tree. If onboarding text is found,
-    // walk through the steps. Otherwise, skip — the auth flow is verified
-    // by the token-consume and user-profile tests above.
-    const skipVisible = await textExists('Skip for now');
+  it('FeaturesStep — click through', async () => {
+    if (await maybeAlreadyOnHome()) {
+      return;
+    }
+    // FeaturesStep button: "Looks Amazing. Bring It On 🚀"
+    // Emoji may not appear in accessibility tree, try multiple variants
+    const buttonCandidates = ['Looks Amazing', 'Bring It On'];
 
     if (!skipVisible) {
       console.log('[LoginFlow] Onboarding overlay not visible in accessibility tree — skipping step walkthrough');
@@ -205,8 +264,15 @@ describe('Login flow — complete with mock data', () => {
     }
     await browser.pause(2_000);
 
-    // Step 3: PrivacyStep
-    for (const text of ['Got it', 'Continue']) {
+  it('PrivacyStep — click through', async () => {
+    if (await maybeAlreadyOnHome()) {
+      return;
+    }
+    // PrivacyStep button: "Got it! Let's Continue 👀"
+    const buttonCandidates = ['Got it', 'Continue'];
+
+    let clicked = false;
+    for (const text of buttonCandidates) {
       if (await textExists(text)) {
         await clickText(text, 5_000);
         console.log(`[LoginFlow] PrivacyStep: clicked "${text}"`);
@@ -215,8 +281,17 @@ describe('Login flow — complete with mock data', () => {
     }
     await browser.pause(2_000);
 
-    // Step 4: GetStartedStep
-    for (const text of ["Let's Go", "I'm Ready"]) {
+  it('GetStartedStep — complete onboarding', async () => {
+    if (await maybeAlreadyOnHome()) {
+      return;
+    }
+    // GetStartedStep button: "I'm Ready! Let's Go! 🔥"
+    // NOTE: Do NOT use "Ready" — it matches the heading "You Are Ready, Soldier!"
+    // which is NOT inside the button and won't trigger handleComplete().
+    const buttonCandidates = ["Let's Go", "I'm Ready"];
+
+    let clicked = false;
+    for (const text of buttonCandidates) {
       if (await textExists(text)) {
         await clickText(text, 5_000);
         console.log(`[LoginFlow] GetStartedStep: clicked "${text}"`);

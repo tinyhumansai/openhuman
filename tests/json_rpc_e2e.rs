@@ -334,6 +334,47 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
     rpc_join.abort();
 }
 
+#[tokio::test]
+async fn json_rpc_rejects_non_object_params_with_clear_error() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let invalid = post_json_rpc(
+        &rpc_base,
+        1001,
+        "openhuman.auth_get_state",
+        json!(["invalid", "params"]),
+    )
+    .await;
+    let err_message = invalid
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        !err_message.is_empty(),
+        "expected non-empty JSON-RPC error message: {invalid}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 // ---------------------------------------------------------------------------
 // Skills registry E2E: fetch, search, install, list, uninstall
 // ---------------------------------------------------------------------------
@@ -799,6 +840,128 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
     .await;
     let stop_result = assert_no_jsonrpc_error(&stop, "skills_stop");
     assert_eq!(stop_result.get("success"), Some(&json!(true)));
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Local AI device profile, presets, and apply preset
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn json_rpc_local_ai_device_profile_and_presets() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _tier_guard = EnvVarGuard::unset("OPENHUMAN_LOCAL_AI_TIER");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // --- device_profile ---
+    let profile = post_json_rpc(
+        &rpc_base,
+        30,
+        "openhuman.local_ai_device_profile",
+        json!({}),
+    )
+    .await;
+    let profile_result = assert_no_jsonrpc_error(&profile, "device_profile");
+    assert!(
+        profile_result
+            .get("total_ram_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0,
+        "expected positive RAM: {profile_result}"
+    );
+    assert!(
+        profile_result
+            .get("cpu_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0,
+        "expected positive CPU count: {profile_result}"
+    );
+
+    // --- presets ---
+    let presets = post_json_rpc(&rpc_base, 31, "openhuman.local_ai_presets", json!({})).await;
+    let presets_result = assert_no_jsonrpc_error(&presets, "presets");
+    let presets_arr = presets_result
+        .get("presets")
+        .and_then(Value::as_array)
+        .expect("presets should be an array");
+    assert_eq!(presets_arr.len(), 3, "expected 3 presets: {presets_result}");
+
+    let recommended = presets_result
+        .get("recommended_tier")
+        .and_then(Value::as_str)
+        .expect("should have recommended_tier");
+    assert!(
+        ["low", "medium", "high"].contains(&recommended),
+        "unexpected recommended_tier: {recommended}"
+    );
+
+    let current = presets_result
+        .get("current_tier")
+        .and_then(Value::as_str)
+        .expect("should have current_tier");
+    // Default config uses gemma3:4b-it-qat which matches Medium
+    assert_eq!(current, "medium", "default config should be medium tier");
+
+    // --- apply_preset (switch to Low) ---
+    let apply = post_json_rpc(
+        &rpc_base,
+        32,
+        "openhuman.local_ai_apply_preset",
+        json!({"tier": "low"}),
+    )
+    .await;
+    let apply_result = assert_no_jsonrpc_error(&apply, "apply_preset");
+    assert_eq!(
+        apply_result.get("applied_tier").and_then(Value::as_str),
+        Some("low")
+    );
+    assert_eq!(
+        apply_result.get("chat_model_id").and_then(Value::as_str),
+        Some("gemma3:1b-it-q4_0")
+    );
+
+    // --- verify presets reflects the change ---
+    let presets_after = post_json_rpc(&rpc_base, 33, "openhuman.local_ai_presets", json!({})).await;
+    let presets_after_result = assert_no_jsonrpc_error(&presets_after, "presets_after");
+    assert_eq!(
+        presets_after_result
+            .get("current_tier")
+            .and_then(Value::as_str),
+        Some("low"),
+        "current tier should now be low after apply"
+    );
+
+    // --- apply_preset with invalid tier should error ---
+    let bad_apply = post_json_rpc(
+        &rpc_base,
+        34,
+        "openhuman.local_ai_apply_preset",
+        json!({"tier": "ultra"}),
+    )
+    .await;
+    assert!(
+        bad_apply.get("error").is_some(),
+        "expected error for invalid tier: {bad_apply}"
+    );
 
     mock_join.abort();
     rpc_join.abort();

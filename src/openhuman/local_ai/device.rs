@@ -1,0 +1,111 @@
+//! Device profile detection for guided model selection.
+
+use serde::{Deserialize, Serialize};
+use sysinfo::System;
+
+/// Summary of local hardware relevant for model tier selection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceProfile {
+    pub total_ram_bytes: u64,
+    pub cpu_count: usize,
+    pub cpu_brand: String,
+    pub os_name: String,
+    pub os_version: String,
+    pub has_gpu: bool,
+    pub gpu_description: Option<String>,
+}
+
+impl DeviceProfile {
+    /// Total RAM expressed in whole gigabytes (rounded down).
+    pub fn total_ram_gb(&self) -> u64 {
+        self.total_ram_bytes / (1024 * 1024 * 1024)
+    }
+}
+
+/// Probe the current machine and return a [`DeviceProfile`].
+///
+/// GPU detection is best-effort: Apple Silicon is assumed to have a GPU (Metal);
+/// on other platforms we report "unknown" unless more specific probing is added later.
+pub fn detect_device_profile() -> DeviceProfile {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    let total_ram_bytes = sys.total_memory();
+    let cpu_count = sys.cpus().len();
+    let cpu_brand = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().trim().to_string())
+        .unwrap_or_default();
+
+    let os_name = System::name().unwrap_or_else(|| "unknown".to_string());
+    let os_version = System::os_version().unwrap_or_else(|| "unknown".to_string());
+
+    let (has_gpu, gpu_description) = detect_gpu(&cpu_brand, &os_name);
+
+    tracing::debug!(
+        total_ram_bytes,
+        cpu_count,
+        cpu_brand = %cpu_brand,
+        os_name = %os_name,
+        os_version = %os_version,
+        has_gpu,
+        gpu_description = ?gpu_description,
+        "device profile detected"
+    );
+
+    DeviceProfile {
+        total_ram_bytes,
+        cpu_count,
+        cpu_brand,
+        os_name,
+        os_version,
+        has_gpu,
+        gpu_description,
+    }
+}
+
+/// Best-effort GPU detection.
+///
+/// Apple Silicon always has a unified GPU (Metal). On other systems we cannot
+/// reliably detect discrete GPUs without heavy platform-specific dependencies,
+/// so we conservatively report unknown.
+fn detect_gpu(cpu_brand: &str, os_name: &str) -> (bool, Option<String>) {
+    let brand_lower = cpu_brand.to_ascii_lowercase();
+    let os_lower = os_name.to_ascii_lowercase();
+
+    // Apple Silicon detection: brand contains "apple" or we're on macOS with an ARM chip
+    if brand_lower.contains("apple") || (os_lower.contains("mac") && brand_lower.contains("arm")) {
+        return (true, Some("Apple Silicon (Metal)".to_string()));
+    }
+
+    // Fallback: cannot reliably detect discrete GPU without platform libraries.
+    (false, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_device_profile_returns_nonzero_hardware() {
+        let profile = detect_device_profile();
+        assert!(profile.total_ram_bytes > 0, "RAM should be > 0");
+        assert!(profile.cpu_count > 0, "CPU count should be > 0");
+        assert!(!profile.os_name.is_empty(), "OS name should be non-empty");
+    }
+
+    #[test]
+    fn total_ram_gb_rounds_down() {
+        let profile = DeviceProfile {
+            total_ram_bytes: 17_179_869_184, // 16 GiB exactly
+            cpu_count: 8,
+            cpu_brand: "test".to_string(),
+            os_name: "test".to_string(),
+            os_version: "1.0".to_string(),
+            has_gpu: false,
+            gpu_description: None,
+        };
+        assert_eq!(profile.total_ram_gb(), 16);
+    }
+}

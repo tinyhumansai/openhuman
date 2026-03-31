@@ -1,3 +1,4 @@
+use crate::openhuman::agent::loop_::parse_tool_calls;
 use crate::openhuman::providers::{
     ChatMessage, ChatResponse, ConversationMessage, ToolResultMessage,
 };
@@ -32,55 +33,17 @@ pub trait ToolDispatcher: Send + Sync {
 pub struct XmlToolDispatcher;
 
 impl XmlToolDispatcher {
-    fn parse_xml_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) {
-        let mut text_parts = Vec::new();
-        let mut calls = Vec::new();
-        let mut remaining = response;
-
-        while let Some(start) = remaining.find("<tool_call>") {
-            let before = &remaining[..start];
-            if !before.trim().is_empty() {
-                text_parts.push(before.trim().to_string());
-            }
-
-            if let Some(end) = remaining[start..].find("</tool_call>") {
-                let inner = &remaining[start + 11..start + end];
-                match serde_json::from_str::<Value>(inner.trim()) {
-                    Ok(parsed) => {
-                        let name = parsed
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        if name.is_empty() {
-                            remaining = &remaining[start + end + 12..];
-                            continue;
-                        }
-                        let arguments = parsed
-                            .get("arguments")
-                            .cloned()
-                            .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-                        calls.push(ParsedToolCall {
-                            name,
-                            arguments,
-                            tool_call_id: None,
-                        });
-                    }
-                    Err(e) => {
-                        tracing::warn!("Malformed <tool_call> JSON: {e}");
-                    }
-                }
-                remaining = &remaining[start + end + 12..];
-            } else {
-                break;
-            }
-        }
-
-        if !remaining.trim().is_empty() {
-            text_parts.push(remaining.trim().to_string());
-        }
-
-        (text_parts.join("\n"), calls)
+    fn parse_tool_calls_from_text(response: &str) -> (String, Vec<ParsedToolCall>) {
+        let (text, calls) = parse_tool_calls(response);
+        let parsed_calls = calls
+            .into_iter()
+            .map(|call| ParsedToolCall {
+                name: call.name,
+                arguments: call.arguments,
+                tool_call_id: None,
+            })
+            .collect::<Vec<_>>();
+        (text, parsed_calls)
     }
 
     pub fn tool_specs(tools: &[Box<dyn Tool>]) -> Vec<ToolSpec> {
@@ -91,7 +54,13 @@ impl XmlToolDispatcher {
 impl ToolDispatcher for XmlToolDispatcher {
     fn parse_response(&self, response: &ChatResponse) -> (String, Vec<ParsedToolCall>) {
         let text = response.text_or_empty();
-        Self::parse_xml_tool_calls(text)
+        let (parsed_text, parsed_calls) = Self::parse_tool_calls_from_text(text);
+        tracing::debug!(
+            parse_mode = "text_fallback",
+            parsed_tool_calls = parsed_calls.len(),
+            "xml dispatcher parsed response"
+        );
+        (parsed_text, parsed_calls)
     }
 
     fn format_results(&self, results: &[ToolExecutionResult]) -> ConversationMessage {
@@ -163,7 +132,7 @@ pub struct NativeToolDispatcher;
 impl ToolDispatcher for NativeToolDispatcher {
     fn parse_response(&self, response: &ChatResponse) -> (String, Vec<ParsedToolCall>) {
         let text = response.text.clone().unwrap_or_default();
-        let mut calls: Vec<ParsedToolCall> = response
+        let calls: Vec<ParsedToolCall> = response
             .tool_calls
             .iter()
             .map(|tc| ParsedToolCall {
@@ -180,29 +149,38 @@ impl ToolDispatcher for NativeToolDispatcher {
             })
             .collect();
 
-        // Fallback for providers/models that emit XML-style tool calls in text
-        // even when native tool-calling is configured.
-        if calls.is_empty() && !text.is_empty() {
-            let (fallback_text, fallback_calls) = XmlToolDispatcher::parse_xml_tool_calls(&text);
-            if !fallback_calls.is_empty() {
-                calls = fallback_calls
-                    .into_iter()
-                    .map(|call| ParsedToolCall {
-                        name: call.name,
-                        arguments: call.arguments,
-                        tool_call_id: None,
-                    })
-                    .collect();
+        if !calls.is_empty() {
+            tracing::debug!(
+                parse_mode = "native_structured",
+                parsed_tool_calls = calls.len(),
+                "native dispatcher parsed response"
+            );
+            return (text, calls);
+        }
 
+        if !text.is_empty() {
+            let (fallback_text, fallback_calls) =
+                XmlToolDispatcher::parse_tool_calls_from_text(&text);
+            if !fallback_calls.is_empty() {
                 let display_text = if fallback_text.is_empty() {
                     text
                 } else {
                     fallback_text
                 };
-                return (display_text, calls);
+                tracing::debug!(
+                    parse_mode = "text_fallback",
+                    parsed_tool_calls = fallback_calls.len(),
+                    "native dispatcher parsed response"
+                );
+                return (display_text, fallback_calls);
             }
         }
 
+        tracing::debug!(
+            parse_mode = "none",
+            parsed_tool_calls = 0,
+            "native dispatcher parsed response"
+        );
         (text, calls)
     }
 
@@ -329,6 +307,21 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "shell");
         assert_eq!(calls[0].tool_call_id, None);
+    }
+
+    #[test]
+    fn native_dispatcher_falls_back_to_invoke_tag() {
+        let response = ChatResponse {
+            text: Some(
+                "Let me run this.\n<invoke>{\"name\":\"shell\",\"arguments\":{\"command\":\"pwd\"}}</invoke>".into(),
+            ),
+            tool_calls: vec![],
+        };
+        let dispatcher = NativeToolDispatcher;
+        let (text, calls) = dispatcher.parse_response(&response);
+        assert_eq!(text, "Let me run this.");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
     }
 
     #[test]

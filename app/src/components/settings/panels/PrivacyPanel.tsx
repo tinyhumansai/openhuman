@@ -1,6 +1,7 @@
 import { syncAnalyticsConsent } from '../../../services/analytics';
 import { setAnalyticsForUser } from '../../../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { isTauri, openhumanUpdateAnalyticsSettings } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -19,6 +20,13 @@ const PrivacyPanel = () => {
     const newValue = !analyticsEnabled;
     dispatch(setAnalyticsForUser({ userId: user._id, enabled: newValue }));
     syncAnalyticsConsent(newValue);
+
+    // Sync to core config so the Rust process also respects the setting
+    if (isTauri()) {
+      openhumanUpdateAnalyticsSettings({ enabled: newValue }).catch(() => {
+        /* best-effort */
+      });
+    }
   };
 
   return (
@@ -30,7 +38,7 @@ const PrivacyPanel = () => {
           {/* Analytics Section */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
-              Analytics
+              Anonymized Analytics
             </h3>
             <div className="bg-stone-800/50 rounded-xl border border-stone-700/50 overflow-hidden">
               <div className="flex items-center justify-between p-4">
@@ -38,7 +46,8 @@ const PrivacyPanel = () => {
                   <p className="text-sm font-medium text-white">Share Anonymized Usage Data</p>
                   <p className="text-xs text-stone-400 mt-1 leading-relaxed">
                     Help improve OpenHuman by sharing anonymous crash reports and usage analytics.
-                    No personal data, messages, or wallet information is ever collected.
+                    All data is fully anonymized &mdash; no personal data, messages, wallet keys, or
+                    session information is ever collected.
                   </p>
                 </div>
                 <button
@@ -73,9 +82,10 @@ const PrivacyPanel = () => {
               </svg>
               <div>
                 <p className="text-xs text-stone-400 leading-relaxed">
-                  When enabled, we collect only crash information, device type, and the file
-                  location of errors. We never access your messages, session data, wallet keys, or
-                  any personally identifiable information.
+                  All analytics and bug reports are fully anonymized. When enabled, we collect only
+                  crash information, device type, and the file location of errors. We never access
+                  your messages, session data, wallet keys, API keys, or any personally identifiable
+                  information. You can change this setting at any time.
                 </p>
               </div>
             </div>

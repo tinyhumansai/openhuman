@@ -51,6 +51,11 @@ struct ScreenIntelligenceSettingsUpdate {
 }
 
 #[derive(Debug, Deserialize)]
+struct AnalyticsSettingsUpdate {
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SetBrowserAllowAllParams {
     enabled: bool,
 }
@@ -80,6 +85,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("set_browser_allow_all"),
         schemas("workspace_onboarding_flag_exists"),
         schemas("workspace_onboarding_flag_set"),
+        schemas("update_analytics_settings"),
+        schemas("get_analytics_settings"),
         schemas("agent_server_status"),
     ]
 }
@@ -133,6 +140,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("workspace_onboarding_flag_set"),
             handler: handle_workspace_onboarding_flag_set,
+        },
+        RegisteredController {
+            schema: schemas("update_analytics_settings"),
+            handler: handle_update_analytics_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_analytics_settings"),
+            handler: handle_get_analytics_settings,
         },
         RegisteredController {
             schema: schemas("agent_server_status"),
@@ -363,6 +378,28 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "update_analytics_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_analytics_settings",
+            description: "Enable or disable anonymized analytics and error reporting.",
+            inputs: vec![optional_bool(
+                "enabled",
+                "Enable anonymized analytics and crash reports.",
+            )],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "get_analytics_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_analytics_settings",
+            description: "Read current analytics settings.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "Whether anonymized analytics is enabled.",
+                required: true,
+            }],
+        },
         "agent_server_status" => ControllerSchema {
             namespace: "config",
             function: "agent_server_status",
@@ -500,6 +537,29 @@ fn handle_workspace_onboarding_flag_set(params: Map<String, Value>) -> Controlle
             )
             .await?,
         )
+    })
+}
+
+fn handle_update_analytics_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<AnalyticsSettingsUpdate>(params)?;
+        let patch = config_rpc::AnalyticsSettingsPatch {
+            enabled: update.enabled,
+        };
+        to_json(config_rpc::load_and_apply_analytics_settings(patch).await?)
+    })
+}
+
+fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let result = serde_json::json!({
+            "enabled": config.observability.analytics_enabled,
+        });
+        to_json(RpcOutcome::new(
+            result,
+            vec!["analytics settings read".to_string()],
+        ))
     })
 }
 

@@ -10,7 +10,7 @@ Non-desktop targets fail at compile time (`compile_error!` in `lib.rs`).
 
 ```
 app/src-tauri/src/
-├── lib.rs                 # `run()`, tray, plugins, `generate_handler!`, core startup
+├── lib.rs                 # `run()`, tray/menu actions, plugins, `generate_handler!`, core startup
 ├── main.rs                # Binary entry
 ├── core_process.rs        # CoreProcessHandle, spawn/monitor openhuman sidecar
 ├── core_rpc.rs            # HTTP client to core JSON-RPC
@@ -36,6 +36,13 @@ React (invoke)
 ```
 
 `CoreProcessHandle` in `core_process.rs` starts or waits for the sidecar; `commands/core_relay.rs` optionally ensures a **service-managed** core is running before relaying.
+
+## Window and tray behavior
+
+- The shell creates a tray icon at startup and wires actions to open the main window or quit.
+- In daemon mode (`daemon` / `--daemon`), the main window is hidden on launch and can be reopened from tray actions.
+- On macOS `RunEvent::Reopen` also restores and focuses the main window.
+- Windows and Linux use the same tray actions (`Open OpenHuman`, `Quit`), with desktop-environment-specific tray rendering differences on some Linux setups.
 
 ## Bundled resources
 

@@ -12,5 +12,9 @@ pub use factories::{
     create_memory, create_memory_for_migration, create_memory_with_storage,
     create_memory_with_storage_and_routes, effective_memory_backend_name,
 };
-pub use types::{NamespaceDocumentInput, NamespaceQueryResult};
+pub use types::{
+    GraphRelationRecord, MemoryItemKind, MemoryKvRecord, NamespaceDocumentInput,
+    NamespaceMemoryHit, NamespaceQueryResult, NamespaceRetrievalContext, RetrievalScoreBreakdown,
+    StoredMemoryDocument,
+};
 pub use unified::UnifiedMemory;

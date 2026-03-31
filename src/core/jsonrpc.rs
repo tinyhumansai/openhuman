@@ -477,6 +477,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invoke_memory_init_missing_required_param_fails() {
+        let err = invoke_method(default_state(), "openhuman.memory_init", json!({}))
+            .await
+            .expect_err("missing jwt_token should fail");
+        assert!(err.contains("jwt_token"));
+    }
+
+    #[tokio::test]
+    async fn invoke_memory_list_namespaces_rejects_unknown_param() {
+        let err = invoke_method(
+            default_state(),
+            "openhuman.memory_list_namespaces",
+            json!({ "extra": true }),
+        )
+        .await
+        .expect_err("unknown param should fail");
+        assert!(err.contains("extra"));
+    }
+
+    #[tokio::test]
+    async fn invoke_memory_query_namespace_missing_namespace_fails() {
+        let err = invoke_method(
+            default_state(),
+            "openhuman.memory_query_namespace",
+            json!({ "query": "who owns atlas" }),
+        )
+        .await
+        .expect_err("missing namespace should fail");
+        assert!(err.contains("namespace"));
+    }
+
+    #[tokio::test]
+    async fn invoke_memory_recall_memories_rejects_unknown_param() {
+        let err = invoke_method(
+            default_state(),
+            "openhuman.memory_recall_memories",
+            json!({ "namespace": "team", "extra": true }),
+        )
+        .await
+        .expect_err("unknown param should fail");
+        assert!(err.contains("extra"));
+    }
+
+    #[tokio::test]
     async fn invoke_migrate_openclaw_rejects_unknown_param() {
         let err = invoke_method(
             default_state(),

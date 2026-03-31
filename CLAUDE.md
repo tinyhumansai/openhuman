@@ -75,6 +75,19 @@ cargo check --manifest-path app/src-tauri/Cargo.toml
 
 ---
 
+## Configuration
+
+Environment variables are documented in two `.env.example` files:
+
+- **[`.env.example`](.env.example)** (repo root) — Rust core, Tauri shell, backend URL, logging, proxy, storage, web search, local AI binary overrides. Loaded via `source scripts/load-dotenv.sh`.
+- **[`app/.env.example`](app/.env.example)** — Frontend `VITE_*` vars (core RPC URL, backend URL, Sentry DSN, skills repo, dev helpers). Copy to `app/.env.local` for local overrides.
+
+**Frontend config** is centralized in [`app/src/utils/config.ts`](app/src/utils/config.ts). All `VITE_*` env vars should be read there and re-exported — do not read `import.meta.env` directly in other files.
+
+**Rust config** uses a TOML-based `Config` struct (`src/openhuman/config/schema/types.rs`) with env var overrides applied in `src/openhuman/config/schema/load.rs`. Env vars override config file values at runtime (e.g. `OPENHUMAN_API_KEY` overrides `config.api_key`).
+
+---
+
 ## Testing Guide (Unit + E2E)
 
 ### Unit tests (Vitest)
@@ -300,6 +313,17 @@ In the parent **OpenHuman** desktop app, **Tauri / Rust is a delivery vehicle**:
 
 ---
 
+## Debug logging rule (must follow)
+
+- **Default to verbose diagnostics on new/changed flows**: Add substantial, development-oriented logs while implementing features or fixes so issues are easy to trace end-to-end.
+- **Log critical checkpoints**: Include logs at entry/exit points, branch decisions, external calls, retries/timeouts, state transitions, and error handling paths.
+- **Use structured, grep-friendly context**: Prefer stable prefixes (for example `[domain]`, `[rpc]`, `[ui-flow]`) and include correlation fields such as request IDs, method names, and entity IDs when available.
+- **Platform conventions**: In Rust, use `log` / `tracing` at `debug` or `trace`; in `app/`, use namespaced `debug` logs and dev-only detail as needed.
+- **Keep logs safe**: Never log secrets or sensitive payloads (API keys, JWTs, credentials, full PII). Redact or omit sensitive fields.
+- **Treat debuggability as a deliverable**: Changes lacking sufficient logging for diagnosis are incomplete and should be updated before handoff.
+
+---
+
 ## Feature design workflow (new capabilities)
 
 Follow this order so behavior is **specified**, **proven in Rust**, **proven over RPC**, then **surfaced in the UI** with matching tests.
@@ -323,8 +347,7 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 - **`src/openhuman/`**: New features go in a **folder/module**, not new root-level `src/openhuman/*.rs` files (see Rust core section).
 - **File size**: Prefer ≤ ~500 lines per source file; split modules when growing.
 - **Pre-merge checks** (when touching code): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust (`Cargo.toml` at root and/or `app/src-tauri/Cargo.toml` as appropriate).
-- **No dynamic imports** in production **`app/src`** code — use **static** `import` / `import type` at the top of the module. Do **not** use `import()` (async dynamic import), `React.lazy(() => import(...))`, or `await import('…')` to load app modules, Tauri APIs, or RPC clients. **Why:** predictable chunk graph, simpler static analysis, fewer surprises in Tauri + Vite, and easier code review. **If a module must not run at load time** (e.g. heavy optional path), use a static import and **guard the call site** with `try/catch` or an explicit runtime check instead of deferring module load via dynamic import. **Exceptions:** Vitest harness patterns (`vi.importActual`, dynamic imports **only** inside `*.test.ts` / `__tests__` / `test/setup.ts` when required by the runner); ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc). **Tech debt:** remove existing `import()` usage in `app/src` over time (e.g. `skillEvents.ts`, `SkillSetupWizard.tsx`, `MessagingPanel.tsx`, `useToolsUpdates.ts`, `lib/skills/manager.ts`).
-- **Type-only imports**: `import type` where appropriate.
+- **No dynamic imports** in production **`app/src`** code — use **static** `import` / `import type` at the top of the module. Do **not** use `import()` (async dynamic import), `React.lazy(() => import(...))`, or `await import('…')` to load app modules, Tauri APIs, or RPC clients. **Why:** predictable chunk graph, simpler static analysis, fewer surprises in Tauri + Vite, and easier code review. **If a module must not run at load time** (e.g. heavy optional path), use a static import and **guard the call site** with `try/catch` or an explicit runtime check instead of deferring module load via dynamic import. **Exceptions:** Vitest harness patterns (`vi.importActual`, dynamic imports **only** inside `*.test.ts` / `__tests__` / `test/setup.ts` when required by the runner); ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).- **Type-only imports**: `import type` where appropriate.
 - **Dual socket / tool sync**: If you change realtime protocol, keep **frontend** (`socketService` / MCP transport) and **core** socket behavior aligned (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) dual-socket section).
 
 ---

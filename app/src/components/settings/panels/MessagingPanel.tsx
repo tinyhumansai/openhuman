@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
+import { callCoreRpc } from '../../../services/coreRpcClient';
 import {
   completeBreakingMigration,
   disconnectChannelConnection,
@@ -285,12 +286,10 @@ const MessagingPanel = () => {
           if (result.auth_action.includes('oauth')) {
             try {
               // Fetch OAuth URL from the auth domain.
-              const oauthResponse = await import('../../../services/coreRpcClient').then(m =>
-                m.callCoreRpc<{ result: { oauthUrl?: string } }>({
-                  method: 'openhuman.auth.oauth_connect',
-                  params: { provider: channel, skillId: channel },
-                })
-              );
+              const oauthResponse = await callCoreRpc<{ result: { oauthUrl?: string } }>({
+                method: 'openhuman.auth.oauth_connect',
+                params: { provider: channel, skillId: channel },
+              });
               if (oauthResponse.result?.oauthUrl) {
                 await openUrl(oauthResponse.result.oauthUrl);
               }

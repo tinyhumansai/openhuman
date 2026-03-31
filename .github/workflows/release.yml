@@ -691,6 +691,35 @@ jobs:
     needs: [create-release, build-artifacts]
     if: needs.build-artifacts.result == 'success'
     steps:
+      - name: Validate required installer assets exist
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releaseId = Number('${{ needs.create-release.outputs.release_id }}');
+            const { owner, repo } = context.repo;
+            const { data: assets } = await github.rest.repos.listReleaseAssets({
+              owner,
+              repo,
+              release_id: releaseId,
+              per_page: 100,
+            });
+
+            const names = assets.map((a) => a.name);
+            const requiredPatterns = [
+              /OpenHuman_.*_aarch64\.dmg$/,
+              /OpenHuman_.*_x64\.dmg$/,
+              /OpenHuman_.*_amd64\.AppImage$/,
+              /OpenHuman_.*_amd64\.deb$/,
+              /(OpenHuman_.*_x64-setup\.exe$|OpenHuman_.*_x64.*\.msi$)/,
+            ];
+
+            const missing = requiredPatterns.filter((pattern) => !names.some((name) => pattern.test(name)));
+            if (missing.length > 0) {
+              core.setFailed(`Missing required installer assets. Got: ${names.join(', ')}`);
+              return;
+            }
+            core.info('All required installer assets are present.');
+
       - name: Publish release
         uses: actions/github-script@v7
         with:
@@ -703,6 +732,147 @@ jobs:
               draft: false,
             });
             core.info(`Published release ${releaseId}`);
+
+  notify-discord:
+    name: Notify Discord about release
+    runs-on: ubuntu-latest
+    environment: Production
+    needs: [prepare-release, create-release, build-artifacts, publish-release]
+    if: needs.publish-release.result == 'success' && needs.build-artifacts.result == 'success'
+    steps:
+      - name: Post release notification to Discord
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        with:
+          script: |
+            const webhookUrl = process.env.DISCORD_RELEASE_WEBHOOK_URL;
+            const releaseId = Number(process.env.RELEASE_ID);
+            const releaseTag = process.env.RELEASE_TAG;
+
+            if (!webhookUrl) {
+              core.warning('DISCORD_RELEASE_WEBHOOK_URL is not configured; skipping Discord release notification.');
+              return;
+            }
+
+            if (!Number.isFinite(releaseId) || releaseId <= 0) {
+              core.warning(`Invalid release id "${process.env.RELEASE_ID}"; skipping Discord release notification.`);
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const maxDescriptionLength = 3500;
+            const maxAssetLines = 8;
+
+            function truncate(text, maxLength) {
+              if (!text) return '';
+              if (text.length <= maxLength) return text;
+              return `${text.slice(0, maxLength - 3)}...`;
+            }
+
+            function stripMarkdownHeadings(text) {
+              return text
+                .replace(/^#{1,6}\s+/gm, '')
+                .replace(/\r/g, '')
+                .trim();
+            }
+
+            const { data: release } = await github.rest.repos.getRelease({
+              owner,
+              repo,
+              release_id: releaseId,
+            });
+
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const sortedPublished = releases
+              .filter((item) => !item.draft)
+              .sort((a, b) => new Date(b.published_at || b.created_at || 0) - new Date(a.published_at || a.created_at || 0));
+            const currentIndex = sortedPublished.findIndex((item) => item.id === release.id);
+            const previousRelease = currentIndex >= 0 ? sortedPublished[currentIndex + 1] : null;
+            const compareUrl = previousRelease
+              ? `https://github.com/${owner}/${repo}/compare/${previousRelease.tag_name}...${release.tag_name}`
+              : null;
+
+            const releaseTitle = release.name || release.tag_name || releaseTag;
+            const bodyText = stripMarkdownHeadings(release.body || '');
+            const summary = bodyText
+              ? truncate(bodyText, maxDescriptionLength)
+              : 'GitHub release published. See the release page for full notes.';
+
+            const assetLines = (release.assets || [])
+              .slice(0, maxAssetLines)
+              .map((asset) => `- [${asset.name}](${asset.browser_download_url})`);
+            const extraAssetCount = Math.max((release.assets || []).length - maxAssetLines, 0);
+            if (extraAssetCount > 0) {
+              assetLines.push(`- ${extraAssetCount} more asset(s) available on the release page`);
+            }
+
+            const fields = [
+              {
+                name: 'Version',
+                value: `\`${release.tag_name || releaseTag}\``,
+                inline: true,
+              },
+              {
+                name: 'Release',
+                value: `[Open on GitHub](${release.html_url})`,
+                inline: true,
+              },
+            ];
+
+            if (compareUrl) {
+              fields.push({
+                name: 'Compare',
+                value: `[${previousRelease.tag_name}...${release.tag_name}](${compareUrl})`,
+                inline: true,
+              });
+            }
+
+            if (assetLines.length > 0) {
+              fields.push({
+                name: 'Artifacts',
+                value: assetLines.join('\n'),
+                inline: false,
+              });
+            }
+
+            const payload = {
+              content: `New GitHub release published for \`${owner}/${repo}\`: **${releaseTitle}**`,
+              embeds: [
+                {
+                  title: releaseTitle,
+                  url: release.html_url,
+                  description: summary,
+                  color: release.prerelease ? 0xf0ad4e : 0x2ecc71,
+                  fields,
+                  footer: {
+                    text: release.prerelease ? 'Pre-release' : 'Published release',
+                  },
+                  timestamp: release.published_at || new Date().toISOString(),
+                },
+              ],
+            };
+
+            const response = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+              const body = await response.text();
+              core.warning(`Discord notification failed: HTTP ${response.status} ${body.slice(0, 300)}`);
+              return;
+            }
+
+            core.info(`Posted Discord release notification for ${release.tag_name || releaseTag}.`);
 
   cleanup-failed-release:
     name: Remove release and tag if build failed

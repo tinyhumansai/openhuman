@@ -1,4 +1,13 @@
 use async_trait::async_trait;
+use parking_lot::Mutex;
+use std::env;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::Arc;
+
+pub const DEFAULT_FASTEMBED_MODEL: &str = "BGESmallENV15";
+pub const DEFAULT_FASTEMBED_DIMENSIONS: usize = 384;
+const DEFAULT_MANAGED_RELEX_DIR: &str = ".openhuman/models/gliner-relex-large-v0.5-onnx";
 
 /// Trait for embedding providers — convert text to vectors
 #[async_trait]
@@ -37,6 +46,183 @@ impl EmbeddingProvider for NoopEmbedding {
 
     async fn embed(&self, _texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         Ok(Vec::new())
+    }
+}
+
+enum FastembedState {
+    Uninitialized,
+    Ready(fastembed::TextEmbedding),
+    Failed(String),
+}
+
+pub struct FastembedEmbedding {
+    model: String,
+    dims: usize,
+    state: Arc<Mutex<FastembedState>>,
+}
+
+impl FastembedEmbedding {
+    pub fn new(model: &str, dims: usize) -> Self {
+        Self {
+            model: if model.trim().is_empty() {
+                DEFAULT_FASTEMBED_MODEL.to_string()
+            } else {
+                model.trim().to_string()
+            },
+            dims: if dims == 0 {
+                DEFAULT_FASTEMBED_DIMENSIONS
+            } else {
+                dims
+            },
+            state: Arc::new(Mutex::new(FastembedState::Uninitialized)),
+        }
+    }
+
+    fn resolve_model(&self) -> fastembed::EmbeddingModel {
+        fastembed::EmbeddingModel::from_str(&self.model)
+            .unwrap_or(fastembed::EmbeddingModel::BGESmallENV15)
+    }
+
+    fn init_model(&self) -> anyhow::Result<fastembed::TextEmbedding> {
+        ensure_fastembed_ort_dylib_path();
+        fastembed::TextEmbedding::try_new(
+            fastembed::InitOptions::new(self.resolve_model()).with_show_download_progress(false),
+        )
+        .map_err(|e| anyhow::anyhow!("fastembed init failed for {}: {e}", self.model))
+    }
+}
+
+fn ensure_fastembed_ort_dylib_path() {
+    if env::var_os("ORT_DYLIB_PATH").is_some() {
+        return;
+    }
+
+    if let Some(lib_path) = env::var_os("ORT_LIB_LOCATION") {
+        let candidate = PathBuf::from(lib_path);
+        if candidate.is_file() {
+            env::set_var("ORT_DYLIB_PATH", candidate);
+            return;
+        }
+
+        #[cfg(target_os = "windows")]
+        let runtime_lib = candidate.join("onnxruntime.dll");
+        #[cfg(target_os = "macos")]
+        let runtime_lib = candidate.join("libonnxruntime.dylib");
+        #[cfg(target_os = "linux")]
+        let runtime_lib = candidate.join("libonnxruntime.so");
+
+        if runtime_lib.exists() {
+            env::set_var("ORT_DYLIB_PATH", runtime_lib);
+            return;
+        }
+    }
+
+    if let Ok(path) = env::var("OPENHUMAN_GLINER_RELEX_CACHE_DIR") {
+        #[cfg(target_os = "windows")]
+        let bundled = PathBuf::from(path).join("onnxruntime.dll");
+        #[cfg(target_os = "macos")]
+        let bundled = PathBuf::from(path).join("libonnxruntime.dylib");
+        #[cfg(target_os = "linux")]
+        let bundled = PathBuf::from(path).join("libonnxruntime.so");
+
+        if bundled.exists() {
+            env::set_var("ORT_DYLIB_PATH", bundled);
+            return;
+        }
+    }
+
+    if let Some(user_dirs) = directories::UserDirs::new() {
+        #[cfg(target_os = "windows")]
+        let bundled = user_dirs
+            .home_dir()
+            .join(DEFAULT_MANAGED_RELEX_DIR)
+            .join("onnxruntime.dll");
+        #[cfg(target_os = "macos")]
+        let bundled = user_dirs
+            .home_dir()
+            .join(DEFAULT_MANAGED_RELEX_DIR)
+            .join("libonnxruntime.dylib");
+        #[cfg(target_os = "linux")]
+        let bundled = user_dirs
+            .home_dir()
+            .join(DEFAULT_MANAGED_RELEX_DIR)
+            .join("libonnxruntime.so");
+
+        if bundled.exists() {
+            env::set_var("ORT_DYLIB_PATH", bundled);
+            return;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for candidate in [
+            "/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
+            "/usr/local/lib/libonnxruntime.so",
+            "/usr/lib/libonnxruntime.so",
+        ] {
+            let candidate = PathBuf::from(candidate);
+            if candidate.exists() {
+                env::set_var("ORT_DYLIB_PATH", candidate);
+                return;
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl EmbeddingProvider for FastembedEmbedding {
+    fn name(&self) -> &str {
+        "fastembed"
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dims
+    }
+
+    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let items = texts
+            .iter()
+            .map(|text| (*text).to_string())
+            .collect::<Vec<_>>();
+        let state = Arc::clone(&self.state);
+        let provider = self.model.clone();
+        let join_result = tokio::task::spawn_blocking(move || {
+            ensure_fastembed_ort_dylib_path();
+            let mut guard = state.lock();
+            if matches!(*guard, FastembedState::Uninitialized) {
+                match fastembed::TextEmbedding::try_new(
+                    fastembed::InitOptions::new(
+                        fastembed::EmbeddingModel::from_str(&provider)
+                            .unwrap_or(fastembed::EmbeddingModel::BGESmallENV15),
+                    )
+                    .with_show_download_progress(false),
+                ) {
+                    Ok(model) => *guard = FastembedState::Ready(model),
+                    Err(err) => {
+                        let message = format!("fastembed init failed for {provider}: {err}");
+                        *guard = FastembedState::Failed(message.clone());
+                    }
+                }
+            }
+
+            match &mut *guard {
+                FastembedState::Ready(model) => model
+                    .embed(items, None)
+                    .map_err(|e| anyhow::anyhow!("fastembed embed failed: {e}")),
+                FastembedState::Failed(message) => Err(anyhow::anyhow!(message.clone())),
+                FastembedState::Uninitialized => {
+                    Err(anyhow::anyhow!("fastembed provider did not initialize"))
+                }
+            }
+        })
+        .await;
+
+        join_result.map_err(|e| anyhow::anyhow!("fastembed task join failed: {e}"))?
     }
 }
 
@@ -163,6 +349,7 @@ pub fn create_embedding_provider(
     dims: usize,
 ) -> Box<dyn EmbeddingProvider> {
     match provider {
+        "fastembed" => Box::new(FastembedEmbedding::new(model, dims)),
         "openai" => {
             let key = api_key.unwrap_or("");
             Box::new(OpenAiEmbedding::new(
@@ -179,6 +366,13 @@ pub fn create_embedding_provider(
         }
         _ => Box::new(NoopEmbedding),
     }
+}
+
+pub fn default_local_embedding_provider() -> Arc<dyn EmbeddingProvider> {
+    Arc::new(FastembedEmbedding::new(
+        DEFAULT_FASTEMBED_MODEL,
+        DEFAULT_FASTEMBED_DIMENSIONS,
+    ))
 }
 
 #[cfg(test)]
@@ -210,6 +404,13 @@ mod tests {
         let p = create_embedding_provider("openai", Some("key"), "text-embedding-3-small", 1536);
         assert_eq!(p.name(), "openai");
         assert_eq!(p.dimensions(), 1536);
+    }
+
+    #[test]
+    fn factory_fastembed() {
+        let p = create_embedding_provider("fastembed", None, DEFAULT_FASTEMBED_MODEL, 384);
+        assert_eq!(p.name(), "fastembed");
+        assert_eq!(p.dimensions(), 384);
     }
 
     #[test]
@@ -253,6 +454,13 @@ mod tests {
     fn factory_unknown_provider_returns_noop() {
         let p = create_embedding_provider("cohere", None, "model", 1536);
         assert_eq!(p.name(), "none");
+    }
+
+    #[test]
+    fn default_local_provider_uses_fastembed_defaults() {
+        let p = default_local_embedding_provider();
+        assert_eq!(p.name(), "fastembed");
+        assert_eq!(p.dimensions(), DEFAULT_FASTEMBED_DIMENSIONS);
     }
 
     #[test]

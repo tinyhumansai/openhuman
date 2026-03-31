@@ -5,6 +5,8 @@
  * re-fetches in the React hooks that consume skill state via RPC.
  */
 
+import { listen } from '@tauri-apps/api/event';
+
 type Listener = (skillId?: string) => void;
 
 const listeners = new Set<Listener>();
@@ -25,8 +27,6 @@ export function emitSkillStateChange(skillId?: string): void {
 /** Setup Tauri event listeners that bridge to the skill event bus. */
 export async function setupTauriSkillEventBridge(): Promise<() => void> {
   try {
-    const { listen } = await import('@tauri-apps/api/event');
-
     const unlistenStatus = await listen<{ skill_id?: string }>(
       'runtime:skill-status-changed',
       (event) => {

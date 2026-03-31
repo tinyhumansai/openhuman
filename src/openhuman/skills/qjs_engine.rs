@@ -38,7 +38,7 @@ use crate::openhuman::skills::preferences::PreferencesStore;
 use crate::openhuman::skills::qjs_skill_instance::{BridgeDeps, QjsSkillInstance};
 use crate::openhuman::skills::skill_registry::SkillRegistry;
 use crate::openhuman::skills::socket_manager::SocketManager;
-use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolResult};
+use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin, ToolResult};
 // IdbStorage removed during runtime cleanup
 
 /// The central runtime engine using QuickJS.
@@ -165,16 +165,16 @@ impl RuntimeEngine {
         let current =
             std::env::current_dir().map_err(|e| format!("Failed to get current dir: {e}"))?;
 
-        // 2. Dev: cwd/skills/skills
-        let dev_skills = current.join("skills").join("skills");
+        // 2. Dev: cwd/openhuman-skills/skills
+        let dev_skills = current.join("openhuman-skills").join("skills");
         if dev_skills.exists() {
             log::info!("[runtime] Using dev skills dir: {:?}", dev_skills);
             return Ok(dev_skills);
         }
 
-        // 3. Dev: ../skills/skills
+        // 3. Dev: ../openhuman-skills/skills
         if let Some(parent) = current.parent() {
-            let parent_skills = parent.join("skills").join("skills");
+            let parent_skills = parent.join("openhuman-skills").join("skills");
             if parent_skills.exists() {
                 log::info!("[runtime] Using parent dev skills dir: {:?}", parent_skills);
                 return Ok(parent_skills);
@@ -183,7 +183,10 @@ impl RuntimeEngine {
 
         // 4. Production: bundled resources
         if let Some(resource_dir) = self.resource_dir.read().as_ref() {
-            let bundled_skills = resource_dir.join("_up_").join("skills").join("skills");
+            let bundled_skills = resource_dir
+                .join("_up_")
+                .join("openhuman-skills")
+                .join("skills");
             if bundled_skills.exists() {
                 log::info!(
                     "[runtime] Using bundled skills from resources: {:?}",
@@ -500,6 +503,26 @@ impl RuntimeEngine {
     ) -> Result<ToolResult, String> {
         self.registry
             .call_tool(skill_id, tool_name, arguments)
+            .await
+    }
+
+    /// Call a tool from inside a running skill. Enforces self-only invocation.
+    pub async fn call_tool_as_skill(
+        &self,
+        caller_skill_id: &str,
+        target_skill_id: &str,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, String> {
+        self.registry
+            .call_tool_scoped(
+                ToolCallOrigin::SkillSelf {
+                    skill_id: caller_skill_id.to_string(),
+                },
+                target_skill_id,
+                tool_name,
+                arguments,
+            )
             .await
     }
 

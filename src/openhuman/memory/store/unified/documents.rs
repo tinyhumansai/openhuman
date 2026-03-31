@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
-use crate::openhuman::memory::store::types::NamespaceDocumentInput;
+use crate::openhuman::memory::store::types::{NamespaceDocumentInput, StoredMemoryDocument};
 
 use super::UnifiedMemory;
 
@@ -14,11 +14,32 @@ impl UnifiedMemory {
         if key.is_empty() {
             return Err("document key cannot be empty".to_string());
         }
+        let existing_document_id = {
+            let conn = self.conn.lock();
+            conn.query_row(
+                "SELECT document_id FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
+                params![namespace, key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| format!("lookup existing document_id: {e}"))?
+        };
         let document_id = input
             .document_id
+            .or(existing_document_id)
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let now = Self::now_ts();
-        let created_at = now;
+        let created_at = {
+            let conn = self.conn.lock();
+            conn.query_row(
+                "SELECT created_at FROM memory_docs WHERE namespace = ?1 AND key = ?2 LIMIT 1",
+                params![namespace, key],
+                |row| row.get::<_, f64>(0),
+            )
+            .optional()
+            .map_err(|e| format!("lookup existing created_at: {e}"))?
+            .unwrap_or(now)
+        };
         let updated_at = now;
         let markdown_rel = self
             .write_markdown_doc(
@@ -84,7 +105,7 @@ impl UnifiedMemory {
             tx.commit().map_err(|e| format!("commit tx: {e}"))?;
         }
 
-        let chunks = Self::split_chunks(&input.content, 900);
+        let chunks = Self::chunk_document_content(&input.content, 225);
         for (idx, chunk) in chunks.iter().enumerate() {
             let embedding = self
                 .embedder
@@ -113,6 +134,64 @@ impl UnifiedMemory {
         }
 
         Ok(document_id)
+    }
+
+    pub(crate) async fn load_documents_for_scope(
+        &self,
+        namespace: &str,
+    ) -> Result<Vec<StoredMemoryDocument>, String> {
+        let conn = self.conn.lock();
+        let ns = Self::sanitize_namespace(namespace);
+        let mut stmt = conn
+            .prepare(
+                "SELECT
+                    document_id,
+                    namespace,
+                    key,
+                    title,
+                    content,
+                    source_type,
+                    priority,
+                    tags_json,
+                    metadata_json,
+                    category,
+                    session_id,
+                    created_at,
+                    updated_at,
+                    markdown_rel_path
+                 FROM memory_docs
+                 WHERE namespace = ?1
+                 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| format!("prepare load_documents_for_scope: {e}"))?;
+        let mut rows = stmt
+            .query(params![ns])
+            .map_err(|e| format!("query load_documents_for_scope: {e}"))?;
+        let mut docs = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| format!("row load_documents_for_scope: {e}"))?
+        {
+            let tags_json: String = row.get(7).map_err(|e| e.to_string())?;
+            let metadata_json: String = row.get(8).map_err(|e| e.to_string())?;
+            docs.push(StoredMemoryDocument {
+                document_id: row.get(0).map_err(|e| e.to_string())?,
+                namespace: row.get(1).map_err(|e| e.to_string())?,
+                key: row.get(2).map_err(|e| e.to_string())?,
+                title: row.get(3).map_err(|e| e.to_string())?,
+                content: row.get(4).map_err(|e| e.to_string())?,
+                source_type: row.get(5).map_err(|e| e.to_string())?,
+                priority: row.get(6).map_err(|e| e.to_string())?,
+                tags: serde_json::from_str(&tags_json).unwrap_or_default(),
+                metadata: serde_json::from_str(&metadata_json).unwrap_or_else(|_| json!({})),
+                category: row.get(9).map_err(|e| e.to_string())?,
+                session_id: row.get(10).map_err(|e| e.to_string())?,
+                created_at: row.get(11).map_err(|e| e.to_string())?,
+                updated_at: row.get(12).map_err(|e| e.to_string())?,
+                markdown_rel_path: row.get(13).map_err(|e| e.to_string())?,
+            });
+        }
+        Ok(docs)
     }
 
     pub async fn list_documents(&self, namespace: Option<&str>) -> Result<Value, String> {
@@ -199,27 +278,36 @@ impl UnifiedMemory {
         document_id: &str,
     ) -> Result<Value, String> {
         let ns = Self::sanitize_namespace(namespace);
-        let conn = self.conn.lock();
-        let rel_path: Option<String> = conn
-            .query_row(
+        let rel_path: Option<String> = {
+            let conn = self.conn.lock();
+            conn.query_row(
                 "SELECT markdown_rel_path FROM memory_docs WHERE namespace = ?1 AND document_id = ?2",
                 params![ns, document_id],
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|e| format!("query delete_document path: {e}"))?;
-        let deleted = conn
-            .execute(
-                "DELETE FROM memory_docs WHERE namespace = ?1 AND document_id = ?2",
+            .map_err(|e| format!("query delete_document path: {e}"))?
+        };
+
+        self.graph_remove_document_namespace(&ns, document_id)
+            .await?;
+
+        let deleted = {
+            let conn = self.conn.lock();
+            let deleted = conn
+                .execute(
+                    "DELETE FROM memory_docs WHERE namespace = ?1 AND document_id = ?2",
+                    params![ns, document_id],
+                )
+                .map_err(|e| format!("delete memory_doc: {e}"))?
+                > 0;
+            conn.execute(
+                "DELETE FROM vector_chunks WHERE namespace = ?1 AND document_id = ?2",
                 params![ns, document_id],
             )
-            .map_err(|e| format!("delete memory_doc: {e}"))?
-            > 0;
-        conn.execute(
-            "DELETE FROM vector_chunks WHERE namespace = ?1 AND document_id = ?2",
-            params![ns, document_id],
-        )
-        .map_err(|e| format!("delete vector_chunks: {e}"))?;
+            .map_err(|e| format!("delete vector_chunks: {e}"))?;
+            deleted
+        };
 
         if let Some(rel) = rel_path {
             let abs = self.workspace_dir.join(rel);

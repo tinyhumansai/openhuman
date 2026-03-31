@@ -12,7 +12,7 @@ import {
 } from 'redux-persist';
 import storage from 'redux-persist/lib/storage';
 
-import { IS_DEV } from '../utils/config';
+import { DEV_JWT_TOKEN, IS_DEV } from '../utils/config';
 import {
   logout as clearRustSession,
   storeSession,
@@ -42,6 +42,7 @@ const authPersistConfig = {
     'isAnalyticsEnabledByUser',
     'encryptionKeyByUser',
     'primaryWalletAddressByUser',
+    'onboardingDeferredByUser',
   ],
 };
 
@@ -147,9 +148,8 @@ export const store = configureStore({
 
 export const persistor = persistStore(store, null, () => {
   // Dev-only: auto-inject JWT token for local testing without login flow.
-  const devToken = import.meta.env.VITE_DEV_JWT_TOKEN;
-  if (devToken && !store.getState().auth.token) {
-    store.dispatch(setToken(devToken));
+  if (DEV_JWT_TOKEN && !store.getState().auth.token) {
+    store.dispatch(setToken(DEV_JWT_TOKEN));
     console.log('[dev] Auto-injected JWT token from VITE_DEV_JWT_TOKEN');
 
     // Auto-mark user as onboarded once their profile is fetched

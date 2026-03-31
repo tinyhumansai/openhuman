@@ -121,14 +121,14 @@ impl LocalAiService {
         if let Err(err) = self.ensure_ollama_server(config).await {
             let mut status = self.status.lock();
             status.state = "degraded".to_string();
-            status.warning = Some(err);
+            status.warning = Some(format_degraded_warning(&err, config));
             return;
         }
 
         if let Err(err) = self.ensure_models_available(config).await {
             let mut status = self.status.lock();
             status.state = "degraded".to_string();
-            status.warning = Some(err);
+            status.warning = Some(format_degraded_warning(&err, config));
             return;
         }
 
@@ -177,6 +177,26 @@ impl LocalAiService {
                 true
             }
         }
+    }
+}
+
+/// Append a tier step-down hint when the current tier is Medium or High.
+fn format_degraded_warning(err: &str, config: &Config) -> String {
+    let current = crate::openhuman::local_ai::presets::current_tier_from_config(&config.local_ai);
+    match current {
+        crate::openhuman::local_ai::presets::ModelTier::High => {
+            format!(
+                "{err}. Hint: your device may not support the High tier model. \
+                 Try switching to Medium or Low in Settings > Local AI Model."
+            )
+        }
+        crate::openhuman::local_ai::presets::ModelTier::Medium => {
+            format!(
+                "{err}. Hint: your device may not support the Medium tier model. \
+                 Try switching to Low in Settings > Local AI Model."
+            )
+        }
+        _ => err.to_string(),
     }
 }
 

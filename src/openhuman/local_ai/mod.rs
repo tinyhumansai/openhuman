@@ -1,7 +1,9 @@
 //! Bundled local AI stack (Ollama, whisper.cpp, Piper).
 
 mod core;
+pub mod device;
 pub mod ops;
+pub mod presets;
 mod schemas;
 
 mod install;
@@ -13,8 +15,10 @@ mod service;
 mod types;
 
 pub use core::*;
+pub use device::DeviceProfile;
 pub use ops as rpc;
 pub use ops::*;
+pub use presets::{ModelPreset, ModelTier};
 pub use schemas::{
     all_controller_schemas as all_local_ai_controller_schemas,
     all_registered_controllers as all_local_ai_registered_controllers,

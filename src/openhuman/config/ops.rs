@@ -88,6 +88,11 @@ pub struct ScreenIntelligenceSettingsPatch {
     pub denylist: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AnalyticsSettingsPatch {
+    pub enabled: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeFlagsOut {
     pub browser_allow_all: bool,
@@ -311,6 +316,31 @@ pub async fn load_and_apply_runtime_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_runtime_settings(&mut config, update).await
+}
+
+pub async fn apply_analytics_settings(
+    config: &mut Config,
+    update: AnalyticsSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(enabled) = update.enabled {
+        config.observability.analytics_enabled = enabled;
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "analytics settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+pub async fn load_and_apply_analytics_settings(
+    update: AnalyticsSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_analytics_settings(&mut config, update).await
 }
 
 pub async fn load_and_apply_browser_settings(

@@ -1,0 +1,85 @@
+From: Sanil Jain <sanil@tinyhumans.ai>
+To: Asha Mehta <asha@tinyhumans.ai>, Ravi Kulkarni <ravi@tinyhumans.ai>
+Cc: OpenHuman Core <core@tinyhumans.ai>
+Subject: Re: Memory integration plan for OpenHuman desktop
+Date: Tue, 12 Mar 2026 09:14:00 +0530
+Thread-Id: memory-integration-2026-03
+
+Hi Asha and Ravi,
+
+Quick summary after today's sync:
+
+1. We should keep JSON-RPC as the transport for the desktop core.
+2. The memory layer in the Rust core should use namespace as the main scope key.
+3. We do not need user_id in the local storage contract for the current desktop runtime.
+4. The frontend can adapt to richer result payloads as long as they still arrive inside JSON-RPC result.
+
+Current work items:
+- Ravi owns the Rust memory API alignment for list, delete, query, and recall.
+- Asha owns the Neocortex v2 ingestion experiment using the GLiNER relex model.
+- Sanil will review response models so they follow the Neocortex API style.
+
+Important project facts:
+- Project name: OpenHuman
+- Subproject: memory-layer-completion
+- Target milestone: March 22, 2026
+- Preferred embedding model for local experiments: text-embedding-3-small
+- Preferred extraction mode to try first: sentence
+
+Known constraints:
+- The desktop app is local-first.
+- Core RPC currently binds to localhost only.
+- We should avoid introducing user_id into every memory request unless we later support multi-user or remote runtimes.
+
+Action items:
+- Ravi: draft typed request/response structs for memory.query_namespace and memory.recall_namespace by Friday.
+- Asha: prepare two ingestion fixtures, one Gmail-like and one Notion-like, with enough structure to test entity and relation extraction.
+- Sanil: decide whether memory.init becomes a no-op compatibility method or is removed from the frontend wrappers.
+
+One durable preference to remember:
+I prefer keeping the memory core simple first and delaying graph traversal until after ingestion and recall are stable.
+
+Thanks,
+Sanil
+
+---
+
+From: Asha Mehta <asha@tinyhumans.ai>
+To: Sanil Jain <sanil@tinyhumans.ai>, Ravi Kulkarni <ravi@tinyhumans.ai>
+Subject: Re: Memory integration plan for OpenHuman desktop
+Date: Tue, 12 Mar 2026 08:41:00 +0530
+
+Agreed.
+
+For the Neocortex donor path, I reviewed the neocortex_v2 extractor again:
+- It uses a single GLiNER relex model.
+- It supports sentence-level and chunk-level extraction.
+- It adds recipient and spatial relation heuristics.
+
+I think we should preserve those heuristics when we port the ingestion flow into OpenHuman.
+
+Also, please record this:
+- Ravi prefers narrower worker ownership to avoid merge conflicts.
+- I prefer evaluation fixtures that include dates, owners, and product decisions.
+
+Regards,
+Asha
+
+---
+
+From: Ravi Kulkarni <ravi@tinyhumans.ai>
+To: Sanil Jain <sanil@tinyhumans.ai>, Asha Mehta <asha@tinyhumans.ai>
+Subject: Re: Memory integration plan for OpenHuman desktop
+Date: Tue, 12 Mar 2026 08:09:00 +0530
+
+One more note before I start:
+
+- I will treat namespace as mandatory for memory query and recall.
+- I will treat memory file APIs as optional until the core contract settles.
+- I want the Gmail importer to preserve subject, sender, recipients, and sent_at metadata.
+
+Dependency note:
+- The frontend wrapper work depends on finalizing the result shape from the Rust core.
+- The ingestion evaluation can run in parallel once the storage mapping is clear.
+
+Ravi
