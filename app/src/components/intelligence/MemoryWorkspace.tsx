@@ -8,11 +8,13 @@ import {
   aiWriteMemoryFile,
   isTauri,
   memoryDeleteDocument,
+  memoryGraphQuery,
   memoryListDocuments,
   memoryListNamespaces,
   memoryQueryNamespace,
   memoryRecallNamespace,
 } from '../../utils/tauriCommands';
+import type { GraphRelation } from '../../utils/tauriCommands';
 
 type MemoryDoc = { documentId: string; namespace: string; title?: string; raw: unknown };
 
@@ -158,6 +160,9 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const [memoryNote, setMemoryNote] = useState('');
   const [memoryNoteSaving, setMemoryNoteSaving] = useState(false);
 
+  const [graphRelations, setGraphRelations] = useState<GraphRelation[]>([]);
+  const [graphRelationsLoading, setGraphRelationsLoading] = useState(false);
+
   const loadWorkspace = useCallback(async () => {
     if (!isTauri()) return;
 
@@ -170,6 +175,17 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
         memoryListNamespaces(),
         aiListMemoryFiles('memory'),
       ]);
+
+      // Load graph relations from local store
+      setGraphRelationsLoading(true);
+      try {
+        const relations = await memoryGraphQuery();
+        setGraphRelations(relations);
+      } catch {
+        setGraphRelations([]);
+      } finally {
+        setGraphRelationsLoading(false);
+      }
 
       const docs = normalizeMemoryDocuments(documentsPayload);
       const combinedFiles = ['memory.md', ...memoryDirFiles.map(file => `memory/${file}`)];
@@ -342,13 +358,33 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       value: `${item.count} docs`,
     }));
 
-    const entityNodes = Object.entries(entities || {})
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([type, count]) => ({ label: type, value: `${count} entities` }));
+    // Build entity nodes from local graph store relations
+    const entityCounts = new Map<string, number>();
+    for (const rel of graphRelations) {
+      const subjectType =
+        (rel.attrs?.entity_types as Record<string, string> | undefined)?.subject ?? 'entity';
+      const objectType =
+        (rel.attrs?.entity_types as Record<string, string> | undefined)?.object ?? 'entity';
+      entityCounts.set(subjectType, (entityCounts.get(subjectType) ?? 0) + 1);
+      entityCounts.set(objectType, (entityCounts.get(objectType) ?? 0) + 1);
+    }
+
+    let entityNodes: MemoryNode[];
+    if (entityCounts.size > 0) {
+      entityNodes = Array.from(entityCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([type, count]) => ({ label: type, value: `${count} entities` }));
+    } else {
+      // Fallback to backend API entity counts
+      entityNodes = Object.entries(entities || {})
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([type, count]) => ({ label: type, value: `${count} entities` }));
+    }
 
     return [...namespaceNodes, ...entityNodes].slice(0, 6);
-  }, [entities, topNamespaces]);
+  }, [entities, graphRelations, topNamespaces]);
 
   return (
     <section className="glass rounded-2xl p-5 border border-white/10 animate-fade-up">
@@ -463,6 +499,52 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
           </div>
           <div className="mt-3 text-xs text-stone-400">
             Nodes show top namespaces and entity buckets connected to your core profile.
+          </div>
+
+          <div className="mt-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs text-stone-400">
+                Graph relations{' '}
+                {graphRelations.length > 0 && (
+                  <span className="text-stone-500">({graphRelations.length})</span>
+                )}
+              </div>
+              {graphRelationsLoading && (
+                <div className="text-[10px] text-stone-500">Loading...</div>
+              )}
+            </div>
+            <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+              {graphRelations.length === 0 ? (
+                <div className="text-[11px] text-stone-500">
+                  {graphRelationsLoading
+                    ? 'Loading graph...'
+                    : 'No relations yet. Ingest documents to populate the graph.'}
+                </div>
+              ) : (
+                graphRelations.slice(0, 20).map((rel, idx) => (
+                  <div
+                    key={`${rel.subject}-${rel.predicate}-${rel.object}-${idx}`}
+                    className="flex items-center gap-1.5 rounded border border-white/5 bg-stone-950/50 px-2 py-1 text-[11px]">
+                    <span className="text-primary-300 truncate max-w-20" title={rel.subject}>
+                      {rel.subject}
+                    </span>
+                    <span className="text-stone-500 shrink-0">&rarr;</span>
+                    <span className="text-amber-300/80 truncate max-w-20" title={rel.predicate}>
+                      {rel.predicate}
+                    </span>
+                    <span className="text-stone-500 shrink-0">&rarr;</span>
+                    <span className="text-emerald-300/80 truncate max-w-20" title={rel.object}>
+                      {rel.object}
+                    </span>
+                    {rel.evidenceCount > 1 && (
+                      <span className="ml-auto text-[10px] text-stone-500 shrink-0">
+                        x{rel.evidenceCount}
+                      </span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 
@@ -635,6 +717,9 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       <div className="mt-3 text-[11px] text-stone-500">
         Sessions: {sessions ? formatNumber(sessions.total) : '--'} · Token volume:{' '}
         {sessions ? formatNumber(sessions.totalTokens) : '--'}
+        {graphRelations.length > 0 && (
+          <> · Relations: {formatNumber(graphRelations.length)}</>
+        )}
         {entities && <> · Entity buckets: {formatNumber(Object.keys(entities).length)}</>}
       </div>
     </section>

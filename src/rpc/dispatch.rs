@@ -119,6 +119,14 @@ pub async fn try_dispatch(
             .await,
         ),
 
+        "memory.doc.ingest" => Some(
+            async move {
+                let payload: crate::openhuman::memory::rpc::IngestDocParams = parse_params(params)?;
+                rpc_json(crate::openhuman::memory::rpc::doc_ingest(payload).await?)
+            }
+            .await,
+        ),
+
         "memory.doc.list" => Some(
             async move {
                 let payload: MemoryDocListParams = parse_params(params)?;
