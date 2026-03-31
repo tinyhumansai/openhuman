@@ -64,7 +64,10 @@ export function deriveConnectionStatus(
 // RPC-backed hooks
 // ---------------------------------------------------------------------------
 
-/** Fetch a single skill snapshot, re-fetching on skill events. */
+/**
+ * Fetch a single skill snapshot, re-fetching on skill events and polling
+ * periodically (the core sidecar has no push channel to the frontend).
+ */
 export function useSkillSnapshot(skillId: string | undefined): SkillSnapshotRpc | null {
   const [snap, setSnap] = useState<SkillSnapshotRpc | null>(null);
   const mountedRef = useRef(true);
@@ -85,16 +88,19 @@ export function useSkillSnapshot(skillId: string | undefined): SkillSnapshotRpc 
     const unsub = onSkillStateChange((changedId) => {
       if (!changedId || changedId === skillId) refresh();
     });
+    // Poll every 3s to catch background state changes from the core sidecar
+    const interval = setInterval(refresh, 3000);
     return () => {
       mountedRef.current = false;
       unsub();
+      clearInterval(interval);
     };
   }, [skillId, refresh]);
 
   return snap;
 }
 
-/** Fetch all running skill snapshots, re-fetching on skill events. */
+/** Fetch all running skill snapshots, re-fetching on skill events and polling. */
 export function useAllSkillSnapshots(): SkillSnapshotRpc[] {
   const [snaps, setSnaps] = useState<SkillSnapshotRpc[]>([]);
   const mountedRef = useRef(true);
@@ -112,9 +118,11 @@ export function useAllSkillSnapshots(): SkillSnapshotRpc[] {
     mountedRef.current = true;
     refresh();
     const unsub = onSkillStateChange(() => refresh());
+    const interval = setInterval(refresh, 3000);
     return () => {
       mountedRef.current = false;
       unsub();
+      clearInterval(interval);
     };
   }, [refresh]);
 

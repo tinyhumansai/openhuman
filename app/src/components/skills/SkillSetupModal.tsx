@@ -36,6 +36,16 @@ export default function SkillSetupModal({
     !hasSetup || setupComplete ? "manage" : "setup",
   );
 
+  // Sync mode when snapshot loads asynchronously — e.g. after page refresh
+  // or when the initial snapshot was null and arrives showing setup_complete.
+  const prevSetupComplete = useRef(setupComplete);
+  useEffect(() => {
+    if (setupComplete && !prevSetupComplete.current) {
+      setMode("manage");
+    }
+    prevSetupComplete.current = setupComplete;
+  }, [setupComplete]);
+
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
