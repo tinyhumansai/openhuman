@@ -82,6 +82,7 @@ tower = { version = "0.5", default-features = false }
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "metrics", "http-proto", "reqwest-client", "reqwest-rustls-webpki-roots"] }
+sentry = { version = "0.47.0", default-features = false, features = ["backtrace", "contexts", "panic", "tracing", "reqwest", "rustls"] }
 tokio-stream = { version = "0.1.18", features = ["full"] }
 url = "2"
 socketioxide = { version = "0.15", features = ["extensions"] }

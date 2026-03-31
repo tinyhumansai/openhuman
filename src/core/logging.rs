@@ -10,7 +10,9 @@ use nu_ansi_term::{Color, Style};
 use tracing::{Event, Level};
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::fmt::FmtContext;
+use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::util::SubscriberInitExt;
 
 static INIT: Once = Once::new();
 
@@ -89,10 +91,25 @@ pub fn init_for_cli_run(verbose: bool) {
 
         let use_color = io::stderr().is_terminal();
 
-        let _ = tracing_subscriber::fmt()
+        let fmt_layer = tracing_subscriber::fmt::layer()
             .with_ansi(use_color)
-            .with_env_filter(filter)
-            .event_format(CleanCliFormat)
+            .event_format(CleanCliFormat);
+
+        let sentry_layer =
+            sentry::integrations::tracing::layer().event_filter(|md: &tracing::Metadata<'_>| {
+                match *md.level() {
+                    Level::ERROR => sentry::integrations::tracing::EventFilter::Event,
+                    Level::WARN | Level::INFO => {
+                        sentry::integrations::tracing::EventFilter::Breadcrumb
+                    }
+                    _ => sentry::integrations::tracing::EventFilter::Ignore,
+                }
+            });
+
+        let _ = tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .with(sentry_layer)
             .try_init();
 
         let _ = tracing_log::LogTracer::init();

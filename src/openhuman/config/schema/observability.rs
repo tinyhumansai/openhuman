@@ -15,6 +15,10 @@ pub struct ObservabilityConfig {
     /// Service name reported to the OTel collector. Defaults to "openhuman".
     #[serde(default)]
     pub otel_service_name: Option<String>,
+
+    /// Sentry DSN for error reporting. Overridden by `OPENHUMAN_SENTRY_DSN` env var.
+    #[serde(default)]
+    pub sentry_dsn: Option<String>,
 }
 
 impl Default for ObservabilityConfig {
@@ -23,6 +27,7 @@ impl Default for ObservabilityConfig {
             backend: "none".into(),
             otel_endpoint: None,
             otel_service_name: None,
+            sentry_dsn: None,
         }
     }
 }

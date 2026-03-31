@@ -592,6 +592,13 @@ impl Config {
             }
         }
 
+        if let Ok(dsn) = std::env::var("OPENHUMAN_SENTRY_DSN") {
+            let dsn = dsn.trim();
+            if !dsn.is_empty() {
+                self.observability.sentry_dsn = Some(dsn.to_string());
+            }
+        }
+
         if self.proxy.enabled && self.proxy.scope == ProxyScope::Environment {
             self.proxy.apply_to_process_env();
         }
