@@ -27,10 +27,6 @@ const LocalAIStep = ({ onNext, onBack: _onBack }: LocalAIStepProps) => {
     onNext({ consentGiven: true, downloadStarted: true });
   }, [onNext]);
 
-  const _handleSkip = useCallback(() => {
-    onNext({ consentGiven: false, downloadStarted: false });
-  }, [onNext]);
-
   return (
     <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
       <div className="flex flex-col items-center mb-5">
