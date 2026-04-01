@@ -185,9 +185,12 @@ export async function waitForButton(
 export async function textExists(text: string): Promise<boolean> {
   try {
     if (isTauriDriver()) {
-      return await browser.execute((t: string) => {
-        return document.body?.innerText?.includes(t) ?? false;
-      }, text);
+      // Use XPath (same as waitForText) instead of innerText — innerText
+      // only returns visible text and can miss off-screen or scrollable content
+      // on webkit2gtk under Xvfb.
+      const literal = xpathStringLiteral(text);
+      const el = await browser.$(`//*[contains(text(),${literal})]`);
+      return await el.isExisting();
     }
 
     const el = await browser.$(xpathContainsText(text));
