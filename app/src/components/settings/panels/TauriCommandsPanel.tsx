@@ -110,10 +110,7 @@ const TauriCommandsPanel = () => {
     return Number.isFinite(parsed) ? parsed : null;
   };
 
-  const backendModelSuggestions = useMemo(
-    () => ['agentic-v1', 'reasoning-v1', 'coding-v1'],
-    []
-  );
+  const backendModelSuggestions = useMemo(() => ['agentic-v1', 'reasoning-v1', 'coding-v1'], []);
 
   const validateApiKey = useCallback((_key: string): string | null => {
     return null;
