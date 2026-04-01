@@ -22,9 +22,10 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
-fn find_skills_dir() -> PathBuf {
+fn try_find_skills_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("SKILL_DEBUG_DIR") {
-        return PathBuf::from(dir);
+        let p = PathBuf::from(&dir);
+        return if p.exists() { Some(p) } else { None };
     }
     let cwd = std::env::current_dir().expect("cwd");
     for candidate in &[
@@ -34,18 +35,30 @@ fn find_skills_dir() -> PathBuf {
     ] {
         let p = cwd.join(candidate);
         if p.exists() {
-            return p.canonicalize().unwrap();
+            return Some(p.canonicalize().unwrap());
         }
     }
     if let Some(parent) = cwd.parent() {
         for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
             let c = entry.path().join("skills/skills");
             if c.join("notion/manifest.json").exists() {
-                return c.canonicalize().unwrap();
+                return Some(c.canonicalize().unwrap());
             }
         }
     }
-    panic!("Skills directory not found. Set SKILL_DEBUG_DIR.");
+    None
+}
+
+macro_rules! require_skills_dir {
+    () => {
+        match try_find_skills_dir() {
+            Some(dir) => dir,
+            None => {
+                eprintln!("SKIPPED: no skills directory available");
+                return;
+            }
+        }
+    };
 }
 
 #[tokio::test]
@@ -58,7 +71,7 @@ async fn notion_live_with_real_data() {
     let backend_url = env_or("BACKEND_URL", "https://staging-api.alphahuman.xyz");
     let jwt_token = env_or("JWT_TOKEN", "");
     let credential_id = env_or("CREDENTIAL_ID", "69cafd0b103bd070232d3223");
-    let skills_dir = find_skills_dir();
+    let skills_dir = require_skills_dir!();
 
     // Use the REAL skills_data directory so oauth_credential.json is available
     let real_data_dir = PathBuf::from(env_or(

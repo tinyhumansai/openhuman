@@ -130,7 +130,7 @@ async fn skills_over_http_rpc() {
         .try_init();
 
     let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
-    let skills_dir = find_skills_dir();
+    let skills_dir = require_skills_dir!();
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
     let data_dir = home.join("skills_data");
