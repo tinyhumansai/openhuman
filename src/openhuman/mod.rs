@@ -24,6 +24,7 @@ pub mod doctor;
 pub mod encryption;
 pub mod health;
 pub mod heartbeat;
+pub mod learning;
 pub mod local_ai;
 pub mod memory;
 pub mod migration;

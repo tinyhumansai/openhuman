@@ -1,6 +1,7 @@
 use super::dispatcher::{
     NativeToolDispatcher, ParsedToolCall, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
+use super::hooks::{self, PostTurnHook, ToolCallRecord, TurnContext};
 use super::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use super::prompt::{PromptContext, SystemPromptBuilder};
 use crate::openhuman::agent::host_runtime;
@@ -34,6 +35,7 @@ pub struct Agent {
     history: Vec<ConversationMessage>,
     classification_config: crate::openhuman::config::QueryClassificationConfig,
     available_hints: Vec<String>,
+    post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
 }
 
 pub struct AgentBuilder {
@@ -52,6 +54,7 @@ pub struct AgentBuilder {
     auto_save: Option<bool>,
     classification_config: Option<crate::openhuman::config::QueryClassificationConfig>,
     available_hints: Option<Vec<String>>,
+    post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
 }
 
 impl Default for AgentBuilder {
@@ -78,6 +81,7 @@ impl AgentBuilder {
             auto_save: None,
             classification_config: None,
             available_hints: None,
+            post_turn_hooks: Vec::new(),
         }
     }
 
@@ -162,6 +166,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn post_turn_hooks(mut self, hooks: Vec<Arc<dyn PostTurnHook>>) -> Self {
+        self.post_turn_hooks = hooks;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let tools = self
             .tools
@@ -198,6 +207,7 @@ impl AgentBuilder {
             history: Vec::new(),
             classification_config: self.classification_config.unwrap_or_default(),
             available_hints: self.available_hints.unwrap_or_default(),
+            post_turn_hooks: self.post_turn_hooks,
         })
     }
 }
@@ -317,6 +327,73 @@ impl Agent {
         let available_hints: Vec<String> =
             config.model_routes.iter().map(|r| r.hint.clone()).collect();
 
+        // Build prompt builder, optionally with learning sections
+        let mut prompt_builder = SystemPromptBuilder::with_defaults();
+        if config.learning.enabled {
+            prompt_builder = prompt_builder
+                .add_section(Box::new(
+                    crate::openhuman::learning::LearnedContextSection::new(memory.clone()),
+                ))
+                .add_section(Box::new(
+                    crate::openhuman::learning::UserProfileSection::new(memory.clone()),
+                ));
+            log::info!("[learning] prompt sections registered (learned_context, user_profile)");
+        }
+
+        // Build post-turn hooks when learning is enabled
+        let mut post_turn_hooks: Vec<Arc<dyn super::hooks::PostTurnHook>> = Vec::new();
+        if config.learning.enabled {
+            let full_config = Arc::new(config.clone());
+
+            if config.learning.reflection_enabled {
+                // For cloud reflection, wrap the provider in an Arc.
+                // For local, no provider needed.
+                let reflection_provider: Option<Arc<dyn crate::openhuman::providers::Provider>> =
+                    if config.learning.reflection_source
+                        == crate::openhuman::config::ReflectionSource::Cloud
+                    {
+                        Some(Arc::from(providers::create_routed_provider(
+                            config.api_key.as_deref(),
+                            config.api_url.as_deref(),
+                            &config.reliability,
+                            &config.model_routes,
+                            &model_name,
+                        )?))
+                    } else {
+                        None
+                    };
+                post_turn_hooks.push(Arc::new(
+                    crate::openhuman::learning::ReflectionHook::new(
+                        config.learning.clone(),
+                        full_config.clone(),
+                        memory.clone(),
+                        reflection_provider,
+                    ),
+                ));
+                log::info!("[learning] reflection hook registered (source={:?})", config.learning.reflection_source);
+            }
+
+            if config.learning.user_profile_enabled {
+                post_turn_hooks.push(Arc::new(
+                    crate::openhuman::learning::UserProfileHook::new(
+                        config.learning.clone(),
+                        memory.clone(),
+                    ),
+                ));
+                log::info!("[learning] user_profile hook registered");
+            }
+
+            if config.learning.tool_tracking_enabled {
+                post_turn_hooks.push(Arc::new(
+                    crate::openhuman::learning::ToolTrackerHook::new(
+                        config.learning.clone(),
+                        memory.clone(),
+                    ),
+                ));
+                log::info!("[learning] tool_tracker hook registered");
+            }
+        }
+
         Agent::builder()
             .provider(provider)
             .tools(tools)
@@ -326,7 +403,7 @@ impl Agent {
                 5,
                 config.memory.min_relevance_score,
             )))
-            .prompt_builder(SystemPromptBuilder::with_defaults())
+            .prompt_builder(prompt_builder)
             .config(config.agent.clone())
             .model_name(model_name)
             .temperature(config.default_temperature)
@@ -336,6 +413,7 @@ impl Agent {
             .identity_config(config.identity.clone())
             .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
             .auto_save(config.memory.auto_save)
+            .post_turn_hooks(post_turn_hooks)
             .build()
     }
 
@@ -379,54 +457,69 @@ impl Agent {
         self.prompt_builder.build(&ctx)
     }
 
-    async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
+    async fn execute_tool_call(
+        &self,
+        call: &ParsedToolCall,
+    ) -> (ToolExecutionResult, ToolCallRecord) {
         let started = std::time::Instant::now();
         log::info!("[agent_loop] tool start name={}", call.name);
-        let result = if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            match tool.execute(call.arguments.clone()).await {
-                Ok(r) => {
-                    if r.success {
-                        r.output
-                    } else {
-                        format!("Error: {}", r.error.unwrap_or(r.output))
+        let (result, success) =
+            if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
+                match tool.execute(call.arguments.clone()).await {
+                    Ok(r) => {
+                        if r.success {
+                            (r.output, true)
+                        } else {
+                            (format!("Error: {}", r.error.unwrap_or(r.output)), false)
+                        }
                     }
+                    Err(e) => (format!("Error executing {}: {e}", call.name), false),
                 }
-                Err(e) => {
-                    format!("Error executing {}: {e}", call.name)
-                }
-            }
-        } else {
-            format!("Unknown tool: {}", call.name)
-        };
+            } else {
+                (format!("Unknown tool: {}", call.name), false)
+            };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
         log::info!(
-            "[agent_loop] tool finish name={} elapsed_ms={} output_chars={}",
+            "[agent_loop] tool finish name={} elapsed_ms={} output_chars={} success={}",
             call.name,
-            started.elapsed().as_millis(),
-            result.chars().count()
+            elapsed_ms,
+            result.chars().count(),
+            success
         );
 
-        ToolExecutionResult {
+        let snippet_len = result.chars().count().min(200);
+        let output_snippet: String = result.chars().take(snippet_len).collect();
+
+        let record = ToolCallRecord {
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            success,
+            output_snippet,
+            duration_ms: elapsed_ms,
+        };
+
+        let exec_result = ToolExecutionResult {
             name: call.name.clone(),
             output: result,
-            success: true,
+            success,
             tool_call_id: call.tool_call_id.clone(),
-        }
+        };
+
+        (exec_result, record)
     }
 
-    async fn execute_tools(&self, calls: &[ParsedToolCall]) -> Vec<ToolExecutionResult> {
-        if !self.config.parallel_tools {
-            let mut results = Vec::with_capacity(calls.len());
-            for call in calls {
-                results.push(self.execute_tool_call(call).await);
-            }
-            return results;
-        }
-
+    async fn execute_tools(
+        &self,
+        calls: &[ParsedToolCall],
+    ) -> (Vec<ToolExecutionResult>, Vec<ToolCallRecord>) {
         let mut results = Vec::with_capacity(calls.len());
+        let mut records = Vec::with_capacity(calls.len());
         for call in calls {
-            results.push(self.execute_tool_call(call).await);
+            let (exec_result, record) = self.execute_tool_call(call).await;
+            results.push(exec_result);
+            records.push(record);
         }
-        results
+        (results, records)
     }
 
     fn classify_model(&self, user_message: &str) -> String {
@@ -440,6 +533,7 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
+        let turn_started = std::time::Instant::now();
         log::info!(
             "[agent_loop] turn start message_chars={} history_len={} max_tool_iterations={}",
             user_message.chars().count(),
@@ -483,6 +577,9 @@ impl Agent {
 
         let effective_model = self.classify_model(user_message);
         log::info!("[agent_loop] model selected model={}", effective_model);
+
+        // Collect tool call records across all iterations for post-turn hooks
+        let mut all_tool_records: Vec<ToolCallRecord> = Vec::new();
 
         for iteration in 0..self.config.max_tool_iterations {
             log::info!(
@@ -562,6 +659,19 @@ impl Agent {
                         .await;
                 }
 
+                // Fire post-turn hooks (non-blocking)
+                if !self.post_turn_hooks.is_empty() {
+                    let ctx = TurnContext {
+                        user_message: user_message.to_string(),
+                        assistant_response: final_text.clone(),
+                        tool_calls: all_tool_records,
+                        turn_duration_ms: turn_started.elapsed().as_millis() as u64,
+                        session_id: None,
+                        iteration_count: iteration + 1,
+                    };
+                    hooks::fire_hooks(&self.post_turn_hooks, ctx);
+                }
+
                 return Ok(final_text);
             }
 
@@ -601,7 +711,8 @@ impl Agent {
                 tool_calls: persisted_tool_calls,
             });
 
-            let results = self.execute_tools(&calls).await;
+            let (results, records) = self.execute_tools(&calls).await;
+            all_tool_records.extend(records);
             log::info!(
                 "[agent_loop] tool results complete i={} result_count={}",
                 iteration + 1,

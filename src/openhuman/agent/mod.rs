@@ -2,6 +2,7 @@
 pub mod agent;
 pub mod classifier;
 pub mod dispatcher;
+pub mod hooks;
 pub mod host_runtime;
 pub mod identity;
 pub mod loop_;
