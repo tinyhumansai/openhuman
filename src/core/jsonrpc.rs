@@ -119,7 +119,16 @@ fn success_html() -> String {
         .to_string()
 }
 
+fn escape_html(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
 fn error_html(message: &str) -> String {
+    let escaped_message = escape_html(message);
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -140,11 +149,10 @@ fn error_html(message: &str) -> String {
     <div class="card">
         <div class="icon">&#9888;</div>
         <h1>Something went wrong</h1>
-        <p>{message}</p>
+        <p>{escaped_message}</p>
     </div>
 </body>
-</html>"#,
-        message = message
+</html>"#
     )
 }
 
@@ -202,13 +210,31 @@ async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl I
     let jwt_token = match client.consume_login_token(&token).await {
         Ok(jwt) => jwt,
         Err(e) => {
-            log::warn!("[auth:telegram] Token consumption failed: {e}");
-            return html_response(
-                StatusCode::BAD_REQUEST,
-                error_html(
-                    "This link has expired or was already used. Send /start register to the bot again.",
-                ),
-            );
+            let error_str = e.to_string();
+            // Check if this is a client-side error (token validation) or server-side error
+            let is_client_error = error_str.contains("expired")
+                || error_str.contains("invalid")
+                || error_str.contains("not found")
+                || error_str.contains("already used")
+                || error_str.contains("401")
+                || error_str.contains("400")
+                || error_str.contains("404");
+
+            if is_client_error {
+                log::warn!("[auth:telegram] Token consumption failed (client error): {e}");
+                return html_response(
+                    StatusCode::BAD_REQUEST,
+                    error_html(
+                        "This link has expired or was already used. Send /start register to the bot again.",
+                    ),
+                );
+            } else {
+                log::error!("[auth:telegram] Token consumption failed (server error): {e}");
+                return html_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_html("Internal server error, please try again later."),
+                );
+            }
         }
     };
 
