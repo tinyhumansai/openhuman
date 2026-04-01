@@ -1,4 +1,3 @@
-/* eslint-disable */
 // @ts-nocheck
 /**
  * E2E test: Cryptocurrency Payment Flow (Coinbase Commerce).

@@ -64,14 +64,7 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
   return undefined;
 }
 
-async function waitForTextToDisappear(text, timeout = 10_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (!(await textExists(text))) return true;
-    await browser.pause(500);
-  }
-  return false;
-}
+
 
 /**
  * Wait until one of the candidate texts appears on screen.
