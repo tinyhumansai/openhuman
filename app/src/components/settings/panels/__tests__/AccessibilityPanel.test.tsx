@@ -70,6 +70,7 @@ const createStore = () =>
         isCaptureTestRunning: false,
         isLoading: false,
         isRequestingPermissions: false,
+        isRestartingCore: false,
         isStartingSession: false,
         isStoppingSession: false,
         isLoadingVision: false,

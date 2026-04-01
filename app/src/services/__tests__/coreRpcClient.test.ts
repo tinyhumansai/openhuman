@@ -1,7 +1,56 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { dispatchLocalAiMethod } from '../../lib/ai/localCoreAiMemory';
+import type { AccessibilityStatus, CommandResponse } from '../../utils/tauriCommands';
 import { callCoreRpc } from '../coreRpcClient';
+
+function sampleAccessibilityStatus(
+  overrides: Partial<AccessibilityStatus> = {}
+): AccessibilityStatus {
+  return {
+    platform_supported: true,
+    permissions: {
+      screen_recording: 'denied',
+      accessibility: 'granted',
+      input_monitoring: 'unknown',
+    },
+    features: { screen_monitoring: true, device_control: true, predictive_input: true },
+    session: {
+      active: false,
+      started_at_ms: null,
+      expires_at_ms: null,
+      remaining_ms: null,
+      ttl_secs: 300,
+      panic_hotkey: 'Cmd+Shift+.',
+      stop_reason: null,
+      frames_in_memory: 0,
+      last_capture_at_ms: null,
+      last_context: null,
+      vision_enabled: true,
+      vision_state: 'idle',
+      vision_queue_depth: 0,
+      last_vision_at_ms: null,
+      last_vision_summary: null,
+    },
+    config: {
+      enabled: true,
+      capture_policy: 'hybrid',
+      policy_mode: 'all_except_blacklist',
+      baseline_fps: 1,
+      vision_enabled: true,
+      session_ttl_secs: 300,
+      panic_stop_hotkey: 'Cmd+Shift+.',
+      autocomplete_enabled: true,
+      allowlist: [],
+      denylist: [],
+    },
+    denylist: [],
+    is_context_blocked: false,
+    permission_check_process_path:
+      '/tmp/openhuman-core-aarch64-apple-darwin',
+    ...overrides,
+  };
+}
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn(() => false) }));
 vi.mock('../../lib/ai/localCoreAiMemory', () => ({
@@ -41,6 +90,35 @@ describe('coreRpcClient', () => {
     const requestInit = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(String(requestInit.body));
     expect(body.method).toBe('openhuman.screen_intelligence_status');
+  });
+
+  test('fetches accessibility_status CommandResponse with permissions and process path', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const status = sampleAccessibilityStatus({
+      permission_check_process_path:
+        '/Users/dev/openhuman/app/src-tauri/binaries/openhuman-core-aarch64-apple-darwin',
+    });
+    const envelope: CommandResponse<AccessibilityStatus> = {
+      result: status,
+      logs: ['screen intelligence status fetched'],
+    };
+
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ jsonrpc: '2.0', id: 99, result: envelope }),
+    } as Response);
+
+    const out = await callCoreRpc<CommandResponse<AccessibilityStatus>>({
+      method: 'openhuman.accessibility_status',
+    });
+
+    expect(out.logs).toContain('screen intelligence status fetched');
+    expect(out.result.permissions.screen_recording).toBe('denied');
+    expect(out.result.permissions.accessibility).toBe('granted');
+    expect(out.result.permissions.input_monitoring).toBe('unknown');
+    expect(out.result.permission_check_process_path).toBe(
+      '/Users/dev/openhuman/app/src-tauri/binaries/openhuman-core-aarch64-apple-darwin'
+    );
   });
 
   test('throws clean error when JSON-RPC error payload is returned', async () => {

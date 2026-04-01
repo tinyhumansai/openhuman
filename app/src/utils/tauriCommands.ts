@@ -180,6 +180,26 @@ export async function setWindowTitle(title: string): Promise<void> {
   await getCurrentWindow().setTitle(title);
 }
 
+/**
+ * Restart the core sidecar process.
+ *
+ * macOS caches permission grants per-process; the running sidecar never sees
+ * a newly granted permission until it restarts. Call this after the user grants
+ * permissions in System Settings, then re-fetch accessibility status so the UI
+ * reflects the updated grants.
+ *
+ * @see https://github.com/tinyhumansai/openhuman/issues/133
+ */
+export async function restartCoreProcess(): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[core] restartCoreProcess: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[core] restartCoreProcess: invoking restart_core_process');
+  await invoke<void>('restart_core_process');
+  console.debug('[core] restartCoreProcess: done');
+}
+
 // --- Memory Commands ---
 
 /**
@@ -597,6 +617,8 @@ export interface AccessibilityStatus {
   config: AccessibilityConfig;
   denylist: string[];
   is_context_blocked: boolean;
+  /** Absolute path of the core binary; macOS TCC applies to this executable. */
+  permission_check_process_path?: string | null;
 }
 
 export interface AccessibilityStartSessionParams {

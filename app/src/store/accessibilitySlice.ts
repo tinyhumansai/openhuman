@@ -16,6 +16,7 @@ import {
   openhumanAccessibilityVisionFlush,
   openhumanAccessibilityVisionRecent,
   openhumanScreenIntelligenceCaptureTest,
+  restartCoreProcess,
 } from '../utils/tauriCommands';
 
 interface AccessibilityState {
@@ -25,6 +26,7 @@ interface AccessibilityState {
   isCaptureTestRunning: boolean;
   isLoading: boolean;
   isRequestingPermissions: boolean;
+  isRestartingCore: boolean;
   isStartingSession: boolean;
   isStoppingSession: boolean;
   isLoadingVision: boolean;
@@ -39,6 +41,7 @@ const initialState: AccessibilityState = {
   isCaptureTestRunning: false,
   isLoading: false,
   isRequestingPermissions: false,
+  isRestartingCore: false,
   isStartingSession: false,
   isStoppingSession: false,
   isLoadingVision: false,
@@ -49,6 +52,15 @@ const initialState: AccessibilityState = {
 const extractError = (error: unknown, fallback: string): string => {
   if (error instanceof Error && error.message.trim()) {
     return error.message;
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+  if (error && typeof error === 'object') {
+    const msg = (error as { message?: unknown }).message;
+    if (typeof msg === 'string' && msg.trim()) {
+      return msg;
+    }
   }
   return fallback;
 };
@@ -87,6 +99,56 @@ export const requestAccessibilityPermission = createAsyncThunk(
       return response.result;
     } catch (error) {
       return rejectWithValue(extractError(error, 'Failed to request accessibility permission'));
+    }
+  }
+);
+
+/**
+ * Restart the core sidecar and re-fetch accessibility status.
+ *
+ * macOS caches permission state per-process. The running sidecar never sees a
+ * newly granted permission until it exits and a fresh process starts. This thunk:
+ *   1. Restarts the core sidecar via the `restart_core_process` Tauri command.
+ *   2. Waits briefly, then re-fetches status with retries while the new sidecar binds.
+ *   3. Updates Redux so the UI reflects the updated grants.
+ *
+ * @see https://github.com/tinyhumansai/openhuman/issues/133 — stale DENIED after granting in System Settings
+ */
+export const refreshPermissionsWithRestart = createAsyncThunk(
+  'accessibility/refreshPermissionsWithRestart',
+  async (_, { rejectWithValue }) => {
+    try {
+      console.debug('[accessibility] refreshPermissionsWithRestart: starting core restart');
+      await restartCoreProcess();
+      console.debug('[accessibility] refreshPermissionsWithRestart: waiting for sidecar ready');
+      await new Promise<void>(resolve => setTimeout(resolve, 400));
+      console.debug('[accessibility] refreshPermissionsWithRestart: fetching updated status');
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          const response = await openhumanAccessibilityStatus();
+          console.debug(
+            '[accessibility] refreshPermissionsWithRestart: done — screen_recording=%s accessibility=%s input_monitoring=%s',
+            response.result.permissions.screen_recording,
+            response.result.permissions.accessibility,
+            response.result.permissions.input_monitoring
+          );
+          return response.result;
+        } catch (e) {
+          if (attempt === 5) {
+            throw e;
+          }
+          console.debug(
+            '[accessibility] refreshPermissionsWithRestart: status fetch failed (attempt %s), retrying…',
+            attempt
+          );
+          await new Promise<void>(resolve => setTimeout(resolve, 350 * attempt));
+        }
+      }
+      throw new Error('Failed to fetch accessibility status after core restart');
+    } catch (error) {
+      const msg = extractError(error, 'Failed to restart core and refresh permissions');
+      console.error('[accessibility] refreshPermissionsWithRestart: error —', msg, error);
+      return rejectWithValue(msg);
     }
   }
 );
@@ -232,6 +294,19 @@ const accessibilitySlice = createSlice({
         state.isRequestingPermissions = false;
         state.lastError =
           (action.payload as string) ?? 'Failed to request accessibility permission';
+      })
+      .addCase(refreshPermissionsWithRestart.pending, state => {
+        state.isRestartingCore = true;
+        state.lastError = null;
+      })
+      .addCase(refreshPermissionsWithRestart.fulfilled, (state, action) => {
+        state.isRestartingCore = false;
+        state.status = action.payload;
+      })
+      .addCase(refreshPermissionsWithRestart.rejected, (state, action) => {
+        state.isRestartingCore = false;
+        state.lastError =
+          (action.payload as string) ?? 'Failed to restart core and refresh permissions';
       })
       .addCase(startAccessibilitySession.pending, state => {
         state.isStartingSession = true;

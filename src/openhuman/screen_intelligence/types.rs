@@ -66,6 +66,10 @@ pub struct AccessibilityStatus {
     pub config: ScreenIntelligenceConfig,
     pub denylist: Vec<String>,
     pub is_context_blocked: bool,
+    /// Absolute path of this core process. macOS privacy (TCC) is per executable; the UI should
+    /// show this so users enable the same binary in System Settings (see GH #133).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_check_process_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -62,3 +62,25 @@ if (!isWindows) {
 }
 
 console.log(`[core:stage] Staged sidecar: ${dest}`);
+
+// macOS: sign with a stable local dev certificate so macOS TCC uses certificate
+// identity (stable across rebuilds) instead of binary content hash (changes
+// every compile). Without this, each recompile breaks existing TCC grants.
+if (process.platform === "darwin") {
+  const DEV_IDENTITY = "OpenHuman Dev Signer";
+  const check = spawnSync(
+    "bash",
+    ["-c", `security find-identity -v -p codesigning 2>/dev/null | grep "${DEV_IDENTITY}" || true`],
+    { cwd: root, encoding: "utf8" },
+  );
+  if (check.stdout && check.stdout.includes(DEV_IDENTITY)) {
+    run("codesign", ["--force", "--sign", DEV_IDENTITY, "--timestamp=none", dest]);
+    console.log(`[core:stage] Signed sidecar with "${DEV_IDENTITY}"`);
+  } else {
+    console.warn(
+      `[core:stage] Dev signing identity "${DEV_IDENTITY}" not found.\n` +
+      `[core:stage] Run 'bash scripts/setup-dev-codesign.sh' once to enable stable TCC grants.\n` +
+      `[core:stage] Without signing, macOS accessibility grants break on every recompile.`,
+    );
+  }
+}

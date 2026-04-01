@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import {
   fetchAccessibilityStatus,
+  refreshPermissionsWithRestart,
   requestAccessibilityPermission,
 } from '../../../store/accessibilitySlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
@@ -15,9 +16,8 @@ interface ScreenPermissionsStepProps {
 const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsStepProps) => {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
-  const { status, isLoading, isRequestingPermissions } = useAppSelector(
-    state => state.accessibility
-  );
+  const { status, isLoading, isRequestingPermissions, isRestartingCore, lastError } =
+    useAppSelector(state => state.accessibility);
 
   useEffect(() => {
     void dispatch(fetchAccessibilityStatus());
@@ -63,20 +63,39 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
       </div>
 
       {!isGranted ? (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
+              disabled={isRequestingPermissions || isLoading}
+              className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
+              {isRequestingPermissions ? 'Requesting...' : 'Request Permissions'}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/settings/accessibility')}
+              className="w-full py-2.5 text-sm font-medium rounded-xl border border-stone-600 hover:border-stone-500 transition-colors">
+              Open Accessibility
+            </button>
+          </div>
           <button
             type="button"
-            onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
-            disabled={isRequestingPermissions || isLoading}
-            className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
-            {isRequestingPermissions ? 'Requesting...' : 'Request Permissions'}
+            onClick={() => void dispatch(refreshPermissionsWithRestart())}
+            disabled={isRestartingCore || isLoading}
+            className="w-full py-2 text-sm font-medium rounded-xl border border-stone-700 hover:border-stone-500 opacity-70 hover:opacity-100 transition-all disabled:opacity-40">
+            {isRestartingCore ? 'Restarting core...' : 'Refresh Status'}
           </button>
-          <button
-            type="button"
-            onClick={() => navigate('/settings/accessibility')}
-            className="w-full py-2.5 text-sm font-medium rounded-xl border border-stone-600 hover:border-stone-500 transition-colors">
-            Open Accessibility
-          </button>
+          {(lastError || status?.permission_check_process_path) && (
+            <div className="text-xs text-stone-400 text-center px-2 space-y-1">
+              {lastError ? <p className="text-coral-400">{lastError}</p> : null}
+              {status?.permission_check_process_path ? (
+                <p className="font-mono break-all text-stone-500">
+                  Grant access for: {status.permission_check_process_path}
+                </p>
+              ) : null}
+            </div>
+          )}
         </div>
       ) : (
         <button

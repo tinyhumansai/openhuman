@@ -19,6 +19,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("status"),
         schemas("request_permissions"),
         schemas("request_permission"),
+        schemas("refresh_permissions"),
         schemas("start_session"),
         schemas("stop_session"),
         schemas("capture_now"),
@@ -43,6 +44,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("request_permission"),
             handler: handle_request_permission,
+        },
+        RegisteredController {
+            schema: schemas("refresh_permissions"),
+            handler: handle_refresh_permissions,
         },
         RegisteredController {
             schema: schemas("start_session"),
@@ -106,6 +111,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
             outputs: vec![json_output("permissions", "Permission status payload.")],
+        },
+        "refresh_permissions" => ControllerSchema {
+            namespace: "screen_intelligence",
+            function: "refresh_permissions",
+            description: "Re-detect current macOS permission state without requesting new grants. \
+                           Call this after the sidecar restarts to read freshly granted permissions.",
+            inputs: vec![],
+            outputs: vec![json_output("permissions", "Freshly detected permission status.")],
         },
         "start_session" => ControllerSchema {
             namespace: "screen_intelligence",
@@ -219,6 +232,14 @@ fn handle_request_permissions(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async {
         to_json(
             crate::openhuman::screen_intelligence::rpc::accessibility_request_permissions().await?,
+        )
+    })
+}
+
+fn handle_refresh_permissions(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        to_json(
+            crate::openhuman::screen_intelligence::rpc::accessibility_refresh_permissions().await?,
         )
     })
 }

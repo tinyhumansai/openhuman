@@ -4,6 +4,7 @@ import {
   fetchAccessibilityStatus,
   fetchAccessibilityVisionRecent,
   flushAccessibilityVision,
+  refreshPermissionsWithRestart,
   requestAccessibilityPermission,
   startAccessibilitySession,
   stopAccessibilitySession,
@@ -50,6 +51,7 @@ const AccessibilityPanel = () => {
     status,
     isLoading,
     isRequestingPermissions,
+    isRestartingCore,
     isStartingSession,
     isStoppingSession,
     isLoadingVision,
@@ -81,6 +83,11 @@ const AccessibilityPanel = () => {
   useEffect(() => {
     void dispatch(fetchAccessibilityVisionRecent(10));
   }, [dispatch]);
+
+  const anyPermissionDenied =
+    status?.permissions.screen_recording === 'denied' ||
+    status?.permissions.accessibility === 'denied' ||
+    status?.permissions.input_monitoring === 'denied';
 
   const screenMonitoring =
     featureOverrides.screen_monitoring ?? status?.features.screen_monitoring ?? true;
@@ -125,34 +132,67 @@ const AccessibilityPanel = () => {
             value={status?.permissions.input_monitoring ?? 'unknown'}
           />
 
+          {anyPermissionDenied && (
+            <div className="rounded-xl border border-amber-700/40 bg-amber-900/20 p-3 text-sm text-amber-200 space-y-1">
+              <p>
+                After granting in System Settings, click &ldquo;Restart &amp; Refresh&rdquo; below.
+              </p>
+              {status?.permission_check_process_path ? (
+                <p className="opacity-75 text-xs">
+                  Enable the same app macOS lists for this path (TCC is per executable).{' '}
+                  <span className="font-mono break-all text-stone-300">
+                    {status.permission_check_process_path}
+                  </span>
+                </p>
+              ) : null}
+              <p className="opacity-75">
+                Still stuck? Remove the old entry for this app in System Settings → Privacy, then
+                click &ldquo;Request&rdquo; again. For dev, run{' '}
+                <span className="font-mono text-xs">yarn core:stage</span> so the sidecar matches the
+                staged binary name.
+              </p>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => void dispatch(requestAccessibilityPermission('screen_recording'))}
-            disabled={isRequestingPermissions}
+            disabled={isRequestingPermissions || isRestartingCore}
             className="mt-1 rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Request Screen Recording'}
           </button>
           <button
             type="button"
             onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
-            disabled={isRequestingPermissions}
+            disabled={isRequestingPermissions || isRestartingCore}
             className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Request Accessibility'}
           </button>
           <button
             type="button"
             onClick={() => void dispatch(requestAccessibilityPermission('input_monitoring'))}
-            disabled={isRequestingPermissions}
+            disabled={isRequestingPermissions || isRestartingCore}
             className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Open Input Monitoring'}
           </button>
-          <button
-            type="button"
-            onClick={() => void dispatch(fetchAccessibilityStatus())}
-            disabled={isLoading}
-            className="rounded-lg border border-stone-600 bg-stone-800/60 px-3 py-2 text-sm text-stone-200 disabled:opacity-50">
-            {isLoading ? 'Refreshing…' : 'Refresh Status'}
-          </button>
+
+          {anyPermissionDenied ? (
+            <button
+              type="button"
+              onClick={() => void dispatch(refreshPermissionsWithRestart())}
+              disabled={isRestartingCore || isLoading}
+              className="rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-2 text-sm text-amber-200 disabled:opacity-50">
+              {isRestartingCore ? 'Restarting core…' : 'Restart & Refresh Permissions'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void dispatch(fetchAccessibilityStatus())}
+              disabled={isLoading || isRestartingCore}
+              className="rounded-lg border border-stone-600 bg-stone-800/60 px-3 py-2 text-sm text-stone-200 disabled:opacity-50">
+              {isLoading ? 'Refreshing…' : 'Refresh Status'}
+            </button>
+          )}
         </section>
 
         <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">

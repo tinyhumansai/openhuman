@@ -251,6 +251,9 @@ impl AccessibilityEngine {
             config,
             denylist,
             is_context_blocked: blocked,
+            permission_check_process_path: std::env::current_exe()
+                .ok()
+                .map(|p| p.display().to_string()),
         }
     }
 
