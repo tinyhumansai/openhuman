@@ -466,6 +466,7 @@ fn resolve_timeout(archetype: AgentArchetype, config: &OrchestratorConfig) -> Du
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::ArchetypeConfig;
 
     #[test]
     fn extract_json_from_fenced_block() {

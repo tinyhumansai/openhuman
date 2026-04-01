@@ -14,6 +14,7 @@
 
 pub mod archetypes;
 pub mod archivist;
+pub mod context_assembly;
 pub mod dag;
 pub mod executor;
 pub mod interrupt;
