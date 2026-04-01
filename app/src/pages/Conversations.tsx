@@ -36,8 +36,6 @@ import {
   openhumanAutocompleteCurrent,
   openhumanLocalAiChat,
   openhumanLocalAiShouldReact,
-  openhumanLocalAiTranscribeBytes,
-  openhumanLocalAiTts,
   openhumanVoiceStatus,
   openhumanVoiceTranscribeBytes,
   openhumanVoiceTts,
