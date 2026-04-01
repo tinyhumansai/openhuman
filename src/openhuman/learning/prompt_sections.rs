@@ -1,34 +1,18 @@
 //! Prompt sections that inject learned context into the agent's system prompt.
 //!
-//! These sections read from memory at prompt-build time and format observations,
-//! patterns, and user profile data for the LLM context.
+//! These sections read pre-fetched data from `PromptContext.learned` — no async
+//! or blocking I/O happens during prompt building.
 
 use crate::openhuman::agent::prompt::{PromptContext, PromptSection};
-use crate::openhuman::memory::{Memory, MemoryCategory};
 use anyhow::Result;
-use std::sync::Arc;
 
 /// Injects recent observations and patterns from the learning subsystem.
-pub struct LearnedContextSection {
-    memory: Arc<dyn Memory>,
-}
+pub struct LearnedContextSection;
 
 impl LearnedContextSection {
-    pub fn new(memory: Arc<dyn Memory>) -> Self {
-        Self { memory }
-    }
-
-    /// Load learned context without blocking the runtime.
-    /// Note: This is called during prompt building (sync context).
-    /// To avoid blocking, we return empty and rely on pre-cached data in future iterations.
-    fn load_learned_context(&self) -> String {
-        // TODO: Pre-fetch and cache this data during Agent initialization or turn start.
-        // For now, we return empty to avoid blocking the Tokio runtime.
-        tracing::debug!(
-            "[learning] LearnedContextSection skipped during prompt build (sync context). \
-             Consider pre-fetching in Agent::turn() or init."
-        );
-        String::new()
+    pub fn new(_memory: std::sync::Arc<dyn crate::openhuman::memory::Memory>) -> Self {
+        // Memory parameter kept for API compatibility but data comes from PromptContext.learned
+        Self
     }
 }
 
@@ -37,32 +21,43 @@ impl PromptSection for LearnedContextSection {
         "learned_context"
     }
 
-    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
-        Ok(self.load_learned_context())
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.learned.observations.is_empty() && ctx.learned.patterns.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("## Learned Context\n\n");
+
+        if !ctx.learned.observations.is_empty() {
+            out.push_str("### Recent Observations\n");
+            for obs in &ctx.learned.observations {
+                out.push_str("- ");
+                out.push_str(obs);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+
+        if !ctx.learned.patterns.is_empty() {
+            out.push_str("### Recognized Patterns\n");
+            for pat in &ctx.learned.patterns {
+                out.push_str("- ");
+                out.push_str(pat);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+
+        Ok(out)
     }
 }
 
 /// Injects the learned user profile into the system prompt.
-pub struct UserProfileSection {
-    memory: Arc<dyn Memory>,
-}
+pub struct UserProfileSection;
 
 impl UserProfileSection {
-    pub fn new(memory: Arc<dyn Memory>) -> Self {
-        Self { memory }
-    }
-
-    /// Load user profile without blocking the runtime.
-    /// Note: This is called during prompt building (sync context).
-    /// To avoid blocking, we return empty and rely on pre-cached data in future iterations.
-    fn load_user_profile(&self) -> String {
-        // TODO: Pre-fetch and cache this data during Agent initialization or turn start.
-        // For now, we return empty to avoid blocking the Tokio runtime.
-        tracing::debug!(
-            "[learning] UserProfileSection skipped during prompt build (sync context). \
-             Consider pre-fetching in Agent::turn() or init."
-        );
-        String::new()
+    pub fn new(_memory: std::sync::Arc<dyn crate::openhuman::memory::Memory>) -> Self {
+        Self
     }
 }
 
@@ -71,7 +66,18 @@ impl PromptSection for UserProfileSection {
         "user_profile"
     }
 
-    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
-        Ok(self.load_user_profile())
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.learned.user_profile.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("## User Profile (Learned)\n\n");
+        for entry in &ctx.learned.user_profile {
+            out.push_str("- ");
+            out.push_str(entry);
+            out.push('\n');
+        }
+        out.push('\n');
+        Ok(out)
     }
 }

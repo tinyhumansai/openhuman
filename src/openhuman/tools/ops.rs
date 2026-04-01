@@ -161,21 +161,11 @@ pub fn all_tools_with_runtime(
     tracing::debug!(
         learning_enabled = root_config.learning.enabled,
         tool_tracking_enabled = root_config.learning.tool_tracking_enabled,
-        "[tools] evaluating ToolStatsTool registration"
+        "evaluating ToolStatsTool registration"
     );
     if root_config.learning.enabled && root_config.learning.tool_tracking_enabled {
-        tracing::debug!("[tools] constructing ToolStatsTool");
-        let tool_stats = ToolStatsTool::new(memory.clone());
-        tracing::debug!(
-            tool_name = tool_stats.name(),
-            "[tools] registering ToolStatsTool"
-        );
-        tools.push(Box::new(tool_stats));
-        tracing::debug!("[tools] ToolStatsTool registered successfully");
-    } else {
-        tracing::debug!(
-            "[tools] ToolStatsTool registration skipped (learning disabled or tool tracking disabled)"
-        );
+        tools.push(Box::new(ToolStatsTool::new(memory.clone())));
+        tracing::debug!("ToolStatsTool registered");
     }
 
     // Add delegation tool when agents are configured

@@ -25,8 +25,41 @@ pub struct ToolCallRecord {
     pub name: String,
     pub arguments: serde_json::Value,
     pub success: bool,
-    pub output_snippet: String,
+    /// Sanitized, non-sensitive summary (tool type, status/error class, safe message).
+    /// Never contains raw tool output or PII.
+    pub output_summary: String,
     pub duration_ms: u64,
+}
+
+/// Produce a safe, non-sensitive summary of a tool result for learning records.
+///
+/// Strips raw payloads, file contents, API responses, and credentials — returns
+/// only the tool name, status, error class (if failed), and a short length hint.
+pub fn sanitize_tool_output(output: &str, tool_name: &str, success: bool) -> String {
+    if success {
+        let char_count = output.chars().count();
+        return format!("{tool_name}: ok ({char_count} chars)");
+    }
+
+    // For failures, extract a safe error class without raw payload
+    let lower = output.to_lowercase();
+    let error_class = if lower.contains("timeout") {
+        "timeout"
+    } else if lower.contains("not found") || lower.contains("no such file") {
+        "not_found"
+    } else if lower.contains("permission") || lower.contains("denied") {
+        "permission_denied"
+    } else if lower.contains("connection") || lower.contains("network") {
+        "connection_error"
+    } else if lower.contains("parse") || lower.contains("invalid") || lower.contains("syntax") {
+        "parse_error"
+    } else if lower.contains("unknown tool") {
+        "unknown_tool"
+    } else {
+        "error"
+    };
+
+    format!("{tool_name}: failed ({error_class})")
 }
 
 /// Trait for post-turn hooks that react to completed turns.
@@ -45,12 +78,38 @@ pub trait PostTurnHook: Send + Sync {
 
 /// Fire all hooks in parallel, logging errors without blocking the caller.
 pub fn fire_hooks(hooks: &[Arc<dyn PostTurnHook>], ctx: TurnContext) {
-    for hook in hooks {
+    log::debug!(
+        "[learning] dispatching {} post-turn hook(s) (tool_calls={}, response_chars={})",
+        hooks.len(),
+        ctx.tool_calls.len(),
+        ctx.assistant_response.chars().count()
+    );
+    for (idx, hook) in hooks.iter().enumerate() {
         let hook = Arc::clone(hook);
         let ctx = ctx.clone();
+        log::trace!(
+            "[learning] scheduling hook {}/{}: '{}'",
+            idx + 1,
+            hooks.len(),
+            hook.name()
+        );
         tokio::spawn(async move {
-            if let Err(e) = hook.on_turn_complete(&ctx).await {
-                log::warn!("[learning] post-turn hook '{}' failed: {e:#}", hook.name());
+            let started = std::time::Instant::now();
+            match hook.on_turn_complete(&ctx).await {
+                Ok(()) => {
+                    log::debug!(
+                        "[learning] hook '{}' completed in {}ms",
+                        hook.name(),
+                        started.elapsed().as_millis()
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[learning] hook '{}' failed after {}ms: {e:#}",
+                        hook.name(),
+                        started.elapsed().as_millis()
+                    );
+                }
             }
         });
     }

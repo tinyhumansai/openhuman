@@ -9,7 +9,9 @@ use crate::openhuman::config::LearningConfig;
 use crate::openhuman::memory::{Memory, MemoryCategory};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Per-tool effectiveness stats stored in memory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,26 +79,48 @@ impl ToolStats {
 pub struct ToolTrackerHook {
     config: LearningConfig,
     memory: Arc<dyn Memory>,
+    /// Per-tool lock to serialize read-modify-write cycles.
+    tool_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl ToolTrackerHook {
     pub fn new(config: LearningConfig, memory: Arc<dyn Memory>) -> Self {
-        Self { config, memory }
-    }
-
-    /// Load existing stats for a tool, or return defaults.
-    async fn load_stats(&self, tool_name: &str) -> ToolStats {
-        let key = format!("tool/{tool_name}");
-        match self.memory.get(&key).await {
-            Ok(Some(entry)) => serde_json::from_str(&entry.content).unwrap_or_default(),
-            _ => ToolStats::default(),
+        Self {
+            config,
+            memory,
+            tool_locks: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Save updated stats for a tool.
-    async fn save_stats(&self, tool_name: &str, stats: &ToolStats) -> anyhow::Result<()> {
+    /// Get or create a per-tool lock.
+    async fn tool_lock(&self, tool_name: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.tool_locks.lock().await;
+        locks
+            .entry(tool_name.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    /// Atomically load, update, and save stats for a single tool under a lock.
+    async fn update_stats(
+        &self,
+        tool_name: &str,
+        success: bool,
+        duration_ms: u64,
+        error_summary: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let lock = self.tool_lock(tool_name).await;
+        let _guard = lock.lock().await;
+
         let key = format!("tool/{tool_name}");
-        let content = serde_json::to_string(stats)?;
+        let mut stats: ToolStats = match self.memory.get(&key).await {
+            Ok(Some(entry)) => serde_json::from_str(&entry.content).unwrap_or_default(),
+            _ => ToolStats::default(),
+        };
+
+        stats.record_call(success, duration_ms, error_summary);
+
+        let content = serde_json::to_string(&stats)?;
         self.memory
             .store(
                 &key,
@@ -104,62 +128,13 @@ impl ToolTrackerHook {
                 MemoryCategory::Custom("tool_effectiveness".into()),
                 None,
             )
-            .await
-    }
+            .await?;
 
-    /// Atomically update stats with retry loop to handle concurrent updates.
-    async fn update_stats_atomic(
-        &self,
-        tool_name: &str,
-        success: bool,
-        duration_ms: u64,
-        error_snippet: Option<&str>,
-    ) -> anyhow::Result<()> {
-        const MAX_RETRIES: usize = 5;
-        let mut attempt = 0;
-
-        loop {
-            // Load current stats
-            let mut stats = self.load_stats(tool_name).await;
-
-            // Apply the update
-            stats.record_call(success, duration_ms, error_snippet);
-
-            // Attempt to save
-            match self.save_stats(tool_name, &stats).await {
-                Ok(_) => {
-                    tracing::debug!(
-                        tool_name = %tool_name,
-                        attempt = attempt + 1,
-                        "[learning] tool stats updated: {}",
-                        stats.summary()
-                    );
-                    return Ok(());
-                }
-                Err(e) if attempt < MAX_RETRIES => {
-                    attempt += 1;
-                    tracing::debug!(
-                        tool_name = %tool_name,
-                        attempt = attempt,
-                        error = %e,
-                        "[learning] retrying tool stats update due to potential race"
-                    );
-                    // Small backoff
-                    tokio::time::sleep(tokio::time::Duration::from_millis(10 * attempt as u64))
-                        .await;
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        tool_name = %tool_name,
-                        attempts = attempt + 1,
-                        error = %e,
-                        "[learning] failed to save tool stats after retries"
-                    );
-                    return Err(e);
-                }
-            }
-        }
+        log::debug!(
+            "[learning] tool stats updated: {tool_name} — {}",
+            stats.summary()
+        );
+        Ok(())
     }
 }
 
@@ -179,21 +154,19 @@ impl PostTurnHook for ToolTrackerHook {
         }
 
         for tc in &ctx.tool_calls {
-            let error_snippet = if !tc.success {
-                Some(tc.output_snippet.as_str())
+            let error_summary = if !tc.success {
+                Some(tc.output_summary.as_str())
             } else {
                 None
             };
 
-            // Use atomic update to prevent lost updates from concurrent turns
             if let Err(e) = self
-                .update_stats_atomic(&tc.name, tc.success, tc.duration_ms, error_snippet)
+                .update_stats(&tc.name, tc.success, tc.duration_ms, error_summary)
                 .await
             {
-                tracing::warn!(
-                    tool_name = %tc.name,
-                    error = %e,
-                    "[learning] failed to update tool stats"
+                log::warn!(
+                    "[learning] failed to update tool stats for {}: {e:#}",
+                    tc.name
                 );
             }
         }

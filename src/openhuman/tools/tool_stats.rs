@@ -44,6 +44,11 @@ impl Tool for ToolStatsTool {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
+        log::debug!(
+            "[tool_stats] executing query filter={:?}",
+            filter.as_deref()
+        );
+
         let entries = self
             .memory
             .list(
@@ -52,7 +57,13 @@ impl Tool for ToolStatsTool {
             )
             .await?;
 
+        log::debug!(
+            "[tool_stats] found {} tool effectiveness entries",
+            entries.len()
+        );
+
         if entries.is_empty() {
+            log::debug!("[tool_stats] no entries, returning early");
             return Ok(ToolResult {
                 success: true,
                 output: "No tool effectiveness data recorded yet.".into(),
@@ -96,6 +107,11 @@ impl Tool for ToolStatsTool {
                     output.push('\n');
                 }
                 Err(_) => {
+                    log::warn!(
+                        "[tool_stats] failed to parse stats for tool '{}' (content_len={})",
+                        tool_name,
+                        entry.content.len()
+                    );
                     output.push_str(&format!("**{}**: (unparseable stats)\n\n", tool_name));
                 }
             }
@@ -103,6 +119,7 @@ impl Tool for ToolStatsTool {
 
         if !found {
             if let Some(name) = filter {
+                log::debug!("[tool_stats] filter '{name}' matched no entries");
                 return Ok(ToolResult {
                     success: true,
                     output: format!("No effectiveness data recorded for tool '{name}'."),

@@ -1,7 +1,7 @@
 use super::dispatcher::{
     NativeToolDispatcher, ParsedToolCall, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
-use super::hooks::{self, PostTurnHook, ToolCallRecord, TurnContext};
+use super::hooks::{self, sanitize_tool_output, PostTurnHook, ToolCallRecord, TurnContext};
 use super::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use super::prompt::{PromptContext, SystemPromptBuilder};
 use crate::openhuman::agent::host_runtime;
@@ -36,6 +36,7 @@ pub struct Agent {
     classification_config: crate::openhuman::config::QueryClassificationConfig,
     available_hints: Vec<String>,
     post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
+    learning_enabled: bool,
 }
 
 pub struct AgentBuilder {
@@ -55,6 +56,7 @@ pub struct AgentBuilder {
     classification_config: Option<crate::openhuman::config::QueryClassificationConfig>,
     available_hints: Option<Vec<String>>,
     post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
+    learning_enabled: bool,
 }
 
 impl Default for AgentBuilder {
@@ -82,6 +84,7 @@ impl AgentBuilder {
             classification_config: None,
             available_hints: None,
             post_turn_hooks: Vec::new(),
+            learning_enabled: false,
         }
     }
 
@@ -171,6 +174,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn learning_enabled(mut self, enabled: bool) -> Self {
+        self.learning_enabled = enabled;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let tools = self
             .tools
@@ -208,6 +216,7 @@ impl AgentBuilder {
             classification_config: self.classification_config.unwrap_or_default(),
             available_hints: self.available_hints.unwrap_or_default(),
             post_turn_hooks: self.post_turn_hooks,
+            learning_enabled: self.learning_enabled,
         })
     }
 }
@@ -411,6 +420,7 @@ impl Agent {
             .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
+            .learning_enabled(config.learning.enabled)
             .build()
     }
 
@@ -441,7 +451,62 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
-    fn build_system_prompt(&self) -> Result<String> {
+    /// Pre-fetch learned context data from memory (async, non-blocking).
+    async fn fetch_learned_context(&self) -> crate::openhuman::agent::prompt::LearnedContextData {
+        use crate::openhuman::agent::prompt::LearnedContextData;
+
+        if !self.learning_enabled {
+            return LearnedContextData::default();
+        }
+
+        let obs_entries = self
+            .memory
+            .list(
+                Some(&MemoryCategory::Custom("learning_observations".into())),
+                None,
+            )
+            .await
+            .unwrap_or_default();
+
+        let pat_entries = self
+            .memory
+            .list(
+                Some(&MemoryCategory::Custom("learning_patterns".into())),
+                None,
+            )
+            .await
+            .unwrap_or_default();
+
+        let profile_entries = self
+            .memory
+            .list(Some(&MemoryCategory::Custom("user_profile".into())), None)
+            .await
+            .unwrap_or_default();
+
+        LearnedContextData {
+            observations: obs_entries
+                .iter()
+                .rev()
+                .take(5)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect(),
+            patterns: pat_entries
+                .iter()
+                .take(3)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect(),
+            user_profile: profile_entries
+                .iter()
+                .take(20)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect(),
+        }
+    }
+
+    fn build_system_prompt(
+        &self,
+        learned: crate::openhuman::agent::prompt::LearnedContextData,
+    ) -> Result<String> {
         let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
@@ -450,6 +515,7 @@ impl Agent {
             skills: &self.skills,
             identity_config: Some(&self.identity_config),
             dispatcher_instructions: &instructions,
+            learned,
         };
         self.prompt_builder.build(&ctx)
     }
@@ -466,7 +532,8 @@ impl Agent {
             )
         } else {
             // For errors, classify the error type without exposing details
-            let error_class = if raw_output.contains("permission") || raw_output.contains("denied") {
+            let error_class = if raw_output.contains("permission") || raw_output.contains("denied")
+            {
                 "permission_error"
             } else if raw_output.contains("not found") || raw_output.contains("404") {
                 "not_found"
@@ -513,13 +580,13 @@ impl Agent {
             success
         );
 
-        let output_summary = Self::sanitize_tool_output(&result, &call.name, success);
+        let output_summary = sanitize_tool_output(&result, &call.name, success);
 
         let record = ToolCallRecord {
             name: call.name.clone(),
             arguments: call.arguments.clone(),
             success,
-            output_snippet: output_summary,
+            output_summary,
             duration_ms: elapsed_ms,
         };
 
@@ -565,8 +632,11 @@ impl Agent {
             self.history.len(),
             self.config.max_tool_iterations
         );
+        // Pre-fetch learned context async before building the system prompt
+        let learned = self.fetch_learned_context().await;
+
         if self.history.is_empty() {
-            let system_prompt = self.build_system_prompt()?;
+            let system_prompt = self.build_system_prompt(learned)?;
             log::info!(
                 "[agent_loop] system prompt built chars={} content=\n{}",
                 system_prompt.chars().count(),
@@ -576,6 +646,15 @@ impl Agent {
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     system_prompt,
                 )));
+        } else if self.learning_enabled {
+            // Rebuild system prompt on subsequent turns to include newly learned context
+            let system_prompt = self.build_system_prompt(learned)?;
+            if let Some(pos) = self.history.iter().position(
+                |msg| matches!(msg, ConversationMessage::Chat(chat) if chat.role == "system"),
+            ) {
+                self.history[pos] = ConversationMessage::Chat(ChatMessage::system(system_prompt));
+                log::debug!("[agent_loop] system prompt refreshed with learned context");
+            }
         }
 
         if self.auto_save {
@@ -816,6 +895,27 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+/// Sanitize a learned memory entry before injecting into the system prompt.
+/// Strips raw data, limits length, and removes potential secrets.
+fn sanitize_learned_entry(content: &str) -> String {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Truncate to a safe length
+    let max_len = 200;
+    let sanitized: String = trimmed.chars().take(max_len).collect();
+    // Strip anything that looks like a secret/token
+    if sanitized.contains("Bearer ")
+        || sanitized.contains("sk-")
+        || sanitized.contains("ghp_")
+        || sanitized.contains("-----BEGIN")
+    {
+        return "[redacted: potential secret]".to_string();
+    }
+    sanitized
 }
 
 #[cfg(test)]

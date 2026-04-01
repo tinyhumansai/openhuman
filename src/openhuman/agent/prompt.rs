@@ -9,6 +9,17 @@ use std::path::Path;
 
 const BOOTSTRAP_MAX_CHARS: usize = 20_000;
 
+/// Pre-fetched learned context data for prompt sections (avoids blocking the runtime).
+#[derive(Debug, Clone, Default)]
+pub struct LearnedContextData {
+    /// Recent observations from the learning subsystem.
+    pub observations: Vec<String>,
+    /// Recognized patterns.
+    pub patterns: Vec<String>,
+    /// Learned user profile entries.
+    pub user_profile: Vec<String>,
+}
+
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub model_name: &'a str,
@@ -16,6 +27,8 @@ pub struct PromptContext<'a> {
     pub skills: &'a [Skill],
     pub identity_config: Option<&'a IdentityConfig>,
     pub dispatcher_instructions: &'a str,
+    /// Pre-fetched learned context (empty when learning is disabled).
+    pub learned: LearnedContextData,
 }
 
 pub trait PromptSection: Send + Sync {
@@ -339,6 +352,7 @@ mod tests {
             skills: &[],
             identity_config: Some(&identity_config),
             dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
         };
 
         let section = IdentitySection;
@@ -366,6 +380,7 @@ mod tests {
             skills: &[],
             identity_config: None,
             dispatcher_instructions: "instr",
+            learned: LearnedContextData::default(),
         };
         let prompt = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
         assert!(prompt.contains("## Tools"));
@@ -387,6 +402,7 @@ mod tests {
             skills: &[],
             identity_config: None,
             dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
         };
 
         let section = IdentitySection;
@@ -426,6 +442,7 @@ mod tests {
             skills: &[],
             identity_config: None,
             dispatcher_instructions: "instr",
+            learned: LearnedContextData::default(),
         };
 
         let rendered = DateTimeSection.build(&ctx).unwrap();
