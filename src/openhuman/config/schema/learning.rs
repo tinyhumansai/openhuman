@@ -16,7 +16,6 @@ pub enum ReflectionSource {
     Cloud,
 }
 
-
 /// Configuration for the agent self-learning subsystem.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LearningConfig {

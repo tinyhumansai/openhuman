@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 /// Channels can set a maximum permission level to restrict which tools
 /// are available. Tools requiring a level above the channel's maximum
 /// are rejected before execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum PermissionLevel {
     /// No permission needed (metadata-only operations).
     None = 0,
@@ -33,7 +32,6 @@ impl std::fmt::Display for PermissionLevel {
         }
     }
 }
-
 
 /// Result of a tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
