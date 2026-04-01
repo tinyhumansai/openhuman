@@ -27,6 +27,10 @@ pub enum AgentEvent {
     /// Tool calls were parsed from the LLM response.
     ToolCallsParsed {
         tool_names: Vec<String>,
+        /// Full arguments per tool call (parallel with tool_names).
+        tool_arguments: Vec<serde_json::Value>,
+        /// Optional tool_call_id per call (parallel with tool_names).
+        tool_call_ids: Vec<Option<String>>,
         iteration: usize,
     },
 
@@ -36,9 +40,12 @@ pub enum AgentEvent {
     /// A single tool execution completed.
     ToolExecutionComplete {
         name: String,
+        /// The actual tool output string.
+        output: String,
         output_chars: usize,
         elapsed_ms: u64,
         success: bool,
+        tool_call_id: Option<String>,
         iteration: usize,
     },
 
@@ -79,13 +86,20 @@ pub struct EventSender {
 
 impl EventSender {
     /// Create a new event sender with the given channel capacity.
+    /// Capacity is clamped to at least 1 to avoid a broadcast channel panic.
     pub fn new(capacity: usize) -> (Self, tokio::sync::broadcast::Receiver<AgentEvent>) {
-        let (tx, rx) = tokio::sync::broadcast::channel(capacity);
+        let cap = capacity.max(1);
+        let (tx, rx) = tokio::sync::broadcast::channel(cap);
         (Self { tx }, rx)
     }
 
     /// Emit an event. Silently drops if no receivers are listening.
     pub fn emit(&self, event: AgentEvent) {
+        tracing::trace!(
+            event = ?std::mem::discriminant(&event),
+            receivers = self.tx.receiver_count(),
+            "[agent_events] emitting event"
+        );
         let _ = self.tx.send(event);
     }
 
@@ -111,33 +125,44 @@ impl ObserverBridge {
 
     /// Process an event and forward to the legacy observer if applicable.
     pub fn handle_event(&self, event: &AgentEvent) {
+        tracing::trace!(
+            event = ?std::mem::discriminant(event),
+            "[agent_events] ObserverBridge handling event"
+        );
         match event {
             AgentEvent::ToolCallsParsed {
                 tool_names,
+                tool_arguments,
+                tool_call_ids,
                 iteration,
             } => {
                 let calls: Vec<super::dispatcher::ParsedToolCall> = tool_names
                     .iter()
-                    .map(|name| super::dispatcher::ParsedToolCall {
+                    .enumerate()
+                    .map(|(i, name)| super::dispatcher::ParsedToolCall {
                         name: name.clone(),
-                        arguments: serde_json::Value::Null,
-                        tool_call_id: None,
+                        arguments: tool_arguments
+                            .get(i)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                        tool_call_id: tool_call_ids.get(i).cloned().flatten(),
                     })
                     .collect();
                 self.observer.on_tool_calls(&calls, *iteration as u32);
             }
             AgentEvent::ToolExecutionComplete {
                 name,
-                output_chars,
+                output,
                 success,
+                tool_call_id,
                 iteration,
                 ..
             } => {
                 let results = vec![super::dispatcher::ToolExecutionResult {
                     name: name.clone(),
-                    output: format!("[{output_chars} chars]"),
+                    output: output.clone(),
                     success: *success,
-                    tool_call_id: None,
+                    tool_call_id: tool_call_id.clone(),
                 }];
                 self.observer.on_tool_results(&results, *iteration as u32);
             }
