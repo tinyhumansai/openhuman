@@ -987,7 +987,11 @@ impl OpenAiCompatibleProvider {
             }
         }
 
-        ProviderChatResponse { text, tool_calls }
+        ProviderChatResponse {
+            text,
+            tool_calls,
+            usage: None,
+        }
     }
 
     fn is_native_tool_schema_unsupported(status: reqwest::StatusCode, error: &str) -> bool {
@@ -1314,6 +1318,7 @@ impl Provider for OpenAiCompatibleProvider {
                 return Ok(ProviderChatResponse {
                     text: Some(text),
                     tool_calls: vec![],
+                    usage: None,
                 });
             }
         };
@@ -1348,7 +1353,11 @@ impl Provider for OpenAiCompatibleProvider {
             })
             .collect::<Vec<_>>();
 
-        Ok(ProviderChatResponse { text, tool_calls })
+        Ok(ProviderChatResponse {
+            text,
+            tool_calls,
+            usage: None,
+        })
     }
 
     async fn chat(
@@ -1398,6 +1407,7 @@ impl Provider for OpenAiCompatibleProvider {
                         .map(|text| ProviderChatResponse {
                             text: Some(text),
                             tool_calls: vec![],
+                            usage: None,
                         })
                         .map_err(|responses_err| {
                             let fb = super::format_anyhow_chain(&responses_err);
@@ -1426,6 +1436,7 @@ impl Provider for OpenAiCompatibleProvider {
                 return Ok(ProviderChatResponse {
                     text: Some(text),
                     tool_calls: vec![],
+                    usage: None,
                 });
             }
 
@@ -1436,6 +1447,7 @@ impl Provider for OpenAiCompatibleProvider {
                     .map(|text| ProviderChatResponse {
                         text: Some(text),
                         tool_calls: vec![],
+                        usage: None,
                     })
                     .map_err(|responses_err| {
                         let fb = super::format_anyhow_chain(&responses_err);

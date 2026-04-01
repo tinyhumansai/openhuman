@@ -6,18 +6,14 @@ use serde::{Deserialize, Serialize};
 /// Which LLM to use for reflection inference.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ReflectionSource {
     /// Use the local Ollama model via `LocalAiService::prompt()`.
     /// Model is determined by `config.local_ai.chat_model_id`.
+    #[default]
     Local,
     /// Use the cloud reasoning model via `Provider::simple_chat("hint:reasoning")`.
     Cloud,
-}
-
-impl Default for ReflectionSource {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 /// Configuration for the agent self-learning subsystem.

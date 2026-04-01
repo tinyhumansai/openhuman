@@ -8,7 +8,7 @@ pub mod traits;
 #[allow(unused_imports)]
 pub use traits::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ProviderCapabilityError,
-    ToolCall, ToolResultMessage,
+    ToolCall, ToolResultMessage, UsageInfo,
 };
 
 pub use ops::*;

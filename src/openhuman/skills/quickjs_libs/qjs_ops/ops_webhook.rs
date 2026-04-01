@@ -35,7 +35,7 @@ pub fn register<'js>(
 
                     router
                         .register(&tunnel_uuid, &sc.skill_id, name, backend_id)
-                        .map_err(|e| js_err(e))
+                        .map_err(js_err)
                 },
             ),
         )?;
@@ -56,7 +56,7 @@ pub fn register<'js>(
 
                     router
                         .unregister(&tunnel_uuid, &sc.skill_id)
-                        .map_err(|e| js_err(e))
+                        .map_err(js_err)
                 },
             ),
         )?;

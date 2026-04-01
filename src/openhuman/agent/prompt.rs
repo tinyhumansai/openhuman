@@ -63,10 +63,18 @@ impl SystemPromptBuilder {
 
     pub fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
         let mut output = String::new();
+        let mut cache_boundary_inserted = false;
         for section in &self.sections {
             let part = section.build(ctx)?;
             if part.trim().is_empty() {
                 continue;
+            }
+            // Insert cache boundary marker before the first dynamic section.
+            // Static sections (identity, tools, safety, skills) are cacheable;
+            // dynamic sections (workspace, datetime, runtime) change per request.
+            if !cache_boundary_inserted && is_dynamic_section(section.name()) {
+                output.push_str("<!-- CACHE_BOUNDARY -->\n\n");
+                cache_boundary_inserted = true;
             }
             output.push_str(part.trim_end());
             output.push_str("\n\n");
@@ -233,6 +241,13 @@ impl PromptSection for DateTimeSection {
             now.format("%Z")
         ))
     }
+}
+
+/// Returns true for sections whose content changes between requests.
+/// Static sections (identity, tools, safety, skills) are placed before
+/// the cache boundary; dynamic sections (workspace, datetime, runtime) after.
+fn is_dynamic_section(name: &str) -> bool {
+    matches!(name, "workspace" | "datetime" | "runtime")
 }
 
 fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &str) {
