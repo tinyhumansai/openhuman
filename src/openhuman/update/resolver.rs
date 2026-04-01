@@ -88,14 +88,13 @@ fn target_triple() -> String {
 }
 
 fn expected_asset_name(version: &str) -> String {
-    #[cfg(windows)]
-    {
-        return format!("openhuman-core_{version}_{}.exe", target_triple());
-    }
-    #[cfg(not(windows))]
-    {
-        format!("openhuman-core_{version}_{}", target_triple())
-    }
+    let target = target_triple();
+    let ext = if target.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    format!("openhuman-core_{version}_{target}{ext}")
 }
 
 fn digest_without_prefix(value: &str) -> String {
