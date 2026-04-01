@@ -105,8 +105,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let mut config = Config::default();
         config.local_ai.voice_llm_cleanup_enabled = false;
-        let result =
-            rt.block_on(cleanup_transcription(&config, "um hello uh world", None));
+        let result = rt.block_on(cleanup_transcription(&config, "um hello uh world", None));
         assert_eq!(result, "um hello uh world");
     }
 }

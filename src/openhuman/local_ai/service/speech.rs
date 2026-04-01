@@ -30,10 +30,11 @@ impl LocalAiService {
             debug!("{LOG_PREFIX} using in-process whisper engine for {audio_path}");
             let handle = self.whisper.clone();
             let path = audio_path.to_string();
-            let result =
-                tokio::task::spawn_blocking(move || Self::transcribe_in_process_inner(&handle, &path))
-                    .await
-                    .map_err(|e| format!("whisper task join error: {e}"))?;
+            let result = tokio::task::spawn_blocking(move || {
+                Self::transcribe_in_process_inner(&handle, &path)
+            })
+            .await
+            .map_err(|e| format!("whisper task join error: {e}"))?;
             match result {
                 Ok(text) => {
                     self.status.lock().stt_state = "ready".to_string();
