@@ -24,7 +24,7 @@ pub use schema::{
     SchedulerConfig, ScreenIntelligenceConfig, SecretsConfig, SecurityConfig, SlackConfig,
     StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig,
     WebSearchConfig, WebhookConfig, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CODING_V1,
-    MODEL_REASONING_V1,
+    MODEL_REASONING_V1, OrchestratorConfig, ArchetypeConfig,
 };
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
