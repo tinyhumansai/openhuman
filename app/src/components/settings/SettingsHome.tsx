@@ -4,7 +4,10 @@ import { skillManager } from '../../lib/skills/manager';
 import { persistor } from '../../store';
 import { clearToken } from '../../store/authSlice';
 import { useAppDispatch } from '../../store/hooks';
-import { logout as tauriLogout } from '../../utils/tauriCommands';
+import {
+  openhumanWorkspaceOnboardingFlagSet,
+  logout as tauriLogout,
+} from '../../utils/tauriCommands';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
 import { useSettingsNavigation } from './hooks/useSettingsNavigation';
@@ -19,6 +22,11 @@ const SettingsHome = () => {
   const handleLogout = async () => {
     await dispatch(clearToken());
     try {
+      await openhumanWorkspaceOnboardingFlagSet(false);
+    } catch (err) {
+      console.warn('[Settings] Failed to clear workspace onboarding flag:', err);
+    }
+    try {
       await tauriLogout();
     } catch (err) {
       console.warn('[Settings] Rust logout failed:', err);
@@ -28,6 +36,11 @@ const SettingsHome = () => {
 
   const clearAllAppData = async () => {
     await dispatch(clearToken());
+    try {
+      await openhumanWorkspaceOnboardingFlagSet(false);
+    } catch (err) {
+      console.warn('[Settings] Failed to clear workspace onboarding flag:', err);
+    }
     try {
       await tauriLogout();
     } catch (err) {

@@ -2,7 +2,12 @@ import { useEffect } from 'react';
 
 import { clearToken, setAuthBootstrapComplete, setToken } from '../store/authSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { getAuthState, getSessionToken, isTauri } from '../utils/tauriCommands';
+import {
+  getAuthState,
+  getSessionToken,
+  isTauri,
+  openhumanWorkspaceOnboardingFlagSet,
+} from '../utils/tauriCommands';
 
 const AUTH_BOOTSTRAP_TIMEOUT_MS = 5000;
 
@@ -50,6 +55,11 @@ const UserProvider = ({ children }: { children: React.ReactNode }) => {
           }
         } else if (!authState.is_authenticated && token) {
           await dispatch(clearToken());
+          try {
+            await openhumanWorkspaceOnboardingFlagSet(false);
+          } catch {
+            // Best-effort: flag clear failure shouldn't block auth recovery
+          }
         }
       } catch (err) {
         console.warn('[auth] Failed to restore session token from core RPC:', err);

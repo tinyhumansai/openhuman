@@ -56,8 +56,10 @@ const authSlice = createSlice({
     },
     _clearToken: state => {
       state.token = null;
+      state.isOnboardedByUser = {};
       state.onboardingTasksByUser = {};
       state.hasIncompleteOnboardingByUser = {};
+      state.isAnalyticsEnabledByUser = {};
       state.encryptionKeyByUser = {};
       state.primaryWalletAddressByUser = {};
       state.onboardingDeferredByUser = {};

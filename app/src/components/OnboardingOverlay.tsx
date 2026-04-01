@@ -27,10 +27,21 @@ const OnboardingOverlay = () => {
   const isDeferred = useAppSelector(selectOnboardingDeferred);
   const [hasWorkspaceFlag, setHasWorkspaceFlag] = useState<boolean | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const [userLoadTimedOut, setUserLoadTimedOut] = useState(false);
 
-  // Check workspace flag once user is loaded
+  // Timeout: if user profile hasn't loaded after 3s but we have token + bootstrap,
+  // proceed anyway so onboarding isn't permanently invisible.
   useEffect(() => {
-    if (!token || !isAuthBootstrapComplete || !user?._id) return;
+    if (!token || !isAuthBootstrapComplete || user?._id) return;
+
+    const timer = setTimeout(() => setUserLoadTimedOut(true), 3000);
+    return () => clearTimeout(timer);
+  }, [token, isAuthBootstrapComplete, user?._id]);
+
+  // Check workspace flag once user is loaded (or timeout reached)
+  const userReady = !!user?._id || userLoadTimedOut;
+  useEffect(() => {
+    if (!token || !isAuthBootstrapComplete || !userReady) return;
 
     let mounted = true;
     const check = async () => {
@@ -47,7 +58,7 @@ const OnboardingOverlay = () => {
     return () => {
       mounted = false;
     };
-  }, [token, isAuthBootstrapComplete, user?._id, isOnboarded]);
+  }, [token, isAuthBootstrapComplete, userReady, isOnboarded]);
 
   const handleComplete = useCallback(() => {
     setDismissed(true);
@@ -60,8 +71,8 @@ const OnboardingOverlay = () => {
     setDismissed(true);
   }, [dispatch, user]);
 
-  // Don't show if not logged in, bootstrap not complete, or user not loaded
-  if (!token || !isAuthBootstrapComplete || !user?._id) return null;
+  // Don't show if not logged in, bootstrap not complete, or user not ready
+  if (!token || !isAuthBootstrapComplete || !userReady) return null;
 
   // Still loading workspace flag
   if (hasWorkspaceFlag === null) return null;

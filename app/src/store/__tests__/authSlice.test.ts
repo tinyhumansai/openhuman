@@ -2,9 +2,13 @@ import { configureStore } from '@reduxjs/toolkit';
 import { describe, expect, it } from 'vitest';
 
 import authReducer, {
+  clearToken,
   setAnalyticsForUser,
+  setEncryptionKeyForUser,
   setOnboardedForUser,
+  setOnboardingDeferredForUser,
   setOnboardingTasksForUser,
+  setPrimaryWalletAddressForUser,
   setToken,
 } from '../authSlice';
 import teamReducer from '../teamSlice';
@@ -86,5 +90,50 @@ describe('authSlice', () => {
       })
     );
     expect(store.getState().auth.hasIncompleteOnboardingByUser.u1).toBe(false);
+  });
+
+  it('clearToken resets all per-user state', async () => {
+    const store = createStore();
+
+    // Populate all per-user fields
+    store.dispatch(setToken('jwt-abc'));
+    store.dispatch(setOnboardedForUser({ userId: 'u1', value: true }));
+    store.dispatch(setAnalyticsForUser({ userId: 'u1', enabled: true }));
+    store.dispatch(setEncryptionKeyForUser({ userId: 'u1', key: 'aes-hex' }));
+    store.dispatch(setPrimaryWalletAddressForUser({ userId: 'u1', address: '0xabc' }));
+    store.dispatch(setOnboardingDeferredForUser({ userId: 'u1', deferred: true }));
+    store.dispatch(
+      setOnboardingTasksForUser({
+        userId: 'u1',
+        tasks: {
+          accessibilityPermissionGranted: true,
+          localModelConsentGiven: true,
+          localModelDownloadStarted: true,
+          enabledTools: ['shell'],
+          connectedSources: ['telegram'],
+        },
+      })
+    );
+
+    // Verify state is populated
+    const before = store.getState().auth;
+    expect(before.token).toBe('jwt-abc');
+    expect(before.isOnboardedByUser.u1).toBe(true);
+    expect(before.isAnalyticsEnabledByUser.u1).toBe(true);
+    expect(before.encryptionKeyByUser.u1).toBe('aes-hex');
+
+    // Dispatch clearToken thunk
+    await store.dispatch(clearToken());
+
+    // Verify everything is reset
+    const after = store.getState().auth;
+    expect(after.token).toBeNull();
+    expect(after.isOnboardedByUser).toEqual({});
+    expect(after.onboardingTasksByUser).toEqual({});
+    expect(after.hasIncompleteOnboardingByUser).toEqual({});
+    expect(after.isAnalyticsEnabledByUser).toEqual({});
+    expect(after.encryptionKeyByUser).toEqual({});
+    expect(after.primaryWalletAddressByUser).toEqual({});
+    expect(after.onboardingDeferredByUser).toEqual({});
   });
 });
