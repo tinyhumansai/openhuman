@@ -75,6 +75,9 @@ jobs:
             app/src-tauri -> target
           cache-on-failure: true
 
+      - name: Install cmake (for whisper-rs)
+        run: apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
+
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
 

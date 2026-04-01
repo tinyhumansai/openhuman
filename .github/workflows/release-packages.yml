@@ -58,7 +58,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            pkg-config libssl-dev build-essential
+            pkg-config libssl-dev build-essential cmake
 
       - name: Build CLI binary and package tarball
         env:
