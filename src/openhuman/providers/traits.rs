@@ -49,6 +49,17 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
+/// Token usage information returned by the provider after an inference call.
+#[derive(Debug, Clone, Default)]
+pub struct UsageInfo {
+    /// Number of tokens in the input/prompt.
+    pub input_tokens: u64,
+    /// Number of tokens in the output/completion.
+    pub output_tokens: u64,
+    /// Total context window size for the model (0 if unknown).
+    pub context_window: u64,
+}
+
 /// An LLM response that may contain text, tool calls, or both.
 #[derive(Debug, Clone)]
 pub struct ChatResponse {
@@ -56,6 +67,8 @@ pub struct ChatResponse {
     pub text: Option<String>,
     /// Tool calls requested by the LLM.
     pub tool_calls: Vec<ToolCall>,
+    /// Token usage info from the provider (if available).
+    pub usage: Option<UsageInfo>,
 }
 
 impl ChatResponse {
@@ -372,6 +385,7 @@ pub trait Provider: Send + Sync {
                 return Ok(ChatResponse {
                     text: Some(text),
                     tool_calls: Vec::new(),
+                    usage: None,
                 });
             }
         }
@@ -389,6 +403,7 @@ pub trait Provider: Send + Sync {
         Ok(ChatResponse {
             text: Some(text),
             tool_calls: Vec::new(),
+            usage: None,
         })
     }
 
@@ -422,6 +437,7 @@ pub trait Provider: Send + Sync {
         Ok(ChatResponse {
             text: Some(text),
             tool_calls: Vec::new(),
+            usage: None,
         })
     }
 

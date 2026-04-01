@@ -255,6 +255,7 @@ mod tests {
                     .into(),
             ),
             tool_calls: vec![],
+            usage: None,
         };
         let dispatcher = XmlToolDispatcher;
         let (_, calls) = dispatcher.parse_response(&response);
@@ -271,6 +272,7 @@ mod tests {
                 name: "file_read".into(),
                 arguments: "{\"path\":\"a.txt\"}".into(),
             }],
+            usage: None,
         };
         let dispatcher = NativeToolDispatcher;
         let (_, calls) = dispatcher.parse_response(&response);
@@ -300,6 +302,7 @@ mod tests {
                     .into(),
             ),
             tool_calls: vec![],
+            usage: None,
         };
         let dispatcher = NativeToolDispatcher;
         let (text, calls) = dispatcher.parse_response(&response);
@@ -316,6 +319,7 @@ mod tests {
                 "Let me run this.\n<invoke>{\"name\":\"shell\",\"arguments\":{\"command\":\"pwd\"}}</invoke>".into(),
             ),
             tool_calls: vec![],
+            usage: None,
         };
         let dispatcher = NativeToolDispatcher;
         let (text, calls) = dispatcher.parse_response(&response);

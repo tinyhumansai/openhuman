@@ -61,6 +61,7 @@ pub struct ToolCall {
 pub struct ChatResponse {
     pub text: Option<String>,
     pub tool_calls: Vec<ToolCall>,
+    pub usage: Option<crate::openhuman::providers::UsageInfo>,
 }
 
 impl ChatResponse {
@@ -389,6 +390,7 @@ mod tests {
         let empty = ChatResponse {
             text: None,
             tool_calls: vec![],
+            usage: None,
         };
         assert!(!empty.has_tool_calls());
         assert_eq!(empty.text_or_empty(), "");
@@ -400,6 +402,7 @@ mod tests {
                 name: "shell".into(),
                 arguments: "{}".into(),
             }],
+            usage: None,
         };
         assert!(with_tools.has_tool_calls());
         assert_eq!(with_tools.text_or_empty(), "Let me check");

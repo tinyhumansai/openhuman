@@ -715,6 +715,7 @@ mod tests {
                 return Ok(crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
+                    usage: None,
                 });
             }
             Ok(guard.remove(0))
@@ -758,6 +759,7 @@ mod tests {
             responses: Mutex::new(vec![crate::openhuman::providers::ChatResponse {
                 text: Some("hello".into()),
                 tool_calls: vec![],
+                usage: None,
             }]),
         });
 
@@ -796,10 +798,12 @@ mod tests {
                         name: "echo".into(),
                         arguments: "{}".into(),
                     }],
+                    usage: None,
                 },
                 crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
+                    usage: None,
                 },
             ]),
         });
@@ -842,10 +846,12 @@ mod tests {
                             .into(),
                     ),
                     tool_calls: vec![],
+                    usage: None,
                 },
                 crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
+                    usage: None,
                 },
             ]),
         });
