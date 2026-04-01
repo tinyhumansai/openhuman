@@ -1,9 +1,10 @@
 ---
 name: Bug
-description: Report incorrect behavior, regressions, or broken flows
+about: Used for bug reports
 title: "[Bug] "
-labels:
-  - bug
+labels: bug, enhancement
+assignees: ''
+
 ---
 
 ## Summary
