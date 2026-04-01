@@ -185,6 +185,7 @@ jobs:
           eval "$(dbus-launch --sh-syntax)"
           # Ensure XDG dirs exist for deep-link URL scheme registration on Linux
           mkdir -p ~/.local/share/applications
+          export RUST_BACKTRACE=1
           yarn workspace openhuman-app test:e2e:all:flows || {
             echo "=== tauri-driver log ==="
             cat /tmp/tauri-driver-e2e-*.log 2>/dev/null || echo "No tauri-driver logs"

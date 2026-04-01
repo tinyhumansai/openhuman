@@ -179,7 +179,9 @@ pub fn run() {
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
             {
-                app.deep_link().register_all()?;
+                if let Err(err) = app.deep_link().register_all() {
+                    log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                }
             }
 
             let core_run_mode = core_process::default_core_run_mode(daemon_mode);
