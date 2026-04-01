@@ -529,7 +529,11 @@ const Conversations = () => {
     };
 
     dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
-    lastUserMessageRef.current = { id: userMessage.id, content: trimmed, threadId: sendingThreadId };
+    lastUserMessageRef.current = {
+      id: userMessage.id,
+      content: trimmed,
+      threadId: sendingThreadId,
+    };
 
     setInputValue('');
     setSendError(null);
