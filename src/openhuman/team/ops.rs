@@ -41,7 +41,11 @@ fn require_token(config: &Config) -> Result<String, String> {
     get_session_token(config)?
         .and_then(|v| {
             let t = v.trim().to_string();
-            if t.is_empty() { None } else { Some(t) }
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
         })
         .ok_or_else(|| "no backend session token; run auth_store_session first".to_string())
 }
@@ -74,7 +78,10 @@ async fn authed_request(
         req = req.json(&b);
     }
 
-    let resp = req.send().await.map_err(|e| format!("request failed: {e}"))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
 

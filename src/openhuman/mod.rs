@@ -14,6 +14,7 @@
 pub mod agent;
 pub mod approval;
 pub mod autocomplete;
+pub mod billing;
 pub mod channels;
 pub mod config;
 pub mod cost;
@@ -22,7 +23,6 @@ pub mod cron;
 pub mod dev_paths;
 pub mod doctor;
 pub mod encryption;
-pub mod billing;
 pub mod health;
 pub mod heartbeat;
 pub mod learning;

@@ -185,10 +185,22 @@ fn mock_upstream_router() -> Router {
         .route("/payments/coinbase/charge", post(coinbase_charge))
         // team
         .route("/teams/{team_id}/members", get(team_members))
-        .route("/teams/{team_id}/members/{user_id}", axum::routing::delete(team_member_delete))
-        .route("/teams/{team_id}/members/{user_id}/role", axum::routing::put(team_member_role_put))
-        .route("/teams/{team_id}/invites", get(team_invites_get).post(team_invites_post))
-        .route("/teams/{team_id}/invites/{invite_id}", axum::routing::delete(team_invite_delete))
+        .route(
+            "/teams/{team_id}/members/{user_id}",
+            axum::routing::delete(team_member_delete),
+        )
+        .route(
+            "/teams/{team_id}/members/{user_id}/role",
+            axum::routing::put(team_member_role_put),
+        )
+        .route(
+            "/teams/{team_id}/invites",
+            get(team_invites_get).post(team_invites_post),
+        )
+        .route(
+            "/teams/{team_id}/invites/{invite_id}",
+            axum::routing::delete(team_invite_delete),
+        )
 }
 
 async fn serve_on_ephemeral(
@@ -1311,7 +1323,10 @@ async fn team_rpc_e2e() {
     let invites_arr = invites_result
         .as_array()
         .expect("expected array of invites");
-    assert!(!invites_arr.is_empty(), "expected at least one invite: {invites_result}");
+    assert!(
+        !invites_arr.is_empty(),
+        "expected at least one invite: {invites_result}"
+    );
 
     // --- team_revoke_invite (no payload to check, just assert no error) ---
     let revoke = post_json_rpc(

@@ -240,12 +240,8 @@ fn handle_team_revoke_invite(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let payload = deserialize_params::<RevokeInviteParams>(params)?;
         to_json(
-            crate::openhuman::team::revoke_invite(
-                &config,
-                &payload.team_id,
-                &payload.invite_id,
-            )
-            .await?,
+            crate::openhuman::team::revoke_invite(&config, &payload.team_id, &payload.invite_id)
+                .await?,
         )
     })
 }

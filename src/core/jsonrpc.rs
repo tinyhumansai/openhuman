@@ -762,9 +762,13 @@ mod tests {
 
     #[tokio::test]
     async fn billing_purchase_plan_missing_plan_fails_validation() {
-        let err = invoke_method(default_state(), "openhuman.billing_purchase_plan", json!({}))
-            .await
-            .expect_err("missing plan should fail");
+        let err = invoke_method(
+            default_state(),
+            "openhuman.billing_purchase_plan",
+            json!({}),
+        )
+        .await
+        .expect_err("missing plan should fail");
         assert!(err.contains("missing required param 'plan'"));
     }
 

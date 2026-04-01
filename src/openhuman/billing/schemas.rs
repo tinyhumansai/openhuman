@@ -80,7 +80,10 @@ pub fn billing_schemas(function: &str) -> ControllerSchema {
             namespace: "billing",
             function: "purchase_plan",
             description: "Create Stripe Checkout session for a plan purchase.",
-            inputs: vec![required_string("plan", "Plan identifier (backend contract).")],
+            inputs: vec![required_string(
+                "plan",
+                "Plan identifier (backend contract).",
+            )],
             outputs: vec![json_output(
                 "session",
                 "Purchase session payload from /payments/stripe/purchasePlan.",
@@ -153,9 +156,7 @@ fn handle_billing_purchase_plan(params: Map<String, Value>) -> ControllerFuture 
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let payload = deserialize_params::<PurchasePlanParams>(params)?;
-        to_json(
-            crate::openhuman::billing::purchase_plan(&config, payload.plan.trim()).await?,
-        )
+        to_json(crate::openhuman::billing::purchase_plan(&config, payload.plan.trim()).await?)
     })
 }
 
@@ -171,12 +172,8 @@ fn handle_billing_top_up(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let payload = deserialize_params::<TopUpParams>(params)?;
         to_json(
-            crate::openhuman::billing::top_up_credits(
-                &config,
-                payload.amount_usd,
-                payload.gateway,
-            )
-            .await?,
+            crate::openhuman::billing::top_up_credits(&config, payload.amount_usd, payload.gateway)
+                .await?,
         )
     })
 }

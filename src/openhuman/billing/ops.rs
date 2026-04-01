@@ -57,7 +57,10 @@ async fn authed_request(
         req = req.json(&b);
     }
 
-    let resp = req.send().await.map_err(|e| format!("request failed: {e}"))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
 
@@ -108,7 +111,11 @@ fn require_token(config: &Config) -> Result<String, String> {
     get_session_token(config)?
         .and_then(|v| {
             let t = v.trim().to_string();
-            if t.is_empty() { None } else { Some(t) }
+            if t.is_empty() {
+                None
+            } else {
+                Some(t)
+            }
         })
         .ok_or_else(|| "no backend session token; run auth_store_session first".to_string())
 }
@@ -126,13 +133,7 @@ async fn get_authed_value(
 }
 
 pub async fn get_current_plan(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(
-        config,
-        Method::GET,
-        "/payments/stripe/currentPlan",
-        None,
-    )
-    .await?;
+    let data = get_authed_value(config, Method::GET, "/payments/stripe/currentPlan", None).await?;
     Ok(RpcOutcome::single_log(
         data,
         "current plan fetched from backend",
@@ -167,13 +168,7 @@ pub async fn purchase_plan(config: &Config, plan: &str) -> Result<RpcOutcome<Val
 }
 
 pub async fn create_portal_session(config: &Config) -> Result<RpcOutcome<Value>, String> {
-    let data = get_authed_value(
-        config,
-        Method::POST,
-        "/payments/stripe/portal",
-        None,
-    )
-    .await?;
+    let data = get_authed_value(config, Method::POST, "/payments/stripe/portal", None).await?;
     Ok(RpcOutcome::single_log(
         data,
         "customer portal session created",
@@ -217,10 +212,7 @@ pub async fn top_up_credits(
     )
     .await?;
 
-    Ok(RpcOutcome::single_log(
-        data,
-        "credit top-up initiated",
-    ))
+    Ok(RpcOutcome::single_log(data, "credit top-up initiated"))
 }
 
 #[derive(Debug, Serialize)]
