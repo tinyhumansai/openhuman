@@ -1,7 +1,7 @@
 /* eslint-disable */
 // @ts-nocheck
 /**
- * E2E test: Authentication & Access Control + Billing & Subscriptions.
+ * E2E test: Authentication & Access Control + Billing & Subscriptions (Linux / tauri-driver).
  *
  * Covers:
  *   1.1    User registration via deep link
@@ -14,6 +14,14 @@
  *   1.3    Logout via Settings menu
  *   1.3.1  Revoked session auto-logout
  *
+ * Onboarding steps (Onboarding.tsx — 6 steps):
+ *   Step 0: WelcomeStep       — "Continue"
+ *   Step 1: LocalAIStep       — "Setup later" → "Continue"
+ *   Step 2: ScreenPermissions — "Continue Without Permission"
+ *   Step 3: ToolsStep         — "Continue"
+ *   Step 4: SkillsStep        — "Finish Setup" (fires onboarding-complete)
+ *   Step 5: MnemonicStep      — checkbox + "Finish Setup"
+ *
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
  */
@@ -21,7 +29,6 @@ import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/ap
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickButton,
-  clickNativeButton,
   clickText,
   dumpAccessibilityTree,
   hasAppChrome,
@@ -81,65 +88,235 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
   return undefined;
 }
 
-async function navigateToHome() {
-  try {
-    await clickNativeButton('Home', 10_000);
-  } catch {
-    // May already be on Home
-  }
-  await browser.pause(2_000);
-  const homeText = await waitForHomePage(15_000);
-  if (!homeText) {
-    try {
-      await clickNativeButton('Home', 5_000);
-    } catch {
-      /* ignore */
+/**
+ * Click the first matching text from a list of candidates.
+ * Returns the clicked text or null if none found.
+ */
+async function clickFirstMatch(candidates, timeout = 5_000) {
+  for (const text of candidates) {
+    if (await textExists(text)) {
+      await clickText(text, timeout);
+      return text;
     }
+  }
+  return null;
+}
+
+/**
+ * Navigate via JS hash change. The sidebar nav buttons are icon-only
+ * (no text content, just aria-label + SVG), so XPath text matching
+ * and standard clicks fail on tauri-driver. Using window.location.hash
+ * is the most reliable strategy.
+ */
+async function navigateViaHash(hash) {
+  try {
+    await browser.execute((h) => { window.location.hash = h; }, hash);
     await browser.pause(2_000);
+    const currentHash = await browser.execute(() => window.location.hash);
+    console.log(`[AuthAccess] Navigated to ${hash} (current: ${currentHash})`);
+  } catch (err) {
+    console.log(`[AuthAccess] Hash navigation to ${hash} failed:`, err);
+  }
+}
+
+/**
+ * Click a sidebar nav button by aria-label via JS.
+ * Fallback for cases where hash navigation doesn't trigger the right route.
+ */
+async function clickNavByAriaLabel(label) {
+  try {
+    const clicked = await browser.execute((lbl) => {
+      const btn = document.querySelector(`button[aria-label="${lbl}"]`) as HTMLButtonElement;
+      if (btn) { btn.click(); return true; }
+      return false;
+    }, label);
+    if (clicked) {
+      console.log(`[AuthAccess] Clicked nav button [aria-label="${label}"] via JS`);
+      await browser.pause(2_000);
+    }
+    return clicked;
+  } catch {
+    return false;
+  }
+}
+
+async function navigateToHome() {
+  await navigateViaHash('/home');
+  const homeText = await waitForHomePage(10_000);
+  if (!homeText) {
+    await clickNavByAriaLabel('Home');
     await waitForHomePage(10_000);
   }
 }
 
 async function navigateToSettings() {
-  await clickNativeButton('Settings', 10_000);
-  console.log('[AuthAccess] Clicked Settings nav');
-  await browser.pause(3_000);
+  await navigateViaHash('/settings');
 }
 
 async function navigateToBilling() {
-  await navigateToSettings();
+  // Navigate directly to billing settings via hash route
+  await navigateViaHash('/settings/billing');
 
-  // Wait for Billing text to appear in Settings page (up to 15s).
-  // Note: "Billing & Usage" contains "&" which breaks XPath — use "Billing" only.
-  try {
-    await waitForText('Billing', 15_000);
-    await clickText('Billing', 10_000);
-    console.log('[AuthAccess] Clicked Billing menu item');
-  } catch {
-    // Retry: Settings page may not have loaded
-    console.log('[AuthAccess] Billing not found, retrying Settings navigation...');
-    try {
-      await clickNativeButton('Settings', 5_000);
-    } catch {
-      /* ignore */
-    }
-    await browser.pause(3_000);
-    try {
-      await waitForText('Billing', 10_000);
-      await clickText('Billing', 10_000);
-      console.log('[AuthAccess] Clicked Billing menu item (retry)');
-    } catch {
-      const tree = await dumpAccessibilityTree();
-      console.log('[AuthAccess] Billing menu item not found. Tree:\n', tree.slice(0, 6000));
-      throw new Error('Billing menu item not found in Settings');
-    }
+  // Wait for billing page content to appear
+  const deadline = Date.now() + 15_000;
+  let hasBilling = false;
+  while (Date.now() < deadline) {
+    hasBilling = (await textExists('Current Plan')) ||
+      (await textExists('FREE')) ||
+      (await textExists('Upgrade'));
+    if (hasBilling) break;
+    await browser.pause(500);
   }
 
-  await browser.pause(2_000);
+  if (hasBilling) {
+    console.log('[AuthAccess] Billing page loaded');
+    return;
+  }
+
+  // Debug: check where we actually are
+  const currentHash = await browser.execute(() => window.location.hash);
+  console.log(`[AuthAccess] Billing content not found. Current hash: ${currentHash}`);
+
+  // Fallback: go to settings home, then click Billing menu item via JS
+  await navigateViaHash('/settings');
+  await browser.pause(3_000);
+
+  const clicked = await browser.execute(() => {
+    // Settings menu items have title text — find and click "Billing & Usage"
+    const allText = document.querySelectorAll('*');
+    for (const el of allText) {
+      const text = el.textContent?.trim() || '';
+      if ((text === 'Billing & Usage' || text === 'Billing') && el.closest('button, [role="button"], a, [class*="MenuItem"]')) {
+        (el.closest('button, [role="button"], a, [class*="MenuItem"]') as HTMLElement).click();
+        return 'clicked';
+      }
+    }
+    // Try direct hash as last resort
+    window.location.hash = '/settings/billing';
+    return 'hash-fallback';
+  });
+  console.log(`[AuthAccess] Billing fallback: ${clicked}`);
+  await browser.pause(3_000);
+
+  // Final check
+  const finalCheck = (await textExists('Current Plan')) || (await textExists('Upgrade'));
+  if (!finalCheck) {
+    const tree = await dumpAccessibilityTree();
+    console.log('[AuthAccess] Billing still not found. Tree:\n', tree.slice(0, 4000));
+    throw new Error('Could not navigate to Billing panel');
+  }
 }
 
 /**
- * Perform full login via deep link. Leaves app on Home page.
+ * Walk through the real onboarding steps (Onboarding.tsx — 6 steps).
+ *
+ *   Step 0: WelcomeStep       — "Continue"
+ *   Step 1: LocalAIStep       — "Setup later" → "Continue" (skip Ollama)
+ *   Step 2: ScreenPermissions — "Continue Without Permission" or "Continue"
+ *   Step 3: ToolsStep         — "Continue"
+ *   Step 4: SkillsStep        — "Finish Setup" (fires onboarding-complete)
+ *   Step 5: MnemonicStep      — checkbox + "Finish Setup"
+ */
+async function walkOnboarding() {
+  const skipVisible = (await textExists('Welcome')) ||
+    (await textExists('Set up later')) ||
+    (await textExists('Continue'));
+
+  if (!skipVisible) {
+    console.log(
+      '[AuthAccess] Onboarding overlay not visible — skipping (portal not in accessibility tree)'
+    );
+    await browser.pause(3_000);
+    return;
+  }
+
+  // Step 0: WelcomeStep — click "Continue"
+  if (await textExists('Welcome')) {
+    const clicked = await clickFirstMatch(['Continue'], 10_000);
+    if (clicked) console.log(`[AuthAccess] WelcomeStep: clicked "${clicked}"`);
+    await browser.pause(2_000);
+  }
+
+  // Step 1: LocalAIStep — click "Setup later" to skip Ollama, then "Continue"
+  {
+    const clicked = await clickFirstMatch(
+      ['Setup later', 'Use Local Models', 'Continue'],
+      10_000
+    );
+    if (clicked) {
+      console.log(`[AuthAccess] LocalAIStep: clicked "${clicked}"`);
+      await browser.pause(2_000);
+      if (clicked === 'Setup later') {
+        const cont = await clickFirstMatch(['Continue'], 5_000);
+        if (cont) {
+          console.log('[AuthAccess] LocalAIStep (skipped): clicked "Continue"');
+          await browser.pause(2_000);
+        }
+      }
+    }
+  }
+
+  // Step 2: ScreenPermissionsStep — click "Continue Without Permission"
+  {
+    const clicked = await clickFirstMatch(
+      ['Continue Without Permission', 'Continue'],
+      10_000
+    );
+    if (clicked) {
+      console.log(`[AuthAccess] ScreenPermissionsStep: clicked "${clicked}"`);
+      await browser.pause(2_000);
+    }
+  }
+
+  // Step 3: ToolsStep — click "Continue"
+  {
+    const toolsVisible = await textExists('Enable Tools');
+    if (toolsVisible) {
+      const clicked = await clickFirstMatch(['Continue'], 10_000);
+      if (clicked) {
+        console.log(`[AuthAccess] ToolsStep: clicked "${clicked}"`);
+        await browser.pause(2_000);
+      }
+    }
+  }
+
+  // Step 4: SkillsStep — click "Finish Setup"
+  {
+    const skillsVisible = await textExists('Install Skills');
+    if (skillsVisible) {
+      const clicked = await clickFirstMatch(['Finish Setup'], 10_000);
+      if (clicked) {
+        console.log(`[AuthAccess] SkillsStep: clicked "${clicked}"`);
+        await browser.pause(3_000);
+      }
+    }
+  }
+
+  // Step 5: MnemonicStep — tick checkbox and click "Finish Setup"
+  {
+    const mnemonicVisible = await textExists('Your Recovery Phrase');
+    if (mnemonicVisible) {
+      console.log('[AuthAccess] MnemonicStep: visible');
+      try {
+        await browser.execute(() => {
+          const checkbox = document.querySelector('input[type="checkbox"]') as HTMLInputElement;
+          if (checkbox && !checkbox.checked) checkbox.click();
+        });
+      } catch (err) {
+        console.log('[AuthAccess] MnemonicStep: checkbox click failed:', err);
+      }
+      await browser.pause(1_000);
+      const clicked = await clickFirstMatch(['Finish Setup'], 10_000);
+      if (clicked) {
+        console.log(`[AuthAccess] MnemonicStep: clicked "${clicked}"`);
+        await browser.pause(3_000);
+      }
+    }
+  }
+}
+
+/**
+ * Perform full login via deep link. Walks onboarding. Leaves app on Home page.
  */
 async function performFullLogin(token = 'e2e-test-token') {
   await triggerAuthDeepLink(token);
@@ -166,46 +343,11 @@ async function performFullLogin(token = 'e2e-test-token') {
       '[AuthAccess] Missing user profile call. Request log:',
       JSON.stringify(getRequestLog(), null, 2)
     );
-    // Non-fatal — the app may have already loaded user data
     console.log('[AuthAccess] Continuing without user profile call confirmation');
   }
 
-  // Onboarding is a React portal overlay — may not be visible in Mac2 accessibility tree.
-  const skipVisible = await textExists('Skip for now');
-  if (skipVisible) {
-    await clickText('Skip for now', 10_000);
-    await waitForTextToDisappear('Skip for now', 8_000);
-    await browser.pause(2_000);
-
-    for (const text of ['Looks Amazing', 'Bring It On']) {
-      if (await textExists(text)) {
-        await clickText(text, 5_000);
-        break;
-      }
-    }
-    await browser.pause(2_000);
-
-    for (const text of ['Got it', 'Continue']) {
-      if (await textExists(text)) {
-        await clickText(text, 5_000);
-        break;
-      }
-    }
-    await browser.pause(2_000);
-
-    for (const text of ["Let's Go", "I'm Ready"]) {
-      if (await textExists(text)) {
-        await clickText(text, 5_000);
-        break;
-      }
-    }
-    await browser.pause(3_000);
-  } else {
-    console.log(
-      '[AuthAccess] Onboarding overlay not visible — skipping (WKWebView portal limitation)'
-    );
-    await browser.pause(3_000);
-  }
+  // Walk real onboarding steps
+  await walkOnboarding();
 
   const homeText = await waitForHomePage(15_000);
   if (!homeText) {
@@ -247,12 +389,7 @@ describe('Auth & Access Control', () => {
 
     const homeText = await waitForHomePage(15_000);
     if (!homeText) {
-      try {
-        await clickNativeButton('Home', 5_000);
-      } catch {
-        /* ignore */
-      }
-      await browser.pause(2_000);
+      await navigateToHome();
     }
     const finalHome = homeText || (await waitForHomePage(10_000));
     expect(finalHome).not.toBeNull();
@@ -266,12 +403,7 @@ describe('Auth & Access Control', () => {
 
     const homeText = await waitForHomePage(15_000);
     if (!homeText) {
-      try {
-        await clickNativeButton('Home', 5_000);
-      } catch {
-        /* ignore */
-      }
-      await browser.pause(2_000);
+      await navigateToHome();
     }
     const finalHome = homeText || (await waitForHomePage(10_000));
     expect(finalHome).not.toBeNull();
@@ -370,25 +502,19 @@ describe('Auth & Access Control', () => {
     expect(hasPlanInfo).toBe(true);
 
     // "Manage" button appears when hasActiveSubscription is true in currentPlan response.
-    // Note: the team subscription in Redux may still show FREE (stale), but BillingPanel
-    // uses its own currentPlan fetch. Check if Manage is visible.
     const hasManage = await textExists('Manage');
     console.log(`[AuthAccess] 3.3.1 — Manage button visible: ${hasManage}`);
 
-    // Even if Manage isn't visible (team subscription stale), the plan call was verified
     console.log('[AuthAccess] 3.3.1 — Active subscription display verified');
   });
 
   it('3.3.3 — manage subscription opens Stripe portal', async () => {
     // Still on billing page from previous test.
-    // If "Manage" is visible, click it and verify portal API call.
     const hasManage = await textExists('Manage');
     if (!hasManage) {
       console.log(
         '[AuthAccess] 3.3.3 — Manage button not visible (team subscription stale). Skipping portal click.'
       );
-      // Verify the portal endpoint works by calling it programmatically
-      // (the mock server handles POST /payments/stripe/portal)
       resetMockBehavior();
       await navigateToHome();
       return;
@@ -422,32 +548,49 @@ describe('Auth & Access Control', () => {
 
     const homeCheck = await waitForHomePage(10_000);
     if (!homeCheck) {
-      try {
-        await clickNativeButton('Home', 5_000);
-      } catch {
-        /* ignore */
-      }
-      await browser.pause(2_000);
+      await navigateToHome();
     }
 
     await navigateToSettings();
 
-    // Click "Log out" (simple logout, not "Log Out & Clear App Data")
-    const logoutCandidates = ['Log out', 'Logout', 'Sign out'];
-    let loggedOut = false;
-    for (const text of logoutCandidates) {
-      if (await textExists(text)) {
-        await clickText(text, 10_000);
-        console.log(`[AuthAccess] Clicked "${text}"`);
-        loggedOut = true;
-        break;
+    // Click "Log out" via JS — the settings menu item text is "Log out"
+    // with description "Sign out of your account"
+    const loggedOut = await browser.execute(() => {
+      const allElements = document.querySelectorAll('*');
+      for (const el of allElements) {
+        const text = el.textContent?.trim() || '';
+        if (text === 'Log out') {
+          const clickable = el.closest('button, [role="button"], a, [class*="MenuItem"]') as HTMLElement;
+          if (clickable) {
+            clickable.click();
+            return 'clicked-parent';
+          }
+          (el as HTMLElement).click();
+          return 'clicked-self';
+        }
       }
-    }
+      return null;
+    });
 
     if (!loggedOut) {
-      const tree = await dumpAccessibilityTree();
-      console.log('[AuthAccess] Logout button not found. Tree:\n', tree.slice(0, 6000));
-      throw new Error('Could not find logout button in Settings');
+      // Fallback: try XPath text search
+      const logoutCandidates = ['Log out', 'Logout', 'Sign out'];
+      let found = false;
+      for (const text of logoutCandidates) {
+        if (await textExists(text)) {
+          await clickText(text, 10_000);
+          console.log(`[AuthAccess] Clicked "${text}" via XPath`);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        const tree = await dumpAccessibilityTree();
+        console.log('[AuthAccess] Logout button not found. Tree:\n', tree.slice(0, 4000));
+        throw new Error('Could not find logout button in Settings');
+      }
+    } else {
+      console.log(`[AuthAccess] Logout: ${loggedOut}`);
     }
 
     // If a confirmation dialog appears, confirm it
@@ -455,12 +598,16 @@ describe('Auth & Access Control', () => {
     const hasConfirm =
       (await textExists('Confirm')) || (await textExists('Yes')) || (await textExists('Log Out'));
     if (hasConfirm) {
-      for (const text of ['Confirm', 'Yes', 'Log Out']) {
-        if (await textExists(text)) {
-          await clickText(text, 5_000);
-          break;
+      await browser.execute(() => {
+        const btns = document.querySelectorAll('button');
+        for (const btn of btns) {
+          const text = btn.textContent?.trim() || '';
+          if (text === 'Confirm' || text === 'Yes' || text === 'Log Out') {
+            btn.click();
+            return;
+          }
         }
-      }
+      });
       await browser.pause(2_000);
     }
 

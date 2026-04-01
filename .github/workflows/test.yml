@@ -153,7 +153,7 @@ jobs:
             ${{ runner.os }}-e2e-cargo-
 
       - name: Install tauri-driver
-        run: cargo install tauri-driver
+        run: cargo install tauri-driver --version 2.0.5
 
       - name: Install JS dependencies
         run: yarn install --frozen-lockfile

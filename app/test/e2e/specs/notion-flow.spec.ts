@@ -19,18 +19,23 @@
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickButton,
-  clickNativeButton,
   clickText,
   dumpAccessibilityTree,
   textExists,
   waitForText,
-  waitForWebView,
-  waitForWindowVisible,
 } from '../helpers/element-helpers';
+import {
+  performFullLogin,
+  navigateToHome,
+  navigateToSkills,
+  navigateToIntelligence,
+  navigateToSettings,
+  waitForHomePage,
+} from '../helpers/shared-flows';
 import {
   clearRequestLog,
   getRequestLog,
@@ -95,118 +100,8 @@ async function waitForHomePage(timeout = 15_000) {
   return null;
 }
 
-/**
- * Click the first matching text from a list of candidates, with retry.
- */
-async function clickFirstCandidate(candidates, label, timeout = 10_000) {
-  for (const text of candidates) {
-    if (await textExists(text)) {
-      await clickText(text, timeout);
-      console.log(`${LOG_PREFIX} ${label}: clicked "${text}"`);
-
-      const advanced = await waitForTextToDisappear(text, 8_000);
-      if (advanced) return text;
-
-      console.log(`${LOG_PREFIX} ${label}: "${text}" still visible, retrying click...`);
-      await clickText(text, 5_000);
-      const retryAdvanced = await waitForTextToDisappear(text, 5_000);
-      if (retryAdvanced) return text;
-
-      const tree = await dumpAccessibilityTree();
-      console.log(
-        `${LOG_PREFIX} ${label}: "${text}" still visible after retry. Tree:\n`,
-        tree.slice(0, 4000)
-      );
-      return null;
-    }
-  }
-
-  const tree = await dumpAccessibilityTree();
-  console.log(`${LOG_PREFIX} ${label}: no candidates found. Tree:\n`, tree.slice(0, 4000));
-  return null;
-}
-
-/**
- * Navigate back to Home via the sidebar Home button.
- */
-async function navigateToHome() {
-  try {
-    await clickNativeButton('Home', 10_000);
-    console.log(`${LOG_PREFIX} Clicked Home nav`);
-  } catch {
-    console.log(`${LOG_PREFIX} navigateToHome: Home button not found, may already be on Home`);
-  }
-  await browser.pause(2_000);
-  const homeText = await waitForHomePage(15_000);
-  if (!homeText) {
-    // Retry — click may not have landed
-    try {
-      await clickNativeButton('Home', 5_000);
-      await browser.pause(2_000);
-    } catch {
-      /* ignore */
-    }
-    const retryText = await waitForHomePage(10_000);
-    if (!retryText) {
-      const tree = await dumpAccessibilityTree();
-      console.log(
-        `${LOG_PREFIX} navigateToHome: Home page not reached. Tree:\n`,
-        tree.slice(0, 4000)
-      );
-      throw new Error('navigateToHome: Home page not reached after clicking Home nav');
-    }
-  }
-}
-
-/**
- * Perform the full login + onboarding flow via deep link.
- */
-async function performFullLogin(token = 'e2e-test-token') {
-  await triggerAuthDeepLink(token);
-
-  await waitForWindowVisible(25_000);
-  await waitForWebView(15_000);
-  await waitForAppReady(15_000);
-
-  // Onboarding is a React portal overlay (z-[9999]). On Mac2, portal content
-  // may not appear in the accessibility tree (WKWebView limitation).
-  // Try to walk through onboarding if visible, otherwise skip.
-  const skipVisible = await textExists('Skip for now');
-  if (skipVisible) {
-    await clickText('Skip for now', 10_000);
-    console.log(`${LOG_PREFIX} Clicked "Skip for now"`);
-    await waitForTextToDisappear('Skip for now', 8_000);
-    await browser.pause(2_000);
-
-    // FeaturesStep
-    const featResult = await clickFirstCandidate(['Looks Amazing', 'Bring It On'], 'FeaturesStep');
-    if (featResult) await browser.pause(2_000);
-
-    // PrivacyStep
-    const privResult = await clickFirstCandidate(['Got it', 'Continue'], 'PrivacyStep');
-    if (privResult) await browser.pause(2_000);
-
-    // GetStartedStep
-    const startResult = await clickFirstCandidate(["Let's Go", "I'm Ready"], 'GetStartedStep');
-    if (startResult) await browser.pause(3_000);
-  } else {
-    console.log(
-      `${LOG_PREFIX} Onboarding overlay not visible — skipping (WKWebView portal limitation)`
-    );
-    await browser.pause(3_000);
-  }
-
-  const homeText = await waitForHomePage(15_000);
-  if (!homeText) {
-    const tree = await dumpAccessibilityTree();
-    console.log(
-      `${LOG_PREFIX} Home page not reached after onboarding. Tree:\n`,
-      tree.slice(0, 4000)
-    );
-    throw new Error('Full login + onboarding did not reach Home page');
-  }
-  console.log(`${LOG_PREFIX} Home page confirmed: found "${homeText}"`);
-}
+// clickFirstCandidate, navigateToHome, performFullLogin, waitForHomePage
+// are now imported from shared-flows
 
 /**
  * Counter for unique JWT suffixes.
@@ -226,12 +121,7 @@ async function reAuthAndGoHome(token = 'e2e-notion-token') {
   await triggerAuthDeepLink(token);
   await browser.pause(5_000);
 
-  try {
-    await clickNativeButton('Home', 5_000);
-    await browser.pause(2_000);
-  } catch {
-    // Home button might not be visible yet
-  }
+  await navigateToHome();
 
   const homeText = await waitForHomePage(15_000);
   if (!homeText) {
@@ -256,8 +146,7 @@ async function findNotionInUI() {
 
   // Check Intelligence page
   try {
-    await clickNativeButton('Intelligence', 5_000);
-    await browser.pause(2_000);
+    await navigateToIntelligence();
     if (await textExists('Notion')) {
       console.log(`${LOG_PREFIX} Notion found on Intelligence page`);
       return true;
@@ -271,14 +160,7 @@ async function findNotionInUI() {
   return false;
 }
 
-/**
- * Navigate to the Settings page and look for Notion.
- */
-async function navigateToSettings() {
-  await clickNativeButton('Settings', 10_000);
-  console.log(`${LOG_PREFIX} Clicked Settings nav`);
-  await browser.pause(3_000);
-}
+// navigateToSettings is imported from shared-flows
 
 /**
  * Open the Notion skill setup/management modal.
@@ -545,7 +427,7 @@ describe('Notion Integration Flows', () => {
 
       // Navigate to Intelligence page to see skills list
       try {
-        await clickNativeButton('Intelligence', 10_000);
+        await navigateToIntelligence();
         await browser.pause(3_000);
         console.log(`${LOG_PREFIX} 8.2.1: Navigated to Intelligence page`);
       } catch {

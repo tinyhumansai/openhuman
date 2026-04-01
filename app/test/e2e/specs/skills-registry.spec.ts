@@ -14,6 +14,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { navigateToSkills } from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 function stepLog(message: string, context?: unknown): void {
@@ -70,15 +71,9 @@ describe('Skills registry flow', () => {
   });
 
   it('can navigate to skills page', async () => {
-    stepLog('Looking for Skills navigation item');
-    try {
-      await clickText('Skills', 10_000);
-      stepLog('Clicked Skills nav item');
-    } catch {
-      stepLog('Skills nav item not found, dumping accessibility tree');
-      await dumpAccessibilityTree();
-      throw new Error('Could not find Skills navigation item');
-    }
+    stepLog('Navigating to Skills page');
+    await navigateToSkills();
+    stepLog('Navigated to Skills via hash');
 
     // Wait for the skills page to render
     await browser.pause(2_000);

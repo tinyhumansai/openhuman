@@ -570,6 +570,10 @@ async function handleRequest(req, res) {
     json(res, 200, { success: true, data: {} });
     return;
   }
+  if (method === "POST" && /^\/settings\/onboarding-complete\/?$/.test(url)) {
+    json(res, 200, { success: true, data: {} });
+    return;
+  }
 
   // currentPlan is handled by the earlier consolidated handler.
   if (method === "GET" && /^\/billing\/current-plan\/?(\?.*)?$/.test(url)) {

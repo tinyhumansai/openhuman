@@ -34,10 +34,12 @@ function getAppPath(): string {
     case 'win32':
       return path.join(projectRoot, 'src-tauri', 'target', 'debug', 'OpenHuman.exe');
     case 'linux': {
-      // tauri-driver launches the binary directly (not a bundle)
+      // tauri-driver launches the binary directly (not a bundle).
+      // Prefer the Tauri build output (src-tauri/target) over the repo-root
+      // target/ which may contain a stale core-only binary.
       const candidates = [
-        path.join(repoRoot, 'target', 'debug', 'OpenHuman'),
         path.join(projectRoot, 'src-tauri', 'target', 'debug', 'OpenHuman'),
+        path.join(repoRoot, 'target', 'debug', 'OpenHuman'),
       ];
       for (const candidate of candidates) {
         if (fs.existsSync(candidate)) return candidate;
@@ -55,11 +57,10 @@ function getAppPath(): string {
  * - Linux: tauri-driver (W3C WebDriver, port 4444)
  * - macOS: Appium Mac2 (XCUITest, port 4723)
  */
-function getPlatformCapabilities(): WebdriverIO.Capabilities[] {
+function getPlatformCapabilities(): Record<string, unknown>[] {
   if (process.platform === 'linux') {
     return [
       {
-        // @ts-expect-error -- tauri:options is a custom capability
         'tauri:options': { application: getAppPath() },
       },
     ];
@@ -69,7 +70,6 @@ function getPlatformCapabilities(): WebdriverIO.Capabilities[] {
   return [
     {
       platformName: 'mac',
-      // @ts-expect-error -- Appium capabilities are not in standard WebDriver types
       'appium:automationName': 'Mac2',
       'appium:app': getAppPath(),
       'appium:showServerLogs': true,
@@ -83,7 +83,7 @@ const driverPort =
     ? parseInt(process.env.TAURI_DRIVER_PORT || '4444', 10)
     : parseInt(process.env.APPIUM_PORT || '4723', 10);
 
-export const config: Options.Testrunner = {
+export const config: Options.Testrunner & Record<string, unknown> = {
   runner: 'local',
   hostname: '127.0.0.1',
   port: driverPort,
@@ -100,7 +100,7 @@ export const config: Options.Testrunner = {
   reporters: ['spec'],
   mochaOpts: {
     ui: 'bdd',
-    timeout: 60_000, // App startup can be slow
+    timeout: 120_000, // Billing/settings tests need extra time for API polling
   },
   autoCompileOpts: { tsNodeOpts: { project: tsconfigE2ePath } },
 };

@@ -16,6 +16,12 @@ sleep 2
 # Start dbus session (required by webkit2gtk for IPC)
 eval "$(dbus-launch --sh-syntax)"
 
+# Ensure XDG dirs exist for deep-link registration
+mkdir -p ~/.local/share/applications
+
+# Export backtrace for debugging
+export RUST_BACKTRACE=1
+
 echo "Xvfb started on $DISPLAY (pid $XVFB_PID)"
 echo "D-Bus session: $DBUS_SESSION_BUS_ADDRESS"
 

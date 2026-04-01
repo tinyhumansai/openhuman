@@ -17,7 +17,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # System dependencies for Tauri + webkit2gtk
 RUN apt-get update && apt-get install -y \
-  curl build-essential pkg-config \
+  bash curl build-essential pkg-config \
   libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
   librsvg2-dev patchelf libssl-dev \
   xvfb at-spi2-core dbus-x11 webkit2gtk-driver \
@@ -36,7 +36,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
   rm -rf /var/lib/apt/lists/*
 
 # tauri-driver (WebDriver server for Tauri apps)
-RUN cargo install tauri-driver
+RUN cargo install tauri-driver --version 2.0.5
 
 WORKDIR /app
 
