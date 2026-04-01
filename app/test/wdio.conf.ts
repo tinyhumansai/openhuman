@@ -59,11 +59,7 @@ function getAppPath(): string {
  */
 function getPlatformCapabilities(): Record<string, unknown>[] {
   if (process.platform === 'linux') {
-    return [
-      {
-        'tauri:options': { application: getAppPath() },
-      },
-    ];
+    return [{ 'tauri:options': { application: getAppPath() } }];
   }
 
   // macOS: Appium Mac2
