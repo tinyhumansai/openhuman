@@ -46,6 +46,12 @@ pub fn apply_staged_update_for_path(target_bin: &Path) -> Result<bool, String> {
         return Ok(false);
     }
 
+    log::debug!(
+        "[update] applying staged update: {} -> {}",
+        staged.display(),
+        target_bin.display()
+    );
+
     let backup = backup_binary_path(target_bin);
     if backup.exists() {
         let _ = std::fs::remove_file(&backup);
@@ -69,6 +75,7 @@ pub fn apply_staged_update_for_path(target_bin: &Path) -> Result<bool, String> {
     }
 
     let _ = std::fs::remove_file(&backup);
+    log::debug!("[update] staged update activated at {}", target_bin.display());
     Ok(true)
 }
 
@@ -119,6 +126,7 @@ pub fn write_staged_binary(target_bin: &Path, bytes: &[u8]) -> Result<PathBuf, S
     std::fs::rename(&tmp, &staged)
         .map_err(|e| format!("failed to stage update {}: {e}", staged.display()))?;
 
+    log::debug!("[update] binary staged at {}", staged.display());
     Ok(staged)
 }
 

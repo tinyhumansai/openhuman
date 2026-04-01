@@ -28,6 +28,7 @@ fn normalize_digest(value: &str) -> String {
 }
 
 async fn download_asset(url: &str) -> Result<Vec<u8>, String> {
+    log::debug!("[update] downloading asset from {url}");
     let client = reqwest::Client::builder()
         .build()
         .map_err(|e| format!("failed to build http client: {e}"))?;
@@ -50,13 +51,16 @@ async fn download_asset(url: &str) -> Result<Vec<u8>, String> {
         .bytes()
         .await
         .map_err(|e| format!("failed to read update asset bytes: {e}"))?;
+    log::debug!("[update] downloaded {} bytes", bytes.len());
     Ok(bytes.to_vec())
 }
 
 fn verify_digest(bytes: &[u8], expected_sha256: Option<&str>) -> Result<(), String> {
     let Some(expected) = expected_sha256 else {
+        log::debug!("[update] no digest provided, skipping verification");
         return Ok(());
     };
+    log::debug!("[update] verifying SHA256 digest");
 
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -75,8 +79,16 @@ fn verify_digest(bytes: &[u8], expected_sha256: Option<&str>) -> Result<(), Stri
 
 pub fn apply_staged_update_preflight() -> Result<bool, String> {
     let target = managed_binary_path()?;
+    log::debug!("[update] preflight: checking for staged update at {}", target.display());
     match super::store::apply_staged_update_for_path(&target) {
-        Ok(applied) => Ok(applied),
+        Ok(true) => {
+            log::info!("[update] preflight: staged update applied successfully");
+            Ok(true)
+        }
+        Ok(false) => {
+            log::debug!("[update] preflight: no staged update found");
+            Ok(false)
+        }
         Err(error) => {
             #[cfg(windows)]
             {
@@ -95,12 +107,14 @@ pub fn apply_staged_update_preflight() -> Result<bool, String> {
 
 async fn check_for_update(config: &mut Config) -> Result<Option<UpdateAsset>, String> {
     let current_version = env!("CARGO_PKG_VERSION");
+    log::debug!("[update] checking for update (current={current_version})");
     let resolved = fetch_latest_release(config.update.last_etag.as_deref()).await?;
 
     config.update.last_check_at = Some(now_rfc3339());
     config.update.last_error = None;
 
     if resolved.not_modified {
+        log::debug!("[update] release not modified (ETag match)");
         config.update.last_result = Some("not_modified".to_string());
         return Ok(None);
     }
@@ -113,12 +127,17 @@ async fn check_for_update(config: &mut Config) -> Result<Option<UpdateAsset>, St
     if let Some(asset) = latest.as_ref() {
         config.update.last_seen_version = Some(asset.version.clone());
         let ordering = compare_versions(&asset.version, current_version)?;
+        log::debug!(
+            "[update] version compare: latest={} current={current_version} ordering={ordering:?}",
+            asset.version
+        );
         if ordering.is_gt() {
             config.update.last_result = Some("update_available".to_string());
             return Ok(latest);
         }
     }
 
+    log::debug!("[update] already up to date");
     config.update.last_result = Some("up_to_date".to_string());
     Ok(None)
 }
@@ -230,6 +249,7 @@ pub async fn update_apply() -> Result<RpcOutcome<UpdateApplyStatus>, String> {
 }
 
 pub async fn maybe_background_check() {
+    log::debug!("[update] evaluating background check");
     let mut config = match Config::load_or_init().await {
         Ok(config) => config,
         Err(error) => {
@@ -239,6 +259,7 @@ pub async fn maybe_background_check() {
     };
 
     if matches!(config.update.mode, UpdateMode::Manual) {
+        log::debug!("[update] background check skipped (mode=manual)");
         return;
     }
 
@@ -252,8 +273,10 @@ pub async fn maybe_background_check() {
         .unwrap_or(true);
 
     if !due {
+        log::debug!("[update] background check not yet due");
         return;
     }
+    log::debug!("[update] background check is due, running now");
 
     match check_for_update(&mut config).await {
         Ok(_) => {

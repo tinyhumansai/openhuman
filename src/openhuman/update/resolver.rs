@@ -120,6 +120,7 @@ pub async fn fetch_latest_release(last_etag: Option<&str>) -> Result<ResolvedRel
         .trim_end_matches('/')
         .to_string();
     let url = format!("{api_base}/repos/{repo}/releases/latest");
+    log::debug!("[update] fetching latest release from {url} (etag={last_etag:?})");
 
     let client = reqwest::Client::builder()
         .build()
@@ -172,6 +173,10 @@ pub async fn fetch_latest_release(last_etag: Option<&str>) -> Result<ResolvedRel
     let version = normalize_version(&tag)
         .ok_or_else(|| format!("latest release tag is not semver-like: {tag}"))?;
     let expected_name = expected_asset_name(&version);
+
+    log::debug!(
+        "[update] resolved release tag={tag} version={version}, looking for asset={expected_name}"
+    );
 
     let asset = release
         .assets
