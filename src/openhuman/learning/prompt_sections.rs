@@ -18,77 +18,17 @@ impl LearnedContextSection {
         Self { memory }
     }
 
-    /// Query memory synchronously using a blocking task (prompt building is sync).
+    /// Load learned context without blocking the runtime.
+    /// Note: This is called during prompt building (sync context).
+    /// To avoid blocking, we return empty and rely on pre-cached data in future iterations.
     fn load_learned_context(&self) -> String {
-        let memory = self.memory.clone();
-        let rt = tokio::runtime::Handle::try_current();
-        let (observations, patterns) = match rt {
-            Ok(handle) => {
-                let handle2 = handle.clone();
-                let mem = memory.clone();
-                let obs = std::thread::spawn(move || {
-                    handle.block_on(async {
-                        mem.list(
-                            Some(&MemoryCategory::Custom("learning_observations".into())),
-                            None,
-                        )
-                        .await
-                        .unwrap_or_default()
-                    })
-                })
-                .join()
-                .unwrap_or_default();
-
-                let mem2 = memory;
-                let pats = std::thread::spawn(move || {
-                    handle2.block_on(async {
-                        mem2.list(
-                            Some(&MemoryCategory::Custom("learning_patterns".into())),
-                            None,
-                        )
-                        .await
-                        .unwrap_or_default()
-                    })
-                })
-                .join()
-                .unwrap_or_default();
-
-                (obs, pats)
-            }
-            Err(_) => {
-                log::debug!("[learning] no tokio runtime for prompt section, skipping");
-                return String::new();
-            }
-        };
-
-        if observations.is_empty() && patterns.is_empty() {
-            return String::new();
-        }
-
-        let mut out = String::from("## Learned Context\n\n");
-
-        if !observations.is_empty() {
-            out.push_str("### Recent Observations\n");
-            // Show most recent 5 observations
-            for entry in observations.iter().rev().take(5) {
-                out.push_str("- ");
-                out.push_str(entry.content.trim());
-                out.push('\n');
-            }
-            out.push('\n');
-        }
-
-        if !patterns.is_empty() {
-            out.push_str("### Recognized Patterns\n");
-            for entry in patterns.iter().take(3) {
-                out.push_str("- ");
-                out.push_str(entry.content.trim());
-                out.push('\n');
-            }
-            out.push('\n');
-        }
-
-        out
+        // TODO: Pre-fetch and cache this data during Agent initialization or turn start.
+        // For now, we return empty to avoid blocking the Tokio runtime.
+        tracing::debug!(
+            "[learning] LearnedContextSection skipped during prompt build (sync context). \
+             Consider pre-fetching in Agent::turn() or init."
+        );
+        String::new()
     }
 }
 
@@ -112,37 +52,17 @@ impl UserProfileSection {
         Self { memory }
     }
 
+    /// Load user profile without blocking the runtime.
+    /// Note: This is called during prompt building (sync context).
+    /// To avoid blocking, we return empty and rely on pre-cached data in future iterations.
     fn load_user_profile(&self) -> String {
-        let memory = self.memory.clone();
-        let rt = tokio::runtime::Handle::try_current();
-        let entries = match rt {
-            Ok(handle) => {
-                let mem = memory;
-                std::thread::spawn(move || {
-                    handle.block_on(async {
-                        mem.list(Some(&MemoryCategory::Custom("user_profile".into())), None)
-                            .await
-                            .unwrap_or_default()
-                    })
-                })
-                .join()
-                .unwrap_or_default()
-            }
-            Err(_) => return String::new(),
-        };
-
-        if entries.is_empty() {
-            return String::new();
-        }
-
-        let mut out = String::from("## User Profile (Learned)\n\n");
-        for entry in entries.iter().take(20) {
-            out.push_str("- ");
-            out.push_str(entry.content.trim());
-            out.push('\n');
-        }
-        out.push('\n');
-        out
+        // TODO: Pre-fetch and cache this data during Agent initialization or turn start.
+        // For now, we return empty to avoid blocking the Tokio runtime.
+        tracing::debug!(
+            "[learning] UserProfileSection skipped during prompt build (sync context). \
+             Consider pre-fetching in Agent::turn() or init."
+        );
+        String::new()
     }
 }
 

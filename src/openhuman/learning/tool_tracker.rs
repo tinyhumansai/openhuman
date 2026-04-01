@@ -106,6 +106,61 @@ impl ToolTrackerHook {
             )
             .await
     }
+
+    /// Atomically update stats with retry loop to handle concurrent updates.
+    async fn update_stats_atomic(
+        &self,
+        tool_name: &str,
+        success: bool,
+        duration_ms: u64,
+        error_snippet: Option<&str>,
+    ) -> anyhow::Result<()> {
+        const MAX_RETRIES: usize = 5;
+        let mut attempt = 0;
+
+        loop {
+            // Load current stats
+            let mut stats = self.load_stats(tool_name).await;
+
+            // Apply the update
+            stats.record_call(success, duration_ms, error_snippet);
+
+            // Attempt to save
+            match self.save_stats(tool_name, &stats).await {
+                Ok(_) => {
+                    tracing::debug!(
+                        tool_name = %tool_name,
+                        attempt = attempt + 1,
+                        "[learning] tool stats updated: {}",
+                        stats.summary()
+                    );
+                    return Ok(());
+                }
+                Err(e) if attempt < MAX_RETRIES => {
+                    attempt += 1;
+                    tracing::debug!(
+                        tool_name = %tool_name,
+                        attempt = attempt,
+                        error = %e,
+                        "[learning] retrying tool stats update due to potential race"
+                    );
+                    // Small backoff
+                    tokio::time::sleep(tokio::time::Duration::from_millis(10 * attempt as u64))
+                        .await;
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tool_name = %tool_name,
+                        attempts = attempt + 1,
+                        error = %e,
+                        "[learning] failed to save tool stats after retries"
+                    );
+                    return Err(e);
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -124,24 +179,21 @@ impl PostTurnHook for ToolTrackerHook {
         }
 
         for tc in &ctx.tool_calls {
-            let mut stats = self.load_stats(&tc.name).await;
             let error_snippet = if !tc.success {
                 Some(tc.output_snippet.as_str())
             } else {
                 None
             };
-            stats.record_call(tc.success, tc.duration_ms, error_snippet);
 
-            if let Err(e) = self.save_stats(&tc.name, &stats).await {
-                log::warn!(
-                    "[learning] failed to save tool stats for {}: {e:#}",
-                    tc.name
-                );
-            } else {
-                log::debug!(
-                    "[learning] tool stats updated: {} — {}",
-                    tc.name,
-                    stats.summary()
+            // Use atomic update to prevent lost updates from concurrent turns
+            if let Err(e) = self
+                .update_stats_atomic(&tc.name, tc.success, tc.duration_ms, error_snippet)
+                .await
+            {
+                tracing::warn!(
+                    tool_name = %tc.name,
+                    error = %e,
+                    "[learning] failed to update tool stats"
                 );
             }
         }

@@ -9,8 +9,9 @@ use crate::openhuman::config::{Config, LearningConfig, ReflectionSource};
 use crate::openhuman::memory::{Memory, MemoryCategory};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Structured output expected from the reflection LLM call.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -29,7 +30,8 @@ pub struct ReflectionHook {
     full_config: Arc<Config>,
     memory: Arc<dyn Memory>,
     provider: Option<Arc<dyn crate::openhuman::providers::Provider>>,
-    reflection_count: AtomicUsize,
+    /// Per-session reflection counts to prevent races and enforce quota per session
+    session_counts: Arc<Mutex<HashMap<String, AtomicUsize>>>,
 }
 
 impl ReflectionHook {
@@ -44,23 +46,54 @@ impl ReflectionHook {
             full_config,
             memory,
             provider,
-            reflection_count: AtomicUsize::new(0),
+            session_counts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    /// Check if this turn warrants reflection.
+    /// Atomically check and increment the session reflection count.
+    /// Returns true if reflection should proceed, false if throttled.
+    fn try_increment_session_count(&self, session_id: &str) -> bool {
+        let mut counts = self.session_counts.lock().unwrap();
+        let counter = counts
+            .entry(session_id.to_string())
+            .or_insert_with(|| AtomicUsize::new(0));
+
+        // Atomic check-and-increment
+        let mut current = counter.load(Ordering::Relaxed);
+        loop {
+            if current >= self.config.max_reflections_per_session {
+                tracing::debug!(
+                    session_id = %session_id,
+                    count = current,
+                    max = self.config.max_reflections_per_session,
+                    "[learning] reflection throttled for session"
+                );
+                return false;
+            }
+
+            match counter.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(new_val) => current = new_val,
+            }
+        }
+    }
+
+    /// Decrement the session count (used for rollback on failure).
+    fn decrement_session_count(&self, session_id: &str) {
+        let counts = self.session_counts.lock().unwrap();
+        if let Some(counter) = counts.get(session_id) {
+            counter.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Check if this turn warrants reflection (complexity check only).
     fn should_reflect(&self, ctx: &TurnContext) -> bool {
         if !self.config.enabled || !self.config.reflection_enabled {
-            return false;
-        }
-
-        // Throttle: don't exceed max reflections per session
-        let count = self.reflection_count.load(Ordering::Relaxed);
-        if count >= self.config.max_reflections_per_session {
-            log::debug!(
-                "[learning] reflection throttled: {count} >= {}",
-                self.config.max_reflections_per_session
-            );
             return false;
         }
 
@@ -221,14 +254,33 @@ impl PostTurnHook for ReflectionHook {
             return Ok(());
         }
 
-        self.reflection_count.fetch_add(1, Ordering::Relaxed);
-        log::debug!(
-            "[learning] starting reflection (count={})",
-            self.reflection_count.load(Ordering::Relaxed)
+        // Atomic check-and-increment for this session
+        if !self.try_increment_session_count(&ctx.session_id) {
+            return Ok(());
+        }
+
+        tracing::debug!(
+            session_id = %ctx.session_id,
+            "[learning] starting reflection"
         );
 
         let prompt = self.build_reflection_prompt(ctx);
-        let raw = self.run_reflection(&prompt).await?;
+        let result = self.run_reflection(&prompt).await;
+
+        // Handle reflection failure and rollback count
+        let raw = match result {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    session_id = %ctx.session_id,
+                    error = %e,
+                    "[learning] reflection failed, rolling back count"
+                );
+                self.decrement_session_count(&ctx.session_id);
+                return Err(e);
+            }
+        };
+
         let output = Self::parse_reflection(&raw);
 
         log::info!(

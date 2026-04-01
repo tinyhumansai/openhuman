@@ -454,6 +454,35 @@ impl Agent {
         self.prompt_builder.build(&ctx)
     }
 
+    /// Sanitize tool output to prevent PII/secrets in learning data.
+    /// Returns a safe metadata string: tool type, status, and error class.
+    fn sanitize_tool_output(raw_output: &str, tool_name: &str, success: bool) -> String {
+        if success {
+            // For successful calls, return a structured summary without raw data
+            let char_count = raw_output.chars().count();
+            format!(
+                "tool={} status=success output_length={}",
+                tool_name, char_count
+            )
+        } else {
+            // For errors, classify the error type without exposing details
+            let error_class = if raw_output.contains("permission") || raw_output.contains("denied") {
+                "permission_error"
+            } else if raw_output.contains("not found") || raw_output.contains("404") {
+                "not_found"
+            } else if raw_output.contains("timeout") || raw_output.contains("timed out") {
+                "timeout"
+            } else if raw_output.contains("network") || raw_output.contains("connection") {
+                "network_error"
+            } else if raw_output.contains("invalid") || raw_output.contains("parse") {
+                "validation_error"
+            } else {
+                "unknown_error"
+            };
+            format!("tool={} status=error class={}", tool_name, error_class)
+        }
+    }
+
     async fn execute_tool_call(
         &self,
         call: &ParsedToolCall,
@@ -484,14 +513,13 @@ impl Agent {
             success
         );
 
-        let snippet_len = result.chars().count().min(200);
-        let output_snippet: String = result.chars().take(snippet_len).collect();
+        let output_summary = Self::sanitize_tool_output(&result, &call.name, success);
 
         let record = ToolCallRecord {
             name: call.name.clone(),
             arguments: call.arguments.clone(),
             success,
-            output_snippet,
+            output_snippet: output_summary,
             duration_ms: elapsed_ms,
         };
 
