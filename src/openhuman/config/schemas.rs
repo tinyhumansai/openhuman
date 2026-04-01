@@ -70,6 +70,11 @@ struct WorkspaceOnboardingFlagSetParams {
     value: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct OnboardingCompletedSetParams {
+    value: bool,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -86,6 +91,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_analytics_settings"),
         schemas("get_analytics_settings"),
         schemas("agent_server_status"),
+        schemas("get_onboarding_completed"),
+        schemas("set_onboarding_completed"),
     ]
 }
 
@@ -146,6 +153,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("agent_server_status"),
             handler: handle_agent_server_status,
+        },
+        RegisteredController {
+            schema: schemas("get_onboarding_completed"),
+            handler: handle_get_onboarding_completed,
+        },
+        RegisteredController {
+            schema: schemas("set_onboarding_completed"),
+            handler: handle_set_onboarding_completed,
         },
     ]
 }
@@ -368,6 +383,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("status", "Agent server status payload.")],
         },
+        "get_onboarding_completed" => ControllerSchema {
+            namespace: "config",
+            function: "get_onboarding_completed",
+            description: "Read whether the user has completed the onboarding flow.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "completed",
+                ty: TypeSchema::Bool,
+                comment: "True when onboarding has been completed.",
+                required: true,
+            }],
+        },
+        "set_onboarding_completed" => ControllerSchema {
+            namespace: "config",
+            function: "set_onboarding_completed",
+            description: "Mark the onboarding flow as completed or reset it.",
+            inputs: vec![FieldSchema {
+                name: "value",
+                ty: TypeSchema::Bool,
+                comment: "True to mark completed, false to reset.",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "completed",
+                ty: TypeSchema::Bool,
+                comment: "Updated onboarding completed state.",
+                required: true,
+            }],
+        },
         _ => ControllerSchema {
             namespace: "config",
             function: "unknown",
@@ -519,6 +563,17 @@ fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFutur
 
 fn handle_agent_server_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::agent_server_status()) })
+}
+
+fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::get_onboarding_completed().await?) })
+}
+
+fn handle_set_onboarding_completed(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = deserialize_params::<OnboardingCompletedSetParams>(params)?;
+        to_json(config_rpc::set_onboarding_completed(payload.value).await?)
+    })
 }
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {

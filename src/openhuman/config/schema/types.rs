@@ -117,6 +117,10 @@ pub struct Config {
 
     #[serde(default)]
     pub orchestrator: OrchestratorConfig,
+
+    /// Whether the user has completed the onboarding flow.
+    #[serde(default)]
+    pub onboarding_completed: bool,
 }
 
 impl Default for Config {
@@ -163,6 +167,7 @@ impl Default for Config {
             query_classification: QueryClassificationConfig::default(),
             learning: LearningConfig::default(),
             orchestrator: OrchestratorConfig::default(),
+            onboarding_completed: false,
         }
     }
 }

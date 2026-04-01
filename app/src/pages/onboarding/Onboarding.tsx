@@ -5,7 +5,7 @@ import { useUser } from '../../hooks/useUser';
 import { userApi } from '../../services/api/userApi';
 import { setOnboardedForUser, setOnboardingTasksForUser } from '../../store/authSlice';
 import { useAppDispatch } from '../../store/hooks';
-import { openhumanWorkspaceOnboardingFlagSet } from '../../utils/tauriCommands';
+import { setOnboardingCompleted } from '../../utils/tauriCommands';
 import LocalAIStep from './steps/LocalAIStep';
 import MnemonicStep from './steps/MnemonicStep';
 import ScreenPermissionsStep from './steps/ScreenPermissionsStep';
@@ -101,16 +101,16 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   };
 
   const handleMnemonicComplete = async () => {
-    // Mark onboarded in Redux
+    // Mark onboarded in Redux (belt-and-suspenders alongside config)
     if (user?._id) {
       dispatch(setOnboardedForUser({ userId: user._id, value: true }));
     }
 
-    // Write workspace flag so the overlay won't show again
+    // Write onboarding_completed to core config (source of truth)
     try {
-      await openhumanWorkspaceOnboardingFlagSet(true);
+      await setOnboardingCompleted(true);
     } catch {
-      // Non-critical — Redux state is the primary gate
+      console.warn('[onboarding] Failed to persist onboarding_completed to core config');
     }
 
     onComplete?.();
