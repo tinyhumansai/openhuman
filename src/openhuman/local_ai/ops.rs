@@ -541,7 +541,7 @@ pub async fn local_ai_should_react(
         Ok(raw) => {
             let trimmed = raw.trim();
             tracing::debug!(
-                raw_output = trimmed,
+                output_len = trimmed.len(),
                 "[local_ai:should_react] model response"
             );
             if trimmed.eq_ignore_ascii_case("NONE") || trimmed.is_empty() {
@@ -584,11 +584,26 @@ pub async fn local_ai_should_react(
     ))
 }
 
-/// Extract the first emoji from a string. Handles common emoji codepoints.
+/// Extract the first emoji from a string. Handles common emoji codepoints
+/// including flag sequences (pairs of regional indicator symbols).
 fn extract_first_emoji(text: &str) -> Option<String> {
     let mut chars = text.chars();
     while let Some(ch) = chars.next() {
-        // Basic emoji ranges and variation selectors
+        // Regional indicator pair → flag emoji (e.g. 🇺🇸 = U+1F1FA U+1F1F8)
+        if is_regional_indicator(ch) {
+            let mut emoji = String::new();
+            emoji.push(ch);
+            // Consume consecutive regional indicators (flags are pairs)
+            for next in chars.by_ref() {
+                if is_regional_indicator(next) {
+                    emoji.push(next);
+                } else {
+                    break;
+                }
+            }
+            return Some(emoji);
+        }
+
         if is_emoji_start(ch) {
             let mut emoji = String::new();
             emoji.push(ch);
@@ -608,6 +623,10 @@ fn extract_first_emoji(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn is_regional_indicator(ch: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&ch)
 }
 
 fn is_emoji_start(ch: char) -> bool {
@@ -630,7 +649,6 @@ fn is_emoji_start(ch: char) -> bool {
         | '\u{2B1B}'..='\u{2B1C}'      // squares
         | '\u{2B50}' | '\u{2B55}'     // star, circle
         | '\u{FE00}'..='\u{FE0F}'      // variation selectors
-        | '\u{1F1E0}'..='\u{1F1FF}'    // regional indicators (flags)
         | '\u{1F300}'..='\u{1F9FF}'    // misc symbols, emoticons, transport, supplemental
         | '\u{1FA00}'..='\u{1FA6F}'    // chess symbols, extended-A
         | '\u{1FA70}'..='\u{1FAFF}'    // symbols extended-A
@@ -663,6 +681,18 @@ mod tests {
         assert_eq!(extract_first_emoji("NONE"), None);
         assert_eq!(extract_first_emoji("no reaction"), None);
         assert_eq!(extract_first_emoji(""), None);
+    }
+
+    #[test]
+    fn extract_flag_emoji_keeps_pair_together() {
+        assert_eq!(
+            extract_first_emoji("🇺🇸"),
+            Some("🇺🇸".to_string())
+        );
+        assert_eq!(
+            extract_first_emoji("🇬🇧 Great Britain"),
+            Some("🇬🇧".to_string())
+        );
     }
 
     #[test]

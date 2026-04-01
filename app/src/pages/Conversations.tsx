@@ -128,7 +128,9 @@ const Conversations = () => {
   const defaultChannelType = useAppSelector(
     state => state.channelConnections?.defaultMessagingChannel ?? 'web'
   );
-  const lastUserMessageRef = useRef<{ id: string; content: string; threadId: string } | null>(null);
+  const pendingReactionRef = useRef<
+    Map<string, { msgId: string; content: string; threadId: string }>
+  >(new Map());
 
   const selectedThreadIdRef = useRef(selectedThreadId);
   useEffect(() => {
@@ -355,10 +357,10 @@ const Conversations = () => {
         });
 
         // Fire-and-forget: auto-react to the user's message
-        if (lastUserMessageRef.current && lastUserMessageRef.current.threadId === event.thread_id) {
-          const { id, content, threadId } = lastUserMessageRef.current;
-          maybeAutoReact(id, content, threadId);
-          lastUserMessageRef.current = null;
+        const pending = pendingReactionRef.current.get(event.thread_id);
+        if (pending) {
+          maybeAutoReact(pending.msgId, pending.content, pending.threadId);
+          pendingReactionRef.current.delete(event.thread_id);
         }
 
         // Multi-bubble delivery gate: only when local model is active
@@ -420,6 +422,9 @@ const Conversations = () => {
             ),
           };
         });
+
+        // Clear pending reaction so stale callbacks are ignored
+        pendingReactionRef.current.delete(event.thread_id);
 
         if (event.error_type !== 'cancelled') {
           // Deduplicate: skip if the last message is already an error
@@ -529,11 +534,11 @@ const Conversations = () => {
     };
 
     dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
-    lastUserMessageRef.current = {
-      id: userMessage.id,
+    pendingReactionRef.current.set(sendingThreadId, {
+      msgId: userMessage.id,
       content: trimmed,
       threadId: sendingThreadId,
-    };
+    });
 
     setInputValue('');
     setSendError(null);
@@ -576,8 +581,10 @@ const Conversations = () => {
         }
 
         await deliverLocalResponse(reply, sendingThreadId);
+        pendingReactionRef.current.delete(sendingThreadId);
         maybeAutoReact(userMessage.id, trimmed, sendingThreadId);
       } catch (err) {
+        pendingReactionRef.current.delete(sendingThreadId);
         const msg = err instanceof Error ? err.message : String(err);
         setSendError(msg);
         dispatch(
@@ -902,12 +909,16 @@ const Conversations = () => {
                         </svg>
                       )}
                     </button>
-                    {msg.sender === 'agent' && (
-                      <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
-                        {(() => {
-                          const myReactions =
-                            (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
-                          return myReactions.map(emoji => (
+                    {(() => {
+                      const myReactions =
+                        (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
+                      const hasReactions = myReactions.length > 0;
+                      // Show reaction row if there are existing reactions (any sender)
+                      // or if this is an agent message (manual picker available)
+                      if (!hasReactions && msg.sender !== 'agent') return null;
+                      return (
+                        <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
+                          {myReactions.map(emoji => (
                             <button
                               key={emoji}
                               onClick={() =>
@@ -924,46 +935,47 @@ const Conversations = () => {
                               title={`Remove ${emoji}`}>
                               {emoji}
                             </button>
-                          ));
-                        })()}
-                        {reactionPickerMsgId === msg.id ? (
-                          <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-white/10">
-                            {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
+                          ))}
+                          {msg.sender === 'agent' &&
+                            (reactionPickerMsgId === msg.id ? (
+                              <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-white/10">
+                                {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
+                                  <button
+                                    key={emoji}
+                                    onClick={() => {
+                                      if (selectedThreadId) {
+                                        dispatch(
+                                          addReaction({
+                                            threadId: selectedThreadId,
+                                            messageId: msg.id,
+                                            emoji,
+                                          })
+                                        );
+                                      }
+                                      setReactionPickerMsgId(null);
+                                    }}
+                                    className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
+                                    title={emoji}>
+                                    {emoji}
+                                  </button>
+                                ))}
+                                <button
+                                  onClick={() => setReactionPickerMsgId(null)}
+                                  className="ml-0.5 text-stone-600 hover:text-stone-400 text-xs px-0.5">
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
                               <button
-                                key={emoji}
-                                onClick={() => {
-                                  if (selectedThreadId) {
-                                    dispatch(
-                                      addReaction({
-                                        threadId: selectedThreadId,
-                                        messageId: msg.id,
-                                        emoji,
-                                      })
-                                    );
-                                  }
-                                  setReactionPickerMsgId(null);
-                                }}
-                                className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
-                                title={emoji}>
-                                {emoji}
+                                onClick={() => setReactionPickerMsgId(msg.id)}
+                                className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-white/5 hover:bg-white/15 text-stone-500 hover:text-stone-300 text-xs transition-all"
+                                title="Add reaction">
+                                +
                               </button>
                             ))}
-                            <button
-                              onClick={() => setReactionPickerMsgId(null)}
-                              className="ml-0.5 text-stone-600 hover:text-stone-400 text-xs px-0.5">
-                              ✕
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setReactionPickerMsgId(msg.id)}
-                            className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-white/5 hover:bg-white/15 text-stone-500 hover:text-stone-300 text-xs transition-all"
-                            title="Add reaction">
-                            +
-                          </button>
-                        )}
-                      </div>
-                    )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
