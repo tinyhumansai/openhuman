@@ -60,54 +60,61 @@ fn info(msg: &str) {
     eprintln!("  · {msg}");
 }
 
-/// Find the skills source directory. Priority:
+/// Find the skills source directory. Returns None when not available (e.g. CI).
+///
+/// Priority:
 /// 1. SKILL_DEBUG_DIR env var
 /// 2. ../openhuman-skills/skills (sibling repo)
 /// 3. openhuman-skills/skills (subdir)
 /// 4. Broader search in parent workspace
-fn find_skills_dir() -> PathBuf {
+fn try_find_skills_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("SKILL_DEBUG_DIR") {
         let p = PathBuf::from(&dir);
-        assert!(p.exists(), "SKILL_DEBUG_DIR={dir} does not exist");
-        return p;
+        if p.exists() {
+            return Some(p);
+        }
+        eprintln!("SKILL_DEBUG_DIR={dir} does not exist");
+        return None;
     }
 
     let cwd = std::env::current_dir().expect("cwd");
 
-    // Try sibling repo
-    let sibling = cwd.join("../openhuman-skills/skills");
-    if sibling.exists() {
-        return sibling.canonicalize().unwrap();
-    }
+    let candidates = [
+        cwd.join("../openhuman-skills/skills"),
+        cwd.join("openhuman-skills/skills"),
+        cwd.join("../alphahuman/skills/skills"),
+    ];
 
-    // Try subdir
-    let subdir = cwd.join("openhuman-skills/skills");
-    if subdir.exists() {
-        return subdir.canonicalize().unwrap();
-    }
-
-    // Try alphahuman sibling (common dev layout)
-    let alpha = cwd.join("../alphahuman/skills/skills");
-    if alpha.exists() {
-        return alpha.canonicalize().unwrap();
+    for candidate in &candidates {
+        if candidate.exists() {
+            return Some(candidate.canonicalize().unwrap());
+        }
     }
 
     // Search parent workspace
     if let Some(parent) = cwd.parent() {
-        for entry in std::fs::read_dir(parent).into_iter().flatten() {
-            if let Ok(entry) = entry {
-                let candidate = entry.path().join("skills/skills");
-                if candidate.exists() && candidate.join("example-skill/manifest.json").exists() {
-                    return candidate.canonicalize().unwrap();
-                }
+        for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
+            let candidate = entry.path().join("skills/skills");
+            if candidate.exists() && candidate.join("example-skill/manifest.json").exists() {
+                return Some(candidate.canonicalize().unwrap());
             }
         }
     }
 
-    panic!(
-        "Could not find skills directory. Set SKILL_DEBUG_DIR or place openhuman-skills repo as a sibling.\n\
-         Searched from: {cwd:?}"
-    );
+    None
+}
+
+/// Convenience wrapper that skips the test when no skills directory is found.
+macro_rules! require_skills_dir {
+    () => {
+        match try_find_skills_dir() {
+            Some(dir) => dir,
+            None => {
+                eprintln!("SKIPPED: no skills directory available (set SKILL_DEBUG_DIR for CI)");
+                return;
+            }
+        }
+    };
 }
 
 /// Create a RuntimeEngine with the given skills source dir and a temp data dir.
@@ -140,7 +147,7 @@ async fn skill_full_lifecycle() {
         .try_init();
 
     let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
-    let skills_dir = find_skills_dir();
+    let skills_dir = require_skills_dir!();
     let tmp = tempdir().expect("tempdir");
     let data_dir = tmp.path().join("skills_data");
     std::fs::create_dir_all(&data_dir).expect("create data_dir");
@@ -533,7 +540,7 @@ async fn skill_rapid_start_stop() {
         .try_init();
 
     let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
-    let skills_dir = find_skills_dir();
+    let skills_dir = require_skills_dir!();
     let tmp = tempdir().expect("tempdir");
     let data_dir = tmp.path().join("skills_data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -574,7 +581,7 @@ async fn skill_disconnect_flow() {
         .try_init();
 
     let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
-    let skills_dir = find_skills_dir();
+    let skills_dir = require_skills_dir!();
     let tmp = tempdir().expect("tempdir");
     let data_dir = tmp.path().join("skills_data");
     std::fs::create_dir_all(&data_dir).unwrap();
