@@ -535,14 +535,15 @@ pub async fn local_ai_should_react(
          Reply with EXACTLY one word: either NONE (no reaction) or a single emoji character."
     );
 
-    let output = service
-        .prompt(config, &prompt, Some(8), true)
-        .await;
+    let output = service.prompt(config, &prompt, Some(8), true).await;
 
     let decision = match output {
         Ok(raw) => {
             let trimmed = raw.trim();
-            tracing::debug!(raw_output = trimmed, "[local_ai:should_react] model response");
+            tracing::debug!(
+                raw_output = trimmed,
+                "[local_ai:should_react] model response"
+            );
             if trimmed.eq_ignore_ascii_case("NONE") || trimmed.is_empty() {
                 ReactionDecision {
                     should_react: false,
