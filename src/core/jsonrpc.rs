@@ -430,9 +430,7 @@ pub async fn run_server(
 ) -> anyhow::Result<()> {
     let _ = all::all_registered_controllers();
     let port = port.unwrap_or_else(core_port);
-    let host = host
-        .map(|h| h.to_string())
-        .unwrap_or_else(core_host);
+    let host = host.map(|h| h.to_string()).unwrap_or_else(core_host);
     let bind_addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
