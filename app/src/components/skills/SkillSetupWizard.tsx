@@ -14,6 +14,7 @@ import { openUrl } from "../../utils/openUrl.ts";
 import type { SetupStep, SetupFieldError } from "../../lib/skills/types.ts";
 import SetupFormRenderer from "./SetupFormRenderer.tsx";
 import {IS_DEV} from "../../utils/config.ts";
+import {isTauri} from "../../utils/tauriCommands.ts";
 
 interface SkillSetupWizardProps {
   skillId: string;
@@ -147,7 +148,7 @@ export default function SkillSetupWizard({
     const { oauth } = state;
 
     try {
-      const shouldShowJson = IS_DEV ? 'responseType=json&' : ''
+      const shouldShowJson = IS_DEV && !isTauri() ? 'responseType=json&' : ''
       // Call backend to get the real OAuth authorization URL
       const data = await apiClient.get<{ oauthUrl?: string }>(
         `/auth/${oauth.provider}/connect?${shouldShowJson}skillId=${skillId}`,

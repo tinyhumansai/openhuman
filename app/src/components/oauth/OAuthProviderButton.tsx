@@ -28,15 +28,10 @@ const OAuthProviderButton = ({
 
     try {
       const backendUrl = await getBackendUrl();
-      const loginUrl = `${backendUrl}/auth/${provider.id}/login${IS_DEV ? '?responseType=json' : ''}`;
-
-      if (IS_DEV) {
-        console.log(`[dev] OAuth debug mode enabled. OAuth URL: ${loginUrl}`);
-        console.log('[dev] In debug mode, OAuth will return JSON response instead of redirect.');
-        console.log(
-          '[dev] After OAuth completion, copy the loginToken and use: window.__simulateDeepLink("openhuman://auth?token=YOUR_TOKEN")'
-        );
-      }
+      // In dev mode, request JSON response for browser testing — but NOT when
+      // running in Tauri, where the backend must redirect to openhuman:// deep link.
+      const useJsonResponse = IS_DEV && !isTauri();
+      const loginUrl = `${backendUrl}/auth/${provider.id}/login${useJsonResponse ? '?responseType=json' : ''}`;
 
       // Desktop (Tauri): use system browser → backend OAuth → deep link back to app
       if (isTauri()) {
