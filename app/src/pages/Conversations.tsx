@@ -35,8 +35,9 @@ import {
   openhumanAutocompleteAccept,
   openhumanAutocompleteCurrent,
   openhumanLocalAiChat,
-  openhumanLocalAiTranscribeBytes,
-  openhumanLocalAiTts,
+  openhumanVoiceStatus,
+  openhumanVoiceTranscribeBytes,
+  openhumanVoiceTts,
 } from '../utils/tauriCommands';
 
 const DEFAULT_THREAD_ID = 'default-thread';
@@ -281,6 +282,33 @@ const Conversations = () => {
       mediaRecorderRef.current?.stop();
     }
   }, [inputMode, isRecording]);
+
+  // Proactively check voice binary availability when switching to voice mode
+  useEffect(() => {
+    if (inputMode !== 'voice' || !rustChat) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resp = await openhumanVoiceStatus();
+        if (cancelled) return;
+        const status = resp.result;
+        if (!status.stt_available) {
+          setVoiceStatus(
+            'Speech-to-text unavailable: whisper-cli binary or STT model not found. Check Settings > Local Models.'
+          );
+        } else {
+          setVoiceStatus('Ready — tap "Start Talking" to record.');
+        }
+      } catch {
+        if (!cancelled) {
+          setVoiceStatus('Could not check voice availability.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inputMode, rustChat]);
 
   useEffect(() => {
     if (!rustChat || socketStatus !== 'connected') return;
@@ -588,7 +616,7 @@ const Conversations = () => {
       const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
       const audioBytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const extension = getAudioExtension(mimeType || blob.type);
-      const result = await openhumanLocalAiTranscribeBytes(audioBytes, extension);
+      const result = await openhumanVoiceTranscribeBytes(audioBytes, extension);
       const transcript = result.result.text.trim();
 
       if (!transcript) {
@@ -685,7 +713,7 @@ const Conversations = () => {
 
     void (async () => {
       try {
-        const ttsResult = await openhumanLocalAiTts(latestAgentMessage.content);
+        const ttsResult = await openhumanVoiceTts(latestAgentMessage.content);
         if (cancelled) return;
 
         const audioSrc = convertFileSrc(ttsResult.result.output_path);

@@ -7,10 +7,10 @@ pub mod presets;
 mod schemas;
 
 mod install;
-mod model_ids;
+pub(crate) mod model_ids;
 mod ollama_api;
 mod parse;
-mod paths;
+pub(crate) mod paths;
 mod service;
 mod types;
 
