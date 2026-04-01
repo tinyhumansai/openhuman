@@ -573,4 +573,104 @@ mod tests {
         assert!(key.starts_with("preference_"));
         assert!(key.contains("prefer"));
     }
+
+    #[tokio::test]
+    async fn archivist_accumulates_turns_in_segment() {
+        let conn = setup_conn();
+        let hook = ArchivistHook::new(conn.clone(), true);
+
+        let session = "accum-session";
+
+        // Send three turns in quick succession.
+        for i in 1..=3 {
+            hook.on_turn_complete(&TurnContext {
+                user_message: format!("Turn number {i}"),
+                assistant_response: format!("Response {i}"),
+                tool_calls: vec![],
+                turn_duration_ms: 50,
+                session_id: Some(session.into()),
+                iteration_count: i,
+            })
+            .await
+            .unwrap();
+        }
+
+        // After 3 turns on the same session with no boundary triggers, there
+        // should be exactly one open segment whose turn_count reflects all turns.
+        let open_seg = seg::open_segment_for_session(&conn, session)
+            .unwrap()
+            .expect("Expected an open segment after 3 turns");
+
+        // segment_create starts turn_count at 1; each subsequent turn calls
+        // segment_append_turn which increments by 1.  So 3 turns => turn_count = 3.
+        assert_eq!(
+            open_seg.turn_count, 3,
+            "Segment should have accumulated 3 turns, got {}",
+            open_seg.turn_count
+        );
+    }
+
+    #[tokio::test]
+    async fn archivist_extracts_preference_event_on_boundary() {
+        let conn = setup_conn();
+        let hook = ArchivistHook::new(conn.clone(), true);
+
+        let session = "pref-boundary-session";
+
+        // First turn: establishes a segment.
+        hook.on_turn_complete(&TurnContext {
+            user_message: "Tell me about Rust ownership".into(),
+            assistant_response: "Ownership is a key concept in Rust.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some(session.into()),
+            iteration_count: 1,
+        })
+        .await
+        .unwrap();
+
+        // Second turn: continue in the same segment; include a preference statement
+        // so it can be captured when the segment closes.
+        hook.on_turn_complete(&TurnContext {
+            user_message: "I prefer dark mode for all my editors".into(),
+            assistant_response: "Good to know! Dark mode is easier on the eyes.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some(session.into()),
+            iteration_count: 2,
+        })
+        .await
+        .unwrap();
+
+        // Third turn: explicit topic-change marker — this will close the current
+        // segment and trigger on_segment_closed which runs heuristic extraction.
+        hook.on_turn_complete(&TurnContext {
+            user_message: "Switching to a different topic — how does Tokio work?".into(),
+            assistant_response: "Tokio is an async runtime.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some(session.into()),
+            iteration_count: 3,
+        })
+        .await
+        .unwrap();
+
+        // The boundary fires on the 3rd turn's detection, closing the segment that
+        // held the "I prefer dark mode" content. Verify a preference event was stored.
+        let events = ev::events_by_type(&conn, "global", "preference", 20).unwrap();
+        assert!(
+            !events.is_empty(),
+            "Expected at least one preference event after segment close; got 0. \
+             The 'I prefer dark mode' message should have been extracted."
+        );
+        // At least one event content should reference dark mode or preference.
+        let has_dark_mode = events
+            .iter()
+            .any(|e| e.content.to_lowercase().contains("prefer"));
+        assert!(
+            has_dark_mode,
+            "Expected a preference event mentioning 'prefer', found: {:?}",
+            events.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
+    }
 }

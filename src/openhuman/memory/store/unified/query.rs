@@ -1346,4 +1346,123 @@ mod tests {
             .iter()
             .any(|hit| matches!(hit.kind, crate::openhuman::memory::MemoryItemKind::Kv)));
     }
+
+    #[tokio::test]
+    async fn query_returns_episodic_hits_when_available() {
+        use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
+
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        // Insert an episodic entry that matches the query.
+        fts5::episodic_insert(
+            &memory.conn,
+            &EpisodicEntry {
+                id: None,
+                session_id: "sess-1".into(),
+                timestamp: 1000.0,
+                role: "user".into(),
+                content: "I have been using Tokio for async Rust development".into(),
+                lesson: None,
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+
+        let hits = memory
+            .query_namespace_hits("global", "Tokio async Rust", 10)
+            .await
+            .unwrap();
+
+        let episodic_hits: Vec<_> = hits
+            .iter()
+            .filter(|h| h.kind == crate::openhuman::memory::MemoryItemKind::Episodic)
+            .collect();
+        assert!(
+            !episodic_hits.is_empty(),
+            "Expected at least one Episodic hit for 'Tokio async Rust'"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_returns_event_hits_when_available() {
+        use crate::openhuman::memory::store::events::{self, EventRecord, EventType};
+
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        // Insert an event that matches the query.
+        events::event_insert(
+            &memory.conn,
+            &EventRecord {
+                event_id: "evt-q-1".into(),
+                segment_id: "seg-q-1".into(),
+                session_id: "s1".into(),
+                namespace: "global".into(),
+                event_type: EventType::Decision,
+                content: "We decided to use PostgreSQL as the primary database".into(),
+                subject: Some("database choice".into()),
+                timestamp_ref: None,
+                confidence: 0.85,
+                embedding: None,
+                source_turn_ids: None,
+                created_at: 1000.0,
+            },
+        )
+        .unwrap();
+
+        let hits = memory
+            .query_namespace_hits("global", "PostgreSQL database", 10)
+            .await
+            .unwrap();
+
+        let event_hits: Vec<_> = hits
+            .iter()
+            .filter(|h| h.kind == crate::openhuman::memory::MemoryItemKind::Event)
+            .collect();
+        assert!(
+            !event_hits.is_empty(),
+            "Expected at least one Event hit for 'PostgreSQL database'"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_episodic_hits_have_correct_kind() {
+        use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
+
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        fts5::episodic_insert(
+            &memory.conn,
+            &EpisodicEntry {
+                id: None,
+                session_id: "sess-kind".into(),
+                timestamp: 2000.0,
+                role: "assistant".into(),
+                content: "The deployment pipeline uses GitHub Actions for CI".into(),
+                lesson: Some("CI runs on push to main".into()),
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+
+        let hits = memory
+            .query_namespace_hits("global", "GitHub Actions deployment", 10)
+            .await
+            .unwrap();
+
+        for hit in hits
+            .iter()
+            .filter(|h| h.id.starts_with("episodic:"))
+        {
+            assert_eq!(
+                hit.kind,
+                crate::openhuman::memory::MemoryItemKind::Episodic,
+                "Hits with 'episodic:' id prefix must have kind Episodic"
+            );
+        }
+    }
 }
