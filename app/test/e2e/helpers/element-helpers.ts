@@ -108,8 +108,8 @@ export async function waitForText(
 ): Promise<ChainablePromiseElement> {
   if (isTauriDriver()) {
     // Use XPath on the HTML DOM — works universally with WebDriver
-    const escaped = text.replace(/'/g, "\\'");
-    const selector = `//*[contains(text(),'${escaped}')]`;
+    const literal = xpathStringLiteral(text);
+    const selector = `//*[contains(text(),${literal})]`;
     const el = await browser.$(selector);
     await el.waitForExist({ timeout, timeoutMsg: `Text "${text}" not found within ${timeout}ms` });
     return el;
@@ -135,11 +135,11 @@ export async function waitForButton(
 ): Promise<ChainablePromiseElement> {
   if (isTauriDriver()) {
     // Try button, [role="button"], a elements containing the text
-    const escaped = text.replace(/'/g, "\\'");
+    const literal = xpathStringLiteral(text);
     const btnXpath =
-      `//button[contains(text(),'${escaped}')] | ` +
-      `//*[@role='button'][contains(text(),'${escaped}')] | ` +
-      `//a[contains(text(),'${escaped}')]`;
+      `//button[contains(text(),${literal})] | ` +
+      `//*[@role='button'][contains(text(),${literal})] | ` +
+      `//a[contains(text(),${literal})]`;
     const el = await browser.$(btnXpath);
     try {
       await el.waitForExist({ timeout });

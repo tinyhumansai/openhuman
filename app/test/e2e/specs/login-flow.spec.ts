@@ -63,7 +63,7 @@ describe('Login flow — complete with mock data', () => {
   // Phase 1: Deep link authentication
   // -----------------------------------------------------------------------
 
-  it('app starts with window hidden (tray app)', async () => {
+  it('app process is running and has chrome (menu bar on macOS, window on Linux)', async () => {
     const hasChrome = await hasAppChrome();
     expect(hasChrome).toBe(true);
   });

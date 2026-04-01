@@ -122,7 +122,7 @@ if [ "$OS" = "Linux" ]; then
   # ---------------------------------------------------------------------------
   # Linux: start tauri-driver
   # ---------------------------------------------------------------------------
-  TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
+  export TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
   DRIVER_LOG="/tmp/tauri-driver-e2e-${LOG_SUFFIX}.log"
 
   TAURI_DRIVER_BIN="$(command -v tauri-driver 2>/dev/null || true)"
@@ -156,7 +156,7 @@ else
   # ---------------------------------------------------------------------------
   # macOS: start Appium
   # ---------------------------------------------------------------------------
-  APPIUM_PORT="${APPIUM_PORT:-4723}"
+  export APPIUM_PORT="${APPIUM_PORT:-4723}"
   # shellcheck source=/dev/null
   source "$SCRIPT_DIR/e2e-resolve-node-appium.sh"
 

@@ -181,7 +181,7 @@ jobs:
           Xvfb :99 -screen 0 1280x1024x24 &
           sleep 2
           # dbus session is required by webkit2gtk
-          eval $(dbus-launch --sh-syntax)
+          eval "$(dbus-launch --sh-syntax)"
           yarn workspace openhuman-app test:e2e:all:flows
 
 #   e2e-macos:

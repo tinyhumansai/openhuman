@@ -310,6 +310,10 @@ async function handleRequest(req, res) {
     (/^\/payments\/stripe\/checkout\/?$/.test(url) ||
       /^\/payments\/stripe\/purchasePlan\/?$/.test(url))
   ) {
+    if (mockBehavior.purchaseError === "true") {
+      json(res, 500, { success: false, error: "Payment service unavailable" });
+      return;
+    }
     json(res, 200, {
       success: true,
       data: {
@@ -331,11 +335,16 @@ async function handleRequest(req, res) {
   }
 
   if (method === "POST" && /^\/payments\/coinbase\/charge\/?$/.test(url)) {
+    if (mockBehavior.coinbaseError === "true") {
+      json(res, 500, { success: false, error: "Coinbase service unavailable" });
+      return;
+    }
     json(res, 200, {
       success: true,
       data: {
-        chargeId: "charge_mock_" + Date.now(),
+        gatewayTransactionId: "charge_mock_" + Date.now(),
         hostedUrl: "https://commerce.coinbase.com/mock-charge",
+        status: "NEW",
         expiresAt: new Date(Date.now() + 3600000).toISOString(),
       },
     });
@@ -562,10 +571,8 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (
-    (method === "GET" && /^\/billing\/current-plan\/?(\?.*)?$/.test(url)) ||
-    (method === "GET" && /^\/payments\/stripe\/currentPlan\/?(\?.*)?$/.test(url))
-  ) {
+  // currentPlan is handled by the earlier consolidated handler.
+  if (method === "GET" && /^\/billing\/current-plan\/?(\?.*)?$/.test(url)) {
     const plan = mockBehavior.plan || "FREE";
     const isActive = mockBehavior.planActive === "true";
     const expiry = mockBehavior.planExpiry || null;
@@ -587,40 +594,9 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (method === "POST" && /^\/payments\/stripe\/purchasePlan\/?$/.test(url)) {
-    if (mockBehavior.purchaseError === "true") {
-      json(res, 500, { success: false, error: "Payment service unavailable" });
-      return;
-    }
-    json(res, 200, {
-      success: true,
-      data: { checkoutUrl: `${origin}/mock-checkout`, sessionId: `cs_mock_${Date.now()}` },
-    });
-    return;
-  }
-
-  if (method === "POST" && /^\/payments\/stripe\/portal\/?$/.test(url)) {
-    json(res, 200, { success: true, data: { portalUrl: `${origin}/mock-portal` } });
-    return;
-  }
-
-  if (method === "POST" && /^\/payments\/coinbase\/charge\/?$/.test(url)) {
-    if (mockBehavior.coinbaseError === "true") {
-      json(res, 500, { success: false, error: "Coinbase service unavailable" });
-      return;
-    }
-    const chargeId = `coinbase_mock_${Date.now()}`;
-    json(res, 200, {
-      success: true,
-      data: {
-        gatewayTransactionId: chargeId,
-        hostedUrl: `${origin}/mock-coinbase-checkout`,
-        status: "NEW",
-        expiresAt: new Date(Date.now() + 3600000).toISOString(),
-      },
-    });
-    return;
-  }
+  // purchasePlan, portal, and coinbase/charge are handled by the earlier
+  // consolidated handlers (with mockBehavior checks). Only the coinbase
+  // charge-status polling endpoint remains here.
 
   if (method === "GET" && /^\/payments\/coinbase\/charge\/[^/]+\/?(\?.*)?$/.test(url)) {
     const status = mockBehavior.cryptoStatus || "NEW";

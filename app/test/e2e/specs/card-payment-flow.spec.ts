@@ -91,6 +91,9 @@ async function navigateToHome() {
     await browser.pause(2_000);
     homeText = await waitForHomePage(10_000);
   }
+  if (!homeText) {
+    throw new Error('Failed to navigate to Home after retries');
+  }
 }
 
 async function navigateToBilling() {
@@ -228,16 +231,29 @@ describe('Card Payment Flow', () => {
 
   it('5.2.2 — failed purchase API call handled gracefully', async () => {
     resetMockBehavior();
+    setMockBehavior('purchaseError', 'true');
     clearRequestLog();
     await navigateToBilling();
 
+    // Click Upgrade — this should hit the mock which returns a 500 error
+    await clickText('Upgrade', 10_000);
+    console.log(`${LOG_PREFIX} Clicked Upgrade (expecting failure)`);
+    await browser.pause(3_000);
+
+    // Verify the purchase API was called
+    const purchaseCall = await waitForRequest('POST', '/payments/stripe/purchasePlan', 10_000);
+    expect(purchaseCall).toBeDefined();
+
+    // The app should remain on the billing page without crashing.
+    // It should NOT show "Waiting for payment" since the API returned an error.
     const hasBillingContent =
       (await textExists('Current Plan')) ||
       (await textExists('FREE')) ||
       (await textExists('Upgrade'));
     expect(hasBillingContent).toBe(true);
 
-    console.log(`${LOG_PREFIX} 5.2.2 — Billing loads correctly with default plan`);
+    console.log(`${LOG_PREFIX} 5.2.2 — App handled purchase error gracefully`);
+    resetMockBehavior();
     await navigateToHome();
   });
 

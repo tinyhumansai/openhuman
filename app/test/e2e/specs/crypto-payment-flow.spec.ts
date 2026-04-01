@@ -91,6 +91,9 @@ async function navigateToHome() {
     await browser.pause(2_000);
     homeText = await waitForHomePage(10_000);
   }
+  if (!homeText) {
+    throw new Error('Failed to navigate to Home after retries');
+  }
 }
 
 async function navigateToBilling() {
@@ -215,26 +218,22 @@ describe('Crypto Payment Flow', () => {
     const hasAnnual = await textExists('Annual');
     console.log(`${LOG_PREFIX} Monthly: ${hasMonthly}, Annual: ${hasAnnual}`);
 
-    // Toggle crypto on
+    // Toggle crypto on — this label must exist on the billing page
     const hasCrypto = await textExists('Pay with Crypto');
-    if (hasCrypto) {
-      try {
-        await clickToggle(10_000);
-      } catch {
-        await clickText('Pay with Crypto', 10_000);
-      }
-      await browser.pause(2_000);
+    expect(hasCrypto).toBe(true);
 
-      // After enabling crypto, annual billing should be forced
-      // Monthly option should be visually disabled (opacity-40)
-      // We can verify by checking that Annual is still visible
-      const annualStillVisible = await textExists('Annual');
-      expect(annualStillVisible).toBe(true);
-
-      console.log(`${LOG_PREFIX} 6.1.2 — Crypto toggle forces annual billing`);
-    } else {
-      console.log(`${LOG_PREFIX} 6.1.2 — Pay with Crypto label not found. Skipping.`);
+    try {
+      await clickToggle(10_000);
+    } catch {
+      await clickText('Pay with Crypto', 10_000);
     }
+    await browser.pause(2_000);
+
+    // After enabling crypto, annual billing should be forced
+    const annualStillVisible = await textExists('Annual');
+    expect(annualStillVisible).toBe(true);
+
+    console.log(`${LOG_PREFIX} 6.1.2 — Crypto toggle forces annual billing`);
 
     await navigateToHome();
   });
@@ -245,11 +244,8 @@ describe('Crypto Payment Flow', () => {
     setMockBehavior('planActive', 'true');
     clearRequestLog();
     await navigateToBilling();
-    await browser.pause(3_000);
 
-    const planCall = getRequestLog().find(
-      r => r.method === 'GET' && r.url.includes('/payments/stripe/currentPlan')
-    );
+    const planCall = await waitForRequest('GET', '/payments/stripe/currentPlan', 10_000);
     expect(planCall).toBeDefined();
 
     const hasPlanInfo =
@@ -278,19 +274,29 @@ describe('Crypto Payment Flow', () => {
     await navigateToHome();
   });
 
-  it('6.3.2 — Coinbase API error handled gracefully', async () => {
+  it('6.3.2 — payment API error handled gracefully', async () => {
     resetMockBehavior();
+    setMockBehavior('purchaseError', 'true');
     clearRequestLog();
     await navigateToBilling();
 
-    // Billing page should load without crashing even without active subscription
+    // Click Upgrade — the mock will return a 500 error
+    await clickText('Upgrade', 10_000);
+    console.log(`${LOG_PREFIX} Clicked Upgrade (expecting error)`);
+    await browser.pause(3_000);
+
+    // Verify the purchase API was called
+    const purchaseCall = await waitForRequest('POST', '/payments/stripe/purchasePlan', 10_000);
+    expect(purchaseCall).toBeDefined();
+
+    // App should remain on billing page without crashing
     const hasBillingContent =
       (await textExists('Current Plan')) ||
       (await textExists('FREE')) ||
       (await textExists('Upgrade'));
     expect(hasBillingContent).toBe(true);
 
-    console.log(`${LOG_PREFIX} 6.3.2 — Billing loads gracefully with default state`);
+    console.log(`${LOG_PREFIX} 6.3.2 — App handled payment error gracefully`);
     resetMockBehavior();
     await navigateToHome();
   });
