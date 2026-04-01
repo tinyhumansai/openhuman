@@ -16,6 +16,7 @@ pub struct UnifiedMemory {
 }
 
 mod documents;
+pub mod fts5;
 mod graph;
 mod helpers;
 mod init;

@@ -5,6 +5,7 @@ pub mod cost;
 pub mod dispatcher;
 pub mod error;
 pub mod events;
+pub mod harness;
 pub mod hooks;
 pub mod host_runtime;
 pub mod identity;

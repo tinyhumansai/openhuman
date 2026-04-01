@@ -104,6 +104,11 @@ impl UnifiedMemory {
              CREATE INDEX IF NOT EXISTS idx_vector_chunks_ns_doc ON vector_chunks(namespace, document_id);",
         )?;
 
+        // Create FTS5 episodic tables (episodic_log, episodic_fts, and their
+        // triggers) so the Archivist can call episodic_insert immediately after
+        // the store is initialised.
+        conn.execute_batch(super::fts5::EPISODIC_INIT_SQL)?;
+
         Ok(Self {
             workspace_dir: workspace_dir.to_path_buf(),
             db_path,
