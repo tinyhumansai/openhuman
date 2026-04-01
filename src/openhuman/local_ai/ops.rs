@@ -685,10 +685,7 @@ mod tests {
 
     #[test]
     fn extract_flag_emoji_keeps_pair_together() {
-        assert_eq!(
-            extract_first_emoji("🇺🇸"),
-            Some("🇺🇸".to_string())
-        );
+        assert_eq!(extract_first_emoji("🇺🇸"), Some("🇺🇸".to_string()));
         assert_eq!(
             extract_first_emoji("🇬🇧 Great Britain"),
             Some("🇬🇧".to_string())
