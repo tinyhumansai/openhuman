@@ -12,6 +12,7 @@ mod ops_core;
 mod ops_net;
 mod ops_state;
 mod ops_storage;
+mod ops_webhook;
 pub mod types;
 
 // Re-export public API used by `qjs_skill_instance`

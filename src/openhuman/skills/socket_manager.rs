@@ -30,6 +30,7 @@ use {
 // SkillRegistry only available on desktop
 use crate::openhuman::skills::skill_registry::SkillRegistry;
 use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin};
+use crate::openhuman::webhooks::{WebhookRequest, WebhookRouter};
 
 /// Events emitted to the frontend via Tauri.
 #[allow(dead_code)]
@@ -46,6 +47,7 @@ pub mod events {
 
 struct SharedState {
     registry: RwLock<Option<Arc<SkillRegistry>>>,
+    webhook_router: RwLock<Option<Arc<WebhookRouter>>>,
     status: RwLock<ConnectionStatus>,
     socket_id: RwLock<Option<String>>,
 }
@@ -84,6 +86,7 @@ impl SocketManager {
         Self {
             shared: Arc::new(SharedState {
                 registry: RwLock::new(None),
+                webhook_router: RwLock::new(None),
                 status: RwLock::new(ConnectionStatus::Disconnected),
                 socket_id: RwLock::new(None),
             }),
@@ -96,6 +99,11 @@ impl SocketManager {
     /// Set the skill registry for MCP tool handling.
     pub fn set_registry(&self, registry: Arc<SkillRegistry>) {
         *self.shared.registry.write() = Some(registry);
+    }
+
+    /// Set the webhook router for skill-targeted webhook delivery.
+    pub fn set_webhook_router(&self, router: Arc<WebhookRouter>) {
+        *self.shared.webhook_router.write() = Some(router);
     }
 
     /// Get current socket state.
@@ -626,6 +634,14 @@ fn handle_sio_event(
                 handle_mcp_tool_call(&shared, data, &tx).await;
             });
         }
+        // Webhook tunnel — route to owning skill and relay response
+        "webhook:request" => {
+            let shared = Arc::clone(shared);
+            let tx = emit_tx.clone();
+            tokio::spawn(async move {
+                handle_webhook_request(&shared, data, &tx).await;
+            });
+        }
         _ => {
             // Forward to skills (desktop only) and frontend
             {
@@ -769,6 +785,171 @@ async fn handle_mcp_tool_call(
         "mcp:toolCallResponse",
         json!({ "requestId": request_id, "result": result }),
     );
+}
+
+// ---------------------------------------------------------------------------
+// Webhook tunnel handler
+// ---------------------------------------------------------------------------
+
+/// Handle an incoming `webhook:request` event from the backend.
+///
+/// Routes the request to the owning skill via the WebhookRouter, waits for the
+/// skill's response, and emits `webhook:response` back through the socket.
+async fn handle_webhook_request(
+    shared: &SharedState,
+    data: serde_json::Value,
+    emit_tx: &mpsc::UnboundedSender<String>,
+) {
+    // Parse the incoming request
+    let request: WebhookRequest = match serde_json::from_value(data.clone()) {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("[socket-mgr] Failed to parse webhook:request payload: {e}");
+            // Try to extract correlationId so we can send a 400 back
+            let cid = data
+                .get("correlationId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            emit_via_channel(
+                emit_tx,
+                "webhook:response",
+                json!({
+                    "correlationId": cid,
+                    "statusCode": 400,
+                    "headers": {},
+                    "body": base64_encode(&format!(
+                        "{{\"error\":\"Bad request: {}\"}}",
+                        e.to_string().replace('"', "\\\"")
+                    )),
+                }),
+            );
+            return;
+        }
+    };
+
+    let correlation_id = request.correlation_id.clone();
+    let tunnel_uuid = request.tunnel_uuid.clone();
+    let tunnel_name = request.tunnel_name.clone();
+    let method = request.method.clone();
+    let path = request.path.clone();
+
+    log::info!(
+        "[socket-mgr] webhook:request {} {} (tunnel={}, correlationId={})",
+        method,
+        path,
+        tunnel_uuid,
+        correlation_id,
+    );
+
+    // Look up the owning skill via the webhook router
+    let router = shared.webhook_router.read().clone();
+    let skill_id = router.as_ref().and_then(|r| r.route(&tunnel_uuid));
+
+    let (response, resolved_skill_id) = match skill_id {
+        Some(sid) => {
+            log::debug!("[socket-mgr] webhook:request routed to skill '{}'", sid,);
+
+            let registry = shared.registry.read().clone();
+            match registry {
+                Some(registry) => {
+                    let result = registry
+                        .send_webhook_request(
+                            &sid,
+                            correlation_id.clone(),
+                            request.method,
+                            request.path,
+                            request.headers,
+                            request.query,
+                            request.body,
+                            request.tunnel_id,
+                            request.tunnel_name,
+                        )
+                        .await;
+
+                    match result {
+                        Ok(resp) => (resp, Some(sid)),
+                        Err(e) => {
+                            log::warn!("[socket-mgr] Skill webhook handler error: {}", e,);
+                            (
+                                crate::openhuman::webhooks::WebhookResponseData {
+                                    correlation_id: correlation_id.clone(),
+                                    status_code: 500,
+                                    headers: std::collections::HashMap::new(),
+                                    body: base64_encode(&format!(
+                                        "{{\"error\":\"Skill handler error: {}\"}}",
+                                        e.replace('"', "\\\"")
+                                    )),
+                                },
+                                Some(sid),
+                            )
+                        }
+                    }
+                }
+                None => {
+                    log::warn!("[socket-mgr] No skill registry available for webhook");
+                    (
+                        crate::openhuman::webhooks::WebhookResponseData {
+                            correlation_id: correlation_id.clone(),
+                            status_code: 503,
+                            headers: std::collections::HashMap::new(),
+                            body: base64_encode("{\"error\":\"Runtime not ready\"}"),
+                        },
+                        None,
+                    )
+                }
+            }
+        }
+        None => {
+            log::debug!(
+                "[socket-mgr] No skill registered for tunnel {}",
+                tunnel_uuid,
+            );
+            (
+                crate::openhuman::webhooks::WebhookResponseData {
+                    correlation_id: correlation_id.clone(),
+                    status_code: 404,
+                    headers: std::collections::HashMap::new(),
+                    body: base64_encode("{\"error\":\"No handler registered for this tunnel\"}"),
+                },
+                None,
+            )
+        }
+    };
+
+    // Emit webhook:response back to the backend
+    emit_via_channel(
+        emit_tx,
+        "webhook:response",
+        json!({
+            "correlationId": response.correlation_id,
+            "statusCode": response.status_code,
+            "headers": response.headers,
+            "body": response.body,
+        }),
+    );
+
+    // Log activity for debugging (frontend polls activity via core RPC)
+    log::info!(
+        "[socket-mgr] webhook activity: {} {} → status={}, skill={:?}, tunnel={}",
+        method,
+        path,
+        response.status_code,
+        resolved_skill_id,
+        tunnel_name,
+    );
+
+    log::debug!(
+        "[socket-mgr] webhook:response emitted (status={})",
+        response.status_code,
+    );
+}
+
+/// Base64-encode a string (for webhook response bodies).
+/// Uses the `STANDARD` alphabet (A-Z, a-z, 0-9, +, /) with `=` padding.
+fn base64_encode(input: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(input.as_bytes())
 }
 
 // ---------------------------------------------------------------------------

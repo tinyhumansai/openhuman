@@ -140,6 +140,7 @@ impl QjsSkillInstance {
                         skill_id: skill_id.clone(),
                         data_dir: data_dir.clone(),
                         memory_client: _deps.memory_client.clone(),
+                        webhook_router: _deps.webhook_router.clone(),
                     };
 
                     if let Err(e) = qjs_ops::register_ops(

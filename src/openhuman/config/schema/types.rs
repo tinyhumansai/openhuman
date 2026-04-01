@@ -67,9 +67,6 @@ pub struct Config {
     pub storage: StorageConfig,
 
     #[serde(default)]
-    pub tunnel: TunnelConfig,
-
-    #[serde(default)]
     pub composio: ComposioConfig,
 
     #[serde(default)]
@@ -140,7 +137,6 @@ impl Default for Config {
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             storage: StorageConfig::default(),
-            tunnel: TunnelConfig::default(),
             composio: ComposioConfig::default(),
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),

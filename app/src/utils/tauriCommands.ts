@@ -984,18 +984,6 @@ function tauriErrorMessage(err: unknown): string {
   return 'Unknown Tauri invoke error';
 }
 
-export interface TunnelConfig {
-  provider: string;
-  cloudflare?: { token: string } | null;
-  tailscale?: { funnel?: boolean; hostname?: string | null } | null;
-  ngrok?: { auth_token: string; domain?: string | null } | null;
-  custom?: {
-    start_command: string;
-    health_url?: string | null;
-    url_pattern?: string | null;
-  } | null;
-}
-
 export async function openhumanGetConfig(): Promise<CommandResponse<ConfigSnapshot>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
@@ -1024,18 +1012,6 @@ export async function openhumanUpdateMemorySettings(
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.update_memory_settings',
     params: update,
-  });
-}
-
-export async function openhumanUpdateTunnelSettings(
-  tunnel: TunnelConfig
-): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: 'openhuman.update_tunnel_settings',
-    params: tunnel,
   });
 }
 

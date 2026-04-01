@@ -29,13 +29,11 @@ import {
   openhumanUpdateMemorySettings,
   openhumanUpdateModelSettings,
   openhumanUpdateRuntimeSettings,
-  openhumanUpdateTunnelSettings,
   runtimeDisableSkill,
   runtimeEnableSkill,
   runtimeIsSkillEnabled,
   runtimeListSkills,
   SkillSnapshot,
-  TunnelConfig,
 } from '../../../utils/tauriCommands';
 import DaemonHealthIndicator from '../../daemon/DaemonHealthIndicator';
 import SettingsHeader from '../components/SettingsHeader';
@@ -76,11 +74,6 @@ const TauriCommandsPanel = () => {
   const [apiUrl, setApiUrl] = useState<string>('');
   const [defaultModel, setDefaultModel] = useState<string>('');
   const [defaultTemp, setDefaultTemp] = useState<string>('0.7');
-  const [tunnelProvider, setTunnelProvider] = useState<string>('none');
-  const [cloudflareToken, setCloudflareToken] = useState<string>('');
-  const [ngrokToken, setNgrokToken] = useState<string>('');
-  const [tailscaleHostname, setTailscaleHostname] = useState<string>('');
-  const [customCommand, setCustomCommand] = useState<string>('');
   const [memoryBackend, setMemoryBackend] = useState<string>('sqlite');
   const [memoryAutoSave, setMemoryAutoSave] = useState<boolean>(true);
   const [embeddingProvider, setEmbeddingProvider] = useState<string>('none');
@@ -277,14 +270,6 @@ const TauriCommandsPanel = () => {
       setConfigLoaded(true);
 
       // Load other configuration sections
-      const tunnel = (config.tunnel as Record<string, unknown>) ?? {};
-      setTunnelProvider((tunnel.provider as string) ?? 'none');
-      setCloudflareToken(((tunnel.cloudflare as Record<string, unknown>)?.token as string) ?? '');
-      setNgrokToken(((tunnel.ngrok as Record<string, unknown>)?.auth_token as string) ?? '');
-      setTailscaleHostname(
-        ((tunnel.tailscale as Record<string, unknown>)?.hostname as string) ?? ''
-      );
-      setCustomCommand(((tunnel.custom as Record<string, unknown>)?.start_command as string) ?? '');
 
       const memory = (config.memory as Record<string, unknown>) ?? {};
       setMemoryBackend((memory.backend as string) ?? 'sqlite');
@@ -343,22 +328,6 @@ const TauriCommandsPanel = () => {
     },
     [daemonShowTray, tauriAvailable]
   );
-
-  const buildTunnelConfig = (): TunnelConfig => {
-    if (tunnelProvider === 'cloudflare') {
-      return { provider: 'cloudflare', cloudflare: { token: cloudflareToken } };
-    }
-    if (tunnelProvider === 'ngrok') {
-      return { provider: 'ngrok', ngrok: { auth_token: ngrokToken } };
-    }
-    if (tunnelProvider === 'tailscale') {
-      return { provider: 'tailscale', tailscale: { hostname: tailscaleHostname || null } };
-    }
-    if (tunnelProvider === 'custom') {
-      return { provider: 'custom', custom: { start_command: customCommand } };
-    }
-    return { provider: 'none' };
-  };
 
   const saveModelSettings = async () => {
     // Pre-save validation
@@ -469,9 +438,6 @@ const TauriCommandsPanel = () => {
       setValidationLoading(false);
     }
   };
-
-  const saveTunnelSettings = () =>
-    run(() => openhumanUpdateTunnelSettings(buildTunnelConfig()), 'saveTunnelSettings');
 
   const saveMemorySettings = () =>
     run(
@@ -1023,66 +989,7 @@ const TauriCommandsPanel = () => {
             collapsible={true}
             defaultExpanded={!isCollapsed('network-infrastructure')}
             hasChanges={false}
-            loading={operationLoading?.includes('Tunnel') || operationLoading?.includes('Memory')}>
-            <div className="grid gap-8">
-              <InputGroup
-                title="Tunnel Configuration"
-                description="Configure external tunnel providers">
-                <Field label="Provider" fullWidth>
-                  <select
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
-                    value={tunnelProvider}
-                    onChange={event => setTunnelProvider(event.target.value)}>
-                    <option value="none">none</option>
-                    <option value="cloudflare">cloudflare</option>
-                    <option value="ngrok">ngrok</option>
-                    <option value="tailscale">tailscale</option>
-                    <option value="custom">custom</option>
-                  </select>
-                </Field>
-                {tunnelProvider === 'cloudflare' && (
-                  <Field label="Cloudflare Token" fullWidth>
-                    <input
-                      className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
-                      placeholder="cloudflare token"
-                      value={cloudflareToken}
-                      onChange={event => setCloudflareToken(event.target.value)}
-                    />
-                  </Field>
-                )}
-                {tunnelProvider === 'ngrok' && (
-                  <Field label="Ngrok Token" fullWidth>
-                    <input
-                      className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
-                      placeholder="ngrok token"
-                      value={ngrokToken}
-                      onChange={event => setNgrokToken(event.target.value)}
-                    />
-                  </Field>
-                )}
-                {tunnelProvider === 'tailscale' && (
-                  <Field label="Tailscale Hostname" fullWidth>
-                    <input
-                      className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
-                      placeholder="alpha.local"
-                      value={tailscaleHostname}
-                      onChange={event => setTailscaleHostname(event.target.value)}
-                    />
-                  </Field>
-                )}
-                {tunnelProvider === 'custom' && (
-                  <Field label="Custom Start Command" fullWidth>
-                    <input
-                      className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
-                      placeholder="ngrok http 3000"
-                      value={customCommand}
-                      onChange={event => setCustomCommand(event.target.value)}
-                    />
-                  </Field>
-                )}
-              </InputGroup>
-            </div>
-
+            loading={operationLoading?.includes('Memory')}>
             <InputGroup
               title="Memory Settings"
               description="Configure memory backend and embedding models">
@@ -1135,11 +1042,6 @@ const TauriCommandsPanel = () => {
             </InputGroup>
 
             <ActionPanel>
-              <PrimaryButton
-                onClick={saveTunnelSettings}
-                loading={operationLoading === 'saveTunnelSettings'}>
-                Save Tunnel Settings
-              </PrimaryButton>
               <PrimaryButton
                 onClick={saveMemorySettings}
                 loading={operationLoading === 'saveMemorySettings'}>
