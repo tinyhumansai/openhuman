@@ -149,16 +149,16 @@ encrypt = false
     assert_eq!(r.get("ok"), Some(&json!(true)));
     eprintln!("  OK");
 
-    // 2. skills.discover
-    eprintln!("\n--- skills.discover ---");
-    let discover = rpc_call(&base, 2, "skills.discover", json!({})).await;
-    let r = check_result(&discover, "skills.discover");
+    // 2. openhuman.skills_discover
+    eprintln!("\n--- openhuman.skills_discover ---");
+    let discover = rpc_call(&base, 2, "openhuman.skills_discover", json!({})).await;
+    let r = check_result(&discover, "skills_discover");
     eprintln!("  Result: {} skills", r.as_array().map(|a| a.len()).unwrap_or(0));
 
-    // 3. skills.start
-    eprintln!("\n--- skills.start ---");
-    let start = rpc_call(&base, 3, "skills.start", json!({ "skill_id": skill_id })).await;
-    let r = check_result(&start, "skills.start");
+    // 3. openhuman.skills_start
+    eprintln!("\n--- openhuman.skills_start ---");
+    let start = rpc_call(&base, 3, "openhuman.skills_start", json!({ "skill_id": skill_id })).await;
+    let r = check_result(&start, "skills_start");
     if r.get("__error").is_some() {
         eprintln!("  Start failed (see error above)");
     } else {
@@ -166,10 +166,10 @@ encrypt = false
         eprintln!("  Tools: {}", r.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0));
     }
 
-    // 4. skills.list_tools
-    eprintln!("\n--- skills.list_tools ---");
-    let tools = rpc_call(&base, 4, "skills.list_tools", json!({ "skill_id": skill_id })).await;
-    let r = check_result(&tools, "skills.list_tools");
+    // 4. openhuman.skills_list_tools
+    eprintln!("\n--- openhuman.skills_list_tools ---");
+    let tools = rpc_call(&base, 4, "openhuman.skills_list_tools", json!({ "skill_id": skill_id })).await;
+    let r = check_result(&tools, "skills_list_tools");
     let tool_list = r.get("tools").and_then(|t| t.as_array());
     if let Some(tools) = tool_list {
         eprintln!("  {} tools:", tools.len());
@@ -181,8 +181,8 @@ encrypt = false
         }
     }
 
-    // 5. skills.call_tool
-    eprintln!("\n--- skills.call_tool ---");
+    // 5. openhuman.skills_call_tool
+    eprintln!("\n--- openhuman.skills_call_tool ---");
     let tool_name = env_or("SKILL_DEBUG_TOOL", "get-status");
     let tool_args: Value = std::env::var("SKILL_DEBUG_TOOL_ARGS")
         .ok()
@@ -190,35 +190,35 @@ encrypt = false
         .unwrap_or_else(|| json!({}));
     let call = rpc_call(
         &base, 5,
-        "skills.call_tool",
+        "openhuman.skills_call_tool",
         json!({ "skill_id": skill_id, "tool_name": tool_name, "arguments": tool_args }),
     ).await;
-    let r = check_result(&call, "skills.call_tool");
+    let r = check_result(&call, "skills_call_tool");
     eprintln!("  Result: {r}");
 
-    // 6. skills.sync (tick)
-    eprintln!("\n--- skills.sync ---");
-    let sync = rpc_call(&base, 6, "skills.sync", json!({ "skill_id": skill_id })).await;
-    let r = check_result(&sync, "skills.sync");
+    // 6. openhuman.skills_sync (tick)
+    eprintln!("\n--- openhuman.skills_sync ---");
+    let sync = rpc_call(&base, 6, "openhuman.skills_sync", json!({ "skill_id": skill_id })).await;
+    let r = check_result(&sync, "skills_sync");
     eprintln!("  Result: {r}");
 
-    // 7. skills.status
-    eprintln!("\n--- skills.status ---");
-    let status = rpc_call(&base, 7, "skills.status", json!({ "skill_id": skill_id })).await;
-    let r = check_result(&status, "skills.status");
+    // 7. openhuman.skills_status
+    eprintln!("\n--- openhuman.skills_status ---");
+    let status = rpc_call(&base, 7, "openhuman.skills_status", json!({ "skill_id": skill_id })).await;
+    let r = check_result(&status, "skills_status");
     eprintln!("  Status: {:?}", r.get("status"));
     eprintln!("  Published state keys: {:?}", r.get("state").and_then(|s| s.as_object()).map(|o| o.keys().collect::<Vec<_>>()));
 
-    // 8. skills.stop
-    eprintln!("\n--- skills.stop ---");
-    let stop = rpc_call(&base, 8, "skills.stop", json!({ "skill_id": skill_id })).await;
-    let r = check_result(&stop, "skills.stop");
+    // 8. openhuman.skills_stop
+    eprintln!("\n--- openhuman.skills_stop ---");
+    let stop = rpc_call(&base, 8, "openhuman.skills_stop", json!({ "skill_id": skill_id })).await;
+    let r = check_result(&stop, "skills_stop");
     eprintln!("  Result: {r}");
 
-    // 9. skills.list (post-stop)
-    eprintln!("\n--- skills.list (post-stop) ---");
-    let list = rpc_call(&base, 9, "skills.list", json!({})).await;
-    let r = check_result(&list, "skills.list");
+    // 9. openhuman.skills_list (post-stop)
+    eprintln!("\n--- openhuman.skills_list (post-stop) ---");
+    let list = rpc_call(&base, 9, "openhuman.skills_list", json!({})).await;
+    let r = check_result(&list, "skills_list");
     let skills = r.as_array();
     eprintln!("  {} skill(s)", skills.map(|a| a.len()).unwrap_or(0));
 
