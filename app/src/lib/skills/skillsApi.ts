@@ -118,6 +118,35 @@ export async function setSetupComplete(skillId: string, complete: boolean): Prom
   });
 }
 
+export async function revokeOAuth(skillId: string, integrationId: string): Promise<void> {
+  await callCoreRpc({
+    method: 'openhuman.skills_rpc',
+    params: {
+      skill_id: skillId,
+      method: 'oauth/revoked',
+      params: { integrationId },
+    },
+  });
+}
+
+/**
+ * Host-side fallback: delete oauth_credential.json from the skill's data dir.
+ * Used when the runtime is already stopped so oauth/revoked RPC can't reach it.
+ */
+export async function removePersistedOAuthCredential(skillId: string): Promise<void> {
+  await callCoreRpc({
+    method: 'openhuman.skills_data_write',
+    params: { skill_id: skillId, filename: 'oauth_credential.json', content: '' },
+  });
+}
+
+export async function disableSkill(skillId: string): Promise<void> {
+  await callCoreRpc({
+    method: 'openhuman.skills_disable',
+    params: { skill_id: skillId },
+  });
+}
+
 export async function fetchRegistryFresh(): Promise<void> {
   await callCoreRpc({
     method: 'openhuman.skills_registry_fetch',

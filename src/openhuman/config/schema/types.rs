@@ -6,6 +6,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Standard model identifiers matching the backend model registry.
+pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
+pub const MODEL_REASONING_V1: &str = "reasoning-v1";
+pub const MODEL_CODING_V1: &str = "coding-v1";
+/// Default model used when no explicit model is configured.
+pub const DEFAULT_MODEL: &str = MODEL_AGENTIC_V1;
+
 /// Top-level configuration (config.toml root).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
@@ -67,9 +74,6 @@ pub struct Config {
     pub storage: StorageConfig,
 
     #[serde(default)]
-    pub tunnel: TunnelConfig,
-
-    #[serde(default)]
     pub composio: ComposioConfig,
 
     #[serde(default)]
@@ -107,6 +111,12 @@ pub struct Config {
 
     #[serde(default)]
     pub local_ai: LocalAiConfig,
+
+    #[serde(default)]
+    pub learning: LearningConfig,
+
+    #[serde(default)]
+    pub orchestrator: OrchestratorConfig,
 }
 
 impl Default for Config {
@@ -120,7 +130,7 @@ impl Default for Config {
             config_path: openhuman_dir.join("config.toml"),
             api_key: None,
             api_url: None,
-            default_model: Some("neocortex-mk1".to_string()),
+            default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: 0.7,
             observability: ObservabilityConfig::default(),
             autonomy: AutonomyConfig::default(),
@@ -137,7 +147,6 @@ impl Default for Config {
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             storage: StorageConfig::default(),
-            tunnel: TunnelConfig::default(),
             composio: ComposioConfig::default(),
             secrets: SecretsConfig::default(),
             browser: BrowserConfig::default(),
@@ -152,6 +161,8 @@ impl Default for Config {
             hardware: HardwareConfig::default(),
             local_ai: LocalAiConfig::default(),
             query_classification: QueryClassificationConfig::default(),
+            learning: LearningConfig::default(),
+            orchestrator: OrchestratorConfig::default(),
         }
     }
 }

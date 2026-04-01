@@ -9,6 +9,17 @@ use std::path::Path;
 
 const BOOTSTRAP_MAX_CHARS: usize = 20_000;
 
+/// Pre-fetched learned context data for prompt sections (avoids blocking the runtime).
+#[derive(Debug, Clone, Default)]
+pub struct LearnedContextData {
+    /// Recent observations from the learning subsystem.
+    pub observations: Vec<String>,
+    /// Recognized patterns.
+    pub patterns: Vec<String>,
+    /// Learned user profile entries.
+    pub user_profile: Vec<String>,
+}
+
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub model_name: &'a str,
@@ -16,6 +27,8 @@ pub struct PromptContext<'a> {
     pub skills: &'a [Skill],
     pub identity_config: Option<&'a IdentityConfig>,
     pub dispatcher_instructions: &'a str,
+    /// Pre-fetched learned context (empty when learning is disabled).
+    pub learned: LearnedContextData,
 }
 
 pub trait PromptSection: Send + Sync {
@@ -50,10 +63,18 @@ impl SystemPromptBuilder {
 
     pub fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
         let mut output = String::new();
+        let mut cache_boundary_inserted = false;
         for section in &self.sections {
             let part = section.build(ctx)?;
             if part.trim().is_empty() {
                 continue;
+            }
+            // Insert cache boundary marker before the first dynamic section.
+            // Static sections (identity, tools, safety, skills) are cacheable;
+            // dynamic sections (workspace, datetime, runtime) change per request.
+            if !cache_boundary_inserted && is_dynamic_section(section.name()) {
+                output.push_str("<!-- CACHE_BOUNDARY -->\n\n");
+                cache_boundary_inserted = true;
             }
             output.push_str(part.trim_end());
             output.push_str("\n\n");
@@ -222,6 +243,13 @@ impl PromptSection for DateTimeSection {
     }
 }
 
+/// Returns true for sections whose content changes between requests.
+/// Static sections (identity, tools, safety, skills) are placed before
+/// the cache boundary; dynamic sections (workspace, datetime, runtime) after.
+fn is_dynamic_section(name: &str) -> bool {
+    matches!(name, "workspace" | "datetime" | "runtime")
+}
+
 fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &str) {
     let path = workspace_dir.join(filename);
     if !path.exists() {
@@ -339,6 +367,7 @@ mod tests {
             skills: &[],
             identity_config: Some(&identity_config),
             dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
         };
 
         let section = IdentitySection;
@@ -366,6 +395,7 @@ mod tests {
             skills: &[],
             identity_config: None,
             dispatcher_instructions: "instr",
+            learned: LearnedContextData::default(),
         };
         let prompt = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
         assert!(prompt.contains("## Tools"));
@@ -387,6 +417,7 @@ mod tests {
             skills: &[],
             identity_config: None,
             dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
         };
 
         let section = IdentitySection;
@@ -426,6 +457,7 @@ mod tests {
             skills: &[],
             identity_config: None,
             dispatcher_instructions: "instr",
+            learned: LearnedContextData::default(),
         };
 
         let rendered = DateTimeSection.build(&ctx).unwrap();

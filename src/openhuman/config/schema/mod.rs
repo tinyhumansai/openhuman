@@ -11,15 +11,16 @@ mod defaults;
 mod hardware;
 mod heartbeat_cron;
 mod identity_cost;
+mod learning;
 mod load;
 mod local_ai;
 mod observability;
+mod orchestrator;
 mod proxy;
 mod routes;
 mod runtime;
 mod storage_memory;
 mod tools;
-mod tunnel;
 
 pub use accessibility::ScreenIntelligenceConfig;
 pub use agent::{AgentConfig, DelegateAgentConfig};
@@ -36,8 +37,10 @@ pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{
     CostConfig, IdentityConfig, ModelPricing, PeripheralBoardConfig, PeripheralsConfig,
 };
+pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::LocalAiConfig;
 pub use observability::ObservabilityConfig;
+pub use orchestrator::{ArchetypeConfig, OrchestratorConfig};
 pub use proxy::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
@@ -54,10 +57,5 @@ pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, HttpRequestConfig, MultimodalConfig,
     SecretsConfig, WebSearchConfig,
 };
-pub use tunnel::{
-    CloudflareTunnelConfig, CustomTunnelConfig, NgrokTunnelConfig, TailscaleTunnelConfig,
-    TunnelConfig,
-};
-
 mod types;
 pub use types::*;

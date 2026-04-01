@@ -83,7 +83,7 @@ pub fn all_tools_with_runtime(
         Box::new(CronRunsTool::new(config.clone())),
         Box::new(MemoryStoreTool::new(memory.clone(), security.clone())),
         Box::new(MemoryRecallTool::new(memory.clone())),
-        Box::new(MemoryForgetTool::new(memory, security.clone())),
+        Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
         Box::new(ScheduleTool::new(security.clone(), root_config.clone())),
         Box::new(ProxyConfigTool::new(config.clone(), security.clone())),
         Box::new(GitOperationsTool::new(
@@ -155,6 +155,17 @@ pub fn all_tools_with_runtime(
                 security.clone(),
             )));
         }
+    }
+
+    // Tool effectiveness stats (enabled when learning is on)
+    tracing::debug!(
+        learning_enabled = root_config.learning.enabled,
+        tool_tracking_enabled = root_config.learning.tool_tracking_enabled,
+        "evaluating ToolStatsTool registration"
+    );
+    if root_config.learning.enabled && root_config.learning.tool_tracking_enabled {
+        tools.push(Box::new(ToolStatsTool::new(memory.clone())));
+        tracing::debug!("ToolStatsTool registered");
     }
 
     // Add delegation tool when agents are configured

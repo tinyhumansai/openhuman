@@ -1,6 +1,7 @@
 use super::dispatcher::{
     NativeToolDispatcher, ParsedToolCall, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
+use super::hooks::{self, sanitize_tool_output, PostTurnHook, ToolCallRecord, TurnContext};
 use super::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use super::prompt::{PromptContext, SystemPromptBuilder};
 use crate::openhuman::agent::host_runtime;
@@ -34,6 +35,8 @@ pub struct Agent {
     history: Vec<ConversationMessage>,
     classification_config: crate::openhuman::config::QueryClassificationConfig,
     available_hints: Vec<String>,
+    post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
+    learning_enabled: bool,
 }
 
 pub struct AgentBuilder {
@@ -52,6 +55,8 @@ pub struct AgentBuilder {
     auto_save: Option<bool>,
     classification_config: Option<crate::openhuman::config::QueryClassificationConfig>,
     available_hints: Option<Vec<String>>,
+    post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
+    learning_enabled: bool,
 }
 
 impl Default for AgentBuilder {
@@ -78,6 +83,8 @@ impl AgentBuilder {
             auto_save: None,
             classification_config: None,
             available_hints: None,
+            post_turn_hooks: Vec::new(),
+            learning_enabled: false,
         }
     }
 
@@ -162,6 +169,16 @@ impl AgentBuilder {
         self
     }
 
+    pub fn post_turn_hooks(mut self, hooks: Vec<Arc<dyn PostTurnHook>>) -> Self {
+        self.post_turn_hooks = hooks;
+        self
+    }
+
+    pub fn learning_enabled(mut self, enabled: bool) -> Self {
+        self.learning_enabled = enabled;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let tools = self
             .tools
@@ -187,7 +204,9 @@ impl AgentBuilder {
                 .memory_loader
                 .unwrap_or_else(|| Box::new(DefaultMemoryLoader::default())),
             config: self.config.unwrap_or_default(),
-            model_name: self.model_name.unwrap_or_else(|| "neocortex-mk1".into()),
+            model_name: self
+                .model_name
+                .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into()),
             temperature: self.temperature.unwrap_or(0.7),
             workspace_dir: self
                 .workspace_dir
@@ -198,6 +217,8 @@ impl AgentBuilder {
             history: Vec::new(),
             classification_config: self.classification_config.unwrap_or_default(),
             available_hints: self.available_hints.unwrap_or_default(),
+            post_turn_hooks: self.post_turn_hooks,
+            learning_enabled: self.learning_enabled,
         })
     }
 }
@@ -295,7 +316,7 @@ impl Agent {
         let model_name = config
             .default_model
             .as_deref()
-            .unwrap_or("neocortex-mk1")
+            .unwrap_or(crate::openhuman::config::DEFAULT_MODEL)
             .to_string();
 
         let provider: Box<dyn Provider> = providers::create_routed_provider(
@@ -317,16 +338,80 @@ impl Agent {
         let available_hints: Vec<String> =
             config.model_routes.iter().map(|r| r.hint.clone()).collect();
 
+        // Build prompt builder, optionally with learning sections
+        let mut prompt_builder = SystemPromptBuilder::with_defaults();
+        if config.learning.enabled {
+            prompt_builder = prompt_builder
+                .add_section(Box::new(
+                    crate::openhuman::learning::LearnedContextSection::new(memory.clone()),
+                ))
+                .add_section(Box::new(
+                    crate::openhuman::learning::UserProfileSection::new(memory.clone()),
+                ));
+            log::info!("[learning] prompt sections registered (learned_context, user_profile)");
+        }
+
+        // Build post-turn hooks when learning is enabled
+        let mut post_turn_hooks: Vec<Arc<dyn super::hooks::PostTurnHook>> = Vec::new();
+        if config.learning.enabled {
+            let full_config = Arc::new(config.clone());
+
+            if config.learning.reflection_enabled {
+                // For cloud reflection, wrap the provider in an Arc.
+                // For local, no provider needed.
+                let reflection_provider: Option<Arc<dyn crate::openhuman::providers::Provider>> =
+                    if config.learning.reflection_source
+                        == crate::openhuman::config::ReflectionSource::Cloud
+                    {
+                        Some(Arc::from(providers::create_routed_provider(
+                            config.api_key.as_deref(),
+                            config.api_url.as_deref(),
+                            &config.reliability,
+                            &config.model_routes,
+                            &model_name,
+                        )?))
+                    } else {
+                        None
+                    };
+                post_turn_hooks.push(Arc::new(crate::openhuman::learning::ReflectionHook::new(
+                    config.learning.clone(),
+                    full_config.clone(),
+                    memory.clone(),
+                    reflection_provider,
+                )));
+                log::info!(
+                    "[learning] reflection hook registered (source={:?})",
+                    config.learning.reflection_source
+                );
+            }
+
+            if config.learning.user_profile_enabled {
+                post_turn_hooks.push(Arc::new(crate::openhuman::learning::UserProfileHook::new(
+                    config.learning.clone(),
+                    memory.clone(),
+                )));
+                log::info!("[learning] user_profile hook registered");
+            }
+
+            if config.learning.tool_tracking_enabled {
+                post_turn_hooks.push(Arc::new(crate::openhuman::learning::ToolTrackerHook::new(
+                    config.learning.clone(),
+                    memory.clone(),
+                )));
+                log::info!("[learning] tool_tracker hook registered");
+            }
+        }
+
         Agent::builder()
             .provider(provider)
             .tools(tools)
             .memory(memory)
             .tool_dispatcher(tool_dispatcher)
-            .memory_loader(Box::new(DefaultMemoryLoader::new(
-                5,
-                config.memory.min_relevance_score,
-            )))
-            .prompt_builder(SystemPromptBuilder::with_defaults())
+            .memory_loader(Box::new(
+                DefaultMemoryLoader::new(5, config.memory.min_relevance_score)
+                    .with_max_chars(config.agent.max_memory_context_chars),
+            ))
+            .prompt_builder(prompt_builder)
             .config(config.agent.clone())
             .model_name(model_name)
             .temperature(config.default_temperature)
@@ -336,6 +421,8 @@ impl Agent {
             .identity_config(config.identity.clone())
             .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
             .auto_save(config.memory.auto_save)
+            .post_turn_hooks(post_turn_hooks)
+            .learning_enabled(config.learning.enabled)
             .build()
     }
 
@@ -366,7 +453,62 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
-    fn build_system_prompt(&self) -> Result<String> {
+    /// Pre-fetch learned context data from memory (async, non-blocking).
+    async fn fetch_learned_context(&self) -> crate::openhuman::agent::prompt::LearnedContextData {
+        use crate::openhuman::agent::prompt::LearnedContextData;
+
+        if !self.learning_enabled {
+            return LearnedContextData::default();
+        }
+
+        let obs_entries = self
+            .memory
+            .list(
+                Some(&MemoryCategory::Custom("learning_observations".into())),
+                None,
+            )
+            .await
+            .unwrap_or_default();
+
+        let pat_entries = self
+            .memory
+            .list(
+                Some(&MemoryCategory::Custom("learning_patterns".into())),
+                None,
+            )
+            .await
+            .unwrap_or_default();
+
+        let profile_entries = self
+            .memory
+            .list(Some(&MemoryCategory::Custom("user_profile".into())), None)
+            .await
+            .unwrap_or_default();
+
+        LearnedContextData {
+            observations: obs_entries
+                .iter()
+                .rev()
+                .take(5)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect(),
+            patterns: pat_entries
+                .iter()
+                .take(3)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect(),
+            user_profile: profile_entries
+                .iter()
+                .take(20)
+                .map(|e| sanitize_learned_entry(&e.content))
+                .collect(),
+        }
+    }
+
+    fn build_system_prompt(
+        &self,
+        learned: crate::openhuman::agent::prompt::LearnedContextData,
+    ) -> Result<String> {
         let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
@@ -375,58 +517,103 @@ impl Agent {
             skills: &self.skills,
             identity_config: Some(&self.identity_config),
             dispatcher_instructions: &instructions,
+            learned,
         };
         self.prompt_builder.build(&ctx)
     }
 
-    async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
-        let started = std::time::Instant::now();
-        log::info!("[agent_loop] tool start name={}", call.name);
-        let result = if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            match tool.execute(call.arguments.clone()).await {
-                Ok(r) => {
-                    if r.success {
-                        r.output
-                    } else {
-                        format!("Error: {}", r.error.unwrap_or(r.output))
-                    }
-                }
-                Err(e) => {
-                    format!("Error executing {}: {e}", call.name)
-                }
-            }
+    /// Sanitize tool output to prevent PII/secrets in learning data.
+    /// Returns a safe metadata string: tool type, status, and error class.
+    fn sanitize_tool_output(raw_output: &str, tool_name: &str, success: bool) -> String {
+        if success {
+            // For successful calls, return a structured summary without raw data
+            let char_count = raw_output.chars().count();
+            format!(
+                "tool={} status=success output_length={}",
+                tool_name, char_count
+            )
         } else {
-            format!("Unknown tool: {}", call.name)
-        };
-        log::info!(
-            "[agent_loop] tool finish name={} elapsed_ms={} output_chars={}",
-            call.name,
-            started.elapsed().as_millis(),
-            result.chars().count()
-        );
-
-        ToolExecutionResult {
-            name: call.name.clone(),
-            output: result,
-            success: true,
-            tool_call_id: call.tool_call_id.clone(),
+            // For errors, classify the error type without exposing details
+            let error_class = if raw_output.contains("permission") || raw_output.contains("denied")
+            {
+                "permission_error"
+            } else if raw_output.contains("not found") || raw_output.contains("404") {
+                "not_found"
+            } else if raw_output.contains("timeout") || raw_output.contains("timed out") {
+                "timeout"
+            } else if raw_output.contains("network") || raw_output.contains("connection") {
+                "network_error"
+            } else if raw_output.contains("invalid") || raw_output.contains("parse") {
+                "validation_error"
+            } else {
+                "unknown_error"
+            };
+            format!("tool={} status=error class={}", tool_name, error_class)
         }
     }
 
-    async fn execute_tools(&self, calls: &[ParsedToolCall]) -> Vec<ToolExecutionResult> {
-        if !self.config.parallel_tools {
-            let mut results = Vec::with_capacity(calls.len());
-            for call in calls {
-                results.push(self.execute_tool_call(call).await);
-            }
-            return results;
-        }
+    async fn execute_tool_call(
+        &self,
+        call: &ParsedToolCall,
+    ) -> (ToolExecutionResult, ToolCallRecord) {
+        let started = std::time::Instant::now();
+        log::info!("[agent_loop] tool start name={}", call.name);
+        let (result, success) =
+            if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
+                match tool.execute(call.arguments.clone()).await {
+                    Ok(r) => {
+                        if r.success {
+                            (r.output, true)
+                        } else {
+                            (format!("Error: {}", r.error.unwrap_or(r.output)), false)
+                        }
+                    }
+                    Err(e) => (format!("Error executing {}: {e}", call.name), false),
+                }
+            } else {
+                (format!("Unknown tool: {}", call.name), false)
+            };
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        log::info!(
+            "[agent_loop] tool finish name={} elapsed_ms={} output_chars={} success={}",
+            call.name,
+            elapsed_ms,
+            result.chars().count(),
+            success
+        );
 
+        let output_summary = sanitize_tool_output(&result, &call.name, success);
+
+        let record = ToolCallRecord {
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            success,
+            output_summary,
+            duration_ms: elapsed_ms,
+        };
+
+        let exec_result = ToolExecutionResult {
+            name: call.name.clone(),
+            output: result,
+            success,
+            tool_call_id: call.tool_call_id.clone(),
+        };
+
+        (exec_result, record)
+    }
+
+    async fn execute_tools(
+        &self,
+        calls: &[ParsedToolCall],
+    ) -> (Vec<ToolExecutionResult>, Vec<ToolCallRecord>) {
         let mut results = Vec::with_capacity(calls.len());
+        let mut records = Vec::with_capacity(calls.len());
         for call in calls {
-            results.push(self.execute_tool_call(call).await);
+            let (exec_result, record) = self.execute_tool_call(call).await;
+            results.push(exec_result);
+            records.push(record);
         }
-        results
+        (results, records)
     }
 
     fn classify_model(&self, user_message: &str) -> String {
@@ -440,14 +627,18 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
+        let turn_started = std::time::Instant::now();
         log::info!(
             "[agent_loop] turn start message_chars={} history_len={} max_tool_iterations={}",
             user_message.chars().count(),
             self.history.len(),
             self.config.max_tool_iterations
         );
+        // Pre-fetch learned context async before building the system prompt
+        let learned = self.fetch_learned_context().await;
+
         if self.history.is_empty() {
-            let system_prompt = self.build_system_prompt()?;
+            let system_prompt = self.build_system_prompt(learned)?;
             log::info!(
                 "[agent_loop] system prompt built chars={} content=\n{}",
                 system_prompt.chars().count(),
@@ -457,6 +648,15 @@ impl Agent {
                 .push(ConversationMessage::Chat(ChatMessage::system(
                     system_prompt,
                 )));
+        } else if self.learning_enabled {
+            // Rebuild system prompt on subsequent turns to include newly learned context
+            let system_prompt = self.build_system_prompt(learned)?;
+            if let Some(pos) = self.history.iter().position(
+                |msg| matches!(msg, ConversationMessage::Chat(chat) if chat.role == "system"),
+            ) {
+                self.history[pos] = ConversationMessage::Chat(ChatMessage::system(system_prompt));
+                log::debug!("[agent_loop] system prompt refreshed with learned context");
+            }
         }
 
         if self.auto_save {
@@ -484,6 +684,9 @@ impl Agent {
         let effective_model = self.classify_model(user_message);
         log::info!("[agent_loop] model selected model={}", effective_model);
 
+        // Collect tool call records across all iterations for post-turn hooks
+        let mut all_tool_records: Vec<ToolCallRecord> = Vec::new();
+
         for iteration in 0..self.config.max_tool_iterations {
             log::info!(
                 "[agent_loop] iteration start i={} history_len={}",
@@ -508,6 +711,7 @@ impl Agent {
                         } else {
                             None
                         },
+                        system_prompt_cache_boundary: None,
                     },
                     &effective_model,
                     self.temperature,
@@ -562,6 +766,19 @@ impl Agent {
                         .await;
                 }
 
+                // Fire post-turn hooks (non-blocking)
+                if !self.post_turn_hooks.is_empty() {
+                    let ctx = TurnContext {
+                        user_message: user_message.to_string(),
+                        assistant_response: final_text.clone(),
+                        tool_calls: all_tool_records,
+                        turn_duration_ms: turn_started.elapsed().as_millis() as u64,
+                        session_id: None,
+                        iteration_count: iteration + 1,
+                    };
+                    hooks::fire_hooks(&self.post_turn_hooks, ctx);
+                }
+
                 return Ok(final_text);
             }
 
@@ -601,7 +818,8 @@ impl Agent {
                 tool_calls: persisted_tool_calls,
             });
 
-            let results = self.execute_tools(&calls).await;
+            let (results, records) = self.execute_tools(&calls).await;
+            all_tool_records.extend(records);
             log::info!(
                 "[agent_loop] tool results complete i={} result_count={}",
                 iteration + 1,
@@ -682,6 +900,27 @@ pub async fn run(
     Ok(())
 }
 
+/// Sanitize a learned memory entry before injecting into the system prompt.
+/// Strips raw data, limits length, and removes potential secrets.
+fn sanitize_learned_entry(content: &str) -> String {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Truncate to a safe length
+    let max_len = 200;
+    let sanitized: String = trimmed.chars().take(max_len).collect();
+    // Strip anything that looks like a secret/token
+    if sanitized.contains("Bearer ")
+        || sanitized.contains("sk-")
+        || sanitized.contains("ghp_")
+        || sanitized.contains("-----BEGIN")
+    {
+        return "[redacted: potential secret]".to_string();
+    }
+    sanitized
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -715,6 +954,7 @@ mod tests {
                 return Ok(crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
+                    usage: None,
                 });
             }
             Ok(guard.remove(0))
@@ -758,6 +998,7 @@ mod tests {
             responses: Mutex::new(vec![crate::openhuman::providers::ChatResponse {
                 text: Some("hello".into()),
                 tool_calls: vec![],
+                usage: None,
             }]),
         });
 
@@ -796,10 +1037,12 @@ mod tests {
                         name: "echo".into(),
                         arguments: "{}".into(),
                     }],
+                    usage: None,
                 },
                 crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
+                    usage: None,
                 },
             ]),
         });
@@ -842,10 +1085,12 @@ mod tests {
                             .into(),
                     ),
                     tool_calls: vec![],
+                    usage: None,
                 },
                 crate::openhuman::providers::ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
+                    usage: None,
                 },
             ]),
         });

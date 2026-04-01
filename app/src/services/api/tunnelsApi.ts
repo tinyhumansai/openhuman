@@ -4,7 +4,10 @@ import { apiClient } from '../apiClient';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface Tunnel {
+  /** Internal backend ID (used for CRUD endpoints: GET/PATCH/DELETE /tunnels/:id). */
   id: string;
+  /** External UUID used for webhook routing (appears in webhook URLs and local registrations). */
+  uuid: string;
   name: string;
   description?: string;
   isActive: boolean;
@@ -51,20 +54,20 @@ export const tunnelsApi = {
     return response.data;
   },
 
-  /** GET /tunnels/:id — get a specific webhook tunnel */
-  getTunnel: async (id: string): Promise<Tunnel> => {
-    const response = await apiClient.get<ApiResponse<Tunnel>>(`/tunnels/${id}`);
+  /** GET /tunnels/:tunnelId — get a specific webhook tunnel by its internal ID. */
+  getTunnel: async (tunnelId: string): Promise<Tunnel> => {
+    const response = await apiClient.get<ApiResponse<Tunnel>>(`/tunnels/${tunnelId}`);
     return response.data;
   },
 
-  /** PATCH /tunnels/:id — update a webhook tunnel */
-  updateTunnel: async (id: string, body: UpdateTunnelRequest): Promise<Tunnel> => {
-    const response = await apiClient.patch<ApiResponse<Tunnel>>(`/tunnels/${id}`, body);
+  /** PATCH /tunnels/:tunnelId — update a webhook tunnel by its internal ID. */
+  updateTunnel: async (tunnelId: string, body: UpdateTunnelRequest): Promise<Tunnel> => {
+    const response = await apiClient.patch<ApiResponse<Tunnel>>(`/tunnels/${tunnelId}`, body);
     return response.data;
   },
 
-  /** DELETE /tunnels/:id — delete a webhook tunnel */
-  deleteTunnel: async (id: string): Promise<void> => {
-    await apiClient.delete<ApiResponse<unknown>>(`/tunnels/${id}`);
+  /** DELETE /tunnels/:tunnelId — delete a webhook tunnel by its internal ID. */
+  deleteTunnel: async (tunnelId: string): Promise<void> => {
+    await apiClient.delete<ApiResponse<unknown>>(`/tunnels/${tunnelId}`);
   },
 };

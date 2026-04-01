@@ -17,4 +17,5 @@ pub use types::{
     NamespaceMemoryHit, NamespaceQueryResult, NamespaceRetrievalContext, RetrievalScoreBreakdown,
     StoredMemoryDocument,
 };
+pub use unified::fts5;
 pub use unified::UnifiedMemory;

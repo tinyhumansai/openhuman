@@ -26,6 +26,10 @@ pub struct LocalAiStatus {
     pub download_speed_bps: Option<u64>,
     pub eta_seconds: Option<u64>,
     pub warning: Option<String>,
+    /// Extended error text (e.g. stderr from install script) for UI display.
+    pub error_detail: Option<String>,
+    /// Category of failure: "install", "download", "server", or None.
+    pub error_category: Option<String>,
     pub model_path: Option<String>,
     pub active_backend: String,
     pub backend_reason: Option<String>,
@@ -56,6 +60,8 @@ impl LocalAiStatus {
             download_speed_bps: None,
             eta_seconds: None,
             warning: None,
+            error_detail: None,
+            error_category: None,
             model_path: None,
             active_backend: "ollama".to_string(),
             backend_reason: None,

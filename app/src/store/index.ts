@@ -29,6 +29,7 @@ import socketReducer from './socketSlice';
 import teamReducer from './teamSlice';
 import threadReducer from './threadSlice';
 import userReducer from './userSlice';
+import webhooksReducer from './webhooksSlice';
 
 // Persist config for auth only
 const authPersistConfig = {
@@ -132,6 +133,7 @@ export const store = configureStore({
     invite: inviteReducer,
     accessibility: accessibilityReducer,
     channelConnections: persistedChannelConnectionsReducer,
+    webhooks: webhooksReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

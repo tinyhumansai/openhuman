@@ -291,10 +291,15 @@ export async function memoryGraphQuery(
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<GraphRelation[]>({
+  const raw = await callCoreRpc<GraphRelation[] | { result: GraphRelation[] }>({
     method: 'openhuman.memory_graph_query',
     params: { namespace, subject, predicate },
   });
+  // RpcOutcome wraps with { result, logs } when logs are present — unwrap if needed.
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === 'object' && 'result' in raw && Array.isArray(raw.result))
+    return raw.result;
+  return [];
 }
 
 export async function memoryDocIngest(params: {
@@ -828,6 +833,8 @@ export interface LocalAiStatus {
   download_speed_bps?: number | null;
   eta_seconds?: number | null;
   warning?: string | null;
+  error_detail?: string | null;
+  error_category?: string | null;
   model_path?: string | null;
   active_backend: string;
   backend_reason?: string | null;
@@ -977,18 +984,6 @@ function tauriErrorMessage(err: unknown): string {
   return 'Unknown Tauri invoke error';
 }
 
-export interface TunnelConfig {
-  provider: string;
-  cloudflare?: { token: string } | null;
-  tailscale?: { funnel?: boolean; hostname?: string | null } | null;
-  ngrok?: { auth_token: string; domain?: string | null } | null;
-  custom?: {
-    start_command: string;
-    health_url?: string | null;
-    url_pattern?: string | null;
-  } | null;
-}
-
 export async function openhumanGetConfig(): Promise<CommandResponse<ConfigSnapshot>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
@@ -1017,18 +1012,6 @@ export async function openhumanUpdateMemorySettings(
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: 'openhuman.update_memory_settings',
     params: update,
-  });
-}
-
-export async function openhumanUpdateTunnelSettings(
-  tunnel: TunnelConfig
-): Promise<CommandResponse<ConfigSnapshot>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
-    method: 'openhuman.update_tunnel_settings',
-    params: tunnel,
   });
 }
 
@@ -1417,6 +1400,38 @@ export async function openhumanLocalAiApplyPreset(tier: string): Promise<ApplyPr
   return await callCoreRpc<ApplyPresetResult>({
     method: 'openhuman.local_ai_apply_preset',
     params: { tier },
+  });
+}
+
+export interface LocalAiDiagnostics {
+  ollama_running: boolean;
+  ollama_binary_path: string | null;
+  installed_models: Array<{ name: string; size?: number | null; modified_at?: string | null }>;
+  expected: {
+    chat_model: string;
+    chat_found: boolean;
+    embedding_model: string;
+    embedding_found: boolean;
+    vision_model: string;
+    vision_found: boolean;
+  };
+  issues: string[];
+  ok: boolean;
+}
+
+export async function openhumanLocalAiDiagnostics(): Promise<LocalAiDiagnostics> {
+  return await callCoreRpc<LocalAiDiagnostics>({
+    method: 'openhuman.local_ai_diagnostics',
+    params: {},
+  });
+}
+
+export async function openhumanLocalAiSetOllamaPath(
+  path: string
+): Promise<{ ollama_binary_path: string | null; status: LocalAiStatus }> {
+  return await callCoreRpc<{ ollama_binary_path: string | null; status: LocalAiStatus }>({
+    method: 'openhuman.local_ai_set_ollama_path',
+    params: { path },
   });
 }
 

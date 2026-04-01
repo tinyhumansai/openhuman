@@ -80,7 +80,10 @@ export default function ErrorFallbackScreen({
               Try to Recover
             </button>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                window.location.hash = '#/home';
+                window.location.reload();
+              }}
               className="flex-1 bg-coral-500 hover:bg-coral-600 text-white text-sm font-medium rounded-xl px-4 py-3 transition-colors">
               Reload App
             </button>

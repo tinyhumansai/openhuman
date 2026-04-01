@@ -611,11 +611,156 @@ impl Config {
             }
         }
 
+        // Learning subsystem overrides
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.enabled = false,
+                _ => {}
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_REFLECTION_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.reflection_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.reflection_enabled = false,
+                _ => {}
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_USER_PROFILE_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.user_profile_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.user_profile_enabled = false,
+                _ => {}
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_TOOL_TRACKING_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.tool_tracking_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.tool_tracking_enabled = false,
+                _ => {}
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_SKILL_CREATION_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.skill_creation_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.skill_creation_enabled = false,
+                _ => {}
+            }
+        }
+        if let Ok(source) = std::env::var("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {
+            let normalized = source.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "local" => {
+                    self.learning.reflection_source =
+                        crate::openhuman::config::ReflectionSource::Local
+                }
+                "cloud" => {
+                    self.learning.reflection_source =
+                        crate::openhuman::config::ReflectionSource::Cloud
+                }
+                _ => {
+                    tracing::warn!(
+                        source = %source,
+                        "ignoring invalid OPENHUMAN_LEARNING_REFLECTION_SOURCE (valid: local, cloud)"
+                    );
+                }
+            }
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_LEARNING_MAX_REFLECTIONS_PER_SESSION") {
+            if let Ok(max) = val.trim().parse::<usize>() {
+                self.learning.max_reflections_per_session = max;
+            }
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_LEARNING_MIN_TURN_COMPLEXITY") {
+            if let Ok(min) = val.trim().parse::<usize>() {
+                self.learning.min_turn_complexity = min;
+            }
+        }
+
         if self.proxy.enabled && self.proxy.scope == ProxyScope::Environment {
             self.proxy.apply_to_process_env();
         }
 
         set_runtime_proxy_config(self.proxy.clone());
+
+        // Learning subsystem configuration
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.enabled = false,
+                _ => {}
+            }
+        }
+
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_REFLECTION_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.reflection_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.reflection_enabled = false,
+                _ => {}
+            }
+        }
+
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_USER_PROFILE_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.user_profile_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.user_profile_enabled = false,
+                _ => {}
+            }
+        }
+
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_TOOL_TRACKING_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.tool_tracking_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.tool_tracking_enabled = false,
+                _ => {}
+            }
+        }
+
+        if let Ok(flag) = std::env::var("OPENHUMAN_LEARNING_SKILL_CREATION_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.learning.skill_creation_enabled = true,
+                "0" | "false" | "no" | "off" => self.learning.skill_creation_enabled = false,
+                _ => {}
+            }
+        }
+
+        if let Ok(source_str) = std::env::var("OPENHUMAN_LEARNING_REFLECTION_SOURCE") {
+            let normalized = source_str.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "local" => self.learning.reflection_source = super::ReflectionSource::Local,
+                "cloud" => self.learning.reflection_source = super::ReflectionSource::Cloud,
+                _ => {
+                    tracing::warn!(
+                        source = %source_str,
+                        "Ignoring invalid OPENHUMAN_LEARNING_REFLECTION_SOURCE (valid: local, cloud)"
+                    );
+                }
+            }
+        }
+
+        if let Ok(max_str) = std::env::var("OPENHUMAN_LEARNING_MAX_REFLECTIONS_PER_SESSION") {
+            if let Ok(max_val) = max_str.parse::<usize>() {
+                if max_val > 0 {
+                    self.learning.max_reflections_per_session = max_val;
+                }
+            }
+        }
+
+        if let Ok(min_str) = std::env::var("OPENHUMAN_LEARNING_MIN_TURN_COMPLEXITY") {
+            if let Ok(min_val) = min_str.parse::<usize>() {
+                self.learning.min_turn_complexity = min_val;
+            }
+        }
     }
 
     pub async fn save(&self) -> Result<()> {

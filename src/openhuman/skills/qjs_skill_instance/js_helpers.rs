@@ -77,25 +77,46 @@ pub(crate) fn extract_tools(js_ctx: &rquickjs::Ctx<'_>, state: &Arc<RwLock<Skill
     }
 }
 
-/// Load a persisted OAuth credential from the skill's store and inject it
-/// into the JS context so tools have access to the credential.
-/// An empty string means "disconnected" — only non-empty values are restored.
-pub(crate) async fn restore_oauth_credential(ctx: &rquickjs::AsyncContext, skill_id: &str) {
-    let code = r#"(function() {
-        if (typeof globalThis.state === 'undefined' || typeof globalThis.oauth === 'undefined') return false;
-        var cred = globalThis.state.get('__oauth_credential');
-        if (cred && cred !== '' && globalThis.oauth.__setCredential) {
-            globalThis.oauth.__setCredential(cred);
+/// Load a persisted OAuth credential from the skill's data directory and inject
+/// it into the JS context so tools have access to the credential.
+///
+/// Reads `{data_dir}/oauth_credential.json` which is written by the
+/// `oauth/complete` handler and deleted by `oauth/revoked`.
+pub(crate) async fn restore_oauth_credential(
+    ctx: &rquickjs::AsyncContext,
+    skill_id: &str,
+    data_dir: &std::path::Path,
+) {
+    let cred_path = data_dir.join("oauth_credential.json");
+    let cred_json = match std::fs::read_to_string(&cred_path) {
+        Ok(s) if !s.is_empty() => s,
+        _ => return,
+    };
+
+    // Inject credential into both oauth bridge and in-memory state
+    let code = format!(
+        r#"(function() {{
+            var cred = {cred};
+            if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{
+                globalThis.oauth.__setCredential(cred);
+            }}
+            if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
+                globalThis.state.set('__oauth_credential', cred);
+            }}
             return true;
-        }
-        return false;
-    })()"#;
+        }})()"#,
+        cred = cred_json
+    );
 
     let restored = ctx
         .with(|js_ctx| js_ctx.eval::<bool, _>(code.as_bytes()).unwrap_or(false))
         .await;
 
     if restored {
-        log::info!("[skill:{}] Restored OAuth credential from store", skill_id);
+        log::info!(
+            "[skill:{}] Restored OAuth credential from {}",
+            skill_id,
+            cred_path.display()
+        );
     }
 }

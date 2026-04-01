@@ -4,7 +4,7 @@ import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
 import { skillManager } from '../lib/skills/manager';
 import { emitSkillStateChange } from '../lib/skills/skillEvents';
-import { setSetupComplete as rpcSetSetupComplete, startSkill } from '../lib/skills/skillsApi';
+import { startSkill } from '../lib/skills/skillsApi';
 import { consumeLoginToken } from '../services/api/authApi';
 import { store } from '../store';
 import { setToken } from '../store/authSlice';
@@ -122,13 +122,8 @@ const handleOAuthDeepLink = async (parsed: URL) => {
 
     console.log(`[DeepLink] OAuth success for skill=${skillId} integration=${integrationId}`);
 
-    // 1. Persist setup completion
-    await rpcSetSetupComplete(skillId, true).catch(err =>
-      console.warn('[DeepLink] Failed to persist setup_complete via RPC:', err)
-    );
-    emitSkillStateChange(skillId);
-
-    // 2. Start the skill in the core QuickJS runtime (if not already running)
+    // 1. Start the skill in the core QuickJS runtime (if not already running).
+    //    This also sets enabled=true via the preferences store.
     try {
       await startSkill(skillId);
       console.log(`[DeepLink] Skill '${skillId}' started in core runtime`);
@@ -136,7 +131,8 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       console.warn(`[DeepLink] Could not start skill '${skillId}' in runtime:`, startErr);
     }
 
-    // 3. Send oauth/complete to the running skill with the credential
+    // 2. Notify the running skill of the OAuth credential, mark setup_complete,
+    //    and activate (list tools, sync to backend).
     try {
       await skillManager.notifyOAuthComplete(skillId, integrationId);
       console.log(`[DeepLink] OAuth complete sent to skill '${skillId}'`);
@@ -144,7 +140,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       console.warn('[DeepLink] Runtime notify failed:', runtimeErr);
     }
 
-    // 4. Trigger initial data sync
+    // 3. Trigger initial data sync
     try {
       await skillManager.triggerSync(skillId);
     } catch {
@@ -226,7 +222,7 @@ export const setupDesktopDeepLinkListener = async () => {
 
     if (typeof window !== 'undefined') {
       // window.__simulateDeepLink('openhuman://auth?token=1234567890')
-      // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69c34e6a103bd070232d2710&skillId=notion')
+      // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&skillId=notion')
       const win = window as Window & { __simulateDeepLink?: (url: string) => Promise<void> };
       win.__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);
     }

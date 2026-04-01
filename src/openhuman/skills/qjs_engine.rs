@@ -39,6 +39,7 @@ use crate::openhuman::skills::qjs_skill_instance::{BridgeDeps, QjsSkillInstance}
 use crate::openhuman::skills::skill_registry::SkillRegistry;
 use crate::openhuman::skills::socket_manager::SocketManager;
 use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin, ToolResult};
+use crate::openhuman::webhooks::WebhookRouter;
 // IdbStorage removed during runtime cleanup
 
 /// The central runtime engine using QuickJS.
@@ -61,6 +62,8 @@ pub struct RuntimeEngine {
     memory_client: RwLock<Option<MemoryClientRef>>,
     /// Socket manager for emitting tool:sync events.
     socket_manager: RwLock<Option<Arc<SocketManager>>>,
+    /// Webhook router for tunnel-to-skill routing.
+    webhook_router: Arc<WebhookRouter>,
     /// Workspace directory for user-installed skills from registry.
     workspace_dir: RwLock<Option<PathBuf>>,
 }
@@ -87,6 +90,10 @@ impl RuntimeEngine {
             }
         };
 
+        // Initialize webhook router with persistence
+        let webhook_routes_path = skills_data_dir.join("webhook_routes.json");
+        let webhook_router = Arc::new(WebhookRouter::new(Some(webhook_routes_path)));
+
         log::info!("[runtime] QuickJS RuntimeEngine created");
 
         Ok(Self {
@@ -99,6 +106,7 @@ impl RuntimeEngine {
             resource_dir: RwLock::new(None),
             memory_client: RwLock::new(memory_client),
             socket_manager: RwLock::new(None),
+            webhook_router,
             workspace_dir: RwLock::new(None),
         })
     }
@@ -137,7 +145,14 @@ impl RuntimeEngine {
 
     /// Set the socket manager for emitting `tool:sync` events.
     pub fn set_socket_manager(&self, mgr: Arc<SocketManager>) {
+        // Also wire the webhook router into the socket manager
+        mgr.set_webhook_router(Arc::clone(&self.webhook_router));
         *self.socket_manager.write() = Some(mgr);
+    }
+
+    /// Get a clone of the webhook router Arc.
+    pub fn webhook_router(&self) -> Arc<WebhookRouter> {
+        Arc::clone(&self.webhook_router)
     }
 
     /// Set the workspace directory for user-installed skills from the registry.
@@ -377,6 +392,7 @@ impl RuntimeEngine {
             cron_scheduler: self.cron_scheduler.clone(),
             skill_registry: self.registry.clone(),
             memory_client: self.memory_client.read().clone(),
+            webhook_router: Some(self.webhook_router.clone()),
             data_dir: data_dir.clone(),
         };
 
@@ -457,6 +473,7 @@ impl RuntimeEngine {
     pub async fn stop_skill(&self, skill_id: &str) -> Result<(), String> {
         self.registry.stop_skill(skill_id).await?;
         self.cron_scheduler.unregister_all_for_skill(skill_id);
+        self.webhook_router.unregister_skill(skill_id);
         self.emit_status_change(skill_id);
         self.sync_tools().await;
         Ok(())

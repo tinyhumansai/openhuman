@@ -107,6 +107,7 @@ pub(crate) async fn run_tool_call_loop(
                     ChatRequest {
                         messages: &prepared_messages.messages,
                         tools: request_tools,
+                        system_prompt_cache_boundary: None,
                     },
                     model,
                     temperature,

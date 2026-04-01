@@ -77,6 +77,7 @@ pub struct SkillContext {
     pub skill_id: String,
     pub data_dir: PathBuf,
     pub memory_client: Option<crate::openhuman::memory::MemoryClientRef>,
+    pub webhook_router: Option<std::sync::Arc<crate::openhuman::webhooks::WebhookRouter>>,
 }
 
 // ============================================================================

@@ -91,13 +91,8 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
 
   try {
     const parsed = new URL(url);
-<<<<<<< HEAD
     if (parsed.protocol !== 'openhuman:') return;
     if (parsed.hostname !== 'auth') return;
-=======
-    if (parsed.protocol !== "outsourced:") return;
-    if (parsed.hostname !== "auth") return;
->>>>>>> fix/telegram-mcp
 
     const token = parsed.searchParams.get("token");
     if (!token) return;

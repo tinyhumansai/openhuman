@@ -39,6 +39,7 @@ pub(crate) async fn run_event_loop(
     timer_state: &Arc<RwLock<qjs_ops::TimerState>>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
     memory_client: Option<MemoryClientRef>,
+    data_dir: &std::path::Path,
 ) {
     // Maximum sleep duration when no timers are pending
     const MAX_IDLE_SLEEP: Duration = Duration::from_millis(100);
@@ -76,6 +77,7 @@ pub(crate) async fn run_event_loop(
                     &mut pending_tool,
                     &memory_client,
                     ops_state,
+                    data_dir,
                 )
                 .await;
                 if should_stop {
@@ -212,6 +214,7 @@ async fn handle_message(
     pending_tool: &mut Option<PendingToolCall>,
     memory_client: &Option<MemoryClientRef>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
+    data_dir: &std::path::Path,
 ) -> bool {
     match msg {
         SkillMessage::CallTool {
@@ -226,7 +229,7 @@ async fn handle_message(
             );
 
             // Lazy-load persisted OAuth credential before calling the tool
-            restore_oauth_credential(ctx, skill_id).await;
+            restore_oauth_credential(ctx, skill_id, data_dir).await;
             log::debug!(
                 "[skill:{}] event_loop: OAuth credential restored for tool '{}'",
                 skill_id,
@@ -361,6 +364,88 @@ async fn handle_message(
                 log::warn!("[skill:{}] onError() handler failed: {e}", skill_id);
             }
         }
+        SkillMessage::WebhookRequest {
+            correlation_id,
+            method,
+            path,
+            headers,
+            query,
+            body,
+            tunnel_id,
+            tunnel_name,
+            reply,
+        } => {
+            log::info!(
+                "[skill:{}] event_loop: WebhookRequest {} {} (tunnel={})",
+                skill_id,
+                method,
+                path,
+                tunnel_id,
+            );
+
+            // Restore OAuth credential in case the handler needs authenticated API calls
+            restore_oauth_credential(ctx, skill_id, data_dir).await;
+
+            let args = serde_json::json!({
+                "correlationId": correlation_id,
+                "method": method,
+                "path": path,
+                "headers": headers,
+                "query": query,
+                "body": body,
+                "tunnelId": tunnel_id,
+                "tunnelName": tunnel_name,
+            });
+
+            match handle_js_call(rt, ctx, "onWebhookRequest", &args.to_string()).await {
+                Ok(response_val) => {
+                    use crate::openhuman::webhooks::WebhookResponseData;
+
+                    let status_code = response_val
+                        .get("statusCode")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(200) as u16;
+                    let resp_headers: HashMap<String, String> = response_val
+                        .get("headers")
+                        .map(|v| match serde_json::from_value(v.clone()) {
+                            Ok(h) => h,
+                            Err(e) => {
+                                log::warn!(
+                                    "[skill] Failed to parse webhook response headers: {e}, raw: {v}"
+                                );
+                                HashMap::new()
+                            }
+                        })
+                        .unwrap_or_default();
+                    let resp_body = response_val
+                        .get("body")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    log::debug!(
+                        "[skill:{}] event_loop: WebhookRequest handled → status {}",
+                        skill_id,
+                        status_code,
+                    );
+
+                    let _ = reply.send(Ok(WebhookResponseData {
+                        correlation_id,
+                        status_code,
+                        headers: resp_headers,
+                        body: resp_body,
+                    }));
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[skill:{}] event_loop: onWebhookRequest failed: {}",
+                        skill_id,
+                        e,
+                    );
+                    let _ = reply.send(Err(e));
+                }
+            }
+        }
         SkillMessage::Rpc {
             method,
             params,
@@ -370,7 +455,7 @@ async fn handle_message(
 
             let result = match method.as_str() {
                 "oauth/complete" => {
-                    // Set credential on the oauth bridge + persist to store
+                    // Set credential on the oauth bridge + in-memory state
                     let cred_json =
                         serde_json::to_string(&params).unwrap_or_else(|_| "null".to_string());
                     let code = format!(
@@ -388,10 +473,21 @@ async fn handle_message(
                         let _ = js_ctx.eval::<rquickjs::Value, _>(code.as_bytes());
                     })
                     .await;
-                    log::info!(
-                        "[skill:{}] OAuth credential set and persisted to store",
-                        skill_id
-                    );
+
+                    // Persist credential to disk so it survives restarts
+                    let cred_path = data_dir.join("oauth_credential.json");
+                    if let Err(e) = std::fs::write(&cred_path, &cred_json) {
+                        log::error!(
+                            "[skill:{}] Failed to persist OAuth credential: {e}",
+                            skill_id
+                        );
+                    } else {
+                        log::info!(
+                            "[skill:{}] OAuth credential persisted to {}",
+                            skill_id,
+                            cred_path.display()
+                        );
+                    }
                     let params_str =
                         serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
                     handle_js_call(rt, ctx, "onOAuthComplete", &params_str).await
@@ -445,7 +541,14 @@ async fn handle_message(
                         let _ = js_ctx.eval::<rquickjs::Value, _>(clear_code.as_bytes());
                     })
                     .await;
-                    log::info!("[skill:{}] OAuth credential cleared from store", skill_id);
+
+                    // Remove persisted credential file
+                    let cred_path = data_dir.join("oauth_credential.json");
+                    let _ = std::fs::remove_file(&cred_path);
+                    log::info!(
+                        "[skill:{}] OAuth credential cleared from store and disk",
+                        skill_id
+                    );
 
                     // Fire-and-forget: delete memory for this integration
                     if let Some(client) = memory_client_opt {

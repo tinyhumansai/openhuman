@@ -1,9 +1,10 @@
 ---
 name: Feature
-description: Propose a new capability with tests and code documentation
+about: Used for new features or suggestions
 title: "[Feature] "
-labels:
-  - enhancement
+labels: enhancement
+assignees: ''
+
 ---
 
 ## Summary
