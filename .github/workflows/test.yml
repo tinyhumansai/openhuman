@@ -183,7 +183,13 @@ jobs:
           sleep 2
           # dbus session is required by webkit2gtk
           eval "$(dbus-launch --sh-syntax)"
-          yarn workspace openhuman-app test:e2e:all:flows
+          # Quick sanity check: can the app binary launch at all?
+          timeout 10 app/src-tauri/target/debug/OpenHuman --help 2>&1 || echo "(app exited — expected for GUI binary)"
+          yarn workspace openhuman-app test:e2e:all:flows || {
+            echo "=== tauri-driver log ==="
+            cat /tmp/tauri-driver-e2e-*.log 2>/dev/null || echo "No tauri-driver logs"
+            exit 1
+          }
 
 #   e2e-macos:
 #     name: E2E (macOS / Appium)
