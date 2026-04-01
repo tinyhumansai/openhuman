@@ -13,7 +13,6 @@ pub use ops::*;
 pub use schema::{
     apply_runtime_proxy_to_builder, build_runtime_proxy_client,
     build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
-<<<<<<< HEAD
     AgentConfig, ArchetypeConfig, AuditConfig, AutocompleteConfig, AutonomyConfig,
     BrowserComputerUseConfig, BrowserConfig, ChannelsConfig, ClassificationRule, ComposioConfig,
     Config, CostConfig, CronConfig, DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig,
@@ -26,20 +25,6 @@ pub use schema::{
     SlackConfig, StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode,
     TelegramConfig, WebSearchConfig, WebhookConfig, DEFAULT_MODEL, MODEL_AGENTIC_V1,
     MODEL_CODING_V1, MODEL_REASONING_V1,
-=======
-    AgentConfig, AuditConfig, AutocompleteConfig, AutonomyConfig, BrowserComputerUseConfig,
-    BrowserConfig, ChannelsConfig, ClassificationRule, ComposioConfig, Config, CostConfig,
-    CronConfig, DelegateAgentConfig, DiscordConfig, DockerRuntimeConfig, EmbeddingRouteConfig,
-    HardwareConfig, HardwareTransport, HeartbeatConfig, HttpRequestConfig, IMessageConfig,
-    IdentityConfig, LarkConfig, LearningConfig, LocalAiConfig, MatrixConfig, MemoryConfig,
-    ModelRouteConfig, MultimodalConfig, ObservabilityConfig, PeripheralBoardConfig,
-    PeripheralsConfig, ProxyConfig, ProxyScope, QueryClassificationConfig, ReflectionSource,
-    ReliabilityConfig, ResourceLimitsConfig, RuntimeConfig, SandboxBackend, SandboxConfig,
-    SchedulerConfig, ScreenIntelligenceConfig, SecretsConfig, SecurityConfig, SlackConfig,
-    StorageConfig, StorageProviderConfig, StorageProviderSection, StreamMode, TelegramConfig,
-    WebSearchConfig, WebhookConfig, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CODING_V1,
-    MODEL_REASONING_V1,
->>>>>>> upstream/main
 };
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
