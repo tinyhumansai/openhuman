@@ -9,6 +9,9 @@ use super::store::{
 };
 use super::types::{UpdateApplyStatus, UpdateAsset, UpdateCheckStatus};
 
+/// Guards config load→mutate→save sequences to prevent concurrent mutation races.
+static UPDATE_CONFIG_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
@@ -29,9 +32,11 @@ fn normalize_digest(value: &str) -> String {
 
 async fn download_asset(url: &str) -> Result<Vec<u8>, String> {
     log::debug!("[update] downloading asset from {url}");
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|e| format!("failed to build http client: {e}"))?;
+    let client = crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
+        "update.asset",
+        300, // 5-minute total timeout for binary download
+        10,  // 10-second connect timeout
+    );
 
     let response = client
         .get(url)
@@ -214,6 +219,7 @@ pub async fn update_set_policy(
     mode: UpdateMode,
     check_interval_hours: Option<u64>,
 ) -> Result<RpcOutcome<UpdateCheckStatus>, String> {
+    let _guard = UPDATE_CONFIG_MUTEX.lock().await;
     let mut config = Config::load_or_init().await.map_err(|e| e.to_string())?;
     config.update.mode = mode;
     if let Some(hours) = check_interval_hours {
@@ -224,6 +230,7 @@ pub async fn update_set_policy(
 }
 
 pub async fn update_dismiss(version: String) -> Result<RpcOutcome<UpdateCheckStatus>, String> {
+    let _guard = UPDATE_CONFIG_MUTEX.lock().await;
     log::debug!("[update] dismissing version {version}");
     let mut config = Config::load_or_init().await.map_err(|e| e.to_string())?;
     config.update.last_dismissed_version = Some(version);
@@ -232,6 +239,7 @@ pub async fn update_dismiss(version: String) -> Result<RpcOutcome<UpdateCheckSta
 }
 
 pub async fn update_check() -> Result<RpcOutcome<UpdateCheckStatus>, String> {
+    let _guard = UPDATE_CONFIG_MUTEX.lock().await;
     let mut config = Config::load_or_init().await.map_err(|e| e.to_string())?;
     match check_for_update(&mut config).await {
         Ok(_) => {}
@@ -256,9 +264,47 @@ async fn download_and_stage(asset: &UpdateAsset) -> Result<std::path::PathBuf, S
 }
 
 pub async fn update_apply() -> Result<RpcOutcome<UpdateApplyStatus>, String> {
+    let _guard = UPDATE_CONFIG_MUTEX.lock().await;
     let mut config = Config::load_or_init().await.map_err(|e| e.to_string())?;
     let latest = check_for_update(&mut config).await?;
-    let asset = latest.ok_or_else(|| "no newer update is available".to_string())?;
+    let asset = match latest {
+        Some(a) => a,
+        None => {
+            // ETag 304 or already up-to-date: try cached asset metadata
+            let current_version = env!("CARGO_PKG_VERSION");
+            let cached_version = config.update.last_seen_version.clone();
+            let is_newer = cached_version
+                .as_deref()
+                .and_then(|v| compare_versions(v, current_version).ok())
+                .map(|o| o.is_gt())
+                .unwrap_or(false);
+            if !is_newer {
+                return Err("no newer update is available".to_string());
+            }
+            let url = config
+                .update
+                .last_seen_download_url
+                .clone()
+                .ok_or_else(|| "cached asset missing download URL".to_string())?;
+            log::debug!("[update] reusing cached asset metadata for apply");
+            UpdateAsset {
+                version: cached_version.unwrap_or_default(),
+                tag: config.update.last_seen_tag.clone().unwrap_or_default(),
+                name: config
+                    .update
+                    .last_seen_asset_name
+                    .clone()
+                    .unwrap_or_default(),
+                download_url: url,
+                digest_sha256: config.update.last_seen_digest_sha256.clone(),
+                release_url: config
+                    .update
+                    .last_seen_release_url
+                    .clone()
+                    .unwrap_or_default(),
+            }
+        }
+    };
 
     let staged_path = download_and_stage(&asset).await?;
 
@@ -280,6 +326,7 @@ pub async fn update_apply() -> Result<RpcOutcome<UpdateApplyStatus>, String> {
 }
 
 pub async fn maybe_background_check() {
+    let _guard = UPDATE_CONFIG_MUTEX.lock().await;
     log::debug!("[update] evaluating background check");
     let mut config = match Config::load_or_init().await {
         Ok(config) => config,
