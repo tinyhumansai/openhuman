@@ -1077,6 +1077,18 @@ export async function openhumanUpdateApply(): Promise<CommandResponse<CoreUpdate
   });
 }
 
+export async function openhumanUpdateDismiss(
+  version: string
+): Promise<CommandResponse<CoreUpdateStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<CoreUpdateStatus>>({
+    method: 'openhuman.update_dismiss',
+    params: { version },
+  });
+}
+
 export async function openhumanUpdateModelSettings(
   update: ModelSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {

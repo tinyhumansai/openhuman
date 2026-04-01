@@ -12,10 +12,16 @@ struct SetPolicyParams {
     check_interval_hours: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DismissParams {
+    version: String,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("status"),
         schemas("set_policy"),
+        schemas("dismiss"),
         schemas("check"),
         schemas("apply"),
     ]
@@ -30,6 +36,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_policy"),
             handler: handle_set_policy,
+        },
+        RegisteredController {
+            schema: schemas("dismiss"),
+            handler: handle_dismiss,
         },
         RegisteredController {
             schema: schemas("check"),
@@ -76,6 +86,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     required: false,
                 },
             ],
+            outputs: vec![FieldSchema {
+                name: "status",
+                ty: TypeSchema::Ref("UpdateCheckStatus"),
+                comment: "Updated status snapshot.",
+                required: true,
+            }],
+        },
+        "dismiss" => ControllerSchema {
+            namespace: "update",
+            function: "dismiss",
+            description: "Dismiss an available update version so prompt mode stops prompting for it.",
+            inputs: vec![FieldSchema {
+                name: "version",
+                ty: TypeSchema::String,
+                comment: "The version string to dismiss.",
+                required: true,
+            }],
             outputs: vec![FieldSchema {
                 name: "status",
                 ty: TypeSchema::Ref("UpdateCheckStatus"),
@@ -137,6 +164,14 @@ fn handle_set_policy(params: Map<String, Value>) -> ControllerFuture {
             )
             .await?,
         )
+    })
+}
+
+fn handle_dismiss(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload: DismissParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        to_json(crate::openhuman::update::rpc::update_dismiss(payload.version).await?)
     })
 }
 

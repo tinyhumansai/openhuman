@@ -203,6 +203,14 @@ pub async fn update_set_policy(
     update_status().await
 }
 
+pub async fn update_dismiss(version: String) -> Result<RpcOutcome<UpdateCheckStatus>, String> {
+    log::debug!("[update] dismissing version {version}");
+    let mut config = Config::load_or_init().await.map_err(|e| e.to_string())?;
+    config.update.last_dismissed_version = Some(version);
+    config.save().await.map_err(|e| e.to_string())?;
+    update_status().await
+}
+
 pub async fn update_check() -> Result<RpcOutcome<UpdateCheckStatus>, String> {
     let mut config = Config::load_or_init().await.map_err(|e| e.to_string())?;
     match check_for_update(&mut config).await {
