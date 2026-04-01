@@ -97,9 +97,7 @@ fn find_skills_dir() -> PathBuf {
         for entry in std::fs::read_dir(parent).into_iter().flatten() {
             if let Ok(entry) = entry {
                 let candidate = entry.path().join("skills/skills");
-                if candidate.exists()
-                    && candidate.join("example-skill/manifest.json").exists()
-                {
+                if candidate.exists() && candidate.join("example-skill/manifest.json").exists() {
                     return candidate.canonicalize().unwrap();
                 }
             }
@@ -114,8 +112,8 @@ fn find_skills_dir() -> PathBuf {
 
 /// Create a RuntimeEngine with the given skills source dir and a temp data dir.
 async fn create_engine(skills_dir: &Path, data_dir: &Path) -> Arc<RuntimeEngine> {
-    let engine = RuntimeEngine::new(data_dir.to_path_buf())
-        .expect("RuntimeEngine::new should succeed");
+    let engine =
+        RuntimeEngine::new(data_dir.to_path_buf()).expect("RuntimeEngine::new should succeed");
     let engine = Arc::new(engine);
 
     // Set the skills source directory
@@ -147,9 +145,7 @@ async fn skill_full_lifecycle() {
     let data_dir = tmp.path().join("skills_data");
     std::fs::create_dir_all(&data_dir).expect("create data_dir");
 
-    banner(&format!(
-        "Skills Debug E2E — skill: {skill_id}"
-    ));
+    banner(&format!("Skills Debug E2E — skill: {skill_id}"));
     info(&format!("Skills dir: {}", skills_dir.display()));
     info(&format!("Data dir:   {}", data_dir.display()));
 
@@ -175,7 +171,10 @@ async fn skill_full_lifecycle() {
             } else {
                 fail(&format!(
                     "Target skill '{skill_id}' NOT found. Available: {}",
-                    m.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")
+                    m.iter()
+                        .map(|m| m.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
                 panic!("Target skill not found in discovered skills");
             }
@@ -249,7 +248,9 @@ async fn skill_full_lifecycle() {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| json!({}));
 
-    info(&format!("Calling tool '{tool_name}' with args: {tool_args}"));
+    info(&format!(
+        "Calling tool '{tool_name}' with args: {tool_args}"
+    ));
 
     let call_result = tokio::time::timeout(
         Duration::from_secs(30),
@@ -410,10 +411,7 @@ async fn skill_full_lifecycle() {
         Some(snap) => {
             ok(&format!("Status: {:?}", snap.status));
             info(&format!("Tools: {}", snap.tools.len()));
-            info(&format!(
-                "Published state: {} key(s)",
-                snap.state.len()
-            ));
+            info(&format!("Published state: {} key(s)", snap.state.len()));
             if is_verbose() {
                 for (k, v) in &snap.state {
                     info(&format!("  {k} = {v}"));
@@ -435,11 +433,8 @@ async fn skill_full_lifecycle() {
 
     // ── 10. Stop ──
     step(&format!("STOP SKILL '{skill_id}'"));
-    let stop_result = tokio::time::timeout(
-        Duration::from_secs(10),
-        engine.stop_skill(&skill_id),
-    )
-    .await;
+    let stop_result =
+        tokio::time::timeout(Duration::from_secs(10), engine.stop_skill(&skill_id)).await;
 
     match stop_result {
         Ok(Ok(())) => {
@@ -491,7 +486,9 @@ async fn skill_not_found_gives_clear_error() {
     let engine = Arc::new(engine);
     set_global_engine(engine.clone());
 
-    let result = engine.call_tool("nonexistent-skill", "some-tool", json!({})).await;
+    let result = engine
+        .call_tool("nonexistent-skill", "some-tool", json!({}))
+        .await;
     assert!(result.is_err(), "Expected error for non-existent skill");
     let err = result.unwrap_err();
     eprintln!("  Expected error: {err}");
@@ -548,11 +545,7 @@ async fn skill_rapid_start_stop() {
         let start = engine.start_skill(&skill_id).await;
         match &start {
             Ok(snap) => {
-                eprintln!(
-                    "    Started: {:?}, {} tools",
-                    snap.status,
-                    snap.tools.len()
-                );
+                eprintln!("    Started: {:?}, {} tools", snap.status, snap.tools.len());
             }
             Err(e) => {
                 eprintln!("    Start failed: {e}");
@@ -592,7 +585,10 @@ async fn skill_disconnect_flow() {
     eprintln!("\n--- DISCONNECT TEST ---");
     eprintln!("  Starting skill '{skill_id}'...");
     let snap = engine.start_skill(&skill_id).await.expect("start");
-    assert_eq!(snap.status, openhuman_core::openhuman::skills::types::SkillStatus::Running);
+    assert_eq!(
+        snap.status,
+        openhuman_core::openhuman::skills::types::SkillStatus::Running
+    );
     eprintln!("  ✓ Running, {} tools", snap.tools.len());
 
     // ── Write a fake OAuth credential ──
@@ -604,7 +600,10 @@ async fn skill_disconnect_flow() {
         r#"{"credentialId":"test-cred-123","provider":"test","grantedScopes":[]}"#,
     )
     .unwrap();
-    assert!(cred_path.exists(), "Credential file should exist before disconnect");
+    assert!(
+        cred_path.exists(),
+        "Credential file should exist before disconnect"
+    );
     eprintln!("  ✓ Wrote fake oauth_credential.json");
 
     // ── Simulate frontend disconnect: stop + set_setup_complete(false) ──
@@ -639,7 +638,10 @@ async fn skill_disconnect_flow() {
     .unwrap();
 
     let snap2 = engine.start_skill(&skill_id).await.expect("restart");
-    assert_eq!(snap2.status, openhuman_core::openhuman::skills::types::SkillStatus::Running);
+    assert_eq!(
+        snap2.status,
+        openhuman_core::openhuman::skills::types::SkillStatus::Running
+    );
     eprintln!("  ✓ Restarted skill");
 
     // Send oauth/revoked RPC (what disconnect SHOULD do)
@@ -670,9 +672,19 @@ async fn skill_disconnect_flow() {
 
     // ── Verify restart after disconnect shows clean state ──
     eprintln!("\n  Verifying clean restart after proper disconnect...");
-    let snap3 = engine.start_skill(&skill_id).await.expect("restart after disconnect");
-    eprintln!("  ✓ Restarted: {:?}, {} tools", snap3.status, snap3.tools.len());
-    eprintln!("  setup_complete: {}", engine.preferences().is_setup_complete(&skill_id));
+    let snap3 = engine
+        .start_skill(&skill_id)
+        .await
+        .expect("restart after disconnect");
+    eprintln!(
+        "  ✓ Restarted: {:?}, {} tools",
+        snap3.status,
+        snap3.tools.len()
+    );
+    eprintln!(
+        "  setup_complete: {}",
+        engine.preferences().is_setup_complete(&skill_id)
+    );
 
     engine.stop_skill(&skill_id).await.expect("final stop");
     eprintln!("\n  ✓ Disconnect flow test complete");

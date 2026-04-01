@@ -74,7 +74,10 @@ async fn notion_live_with_real_data() {
     eprintln!("  Notion Live Debug (real data dir)");
     eprintln!("{sep}");
     eprintln!("  Backend:       {backend_url}");
-    eprintln!("  JWT:           {}...", &jwt_token.get(..20).unwrap_or("(empty)"));
+    eprintln!(
+        "  JWT:           {}...",
+        &jwt_token.get(..20).unwrap_or("(empty)")
+    );
     eprintln!("  Credential ID: {credential_id}");
     eprintln!("  Skills dir:    {}", skills_dir.display());
     eprintln!("  Data dir:      {}", real_data_dir.display());
@@ -125,9 +128,7 @@ async fn notion_live_with_real_data() {
 
     // ── Step 2: Raw proxy check ──
     eprintln!("\n--- Step 2: OAuth Proxy Check ---");
-    let proxy_url = format!(
-        "{backend_url}/proxy/by-id/{credential_id}/v1/users?page_size=1"
-    );
+    let proxy_url = format!("{backend_url}/proxy/by-id/{credential_id}/v1/users?page_size=1");
     eprintln!("  GET {proxy_url}");
 
     let proxy = client
@@ -146,7 +147,10 @@ async fn notion_live_with_real_data() {
                 eprintln!("  ✓ Notion API accessible via proxy");
                 eprintln!("  Body: {}...", &body[..body.len().min(300)]);
             } else {
-                eprintln!("  ✗ Proxy returned {status}: {}...", &body[..body.len().min(200)]);
+                eprintln!(
+                    "  ✗ Proxy returned {status}: {}...",
+                    &body[..body.len().min(200)]
+                );
             }
         }
         Err(e) => {
@@ -168,7 +172,12 @@ async fn notion_live_with_real_data() {
             eprintln!("  Tools: {}", snap.tools.len());
             eprintln!("  Published state:");
             for (k, v) in &snap.state {
-                if k.contains("status") || k.contains("error") || k.contains("auth") || k == "workspaceName" || k == "is_initialized" {
+                if k.contains("status")
+                    || k.contains("error")
+                    || k.contains("auth")
+                    || k == "workspaceName"
+                    || k == "is_initialized"
+                {
                     eprintln!("    {k} = {v}");
                 }
             }
@@ -195,10 +204,22 @@ async fn notion_live_with_real_data() {
                         // Parse and pretty-print
                         if let Ok(v) = serde_json::from_str::<Value>(text) {
                             eprintln!("  ✓ sync-status:");
-                            eprintln!("    connected:       {}", v.get("connected").unwrap_or(&json!(null)));
-                            eprintln!("    workspace:       {}", v.get("workspace_name").unwrap_or(&json!(null)));
-                            eprintln!("    last_sync:       {}", v.get("last_sync_time").unwrap_or(&json!(null)));
-                            eprintln!("    last_sync_error: {}", v.get("last_sync_error").unwrap_or(&json!(null)));
+                            eprintln!(
+                                "    connected:       {}",
+                                v.get("connected").unwrap_or(&json!(null))
+                            );
+                            eprintln!(
+                                "    workspace:       {}",
+                                v.get("workspace_name").unwrap_or(&json!(null))
+                            );
+                            eprintln!(
+                                "    last_sync:       {}",
+                                v.get("last_sync_time").unwrap_or(&json!(null))
+                            );
+                            eprintln!(
+                                "    last_sync_error: {}",
+                                v.get("last_sync_error").unwrap_or(&json!(null))
+                            );
                             if let Some(totals) = v.get("totals") {
                                 eprintln!("    totals: {totals}");
                             }
@@ -267,7 +288,11 @@ async fn notion_live_with_real_data() {
     if let Some(snap) = engine.get_skill_state("notion") {
         eprintln!("  Status: {:?}", snap.status);
         for (k, v) in &snap.state {
-            if k.contains("status") || k.contains("error") || k.contains("auth") || k == "workspaceName" {
+            if k.contains("status")
+                || k.contains("error")
+                || k.contains("auth")
+                || k == "workspaceName"
+            {
                 eprintln!("  {k} = {v}");
             }
         }

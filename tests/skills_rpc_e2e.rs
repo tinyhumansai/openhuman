@@ -56,8 +56,15 @@ fn find_skills_dir() -> PathBuf {
     panic!("Skills directory not found. Set SKILL_DEBUG_DIR.");
 }
 
-async fn serve_on_ephemeral(app: Router) -> (SocketAddr, tokio::task::JoinHandle<Result<(), std::io::Error>>) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+async fn serve_on_ephemeral(
+    app: Router,
+) -> (
+    SocketAddr,
+    tokio::task::JoinHandle<Result<(), std::io::Error>>,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr = listener.local_addr().expect("addr");
     let handle = tokio::spawn(async move { axum::serve(listener, app).await });
     (addr, handle)
@@ -75,10 +82,20 @@ async fn rpc_call(base: &str, id: i64, method: &str, params: Value) -> Value {
         "params": params,
     });
     let url = format!("{}/rpc", base.trim_end_matches('/'));
-    let resp = client.post(&url).json(&body).send().await
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
         .unwrap_or_else(|e| panic!("POST {url}: {e}"));
-    assert!(resp.status().is_success(), "HTTP error {} for {}", resp.status(), method);
-    resp.json::<Value>().await
+    assert!(
+        resp.status().is_success(),
+        "HTTP error {} for {}",
+        resp.status(),
+        method
+    );
+    resp.json::<Value>()
+        .await
         .unwrap_or_else(|e| panic!("json for {method}: {e}"))
 }
 
@@ -117,7 +134,8 @@ default_model = "test"
 [secrets]
 encrypt = false
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Unsafe env overrides (tests are serialized)
     unsafe {
@@ -153,28 +171,52 @@ encrypt = false
     eprintln!("\n--- openhuman.skills_discover ---");
     let discover = rpc_call(&base, 2, "openhuman.skills_discover", json!({})).await;
     let r = check_result(&discover, "skills_discover");
-    eprintln!("  Result: {} skills", r.as_array().map(|a| a.len()).unwrap_or(0));
+    eprintln!(
+        "  Result: {} skills",
+        r.as_array().map(|a| a.len()).unwrap_or(0)
+    );
 
     // 3. openhuman.skills_start
     eprintln!("\n--- openhuman.skills_start ---");
-    let start = rpc_call(&base, 3, "openhuman.skills_start", json!({ "skill_id": skill_id })).await;
+    let start = rpc_call(
+        &base,
+        3,
+        "openhuman.skills_start",
+        json!({ "skill_id": skill_id }),
+    )
+    .await;
     let r = check_result(&start, "skills_start");
     if r.get("__error").is_some() {
         eprintln!("  Start failed (see error above)");
     } else {
         eprintln!("  Status: {:?}", r.get("status"));
-        eprintln!("  Tools: {}", r.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0));
+        eprintln!(
+            "  Tools: {}",
+            r.get("tools")
+                .and_then(|t| t.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0)
+        );
     }
 
     // 4. openhuman.skills_list_tools
     eprintln!("\n--- openhuman.skills_list_tools ---");
-    let tools = rpc_call(&base, 4, "openhuman.skills_list_tools", json!({ "skill_id": skill_id })).await;
+    let tools = rpc_call(
+        &base,
+        4,
+        "openhuman.skills_list_tools",
+        json!({ "skill_id": skill_id }),
+    )
+    .await;
     let r = check_result(&tools, "skills_list_tools");
     let tool_list = r.get("tools").and_then(|t| t.as_array());
     if let Some(tools) = tool_list {
         eprintln!("  {} tools:", tools.len());
         for t in tools.iter().take(5) {
-            eprintln!("    - {}", t.get("name").and_then(|n| n.as_str()).unwrap_or("?"));
+            eprintln!(
+                "    - {}",
+                t.get("name").and_then(|n| n.as_str()).unwrap_or("?")
+            );
         }
         if tools.len() > 5 {
             eprintln!("    ... and {} more", tools.len() - 5);
@@ -189,29 +231,54 @@ encrypt = false
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| json!({}));
     let call = rpc_call(
-        &base, 5,
+        &base,
+        5,
         "openhuman.skills_call_tool",
         json!({ "skill_id": skill_id, "tool_name": tool_name, "arguments": tool_args }),
-    ).await;
+    )
+    .await;
     let r = check_result(&call, "skills_call_tool");
     eprintln!("  Result: {r}");
 
     // 6. openhuman.skills_sync (tick)
     eprintln!("\n--- openhuman.skills_sync ---");
-    let sync = rpc_call(&base, 6, "openhuman.skills_sync", json!({ "skill_id": skill_id })).await;
+    let sync = rpc_call(
+        &base,
+        6,
+        "openhuman.skills_sync",
+        json!({ "skill_id": skill_id }),
+    )
+    .await;
     let r = check_result(&sync, "skills_sync");
     eprintln!("  Result: {r}");
 
     // 7. openhuman.skills_status
     eprintln!("\n--- openhuman.skills_status ---");
-    let status = rpc_call(&base, 7, "openhuman.skills_status", json!({ "skill_id": skill_id })).await;
+    let status = rpc_call(
+        &base,
+        7,
+        "openhuman.skills_status",
+        json!({ "skill_id": skill_id }),
+    )
+    .await;
     let r = check_result(&status, "skills_status");
     eprintln!("  Status: {:?}", r.get("status"));
-    eprintln!("  Published state keys: {:?}", r.get("state").and_then(|s| s.as_object()).map(|o| o.keys().collect::<Vec<_>>()));
+    eprintln!(
+        "  Published state keys: {:?}",
+        r.get("state")
+            .and_then(|s| s.as_object())
+            .map(|o| o.keys().collect::<Vec<_>>())
+    );
 
     // 8. openhuman.skills_stop
     eprintln!("\n--- openhuman.skills_stop ---");
-    let stop = rpc_call(&base, 8, "openhuman.skills_stop", json!({ "skill_id": skill_id })).await;
+    let stop = rpc_call(
+        &base,
+        8,
+        "openhuman.skills_stop",
+        json!({ "skill_id": skill_id }),
+    )
+    .await;
     let r = check_result(&stop, "skills_stop");
     eprintln!("  Result: {r}");
 
