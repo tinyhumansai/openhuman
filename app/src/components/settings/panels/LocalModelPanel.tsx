@@ -1129,9 +1129,12 @@ const LocalModelPanel = () => {
                   {isTranscribeLoading ? 'Running...' : 'Run Transcription Test'}
                 </button>
                 {transcribeOutput && (
-                  <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-1">
+                  <div className="rounded-md bg-stone-950 border border-gray-700 p-3 text-xs text-stone-200 space-y-2">
                     <div>Model: {transcribeOutput.model_id}</div>
-                    <pre className="whitespace-pre-wrap">{transcribeOutput.text}</pre>
+                    <div>
+                      <span className="text-stone-400">Transcript:</span>
+                      <pre className="whitespace-pre-wrap mt-1">{transcribeOutput.text}</pre>
+                    </div>
                   </div>
                 )}
               </div>

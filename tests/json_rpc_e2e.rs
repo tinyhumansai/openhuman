@@ -1556,3 +1556,64 @@ async fn team_rpc_e2e() {
     mock_join.abort();
     rpc_join.abort();
 }
+
+#[tokio::test]
+async fn voice_status_returns_availability() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _whisper_guard = EnvVarGuard::unset("WHISPER_BIN");
+    let _piper_guard = EnvVarGuard::unset("PIPER_BIN");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // voice_status does not require auth — it only checks filesystem availability
+    let status = post_json_rpc(&rpc_base, 1, "openhuman.voice_status", json!({})).await;
+    let result = assert_no_jsonrpc_error(&status, "voice_status");
+
+    // Without whisper/piper installed in the test env, both should be unavailable
+    assert!(
+        result.get("stt_available").is_some(),
+        "expected stt_available field: {result}"
+    );
+    assert!(
+        result.get("tts_available").is_some(),
+        "expected tts_available field: {result}"
+    );
+    assert!(
+        result.get("stt_model_id").is_some(),
+        "expected stt_model_id field: {result}"
+    );
+    assert!(
+        result.get("tts_voice_id").is_some(),
+        "expected tts_voice_id field: {result}"
+    );
+
+    // Verify that without binaries, availability is false
+    assert_eq!(
+        result.get("stt_available").and_then(Value::as_bool),
+        Some(false),
+        "stt should be unavailable without whisper binary"
+    );
+    assert_eq!(
+        result.get("tts_available").and_then(Value::as_bool),
+        Some(false),
+        "tts should be unavailable without piper binary"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}

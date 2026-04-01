@@ -54,6 +54,14 @@ pub struct LocalAiConfig {
     /// Optional path to a manually-installed Ollama binary.
     #[serde(default)]
     pub ollama_binary_path: Option<String>,
+    /// When true, load the whisper model in-process via whisper-rs instead of
+    /// shelling out to whisper-cli for each transcription call.
+    #[serde(default = "default_whisper_in_process")]
+    pub whisper_in_process: bool,
+    /// When true and Ollama is available, pass raw transcription through a
+    /// local LLM to fix grammar/punctuation using conversation context.
+    #[serde(default = "default_voice_llm_cleanup_enabled")]
+    pub voice_llm_cleanup_enabled: bool,
 }
 
 fn default_enabled() -> bool {
@@ -149,6 +157,14 @@ fn default_max_suggestions() -> usize {
     5
 }
 
+fn default_whisper_in_process() -> bool {
+    true
+}
+
+fn default_voice_llm_cleanup_enabled() -> bool {
+    true
+}
+
 impl Default for LocalAiConfig {
     fn default() -> Self {
         Self {
@@ -176,6 +192,8 @@ impl Default for LocalAiConfig {
             max_suggestions: default_max_suggestions(),
             selected_tier: None,
             ollama_binary_path: None,
+            whisper_in_process: default_whisper_in_process(),
+            voice_llm_cleanup_enabled: default_voice_llm_cleanup_enabled(),
         }
     }
 }

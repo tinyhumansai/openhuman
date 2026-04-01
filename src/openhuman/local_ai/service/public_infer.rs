@@ -227,7 +227,7 @@ impl LocalAiService {
         }
     }
 
-    async fn inference(
+    pub(crate) async fn inference(
         &self,
         config: &Config,
         system: &str,

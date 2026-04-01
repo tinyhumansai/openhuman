@@ -127,18 +127,27 @@ yarn mock:api
 curl -s http://127.0.0.1:18473/__admin/health
 ```
 
-### E2E tests (WDIO + Appium mac2)
+### E2E tests (WDIO — dual platform)
+
+Full guide: [`docs/E2E-TESTING.md`](docs/E2E-TESTING.md).
+
+Two automation backends:
+- **Linux (CI default)**: `tauri-driver` (WebDriver, port 4444) — drives the debug binary directly
+- **macOS (local dev)**: Appium Mac2 (XCUITest, port 4723) — drives the `.app` bundle
 
 - **Where specs live**: `app/test/e2e/specs/*.spec.ts`
 - **Shared harness**:
-  - Helpers: `app/test/e2e/helpers/*`
+  - Platform detection: `app/test/e2e/helpers/platform.ts`
+  - Element helpers: `app/test/e2e/helpers/element-helpers.ts`
+  - Deep link helpers: `app/test/e2e/helpers/deep-link-helpers.ts`
+  - App lifecycle: `app/test/e2e/helpers/app-helpers.ts`
   - Mock backend: `app/test/e2e/mock-server.ts`
-  - WDIO config: `app/test/wdio.conf.ts`
+  - WDIO config: `app/test/wdio.conf.ts` (auto-detects platform)
 
 - **Build + run**:
 
 ```bash
-# Build desktop app bundle + stage core sidecar
+# Build app + stage core sidecar (detects macOS vs Linux automatically)
 yarn test:e2e:build
 
 # Run one spec
@@ -146,13 +155,17 @@ bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
 
 # Run all flow specs
 yarn test:e2e:all:flows
+
+# Docker on macOS (run Linux E2E locally)
+docker compose -f e2e/docker-compose.yml run --rm e2e
 ```
 
 - **Authoring rules**:
   - Ensure each spec is runnable in isolation.
-  - Use helper waits (`waitForAppReady`, `waitForWebView`, etc.) instead of ad hoc long sleeps.
+  - Use helpers from `element-helpers.ts` — never use raw `XCUIElementType*` selectors in specs.
+  - Use `clickNativeButton()`, `hasAppChrome()`, `waitForWebView()`, `clickToggle()` for cross-platform element interaction.
   - Assert both UI outcomes and backend/mock effects when relevant.
-  - Add failure diagnostics (request logs, accessibility tree dump) for faster debugging by agents.
+  - Add failure diagnostics (request logs, `dumpAccessibilityTree()`) for faster debugging by agents.
 
 ### Deterministic core-sidecar reset
 

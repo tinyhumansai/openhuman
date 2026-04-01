@@ -37,5 +37,6 @@ pub mod skills;
 pub mod team;
 pub mod tools;
 pub mod util;
+pub mod voice;
 pub mod webhooks;
 pub mod workspace;

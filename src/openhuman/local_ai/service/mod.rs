@@ -6,6 +6,7 @@ mod ollama_admin;
 mod public_infer;
 mod speech;
 mod vision_embed;
+pub(crate) mod whisper_engine;
 
 use crate::openhuman::local_ai::types::LocalAiStatus;
 use parking_lot::Mutex;
@@ -15,4 +16,6 @@ pub struct LocalAiService {
     pub(crate) bootstrap_lock: tokio::sync::Mutex<()>,
     pub(crate) last_memory_summary_at: Mutex<Option<std::time::Instant>>,
     pub(crate) http: reqwest::Client,
+    /// In-process whisper.cpp context for low-latency STT.
+    pub(crate) whisper: whisper_engine::WhisperEngineHandle,
 }

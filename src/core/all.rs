@@ -65,6 +65,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
     controllers.extend(crate::openhuman::billing::all_billing_registered_controllers());
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
+    controllers.extend(crate::openhuman::voice::all_voice_registered_controllers());
     controllers
 }
 
@@ -95,6 +96,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
+    schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
     schemas
 }
 
@@ -131,6 +133,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
+        "voice" => Some("Speech-to-text and text-to-speech using local models."),
         _ => None,
     }
 }
