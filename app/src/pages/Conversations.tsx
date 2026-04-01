@@ -35,6 +35,7 @@ import {
   openhumanAutocompleteAccept,
   openhumanAutocompleteCurrent,
   openhumanLocalAiChat,
+  openhumanLocalAiShouldReact,
   openhumanLocalAiTranscribeBytes,
   openhumanLocalAiTts,
 } from '../utils/tauriCommands';
@@ -124,6 +125,10 @@ const Conversations = () => {
   const [isDelivering, setIsDelivering] = useState(false);
   const deliveryActiveRef = useRef(false);
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+  const defaultChannelType = useAppSelector(
+    state => state.channelConnections?.defaultMessagingChannel ?? 'web'
+  );
+  const lastUserMessageRef = useRef<{ id: string; content: string; threadId: string } | null>(null);
 
   const selectedThreadIdRef = useRef(selectedThreadId);
   useEffect(() => {
@@ -349,6 +354,13 @@ const Conversations = () => {
           };
         });
 
+        // Fire-and-forget: auto-react to the user's message
+        if (lastUserMessageRef.current && lastUserMessageRef.current.threadId === event.thread_id) {
+          const { id, content, threadId } = lastUserMessageRef.current;
+          maybeAutoReact(id, content, threadId);
+          lastUserMessageRef.current = null;
+        }
+
         // Multi-bubble delivery gate: only when local model is active
         if (!isLocalModelActiveRef.current) {
           dispatch(
@@ -471,6 +483,26 @@ const Conversations = () => {
     setIsDelivering(false);
   };
 
+  /**
+   * Fire-and-forget: ask the local model if we should auto-react to the
+   * user's message with an emoji. Adds a personal touch based on channel type.
+   */
+  const maybeAutoReact = (userMessageId: string, messageContent: string, threadId: string) => {
+    if (!isTauri() || !isLocalModelActiveRef.current) return;
+
+    void openhumanLocalAiShouldReact(messageContent, defaultChannelType)
+      .then(response => {
+        const decision = response.result;
+        if (decision?.should_react && decision.emoji) {
+          console.debug('[conversations:auto-react] reacting with', decision.emoji);
+          dispatch(addReaction({ threadId, messageId: userMessageId, emoji: decision.emoji }));
+        }
+      })
+      .catch(err => {
+        console.debug('[conversations:auto-react] failed:', err);
+      });
+  };
+
   const handleSendMessage = async (text?: string) => {
     const normalized = text ?? inputValue;
     const trimmed = normalized.trim();
@@ -497,6 +529,7 @@ const Conversations = () => {
     };
 
     dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
+    lastUserMessageRef.current = { id: userMessage.id, content: trimmed, threadId: sendingThreadId };
 
     setInputValue('');
     setSendError(null);
@@ -539,6 +572,7 @@ const Conversations = () => {
         }
 
         await deliverLocalResponse(reply, sendingThreadId);
+        maybeAutoReact(userMessage.id, trimmed, sendingThreadId);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setSendError(msg);

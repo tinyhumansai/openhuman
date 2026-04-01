@@ -111,6 +111,12 @@ struct LocalAiChatParams {
     max_tokens: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct LocalAiShouldReactParams {
+    message: String,
+    channel_type: String,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("agent_chat"),
@@ -138,6 +144,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("local_ai_set_ollama_path"),
         schemas("local_ai_diagnostics"),
         schemas("local_ai_chat"),
+        schemas("local_ai_should_react"),
     ]
 }
 
@@ -242,6 +249,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_chat"),
             handler: handle_local_ai_chat,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_should_react"),
+            handler: handle_local_ai_should_react,
         },
     ]
 }
@@ -487,6 +498,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_u64("max_tokens", "Optional max output tokens."),
             ],
             outputs: vec![json_output("reply", "Assistant reply text.")],
+        },
+        "local_ai_should_react" => ControllerSchema {
+            namespace: "local_ai",
+            function: "should_react",
+            description: "Ask the local model whether the assistant should add an emoji reaction to a user message, based on channel type.",
+            inputs: vec![
+                required_string("message", "User message content to evaluate."),
+                required_string("channel_type", "Channel type: web, telegram, discord, slack, etc."),
+            ],
+            outputs: vec![json_output("decision", "Reaction decision: {should_react, emoji}.")],
         },
         _ => ControllerSchema {
             namespace: "local_ai",
@@ -849,6 +870,21 @@ fn handle_local_ai_set_ollama_path(params: Map<String, Value>) -> ControllerFutu
             "ollama_binary_path": new_value,
             "status": current_status,
         }))
+    })
+}
+
+fn handle_local_ai_should_react(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiShouldReactParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::local_ai::rpc::local_ai_should_react(
+                &config,
+                &p.message,
+                &p.channel_type,
+            )
+            .await?,
+        )
     })
 }
 

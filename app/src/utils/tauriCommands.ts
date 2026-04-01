@@ -1373,6 +1373,28 @@ export async function openhumanLocalAiChat(
   });
 }
 
+// --- Reaction decision (local model) ---
+
+export interface ReactionDecision {
+  should_react: boolean;
+  emoji: string | null;
+}
+
+/**
+ * Ask the local model whether the assistant should react to a user message
+ * with an emoji, based on the channel type. Designed to be fire-and-forget.
+ * Zero cloud cost — runs entirely on the local Ollama model.
+ */
+export async function openhumanLocalAiShouldReact(
+  message: string,
+  channelType: string
+): Promise<CommandResponse<ReactionDecision>> {
+  return await callCoreRpc<CommandResponse<ReactionDecision>>({
+    method: 'openhuman.local_ai_should_react',
+    params: { message, channel_type: channelType },
+  });
+}
+
 export async function openhumanLocalAiAssetsStatus(): Promise<
   CommandResponse<LocalAiAssetsStatus>
 > {
