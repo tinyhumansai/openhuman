@@ -64,8 +64,6 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
   return undefined;
 }
 
-
-
 /**
  * Wait until one of the candidate texts appears on screen.
  * Returns the matched text or null on timeout.
