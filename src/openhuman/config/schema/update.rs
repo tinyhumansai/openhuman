@@ -13,7 +13,7 @@ pub enum UpdateMode {
 
 impl Default for UpdateMode {
     fn default() -> Self {
-        Self::Auto
+        Self::Prompt
     }
 }
 
@@ -54,7 +54,7 @@ fn default_check_interval_hours() -> u64 {
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
-            mode: UpdateMode::Auto,
+            mode: UpdateMode::Prompt,
             check_interval_hours: default_check_interval_hours(),
             last_check_at: None,
             last_seen_version: None,
