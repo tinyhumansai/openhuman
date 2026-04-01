@@ -341,7 +341,7 @@ fn grouped_schemas() -> BTreeMap<String, Vec<ControllerSchema>> {
 fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("OpenHuman core CLI\n");
     println!("Usage:");
-    println!("  openhuman run [--port <u16>] [--jsonrpc-only] [--verbose]");
+    println!("  openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--verbose]");
     println!("  openhuman repl [--verbose] [--eval '<cmd>'] [--batch]");
     println!("  openhuman call --method <name> [--params '<json>']");
     println!("  openhuman <namespace> <function> [--param value ...]\n");

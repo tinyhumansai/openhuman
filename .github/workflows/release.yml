@@ -787,15 +787,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push staging tag
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.prepare-release.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:staging-${{ needs.prepare-release.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |
@@ -804,29 +803,6 @@ jobs:
             org.opencontainers.image.version=${{ needs.prepare-release.outputs.version }}
             org.opencontainers.image.source=https://github.com/tinyhumansai/openhuman
             org.opencontainers.image.revision=${{ needs.prepare-release.outputs.sha }}
-
-      - name: Upload Docker digest to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-          TAG: ${{ needs.prepare-release.outputs.tag }}
-        run: |
-          DIGEST_FILE="$(mktemp)"
-          cat > "$DIGEST_FILE" <<EOF
-          Docker image: ghcr.io/${{ env.IMAGE_NAME }}:${TAG}
-          Also tagged:  ghcr.io/${{ env.IMAGE_NAME }}:latest
-
-          Pull:
-            docker pull ghcr.io/${{ env.IMAGE_NAME }}:${TAG}
-
-          Run:
-            docker run -p 7788:7788 --env-file .env ghcr.io/${{ env.IMAGE_NAME }}:${TAG}
-          EOF
-          # Append docker info to release body
-          gh release view "${TAG}" --repo tinyhumansai/openhuman --json body -q .body > /tmp/body.md
-          printf '\n---\n\n### Docker\n\n```\ndocker pull ghcr.io/%s:%s\ndocker run -p 7788:7788 --env-file .env ghcr.io/%s:%s\n```\n' \
-            "${{ env.IMAGE_NAME }}" "${TAG}" "${{ env.IMAGE_NAME }}" "${TAG}" >> /tmp/body.md
-          gh release edit "${TAG}" --repo tinyhumansai/openhuman --notes-file /tmp/body.md
 
   # =========================================================================
   # Phase 4: Publish the draft release (waits for ALL build phases)
@@ -867,6 +843,33 @@ jobs:
               return;
             }
             core.info('All required installer assets are present.');
+
+      - name: Promote Docker image from staging to release tags
+        env:
+          REGISTRY: ghcr.io
+          IMAGE_NAME: tinyhumansai/openhuman-core
+          TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          # Log in to GHCR
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          STAGING="${REGISTRY}/${IMAGE_NAME}:staging-${TAG}"
+          VERSIONED="${REGISTRY}/${IMAGE_NAME}:${TAG}"
+          LATEST="${REGISTRY}/${IMAGE_NAME}:latest"
+
+          echo "Promoting ${STAGING} → ${VERSIONED}, ${LATEST}"
+          docker buildx imagetools create --tag "${VERSIONED}" --tag "${LATEST}" "${STAGING}"
+
+      - name: Append Docker pull instructions to release notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare-release.outputs.tag }}
+          IMAGE_NAME: tinyhumansai/openhuman-core
+        run: |
+          gh release view "${TAG}" --repo tinyhumansai/openhuman --json body -q .body > /tmp/body.md
+          printf '\n---\n\n### Docker\n\n```\ndocker pull ghcr.io/%s:%s\ndocker run -p 7788:7788 --env-file .env ghcr.io/%s:%s\n```\n' \
+            "${IMAGE_NAME}" "${TAG}" "${IMAGE_NAME}" "${TAG}" >> /tmp/body.md
+          gh release edit "${TAG}" --repo tinyhumansai/openhuman --notes-file /tmp/body.md
 
       - name: Publish release
         uses: actions/github-script@v7
@@ -933,3 +936,23 @@ jobs:
                 throw e;
               }
             }
+
+      - name: Delete staging Docker image
+        continue-on-error: true
+        env:
+          TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          PACKAGE="openhuman-core"
+          STAGING_TAG="staging-${TAG}"
+          echo "Attempting to delete staging Docker tag: ${STAGING_TAG}"
+          # List package versions and find the staging tag
+          VERSION_ID="$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/tinyhumansai/packages/container/${PACKAGE}/versions" \
+            --paginate --jq ".[] | select(.metadata.container.tags[] == \"${STAGING_TAG}\") | .id" 2>/dev/null | head -1)"
+          if [ -n "$VERSION_ID" ]; then
+            gh api -X DELETE "/orgs/tinyhumansai/packages/container/${PACKAGE}/versions/${VERSION_ID}" || true
+            echo "Deleted staging image version ${VERSION_ID}"
+          else
+            echo "Staging tag ${STAGING_TAG} not found or already deleted"
+          fi
