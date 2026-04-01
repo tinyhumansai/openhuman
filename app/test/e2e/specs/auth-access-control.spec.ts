@@ -118,7 +118,11 @@ async function navigateToBilling() {
   } catch {
     // Retry: Settings page may not have loaded
     console.log('[AuthAccess] Billing not found, retrying Settings navigation...');
-    try { await clickNativeButton('Settings', 5_000); } catch { /* ignore */ }
+    try {
+      await clickNativeButton('Settings', 5_000);
+    } catch {
+      /* ignore */
+    }
     await browser.pause(3_000);
     try {
       await waitForText('Billing', 10_000);
