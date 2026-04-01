@@ -678,6 +678,48 @@ jobs:
           echo "Checking staple..."
           xcrun stapler validate "$APP_PATH" || echo "WARNING: Staple validation failed"
 
+      - name: Package CLI tarball and upload to release
+        if: matrix.settings.platform != 'windows-latest'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          MATRIX_PLATFORM: ${{ matrix.settings.platform }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
+        run: |
+          set -euo pipefail
+
+          TARBALL="openhuman-core-${VERSION}-${MATRIX_TARGET}.tar.gz"
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+
+          if [[ "$MATRIX_PLATFORM" == "macos-latest" ]]; then
+            # Prefer the notarized+signed binary extracted from inside the .app bundle
+            APP_PATH="${{ steps.locate-app.outputs.app_path }}"
+            BIN=$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -name "openhuman-core-*" \
+              ! -name "*.sig" 2>/dev/null | head -1 || true)
+            [[ -z "$BIN" ]] && BIN=$(find "$APP_PATH/Contents/Resources" -maxdepth 1 \
+              -name "openhuman-core-*" ! -name "*.sig" 2>/dev/null | head -1 || true)
+            if [[ -z "$BIN" ]]; then
+              echo "[pkg] Falling back to target dir binary (no notarized sidecar found)"
+              BIN="${{ steps.cli-paths.outputs.cli_path }}"
+            fi
+          else
+            BIN="${{ steps.cli-paths.outputs.cli_path }}"
+          fi
+
+          cp "$BIN" "$WORK/openhuman-core"
+          chmod +x "$WORK/openhuman-core"
+          tar -czf "$TARBALL" -C "$WORK" openhuman-core
+
+          # openssl dgst works on both macOS and Linux runners
+          openssl dgst -sha256 -r "$TARBALL" | awk '{print $1}' > "${TARBALL}.sha256"
+
+          gh release upload "v${VERSION}" "$TARBALL" "${TARBALL}.sha256" \
+            --repo tinyhumansai/openhuman --clobber
+
+          echo "[pkg] Uploaded $TARBALL and ${TARBALL}.sha256"
+
       - name: Upload standalone CLI artifacts
         uses: actions/upload-artifact@v4
         with:
