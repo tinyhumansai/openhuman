@@ -82,10 +82,113 @@ fn mock_upstream_router() -> Router {
         }))
     }
 
+    // ── Billing mock routes ──────────────────────────────────────────────────
+
+    async fn stripe_current_plan() -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": {
+                "plan": "PRO",
+                "hasActiveSubscription": true,
+                "planExpiry": "2030-01-01T00:00:00.000Z",
+                "subscription": { "id": "sub_mock_123", "status": "active" }
+            }
+        }))
+    }
+
+    async fn stripe_purchase_plan(Json(_body): Json<Value>) -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": { "checkoutUrl": "http://127.0.0.1/mock-checkout", "sessionId": "cs_mock_abc" }
+        }))
+    }
+
+    async fn stripe_portal() -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": { "portalUrl": "http://127.0.0.1/mock-portal" }
+        }))
+    }
+
+    async fn credits_top_up(Json(_body): Json<Value>) -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": {
+                "url": "http://127.0.0.1/mock-topup",
+                "gatewayTransactionId": "txn_mock_1",
+                "amountUsd": 10.0,
+                "gateway": "stripe"
+            }
+        }))
+    }
+
+    async fn coinbase_charge(Json(_body): Json<Value>) -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": {
+                "gatewayTransactionId": "coinbase_mock_1",
+                "hostedUrl": "http://127.0.0.1/mock-coinbase",
+                "status": "NEW",
+                "expiresAt": "2030-01-01T01:00:00.000Z"
+            }
+        }))
+    }
+
+    // ── Team mock routes ─────────────────────────────────────────────────────
+
+    async fn team_members() -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": [
+                { "id": "user-1", "username": "alice", "role": "ADMIN" },
+                { "id": "user-2", "username": "bob",   "role": "MEMBER" }
+            ]
+        }))
+    }
+
+    async fn team_invites_get() -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": [
+                { "id": "inv-1", "code": "ALPHA1", "maxUses": 5, "usedCount": 1, "expiresAt": null }
+            ]
+        }))
+    }
+
+    async fn team_invites_post(Json(_body): Json<Value>) -> Json<Value> {
+        Json(json!({
+            "success": true,
+            "data": { "id": "inv-new", "code": "NEWCODE", "maxUses": 3, "usedCount": 0, "expiresAt": null }
+        }))
+    }
+
+    async fn team_member_delete() -> Json<Value> {
+        Json(json!({ "success": true, "data": {} }))
+    }
+
+    async fn team_member_role_put(Json(_body): Json<Value>) -> Json<Value> {
+        Json(json!({ "success": true, "data": {} }))
+    }
+
+    async fn team_invite_delete() -> Json<Value> {
+        Json(json!({ "success": true, "data": {} }))
+    }
+
     Router::new()
         .route("/settings", get(settings))
-        // `OpenHumanBackendProvider` uses `{api_url}/openai/v1` + `/chat/completions`.
         .route("/openai/v1/chat/completions", post(chat_completions))
+        // billing
+        .route("/payments/stripe/currentPlan", get(stripe_current_plan))
+        .route("/payments/stripe/purchasePlan", post(stripe_purchase_plan))
+        .route("/payments/stripe/portal", post(stripe_portal))
+        .route("/payments/credits/top-up", post(credits_top_up))
+        .route("/payments/coinbase/charge", post(coinbase_charge))
+        // team
+        .route("/teams/{team_id}/members", get(team_members))
+        .route("/teams/{team_id}/members/{user_id}", axum::routing::delete(team_member_delete))
+        .route("/teams/{team_id}/members/{user_id}/role", axum::routing::put(team_member_role_put))
+        .route("/teams/{team_id}/invites", get(team_invites_get).post(team_invites_post))
+        .route("/teams/{team_id}/invites/{invite_id}", axum::routing::delete(team_invite_delete))
 }
 
 async fn serve_on_ephemeral(
@@ -962,6 +1065,283 @@ async fn json_rpc_local_ai_device_profile_and_presets() {
         bad_apply.get("error").is_some(),
         "expected error for invalid tier: {bad_apply}"
     );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+// ── Billing & Team E2E tests ──────────────────────────────────────────────────
+
+/// End-to-end test for billing RPC methods.
+///
+/// Spins up an in-process Axum mock backend and a real JSON-RPC server, stores a
+/// session JWT, then exercises every billing controller through the RPC surface
+/// exactly as the desktop app or a CI script would.
+#[tokio::test]
+async fn billing_rpc_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Store a session first — all billing methods require it.
+    let store = post_json_rpc(
+        &rpc_base,
+        1,
+        "openhuman.auth_store_session",
+        json!({ "token": "e2e-billing-jwt", "user_id": "e2e-user" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    // Helper: the RPC outcome wraps backend data in {result: ..., logs: [...]}.
+    // We peel off the inner "result" field to get the actual backend payload.
+    fn inner(outer: &Value, ctx: &str) -> Value {
+        outer
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| panic!("{ctx}: missing inner result in: {outer}"))
+    }
+
+    // --- billing_get_current_plan ---
+    let plan = post_json_rpc(
+        &rpc_base,
+        2,
+        "openhuman.billing_get_current_plan",
+        json!({}),
+    )
+    .await;
+    let plan_outer = assert_no_jsonrpc_error(&plan, "billing_get_current_plan");
+    let plan_result = inner(plan_outer, "billing_get_current_plan");
+    assert_eq!(
+        plan_result.get("plan").and_then(Value::as_str),
+        Some("PRO"),
+        "expected PRO plan: {plan_result}"
+    );
+    assert_eq!(
+        plan_result
+            .get("hasActiveSubscription")
+            .and_then(Value::as_bool),
+        Some(true),
+        "expected active subscription: {plan_result}"
+    );
+
+    // --- billing_purchase_plan ---
+    let purchase = post_json_rpc(
+        &rpc_base,
+        3,
+        "openhuman.billing_purchase_plan",
+        json!({ "plan": "pro" }),
+    )
+    .await;
+    let purchase_outer = assert_no_jsonrpc_error(&purchase, "billing_purchase_plan");
+    let purchase_result = inner(purchase_outer, "billing_purchase_plan");
+    assert!(
+        purchase_result
+            .get("checkoutUrl")
+            .and_then(Value::as_str)
+            .is_some(),
+        "expected checkoutUrl: {purchase_result}"
+    );
+
+    // --- billing_create_portal_session ---
+    let portal = post_json_rpc(
+        &rpc_base,
+        4,
+        "openhuman.billing_create_portal_session",
+        json!({}),
+    )
+    .await;
+    let portal_outer = assert_no_jsonrpc_error(&portal, "billing_create_portal_session");
+    let portal_result = inner(portal_outer, "billing_create_portal_session");
+    assert!(
+        portal_result
+            .get("portalUrl")
+            .and_then(Value::as_str)
+            .is_some(),
+        "expected portalUrl: {portal_result}"
+    );
+
+    // --- billing_top_up ---
+    let top_up = post_json_rpc(
+        &rpc_base,
+        5,
+        "openhuman.billing_top_up",
+        json!({ "amountUsd": 10.0, "gateway": "stripe" }),
+    )
+    .await;
+    let top_up_outer = assert_no_jsonrpc_error(&top_up, "billing_top_up");
+    let top_up_result = inner(top_up_outer, "billing_top_up");
+    assert_eq!(
+        top_up_result.get("amountUsd").and_then(Value::as_f64),
+        Some(10.0),
+        "expected amountUsd 10.0: {top_up_result}"
+    );
+
+    // --- billing_create_coinbase_charge ---
+    let charge = post_json_rpc(
+        &rpc_base,
+        6,
+        "openhuman.billing_create_coinbase_charge",
+        json!({ "plan": "pro" }),
+    )
+    .await;
+    let charge_outer = assert_no_jsonrpc_error(&charge, "billing_create_coinbase_charge");
+    let charge_result = inner(charge_outer, "billing_create_coinbase_charge");
+    assert!(
+        charge_result
+            .get("hostedUrl")
+            .and_then(Value::as_str)
+            .is_some(),
+        "expected hostedUrl: {charge_result}"
+    );
+    assert_eq!(
+        charge_result.get("status").and_then(Value::as_str),
+        Some("NEW"),
+        "expected NEW status: {charge_result}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// End-to-end test for team RPC methods.
+///
+/// Spins up an in-process Axum mock backend and a real JSON-RPC server, stores a
+/// session JWT, then exercises every team controller through the RPC surface.
+#[tokio::test]
+async fn team_rpc_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Store a session first — all team methods require it.
+    let store = post_json_rpc(
+        &rpc_base,
+        1,
+        "openhuman.auth_store_session",
+        json!({ "token": "e2e-team-jwt", "user_id": "e2e-user" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    // Helper: peel off the inner "result" field from the RPC outcome envelope.
+    fn inner(outer: &Value, ctx: &str) -> Value {
+        outer
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| panic!("{ctx}: missing inner result in: {outer}"))
+    }
+
+    let team_id = "team-1";
+
+    // --- team_list_members ---
+    let members = post_json_rpc(
+        &rpc_base,
+        2,
+        "openhuman.team_list_members",
+        json!({ "teamId": team_id }),
+    )
+    .await;
+    let members_outer = assert_no_jsonrpc_error(&members, "team_list_members");
+    let members_result = inner(members_outer, "team_list_members");
+    let members_arr = members_result
+        .as_array()
+        .expect("expected array of members");
+    assert_eq!(members_arr.len(), 2, "expected 2 members: {members_result}");
+    assert_eq!(
+        members_arr[0].get("username").and_then(Value::as_str),
+        Some("alice")
+    );
+
+    // --- team_create_invite ---
+    let invite = post_json_rpc(
+        &rpc_base,
+        3,
+        "openhuman.team_create_invite",
+        json!({ "teamId": team_id, "maxUses": 3, "expiresInDays": 7 }),
+    )
+    .await;
+    let invite_outer = assert_no_jsonrpc_error(&invite, "team_create_invite");
+    let invite_result = inner(invite_outer, "team_create_invite");
+    assert!(
+        invite_result.get("code").and_then(Value::as_str).is_some(),
+        "expected invite code: {invite_result}"
+    );
+
+    // --- team_list_invites ---
+    let invites = post_json_rpc(
+        &rpc_base,
+        4,
+        "openhuman.team_list_invites",
+        json!({ "teamId": team_id }),
+    )
+    .await;
+    let invites_outer = assert_no_jsonrpc_error(&invites, "team_list_invites");
+    let invites_result = inner(invites_outer, "team_list_invites");
+    let invites_arr = invites_result
+        .as_array()
+        .expect("expected array of invites");
+    assert!(!invites_arr.is_empty(), "expected at least one invite: {invites_result}");
+
+    // --- team_revoke_invite (no payload to check, just assert no error) ---
+    let revoke = post_json_rpc(
+        &rpc_base,
+        5,
+        "openhuman.team_revoke_invite",
+        json!({ "teamId": team_id, "inviteId": "inv-1" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&revoke, "team_revoke_invite");
+
+    // --- team_remove_member ---
+    let remove = post_json_rpc(
+        &rpc_base,
+        6,
+        "openhuman.team_remove_member",
+        json!({ "teamId": team_id, "userId": "user-2" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&remove, "team_remove_member");
+
+    // --- team_change_member_role ---
+    let role_change = post_json_rpc(
+        &rpc_base,
+        7,
+        "openhuman.team_change_member_role",
+        json!({ "teamId": team_id, "userId": "user-1", "role": "MEMBER" }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&role_change, "team_change_member_role");
 
     mock_join.abort();
     rpc_join.abort();
