@@ -168,9 +168,7 @@ async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl I
         None => {
             return html_response(
                 StatusCode::BAD_REQUEST,
-                error_html(
-                    "Missing token parameter. Send /start register to the bot again.",
-                ),
+                error_html("Missing token parameter. Send /start register to the bot again."),
             )
         }
     };
@@ -214,8 +212,7 @@ async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl I
         }
     };
 
-    match crate::openhuman::credentials::ops::store_session(&config, &jwt_token, None, None).await
-    {
+    match crate::openhuman::credentials::ops::store_session(&config, &jwt_token, None, None).await {
         Ok(outcome) => {
             for msg in &outcome.logs {
                 log::info!("[auth:telegram] {msg}");
@@ -226,9 +223,7 @@ async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl I
             log::error!("[auth:telegram] Failed to store session: {e}");
             return html_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                error_html(
-                    "Connected to Telegram but failed to save session. Please try again.",
-                ),
+                error_html("Connected to Telegram but failed to save session. Please try again."),
             );
         }
     }
