@@ -105,7 +105,7 @@ const Conversations = () => {
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
 
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  const [selectedModel, setSelectedModel] = useState('neocortex-mk1');
+  const [selectedModel, setSelectedModel] = useState('agentic-v1');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -170,7 +170,7 @@ const Conversations = () => {
       .then(data => {
         if (data.data.length > 0) {
           setAvailableModels(data.data);
-          const preferred = data.data.find(m => m.id === 'neocortex-mk1');
+          const preferred = data.data.find(m => m.id === 'agentic-v1');
           setSelectedModel(preferred ? preferred.id : data.data[0].id);
         }
       })

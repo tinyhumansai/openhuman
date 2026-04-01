@@ -204,7 +204,9 @@ impl AgentBuilder {
                 .memory_loader
                 .unwrap_or_else(|| Box::new(DefaultMemoryLoader::default())),
             config: self.config.unwrap_or_default(),
-            model_name: self.model_name.unwrap_or_else(|| "neocortex-mk1".into()),
+            model_name: self
+                .model_name
+                .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into()),
             temperature: self.temperature.unwrap_or(0.7),
             workspace_dir: self
                 .workspace_dir
@@ -314,7 +316,7 @@ impl Agent {
         let model_name = config
             .default_model
             .as_deref()
-            .unwrap_or("neocortex-mk1")
+            .unwrap_or(crate::openhuman::config::DEFAULT_MODEL)
             .to_string();
 
         let provider: Box<dyn Provider> = providers::create_routed_provider(

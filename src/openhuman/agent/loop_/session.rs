@@ -85,7 +85,7 @@ pub async fn run(
     let model_name = model_override
         .as_deref()
         .or(config.default_model.as_deref())
-        .unwrap_or("neocortex-mk1");
+        .unwrap_or(crate::openhuman::config::DEFAULT_MODEL);
 
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
@@ -488,7 +488,7 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
     let model_name = config
         .default_model
         .clone()
-        .unwrap_or_else(|| "neocortex-mk1".into());
+        .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
         openhuman_dir: config.config_path.parent().map(std::path::PathBuf::from),

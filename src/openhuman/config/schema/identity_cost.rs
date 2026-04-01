@@ -96,79 +96,29 @@ impl Default for CostConfig {
 
 /// Default pricing for popular models (USD per 1M tokens)
 fn get_default_pricing() -> HashMap<String, ModelPricing> {
+    use super::types::{MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_V1};
+
     let mut prices = HashMap::new();
 
     prices.insert(
-        "anthropic/claude-sonnet-4-20250514".into(),
+        MODEL_REASONING_V1.into(),
         ModelPricing {
-            input: 3.0,
-            output: 15.0,
+            input: 0.84,
+            output: 2.52,
         },
     );
     prices.insert(
-        "anthropic/claude-opus-4-20250514".into(),
+        MODEL_AGENTIC_V1.into(),
         ModelPricing {
-            input: 15.0,
-            output: 75.0,
+            input: 0.45,
+            output: 1.80,
         },
     );
     prices.insert(
-        "anthropic/claude-3.5-sonnet".into(),
+        MODEL_CODING_V1.into(),
         ModelPricing {
-            input: 3.0,
-            output: 15.0,
-        },
-    );
-    prices.insert(
-        "anthropic/claude-3-haiku".into(),
-        ModelPricing {
-            input: 0.25,
-            output: 1.25,
-        },
-    );
-
-    prices.insert(
-        "neocortex-mk1".into(),
-        ModelPricing {
-            input: 5.0,
-            output: 15.0,
-        },
-    );
-
-    prices.insert(
-        "openai/gpt-4o".into(),
-        ModelPricing {
-            input: 5.0,
-            output: 15.0,
-        },
-    );
-    prices.insert(
-        "openai/gpt-4o-mini".into(),
-        ModelPricing {
-            input: 0.15,
-            output: 0.60,
-        },
-    );
-    prices.insert(
-        "openai/o1-preview".into(),
-        ModelPricing {
-            input: 15.0,
-            output: 60.0,
-        },
-    );
-
-    prices.insert(
-        "google/gemini-2.0-flash".into(),
-        ModelPricing {
-            input: 0.10,
-            output: 0.40,
-        },
-    );
-    prices.insert(
-        "google/gemini-1.5-pro".into(),
-        ModelPricing {
-            input: 1.25,
-            output: 5.0,
+            input: 0.90,
+            output: 3.30,
         },
     );
 

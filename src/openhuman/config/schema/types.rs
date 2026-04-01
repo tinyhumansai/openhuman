@@ -6,6 +6,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Standard model identifiers matching the backend model registry.
+pub const MODEL_AGENTIC_V1: &str = "agentic-v1";
+pub const MODEL_REASONING_V1: &str = "reasoning-v1";
+pub const MODEL_CODING_V1: &str = "coding-v1";
+/// Default model used when no explicit model is configured.
+pub const DEFAULT_MODEL: &str = MODEL_AGENTIC_V1;
+
 /// Top-level configuration (config.toml root).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
@@ -120,7 +127,7 @@ impl Default for Config {
             config_path: openhuman_dir.join("config.toml"),
             api_key: None,
             api_url: None,
-            default_model: Some("neocortex-mk1".to_string()),
+            default_model: Some(DEFAULT_MODEL.to_string()),
             default_temperature: 0.7,
             observability: ObservabilityConfig::default(),
             autonomy: AutonomyConfig::default(),

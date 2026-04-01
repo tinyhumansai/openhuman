@@ -325,7 +325,7 @@ mod tests {
         agents.insert(
             "coder".to_string(),
             DelegateAgentConfig {
-                model: "neocortex-mk1".to_string(),
+                model: crate::openhuman::config::DEFAULT_MODEL.to_string(),
                 system_prompt: None,
                 api_key: Some("delegate-test-credential".to_string()),
                 temperature: None,

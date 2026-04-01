@@ -53,7 +53,7 @@ pub async fn agent_chat_simple(
     let default_model = effective
         .default_model
         .clone()
-        .unwrap_or_else(|| "neocortex-mk1".to_string());
+        .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string());
 
     let options = ProviderRuntimeOptions {
         auth_profile_override: None,
