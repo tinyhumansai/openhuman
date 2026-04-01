@@ -60,33 +60,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libssl-dev build-essential
 
-      - name: Build CLI binary
-        run: cargo build --release --bin openhuman-core
-        env:
-          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
-
-      - name: Package tarball and upload to release
+      - name: Build CLI binary and package tarball
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENHUMAN_SENTRY_DSN: ${{ vars.OPENHUMAN_SENTRY_DSN }}
         run: |
-          set -euo pipefail
+          cargo build --release --bin openhuman-core
           VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-          TARGET="aarch64-unknown-linux-gnu"
-          TARBALL="openhuman-core-${VERSION}-${TARGET}.tar.gz"
-
-          WORK=$(mktemp -d)
-          trap 'rm -rf "$WORK"' EXIT
-          cp target/release/openhuman-core "$WORK/"
-          chmod +x "$WORK/openhuman-core"
-          tar -czf "$TARBALL" -C "$WORK" openhuman-core
-          openssl dgst -sha256 -r "$TARBALL" | awk '{print $1}' > "${TARBALL}.sha256"
-
-          gh release upload "${{ github.event.release.tag_name }}" \
-            "$TARBALL" "${TARBALL}.sha256" \
-            --repo tinyhumansai/openhuman --clobber
-
-          echo "[pkg] Uploaded $TARBALL"
+          bash scripts/release/package-cli-tarball.sh \
+            target/release/openhuman-core \
+            "${VERSION#v}" \
+            aarch64-unknown-linux-gnu
 
   # ────────────────────────────────────────────────────────────────────────────
   # 2. Update Homebrew tap
@@ -111,55 +95,14 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: tap
 
-      - name: Download tarballs and compute checksums
+      - name: Update Homebrew formula
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
-          mkdir -p /tmp/tarballs
-
-          for row in \
-            "aarch64-apple-darwin:SHA256_MACOS_ARM64" \
-            "x86_64-apple-darwin:SHA256_MACOS_X64" \
-            "x86_64-unknown-linux-gnu:SHA256_LINUX_X64" \
-            "aarch64-unknown-linux-gnu:SHA256_LINUX_ARM64"
-          do
-            TARGET="${row%%:*}"
-            VAR="${row##*:}"
-            TARBALL="openhuman-core-${VERSION}-${TARGET}.tar.gz"
-            echo "[homebrew] Downloading $TARBALL ..."
-            gh release download "$TAG" \
-              --pattern "$TARBALL" \
-              --repo tinyhumansai/openhuman \
-              --dir /tmp/tarballs
-            SHA=$(openssl dgst -sha256 -r "/tmp/tarballs/$TARBALL" | awk '{print $1}')
-            echo "${VAR}=${SHA}" >> "$GITHUB_ENV"
-            echo "[homebrew]   $TARGET → $SHA"
-          done
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-
-      - name: Render and commit formula
-        run: |
-          set -euo pipefail
-          mkdir -p tap/Formula
-
-          sed \
-            -e "s/@VERSION@/${VERSION}/g" \
-            -e "s/@SHA256_MACOS_ARM64@/${SHA256_MACOS_ARM64}/g" \
-            -e "s/@SHA256_MACOS_X64@/${SHA256_MACOS_X64}/g" \
-            -e "s/@SHA256_LINUX_X64@/${SHA256_LINUX_X64}/g" \
-            -e "s/@SHA256_LINUX_ARM64@/${SHA256_LINUX_ARM64}/g" \
-            src/packages/homebrew/openhuman.rb > tap/Formula/openhuman.rb
-
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/openhuman.rb
-          git diff --cached --quiet && echo "[homebrew] No changes to commit." && exit 0
-          git commit -m "chore: update formula to v${VERSION}"
-          git push
+          bash src/scripts/release/update-homebrew.sh \
+            "${{ github.event.release.tag_name }}" \
+            src/packages/homebrew/openhuman.rb \
+            tap
 
   # ────────────────────────────────────────────────────────────────────────────
   # 3. Build Debian apt repository and deploy to GitHub Pages
@@ -191,76 +134,21 @@ jobs:
           echo "$APT_SIGNING_KEY" | gpg --batch --import
           gpg --list-secret-keys
 
-      - name: Download Linux CLI tarballs from release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
-          mkdir -p /tmp/tarballs
-
-          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
-            TARBALL="openhuman-core-${VERSION}-${target}.tar.gz"
-            gh release download "$TAG" \
-              --pattern "$TARBALL" \
-              --repo tinyhumansai/openhuman \
-              --dir /tmp/tarballs
-            echo "[apt] Downloaded $TARBALL"
-          done
-          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-
-      - name: Extract binaries and build .deb packages
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/bins
-
-          tar -xzf "/tmp/tarballs/openhuman-core-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-            -C /tmp/bins
-          mv /tmp/bins/openhuman-core /tmp/bins/openhuman-core-amd64
-
-          tar -xzf "/tmp/tarballs/openhuman-core-${VERSION}-aarch64-unknown-linux-gnu.tar.gz" \
-            -C /tmp/bins
-          mv /tmp/bins/openhuman-core /tmp/bins/openhuman-core-arm64
-
-          chmod +x /tmp/bins/openhuman-core-amd64 /tmp/bins/openhuman-core-arm64
-
-          bash packages/deb/build.sh /tmp/bins/openhuman-core-amd64 "${VERSION}" amd64
-          bash packages/deb/build.sh /tmp/bins/openhuman-core-arm64 "${VERSION}" arm64
-
-          ls -lh openhuman_*.deb
-
-      - name: Build apt repository
-        env:
-          APT_SIGNING_KEY_ID: ${{ secrets.APT_SIGNING_KEY_ID }}
-        run: |
-          bash scripts/build-apt-repo.sh /tmp/apt-repo \
-            "openhuman_${VERSION}_amd64.deb" \
-            "openhuman_${VERSION}_arm64.deb"
-
       - name: Checkout gh-pages branch
         uses: actions/checkout@v4
         with:
           ref: gh-pages
           path: gh-pages
-          # Create the branch if it doesn't exist
           fetch-depth: 0
 
-      - name: Update apt/ directory on gh-pages
+      - name: Build .deb packages, apt repo, and deploy to gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APT_SIGNING_KEY_ID: ${{ secrets.APT_SIGNING_KEY_ID }}
         run: |
-          set -euo pipefail
-          mkdir -p gh-pages/apt
-          # Remove old apt content, replace with freshly built repo
-          rm -rf gh-pages/apt/*
-          cp -r /tmp/apt-repo/. gh-pages/apt/
-
-          cd gh-pages
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apt/
-          git diff --cached --quiet && echo "[apt] No changes." && exit 0
-          git commit -m "chore(apt): publish v${VERSION}"
-          git push origin gh-pages
+          bash scripts/release/build-apt-packages.sh \
+            "${{ github.event.release.tag_name }}" \
+            --deploy-gh-pages gh-pages
 
   # ────────────────────────────────────────────────────────────────────────────
   # 4. Publish npm package
@@ -285,21 +173,7 @@ jobs:
       - name: Set version and publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION="${VERSION#v}"
-
-          cd packages/npm
-
-          # Stamp version without creating a git commit
-          npm version "$VERSION" --no-git-tag-version
-
-          # SKIP_OPENHUMAN_BINARY_DOWNLOAD prevents postinstall from running
-          # during publish (the binary doesn't exist yet on the publish runner)
-          SKIP_OPENHUMAN_BINARY_DOWNLOAD=1 npm publish --access public
-
-          echo "[npm] Published openhuman@${VERSION}"
+        run: bash scripts/release/publish-npm.sh "${{ github.event.release.tag_name }}"
 
   # ────────────────────────────────────────────────────────────────────────────
   # 5. Smoke test: Homebrew

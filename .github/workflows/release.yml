@@ -67,65 +67,7 @@ jobs:
 
       - name: Compute next version and sync release files
         id: bump
-        env:
-          RELEASE_TYPE: ${{ inputs.release_type }}
-        run: |
-          node <<'NODE'
-          const fs = require('fs');
-
-          const releaseType = process.env.RELEASE_TYPE;
-          const allowed = new Set(['patch', 'minor', 'major']);
-          if (!allowed.has(releaseType)) {
-            throw new Error(`Invalid release_type: ${releaseType}`);
-          }
-
-          const packagePath = 'app/package.json';
-          const tauriPath = 'app/src-tauri/tauri.conf.json';
-          const cargoPath = 'app/src-tauri/Cargo.toml';
-
-          const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-          const match = String(pkg.version || '').match(/^(\d+)\.(\d+)\.(\d+)$/);
-          if (!match) {
-            throw new Error(`package.json version must be SemVer X.Y.Z, found: ${pkg.version}`);
-          }
-
-          let major = Number(match[1]);
-          let minor = Number(match[2]);
-          let patch = Number(match[3]);
-
-          if (releaseType === 'major') {
-            major += 1;
-            minor = 0;
-            patch = 0;
-          } else if (releaseType === 'minor') {
-            minor += 1;
-            patch = 0;
-          } else {
-            patch += 1;
-          }
-
-          const nextVersion = `${major}.${minor}.${patch}`;
-
-          pkg.version = nextVersion;
-          fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
-
-          const tauri = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
-          tauri.version = nextVersion;
-          fs.writeFileSync(tauriPath, `${JSON.stringify(tauri, null, 2)}\n`);
-
-          const cargo = fs.readFileSync(cargoPath, 'utf8');
-          const updatedCargo = cargo.replace(
-            /(\[package\][\s\S]*?^version\s*=\s*")([^"]+)(")/m,
-            `$1${nextVersion}$3`,
-          );
-          if (updatedCargo === cargo) {
-            throw new Error('Failed to update [package].version in app/src-tauri/Cargo.toml');
-          }
-          fs.writeFileSync(cargoPath, updatedCargo);
-
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${nextVersion}\n`);
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `tag=v${nextVersion}\n`);
-          NODE
+        run: node scripts/release/bump-version.js "${{ inputs.release_type }}"
 
       - name: Ensure tag does not already exist
         env:
@@ -380,44 +322,11 @@ jobs:
       - name: Stage sidecar for Tauri bundler
         shell: bash
         run: |
-          mkdir -p app/src-tauri/binaries
-          EXE_SUFFIX=""
-          if [[ "$MATRIX_TARGET" == *"windows"* ]]; then
-            EXE_SUFFIX=".exe"
-          fi
-          SOURCE="$CORE_TARGET_DIR/${CORE_BIN_NAME}${EXE_SUFFIX}"
-          DEST="app/src-tauri/binaries/${SIDECAR_BASE}-${MATRIX_TARGET}${EXE_SUFFIX}"
-          cp "$SOURCE" "$DEST"
-          if [[ "$MATRIX_TARGET" != *"windows"* ]]; then
-            chmod +x "$DEST"
-          fi
-        env:
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-          CORE_TARGET_DIR: ${{ steps.core-paths.outputs.core_target_dir }}
-          CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
-          SIDECAR_BASE: ${{ steps.core-paths.outputs.sidecar_base }}
-
-      - name: Verify staged sidecar for bundler (all platforms)
-        shell: bash
-        run: |
-          EXE_SUFFIX=""
-          if [[ "$MATRIX_TARGET" == *"windows"* ]]; then
-            EXE_SUFFIX=".exe"
-          fi
-          SIDE_CAR_PATH="app/src-tauri/binaries/${SIDECAR_BASE}-${MATRIX_TARGET}${EXE_SUFFIX}"
-          echo "Checking staged sidecar: $SIDE_CAR_PATH"
-          if [ ! -f "$SIDE_CAR_PATH" ]; then
-            echo "Missing staged sidecar binary: $SIDE_CAR_PATH"
-            exit 1
-          fi
-          if [ "$MATRIX_PLATFORM" != "windows-latest" ] && [ ! -x "$SIDE_CAR_PATH" ]; then
-            echo "Staged sidecar is not executable: $SIDE_CAR_PATH"
-            exit 1
-          fi
-        env:
-          MATRIX_PLATFORM: ${{ matrix.settings.platform }}
-          MATRIX_TARGET: ${{ matrix.settings.target }}
-          SIDECAR_BASE: ${{ steps.core-paths.outputs.sidecar_base }}
+          bash scripts/release/stage-sidecar.sh \
+            "${{ matrix.settings.target }}" \
+            "${{ steps.core-paths.outputs.core_target_dir }}" \
+            "${{ steps.core-paths.outputs.core_bin_name }}" \
+            "${{ steps.core-paths.outputs.sidecar_base }}"
 
       - name: Resolve standalone core CLI artifact path
         id: cli-paths
@@ -504,84 +413,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          set -euo pipefail
-          APP_PATH="${{ steps.locate-app.outputs.app_path }}"
-          ENTITLEMENTS="app/src-tauri/entitlements.sidecar.plist"
-
-          # Ensure signing identity is available — re-import cert into a keychain
-          # in case tauri-action's keychain was cleaned up
-          KEYCHAIN="resign-$$.keychain-db"
-          KEYCHAIN_PW="$(openssl rand -base64 24)"
-          CERT_FILE="$(mktemp /tmp/cert-XXXXXX.p12)"
-          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_FILE"
-          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security import "$CERT_FILE" -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
-          rm -f "$CERT_FILE"
-          echo "Signing identity imported into $KEYCHAIN"
-
-          echo "=== Signing .app contents and bundle ==="
-
-          echo "Bundle contents:"
-          ls -la "$APP_PATH/Contents/MacOS/"
-
-          MAIN_EXE="$(defaults read "$APP_PATH/Contents/Info.plist" CFBundleExecutable 2>/dev/null || echo "OpenHuman")"
-          echo "Main executable (from plist): $MAIN_EXE"
-
-          # Sign all non-main binaries (sidecars) first
-          for bin in "$APP_PATH/Contents/MacOS/"*; do
-            [ -f "$bin" ] && [ -x "$bin" ] || continue
-            BASENAME="$(basename "$bin")"
-            [ "$BASENAME" = "$MAIN_EXE" ] && continue
-            echo "  Signing sidecar: $BASENAME"
-            codesign --force --options runtime \
-              --entitlements "$ENTITLEMENTS" \
-              --sign "$APPLE_SIGNING_IDENTITY" \
-              --timestamp \
-              "$bin"
-          done
-
-          # Sign sidecars in Resources/ if any
-          for bin in "$APP_PATH/Contents/Resources/"openhuman-core-*; do
-            [ -f "$bin" ] || continue
-            echo "  Signing resource sidecar: $(basename "$bin")"
-            codesign --force --options runtime \
-              --entitlements "$ENTITLEMENTS" \
-              --sign "$APPLE_SIGNING_IDENTITY" \
-              --timestamp \
-              "$bin"
-          done
-
-          # Sign the .app bundle (signs main exe + updates seal)
-          echo "  Signing .app bundle..."
-          codesign --force --options runtime \
-            --entitlements "$ENTITLEMENTS" \
-            --sign "$APPLE_SIGNING_IDENTITY" \
-            --timestamp \
-            "$APP_PATH"
-
-          echo "=== Verifying signatures ==="
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-
-          echo "=== Notarizing ==="
-          NOTARIZE_ZIP="$(mktemp /tmp/OpenHuman-notarize-XXXXXX.zip)"
-          ditto -c -k --keepParent "$APP_PATH" "$NOTARIZE_ZIP"
-
-          xcrun notarytool submit "$NOTARIZE_ZIP" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-
-          rm -f "$NOTARIZE_ZIP"
-
-          echo "=== Stapling ==="
-          xcrun stapler staple "$APP_PATH"
-
-          echo "=== Notarization complete ==="
+          bash scripts/release/sign-and-notarize-macos.sh \
+            "${{ steps.locate-app.outputs.app_path }}" \
+            "app/src-tauri/entitlements.sidecar.plist"
 
       - name: Re-package DMG after notarization
         if: matrix.settings.platform == 'macos-latest'
@@ -591,30 +425,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          set -euo pipefail
-          APP_PATH="${{ steps.locate-app.outputs.app_path }}"
-          BUNDLE_DIR="${{ steps.locate-app.outputs.bundle_dir }}"
-
-          DMG_PATH="$(find "$BUNDLE_DIR/dmg" -name '*.dmg' -maxdepth 1 2>/dev/null | head -1)"
-          if [ -z "$DMG_PATH" ]; then
-            echo "No DMG found — skipping DMG re-package"
-            exit 0
-          fi
-
-          echo "Re-creating DMG with notarized .app..."
-          DMG_TEMP="$(mktemp /tmp/OpenHuman-XXXXXX.dmg)"
-          hdiutil create -volname "OpenHuman" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_TEMP"
-          mv "$DMG_TEMP" "$DMG_PATH"
-
-          echo "Notarizing DMG..."
-          xcrun notarytool submit "$DMG_PATH" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-
-          xcrun stapler staple "$DMG_PATH"
-          echo "DMG notarization complete: $DMG_PATH"
+          bash scripts/release/repackage-dmg.sh \
+            "${{ steps.locate-app.outputs.app_path }}" \
+            "${{ steps.locate-app.outputs.bundle_dir }}"
 
       - name: Re-upload notarized macOS artifacts to release
         if: matrix.settings.platform == 'macos-latest'
@@ -623,33 +436,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         run: |
-          set -euo pipefail
-          BUNDLE_DIR="${{ steps.locate-app.outputs.bundle_dir }}"
-          APP_PATH="${{ steps.locate-app.outputs.app_path }}"
-          VERSION="${{ needs.prepare-release.outputs.version }}"
-          ARCH="${{ matrix.settings.target }}"
-
-          # Re-upload the DMG (overwrite the one tauri-action uploaded)
-          DMG_PATH="$(find "$BUNDLE_DIR/dmg" -name '*.dmg' -maxdepth 1 2>/dev/null | head -1)"
-          if [ -n "$DMG_PATH" ]; then
-            DMG_NAME="$(basename "$DMG_PATH")"
-            echo "Deleting old DMG asset from release..."
-            ASSET_ID="$(gh api "repos/tinyhumansai/openhuman/releases/$RELEASE_ID/assets" \
-              --jq ".[] | select(.name == \"$DMG_NAME\") | .id" 2>/dev/null || true)"
-            if [ -n "$ASSET_ID" ]; then
-              gh api -X DELETE "repos/tinyhumansai/openhuman/releases/assets/$ASSET_ID" || true
-            fi
-            echo "Uploading notarized DMG..."
-            gh release upload "v${VERSION}" "$DMG_PATH" --repo tinyhumansai/openhuman --clobber
-          fi
-
-          # Re-upload the .app as a zip if tauri-action uploaded one
-          if [ -n "$APP_PATH" ]; then
-            APP_ZIP="/tmp/OpenHuman_${VERSION}_${ARCH}.app.tar.gz"
-            tar -czf "$APP_ZIP" -C "$(dirname "$APP_PATH")" "$(basename "$APP_PATH")"
-            gh release upload "v${VERSION}" "$APP_ZIP" --repo tinyhumansai/openhuman --clobber
-            rm -f "$APP_ZIP"
-          fi
+          bash scripts/release/upload-macos-artifacts.sh \
+            "${{ steps.locate-app.outputs.app_path }}" \
+            "${{ steps.locate-app.outputs.bundle_dir }}" \
+            "${{ needs.prepare-release.outputs.version }}" \
+            "${{ matrix.settings.target }}"
 
       - name: Verify macOS app bundle sidecar layout
         if: matrix.settings.platform == 'macos-latest'
@@ -683,18 +474,9 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-          MATRIX_PLATFORM: ${{ matrix.settings.platform }}
-          MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
-          set -euo pipefail
-
-          TARBALL="openhuman-core-${VERSION}-${MATRIX_TARGET}.tar.gz"
-          WORK=$(mktemp -d)
-          trap 'rm -rf "$WORK"' EXIT
-
-          if [[ "$MATRIX_PLATFORM" == "macos-latest" ]]; then
-            # Prefer the notarized+signed binary extracted from inside the .app bundle
+          # For macOS, prefer the notarized binary from inside the .app bundle
+          if [[ "${{ matrix.settings.platform }}" == "macos-latest" ]]; then
             APP_PATH="${{ steps.locate-app.outputs.app_path }}"
             BIN=$(find "$APP_PATH/Contents/MacOS" -maxdepth 1 -name "openhuman-core-*" \
               ! -name "*.sig" 2>/dev/null | head -1 || true)
@@ -708,17 +490,10 @@ jobs:
             BIN="${{ steps.cli-paths.outputs.cli_path }}"
           fi
 
-          cp "$BIN" "$WORK/openhuman-core"
-          chmod +x "$WORK/openhuman-core"
-          tar -czf "$TARBALL" -C "$WORK" openhuman-core
-
-          # openssl dgst works on both macOS and Linux runners
-          openssl dgst -sha256 -r "$TARBALL" | awk '{print $1}' > "${TARBALL}.sha256"
-
-          gh release upload "v${VERSION}" "$TARBALL" "${TARBALL}.sha256" \
-            --repo tinyhumansai/openhuman --clobber
-
-          echo "[pkg] Uploaded $TARBALL and ${TARBALL}.sha256"
+          bash scripts/release/package-cli-tarball.sh \
+            "$BIN" \
+            "${{ needs.prepare-release.outputs.version }}" \
+            "${{ matrix.settings.target }}"
 
       - name: Upload standalone CLI artifacts
         uses: actions/upload-artifact@v4
@@ -776,147 +551,6 @@ jobs:
               draft: false,
             });
             core.info(`Published release ${releaseId}`);
-
-  # notify-discord:
-  #   name: Notify Discord about release
-  #   runs-on: ubuntu-latest
-  #   environment: Production
-  #   needs: [prepare-release, create-release, build-artifacts, publish-release]
-  #   if: needs.publish-release.result == 'success' && needs.build-artifacts.result == 'success'
-  #   steps:
-  #     - name: Post release notification to Discord
-  #       continue-on-error: true
-  #       uses: actions/github-script@v7
-  #       env:
-  #         DISCORD_RELEASE_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
-  #         RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
-  #         RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
-  #       with:
-  #         script: |
-  #           const webhookUrl = process.env.DISCORD_RELEASE_WEBHOOK_URL;
-  #           const releaseId = Number(process.env.RELEASE_ID);
-  #           const releaseTag = process.env.RELEASE_TAG;
-
-  #           if (!webhookUrl) {
-  #             core.warning('DISCORD_RELEASE_WEBHOOK_URL is not configured; skipping Discord release notification.');
-  #             return;
-  #           }
-
-  #           if (!Number.isFinite(releaseId) || releaseId <= 0) {
-  #             core.warning(`Invalid release id "${process.env.RELEASE_ID}"; skipping Discord release notification.`);
-  #             return;
-  #           }
-
-  #           const { owner, repo } = context.repo;
-  #           const maxDescriptionLength = 3500;
-  #           const maxAssetLines = 8;
-
-  #           function truncate(text, maxLength) {
-  #             if (!text) return '';
-  #             if (text.length <= maxLength) return text;
-  #             return `${text.slice(0, maxLength - 3)}...`;
-  #           }
-
-  #           function stripMarkdownHeadings(text) {
-  #             return text
-  #               .replace(/^#{1,6}\s+/gm, '')
-  #               .replace(/\r/g, '')
-  #               .trim();
-  #           }
-
-  #           const { data: release } = await github.rest.repos.getRelease({
-  #             owner,
-  #             repo,
-  #             release_id: releaseId,
-  #           });
-
-  #           const releases = await github.paginate(github.rest.repos.listReleases, {
-  #             owner,
-  #             repo,
-  #             per_page: 100,
-  #           });
-  #           const sortedPublished = releases
-  #             .filter((item) => !item.draft)
-  #             .sort((a, b) => new Date(b.published_at || b.created_at || 0) - new Date(a.published_at || a.created_at || 0));
-  #           const currentIndex = sortedPublished.findIndex((item) => item.id === release.id);
-  #           const previousRelease = currentIndex >= 0 ? sortedPublished[currentIndex + 1] : null;
-  #           const compareUrl = previousRelease
-  #             ? `https://github.com/${owner}/${repo}/compare/${previousRelease.tag_name}...${release.tag_name}`
-  #             : null;
-
-  #           const releaseTitle = release.name || release.tag_name || releaseTag;
-  #           const bodyText = stripMarkdownHeadings(release.body || '');
-  #           const summary = bodyText
-  #             ? truncate(bodyText, maxDescriptionLength)
-  #             : 'GitHub release published. See the release page for full notes.';
-
-  #           const assetLines = (release.assets || [])
-  #             .slice(0, maxAssetLines)
-  #             .map((asset) => `- [${asset.name}](${asset.browser_download_url})`);
-  #           const extraAssetCount = Math.max((release.assets || []).length - maxAssetLines, 0);
-  #           if (extraAssetCount > 0) {
-  #             assetLines.push(`- ${extraAssetCount} more asset(s) available on the release page`);
-  #           }
-
-  #           const fields = [
-  #             {
-  #               name: 'Version',
-  #               value: `\`${release.tag_name || releaseTag}\``,
-  #               inline: true,
-  #             },
-  #             {
-  #               name: 'Release',
-  #               value: `[Open on GitHub](${release.html_url})`,
-  #               inline: true,
-  #             },
-  #           ];
-
-  #           if (compareUrl) {
-  #             fields.push({
-  #               name: 'Compare',
-  #               value: `[${previousRelease.tag_name}...${release.tag_name}](${compareUrl})`,
-  #               inline: true,
-  #             });
-  #           }
-
-  #           if (assetLines.length > 0) {
-  #             fields.push({
-  #               name: 'Artifacts',
-  #               value: assetLines.join('\n'),
-  #               inline: false,
-  #             });
-  #           }
-
-  #           const payload = {
-  #             content: `New GitHub release published for \`${owner}/${repo}\`: **${releaseTitle}**`,
-  #             embeds: [
-  #               {
-  #                 title: releaseTitle,
-  #                 url: release.html_url,
-  #                 description: summary,
-  #                 color: release.prerelease ? 0xf0ad4e : 0x2ecc71,
-  #                 fields,
-  #                 footer: {
-  #                   text: release.prerelease ? 'Pre-release' : 'Published release',
-  #                 },
-  #                 timestamp: release.published_at || new Date().toISOString(),
-  #               },
-  #             ],
-  #           };
-
-  #           const response = await fetch(webhookUrl, {
-  #             method: 'POST',
-  #             headers: { 'Content-Type': 'application/json' },
-  #             body: JSON.stringify(payload),
-  #           });
-
-  #           if (!response.ok) {
-  #             const body = await response.text();
-  #             core.warning(`Discord notification failed: HTTP ${response.status} ${body.slice(0, 300)}`);
-  #             return;
-  #           }
-
-  #           core.info(`Posted Discord release notification for ${release.tag_name || releaseTag}.`);
 
   cleanup-failed-release:
     name: Remove release and tag if build failed
