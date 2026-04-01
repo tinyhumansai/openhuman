@@ -1,6 +1,43 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// Permission level required to execute a tool.
+///
+/// Channels can set a maximum permission level to restrict which tools
+/// are available. Tools requiring a level above the channel's maximum
+/// are rejected before execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PermissionLevel {
+    /// No permission needed (metadata-only operations).
+    None = 0,
+    /// Read-only operations (file reads, memory recall, listing).
+    ReadOnly = 1,
+    /// Write operations (file writes, memory store).
+    Write = 2,
+    /// Command execution (shell, scripts).
+    Execute = 3,
+    /// Dangerous/destructive operations (hardware, system-level).
+    Dangerous = 4,
+}
+
+impl std::fmt::Display for PermissionLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "None"),
+            Self::ReadOnly => write!(f, "ReadOnly"),
+            Self::Write => write!(f, "Write"),
+            Self::Execute => write!(f, "Execute"),
+            Self::Dangerous => write!(f, "Dangerous"),
+        }
+    }
+}
+
+impl Default for PermissionLevel {
+    fn default() -> Self {
+        Self::ReadOnly
+    }
+}
+
 /// Result of a tool execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
@@ -31,6 +68,13 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool with given arguments
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
+
+    /// Permission level required to execute this tool.
+    /// Channels with a lower maximum permission level will reject this tool.
+    /// Default: `ReadOnly`. Override for write/execute/dangerous tools.
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::ReadOnly
+    }
 
     /// Get the full spec for LLM registration
     fn spec(&self) -> ToolSpec {

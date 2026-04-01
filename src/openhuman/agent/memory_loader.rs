@@ -1,6 +1,5 @@
 use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
-use std::fmt::Write;
 
 #[async_trait]
 pub trait MemoryLoader: Send + Sync {
@@ -11,6 +10,8 @@ pub trait MemoryLoader: Send + Sync {
 pub struct DefaultMemoryLoader {
     limit: usize,
     min_relevance_score: f64,
+    /// Maximum characters of memory context to inject (0 = unlimited).
+    max_context_chars: usize,
 }
 
 impl Default for DefaultMemoryLoader {
@@ -18,6 +19,7 @@ impl Default for DefaultMemoryLoader {
         Self {
             limit: 5,
             min_relevance_score: 0.4,
+            max_context_chars: 2000,
         }
     }
 }
@@ -27,7 +29,13 @@ impl DefaultMemoryLoader {
         Self {
             limit: limit.max(1),
             min_relevance_score,
+            max_context_chars: 2000,
         }
+    }
+
+    pub fn with_max_chars(mut self, max_chars: usize) -> Self {
+        self.max_context_chars = max_chars;
+        self
     }
 }
 
@@ -43,18 +51,35 @@ impl MemoryLoader for DefaultMemoryLoader {
             return Ok(String::new());
         }
 
-        let mut context = String::from("[Memory context]\n");
+        let header = "[Memory context]\n";
+        let mut context = String::from(header);
+        let budget = if self.max_context_chars > 0 {
+            self.max_context_chars
+        } else {
+            usize::MAX
+        };
+
         for entry in entries {
             if let Some(score) = entry.score {
                 if score < self.min_relevance_score {
                     continue;
                 }
             }
-            let _ = writeln!(context, "- {}: {}", entry.key, entry.content);
+            let line = format!("- {}: {}\n", entry.key, entry.content);
+            if context.len() + line.len() > budget {
+                tracing::debug!(
+                    budget,
+                    current_len = context.len(),
+                    skipped_line_len = line.len(),
+                    "[memory_loader] context budget reached, skipping remaining entries"
+                );
+                break;
+            }
+            context.push_str(&line);
         }
 
         // If all entries were below threshold, return empty
-        if context == "[Memory context]\n" {
+        if context == header {
             return Ok(String::new());
         }
 

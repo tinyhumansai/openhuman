@@ -322,10 +322,10 @@ impl Agent {
             .tools(tools)
             .memory(memory)
             .tool_dispatcher(tool_dispatcher)
-            .memory_loader(Box::new(DefaultMemoryLoader::new(
-                5,
-                config.memory.min_relevance_score,
-            )))
+            .memory_loader(Box::new(
+                DefaultMemoryLoader::new(5, config.memory.min_relevance_score)
+                    .with_max_chars(config.agent.max_memory_context_chars),
+            ))
             .prompt_builder(SystemPromptBuilder::with_defaults())
             .config(config.agent.clone())
             .model_name(model_name)
@@ -414,7 +414,7 @@ impl Agent {
     }
 
     async fn execute_tools(&self, calls: &[ParsedToolCall]) -> Vec<ToolExecutionResult> {
-        if !self.config.parallel_tools {
+        if !self.config.parallel_tools || calls.len() <= 1 {
             let mut results = Vec::with_capacity(calls.len());
             for call in calls {
                 results.push(self.execute_tool_call(call).await);
@@ -422,11 +422,26 @@ impl Agent {
             return results;
         }
 
-        let mut results = Vec::with_capacity(calls.len());
-        for call in calls {
-            results.push(self.execute_tool_call(call).await);
-        }
-        results
+        // Parallel execution: run up to max_parallel_tools concurrently.
+        log::info!(
+            "[agent_loop] parallel tool execution count={} max_concurrent={}",
+            calls.len(),
+            self.config.max_parallel_tools
+        );
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(
+            self.config.max_parallel_tools.max(1),
+        ));
+        let futures: Vec<_> = calls
+            .iter()
+            .map(|call| {
+                let sem = semaphore.clone();
+                async move {
+                    let _permit = sem.acquire().await.expect("semaphore closed");
+                    self.execute_tool_call(call).await
+                }
+            })
+            .collect();
+        futures::future::join_all(futures).await
     }
 
     fn classify_model(&self, user_message: &str) -> String {
@@ -508,6 +523,7 @@ impl Agent {
                         } else {
                             None
                         },
+                        system_prompt_cache_boundary: None,
                     },
                     &effective_model,
                     self.temperature,

@@ -65,7 +65,7 @@ pub use schemas::{
 };
 pub use screenshot::ScreenshotTool;
 pub use shell::ShellTool;
-pub use traits::Tool;
+pub use traits::{PermissionLevel, Tool};
 #[allow(unused_imports)]
 pub use traits::{ToolResult, ToolSpec};
 pub use web_search_tool::WebSearchTool;

@@ -1,5 +1,6 @@
 //! Agent loop: tool-call execution, CLI session, and channel message handling.
 
+pub(crate) mod context_guard;
 mod credentials;
 mod history;
 mod instructions;

@@ -88,6 +88,11 @@ impl ChatResponse {
 pub struct ChatRequest<'a> {
     pub messages: &'a [ChatMessage],
     pub tools: Option<&'a [ToolSpec]>,
+    /// Byte offset in the system prompt where static (cacheable) content ends
+    /// and dynamic content begins. Providers that support prompt caching can
+    /// apply `cache_control` to the prefix before this boundary.
+    /// `None` means no cache boundary is known.
+    pub system_prompt_cache_boundary: Option<usize>,
 }
 
 /// A tool result to feed back to the LLM.
@@ -561,6 +566,7 @@ mod tests {
         let empty = ChatResponse {
             text: None,
             tool_calls: vec![],
+            usage: None,
         };
         assert!(!empty.has_tool_calls());
         assert_eq!(empty.text_or_empty(), "");
@@ -572,6 +578,7 @@ mod tests {
                 name: "shell".into(),
                 arguments: "{}".into(),
             }],
+            usage: None,
         };
         assert!(with_tools.has_tool_calls());
         assert_eq!(with_tools.text_or_empty(), "Let me check");
@@ -782,6 +789,7 @@ mod tests {
         let request = ChatRequest {
             messages: &[ChatMessage::user("Hello")],
             tools: Some(&tools),
+            system_prompt_cache_boundary: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -799,6 +807,7 @@ mod tests {
         let request = ChatRequest {
             messages: &[ChatMessage::user("Hello")],
             tools: None,
+            system_prompt_cache_boundary: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -899,6 +908,7 @@ mod tests {
                 ChatMessage::system("BASE_SYSTEM_PROMPT"),
             ],
             tools: Some(&tools),
+            system_prompt_cache_boundary: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -921,6 +931,7 @@ mod tests {
         let request = ChatRequest {
             messages: &[ChatMessage::system("BASE"), ChatMessage::user("Hello")],
             tools: Some(&tools),
+            system_prompt_cache_boundary: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -943,6 +954,7 @@ mod tests {
         let request = ChatRequest {
             messages: &[ChatMessage::user("Hello")],
             tools: Some(&tools),
+            system_prompt_cache_boundary: None,
         };
 
         let err = provider.chat(request, "model", 0.7).await.unwrap_err();
