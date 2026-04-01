@@ -36,11 +36,17 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
     enabledTools: [],
     connectedSources: [],
   });
-  const totalSteps = 7;
+  const totalSteps = 6;
 
   const handleNext = () => {
     if (currentStep < totalSteps - 1) {
       setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
     }
   };
 
@@ -82,18 +88,11 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       );
     }
 
-    // Notify backend
+    // Notify backend (best-effort — don't block onboarding completion)
     try {
       await userApi.onboardingComplete();
-    } catch (e) {
-      const msg =
-        e &&
-        typeof e === 'object' &&
-        'error' in e &&
-        typeof (e as { error: unknown }).error === 'string'
-          ? (e as { error: string }).error
-          : 'Failed to complete onboarding. Please try again.';
-      throw new Error(msg);
+    } catch {
+      console.warn('[onboarding] Failed to notify backend of onboarding completion');
     }
 
     // Advance to mnemonic step
@@ -121,15 +120,15 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       case 0:
         return <WelcomeStep onNext={handleNext} />;
       case 1:
-        return <LocalAIStep onNext={handleLocalAINext} />;
+        return <LocalAIStep onNext={handleLocalAINext} onBack={handleBack} />;
       case 2:
-        return <ScreenPermissionsStep onNext={handleAccessibilityNext} />;
+        return <ScreenPermissionsStep onNext={handleAccessibilityNext} onBack={handleBack} />;
       case 3:
-        return <ToolsStep onNext={handleToolsNext} />;
+        return <ToolsStep onNext={handleToolsNext} onBack={handleBack} />;
       case 4:
-        return <SkillsStep onComplete={handleSkillsNext} />;
+        return <SkillsStep onComplete={handleSkillsNext} onBack={handleBack} />;
       case 5:
-        return <MnemonicStep onComplete={handleMnemonicComplete} />;
+        return <MnemonicStep onComplete={handleMnemonicComplete} onBack={handleBack} />;
       default:
         return null;
     }

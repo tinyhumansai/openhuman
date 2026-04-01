@@ -10,7 +10,7 @@ const ProgressIndicator = ({ currentStep, totalSteps }: ProgressIndicatorProps) 
         <div
           key={index}
           className={`w-8 h-0.5 rounded-full ${
-            index < currentStep ? 'bg-primary-500' : 'bg-stone-700'
+            index <= currentStep ? 'bg-primary-500' : 'bg-stone-700'
           }`}
         />
       ))}

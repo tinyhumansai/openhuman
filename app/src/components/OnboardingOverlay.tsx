@@ -25,6 +25,11 @@ const OnboardingOverlay = () => {
   const user = useAppSelector(state => state.user.user);
   const isOnboarded = useAppSelector(selectIsOnboarded);
   const isDeferred = useAppSelector(selectOnboardingDeferred);
+  // Fallback: if we have a token and any user was previously onboarded,
+  // don't flash the overlay while waiting for the user profile to load.
+  const anyUserOnboarded = useAppSelector(
+    state => Object.values(state.auth.isOnboardedByUser).some(Boolean)
+  );
   const [hasWorkspaceFlag, setHasWorkspaceFlag] = useState<boolean | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [userLoadTimedOut, setUserLoadTimedOut] = useState(false);
@@ -80,10 +85,12 @@ const OnboardingOverlay = () => {
   // Still loading workspace flag
   if (hasWorkspaceFlag === null) return null;
 
-  // Determine if onboarding should show
+  // Determine if onboarding should show.
+  // anyUserOnboarded prevents the overlay from flashing while the user profile
+  // is still loading (selectIsOnboarded returns false when user._id is null).
   const shouldShow = DEV_FORCE_ONBOARDING
     ? !dismissed
-    : !isOnboarded && !hasWorkspaceFlag && !isDeferred && !dismissed;
+    : !isOnboarded && !anyUserOnboarded && !hasWorkspaceFlag && !isDeferred && !dismissed;
 
   if (!shouldShow) return null;
 

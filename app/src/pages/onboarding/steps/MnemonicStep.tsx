@@ -17,9 +17,10 @@ const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 interface MnemonicStepProps {
   onComplete: () => void | Promise<void>;
+  onBack?: () => void;
 }
 
-const MnemonicStep = ({ onComplete }: MnemonicStepProps) => {
+const MnemonicStep = ({ onComplete, onBack }: MnemonicStepProps) => {
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.user.user);
   const [mode, setMode] = useState<'generate' | 'import'>('generate');
@@ -321,16 +322,26 @@ const MnemonicStep = ({ onComplete }: MnemonicStepProps) => {
 
       {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
 
-      <button
-        onClick={handleContinue}
-        disabled={!canContinue || loading}
-        className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60 disabled:cursor-not-allowed">
-        {loading
-          ? 'Securing Your Data...'
-          : mode === 'import'
-            ? 'Import & Finish Setup'
-            : 'Finish Setup'}
-      </button>
+      <div className="flex gap-2">
+        {onBack && (
+          <button
+            onClick={onBack}
+            disabled={loading}
+            className="py-2.5 px-4 text-sm font-medium rounded-xl bg-stone-800 hover:bg-stone-700 transition-colors disabled:opacity-60">
+            Back
+          </button>
+        )}
+        <button
+          onClick={handleContinue}
+          disabled={!canContinue || loading}
+          className="btn-primary flex-1 py-2.5 text-sm font-medium rounded-xl disabled:opacity-60 disabled:cursor-not-allowed">
+          {loading
+            ? 'Securing Your Data...'
+            : mode === 'import'
+              ? 'Import & Finish Setup'
+              : 'Finish Setup'}
+        </button>
+      </div>
     </div>
   );
 };

@@ -10,6 +10,7 @@ import type { SkillConnectionStatus } from '../../../lib/skills/types';
 
 interface SkillsStepProps {
   onComplete: (connectedSources: string[]) => void | Promise<void>;
+  onBack?: () => void;
 }
 
 interface SourceOption {
@@ -73,7 +74,7 @@ const SOURCE_OPTIONS: SourceOption[] = [
   },
 ];
 
-const SkillsStep = ({ onComplete }: SkillsStepProps) => {
+const SkillsStep = ({ onComplete, onBack }: SkillsStepProps) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [setupModalOpen, setSetupModalOpen] = useState(false);
@@ -162,12 +163,22 @@ const SkillsStep = ({ onComplete }: SkillsStepProps) => {
 
       {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
 
-      <button
-        onClick={handleFinish}
-        disabled={loading}
-        className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60 disabled:cursor-not-allowed">
-        {loading ? 'Finishing...' : 'Finish Setup'}
-      </button>
+      <div className="flex gap-2">
+        {onBack && (
+          <button
+            onClick={onBack}
+            disabled={loading}
+            className="py-2.5 px-4 text-sm font-medium rounded-xl bg-stone-800 hover:bg-stone-700 transition-colors disabled:opacity-60">
+            Back
+          </button>
+        )}
+        <button
+          onClick={handleFinish}
+          disabled={loading}
+          className="btn-primary flex-1 py-2.5 text-sm font-medium rounded-xl disabled:opacity-60 disabled:cursor-not-allowed">
+          {loading ? 'Finishing...' : 'Finish Setup'}
+        </button>
+      </div>
 
       {setupModalOpen && activeSkillId && (
         <SkillSetupModal

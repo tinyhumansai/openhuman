@@ -9,9 +9,10 @@ import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 
 interface ScreenPermissionsStepProps {
   onNext: (accessibilityPermissionGranted: boolean) => void;
+  onBack?: () => void;
 }
 
-const ScreenPermissionsStep = ({ onNext }: ScreenPermissionsStepProps) => {
+const ScreenPermissionsStep = ({ onNext, onBack }: ScreenPermissionsStepProps) => {
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const { status, isLoading, isRequestingPermissions } = useAppSelector(
@@ -83,11 +84,20 @@ const ScreenPermissionsStep = ({ onNext }: ScreenPermissionsStepProps) => {
         </button>
       </div>
 
-      <button
-        onClick={() => onNext(isGranted)}
-        className="w-full py-2.5 text-sm font-medium rounded-xl bg-stone-800 hover:bg-stone-700 transition-colors">
-        {isGranted ? 'Continue' : 'Continue Without Permission'}
-      </button>
+      <div className="flex gap-2">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="py-2.5 px-4 text-sm font-medium rounded-xl bg-stone-800 hover:bg-stone-700 transition-colors">
+            Back
+          </button>
+        )}
+        <button
+          onClick={() => onNext(isGranted)}
+          className="flex-1 py-2.5 text-sm font-medium rounded-xl bg-stone-800 hover:bg-stone-700 transition-colors">
+          {isGranted ? 'Continue' : 'Continue Without Permission'}
+        </button>
+      </div>
     </div>
   );
 };
