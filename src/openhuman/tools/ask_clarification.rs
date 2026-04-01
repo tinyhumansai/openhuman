@@ -56,15 +56,12 @@ impl Tool for AskClarificationTool {
             .and_then(|v| v.as_str())
             .unwrap_or("Could you clarify?");
 
-        let options = args
-            .get("options")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            });
+        let options = args.get("options").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        });
 
         let mut output = format!("[CLARIFICATION NEEDED]\n{question}");
         if let Some(opts) = options {

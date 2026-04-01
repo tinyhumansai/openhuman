@@ -46,7 +46,9 @@ pub async fn run_orchestrated(
     );
 
     if dag.is_empty() {
-        tracing::warn!("[orchestrator] planner returned empty DAG, falling back to direct response");
+        tracing::warn!(
+            "[orchestrator] planner returned empty DAG, falling back to direct response"
+        );
         return direct_response(user_message, provider, config).await;
     }
 
@@ -93,7 +95,10 @@ pub async fn run_orchestrated(
         let decision = review_level(&dag, task_ids, provider, config).await?;
         match decision {
             ReviewDecision::Continue => {
-                tracing::debug!("[orchestrator] level {} approved, continuing", level_idx + 1);
+                tracing::debug!(
+                    "[orchestrator] level {} approved, continuing",
+                    level_idx + 1
+                );
             }
             ReviewDecision::Retry(retry_ids) => {
                 tracing::info!(
@@ -184,19 +189,16 @@ async fn plan_tasks(
     };
 
     let response = provider.chat(request, &model, temperature).await?;
-    let text = response
-        .text
-        .as_deref()
-        .unwrap_or("")
-        .trim();
+    let text = response.text.as_deref().unwrap_or("").trim();
 
     // Extract JSON from potential markdown code fences.
     let json_str = extract_json_block(text);
 
-    let dag: TaskDag = serde_json::from_str(json_str)
-        .context("failed to parse Planner DAG JSON")?;
+    let dag: TaskDag =
+        serde_json::from_str(json_str).context("failed to parse Planner DAG JSON")?;
 
-    dag.validate().map_err(|e| anyhow::anyhow!("invalid DAG: {e}"))?;
+    dag.validate()
+        .map_err(|e| anyhow::anyhow!("invalid DAG: {e}"))?;
 
     Ok(dag)
 }
@@ -243,9 +245,7 @@ async fn execute_level(
             .collect();
 
         let _prompt = if dep_context.is_empty() {
-            format!(
-                "Task: {description}\n\nAcceptance criteria: {acceptance}"
-            )
+            format!("Task: {description}\n\nAcceptance criteria: {acceptance}")
         } else {
             format!(
                 "Context from prior tasks:\n{dep_context}\n\

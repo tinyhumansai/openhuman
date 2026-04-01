@@ -74,16 +74,19 @@ impl Tool for RunLinterTool {
         let output = match linter {
             "clippy" => {
                 tokio::process::Command::new("cargo")
-                    .args(["clippy", "--message-format=short", "--", "-W", "clippy::all"])
+                    .args([
+                        "clippy",
+                        "--message-format=short",
+                        "--",
+                        "-W",
+                        "clippy::all",
+                    ])
                     .current_dir(&self.workspace_dir)
                     .output()
                     .await?
             }
             "eslint" => {
-                let path = args
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(".");
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
                 tokio::process::Command::new("npx")
                     .args(["eslint", "--format", "compact", path])
                     .current_dir(&self.workspace_dir)
@@ -114,7 +117,10 @@ impl Tool for RunLinterTool {
             error: if output.status.success() {
                 None
             } else {
-                Some(format!("Linter exited with code {:?}", output.status.code()))
+                Some(format!(
+                    "Linter exited with code {:?}",
+                    output.status.code()
+                ))
             },
         })
     }

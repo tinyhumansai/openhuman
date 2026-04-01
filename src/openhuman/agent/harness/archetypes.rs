@@ -72,36 +72,13 @@ impl AgentArchetype {
                 "read_workspace_state",
                 "ask_user_clarification",
             ]),
-            Self::Planner => Some(&[
-                "query_memory",
-                "read_workspace_state",
-                "file_read",
-            ]),
-            Self::CodeExecutor => Some(&[
-                "shell",
-                "file_read",
-                "file_write",
-                "git_operations",
-            ]),
+            Self::Planner => Some(&["query_memory", "read_workspace_state", "file_read"]),
+            Self::CodeExecutor => Some(&["shell", "file_read", "file_write", "git_operations"]),
             Self::SkillsAgent => None, // dynamic — all skill-registered tools + memory_recall
             Self::ToolMaker => Some(&["file_write", "shell"]),
-            Self::Researcher => Some(&[
-                "http_request",
-                "web_search",
-                "file_read",
-                "memory_recall",
-            ]),
-            Self::Critic => Some(&[
-                "read_diff",
-                "run_linter",
-                "run_tests",
-                "file_read",
-            ]),
-            Self::Archivist => Some(&[
-                "update_memory_md",
-                "insert_sql_record",
-                "memory_store",
-            ]),
+            Self::Researcher => Some(&["http_request", "web_search", "file_read", "memory_recall"]),
+            Self::Critic => Some(&["read_diff", "run_linter", "run_tests", "file_read"]),
+            Self::Archivist => Some(&["update_memory_md", "insert_sql_record", "memory_store"]),
         }
     }
 

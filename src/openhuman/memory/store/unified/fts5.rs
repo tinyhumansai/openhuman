@@ -124,11 +124,7 @@ pub fn episodic_search(
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    tracing::debug!(
-        "[fts5] search '{}' returned {} results",
-        query,
-        rows.len()
-    );
+    tracing::debug!("[fts5] search '{}' returned {} results", query, rows.len());
     Ok(rows)
 }
 

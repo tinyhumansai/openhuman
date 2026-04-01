@@ -36,10 +36,7 @@ impl BootstrapContext {
             parts.push(format!("## Workspace\n{}", self.workspace_summary));
         }
         if !self.memory_context.is_empty() {
-            parts.push(format!(
-                "## Relevant Memory\n{}",
-                self.memory_context
-            ));
+            parts.push(format!("## Relevant Memory\n{}", self.memory_context));
         }
 
         parts.join("\n\n---\n\n")
@@ -86,11 +83,7 @@ pub async fn load_identity_context(workspace_dir: &Path) -> String {
 }
 
 /// Build memory context by recalling relevant entries.
-pub async fn build_memory_context(
-    memory: &dyn Memory,
-    query: &str,
-    max_chars: usize,
-) -> String {
+pub async fn build_memory_context(memory: &dyn Memory, query: &str, max_chars: usize) -> String {
     match memory.recall(query, 5, None).await {
         Ok(entries) => {
             let mut context = String::new();

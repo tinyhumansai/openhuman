@@ -134,7 +134,12 @@ impl TaskDag {
         let id_map: HashMap<&str, &TaskId> =
             self.nodes.iter().map(|n| (n.id.as_str(), &n.id)).collect();
 
-        Some(sorted.into_iter().filter_map(|s| id_map.get(s).copied()).collect())
+        Some(
+            sorted
+                .into_iter()
+                .filter_map(|s| id_map.get(s).copied())
+                .collect(),
+        )
     }
 
     /// Return execution levels: groups of task IDs that can run concurrently.

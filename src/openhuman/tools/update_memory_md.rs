@@ -106,9 +106,7 @@ impl Tool for UpdateMemoryMdTool {
                     .get("section_title")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "'section_title' is required for 'replace_section' action"
-                        )
+                        anyhow::anyhow!("'section_title' is required for 'replace_section' action")
                     })?;
                 self.do_replace_section(&target_path, file, section_title, content)
                     .await
@@ -116,7 +114,9 @@ impl Tool for UpdateMemoryMdTool {
             other => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Unknown action '{other}'. Use 'append' or 'replace_section'.")),
+                error: Some(format!(
+                    "Unknown action '{other}'. Use 'append' or 'replace_section'."
+                )),
             }),
         }
     }
@@ -140,16 +140,21 @@ impl UpdateMemoryMdTool {
         };
         let new_content = format!("{existing}{separator}{content}\n");
 
-        std::fs::write(path, &new_content).map_err(|e| {
-            anyhow::anyhow!("Failed to write {file}: {e}")
-        })?;
+        std::fs::write(path, &new_content)
+            .map_err(|e| anyhow::anyhow!("Failed to write {file}: {e}"))?;
 
         let bytes = new_content.len();
-        tracing::info!("[update_memory_md] appended {} bytes to {file}", content.len());
+        tracing::info!(
+            "[update_memory_md] appended {} bytes to {file}",
+            content.len()
+        );
 
         Ok(ToolResult {
             success: true,
-            output: format!("Appended {} bytes to {file} ({bytes} bytes total).", content.len()),
+            output: format!(
+                "Appended {} bytes to {file} ({bytes} bytes total).",
+                content.len()
+            ),
             error: None,
         })
     }
@@ -208,9 +213,8 @@ impl UpdateMemoryMdTool {
             format!("{existing}{separator}{heading}\n{content}\n")
         };
 
-        std::fs::write(path, &new_file_content).map_err(|e| {
-            anyhow::anyhow!("Failed to write {file}: {e}")
-        })?;
+        std::fs::write(path, &new_file_content)
+            .map_err(|e| anyhow::anyhow!("Failed to write {file}: {e}"))?;
 
         tracing::info!(
             "[update_memory_md] replaced section '{}' in {file} ({} bytes written)",
@@ -298,7 +302,10 @@ mod tests {
         .unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("new body"), "new body missing: {text}");
-        assert!(!text.contains("old body"), "old body should be gone: {text}");
+        assert!(
+            !text.contains("old body"),
+            "old body should be gone: {text}"
+        );
         assert!(text.contains("## Other"), "other section missing: {text}");
         assert!(text.contains("kept"), "other section body missing: {text}");
     }
@@ -335,6 +342,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("not allowed"));
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("not allowed"));
     }
 }

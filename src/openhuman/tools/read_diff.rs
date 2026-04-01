@@ -53,7 +53,10 @@ impl Tool for ReadDiffTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let base = args.get("base").and_then(|v| v.as_str());
-        let staged = args.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+        let staged = args
+            .get("staged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let path_filter = args.get("path_filter").and_then(|v| v.as_str());
 
         let mut git_args = vec!["diff", "--stat", "-p"];

@@ -61,15 +61,9 @@ impl Tool for SpawnSubagentTool {
             .and_then(|v| v.as_str())
             .unwrap_or("code_executor");
 
-        let prompt = args
-            .get("prompt")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let prompt = args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
 
-        let context = args
-            .get("context")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
 
         if prompt.is_empty() {
             return Ok(ToolResult {

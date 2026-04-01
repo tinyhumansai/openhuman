@@ -62,10 +62,7 @@ impl PostTurnHook for ArchivistHook {
             return Ok(());
         };
 
-        let session_id = ctx
-            .session_id
-            .as_deref()
-            .unwrap_or("unknown");
+        let session_id = ctx.session_id.as_deref().unwrap_or("unknown");
         let timestamp = Self::now_timestamp();
 
         tracing::debug!(

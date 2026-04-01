@@ -202,7 +202,11 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("Invalid role"));
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Invalid role"));
     }
 
     #[tokio::test]

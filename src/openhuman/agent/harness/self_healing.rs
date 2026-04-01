@@ -50,11 +50,7 @@ impl SelfHealingInterceptor {
             return None;
         }
 
-        let error_text = result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .to_lowercase();
+        let error_text = result.error.as_deref().unwrap_or("").to_lowercase();
         let output_text = result.output.to_lowercase();
         let combined = format!("{error_text} {output_text}");
 

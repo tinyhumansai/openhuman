@@ -109,12 +109,10 @@ impl Tool for RunTestsTool {
 
         cmd.current_dir(&self.workspace_dir);
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            cmd.output(),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("test execution timed out after {timeout_secs}s"))??;
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), cmd.output())
+                .await
+                .map_err(|_| anyhow::anyhow!("test execution timed out after {timeout_secs}s"))??;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -122,7 +120,11 @@ impl Tool for RunTestsTool {
         let combined = format!("{stdout}\n{stderr}");
         // Truncate if very long.
         let truncated = if combined.len() > 8000 {
-            format!("{}...\n[truncated, {} total chars]", &combined[..8000], combined.len())
+            format!(
+                "{}...\n[truncated, {} total chars]",
+                &combined[..8000],
+                combined.len()
+            )
         } else {
             combined
         };
