@@ -364,6 +364,80 @@ async fn handle_message(
                 log::warn!("[skill:{}] onError() handler failed: {e}", skill_id);
             }
         }
+        SkillMessage::WebhookRequest {
+            correlation_id,
+            method,
+            path,
+            headers,
+            query,
+            body,
+            tunnel_id,
+            tunnel_name,
+            reply,
+        } => {
+            log::info!(
+                "[skill:{}] event_loop: WebhookRequest {} {} (tunnel={})",
+                skill_id,
+                method,
+                path,
+                tunnel_id,
+            );
+
+            // Restore OAuth credential in case the handler needs authenticated API calls
+            restore_oauth_credential(ctx, skill_id, data_dir).await;
+
+            let args = serde_json::json!({
+                "correlationId": correlation_id,
+                "method": method,
+                "path": path,
+                "headers": headers,
+                "query": query,
+                "body": body,
+                "tunnelId": tunnel_id,
+                "tunnelName": tunnel_name,
+            });
+
+            match handle_js_call(rt, ctx, "onWebhookRequest", &args.to_string()).await {
+                Ok(response_val) => {
+                    use crate::openhuman::webhooks::WebhookResponseData;
+
+                    let status_code = response_val
+                        .get("statusCode")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(200) as u16;
+                    let resp_headers: HashMap<String, String> = response_val
+                        .get("headers")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    let resp_body = response_val
+                        .get("body")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    log::debug!(
+                        "[skill:{}] event_loop: WebhookRequest handled → status {}",
+                        skill_id,
+                        status_code,
+                    );
+
+                    let _ = reply.send(Ok(WebhookResponseData {
+                        correlation_id,
+                        status_code,
+                        headers: resp_headers,
+                        body: resp_body,
+                    }));
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[skill:{}] event_loop: onWebhookRequest failed: {}",
+                        skill_id,
+                        e,
+                    );
+                    let _ = reply.send(Err(e));
+                }
+            }
+        }
         SkillMessage::Rpc {
             method,
             params,

@@ -35,4 +35,5 @@ pub mod skills;
 pub mod tools;
 pub mod tunnel;
 pub mod util;
+pub mod webhooks;
 pub mod workspace;

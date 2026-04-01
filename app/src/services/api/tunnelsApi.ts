@@ -5,6 +5,7 @@ import { apiClient } from '../apiClient';
 
 export interface Tunnel {
   id: string;
+  uuid: string;
   name: string;
   description?: string;
   isActive: boolean;

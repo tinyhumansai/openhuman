@@ -23,6 +23,7 @@ pub fn register_ops(
     ops_net::register(ctx, &ops, ws_state)?;
     ops_storage::register(ctx, &ops, storage, skill_context.clone())?;
     ops_state::register(ctx, &ops, skill_state, skill_context.clone())?;
+    ops_webhook::register(ctx, &ops, skill_context)?;
 
     globals.set("__ops", ops)?;
     Ok(())

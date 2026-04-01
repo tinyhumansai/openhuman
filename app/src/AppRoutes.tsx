@@ -10,6 +10,7 @@ import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
+import Webhooks from './pages/Webhooks';
 import Welcome from './pages/Welcome';
 
 const AppRoutes = () => {
@@ -84,6 +85,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Agents />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/webhooks"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Webhooks />
           </ProtectedRoute>
         }
       />

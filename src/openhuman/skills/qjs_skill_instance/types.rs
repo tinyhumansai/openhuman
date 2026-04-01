@@ -15,6 +15,7 @@ pub struct BridgeDeps {
     pub cron_scheduler: Arc<CronScheduler>,
     pub skill_registry: Arc<SkillRegistry>,
     pub memory_client: Option<crate::openhuman::memory::MemoryClientRef>,
+    pub webhook_router: Option<Arc<crate::openhuman::webhooks::WebhookRouter>>,
     pub data_dir: PathBuf,
     // NOTE: No v8_creation_lock - QuickJS doesn't need it
 }

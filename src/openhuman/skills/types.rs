@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::openhuman::webhooks::WebhookResponseData;
+
 /// Status of a running skill instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -99,6 +101,19 @@ pub enum SkillMessage {
     /// Load params from frontend (e.g. wallet address for wallet skill).
     /// Delivered after skill/load RPC; skill may export onLoad(params) to receive them.
     LoadParams { params: serde_json::Value },
+    /// Deliver an incoming webhook request to the skill (targeted, not broadcast).
+    /// The skill must respond via the oneshot reply with status/headers/body.
+    WebhookRequest {
+        correlation_id: String,
+        method: String,
+        path: String,
+        headers: HashMap<String, serde_json::Value>,
+        query: HashMap<String, String>,
+        body: String,
+        tunnel_id: String,
+        tunnel_name: String,
+        reply: tokio::sync::oneshot::Sender<Result<WebhookResponseData, String>>,
+    },
 }
 
 /// Origin of a tool-call request entering the skill runtime.

@@ -1012,4 +1012,124 @@ globalThis.model = {
 };
 
 console.log('[bootstrap] Model API initialized');
+
+// ============================================================================
+// Webhook / Tunnel API (skill-scoped)
+// ============================================================================
+// All operations are scoped to the calling skill. The Rust bridge injects the
+// skill_id automatically — JS code cannot impersonate another skill.
+
+globalThis.webhook = {
+  /**
+   * Register this skill to receive webhooks for a tunnel UUID.
+   * Rejects if the tunnel is already owned by a different skill.
+   * @param {string} tunnelUuid - The tunnel UUID (from createTunnel or backend)
+   * @param {string} [tunnelName] - Human-readable name for display
+   * @param {string} [backendTunnelId] - Backend MongoDB _id for CRUD
+   */
+  register: function (tunnelUuid, tunnelName, backendTunnelId) {
+    __ops.webhook_register(
+      tunnelUuid,
+      tunnelName || null,
+      backendTunnelId || null
+    );
+  },
+
+  /**
+   * Unregister this skill from a tunnel.
+   * Rejects if the tunnel is not owned by this skill.
+   * @param {string} tunnelUuid
+   */
+  unregister: function (tunnelUuid) {
+    __ops.webhook_unregister(tunnelUuid);
+  },
+
+  /**
+   * List only this skill's registered tunnel mappings.
+   * Never includes other skills' tunnels.
+   * @returns {Array<{tunnel_uuid: string, skill_id: string, tunnel_name: string|null}>}
+   */
+  list: function () {
+    var json = __ops.webhook_list();
+    return JSON.parse(json);
+  },
+
+  /**
+   * Create a new tunnel via the backend API, automatically registered to
+   * this skill.
+   * @param {string} name - Tunnel name
+   * @param {string} [description] - Optional description
+   * @returns {Promise<{id: string, uuid: string, webhookUrl: string}>}
+   */
+  createTunnel: async function (name, description) {
+    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
+    var jwtToken = __ops.get_session_token() || '';
+
+    var result = await net.fetch(backendUrl + '/tunnels', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + jwtToken,
+      },
+      body: JSON.stringify({ name: name, description: description || '' }),
+      timeout: 15000,
+    });
+
+    var parsed = JSON.parse(result);
+    if (parsed.status >= 400) {
+      throw new Error('Failed to create tunnel: ' + parsed.status + ' ' + parsed.body);
+    }
+    var data = JSON.parse(parsed.body);
+    var tunnel = data.tunnel || data;
+
+    // Auto-register this tunnel to the calling skill
+    if (tunnel.uuid) {
+      webhook.register(tunnel.uuid, name, tunnel._id || tunnel.id || null);
+    }
+
+    // Build webhook URL for the caller
+    tunnel.webhookUrl = backendUrl + '/webhooks/' + tunnel.uuid;
+
+    console.log('[webhook] Created tunnel: ' + name + ' → ' + tunnel.webhookUrl);
+    return tunnel;
+  },
+
+  /**
+   * List this skill's tunnels from the backend API.
+   * Only returns tunnels that are registered to this skill locally.
+   * @returns {Promise<Array>}
+   */
+  listTunnels: async function () {
+    // Return the locally registered tunnels (scoped to this skill)
+    return webhook.list();
+  },
+
+  /**
+   * Delete a tunnel. Fails if the tunnel is not owned by this skill.
+   * @param {string} tunnelUuid - The tunnel UUID to delete
+   */
+  deleteTunnel: async function (tunnelUuid) {
+    // First verify ownership locally (will throw if not owned)
+    webhook.unregister(tunnelUuid);
+
+    // Then delete from backend
+    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
+    var jwtToken = __ops.get_session_token() || '';
+
+    var result = await net.fetch(backendUrl + '/tunnels/' + tunnelUuid, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + jwtToken },
+      timeout: 10000,
+    });
+
+    var parsed = JSON.parse(result);
+    if (parsed.status >= 400 && parsed.status !== 404) {
+      console.warn('[webhook] Backend delete returned ' + parsed.status);
+    }
+
+    console.log('[webhook] Deleted tunnel: ' + tunnelUuid);
+  },
+};
+
+console.log('[bootstrap] Webhook API initialized');
 console.log('[bootstrap] QuickJS browser APIs initialized');

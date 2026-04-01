@@ -341,6 +341,67 @@ impl SkillRegistry {
             }
         }
     }
+
+    /// Send an incoming webhook request to a specific skill and wait for the response.
+    ///
+    /// Returns the skill's response (status code, headers, body) or an error.
+    /// Times out after 25 seconds (under the backend's 30-second timeout).
+    pub async fn send_webhook_request(
+        &self,
+        skill_id: &str,
+        correlation_id: String,
+        method: String,
+        path: String,
+        headers: std::collections::HashMap<String, serde_json::Value>,
+        query: std::collections::HashMap<String, String>,
+        body: String,
+        tunnel_id: String,
+        tunnel_name: String,
+    ) -> Result<crate::openhuman::webhooks::WebhookResponseData, String> {
+        let sender = {
+            let skills = self.skills.read();
+            let entry = skills
+                .get(skill_id)
+                .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
+            let status = entry.state.read().status;
+            if status != SkillStatus::Running {
+                return Err(format!(
+                    "Skill '{}' is not running (status: {:?})",
+                    skill_id, status
+                ));
+            }
+            entry.sender.clone()
+        };
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        sender
+            .send(SkillMessage::WebhookRequest {
+                correlation_id: correlation_id.clone(),
+                method,
+                path,
+                headers,
+                query,
+                body,
+                tunnel_id,
+                tunnel_name,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| format!("Skill '{}' message channel closed", skill_id))?;
+
+        match tokio::time::timeout(std::time::Duration::from_secs(25), reply_rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(format!(
+                "Skill '{}' webhook reply channel dropped",
+                skill_id
+            )),
+            Err(_) => Err(format!(
+                "Skill '{}' webhook handler timed out (25s)",
+                skill_id
+            )),
+        }
+    }
 }
 
 impl Default for SkillRegistry {
