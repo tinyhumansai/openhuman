@@ -27,6 +27,7 @@ This folder is the **desktop host** for OpenHuman: Tauri v2 + WebView, IPC comma
 - **Tauri updater** (release `latest.json` + desktop bundle artifacts) updates the **desktop app bundle**.
 - **Core self-update** (`openhuman.update_*` JSON-RPC controllers in the Rust core) updates only the **`openhuman-core` sidecar binary**.
 - On app startup, the Tauri host attempts a **preflight sidecar swap** when a staged `*.next` core binary exists, then starts the child sidecar process.
+- **Digest verification** is best-effort: if the release asset includes a `sha256:` digest or a companion checksum file, the updater verifies it; otherwise the download proceeds without digest validation. A follow-up issue should add companion `.sha256` files to the release pipeline for stronger integrity guarantees.
 
 ## Related
 
