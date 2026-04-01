@@ -170,15 +170,16 @@ impl ArchivistHook {
         let entries = fts5::episodic_session_entries(conn, session_id).unwrap_or_default();
 
         // Filter entries that fall within the segment's time window.
-        // Use strict less-than for end_timestamp so the boundary-triggering
-        // turn is NOT included in the previous segment's extraction.
+        // Use <= for end_timestamp (entries at the boundary are part of this
+        // segment). The boundary-triggering turn has a timestamp AFTER
+        // end_timestamp, so it won't be included.
         let segment_entries: Vec<&EpisodicEntry> = entries
             .iter()
             .filter(|e| {
                 e.timestamp >= segment.start_timestamp
                     && segment
                         .end_timestamp
-                        .map(|end| e.timestamp < end)
+                        .map(|end| e.timestamp <= end)
                         .unwrap_or(true)
             })
             .collect();
