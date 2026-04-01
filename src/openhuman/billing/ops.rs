@@ -191,6 +191,21 @@ fn default_gateway() -> String {
     "stripe".to_string()
 }
 
+fn normalize_gateway(gateway: Option<String>) -> Result<String, String> {
+    let gateway = gateway
+        .as_deref()
+        .map(str::trim)
+        .filter(|g| !g.is_empty())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_else(default_gateway);
+
+    if !matches!(gateway.as_str(), "stripe" | "coinbase") {
+        return Err("gateway must be one of: stripe, coinbase".to_string());
+    }
+
+    Ok(gateway)
+}
+
 pub async fn top_up_credits(
     config: &Config,
     amount_usd: f64,
@@ -200,12 +215,10 @@ pub async fn top_up_credits(
         return Err("amountUsd must be a finite number greater than 0".to_string());
     }
 
+    let gateway = normalize_gateway(gateway)?;
     let body = TopUpBody {
         amount_usd,
-        gateway: gateway
-            .map(|g| g.trim().to_string())
-            .filter(|g| !g.is_empty())
-            .unwrap_or_else(default_gateway),
+        gateway,
     };
 
     let data = get_authed_value(
@@ -261,4 +274,38 @@ pub async fn create_coinbase_charge(
         data,
         "Coinbase payment link created",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_gateway_defaults_to_stripe() {
+        assert_eq!(normalize_gateway(None).unwrap(), "stripe");
+        assert_eq!(
+            normalize_gateway(Some("   ".to_string())).unwrap(),
+            "stripe"
+        );
+    }
+
+    #[test]
+    fn normalize_gateway_accepts_supported_values_case_insensitively() {
+        assert_eq!(
+            normalize_gateway(Some(" Stripe ".to_string())).unwrap(),
+            "stripe"
+        );
+        assert_eq!(
+            normalize_gateway(Some("COINBASE".to_string())).unwrap(),
+            "coinbase"
+        );
+    }
+
+    #[test]
+    fn normalize_gateway_rejects_unknown_values() {
+        assert_eq!(
+            normalize_gateway(Some("paypal".to_string())),
+            Err("gateway must be one of: stripe, coinbase".to_string())
+        );
+    }
 }

@@ -73,6 +73,55 @@ fn build_api_path(segments: &[&str]) -> Result<String, String> {
     Ok(url.path().to_string())
 }
 
+fn is_identifier_segment(segment: &str) -> bool {
+    let trimmed = segment.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '%' | '.');
+    let has_digit = trimmed.chars().any(|c| c.is_ascii_digit());
+    let is_uuid_like = trimmed.len() >= 8
+        && trimmed.chars().all(allowed)
+        && trimmed.contains('-')
+        && trimmed.chars().any(|c| c.is_ascii_hexdigit());
+
+    (has_digit && trimmed.chars().all(allowed)) || is_uuid_like
+}
+
+fn redact_route_template(url: &Url) -> String {
+    let Some(segments) = url.path_segments() else {
+        return url.path().to_string();
+    };
+
+    let segments = segments.collect::<Vec<_>>();
+    let redacted = segments
+        .iter()
+        .enumerate()
+        .map(|(idx, segment)| {
+            match (
+                idx,
+                segments.first().copied(),
+                segments.get(2).copied(),
+                *segment,
+            ) {
+                (1, Some("teams"), _, _) => "{team_id}".to_string(),
+                (3, Some("teams"), Some("members"), _) => "{user_id}".to_string(),
+                (3, Some("teams"), Some("invites"), _) => "{invite_id}".to_string(),
+                (_, _, _, value)
+                    if is_identifier_segment(value)
+                        && !matches!(value, "teams" | "members" | "invites" | "role") =>
+                {
+                    "{id}".to_string()
+                }
+                (_, _, _, value) => value.to_string(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    format!("/{}", redacted.join("/"))
+}
+
 async fn authed_request(
     client: &Client,
     base: &Url,
@@ -103,7 +152,12 @@ async fn authed_request(
         .await
         .map_err(|e| format!("failed to read backend response body: {e}"))?;
 
-    debug!("{LOG_PREFIX} {} {} -> {}", method, url, status);
+    debug!(
+        "{LOG_PREFIX} {} {} -> {}",
+        method,
+        redact_route_template(&url),
+        status
+    );
 
     let raw: Value = serde_json::from_str(&text).unwrap_or_else(|_| Value::String(text.clone()));
     if !status.is_success() {
@@ -268,5 +322,31 @@ mod tests {
             .expect("path should build");
 
         assert_eq!(path, "/teams/team%2Fwith%3Freserved/members/user%23frag");
+    }
+
+    #[test]
+    fn redact_route_template_hides_team_member_and_invite_ids() {
+        let members_url =
+            Url::parse("https://api.example.test/teams/team-1/members").expect("members url");
+        assert_eq!(
+            redact_route_template(&members_url),
+            "/teams/{team_id}/members"
+        );
+
+        let member_role_url = Url::parse(
+            "https://api.example.test/teams/69ca3f94bc6e00bbdc551900/members/user-2/role",
+        )
+        .expect("member role url");
+        assert_eq!(
+            redact_route_template(&member_role_url),
+            "/teams/{team_id}/members/{user_id}/role"
+        );
+
+        let invite_url =
+            Url::parse("https://api.example.test/teams/team-1/invites/inv-1").expect("invite url");
+        assert_eq!(
+            redact_route_template(&invite_url),
+            "/teams/{team_id}/invites/{invite_id}"
+        );
     }
 }
