@@ -166,14 +166,15 @@ jobs:
       - name: Build E2E app
         run: yarn workspace openhuman-app test:e2e:build
 
-      - name: Verify E2E build artifacts
+      - name: Stage sidecar next to app binary
         run: |
-          echo "Looking for OpenHuman binary..."
-          find . -name "OpenHuman" -type f ! -path "*/node_modules/*" ! -path "*/.git/*" 2>/dev/null
-          echo "---"
-          ls -la app/src-tauri/target/debug/OpenHuman 2>/dev/null || echo "Binary not at app/src-tauri/target/debug/OpenHuman"
-          echo "Checking sidecar..."
-          ls -la app/src-tauri/binaries/ 2>/dev/null || echo "No binaries directory"
+          # Tauri resolves externalBin relative to the running binary's directory.
+          # Copy the sidecar from binaries/ to target/debug/ so the app can find it.
+          cp app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu \
+             app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
+          chmod +x app/src-tauri/target/debug/openhuman-core-x86_64-unknown-linux-gnu
+          echo "Sidecar staged next to app binary:"
+          ls -la app/src-tauri/target/debug/openhuman-core-* app/src-tauri/target/debug/OpenHuman
 
       - name: Run E2E tests under Xvfb
         run: |
