@@ -103,7 +103,7 @@ impl From<anyhow::Error> for AgentError {
     fn from(e: anyhow::Error) -> Self {
         // Attempt to recover a typed AgentError that was wrapped in anyhow.
         match e.downcast::<AgentError>() {
-            Ok(agent_err) => *agent_err,
+            Ok(agent_err) => agent_err,
             Err(other) => Self::Other(other),
         }
     }
