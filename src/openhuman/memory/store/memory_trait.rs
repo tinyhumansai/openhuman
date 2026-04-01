@@ -4,6 +4,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 
 use crate::openhuman::memory::store::types::{NamespaceDocumentInput, GLOBAL_NAMESPACE};
+use crate::openhuman::memory::store::unified::fts5;
 use crate::openhuman::memory::traits::{Memory, MemoryCategory, MemoryEntry};
 use anyhow::Context;
 
@@ -53,13 +54,13 @@ impl Memory for UnifiedMemory {
         &self,
         query: &str,
         limit: usize,
-        _session_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let ranked = self
             .query_namespace_ranked(GLOBAL_NAMESPACE, query, limit as u32)
             .await
             .map_err(anyhow::Error::msg)?;
-        let out = ranked
+        let mut out: Vec<MemoryEntry> = ranked
             .into_iter()
             .enumerate()
             .map(|(idx, r)| MemoryEntry {
@@ -73,6 +74,42 @@ impl Memory for UnifiedMemory {
                 score: Some(r.score),
             })
             .collect();
+
+        // When session_id is provided, also search episodic entries for that session.
+        if let Some(sid) = session_id {
+            let episodic_entries = fts5::episodic_session_entries(&self.conn, sid)
+                .unwrap_or_default();
+            // Filter by query terms (simple keyword overlap).
+            let query_lower = query.to_lowercase();
+            let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+            for entry in episodic_entries {
+                let content_lower = entry.content.to_lowercase();
+                let matches = query_terms
+                    .iter()
+                    .any(|term| content_lower.contains(term));
+                if matches {
+                    out.push(MemoryEntry {
+                        id: format!("episodic:{}", entry.id.unwrap_or(0)),
+                        key: format!("{}:{}", entry.session_id, entry.role),
+                        content: entry.content,
+                        namespace: Some(GLOBAL_NAMESPACE.to_string()),
+                        category: MemoryCategory::Conversation,
+                        timestamp: format!("{}", entry.timestamp),
+                        session_id: Some(entry.session_id),
+                        score: Some(0.5),
+                    });
+                }
+            }
+            // Re-sort by score descending and truncate.
+            out.sort_by(|a, b| {
+                b.score
+                    .unwrap_or(0.0)
+                    .partial_cmp(&a.score.unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            out.truncate(limit);
+        }
+
         Ok(out)
     }
 

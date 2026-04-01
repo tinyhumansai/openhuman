@@ -37,6 +37,8 @@ pub struct NamespaceQueryResult {
 pub enum MemoryItemKind {
     Document,
     Kv,
+    Episodic,
+    Event,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +86,7 @@ pub struct RetrievalScoreBreakdown {
     pub keyword_relevance: f64,
     pub vector_similarity: f64,
     pub graph_relevance: f64,
+    pub episodic_relevance: f64,
     pub freshness: f64,
     pub final_score: f64,
 }

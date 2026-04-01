@@ -4,7 +4,9 @@
 //! context: identity files, workspace state, and relevant memory.
 
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::store::profile;
 use crate::openhuman::memory::Memory;
+use crate::openhuman::memory::UnifiedMemory;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -19,6 +21,8 @@ pub struct BootstrapContext {
     pub workspace_summary: String,
     /// Relevant memory context.
     pub memory_context: String,
+    /// User profile context (accumulated preferences, facts, skills).
+    pub user_profile_context: String,
 }
 
 impl BootstrapContext {
@@ -34,6 +38,9 @@ impl BootstrapContext {
         }
         if !self.workspace_summary.is_empty() {
             parts.push(format!("## Workspace\n{}", self.workspace_summary));
+        }
+        if !self.user_profile_context.is_empty() {
+            parts.push(format!("## User Profile\n{}", self.user_profile_context));
         }
         if !self.memory_context.is_empty() {
             parts.push(format!("## Relevant Memory\n{}", self.memory_context));
@@ -103,6 +110,33 @@ pub async fn build_memory_context(memory: &dyn Memory, query: &str, max_chars: u
     }
 }
 
+/// Load user profile context from the profile table.
+pub fn load_user_profile_context(_memory: &dyn Memory) -> String {
+    // Try to access the UnifiedMemory connection for profile loading.
+    // The Memory trait doesn't expose this, so we use a separate function
+    // that accepts UnifiedMemory directly.
+    // This is a best-effort operation — returns empty if profile is unavailable.
+    String::new()
+}
+
+/// Load user profile from a UnifiedMemory instance.
+pub fn load_user_profile_from_unified(unified: &UnifiedMemory) -> String {
+    match profile::profile_load_all(&unified.conn) {
+        Ok(facets) if !facets.is_empty() => {
+            tracing::debug!(
+                "[context-assembly] loaded {} profile facets",
+                facets.len()
+            );
+            profile::render_profile_context(&facets)
+        }
+        Ok(_) => String::new(),
+        Err(e) => {
+            tracing::debug!("[context-assembly] profile load failed: {e}");
+            String::new()
+        }
+    }
+}
+
 /// Assemble the full bootstrap context for an orchestrator turn.
 pub async fn assemble_orchestrator_context(
     config: &Config,
@@ -126,5 +160,18 @@ pub async fn assemble_orchestrator_context(
         identity_context,
         workspace_summary: String::new(), // populated by workspace_state tool on demand
         memory_context,
+        user_profile_context: load_user_profile_context(memory.as_ref()),
     }
+}
+
+/// Assemble context with direct UnifiedMemory access (includes profile).
+pub async fn assemble_orchestrator_context_with_unified(
+    config: &Config,
+    memory: Arc<dyn Memory>,
+    unified: &UnifiedMemory,
+    user_message: &str,
+) -> BootstrapContext {
+    let mut ctx = assemble_orchestrator_context(config, memory, user_message).await;
+    ctx.user_profile_context = load_user_profile_from_unified(unified);
+    ctx
 }
