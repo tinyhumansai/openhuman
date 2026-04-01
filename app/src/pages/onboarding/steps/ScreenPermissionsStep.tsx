@@ -84,7 +84,7 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
             onClick={() => void dispatch(refreshPermissionsWithRestart())}
             disabled={isRestartingCore || isLoading}
             className="w-full py-2 text-sm font-medium rounded-xl border border-stone-700 hover:border-stone-500 opacity-70 hover:opacity-100 transition-all disabled:opacity-40">
-            {isRestartingCore ? 'Restarting core...' : 'Refresh Status'}
+            {isRestartingCore ? 'Restarting core...' : 'Restart & Refresh Permissions'}
           </button>
           {(lastError || status?.permission_check_process_path) && (
             <div className="text-xs text-stone-400 text-center px-2 space-y-1">

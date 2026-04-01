@@ -101,6 +101,8 @@ async fn restart_core_process(
     state: tauri::State<'_, core_process::CoreProcessHandle>,
 ) -> Result<(), String> {
     log::info!("[core] restart_core_process: command invoked from frontend");
+    let _guard = state.inner().restart_lock().await;
+    log::debug!("[core] restart_core_process: acquired restart lock");
     state.inner().restart().await
 }
 

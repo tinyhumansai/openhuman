@@ -17,6 +17,7 @@ pub enum CoreRunMode {
 pub struct CoreProcessHandle {
     child: Arc<Mutex<Option<Child>>>,
     task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    restart_lock: Arc<Mutex<()>>,
     port: u16,
     core_bin: Option<PathBuf>,
     run_mode: CoreRunMode,
@@ -27,6 +28,7 @@ impl CoreProcessHandle {
         Self {
             child: Arc::new(Mutex::new(None)),
             task: Arc::new(Mutex::new(None)),
+            restart_lock: Arc::new(Mutex::new(())),
             port,
             core_bin,
             run_mode,
@@ -35,6 +37,11 @@ impl CoreProcessHandle {
 
     pub fn rpc_url(&self) -> String {
         format!("http://127.0.0.1:{}/rpc", self.port)
+    }
+
+    /// Acquire the restart lock to serialize overlapping restart requests.
+    pub async fn restart_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.restart_lock.lock().await
     }
 
     async fn is_rpc_port_open(&self) -> bool {

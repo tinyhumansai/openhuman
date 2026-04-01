@@ -21,7 +21,8 @@ KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 TMPDIR_CERT=$(mktemp -d)
 KEY="$TMPDIR_CERT/openhuman-dev.key"
 CERT="$TMPDIR_CERT/openhuman-dev.crt"
-KEY_DER="$TMPDIR_CERT/openhuman-dev-key.der"
+P12="$TMPDIR_CERT/openhuman-dev.p12"
+P12_PASS="${OPENHUMAN_P12_PASS:-openhuman-dev}"
 
 cleanup() {
   rm -rf "$TMPDIR_CERT"
@@ -68,6 +69,7 @@ security import "$P12" \
 security add-trusted-cert \
   -d \
   -r trustRoot \
+  -p codeSign \
   -k "$KEYCHAIN" \
   "$CERT"
 
