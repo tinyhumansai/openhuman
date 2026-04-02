@@ -71,9 +71,7 @@ const DictationOverlay = () => {
   const { startRecording, stopRecording, dismiss } = useDictation();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
-  const prevStatusRef = useRef(status);
   const lastEditableRef = useRef<EditableTarget | null>(null);
-  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
 
   const getActiveDefaultPosition = () => {
     if (typeof window === 'undefined') return { x: 24, y: 24 };
@@ -91,6 +89,14 @@ const DictationOverlay = () => {
       x: Math.max(12, window.innerWidth - idleWidth - 24),
       y: Math.max(12, window.innerHeight - idleHeight - 24),
     };
+  };
+
+  const [position, setPosition] = useState<{ x: number; y: number }>(() =>
+    status === 'idle' ? getIdleDefaultPosition() : getActiveDefaultPosition()
+  );
+
+  const resetLauncherPosition = () => {
+    setPosition(getIdleDefaultPosition());
   };
 
   const clampToViewport = (x: number, y: number) => {
@@ -124,21 +130,6 @@ const DictationOverlay = () => {
     window.addEventListener('focusin', onFocusIn);
     return () => window.removeEventListener('focusin', onFocusIn);
   }, []);
-
-  useEffect(() => {
-    if (position === null) {
-      setPosition(status === 'idle' ? getIdleDefaultPosition() : getActiveDefaultPosition());
-    }
-  }, [position, status]);
-
-  useEffect(() => {
-    const prev = prevStatusRef.current;
-    if (status === 'idle' && prev !== 'idle') {
-      // When closing active overlay, reset launcher to the corner.
-      setPosition(getIdleDefaultPosition());
-    }
-    prevStatusRef.current = status;
-  }, [status]);
 
   useEffect(() => {
     const onResize = () => {
@@ -193,6 +184,7 @@ const DictationOverlay = () => {
     window.dispatchEvent(insertEvent);
     if (insertEvent.defaultPrevented) {
       console.debug('[dictation] transcript handled by app context listener');
+      resetLauncherPosition();
       dispatch(resetDictation());
       return;
     }
@@ -204,6 +196,7 @@ const DictationOverlay = () => {
 
     if (preferredTarget && insertIntoEditableTarget(preferredTarget, transcript)) {
       console.debug('[dictation] inserted transcript into DOM editable target');
+      resetLauncherPosition();
       dispatch(resetDictation());
       return;
     }
@@ -211,11 +204,13 @@ const DictationOverlay = () => {
     console.debug('[dictation] no DOM target found, trying accessibility action');
     try {
       await openhumanAccessibilityInputAction({ action: 'type', text: transcript });
+      resetLauncherPosition();
       dispatch(resetDictation());
     } catch {
       // Fallback to clipboard
       console.debug('[dictation] accessibility insert failed, falling back to clipboard');
       await navigator.clipboard.writeText(transcript).catch(() => {});
+      resetLauncherPosition();
       dispatch(resetDictation());
     }
   };
@@ -224,6 +219,7 @@ const DictationOverlay = () => {
     if (!transcript) return;
     console.debug('[dictation] copying transcript to clipboard');
     await navigator.clipboard.writeText(transcript).catch(() => {});
+    resetLauncherPosition();
     dispatch(resetDictation());
   };
 
@@ -279,7 +275,10 @@ const DictationOverlay = () => {
           </span>
           <div className="flex-1" />
           <button
-            onClick={dismiss}
+            onClick={() => {
+              resetLauncherPosition();
+              dismiss();
+            }}
             className="text-stone-400 hover:text-stone-200 transition-colors text-xs"
             aria-label="Dismiss dictation">
             ✕

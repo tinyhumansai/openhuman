@@ -237,7 +237,7 @@ const Conversations = () => {
         return `${base}${base.endsWith(' ') ? '' : ' '}${text}`;
       });
 
-      requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
         textInputRef.current?.focus();
       });
     };
