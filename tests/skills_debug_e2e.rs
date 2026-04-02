@@ -363,8 +363,8 @@ async fn skill_full_lifecycle() {
         }
     }
 
-    // ── 6. Tick / Sync ──
-    step("TICK (sync)");
+    // ── 6a. Tick ──
+    step("TICK");
     let tick_result = tokio::time::timeout(
         Duration::from_secs(15),
         engine.rpc(&skill_id, "skill/tick", json!({})),
@@ -380,6 +380,28 @@ async fn skill_full_lifecycle() {
         }
         Err(_) => {
             fail("skill/tick TIMED OUT (15s)");
+        }
+    }
+
+    // ── 6b. Sync (calls onSync, not onTick) ──
+    step("SYNC (skill/sync → onSync)");
+    let sync_result = tokio::time::timeout(
+        Duration::from_secs(15),
+        engine.rpc(&skill_id, "skill/sync", json!({})),
+    )
+    .await;
+
+    match sync_result {
+        Ok(Ok(val)) => {
+            ok(&format!("skill/sync returned: {val}"));
+        }
+        Ok(Err(e)) => {
+            info(&format!(
+                "skill/sync error: {e} (expected if skill has no onSync handler)"
+            ));
+        }
+        Err(_) => {
+            fail("skill/sync TIMED OUT (15s)");
         }
     }
 

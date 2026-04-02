@@ -292,8 +292,96 @@ async fn notion_live_with_real_data() {
         Err(_) => eprintln!("  ✗ TIMED OUT"),
     }
 
-    // ── Step 7: Final state ──
-    eprintln!("\n--- Step 7: Final Skill State ---");
+    // ── Step 7: Sync + Memory Persistence ──
+    eprintln!("\n--- Step 7: Sync + Memory Verification ---");
+    eprintln!("  Calling skill/sync to trigger onSync() + memory persistence...");
+
+    let sync_result = tokio::time::timeout(
+        Duration::from_secs(60),
+        engine.rpc("notion", "skill/sync", json!({})),
+    )
+    .await;
+
+    match &sync_result {
+        Ok(Ok(val)) => eprintln!("  skill/sync returned: {val}"),
+        Ok(Err(e)) => eprintln!("  skill/sync error: {e}"),
+        Err(_) => eprintln!("  skill/sync TIMED OUT (60s)"),
+    }
+
+    // Wait for fire-and-forget memory persistence to complete
+    eprintln!("  Waiting 3s for async memory persistence...");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Verify memory documents were created
+    eprintln!("  Checking local memory store...");
+    let workspace_dir = real_data_dir.join("workspace");
+    let memory_result =
+        openhuman_core::openhuman::memory::MemoryClient::from_workspace_dir(workspace_dir.clone());
+
+    match memory_result {
+        Ok(memory_client) => {
+            let namespace = "skill-notion";
+            match memory_client.list_documents(Some(namespace)).await {
+                Ok(docs) => {
+                    let doc_array = docs
+                        .get("documents")
+                        .and_then(|d| d.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    eprintln!("  Documents in '{namespace}': {}", doc_array.len());
+                    for doc in &doc_array {
+                        let title =
+                            doc.get("title").and_then(|t| t.as_str()).unwrap_or("?");
+                        let content_len = doc
+                            .get("content")
+                            .and_then(|c| c.as_str())
+                            .map(|c| c.len())
+                            .unwrap_or(0);
+                        eprintln!("    - {title} ({content_len} bytes)");
+                    }
+                    if doc_array.is_empty() {
+                        eprintln!("  WARNING: No memory documents found after sync");
+                        eprintln!("  This could mean:");
+                        eprintln!("    1. onSync() didn't publish any state via state.set()");
+                        eprintln!("    2. The memory client wasn't wired into the engine");
+                        eprintln!("    3. store_skill_sync failed silently");
+                    } else {
+                        eprintln!("  PASS: Memory documents created after sync");
+                    }
+                }
+                Err(e) => eprintln!("  Failed to list documents: {e}"),
+            }
+
+            // Also check namespaces
+            match memory_client.list_namespaces().await {
+                Ok(namespaces) => {
+                    eprintln!("  All namespaces: {:?}", namespaces);
+                }
+                Err(e) => eprintln!("  Failed to list namespaces: {e}"),
+            }
+        }
+        Err(e) => {
+            eprintln!("  Could not create MemoryClient for workspace {}: {e}", workspace_dir.display());
+            eprintln!("  (Memory verification skipped — engine uses ~/.openhuman/workspace by default)");
+
+            // Try default location
+            if let Ok(default_client) = openhuman_core::openhuman::memory::MemoryClient::new_local()
+            {
+                let namespace = "skill-notion";
+                if let Ok(docs) = default_client.list_documents(Some(namespace)).await {
+                    let count = docs
+                        .get("documents")
+                        .and_then(|d| d.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    eprintln!("  Documents in default workspace '{namespace}': {count}");
+                }
+            }
+        }
+    }
+
+    // ── Step 8: Final state ──
+    eprintln!("\n--- Step 8: Final Skill State ---");
     if let Some(snap) = engine.get_skill_state("notion") {
         eprintln!("  Status: {:?}", snap.status);
         for (k, v) in &snap.state {

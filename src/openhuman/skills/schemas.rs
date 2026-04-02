@@ -775,7 +775,7 @@ fn handle_skills_sync(params: Map<String, Value>) -> ControllerFuture {
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
         let engine = require_engine()?;
         engine
-            .rpc(&p.skill_id, "skill/tick", serde_json::json!({}))
+            .rpc(&p.skill_id, "skill/sync", serde_json::json!({}))
             .await
     })
 }

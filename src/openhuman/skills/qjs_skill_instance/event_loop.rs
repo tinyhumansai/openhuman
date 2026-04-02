@@ -16,6 +16,54 @@ use super::js_handlers::{
 use super::js_helpers::{drive_jobs, restore_oauth_credential};
 use super::types::SkillState;
 
+/// Fire-and-forget: snapshot the skill's published ops state and persist it to memory.
+///
+/// Called after sync, cron, and tick handlers so that data published via
+/// `state.set()` / `state.setPartial()` during the JS handler is written to the
+/// local memory store (SQLite + vector embeddings).
+fn persist_state_to_memory(
+    skill_id: &str,
+    title_suffix: &str,
+    ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
+    memory_client: &Option<MemoryClientRef>,
+) {
+    let state_snapshot = ops_state.read().data.clone();
+    log::debug!(
+        "[skill:{}] persist_state_to_memory({}): {} keys in snapshot",
+        skill_id,
+        title_suffix,
+        state_snapshot.len(),
+    );
+    if state_snapshot.is_empty() {
+        return;
+    }
+    let Some(client) = memory_client.clone() else {
+        log::debug!(
+            "[skill:{}] persist_state_to_memory: no memory client available, skipping",
+            skill_id,
+        );
+        return;
+    };
+    let skill = skill_id.to_string();
+    let content =
+        serde_json::to_string_pretty(&serde_json::Value::Object(state_snapshot))
+            .unwrap_or_else(|_| "{}".to_string());
+    let title = format!("{} {}", skill, title_suffix);
+    tokio::spawn(async move {
+        log::debug!("[memory] store_skill_sync: title={title}");
+        if let Err(e) = client
+            .store_skill_sync(
+                &skill, "default", &title, &content, None, None, None, None, None, None,
+            )
+            .await
+        {
+            log::warn!("[memory] store_skill_sync failed for '{title}': {e}");
+        } else {
+            log::info!("[memory] store_skill_sync succeeded for '{title}'");
+        }
+    });
+}
+
 /// Pending async tool call that is being driven by the event loop.
 struct PendingToolCall {
     reply: tokio::sync::oneshot::Sender<Result<ToolResult, String>>,
@@ -275,6 +323,13 @@ async fn handle_message(
         }
         SkillMessage::CronTrigger { schedule_id } => {
             let _ = handle_cron_trigger(rt, ctx, &schedule_id).await;
+            // Persist state to memory after cron-triggered sync (e.g. Notion periodic sync)
+            persist_state_to_memory(
+                skill_id,
+                &format!("cron sync ({})", schedule_id),
+                ops_state,
+                memory_client,
+            );
         }
         SkillMessage::Stop { reply } => {
             let _ = call_lifecycle(rt, ctx, "stop").await;
@@ -336,6 +391,8 @@ async fn handle_message(
         }
         SkillMessage::Tick { reply } => {
             let result = handle_js_void_call(rt, ctx, "onTick", "{}").await;
+            // Persist any state published during tick to memory
+            persist_state_to_memory(skill_id, "tick sync", ops_state, memory_client);
             let _ = reply.send(result);
         }
         SkillMessage::LoadParams { params } => {
@@ -495,36 +552,15 @@ async fn handle_message(
                 "skill/ping" => handle_js_call(rt, ctx, "onPing", "{}").await,
                 "skill/sync" => {
                     let result = handle_js_call(rt, ctx, "onSync", "{}").await;
-                    // Fire-and-forget: persist published ops state to TinyHumans memory.
+                    // Persist published ops state to memory after onSync() completes.
                     // Skills publish data via state.set()/setPartial() into ops_state.data,
                     // not as the return value of onSync() (which is typically undefined).
-                    let state_snapshot = ops_state.read().data.clone();
-                    log::info!(
-                        "[memory] store_skill_sync: payload → state_snapshot={:?}",
-                        state_snapshot
+                    persist_state_to_memory(
+                        skill_id,
+                        "periodic sync",
+                        ops_state,
+                        &memory_client_opt,
                     );
-                    if !state_snapshot.is_empty() {
-                        if let Some(client) = memory_client_opt.clone() {
-                            let skill = skill_id.to_string();
-                            let content = serde_json::to_string_pretty(&serde_json::Value::Object(
-                                state_snapshot,
-                            ))
-                            .unwrap_or_else(|_| "{}".to_string());
-                            let title = format!("{} periodic sync", skill);
-                            tokio::spawn(async move {
-                                if let Err(e) = client
-                                    .store_skill_sync(
-                                        &skill, "default", &title, &content, None, None, None,
-                                        None, None, None,
-                                    )
-                                    .await
-                                {
-                                    log::warn!("[memory] store_skill_sync failed: {e}");
-                                }
-                            });
-                        }
-                    }
-
                     result
                 }
                 "oauth/revoked" => {
