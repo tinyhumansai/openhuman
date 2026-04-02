@@ -41,6 +41,7 @@ impl LocalAiService {
                 gen_toks_per_sec: None,
             }),
             bootstrap_lock: tokio::sync::Mutex::new(()),
+            whisper_load_lock: tokio::sync::Mutex::new(()),
             last_memory_summary_at: parking_lot::Mutex::new(None),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
@@ -101,7 +102,11 @@ impl LocalAiService {
             return;
         }
 
-        if matches!(self.status.lock().state.as_str(), "ready") {
+        // Return early if already succeeded or previously degraded.
+        // "degraded" means a prior bootstrap attempt already failed; further
+        // automatic retries just spam Ollama pull requests.  An explicit retry
+        // (local_ai_download with force=true) resets to "idle" first.
+        if matches!(self.status.lock().state.as_str(), "ready" | "degraded") {
             return;
         }
 

@@ -25,6 +25,33 @@ impl LocalAiService {
             return Err("local ai is disabled".to_string());
         }
 
+        // Lazily load in-process whisper engine when enabled. Serialize load attempts
+        // so concurrent requests do not spawn duplicate heavy contexts.
+        if config.local_ai.whisper_in_process && !whisper_engine::is_loaded(&self.whisper) {
+            let _load_guard = self.whisper_load_lock.lock().await;
+            if !whisper_engine::is_loaded(&self.whisper) {
+                if let Ok(model_path) = resolve_stt_model_path(config) {
+                    let handle = self.whisper.clone();
+                    let model = std::path::PathBuf::from(model_path);
+                    debug!(
+                        "{LOG_PREFIX} whisper in-process enabled but unloaded; loading model lazily"
+                    );
+                    let load_result = tokio::task::spawn_blocking(move || {
+                        whisper_engine::load_engine(&handle, &model)
+                    })
+                    .await
+                    .map_err(|e| format!("whisper load task join error: {e}"))?;
+                    if let Err(e) = load_result {
+                        warn!("{LOG_PREFIX} lazy in-process whisper load failed: {e}");
+                    }
+                } else {
+                    debug!(
+                        "{LOG_PREFIX} lazy in-process load skipped: STT model path not resolved"
+                    );
+                }
+            }
+        }
+
         // Try in-process whisper engine first (offloaded to a blocking thread).
         if whisper_engine::is_loaded(&self.whisper) {
             debug!("{LOG_PREFIX} using in-process whisper engine for {audio_path}");

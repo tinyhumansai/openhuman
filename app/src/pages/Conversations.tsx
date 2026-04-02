@@ -138,6 +138,7 @@ const Conversations = () => {
   const [isLoadingBudget, setIsLoadingBudget] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textInputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -221,6 +222,30 @@ const Conversations = () => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
+
+  useEffect(() => {
+    const onDictationInsert = (event: Event) => {
+      const customEvent = event as CustomEvent<{ text?: string }>;
+      const text = customEvent.detail?.text?.trim();
+      if (!text) return;
+
+      customEvent.preventDefault();
+      setInputMode('text');
+      setInputValue(prev => {
+        const base = prev.trim();
+        if (!base) return text;
+        return `${base}${base.endsWith(' ') ? '' : ' '}${text}`;
+      });
+
+      window.requestAnimationFrame(() => {
+        textInputRef.current?.focus();
+      });
+    };
+
+    window.addEventListener('dictation://insert-text', onDictationInsert as EventListener);
+    return () =>
+      window.removeEventListener('dictation://insert-text', onDictationInsert as EventListener);
+  }, []);
 
   useEffect(() => {
     if (sendError && inputValue.length > 0) {
@@ -1312,6 +1337,7 @@ const Conversations = () => {
                   <span className="text-stone-500/50">{inlineCompletionSuffix}</span>
                 </div>
                 <textarea
+                  ref={textInputRef}
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
                   onKeyDown={handleInputKeyDown}

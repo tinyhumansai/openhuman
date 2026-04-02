@@ -127,7 +127,8 @@ const ScreenIntelligencePanel = () => {
   const startDisabled =
     isStartingSession ||
     isLoading ||
-    !status?.platform_supported ||
+    !status ||
+    !status.platform_supported ||
     status.session.active ||
     status.permissions.accessibility !== 'granted';
   const stopDisabled = isStoppingSession || !status?.session.active;
@@ -436,7 +437,7 @@ const ScreenIntelligencePanel = () => {
 
         <DebugSection />
 
-        {!status?.platform_supported && (
+        {status !== null && !status.platform_supported && (
           <div className="rounded-xl border border-amber-700/40 bg-amber-900/20 p-3 text-sm text-amber-200">
             Screen Intelligence V1 is currently supported on macOS only.
           </div>

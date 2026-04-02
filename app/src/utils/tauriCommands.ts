@@ -2175,3 +2175,50 @@ export async function openhumanVoiceTts(
     params: { text, output_path: outputPath },
   });
 }
+
+// --- Dictation Hotkey Commands ---
+
+/**
+ * Register (or re-register) the global dictation toggle hotkey.
+ * On press the Tauri shell emits `dictation://toggle` to all webviews.
+ * Desktop-only — silently no-ops in the browser.
+ */
+export async function registerDictationHotkey(shortcut: string): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[dictation] registerDictationHotkey: skipped — not running in Tauri');
+    return;
+  }
+  const normalizedShortcut = shortcut
+    .trim()
+    .replace(/\bCommandOrControl\b/gi, 'CmdOrCtrl')
+    .replace(/\bCommand\b/gi, 'Cmd')
+    .replace(/\bControl\b/gi, 'Ctrl')
+    .replace(/\bOption\b/gi, 'Alt');
+
+  console.debug(
+    '[dictation] registerDictationHotkey: shortcut=%s normalized=%s',
+    shortcut,
+    normalizedShortcut
+  );
+  try {
+    await invoke<void>('register_dictation_hotkey', { shortcut: normalizedShortcut });
+  } catch (err) {
+    console.warn('[dictation] registerDictationHotkey normalized registration failed', err);
+    throw err;
+  }
+  console.debug('[dictation] registerDictationHotkey: done');
+}
+
+/**
+ * Unregister the global dictation hotkey if one is active.
+ * Desktop-only — silently no-ops in the browser.
+ */
+export async function unregisterDictationHotkey(): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[dictation] unregisterDictationHotkey: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[dictation] unregisterDictationHotkey: invoking');
+  await invoke<void>('unregister_dictation_hotkey');
+  console.debug('[dictation] unregisterDictationHotkey: done');
+}
