@@ -45,9 +45,8 @@ fn persist_state_to_memory(
         return;
     };
     let skill = skill_id.to_string();
-    let content =
-        serde_json::to_string_pretty(&serde_json::Value::Object(state_snapshot))
-            .unwrap_or_else(|_| "{}".to_string());
+    let content = serde_json::to_string_pretty(&serde_json::Value::Object(state_snapshot))
+        .unwrap_or_else(|_| "{}".to_string());
     let title = format!("{} {}", skill, title_suffix);
     tokio::spawn(async move {
         log::debug!("[memory] store_skill_sync: title={title}");

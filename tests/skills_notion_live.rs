@@ -330,8 +330,7 @@ async fn notion_live_with_real_data() {
                         .unwrap_or_default();
                     eprintln!("  Documents in '{namespace}': {}", doc_array.len());
                     for doc in &doc_array {
-                        let title =
-                            doc.get("title").and_then(|t| t.as_str()).unwrap_or("?");
+                        let title = doc.get("title").and_then(|t| t.as_str()).unwrap_or("?");
                         let content_len = doc
                             .get("content")
                             .and_then(|c| c.as_str())
@@ -361,8 +360,13 @@ async fn notion_live_with_real_data() {
             }
         }
         Err(e) => {
-            eprintln!("  Could not create MemoryClient for workspace {}: {e}", workspace_dir.display());
-            eprintln!("  (Memory verification skipped — engine uses ~/.openhuman/workspace by default)");
+            eprintln!(
+                "  Could not create MemoryClient for workspace {}: {e}",
+                workspace_dir.display()
+            );
+            eprintln!(
+                "  (Memory verification skipped — engine uses ~/.openhuman/workspace by default)"
+            );
 
             // Try default location
             if let Ok(default_client) = openhuman_core::openhuman::memory::MemoryClient::new_local()

@@ -163,7 +163,10 @@ async fn sync_rpc_persists_to_memory() {
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default();
-    eprintln!("  Documents in '{namespace}' after sync: {}", after_docs.len());
+    eprintln!(
+        "  Documents in '{namespace}' after sync: {}",
+        after_docs.len()
+    );
 
     for doc in &after_docs {
         let title = doc.get("title").and_then(|t| t.as_str()).unwrap_or("?");
@@ -188,10 +191,7 @@ async fn sync_rpc_persists_to_memory() {
     eprintln!(
         "  Skill has published state: {} ({} keys)",
         has_published_state,
-        final_state
-            .as_ref()
-            .map(|s| s.state.len())
-            .unwrap_or(0)
+        final_state.as_ref().map(|s| s.state.len()).unwrap_or(0)
     );
 
     if has_published_state {
