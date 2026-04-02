@@ -1,14 +1,12 @@
-import { elementExists, waitForApp } from '../helpers/app-helpers';
+import { waitForApp } from '../helpers/app-helpers';
+import { hasAppChrome } from '../helpers/element-helpers';
 
 describe('Navigation', () => {
   before(async () => {
     await waitForApp();
   });
 
-  it('app has menu items in the menu bar', async () => {
-    // A running macOS app always has menu bar items
-    const hasMenuItems = await elementExists('elementType == 56');
-    // elementType 56 = XCUIElementTypeMenuBarItem
-    expect(hasMenuItems).toBe(true);
+  it('app has visible chrome (menu bar on macOS, window handle on Linux)', async () => {
+    expect(await hasAppChrome()).toBe(true);
   });
 });

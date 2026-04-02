@@ -77,6 +77,32 @@ pub(crate) struct OllamaEmbedResponse {
     pub embeddings: Vec<Vec<f32>>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct OllamaChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct OllamaChatRequest {
+    pub model: String,
+    pub messages: Vec<OllamaChatMessage>,
+    pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<OllamaGenerateOptions>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct OllamaChatResponse {
+    pub message: OllamaChatMessage,
+    #[allow(dead_code)]
+    pub done: Option<bool>,
+    pub prompt_eval_count: Option<u32>,
+    pub prompt_eval_duration: Option<u64>,
+    pub eval_count: Option<u32>,
+    pub eval_duration: Option<u64>,
+}
+
 pub(crate) fn ns_to_tps(tokens: f32, duration_ns: u64) -> Option<f32> {
     if duration_ns == 0 || tokens <= 0.0 {
         return None;

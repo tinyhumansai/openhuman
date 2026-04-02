@@ -7,24 +7,26 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 
-use super::capture::{capture_screen_image_ref_for_context, foreground_context, now_ms};
-use super::context::AppContext;
+use super::capture::now_ms;
 use super::helpers::{
     generate_suggestions, parse_vision_summary_output, persist_vision_summary,
     push_ephemeral_frame, push_ephemeral_vision_summary, truncate_tail, validate_input_action,
 };
 use super::limits::{MAX_CONTEXT_CHARS, MAX_SUGGESTION_CHARS};
-use super::permissions::{detect_permissions, permission_to_str};
-#[cfg(target_os = "macos")]
-use super::permissions::{
-    open_macos_privacy_pane, request_accessibility_access, request_screen_recording_access,
-};
 use super::types::{
     AccessibilityFeatures, AccessibilityStatus, AppContextInfo, AutocompleteCommitParams,
     AutocompleteCommitResult, AutocompleteSuggestParams, AutocompleteSuggestResult, CaptureFrame,
     CaptureImageRefResult, CaptureNowResult, CaptureTestResult, InputActionParams,
-    InputActionResult, PermissionKind, PermissionState, PermissionStatus, SessionStatus,
-    StartSessionParams, VisionFlushResult, VisionRecentResult, VisionSummary,
+    InputActionResult, SessionStatus, StartSessionParams, VisionFlushResult, VisionRecentResult,
+    VisionSummary,
+};
+use crate::openhuman::accessibility::{
+    capture_screen_image_ref_for_context, detect_permissions, foreground_context,
+    permission_to_str, AppContext, PermissionKind, PermissionState, PermissionStatus,
+};
+#[cfg(target_os = "macos")]
+use crate::openhuman::accessibility::{
+    open_macos_privacy_pane, request_accessibility_access, request_screen_recording_access,
 };
 
 struct SessionRuntime {
@@ -251,6 +253,9 @@ impl AccessibilityEngine {
             config,
             denylist,
             is_context_blocked: blocked,
+            permission_check_process_path: std::env::current_exe()
+                .ok()
+                .map(|p| p.display().to_string()),
         }
     }
 
@@ -861,13 +866,33 @@ impl AccessibilityEngine {
             .image_ref
             .clone()
             .ok_or_else(|| "frame has no image payload".to_string())?;
+
+        // ── Compress & resize before sending to the LLM ─────────────────
+        tracing::trace!(
+            "[screen_intelligence] compress_screenshot: input image_ref len={}",
+            image_ref.len()
+        );
+        let compressed = super::image_processing::compress_screenshot(&image_ref, None, None)
+            .map_err(|e| format!("image compression failed: {e}"))?;
+        tracing::trace!(
+            "[screen_intelligence] compress_screenshot: {}x{} -> {}x{}, {} -> {} bytes; vision_image_ref len={}",
+            compressed.original_dimensions.0,
+            compressed.original_dimensions.1,
+            compressed.final_dimensions.0,
+            compressed.final_dimensions.1,
+            compressed.original_bytes,
+            compressed.compressed_bytes,
+            compressed.data_uri.len()
+        );
+        let vision_image_ref = compressed.data_uri;
+
         let config = Config::load_or_init()
             .await
             .map_err(|e| format!("failed to load config: {e}"))?;
         let service = local_ai::global(&config);
         let prompt = "Analyze this UI screenshot. Return strict JSON with keys: ui_state, key_text, actionable_notes, confidence (0..1). Keep actionable_notes concise.";
         let raw = service
-            .vision_prompt(&config, prompt, &[image_ref], Some(180))
+            .vision_prompt(&config, prompt, &[vision_image_ref], Some(180))
             .await?;
         Ok(parse_vision_summary_output(frame, &raw))
     }

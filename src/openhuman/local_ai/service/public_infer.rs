@@ -120,7 +120,114 @@ impl LocalAiService {
         Ok(sanitize_inline_completion(&raw))
     }
 
-    async fn inference(
+    /// Multi-turn chat completion via Ollama /api/chat.
+    /// Messages are `[{role: "user"|"assistant"|"system", content: "..."}]`.
+    /// Returns the assistant reply string.
+    pub(crate) async fn chat_with_history(
+        &self,
+        config: &Config,
+        messages: Vec<crate::openhuman::local_ai::ollama_api::OllamaChatMessage>,
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        if !config.local_ai.enabled {
+            return Err("local ai is disabled".to_string());
+        }
+
+        if !matches!(self.status.lock().state.as_str(), "ready") {
+            self.bootstrap(config).await;
+        }
+
+        if messages.is_empty() {
+            return Err("messages must not be empty".to_string());
+        }
+
+        tracing::debug!(
+            message_count = messages.len(),
+            model = %crate::openhuman::local_ai::model_ids::effective_chat_model_id(config),
+            "[local_ai:chat] sending to ollama /api/chat"
+        );
+
+        let started = std::time::Instant::now();
+
+        let body = crate::openhuman::local_ai::ollama_api::OllamaChatRequest {
+            model: crate::openhuman::local_ai::model_ids::effective_chat_model_id(config),
+            messages,
+            stream: false,
+            options: Some(
+                crate::openhuman::local_ai::ollama_api::OllamaGenerateOptions {
+                    temperature: Some(config.default_temperature as f32),
+                    top_k: Some(40),
+                    top_p: Some(0.9),
+                    num_predict: max_tokens.map(|v| v as i32),
+                },
+            ),
+        };
+
+        let response = self
+            .http
+            .post(format!(
+                "{}/api/chat",
+                crate::openhuman::local_ai::ollama_api::OLLAMA_BASE_URL
+            ))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("ollama chat request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let detail = body.trim();
+            return Err(format!(
+                "ollama chat failed with status {}{}",
+                status,
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {detail}")
+                }
+            ));
+        }
+
+        let payload: crate::openhuman::local_ai::ollama_api::OllamaChatResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("ollama chat response parse failed: {e}"))?;
+
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        let prompt_tps = payload
+            .prompt_eval_count
+            .zip(payload.prompt_eval_duration)
+            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
+        let gen_tps = payload
+            .eval_count
+            .zip(payload.eval_duration)
+            .and_then(|(count, dur_ns)| ns_to_tps(count as f32, dur_ns));
+
+        {
+            let mut status = self.status.lock();
+            status.state = "ready".to_string();
+            status.last_latency_ms = Some(elapsed_ms);
+            status.prompt_toks_per_sec = prompt_tps;
+            status.gen_toks_per_sec = gen_tps;
+            status.warning = None;
+        }
+
+        tracing::debug!(
+            elapsed_ms,
+            reply_len = payload.message.content.len(),
+            "[local_ai:chat] ollama /api/chat done"
+        );
+
+        let reply = payload.message.content.trim().to_string();
+        if reply.is_empty() {
+            Err("ollama returned empty reply".to_string())
+        } else {
+            Ok(reply)
+        }
+    }
+
+    pub(crate) async fn inference(
         &self,
         config: &Config,
         system: &str,

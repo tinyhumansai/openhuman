@@ -6,7 +6,6 @@ import authReducer, {
   setAnalyticsForUser,
   setEncryptionKeyForUser,
   setOnboardedForUser,
-  setOnboardingDeferredForUser,
   setOnboardingTasksForUser,
   setPrimaryWalletAddressForUser,
   setToken,
@@ -101,7 +100,6 @@ describe('authSlice', () => {
     store.dispatch(setAnalyticsForUser({ userId: 'u1', enabled: true }));
     store.dispatch(setEncryptionKeyForUser({ userId: 'u1', key: 'aes-hex' }));
     store.dispatch(setPrimaryWalletAddressForUser({ userId: 'u1', address: '0xabc' }));
-    store.dispatch(setOnboardingDeferredForUser({ userId: 'u1', deferred: true }));
     store.dispatch(
       setOnboardingTasksForUser({
         userId: 'u1',
@@ -134,6 +132,5 @@ describe('authSlice', () => {
     expect(after.isAnalyticsEnabledByUser).toEqual({});
     expect(after.encryptionKeyByUser).toEqual({});
     expect(after.primaryWalletAddressByUser).toEqual({});
-    expect(after.onboardingDeferredByUser).toEqual({});
   });
 });

@@ -27,6 +27,18 @@
 
 > **Early Beta** — Under active development. Expect rough edges.
 
+To install or get started, either download from the website over at [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman) or run
+
+```
+# For MacOS/Linux
+curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
+
+# For Windows
+irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
+```
+
+# What is OpenHuman?
+
 OpenHuman is an open-source agentic assistant that is designed to integrate with you in your daily life. Here's what makes OpenHuman special:
 
 - **One subscription, many providers** — One assistant wired to **skills** and backend models so you are not juggling a separate subscription stack for every integration surface.
@@ -45,34 +57,6 @@ OpenHuman is an open-source agentic assistant that is designed to integrate with
 
 Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Contributor orientation: [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
-# Download
-
-> **Early Beta** — Under active development. Expect rough edges.
-
-You can download the latest desktop build from the website at [tinyhuman.ai/openhuman](https://tinyhuman.ai/openhuman). You can also grab it from the [latest GitHub release](https://github.com/tinyhumansai/openhuman/releases/latest), which includes all current artifacts (`.dmg`, `.deb`, `.AppImage`, `.app.tar.gz`, and more).
-
-If you need an older version, browse [all releases](https://github.com/tinyhumansai/openhuman/releases).
-
-If you want to build from source, see [`docs/BUILDING.md`](docs/BUILDING.md).
-
-Install with one command:
-
-```
-curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
-```
-
-On Windows, use PowerShell:
-`irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex`
-
-What setup does:
-
-- Resolves the latest stable release for your OS/arch
-- Verifies release digest when available
-- Installs locally without requiring system-wide admin rights by default
-- macOS: installs `OpenHuman.app` in `~/Applications`
-- Linux: installs `openhuman` AppImage in `~/.local/bin/openhuman` and creates a desktop entry
-- Windows: installs from latest release MSI/EXE in per-user mode where supported
-
 # Under the hood (Architecture)
 
 OpenHuman is a **desktop monorepo**: **Rust** owns **business logic and execution**; the **UI** owns **interaction, layout, and OS integration**.
@@ -87,7 +71,7 @@ OpenHuman is a **desktop monorepo**: **Rust** owns **business logic and executio
 
 **Read more:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · Frontend tree: [`docs/src/README.md`](docs/src/README.md) · Tauri commands: [`docs/src-tauri/README.md`](docs/src-tauri/README.md)
 
-# Star us on GitHub
+<!-- # Star us on GitHub
 
 _Building toward AGI and artificial consciousness? Star the repo and help others find the path._
 
@@ -99,7 +83,7 @@ _Building toward AGI and artificial consciousness? Star the repo and help others
      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=tinyhumansai/openhuman&type=date&legend=top-left" />
     </picture>
   </a>
-</p>
+</p> -->
 
 # Contributors Hall of Fame
 

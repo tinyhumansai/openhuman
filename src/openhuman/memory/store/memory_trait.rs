@@ -1,13 +1,24 @@
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 
 use crate::openhuman::memory::store::types::{NamespaceDocumentInput, GLOBAL_NAMESPACE};
+use crate::openhuman::memory::store::unified::fts5;
 use crate::openhuman::memory::traits::{Memory, MemoryCategory, MemoryEntry};
 use anyhow::Context;
 
 use super::unified::UnifiedMemory;
+
+/// Convert a UNIX timestamp (f64) to RFC3339 string, falling back to the raw number.
+fn timestamp_to_rfc3339(ts: f64) -> String {
+    let secs = ts.trunc() as i64;
+    let nanos = ((ts.fract()) * 1_000_000_000.0).round() as u32;
+    Utc.timestamp_opt(secs, nanos.min(999_999_999))
+        .single()
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| format!("{ts}"))
+}
 
 fn memory_category_from_stored(raw: &str) -> MemoryCategory {
     match raw {
@@ -53,13 +64,13 @@ impl Memory for UnifiedMemory {
         &self,
         query: &str,
         limit: usize,
-        _session_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>> {
         let ranked = self
             .query_namespace_ranked(GLOBAL_NAMESPACE, query, limit as u32)
             .await
             .map_err(anyhow::Error::msg)?;
-        let out = ranked
+        let mut out: Vec<MemoryEntry> = ranked
             .into_iter()
             .enumerate()
             .map(|(idx, r)| MemoryEntry {
@@ -73,6 +84,68 @@ impl Memory for UnifiedMemory {
                 score: Some(r.score),
             })
             .collect();
+
+        // When session_id is provided, also search episodic entries for that session.
+        if let Some(sid) = session_id {
+            let episodic_entries = match fts5::episodic_session_entries(&self.conn, sid) {
+                Ok(entries) => {
+                    tracing::debug!(
+                        "[memory-trait] loaded {} episodic entries for session={sid}",
+                        entries.len()
+                    );
+                    entries
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[memory-trait] failed to load episodic entries for session={sid}: {e}"
+                    );
+                    Vec::new()
+                }
+            };
+            let query_lower = query.to_lowercase();
+            let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+            tracing::debug!(
+                "[memory-trait] filtering episodic entries with terms: {:?}",
+                query_terms
+            );
+            for entry in episodic_entries {
+                let content_lower = entry.content.to_lowercase();
+                let matched_count = query_terms
+                    .iter()
+                    .filter(|term| content_lower.contains(*term))
+                    .count();
+                if matched_count == 0 {
+                    continue;
+                }
+                // Score based on proportion of query terms matched.
+                let match_score = matched_count as f64 / query_terms.len().max(1) as f64;
+                let ts_rfc3339 = timestamp_to_rfc3339(entry.timestamp);
+                tracing::debug!(
+                    "[memory-trait] episodic match: id={:?} session={} score={match_score:.2}",
+                    entry.id,
+                    entry.session_id,
+                );
+                out.push(MemoryEntry {
+                    id: format!("episodic:{}", entry.id.unwrap_or(0)),
+                    key: format!("{}:{}", entry.session_id, entry.role),
+                    content: entry.content,
+                    namespace: Some(GLOBAL_NAMESPACE.to_string()),
+                    category: MemoryCategory::Conversation,
+                    timestamp: ts_rfc3339,
+                    session_id: Some(entry.session_id),
+                    score: Some(match_score),
+                });
+            }
+            // Re-sort by score descending and truncate.
+            out.sort_by(|a, b| {
+                b.score
+                    .unwrap_or(0.0)
+                    .partial_cmp(&a.score.unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            out.truncate(limit);
+        }
+
         Ok(out)
     }
 

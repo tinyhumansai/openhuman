@@ -18,10 +18,30 @@ use serde_json::{json, Value};
 
 use openhuman_core::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
 
+/// Truncate a string to at most `max_bytes` without panicking on multi-byte
+/// char boundaries.  Falls back to the nearest char boundary at or before
+/// `max_bytes`.
+fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn try_find_skills_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("SKILL_DEBUG_DIR") {
         let p = PathBuf::from(&dir);
         return if p.exists() { Some(p) } else { None };
+    }
+    if let Ok(dir) = std::env::var("SKILLS_LOCAL_DIR") {
+        let p = PathBuf::from(&dir);
+        if p.exists() {
+            return Some(p);
+        }
     }
     let cwd = std::env::current_dir().expect("cwd");
     for candidate in &[
@@ -121,7 +141,7 @@ async fn notion_live_with_real_data() {
             eprintln!("  GET /settings → HTTP {status}");
             if status.is_success() {
                 eprintln!("  ✓ Backend reachable, JWT valid");
-                eprintln!("  Body: {}...", &body[..body.len().min(200)]);
+                eprintln!("  Body: {}...", truncate_str(&body, 200));
             } else if status.as_u16() == 502 {
                 eprintln!("  ✗ Backend DOWN (502 Bad Gateway)");
                 eprintln!("  The staging server is unreachable. OAuth proxy will fail.");
@@ -154,11 +174,11 @@ async fn notion_live_with_real_data() {
             eprintln!("  HTTP {status}");
             if status.is_success() {
                 eprintln!("  ✓ Notion API accessible via proxy");
-                eprintln!("  Body: {}...", &body[..body.len().min(300)]);
+                eprintln!("  Body: {}...", truncate_str(&body, 300));
             } else {
                 eprintln!(
                     "  ✗ Proxy returned {status}: {}...",
-                    &body[..body.len().min(200)]
+                    truncate_str(&body, 200)
                 );
             }
         }
@@ -258,7 +278,7 @@ async fn notion_live_with_real_data() {
             for content in &result.content {
                 match content {
                     openhuman_core::openhuman::skills::types::ToolContent::Text { text } => {
-                        eprintln!("  Result: {}...", &text[..text.len().min(500)]);
+                        eprintln!("  Result: {}...", truncate_str(text, 500));
                     }
                     _ => {}
                 }
@@ -282,7 +302,7 @@ async fn notion_live_with_real_data() {
             for content in &result.content {
                 match content {
                     openhuman_core::openhuman::skills::types::ToolContent::Text { text } => {
-                        eprintln!("  Result: {}...", &text[..text.len().min(500)]);
+                        eprintln!("  Result: {}...", truncate_str(text, 500));
                     }
                     _ => {}
                 }
@@ -292,8 +312,77 @@ async fn notion_live_with_real_data() {
         Err(_) => eprintln!("  ✗ TIMED OUT"),
     }
 
-    // ── Step 7: Final state ──
-    eprintln!("\n--- Step 7: Final Skill State ---");
+    // ── Step 7: Sync + Memory Persistence ──
+    eprintln!("\n--- Step 7: Sync + Memory Verification ---");
+    eprintln!("  Calling skill/sync to trigger onSync() + memory persistence...");
+
+    let sync_result = tokio::time::timeout(
+        Duration::from_secs(60),
+        engine.rpc("notion", "skill/sync", json!({})),
+    )
+    .await;
+
+    match &sync_result {
+        Ok(Ok(val)) => eprintln!("  skill/sync returned: {val}"),
+        Ok(Err(e)) => eprintln!("  skill/sync error: {e}"),
+        Err(_) => eprintln!("  skill/sync TIMED OUT (60s)"),
+    }
+
+    // Wait for fire-and-forget memory persistence to complete
+    eprintln!("  Waiting 3s for async memory persistence...");
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Verify memory documents were created.
+    // The RuntimeEngine initializes its MemoryClient via new_local() which
+    // uses ~/.openhuman/workspace, so we check there.
+    eprintln!("  Checking local memory store (~/.openhuman/workspace)...");
+    match openhuman_core::openhuman::memory::MemoryClient::new_local() {
+        Ok(memory_client) => {
+            let namespace = "skill-notion";
+            match memory_client.list_documents(Some(namespace)).await {
+                Ok(docs) => {
+                    let doc_array = docs
+                        .get("documents")
+                        .and_then(|d| d.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    eprintln!("  Documents in '{namespace}': {}", doc_array.len());
+                    for doc in &doc_array {
+                        let title = doc.get("title").and_then(|t| t.as_str()).unwrap_or("?");
+                        let content_len = doc
+                            .get("content")
+                            .and_then(|c| c.as_str())
+                            .map(|c| c.len())
+                            .unwrap_or(0);
+                        eprintln!("    - {title} ({content_len} bytes)");
+                    }
+                    if doc_array.is_empty() {
+                        eprintln!("  WARNING: No memory documents found after sync");
+                        eprintln!("  This could mean:");
+                        eprintln!("    1. onSync() didn't publish any state via state.set()");
+                        eprintln!("    2. The memory client wasn't wired into the engine");
+                        eprintln!("    3. store_skill_sync failed silently");
+                    } else {
+                        eprintln!("  PASS: Memory documents created after sync");
+                    }
+                }
+                Err(e) => eprintln!("  Failed to list documents: {e}"),
+            }
+
+            match memory_client.list_namespaces().await {
+                Ok(namespaces) => {
+                    eprintln!("  All namespaces: {:?}", namespaces);
+                }
+                Err(e) => eprintln!("  Failed to list namespaces: {e}"),
+            }
+        }
+        Err(e) => {
+            eprintln!("  Could not create MemoryClient: {e}");
+        }
+    }
+
+    // ── Step 8: Final state ──
+    eprintln!("\n--- Step 8: Final Skill State ---");
     if let Some(snap) = engine.get_skill_state("notion") {
         eprintln!("  Status: {:?}", snap.status);
         for (k, v) in &snap.state {

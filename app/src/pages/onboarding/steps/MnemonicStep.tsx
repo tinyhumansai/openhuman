@@ -17,9 +17,10 @@ const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 interface MnemonicStepProps {
   onComplete: () => void | Promise<void>;
+  onBack?: () => void;
 }
 
-const MnemonicStep = ({ onComplete }: MnemonicStepProps) => {
+const MnemonicStep = ({ onComplete, onBack: _onBack }: MnemonicStepProps) => {
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.user.user);
   const [mode, setMode] = useState<'generate' | 'import'>('generate');
@@ -183,10 +184,11 @@ const MnemonicStep = ({ onComplete }: MnemonicStepProps) => {
       {mode === 'generate' ? (
         <>
           <div className="text-center mb-4">
-            <h1 className="text-xl font-bold mb-2">Your Recovery Phrase</h1>
+            <h1 className="text-xl font-bold mb-2">Lastly, your Recovery Phrase</h1>
             <p className="opacity-70 text-sm">
               Write down these {MNEMONIC_GENERATE_WORD_COUNT} words in order and store them
-              somewhere safe. This phrase encrypts your data and can never be recovered if lost.
+              somewhere safe. This phrase encrypts your data and can never be recovered if lost. You
+              can always back up later.
             </p>
           </div>
 
@@ -324,12 +326,12 @@ const MnemonicStep = ({ onComplete }: MnemonicStepProps) => {
       <button
         onClick={handleContinue}
         disabled={!canContinue || loading}
-        className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60 disabled:cursor-not-allowed">
+        className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
         {loading
           ? 'Securing Your Data...'
           : mode === 'import'
             ? 'Import & Finish Setup'
-            : 'Finish Setup'}
+            : "I'm Ready! Let's Go!"}
       </button>
     </div>
   );

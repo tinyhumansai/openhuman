@@ -19,8 +19,6 @@ export interface AuthState {
   encryptionKeyByUser: Record<string, string>;
   /** Primary EVM wallet address (0x...) derived from mnemonic, per user id */
   primaryWalletAddressByUser: Record<string, string>;
-  /** Timestamp when user deferred onboarding (value = epoch ms), per user id */
-  onboardingDeferredByUser: Record<string, number>;
 }
 
 export interface UserOnboardingTasks {
@@ -41,7 +39,6 @@ const initialState: AuthState = {
   isAnalyticsEnabledByUser: {},
   encryptionKeyByUser: {},
   primaryWalletAddressByUser: {},
-  onboardingDeferredByUser: {},
 };
 
 const authSlice = createSlice({
@@ -62,7 +59,6 @@ const authSlice = createSlice({
       state.isAnalyticsEnabledByUser = {};
       state.encryptionKeyByUser = {};
       state.primaryWalletAddressByUser = {};
-      state.onboardingDeferredByUser = {};
     },
     setOnboardedForUser: (state, action: PayloadAction<{ userId: string; value: boolean }>) => {
       const { userId, value } = action.payload;
@@ -94,17 +90,6 @@ const authSlice = createSlice({
       const { userId, address } = action.payload;
       state.primaryWalletAddressByUser[userId] = address;
     },
-    setOnboardingDeferredForUser: (
-      state,
-      action: PayloadAction<{ userId: string; deferred: boolean }>
-    ) => {
-      const { userId, deferred } = action.payload;
-      if (deferred) {
-        state.onboardingDeferredByUser[userId] = Date.now();
-      } else {
-        delete state.onboardingDeferredByUser[userId];
-      }
-    },
   },
 });
 
@@ -123,6 +108,5 @@ export const {
   setOnboardingTasksForUser,
   setEncryptionKeyForUser,
   setPrimaryWalletAddressForUser,
-  setOnboardingDeferredForUser,
 } = authSlice.actions;
 export default authSlice.reducer;

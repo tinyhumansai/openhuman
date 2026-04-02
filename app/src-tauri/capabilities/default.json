@@ -2,14 +2,21 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window (desktop only)",
-  "platforms": ["linux", "macOS", "windows"],
-  "windows": ["main"],
+  "platforms": [
+    "linux",
+    "macOS",
+    "windows"
+  ],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "core:window:allow-unminimize",
     "deep-link:default",
-    "opener:default"
+    "opener:default",
+    "allow-core-process"
   ]
 }

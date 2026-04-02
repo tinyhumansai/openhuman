@@ -127,18 +127,27 @@ yarn mock:api
 curl -s http://127.0.0.1:18473/__admin/health
 ```
 
-### E2E tests (WDIO + Appium mac2)
+### E2E tests (WDIO — dual platform)
+
+Full guide: [`docs/E2E-TESTING.md`](docs/E2E-TESTING.md).
+
+Two automation backends:
+- **Linux (CI default)**: `tauri-driver` (WebDriver, port 4444) — drives the debug binary directly
+- **macOS (local dev)**: Appium Mac2 (XCUITest, port 4723) — drives the `.app` bundle
 
 - **Where specs live**: `app/test/e2e/specs/*.spec.ts`
 - **Shared harness**:
-  - Helpers: `app/test/e2e/helpers/*`
+  - Platform detection: `app/test/e2e/helpers/platform.ts`
+  - Element helpers: `app/test/e2e/helpers/element-helpers.ts`
+  - Deep link helpers: `app/test/e2e/helpers/deep-link-helpers.ts`
+  - App lifecycle: `app/test/e2e/helpers/app-helpers.ts`
   - Mock backend: `app/test/e2e/mock-server.ts`
-  - WDIO config: `app/test/wdio.conf.ts`
+  - WDIO config: `app/test/wdio.conf.ts` (auto-detects platform)
 
 - **Build + run**:
 
 ```bash
-# Build desktop app bundle + stage core sidecar
+# Build app + stage core sidecar (detects macOS vs Linux automatically)
 yarn test:e2e:build
 
 # Run one spec
@@ -146,13 +155,17 @@ bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
 
 # Run all flow specs
 yarn test:e2e:all:flows
+
+# Docker on macOS (run Linux E2E locally)
+docker compose -f e2e/docker-compose.yml run --rm e2e
 ```
 
 - **Authoring rules**:
   - Ensure each spec is runnable in isolation.
-  - Use helper waits (`waitForAppReady`, `waitForWebView`, etc.) instead of ad hoc long sleeps.
+  - Use helpers from `element-helpers.ts` — never use raw `XCUIElementType*` selectors in specs.
+  - Use `clickNativeButton()`, `hasAppChrome()`, `waitForWebView()`, `clickToggle()` for cross-platform element interaction.
   - Assert both UI outcomes and backend/mock effects when relevant.
-  - Add failure diagnostics (request logs, accessibility tree dump) for faster debugging by agents.
+  - Add failure diagnostics (request logs, `dumpAccessibilityTree()`) for faster debugging by agents.
 
 ### Deterministic core-sidecar reset
 
@@ -321,6 +334,8 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 4. **UI in the Tauri app** — Build **React** screens, state, and **`core_rpc_relay` / `coreRpcClient`** usage in `app/`; keep **business rules** in the core, not duplicated in the shell.
 5. **App unit tests** — Cover components, hooks, and clients with **Vitest** (`yarn test` / `yarn test:unit` in `app/`).
 6. **App E2E** — Add **desktop E2E** specs where the feature is user-visible (`yarn test:e2e*`, isolated workspace — see [Testing Guide (Unit + E2E)](#testing-guide-unit--e2e)) so the full stack (UI → Tauri → sidecar) behaves as intended.
+
+**Capability catalog** — When a change adds, removes, renames, relocates, or materially changes a user-facing feature, update **`src/openhuman/about_app/`** in the same work so the runtime capability catalog remains the source of truth for what the app can do.
 
 **Debug logging (throughout)** — Add **lots of development-oriented logging** as you build, not as an afterthought. In **Rust**, use `log` / `tracing` at **`debug`** or **`trace`** on RPC entry and exit, error paths, state transitions, and any branch that is hard to infer from tests alone. In **`app/`**, follow existing patterns (e.g. the **`debug`** npm package with a **namespace** per area) plus **dev-only** detail where useful. Prefer **grep-friendly prefixes** (`[feature]`, domain name, or JSON-RPC method) so terminal output from **sidecar**, **Tauri**, and **WebView** can be correlated during `yarn dev` / `tauri dev`. **Never** log secrets, raw JWTs, API keys, or full PII—redact or omit.
 

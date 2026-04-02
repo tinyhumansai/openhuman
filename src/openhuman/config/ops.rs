@@ -432,6 +432,24 @@ pub async fn workspace_onboarding_flag_set(
     ))
 }
 
+pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
+    let config = load_config_with_timeout().await?;
+    Ok(RpcOutcome::single_log(
+        config.onboarding_completed,
+        "onboarding_completed read from config",
+    ))
+}
+
+pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, String> {
+    let mut config = load_config_with_timeout().await?;
+    config.onboarding_completed = value;
+    config.save().await.map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(
+        config.onboarding_completed,
+        "onboarding_completed saved to config",
+    ))
+}
+
 pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
     let running = crate::openhuman::service::mock::mock_agent_running().unwrap_or(true);
     log::info!("[config] agent_server_status requested: running={running}");

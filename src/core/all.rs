@@ -38,6 +38,7 @@ fn registry() -> &'static [RegisteredController] {
 
 fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
+    controllers.extend(crate::openhuman::about_app::all_about_app_registered_controllers());
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
@@ -65,11 +66,13 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
     controllers.extend(crate::openhuman::billing::all_billing_registered_controllers());
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
+    controllers.extend(crate::openhuman::voice::all_voice_registered_controllers());
     controllers
 }
 
 fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
+    schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
@@ -95,6 +98,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
+    schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
     schemas
 }
 
@@ -113,6 +117,7 @@ pub fn rpc_method_name(schema: &ControllerSchema) -> String {
 
 pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     match namespace {
+        "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
         "auth" => Some("Manage app session and provider credentials."),
         "autocomplete" => Some("Inline autocomplete engine controls and style settings."),
         "channels" => Some("Channel definitions, connections, and lifecycle management."),
@@ -131,6 +136,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "memory" => Some("Document storage, vector search, key-value store, and knowledge graph."),
         "billing" => Some("Subscription plan, payment links, and credit top-up via the backend."),
         "team" => Some("Team member management, invites, and role changes via the backend."),
+        "voice" => Some("Speech-to-text and text-to-speech using local models."),
         _ => None,
     }
 }

@@ -171,7 +171,20 @@ impl RuntimeEngine {
 
     /// Get the skills source directory.
     fn get_skills_source_dir(&self) -> Result<PathBuf, String> {
-        // 1. Explicitly set source dir (highest priority)
+        // 0. SKILLS_LOCAL_DIR env var (highest priority — explicit local dev override)
+        if let Ok(local_dir) = std::env::var("SKILLS_LOCAL_DIR") {
+            let local_path = PathBuf::from(&local_dir);
+            if local_path.exists() {
+                log::info!("[runtime] Using SKILLS_LOCAL_DIR: {:?}", local_path);
+                return Ok(local_path);
+            }
+            log::warn!(
+                "[runtime] SKILLS_LOCAL_DIR set to {:?} but directory does not exist",
+                local_path
+            );
+        }
+
+        // 1. Explicitly set source dir (programmatic override)
         if let Some(dir) = self.skills_source_dir.read().as_ref() {
             log::info!("[runtime] Using explicit skills source dir: {:?}", dir);
             return Ok(dir.clone());

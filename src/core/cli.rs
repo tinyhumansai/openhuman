@@ -38,6 +38,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
 
 fn run_server_command(args: &[String]) -> Result<()> {
     let mut port: Option<u16> = None;
+    let mut host: Option<String> = None;
     let mut socketio_enabled = true;
     let mut verbose = false;
     let mut i = 0usize;
@@ -53,6 +54,14 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 );
                 i += 2;
             }
+            "--host" => {
+                host = Some(
+                    args.get(i + 1)
+                        .ok_or_else(|| anyhow::anyhow!("missing value for --host"))?
+                        .clone(),
+                );
+                i += 2;
+            }
             "--jsonrpc-only" => {
                 socketio_enabled = false;
                 i += 1;
@@ -62,8 +71,11 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 i += 1;
             }
             "-h" | "--help" => {
-                println!("Usage: openhuman run [--port <u16>] [--jsonrpc-only] [-v|--verbose]");
+                println!("Usage: openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [-v|--verbose]");
                 println!();
+                println!(
+                    "  --host <addr>    Bind address (default: 127.0.0.1 or OPENHUMAN_CORE_HOST)"
+                );
                 println!(
                     "  --port <u16>     Listen address port (default: 7788 or OPENHUMAN_CORE_PORT)"
                 );
@@ -82,7 +94,9 @@ fn run_server_command(args: &[String]) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(async { crate::core::jsonrpc::run_server(port, socketio_enabled).await })?;
+    rt.block_on(async {
+        crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await
+    })?;
     Ok(())
 }
 
@@ -327,7 +341,7 @@ fn grouped_schemas() -> BTreeMap<String, Vec<ControllerSchema>> {
 fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("OpenHuman core CLI\n");
     println!("Usage:");
-    println!("  openhuman run [--port <u16>] [--jsonrpc-only] [--verbose]");
+    println!("  openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--verbose]");
     println!("  openhuman repl [--verbose] [--eval '<cmd>'] [--batch]");
     println!("  openhuman call --method <name> [--params '<json>']");
     println!("  openhuman <namespace> <function> [--param value ...]\n");

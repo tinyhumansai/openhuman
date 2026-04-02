@@ -6,7 +6,7 @@ import {
   getAuthState,
   getSessionToken,
   isTauri,
-  openhumanWorkspaceOnboardingFlagSet,
+  setOnboardingCompleted,
 } from '../utils/tauriCommands';
 
 const AUTH_BOOTSTRAP_TIMEOUT_MS = 5000;
@@ -56,9 +56,9 @@ const UserProvider = ({ children }: { children: React.ReactNode }) => {
         } else if (!authState.is_authenticated && token) {
           await dispatch(clearToken());
           try {
-            await openhumanWorkspaceOnboardingFlagSet(false);
+            await setOnboardingCompleted(false);
           } catch (err) {
-            console.warn('[auth] Failed to clear workspace onboarding flag:', err);
+            console.warn('[auth] Failed to clear onboarding_completed in config:', err);
           }
         }
       } catch (err) {

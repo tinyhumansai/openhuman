@@ -416,11 +416,60 @@ fn core_port() -> u16 {
         .unwrap_or(7788)
 }
 
-pub async fn run_server(port: Option<u16>, socketio_enabled: bool) -> anyhow::Result<()> {
+fn core_host() -> String {
+    std::env::var("OPENHUMAN_CORE_HOST")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".to_string())
+}
+
+pub async fn run_server(
+    host: Option<&str>,
+    port: Option<u16>,
+    socketio_enabled: bool,
+) -> anyhow::Result<()> {
     let _ = all::all_registered_controllers();
-    let port = port.unwrap_or_else(core_port);
-    let bind_addr = format!("127.0.0.1:{port}");
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+
+    let (resolved_port, port_source) = match port {
+        Some(p) => (p, "CLI --port"),
+        None => (
+            core_port(),
+            if std::env::var("OPENHUMAN_CORE_PORT").is_ok() {
+                "env OPENHUMAN_CORE_PORT"
+            } else {
+                "default"
+            },
+        ),
+    };
+    let (resolved_host, host_source) = match host {
+        Some(h) => (h.to_string(), "CLI --host"),
+        None => (
+            core_host(),
+            if std::env::var("OPENHUMAN_CORE_HOST")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .is_some()
+            {
+                "env OPENHUMAN_CORE_HOST"
+            } else {
+                "default"
+            },
+        ),
+    };
+
+    log::debug!(
+        "[core] Bind resolution: host={resolved_host} (from {host_source}), port={resolved_port} (from {port_source})"
+    );
+
+    let port = resolved_port;
+    let host = resolved_host;
+    let bind_addr = format!("{host}:{port}");
+    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
+        .await
+        .map_err(|e| {
+            log::error!("[core] Failed to bind to {bind_addr}: {e}");
+            e
+        })?;
 
     let app = build_core_http_router(socketio_enabled);
 

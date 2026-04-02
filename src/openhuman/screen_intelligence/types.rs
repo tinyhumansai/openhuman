@@ -1,29 +1,8 @@
 use crate::openhuman::config::ScreenIntelligenceConfig;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionState {
-    Granted,
-    Denied,
-    Unknown,
-    Unsupported,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PermissionStatus {
-    pub screen_recording: PermissionState,
-    pub accessibility: PermissionState,
-    pub input_monitoring: PermissionState,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum PermissionKind {
-    ScreenRecording,
-    Accessibility,
-    InputMonitoring,
-}
+// Permission types are defined in the accessibility middleware; re-export for compatibility.
+pub use crate::openhuman::accessibility::{PermissionKind, PermissionState, PermissionStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessibilityFeatures {
@@ -66,6 +45,10 @@ pub struct AccessibilityStatus {
     pub config: ScreenIntelligenceConfig,
     pub denylist: Vec<String>,
     pub is_context_blocked: bool,
+    /// Absolute path of this core process. macOS privacy (TCC) is per executable; the UI should
+    /// show this so users enable the same binary in System Settings (see GH #133).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_check_process_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -10,6 +10,7 @@ impl LocalAiService {
         let vision_model_id = model_ids::effective_vision_model_id(config);
         let embedding_model_id = model_ids::effective_embedding_model_id(config);
         Self {
+            whisper: super::whisper_engine::new_handle(),
             status: parking_lot::Mutex::new(LocalAiStatus {
                 state: "idle".to_string(),
                 model_id: model_id.clone(),
@@ -41,7 +42,13 @@ impl LocalAiService {
             }),
             bootstrap_lock: tokio::sync::Mutex::new(()),
             last_memory_summary_at: parking_lot::Mutex::new(None),
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|e| {
+                    log::warn!("[local_ai] reqwest client build failed, falling back to default client: {e}");
+                    reqwest::Client::new()
+                }),
         }
     }
 
@@ -156,6 +163,35 @@ impl LocalAiService {
             status.error_category = Some("download".to_string());
             status.warning = Some(format_degraded_warning(&err, config));
             return;
+        }
+
+        // Attempt to load whisper model in-process if configured (blocking I/O).
+        if config.local_ai.whisper_in_process {
+            if let Ok(model_path) =
+                crate::openhuman::local_ai::paths::resolve_stt_model_path(config)
+            {
+                let model = std::path::PathBuf::from(&model_path);
+                let handle = self.whisper.clone();
+                let load_result = tokio::task::spawn_blocking(move || {
+                    super::whisper_engine::load_engine(&handle, &model)
+                })
+                .await;
+                match load_result {
+                    Ok(Ok(())) => {
+                        log::info!("[local_ai] whisper engine loaded in-process: {model_path}");
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!(
+                            "[local_ai] whisper in-process load failed, will fall back to CLI: {e}"
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("[local_ai] whisper load task panicked: {e}");
+                    }
+                }
+            } else {
+                log::debug!("[local_ai] STT model not found, whisper in-process not loaded");
+            }
         }
 
         let mut status = self.status.lock();

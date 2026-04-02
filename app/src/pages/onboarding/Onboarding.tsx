@@ -1,10 +1,11 @@
 import { useState } from 'react';
 
 import ProgressIndicator from '../../components/ProgressIndicator';
+import { useUser } from '../../hooks/useUser';
 import { userApi } from '../../services/api/userApi';
 import { setOnboardedForUser, setOnboardingTasksForUser } from '../../store/authSlice';
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { openhumanWorkspaceOnboardingFlagSet } from '../../utils/tauriCommands';
+import { useAppDispatch } from '../../store/hooks';
+import { setOnboardingCompleted } from '../../utils/tauriCommands';
 import LocalAIStep from './steps/LocalAIStep';
 import MnemonicStep from './steps/MnemonicStep';
 import ScreenPermissionsStep from './steps/ScreenPermissionsStep';
@@ -27,7 +28,7 @@ interface OnboardingDraft {
 
 const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   const dispatch = useAppDispatch();
-  const user = useAppSelector(state => state.user.user);
+  const { user } = useUser();
   const [currentStep, setCurrentStep] = useState(0);
   const [draft, setDraft] = useState<OnboardingDraft>({
     localModelConsentGiven: false,
@@ -36,11 +37,17 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
     enabledTools: [],
     connectedSources: [],
   });
-  const totalSteps = 7;
+  const totalSteps = 6;
 
   const handleNext = () => {
     if (currentStep < totalSteps - 1) {
       setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
     }
   };
 
@@ -82,18 +89,11 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       );
     }
 
-    // Notify backend
+    // Notify backend (best-effort — don't block onboarding completion)
     try {
       await userApi.onboardingComplete();
-    } catch (e) {
-      const msg =
-        e &&
-        typeof e === 'object' &&
-        'error' in e &&
-        typeof (e as { error: unknown }).error === 'string'
-          ? (e as { error: string }).error
-          : 'Failed to complete onboarding. Please try again.';
-      throw new Error(msg);
+    } catch {
+      console.warn('[onboarding] Failed to notify backend of onboarding completion');
     }
 
     // Advance to mnemonic step
@@ -101,16 +101,16 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   };
 
   const handleMnemonicComplete = async () => {
-    // Mark onboarded in Redux
+    // Mark onboarded in Redux (belt-and-suspenders alongside config)
     if (user?._id) {
       dispatch(setOnboardedForUser({ userId: user._id, value: true }));
     }
 
-    // Write workspace flag so the overlay won't show again
+    // Write onboarding_completed to core config (source of truth)
     try {
-      await openhumanWorkspaceOnboardingFlagSet(true);
+      await setOnboardingCompleted(true);
     } catch {
-      // Non-critical — Redux state is the primary gate
+      console.warn('[onboarding] Failed to persist onboarding_completed to core config');
     }
 
     onComplete?.();
@@ -121,15 +121,15 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       case 0:
         return <WelcomeStep onNext={handleNext} />;
       case 1:
-        return <LocalAIStep onNext={handleLocalAINext} />;
+        return <LocalAIStep onNext={handleLocalAINext} onBack={handleBack} />;
       case 2:
-        return <ScreenPermissionsStep onNext={handleAccessibilityNext} />;
+        return <ScreenPermissionsStep onNext={handleAccessibilityNext} onBack={handleBack} />;
       case 3:
-        return <ToolsStep onNext={handleToolsNext} />;
+        return <ToolsStep onNext={handleToolsNext} onBack={handleBack} />;
       case 4:
-        return <SkillsStep onComplete={handleSkillsNext} />;
+        return <SkillsStep onComplete={handleSkillsNext} onBack={handleBack} />;
       case 5:
-        return <MnemonicStep onComplete={handleMnemonicComplete} />;
+        return <MnemonicStep onComplete={handleMnemonicComplete} onBack={handleBack} />;
       default:
         return null;
     }
@@ -137,16 +137,17 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
 
   return (
     <div className="min-h-full relative flex items-center justify-center">
+      {onDefer && (
+        <div className="fixed top-4 right-0 z-20 sm:top-6 sm:right-6">
+          <button
+            type="button"
+            onClick={onDefer}
+            className="text-sm text-white hover:text-stone-200 transition-colors">
+            Skip
+          </button>
+        </div>
+      )}
       <div className="relative z-10 max-w-lg w-full mx-4">
-        {onDefer && (
-          <div className="flex justify-end mb-2">
-            <button
-              onClick={onDefer}
-              className="text-sm text-stone-400 hover:text-stone-200 transition-colors">
-              Set up later
-            </button>
-          </div>
-        )}
         <ProgressIndicator currentStep={currentStep} totalSteps={totalSteps} />
         {renderStep()}
       </div>

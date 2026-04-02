@@ -16,6 +16,101 @@ use super::js_handlers::{
 use super::js_helpers::{drive_jobs, restore_oauth_credential};
 use super::types::SkillState;
 
+/// Payload queued for the background memory-write worker.
+struct MemoryWriteJob {
+    client: MemoryClientRef,
+    skill: String,
+    title: String,
+    content: String,
+}
+
+/// Maximum number of memory-write jobs that can be buffered before back-pressure
+/// causes `persist_state_to_memory` to drop new writes.
+const MEMORY_WRITE_CHANNEL_CAPACITY: usize = 16;
+
+/// Spawn a bounded background worker that consumes `MemoryWriteJob` items and
+/// calls `store_skill_sync` sequentially.  Returns the sender half; dropping it
+/// shuts down the worker.
+fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
+    let (tx, mut rx) = mpsc::channel::<MemoryWriteJob>(MEMORY_WRITE_CHANNEL_CAPACITY);
+    tokio::spawn(async move {
+        while let Some(job) = rx.recv().await {
+            log::debug!("[memory] store_skill_sync: title={}", job.title);
+            if let Err(e) = job
+                .client
+                .store_skill_sync(
+                    &job.skill,
+                    "default",
+                    &job.title,
+                    &job.content,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            {
+                log::warn!("[memory] store_skill_sync failed for '{}': {e}", job.title);
+            } else {
+                log::info!("[memory] store_skill_sync succeeded for '{}'", job.title);
+            }
+        }
+        log::debug!("[memory] memory-write worker shutting down");
+    });
+    tx
+}
+
+/// Snapshot the skill's published ops state and queue it for memory persistence.
+///
+/// Called after sync, cron, and tick handlers so that data published via
+/// `state.set()` / `state.setPartial()` during the JS handler is written to the
+/// local memory store (SQLite + vector embeddings).
+///
+/// Writes are dispatched to a bounded background worker (see
+/// [`spawn_memory_write_worker`]).  If the worker is busy the write is dropped
+/// rather than blocking the event loop.
+fn persist_state_to_memory(
+    skill_id: &str,
+    title_suffix: &str,
+    ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
+    memory_client: &Option<MemoryClientRef>,
+    memory_write_tx: &mpsc::Sender<MemoryWriteJob>,
+) {
+    let state_snapshot = ops_state.read().data.clone();
+    log::debug!(
+        "[skill:{}] persist_state_to_memory({}): {} keys in snapshot",
+        skill_id,
+        title_suffix,
+        state_snapshot.len(),
+    );
+    if state_snapshot.is_empty() {
+        return;
+    }
+    let Some(client) = memory_client.clone() else {
+        log::debug!(
+            "[skill:{}] persist_state_to_memory: no memory client available, skipping",
+            skill_id,
+        );
+        return;
+    };
+    let skill = skill_id.to_string();
+    let content = serde_json::to_string_pretty(&serde_json::Value::Object(state_snapshot))
+        .unwrap_or_else(|_| "{}".to_string());
+    let title = format!("{} {}", skill, title_suffix);
+    if let Err(e) = memory_write_tx.try_send(MemoryWriteJob {
+        client,
+        skill,
+        title: title.clone(),
+        content,
+    }) {
+        log::warn!(
+            "[memory] persist_state_to_memory: channel full, dropping write for '{title}': {e}"
+        );
+    }
+}
+
 /// Pending async tool call that is being driven by the event loop.
 struct PendingToolCall {
     reply: tokio::sync::oneshot::Sender<Result<ToolResult, String>>,
@@ -48,6 +143,10 @@ pub(crate) async fn run_event_loop(
     // Faster polling when waiting for an async tool call
     const TOOL_POLL_SLEEP: Duration = Duration::from_millis(5);
 
+    // Bounded background worker for memory writes — limits concurrent in-flight
+    // store_skill_sync calls and applies backpressure when the channel is full.
+    let memory_write_tx = spawn_memory_write_worker();
+
     // Tracks an in-flight async tool call whose Promise hasn't resolved yet.
     let mut pending_tool: Option<PendingToolCall> = None;
 
@@ -78,6 +177,7 @@ pub(crate) async fn run_event_loop(
                     &memory_client,
                     ops_state,
                     data_dir,
+                    &memory_write_tx,
                 )
                 .await;
                 if should_stop {
@@ -215,6 +315,7 @@ async fn handle_message(
     memory_client: &Option<MemoryClientRef>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
     data_dir: &std::path::Path,
+    memory_write_tx: &mpsc::Sender<MemoryWriteJob>,
 ) -> bool {
     match msg {
         SkillMessage::CallTool {
@@ -274,7 +375,25 @@ async fn handle_message(
             let _ = handle_server_event(rt, ctx, &event, data).await;
         }
         SkillMessage::CronTrigger { schedule_id } => {
-            let _ = handle_cron_trigger(rt, ctx, &schedule_id).await;
+            match handle_cron_trigger(rt, ctx, &schedule_id).await {
+                Ok(_) => {
+                    // Persist state to memory after successful cron-triggered sync
+                    persist_state_to_memory(
+                        skill_id,
+                        &format!("cron sync ({})", schedule_id),
+                        ops_state,
+                        memory_client,
+                        memory_write_tx,
+                    );
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[skill:{}] cron trigger '{}' failed, skipping memory persistence: {e}",
+                        skill_id,
+                        schedule_id,
+                    );
+                }
+            }
         }
         SkillMessage::Stop { reply } => {
             let _ = call_lifecycle(rt, ctx, "stop").await;
@@ -336,6 +455,16 @@ async fn handle_message(
         }
         SkillMessage::Tick { reply } => {
             let result = handle_js_void_call(rt, ctx, "onTick", "{}").await;
+            if result.is_ok() {
+                // Persist any state published during tick to memory
+                persist_state_to_memory(
+                    skill_id,
+                    "tick sync",
+                    ops_state,
+                    memory_client,
+                    memory_write_tx,
+                );
+            }
             let _ = reply.send(result);
         }
         SkillMessage::LoadParams { params } => {
@@ -495,36 +624,18 @@ async fn handle_message(
                 "skill/ping" => handle_js_call(rt, ctx, "onPing", "{}").await,
                 "skill/sync" => {
                     let result = handle_js_call(rt, ctx, "onSync", "{}").await;
-                    // Fire-and-forget: persist published ops state to TinyHumans memory.
-                    // Skills publish data via state.set()/setPartial() into ops_state.data,
-                    // not as the return value of onSync() (which is typically undefined).
-                    let state_snapshot = ops_state.read().data.clone();
-                    log::info!(
-                        "[memory] store_skill_sync: payload → state_snapshot={:?}",
-                        state_snapshot
-                    );
-                    if !state_snapshot.is_empty() {
-                        if let Some(client) = memory_client_opt.clone() {
-                            let skill = skill_id.to_string();
-                            let content = serde_json::to_string_pretty(&serde_json::Value::Object(
-                                state_snapshot,
-                            ))
-                            .unwrap_or_else(|_| "{}".to_string());
-                            let title = format!("{} periodic sync", skill);
-                            tokio::spawn(async move {
-                                if let Err(e) = client
-                                    .store_skill_sync(
-                                        &skill, "default", &title, &content, None, None, None,
-                                        None, None, None,
-                                    )
-                                    .await
-                                {
-                                    log::warn!("[memory] store_skill_sync failed: {e}");
-                                }
-                            });
-                        }
+                    if result.is_ok() {
+                        // Persist published ops state to memory after onSync() succeeds.
+                        // Skills publish data via state.set()/setPartial() into ops_state.data,
+                        // not as the return value of onSync() (which is typically undefined).
+                        persist_state_to_memory(
+                            skill_id,
+                            "periodic sync",
+                            ops_state,
+                            &memory_client_opt,
+                            memory_write_tx,
+                        );
                     }
-
                     result
                 }
                 "oauth/revoked" => {

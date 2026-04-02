@@ -320,6 +320,31 @@ const threadSlice = createSlice({
     setActiveThread: (state, action: { payload: string | null }) => {
       state.activeThreadId = action.payload;
     },
+    addReaction: (
+      state,
+      action: { payload: { threadId: string; messageId: string; emoji: string } }
+    ) => {
+      const { threadId, messageId, emoji } = action.payload;
+      const stored = state.messagesByThreadId[threadId];
+      if (stored) {
+        const msg = stored.find(m => m.id === messageId);
+        if (msg) {
+          const prev = (msg.extraMetadata['myReactions'] as string[] | undefined) ?? [];
+          const idx = prev.indexOf(emoji);
+          const next = idx >= 0 ? prev.filter(e => e !== emoji) : [...prev, emoji];
+          msg.extraMetadata = { ...msg.extraMetadata, myReactions: next };
+        }
+      }
+      if (threadId === state.selectedThreadId) {
+        const viewMsg = state.messages.find(m => m.id === messageId);
+        if (viewMsg) {
+          const prev = (viewMsg.extraMetadata['myReactions'] as string[] | undefined) ?? [];
+          const idx = prev.indexOf(emoji);
+          const next = idx >= 0 ? prev.filter(e => e !== emoji) : [...prev, emoji];
+          viewMsg.extraMetadata = { ...viewMsg.extraMetadata, myReactions: next };
+        }
+      }
+    },
   },
   extraReducers: builder => {
     builder
@@ -402,5 +427,6 @@ export const {
   updateMessagesForThread,
   clearAllThreads,
   setActiveThread,
+  addReaction,
 } = threadSlice.actions;
 export default threadSlice.reducer;

@@ -9,7 +9,6 @@ import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MiniSidebar from './components/MiniSidebar';
 import OnboardingOverlay from './components/OnboardingOverlay';
-import SetupBanner from './components/SetupBanner';
 import SocketProvider from './providers/SocketProvider';
 import UserProvider from './providers/UserProvider';
 import { tagErrorSource } from './services/errorReportQueue';
@@ -45,7 +44,6 @@ function App() {
                     <div className="flex-1 flex overflow-hidden">
                       <MiniSidebar />
                       <div className="flex flex-col flex-1 relative overflow-hidden">
-                        <SetupBanner />
                         <div className="flex-1 overflow-y-auto">
                           <AppRoutes />
                         </div>

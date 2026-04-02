@@ -3,7 +3,7 @@
  * E2E test: Screen Intelligence settings and Intelligence page.
  *
  * Verifies:
- *   1. App launches and has an accessibility tree
+ *   1. App launches and has visible elements
  *   2. Settings navigation works (screen intelligence panel)
  *   3. Intelligence page loads without errors
  *
@@ -12,6 +12,7 @@
  * actual screenshots are taken.
  */
 import { waitForApp } from '../helpers/app-helpers';
+import { hasAppChrome } from '../helpers/element-helpers';
 import { startMockServer, stopMockServer } from '../mock-server';
 
 describe('Screen Intelligence', () => {
@@ -24,13 +25,12 @@ describe('Screen Intelligence', () => {
     stopMockServer();
   });
 
-  it('app launches with accessibility tree', async () => {
+  it('app launches with elements', async () => {
     const elements = await browser.$$('//*');
     expect(elements.length).toBeGreaterThan(0);
   });
 
-  it('app has a menu bar', async () => {
-    const menuBar = await browser.$('//XCUIElementTypeMenuBar');
-    expect(await menuBar.isExisting()).toBe(true);
+  it('app chrome is visible', async () => {
+    expect(await hasAppChrome()).toBe(true);
   });
 });

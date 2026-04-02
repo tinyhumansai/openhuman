@@ -64,9 +64,10 @@ fn info(msg: &str) {
 ///
 /// Priority:
 /// 1. SKILL_DEBUG_DIR env var
-/// 2. ../openhuman-skills/skills (sibling repo)
-/// 3. openhuman-skills/skills (subdir)
-/// 4. Broader search in parent workspace
+/// 2. SKILLS_LOCAL_DIR env var (shared with runtime)
+/// 3. ../openhuman-skills/skills (sibling repo)
+/// 4. openhuman-skills/skills (subdir)
+/// 5. Broader search in parent workspace
 fn try_find_skills_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("SKILL_DEBUG_DIR") {
         let p = PathBuf::from(&dir);
@@ -75,6 +76,14 @@ fn try_find_skills_dir() -> Option<PathBuf> {
         }
         eprintln!("SKILL_DEBUG_DIR={dir} does not exist");
         return None;
+    }
+
+    if let Ok(dir) = std::env::var("SKILLS_LOCAL_DIR") {
+        let p = PathBuf::from(&dir);
+        if p.exists() {
+            return Some(p);
+        }
+        eprintln!("SKILLS_LOCAL_DIR={dir} does not exist");
     }
 
     let cwd = std::env::current_dir().expect("cwd");
@@ -363,8 +372,8 @@ async fn skill_full_lifecycle() {
         }
     }
 
-    // ── 6. Tick / Sync ──
-    step("TICK (sync)");
+    // ── 6a. Tick ──
+    step("TICK");
     let tick_result = tokio::time::timeout(
         Duration::from_secs(15),
         engine.rpc(&skill_id, "skill/tick", json!({})),
@@ -380,6 +389,28 @@ async fn skill_full_lifecycle() {
         }
         Err(_) => {
             fail("skill/tick TIMED OUT (15s)");
+        }
+    }
+
+    // ── 6b. Sync (calls onSync, not onTick) ──
+    step("SYNC (skill/sync → onSync)");
+    let sync_result = tokio::time::timeout(
+        Duration::from_secs(15),
+        engine.rpc(&skill_id, "skill/sync", json!({})),
+    )
+    .await;
+
+    match sync_result {
+        Ok(Ok(val)) => {
+            ok(&format!("skill/sync returned: {val}"));
+        }
+        Ok(Err(e)) => {
+            info(&format!(
+                "skill/sync error: {e} (expected if skill has no onSync handler)"
+            ));
+        }
+        Err(_) => {
+            fail("skill/sync TIMED OUT (15s)");
         }
     }
 

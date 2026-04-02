@@ -437,3 +437,268 @@ pub async fn local_ai_download_asset(
         "local ai asset download triggered",
     ))
 }
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LocalAiChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+pub async fn local_ai_chat(
+    config: &Config,
+    messages: Vec<LocalAiChatMessage>,
+    max_tokens: Option<u32>,
+) -> Result<RpcOutcome<String>, String> {
+    tracing::debug!(
+        message_count = messages.len(),
+        "[local_ai:chat] local_ai_chat op: validating"
+    );
+
+    if messages.is_empty() {
+        return Err("messages must not be empty".to_string());
+    }
+
+    let ollama_messages: Vec<crate::openhuman::local_ai::ollama_api::OllamaChatMessage> = messages
+        .into_iter()
+        .map(
+            |m| crate::openhuman::local_ai::ollama_api::OllamaChatMessage {
+                role: m.role,
+                content: m.content,
+            },
+        )
+        .collect();
+
+    let service = local_ai::global(config);
+    let reply = service
+        .chat_with_history(config, ollama_messages, max_tokens)
+        .await?;
+
+    tracing::debug!(
+        reply_len = reply.len(),
+        "[local_ai:chat] local_ai_chat op: done"
+    );
+    Ok(RpcOutcome::single_log(reply, "local ai chat completed"))
+}
+
+/// Result of the reaction-decision prompt.
+#[derive(Debug, serde::Serialize)]
+pub struct ReactionDecision {
+    /// Whether the model thinks a reaction is appropriate.
+    pub should_react: bool,
+    /// The emoji to use (only meaningful when `should_react` is true).
+    pub emoji: Option<String>,
+}
+
+/// Ask the local model whether the assistant should add an emoji reaction to
+/// the user's message, based on channel type and message content.
+/// Designed to be called fire-and-forget — fast, lightweight, no cloud cost.
+pub async fn local_ai_should_react(
+    config: &Config,
+    message: &str,
+    channel_type: &str,
+) -> Result<RpcOutcome<ReactionDecision>, String> {
+    tracing::debug!(
+        channel_type,
+        msg_len = message.len(),
+        "[local_ai:should_react] evaluating reaction"
+    );
+
+    if message.trim().is_empty() {
+        return Ok(RpcOutcome::single_log(
+            ReactionDecision {
+                should_react: false,
+                emoji: None,
+            },
+            "empty message — no reaction",
+        ));
+    }
+
+    let service = local_ai::global(config);
+    let status = service.status();
+    if !matches!(status.state.as_str(), "ready") {
+        tracing::debug!("[local_ai:should_react] local model not ready, skipping");
+        return Ok(RpcOutcome::single_log(
+            ReactionDecision {
+                should_react: false,
+                emoji: None,
+            },
+            "local model not ready",
+        ));
+    }
+
+    let prompt = format!(
+        "You decide whether an AI assistant should react to a user message with a single emoji. \
+         Consider the channel context: casual channels (discord, telegram) get more frequent \
+         reactions with playful emojis, while professional channels (web, slack, email) are more \
+         reserved — only react to clearly emotional or noteworthy messages.\n\n\
+         Channel: {channel_type}\nUser message: {message}\n\n\
+         Reply with EXACTLY one word: either NONE (no reaction) or a single emoji character."
+    );
+
+    let output = service.prompt(config, &prompt, Some(8), true).await;
+
+    let decision = match output {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            tracing::debug!(
+                output_len = trimmed.len(),
+                "[local_ai:should_react] model response"
+            );
+            if trimmed.eq_ignore_ascii_case("NONE") || trimmed.is_empty() {
+                ReactionDecision {
+                    should_react: false,
+                    emoji: None,
+                }
+            } else {
+                // Extract the first emoji-like character(s) from the response
+                let emoji = extract_first_emoji(trimmed);
+                match emoji {
+                    Some(e) => ReactionDecision {
+                        should_react: true,
+                        emoji: Some(e),
+                    },
+                    None => ReactionDecision {
+                        should_react: false,
+                        emoji: None,
+                    },
+                }
+            }
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "[local_ai:should_react] inference failed, skipping");
+            ReactionDecision {
+                should_react: false,
+                emoji: None,
+            }
+        }
+    };
+
+    tracing::debug!(
+        should_react = decision.should_react,
+        emoji = ?decision.emoji,
+        "[local_ai:should_react] decision"
+    );
+    Ok(RpcOutcome::single_log(
+        decision,
+        "reaction decision completed",
+    ))
+}
+
+/// Extract the first emoji from a string. Handles common emoji codepoints
+/// including flag sequences (pairs of regional indicator symbols).
+fn extract_first_emoji(text: &str) -> Option<String> {
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        // Regional indicator pair → flag emoji (e.g. 🇺🇸 = U+1F1FA U+1F1F8)
+        if is_regional_indicator(ch) {
+            let mut emoji = String::new();
+            emoji.push(ch);
+            // Consume consecutive regional indicators (flags are pairs)
+            for next in chars.by_ref() {
+                if is_regional_indicator(next) {
+                    emoji.push(next);
+                } else {
+                    break;
+                }
+            }
+            return Some(emoji);
+        }
+
+        if is_emoji_start(ch) {
+            let mut emoji = String::new();
+            emoji.push(ch);
+            // Consume joiners and variation selectors that extend the emoji
+            for next in chars.by_ref() {
+                if next == '\u{FE0F}'     // variation selector
+                    || next == '\u{200D}'  // zero-width joiner
+                    || ('\u{1F3FB}'..='\u{1F3FF}').contains(&next) // skin tones
+                    || is_emoji_start(next) && emoji.contains('\u{200D}')
+                {
+                    emoji.push(next);
+                } else {
+                    break;
+                }
+            }
+            return Some(emoji);
+        }
+    }
+    None
+}
+
+fn is_regional_indicator(ch: char) -> bool {
+    ('\u{1F1E6}'..='\u{1F1FF}').contains(&ch)
+}
+
+fn is_emoji_start(ch: char) -> bool {
+    matches!(ch,
+        '\u{203C}' | '\u{2049}'       // exclamation marks
+        | '\u{2139}'                   // information
+        | '\u{2194}'..='\u{2199}'      // arrows
+        | '\u{21A9}'..='\u{21AA}'      // arrows
+        | '\u{231A}'..='\u{231B}'      // watch, hourglass
+        | '\u{23E9}'..='\u{23F3}'      // media controls
+        | '\u{23F8}'..='\u{23FA}'      // media controls
+        | '\u{24C2}'                   // circled M
+        | '\u{25AA}'..='\u{25AB}'      // squares
+        | '\u{25B6}' | '\u{25C0}'     // play buttons
+        | '\u{25FB}'..='\u{25FE}'      // squares
+        | '\u{2328}' | '\u{23CF}'     // keyboard, eject
+        | '\u{2600}'..='\u{27BF}'      // misc symbols, dingbats
+        | '\u{2934}'..='\u{2935}'      // arrows
+        | '\u{2B05}'..='\u{2B07}'      // arrows
+        | '\u{2B1B}'..='\u{2B1C}'      // squares
+        | '\u{2B50}' | '\u{2B55}'     // star, circle
+        | '\u{FE00}'..='\u{FE0F}'      // variation selectors
+        | '\u{1F300}'..='\u{1F9FF}'    // misc symbols, emoticons, transport, supplemental
+        | '\u{1FA00}'..='\u{1FA6F}'    // chess symbols, extended-A
+        | '\u{1FA70}'..='\u{1FAFF}'    // symbols extended-A
+        | '\u{200D}'                   // ZWJ
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_emoji_from_simple_string() {
+        assert_eq!(extract_first_emoji("👍"), Some("👍".to_string()));
+        assert_eq!(extract_first_emoji("🔥"), Some("🔥".to_string()));
+        assert_eq!(extract_first_emoji("❤️"), Some("❤️".to_string()));
+    }
+
+    #[test]
+    fn extract_emoji_with_surrounding_text() {
+        assert_eq!(extract_first_emoji("Sure! 😂"), Some("😂".to_string()));
+        assert_eq!(
+            extract_first_emoji("I think 👀 fits here"),
+            Some("👀".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_none_when_no_emoji() {
+        assert_eq!(extract_first_emoji("NONE"), None);
+        assert_eq!(extract_first_emoji("no reaction"), None);
+        assert_eq!(extract_first_emoji(""), None);
+    }
+
+    #[test]
+    fn extract_flag_emoji_keeps_pair_together() {
+        assert_eq!(extract_first_emoji("🇺🇸"), Some("🇺🇸".to_string()));
+        assert_eq!(
+            extract_first_emoji("🇬🇧 Great Britain"),
+            Some("🇬🇧".to_string())
+        );
+    }
+
+    #[test]
+    fn is_emoji_start_recognizes_common_emojis() {
+        assert!(is_emoji_start('👍'));
+        assert!(is_emoji_start('🔥'));
+        assert!(is_emoji_start('😂'));
+        assert!(is_emoji_start('⭐'));
+        assert!(!is_emoji_start('A'));
+        assert!(!is_emoji_start('1'));
+    }
+}

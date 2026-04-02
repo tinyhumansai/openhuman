@@ -5,11 +5,11 @@ import { clearToken, setToken } from '../../store/authSlice';
 import { renderWithProviders } from '../../test/test-utils';
 import OnboardingOverlay from '../OnboardingOverlay';
 
-// Mock tauriCommands — workspace flag defaults to not existing
+// Mock tauriCommands — onboarding defaults to not completed
 vi.mock('../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => false),
-  openhumanWorkspaceOnboardingFlagExists: vi.fn().mockResolvedValue(false),
-  DEFAULT_WORKSPACE_ONBOARDING_FLAG: '.skip_onboarding',
+  getOnboardingCompleted: vi.fn().mockResolvedValue(false),
+  setOnboardingCompleted: vi.fn().mockResolvedValue(true),
 }));
 
 // DEV_FORCE_ONBOARDING is already mocked as false in test/setup.ts
@@ -29,26 +29,14 @@ const baseAuth = {
 const baseUser = { user: { _id: 'user-1', username: 'tester', firstName: 'Test' } };
 
 describe('OnboardingOverlay', () => {
-  it('does not render when user is onboarded', () => {
+  it('does not render when onboarding is completed', async () => {
+    const { getOnboardingCompleted } = await import('../../utils/tauriCommands');
+    vi.mocked(getOnboardingCompleted).mockResolvedValue(true);
+
     renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: {
-        auth: { ...baseAuth, isOnboardedByUser: { 'user-1': true } },
-        user: baseUser,
-      },
+      preloadedState: { auth: baseAuth, user: baseUser },
     });
 
-    expect(screen.queryByText('Set up later')).not.toBeInTheDocument();
-  });
-
-  it('does not render when onboarding is deferred', async () => {
-    renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: {
-        auth: { ...baseAuth, onboardingDeferredByUser: { 'user-1': Date.now() } },
-        user: baseUser,
-      },
-    });
-
-    // Wait for workspace flag check to resolve
     await vi.waitFor(() => {
       expect(screen.queryByText('Set up later')).not.toBeInTheDocument();
     });
@@ -80,7 +68,7 @@ describe('OnboardingOverlay', () => {
       // Advance past the 3s timeout so userLoadTimedOut becomes true
       await vi.advanceTimersByTimeAsync(3500);
 
-      // Overlay should now be visible (userLoadTimedOut fired, not onboarded, no workspace flag)
+      // Overlay should now be visible (userLoadTimedOut fired, onboarding not completed)
       await vi.waitFor(() => {
         expect(screen.queryByText('Set up later')).toBeInTheDocument();
       });

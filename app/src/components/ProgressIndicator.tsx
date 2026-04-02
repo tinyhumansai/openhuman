@@ -9,8 +9,8 @@ const ProgressIndicator = ({ currentStep, totalSteps }: ProgressIndicatorProps) 
       {Array.from({ length: totalSteps }).map((_, index) => (
         <div
           key={index}
-          className={`w-8 h-0.5 rounded-full ${
-            index < currentStep ? 'bg-primary-500' : 'bg-stone-700'
+          className={`w-8 h-1 rounded-full ${
+            index <= currentStep ? 'bg-sage-500' : 'bg-stone-700'
           }`}
         />
       ))}

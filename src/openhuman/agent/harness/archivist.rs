@@ -1,25 +1,34 @@
-//! Archivist — background PostTurnHook that extracts lessons and indexes
-//! episodic records.
+//! Archivist — background PostTurnHook that extracts lessons, indexes
+//! episodic records, and manages conversation segments with event extraction.
 //!
 //! After each turn, the Archivist:
 //! 1. Inserts the turn into the FTS5 episodic table.
-//! 2. (Future) Summarises the turn using a cheap local model.
-//! 3. (Future) Extracts reusable lessons → appends to MEMORY.md.
+//! 2. Manages conversation segments (boundary detection + lifecycle).
+//! 3. On segment close: extracts events (heuristic) and updates user profile.
+//! 4. Extracts simple lessons from tool failures.
 
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
+use crate::openhuman::memory::store::events::{self, EventRecord, EventType};
 use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
+use crate::openhuman::memory::store::profile::{self, FacetType};
+use crate::openhuman::memory::store::segments::{
+    self, BoundaryConfig, BoundaryDecision, ConversationSegment,
+};
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Background Archivist that indexes turns into FTS5 episodic memory.
+/// Background Archivist that indexes turns into FTS5 episodic memory
+/// and manages conversation segmentation.
 pub struct ArchivistHook {
     /// SQLite connection shared with UnifiedMemory.
     conn: Option<Arc<Mutex<Connection>>>,
     /// Whether the archivist is enabled.
     enabled: bool,
+    /// Boundary detection configuration.
+    boundary_config: BoundaryConfig,
 }
 
 impl ArchivistHook {
@@ -28,6 +37,7 @@ impl ArchivistHook {
         Self {
             conn: Some(conn),
             enabled,
+            boundary_config: BoundaryConfig::default(),
         }
     }
 
@@ -36,6 +46,7 @@ impl ArchivistHook {
         Self {
             conn: None,
             enabled: false,
+            boundary_config: BoundaryConfig::default(),
         }
     }
 
@@ -44,6 +55,230 @@ impl ArchivistHook {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64()
+    }
+
+    /// Handle segment lifecycle for a new turn.
+    ///
+    /// The close→extract→create path uses a SQLite transaction for the
+    /// close + create operations to ensure atomicity. Event extraction
+    /// runs between close and create (outside the transaction) because
+    /// it needs to re-acquire the connection lock via fts5 functions.
+    fn manage_segment(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+        session_id: &str,
+        timestamp: f64,
+        user_message: &str,
+        current_episodic_id: i64,
+    ) {
+        let now = Self::now_timestamp();
+
+        // Check for an open segment for this session.
+        let open_segment = match segments::open_segment_for_session(conn, session_id) {
+            Ok(seg) => seg,
+            Err(e) => {
+                tracing::warn!("[archivist] failed to query open segment: {e}");
+                return;
+            }
+        };
+
+        match open_segment {
+            Some(segment) => {
+                // Run boundary detection.
+                let decision = segments::detect_boundary(
+                    &self.boundary_config,
+                    &segment,
+                    timestamp,
+                    user_message,
+                    None, // No embedding for now — cosine drift skipped without embedder access.
+                );
+
+                match decision {
+                    BoundaryDecision::Continue => {
+                        if let Err(e) = segments::segment_append_turn(
+                            conn,
+                            &segment.segment_id,
+                            current_episodic_id,
+                            timestamp,
+                            now,
+                        ) {
+                            tracing::warn!("[archivist] failed to append turn to segment: {e}");
+                        }
+                    }
+                    BoundaryDecision::Boundary(reason) => {
+                        tracing::debug!(
+                            "[archivist] segment boundary detected: {reason} — closing {}",
+                            segment.segment_id
+                        );
+
+                        // Close the current segment.
+                        if let Err(e) = segments::segment_close(conn, &segment.segment_id, now) {
+                            tracing::warn!("[archivist] failed to close segment: {e}");
+                            return;
+                        }
+
+                        // Extract events from the closed segment and update profile.
+                        // This runs outside a transaction because it calls fts5 functions
+                        // that re-acquire the connection lock.
+                        self.on_segment_closed(conn, &segment, session_id, now);
+
+                        // Create a new segment for the new topic.
+                        // The new segment starts at the current turn's episodic ID.
+                        let new_id = format!("seg-{}", uuid_v4());
+                        if let Err(e) = segments::segment_create(
+                            conn,
+                            &new_id,
+                            session_id,
+                            "global",
+                            current_episodic_id,
+                            timestamp,
+                            now,
+                        ) {
+                            tracing::warn!("[archivist] failed to create new segment: {e}");
+                        }
+                    }
+                }
+            }
+            None => {
+                // No open segment — create the first one using the current episodic ID.
+                let segment_id = format!("seg-{}", uuid_v4());
+                if let Err(e) = segments::segment_create(
+                    conn,
+                    &segment_id,
+                    session_id,
+                    "global",
+                    current_episodic_id,
+                    timestamp,
+                    now,
+                ) {
+                    tracing::warn!("[archivist] failed to create initial segment: {e}");
+                }
+            }
+        }
+    }
+
+    /// Called when a segment is closed. Runs heuristic event extraction
+    /// and updates the user profile from extracted preferences/facts.
+    fn on_segment_closed(
+        &self,
+        conn: &Arc<Mutex<Connection>>,
+        segment: &ConversationSegment,
+        session_id: &str,
+        now: f64,
+    ) {
+        // Gather the conversation text for this segment from episodic entries.
+        let entries = fts5::episodic_session_entries(conn, session_id).unwrap_or_default();
+
+        // Filter entries that fall within the segment's time window.
+        // Use <= for end_timestamp (entries at the boundary are part of this
+        // segment). The boundary-triggering turn has a timestamp AFTER
+        // end_timestamp, so it won't be included.
+        let segment_entries: Vec<&EpisodicEntry> = entries
+            .iter()
+            .filter(|e| {
+                e.timestamp >= segment.start_timestamp
+                    && segment
+                        .end_timestamp
+                        .map(|end| e.timestamp <= end)
+                        .unwrap_or(true)
+            })
+            .collect();
+
+        if segment_entries.is_empty() {
+            return;
+        }
+
+        // Build segment text from user messages.
+        let segment_text: String = segment_entries
+            .iter()
+            .filter(|e| e.role == "user")
+            .map(|e| e.content.as_str())
+            .collect::<Vec<_>>()
+            .join(". ");
+
+        if segment_text.is_empty() {
+            return;
+        }
+
+        // Generate a fallback summary from first and last content.
+        let first = segment_entries
+            .first()
+            .map(|e| e.content.as_str())
+            .unwrap_or("");
+        let last = segment_entries
+            .last()
+            .map(|e| e.content.as_str())
+            .unwrap_or(first);
+        let summary = segments::fallback_summary(first, last, segment.turn_count);
+        if let Err(e) = segments::segment_set_summary(conn, &segment.segment_id, &summary, now) {
+            tracing::warn!("[archivist] failed to set segment summary: {e}");
+        }
+
+        // Extract events via heuristic patterns.
+        let extracted = events::extract_events_heuristic(&segment_text);
+        tracing::debug!(
+            "[archivist] extracted {} events from segment {}",
+            extracted.len(),
+            segment.segment_id
+        );
+
+        for (event_type, content) in &extracted {
+            let event_id = format!("evt-{}", uuid_v4());
+            let event = EventRecord {
+                event_id,
+                segment_id: segment.segment_id.clone(),
+                session_id: session_id.to_string(),
+                namespace: segment.namespace.clone(),
+                event_type: event_type.clone(),
+                content: content.clone(),
+                subject: None,
+                timestamp_ref: None,
+                confidence: 0.6,
+                embedding: None,
+                source_turn_ids: None,
+                created_at: now,
+            };
+            if let Err(e) = events::event_insert(conn, &event) {
+                tracing::warn!("[archivist] failed to insert event: {e}");
+            }
+
+            // Update user profile from preference and fact events.
+            match event_type {
+                EventType::Preference => {
+                    let key = extract_profile_key(content, "preference");
+                    let facet_id = format!("prf-{}", uuid_v4());
+                    if let Err(e) = profile::profile_upsert(
+                        conn,
+                        &facet_id,
+                        &FacetType::Preference,
+                        &key,
+                        content,
+                        0.6,
+                        Some(&segment.segment_id),
+                        now,
+                    ) {
+                        tracing::warn!("[archivist] failed to upsert profile facet: {e}");
+                    }
+                }
+                EventType::Fact => {
+                    let key = extract_profile_key(content, "fact");
+                    let facet_id = format!("prf-{}", uuid_v4());
+                    if let Err(e) = profile::profile_upsert(
+                        conn,
+                        &facet_id,
+                        &FacetType::Context,
+                        &key,
+                        content,
+                        0.6,
+                        Some(&segment.segment_id),
+                        now,
+                    ) {
+                        tracing::warn!("[archivist] failed to upsert profile fact: {e}");
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -86,6 +321,13 @@ impl PostTurnHook for ArchivistHook {
             },
         )?;
 
+        // Retrieve the inserted episodic ID for segment tracking.
+        let current_episodic_id = {
+            let db = conn.lock();
+            db.query_row("SELECT last_insert_rowid()", [], |row| row.get::<_, i64>(0))
+                .unwrap_or(1)
+        };
+
         // Index assistant response with tool call summary.
         let tool_calls_json = if ctx.tool_calls.is_empty() {
             None
@@ -112,6 +354,15 @@ impl PostTurnHook for ArchivistHook {
             },
         )?;
 
+        // Manage conversation segmentation.
+        self.manage_segment(
+            conn,
+            session_id,
+            timestamp,
+            &ctx.user_message,
+            current_episodic_id,
+        );
+
         tracing::debug!("[archivist] turn indexed successfully");
         Ok(())
     }
@@ -137,15 +388,61 @@ fn extract_lesson_from_tools(
     ))
 }
 
+/// Extract a short profile key from event content (first few meaningful words).
+fn extract_profile_key(content: &str, prefix: &str) -> String {
+    let words: Vec<&str> = content
+        .split_whitespace()
+        .filter(|w| w.len() > 2)
+        .take(4)
+        .collect();
+    let key = words.join("_").to_lowercase();
+    let key = key
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect::<String>();
+    if key.is_empty() {
+        format!("{prefix}_unknown")
+    } else {
+        format!("{prefix}_{key}")
+    }
+}
+
+/// Generate a simple UUID v4 (random).
+fn uuid_v4() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{:x}{:08x}", nanos, rand_u32())
+}
+
+/// Simple random u32 from system entropy.
+fn rand_u32() -> u32 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let state = RandomState::new();
+    let mut hasher = state.build_hasher();
+    hasher.write_u64(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64,
+    );
+    hasher.finish() as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::agent::hooks::{ToolCallRecord, TurnContext};
-    use crate::openhuman::memory::store::fts5;
+    use crate::openhuman::memory::store::{events as ev, fts5, segments as seg};
 
     fn setup_conn() -> Arc<Mutex<Connection>> {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(fts5::EPISODIC_INIT_SQL).unwrap();
+        conn.execute_batch(seg::SEGMENTS_INIT_SQL).unwrap();
+        conn.execute_batch(ev::EVENTS_INIT_SQL).unwrap();
+        conn.execute_batch(profile::PROFILE_INIT_SQL).unwrap();
         Arc::new(Mutex::new(conn))
     }
 
@@ -169,6 +466,73 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].role, "user");
         assert_eq!(entries[1].role, "assistant");
+    }
+
+    #[tokio::test]
+    async fn archivist_creates_segment_on_first_turn() {
+        let conn = setup_conn();
+        let hook = ArchivistHook::new(conn.clone(), true);
+
+        let ctx = TurnContext {
+            user_message: "Hello world".into(),
+            assistant_response: "Hi there!".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some("seg-test".into()),
+            iteration_count: 1,
+        };
+
+        hook.on_turn_complete(&ctx).await.unwrap();
+
+        let open = seg::open_segment_for_session(&conn, "seg-test").unwrap();
+        assert!(open.is_some());
+        assert_eq!(open.unwrap().turn_count, 1);
+    }
+
+    #[tokio::test]
+    async fn archivist_detects_topic_change_boundary() {
+        let conn = setup_conn();
+        let hook = ArchivistHook::new(conn.clone(), true);
+
+        hook.on_turn_complete(&TurnContext {
+            user_message: "Tell me about Rust".into(),
+            assistant_response: "Rust is great.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some("boundary-test".into()),
+            iteration_count: 1,
+        })
+        .await
+        .unwrap();
+
+        hook.on_turn_complete(&TurnContext {
+            user_message: "How about its memory safety?".into(),
+            assistant_response: "It uses ownership.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some("boundary-test".into()),
+            iteration_count: 2,
+        })
+        .await
+        .unwrap();
+
+        hook.on_turn_complete(&TurnContext {
+            user_message: "Switching to a different topic now. I prefer dark mode.".into(),
+            assistant_response: "Noted about dark mode.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some("boundary-test".into()),
+            iteration_count: 3,
+        })
+        .await
+        .unwrap();
+
+        let segments = seg::segments_by_namespace(&conn, "global", 10).unwrap();
+        assert!(
+            segments.len() >= 2,
+            "Expected at least 2 segments, got {}",
+            segments.len()
+        );
     }
 
     #[tokio::test]
@@ -209,7 +573,99 @@ mod tests {
             session_id: None,
             iteration_count: 0,
         };
-        // Should not error even without a connection.
         hook.on_turn_complete(&ctx).await.unwrap();
+    }
+
+    #[test]
+    fn extract_profile_key_works() {
+        let key = extract_profile_key("I prefer dark mode for coding", "preference");
+        assert!(key.starts_with("preference_"));
+        assert!(key.contains("prefer"));
+    }
+
+    #[tokio::test]
+    async fn archivist_accumulates_turns_in_segment() {
+        let conn = setup_conn();
+        let hook = ArchivistHook::new(conn.clone(), true);
+
+        let session = "accum-session";
+
+        for i in 1..=3 {
+            hook.on_turn_complete(&TurnContext {
+                user_message: format!("Turn number {i}"),
+                assistant_response: format!("Response {i}"),
+                tool_calls: vec![],
+                turn_duration_ms: 50,
+                session_id: Some(session.into()),
+                iteration_count: i,
+            })
+            .await
+            .unwrap();
+        }
+
+        let open_seg = seg::open_segment_for_session(&conn, session)
+            .unwrap()
+            .expect("Expected an open segment after 3 turns");
+
+        assert_eq!(
+            open_seg.turn_count, 3,
+            "Segment should have accumulated 3 turns, got {}",
+            open_seg.turn_count
+        );
+    }
+
+    #[tokio::test]
+    async fn archivist_extracts_preference_event_on_boundary() {
+        let conn = setup_conn();
+        let hook = ArchivistHook::new(conn.clone(), true);
+
+        let session = "pref-boundary-session";
+
+        hook.on_turn_complete(&TurnContext {
+            user_message: "Tell me about Rust ownership".into(),
+            assistant_response: "Ownership is a key concept in Rust.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some(session.into()),
+            iteration_count: 1,
+        })
+        .await
+        .unwrap();
+
+        hook.on_turn_complete(&TurnContext {
+            user_message: "I prefer dark mode for all my editors".into(),
+            assistant_response: "Good to know! Dark mode is easier on the eyes.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some(session.into()),
+            iteration_count: 2,
+        })
+        .await
+        .unwrap();
+
+        hook.on_turn_complete(&TurnContext {
+            user_message: "Switching to a different topic — how does Tokio work?".into(),
+            assistant_response: "Tokio is an async runtime.".into(),
+            tool_calls: vec![],
+            turn_duration_ms: 100,
+            session_id: Some(session.into()),
+            iteration_count: 3,
+        })
+        .await
+        .unwrap();
+
+        let events = ev::events_by_type(&conn, "global", "preference", 20).unwrap();
+        assert!(
+            !events.is_empty(),
+            "Expected at least one preference event after segment close; got 0."
+        );
+        let has_dark_mode = events
+            .iter()
+            .any(|e| e.content.to_lowercase().contains("prefer"));
+        assert!(
+            has_dark_mode,
+            "Expected a preference event mentioning 'prefer', found: {:?}",
+            events.iter().map(|e| &e.content).collect::<Vec<_>>()
+        );
     }
 }

@@ -1,0 +1,10 @@
+[[permission]]
+identifier = "allow-core-process"
+description = "Core RPC URL and sidecar restart"
+
+[permission.commands]
+allow = [
+    "core_rpc_url",
+    "restart_core_process",
+]
+deny = []

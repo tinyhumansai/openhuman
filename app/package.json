@@ -1,11 +1,11 @@
 {
   "name": "openhuman-app",
-  "version": "0.50.3",
+  "version": "0.51.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:web": "vite",
-    "dev:app": "source ../scripts/load-dotenv.sh && tauri dev",
+    "dev:app": "yarn core:stage && source ../scripts/load-dotenv.sh && tauri dev",
     "core:stage": "node ../scripts/stage-core-sidecar.mjs",
     "build": "tsc && vite build",
     "build:app": "tsc && vite build",

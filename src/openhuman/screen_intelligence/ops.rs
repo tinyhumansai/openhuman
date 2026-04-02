@@ -1,4 +1,7 @@
 //! JSON-RPC / CLI controller surface for screen capture and accessibility automation.
+//!
+//! macOS permission UX (stale DENIED until sidecar restarts) is tracked in
+//! <https://github.com/tinyhumansai/openhuman/issues/133>.
 
 use serde_json::json;
 
@@ -175,6 +178,32 @@ pub async fn accessibility_vision_flush() -> Result<RpcOutcome<VisionFlushResult
     Ok(RpcOutcome::single_log(
         result,
         "screen intelligence vision flush completed",
+    ))
+}
+
+/// Re-detect current permission state. Intended to be called after the sidecar
+/// restarts so the new process reads freshly granted macOS permissions.
+///
+/// macOS caches permission grants per-process; the running sidecar never sees an
+/// updated grant until it restarts. After `restart_core_process` brings up a fresh
+/// sidecar, calling this endpoint returns the authoritative permission state as seen
+/// by that new process.
+pub async fn accessibility_refresh_permissions() -> Result<RpcOutcome<PermissionStatus>, String> {
+    log::info!("[screen_intelligence] refresh_permissions:re-detecting permissions");
+    // `status()` unconditionally calls `detect_permissions()` before returning, so
+    // fetching the full status and extracting the permissions field is the correct
+    // way to get a freshly computed permission state.
+    let full_status = screen_intelligence::global_engine().status().await;
+    let permissions = full_status.permissions;
+    log::debug!(
+        "[screen_intelligence] accessibility_refresh_permissions: screen_recording={:?} accessibility={:?} input_monitoring={:?}",
+        permissions.screen_recording,
+        permissions.accessibility,
+        permissions.input_monitoring,
+    );
+    Ok(RpcOutcome::single_log(
+        permissions,
+        "accessibility permissions refreshed",
     ))
 }
 

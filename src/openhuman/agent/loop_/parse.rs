@@ -82,51 +82,7 @@ pub(crate) fn parse_tool_calls_from_json_value(value: &serde_json::Value) -> Vec
     calls
 }
 
-/// Parse bracket-style pseudo-syntax emitted by some models:
-/// `{tool => "shell", args => { --command "ls" }}`
-///
-/// Extracts tool name and converts `--key "value"` args into a JSON object.
-fn parse_bracket_tool_call(inner: &str) -> Option<ParsedToolCall> {
-    static BRACKET_TOOL_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r#"(?s)\{?\s*tool\s*=>\s*"([^"]+)"\s*,\s*args\s*=>\s*\{(.*?)\}\s*\}?"#).unwrap()
-    });
-    static ARG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"--(\w+)\s+"([^"]*)"#).unwrap());
-
-    let cap = BRACKET_TOOL_RE.captures(inner.trim())?;
-    let name = cap.get(1)?.as_str().to_string();
-    let args_body = cap.get(2)?.as_str();
-
-    let mut args = serde_json::Map::new();
-    for arg_cap in ARG_RE.captures_iter(args_body) {
-        let key = arg_cap.get(1)?.as_str().to_string();
-        let value = arg_cap.get(2)?.as_str().to_string();
-        args.insert(key, serde_json::Value::String(value));
-    }
-
-    if name.is_empty() {
-        return None;
-    }
-
-    tracing::debug!(
-        tool = name.as_str(),
-        parse_mode = "bracket_syntax",
-        "[parse] parsed bracket-style tool call"
-    );
-
-    Some(ParsedToolCall {
-        name,
-        arguments: serde_json::Value::Object(args),
-    })
-}
-
-const TOOL_CALL_OPEN_TAGS: [&str; 6] = [
-    "<tool_call>",
-    "<toolcall>",
-    "<tool-call>",
-    "<invoke>",
-    "[TOOL_CALL]",
-    "[tool_call]",
-];
+const TOOL_CALL_OPEN_TAGS: [&str; 4] = ["<tool_call>", "<toolcall>", "<tool-call>", "<invoke>"];
 
 pub(crate) fn find_first_tag<'a>(haystack: &str, tags: &'a [&'a str]) -> Option<(usize, &'a str)> {
     tags.iter()
@@ -140,8 +96,6 @@ pub(crate) fn matching_tool_call_close_tag(open_tag: &str) -> Option<&'static st
         "<toolcall>" => Some("</toolcall>"),
         "<tool-call>" => Some("</tool-call>"),
         "<invoke>" => Some("</invoke>"),
-        "[TOOL_CALL]" => Some("[/TOOL_CALL]"),
-        "[tool_call]" => Some("[/tool_call]"),
         _ => None,
     }
 }
@@ -422,16 +376,7 @@ pub(crate) fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) 
             }
 
             if !parsed_any {
-                // Try parsing bracket pseudo-syntax:
-                // {tool => "name", args => { --key "value" }}
-                if let Some(call) = parse_bracket_tool_call(inner) {
-                    calls.push(call);
-                    parsed_any = true;
-                }
-            }
-
-            if !parsed_any {
-                tracing::warn!("Malformed tool_call body: could not parse tag content as JSON or bracket syntax");
+                tracing::warn!("Malformed <tool_call> JSON: expected tool-call object in tag body");
             }
 
             remaining = &after_open[close_idx + close_tag.len()..];

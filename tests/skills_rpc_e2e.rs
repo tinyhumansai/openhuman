@@ -34,6 +34,12 @@ fn try_find_skills_dir() -> Option<PathBuf> {
         let p = PathBuf::from(&dir);
         return if p.exists() { Some(p) } else { None };
     }
+    if let Ok(dir) = std::env::var("SKILLS_LOCAL_DIR") {
+        let p = PathBuf::from(&dir);
+        if p.exists() {
+            return Some(p);
+        }
+    }
     let cwd = std::env::current_dir().expect("cwd");
     for candidate in &[
         "../openhuman-skills/skills",

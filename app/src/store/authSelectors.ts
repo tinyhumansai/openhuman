@@ -17,9 +17,3 @@ export const selectHasIncompleteOnboarding = (state: RootState): boolean => {
   if (!userId) return false;
   return state.auth.hasIncompleteOnboardingByUser[userId] ?? false;
 };
-
-export const selectOnboardingDeferred = (state: RootState): boolean => {
-  const userId = state.user.user?._id;
-  if (!userId) return false;
-  return !!state.auth.onboardingDeferredByUser?.[userId];
-};

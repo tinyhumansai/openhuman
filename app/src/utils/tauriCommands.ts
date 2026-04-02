@@ -180,6 +180,26 @@ export async function setWindowTitle(title: string): Promise<void> {
   await getCurrentWindow().setTitle(title);
 }
 
+/**
+ * Restart the core sidecar process.
+ *
+ * macOS caches permission grants per-process; the running sidecar never sees
+ * a newly granted permission until it restarts. Call this after the user grants
+ * permissions in System Settings, then re-fetch accessibility status so the UI
+ * reflects the updated grants.
+ *
+ * @see https://github.com/tinyhumansai/openhuman/issues/133
+ */
+export async function restartCoreProcess(): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[core] restartCoreProcess: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[core] restartCoreProcess: invoking restart_core_process');
+  await invoke<void>('restart_core_process');
+  console.debug('[core] restartCoreProcess: done');
+}
+
 // --- Memory Commands ---
 
 /**
@@ -217,17 +237,30 @@ export async function memoryListDocuments(namespace?: string): Promise<unknown> 
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<unknown>({
+  const resp = await callCoreRpc<unknown>({
     method: 'openhuman.memory_list_documents',
     params: { namespace },
   });
+  // Unwrap envelope: registry returns { data: { documents: [...] }, meta: {...} }
+  if (resp && typeof resp === 'object' && !Array.isArray(resp) && 'data' in resp) {
+    return (resp as Record<string, unknown>).data;
+  }
+  return resp;
 }
 
 export async function memoryListNamespaces(): Promise<string[]> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<string[]>({ method: 'openhuman.memory_list_namespaces' });
+  const resp = await callCoreRpc<{ data?: { namespaces?: string[] }; namespaces?: string[] }>({
+    method: 'openhuman.memory_list_namespaces',
+  });
+  if (resp && typeof resp === 'object') {
+    if (Array.isArray(resp)) return resp;
+    const ns = resp.data?.namespaces ?? resp.namespaces;
+    if (Array.isArray(ns)) return ns;
+  }
+  return [];
 }
 
 export async function memoryDeleteDocument(
@@ -325,20 +358,32 @@ export async function aiListMemoryFiles(relativeDir = 'memory'): Promise<string[
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<string[]>({
+  const resp = await callCoreRpc<{ data?: { files?: string[] }; files?: string[] }>({
     method: 'openhuman.memory_list_files',
     params: { relative_dir: relativeDir },
   });
+  // Unwrap envelope: registry returns { data: { files: [...] } }
+  if (resp && typeof resp === 'object') {
+    if (Array.isArray(resp)) return resp;
+    const files = resp.data?.files ?? resp.files;
+    if (Array.isArray(files)) return files;
+  }
+  return [];
 }
 
 export async function aiReadMemoryFile(relativePath: string): Promise<string> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<string>({
+  const resp = await callCoreRpc<{ data?: { content?: string }; content?: string } | string>({
     method: 'openhuman.memory_read_file',
     params: { relative_path: relativePath },
   });
+  if (typeof resp === 'string') return resp;
+  if (resp && typeof resp === 'object') {
+    return resp.data?.content ?? resp.content ?? '';
+  }
+  return '';
 }
 
 export async function aiWriteMemoryFile(relativePath: string, content: string): Promise<void> {
@@ -572,6 +617,8 @@ export interface AccessibilityStatus {
   config: AccessibilityConfig;
   denylist: string[];
   is_context_blocked: boolean;
+  /** Absolute path of the core binary; macOS TCC applies to this executable. */
+  permission_check_process_path?: string | null;
 }
 
 export interface AccessibilityStartSessionParams {
@@ -691,6 +738,8 @@ export interface AutocompleteDebugFocusResult {
 
 export interface AutocompleteAcceptParams {
   suggestion?: string;
+  /** When true, skip applying text via accessibility (caller already inserted it). */
+  skip_apply?: boolean;
 }
 
 export interface AutocompleteAcceptResult {
@@ -811,7 +860,29 @@ export interface RuntimeFlags {
   log_prompts: boolean;
 }
 
-export const DEFAULT_WORKSPACE_ONBOARDING_FLAG = '.skip_onboarding';
+/** Read onboarding_completed from core config. */
+export async function getOnboardingCompleted(): Promise<boolean> {
+  if (!isTauri()) return false;
+  const res = await callCoreRpc<boolean | { result: boolean }>({
+    method: 'openhuman.config_get_onboarding_completed',
+  });
+  // RpcOutcome may wrap value in { result, logs } when logs are present
+  if (typeof res === 'boolean') return res;
+  if (res && typeof res === 'object' && 'result' in res) return res.result;
+  return false;
+}
+
+/** Write onboarding_completed to core config. */
+export async function setOnboardingCompleted(value: boolean): Promise<boolean> {
+  if (!isTauri()) return false;
+  const res = await callCoreRpc<boolean | { result: boolean }>({
+    method: 'openhuman.config_set_onboarding_completed',
+    params: { value },
+  });
+  if (typeof res === 'boolean') return res;
+  if (res && typeof res === 'object' && 'result' in res) return res.result;
+  return false;
+}
 
 export interface LocalAiStatus {
   state: string;
@@ -1083,31 +1154,6 @@ export async function openhumanGetRuntimeFlags(): Promise<CommandResponse<Runtim
   });
 }
 
-export async function openhumanWorkspaceOnboardingFlagExists(
-  flagName = DEFAULT_WORKSPACE_ONBOARDING_FLAG
-): Promise<boolean> {
-  if (!isTauri()) {
-    return false;
-  }
-  return await callCoreRpc<boolean>({
-    method: 'openhuman.workspace_onboarding_flag_exists',
-    params: { flag_name: flagName },
-  });
-}
-
-export async function openhumanWorkspaceOnboardingFlagSet(
-  value: boolean,
-  flagName = DEFAULT_WORKSPACE_ONBOARDING_FLAG
-): Promise<boolean> {
-  if (!isTauri()) {
-    return false;
-  }
-  return await callCoreRpc<boolean>({
-    method: 'openhuman.workspace_onboarding_flag_set',
-    params: { flag_name: flagName, value },
-  });
-}
-
 export async function openhumanSetBrowserAllowAll(
   enabled: boolean
 ): Promise<CommandResponse<RuntimeFlags>> {
@@ -1321,6 +1367,55 @@ export async function openhumanLocalAiTts(
   return await callCoreRpc<CommandResponse<LocalAiTtsResult>>({
     method: 'openhuman.local_ai_tts',
     params: { text, output_path: outputPath },
+  });
+}
+
+export interface LocalAiChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+export interface LocalAiChatResult {
+  result: string;
+}
+
+/**
+ * Multi-turn chat completion via the local Ollama model.
+ * Only callable when local AI is in "ready" state.
+ * Does NOT hit the cloud API — zero billed token cost.
+ *
+ * @param messages  Full conversation history including the latest user turn.
+ * @param maxTokens Optional cap on output tokens (defaults to model max).
+ */
+export async function openhumanLocalAiChat(
+  messages: LocalAiChatMessage[],
+  maxTokens?: number
+): Promise<CommandResponse<string>> {
+  return await callCoreRpc<CommandResponse<string>>({
+    method: 'openhuman.local_ai_chat',
+    params: { messages, max_tokens: maxTokens },
+  });
+}
+
+// --- Reaction decision (local model) ---
+
+export interface ReactionDecision {
+  should_react: boolean;
+  emoji: string | null;
+}
+
+/**
+ * Ask the local model whether the assistant should react to a user message
+ * with an emoji, based on the channel type. Designed to be fire-and-forget.
+ * Zero cloud cost — runs entirely on the local Ollama model.
+ */
+export async function openhumanLocalAiShouldReact(
+  message: string,
+  channelType: string
+): Promise<CommandResponse<ReactionDecision>> {
+  return await callCoreRpc<CommandResponse<ReactionDecision>>({
+    method: 'openhuman.local_ai_should_react',
+    params: { message, channel_type: channelType },
   });
 }
 
@@ -2006,5 +2101,77 @@ export async function runtimeSkillDataStats(skillId: string): Promise<RuntimeSki
   return await callCoreRpc<RuntimeSkillDataStats>({
     method: 'openhuman.skills_status',
     params: { skill_id: skillId },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Voice domain — openhuman.voice_*
+// ---------------------------------------------------------------------------
+
+export interface VoiceSpeechResult {
+  /** Final text — cleaned by LLM post-processing when available. */
+  text: string;
+  /** Raw whisper output before LLM cleanup. */
+  raw_text: string;
+  model_id: string;
+}
+
+export interface VoiceTtsResult {
+  output_path: string;
+  voice_id: string;
+}
+
+export interface VoiceStatus {
+  stt_available: boolean;
+  tts_available: boolean;
+  stt_model_id: string;
+  tts_voice_id: string;
+  whisper_binary: string | null;
+  piper_binary: string | null;
+  stt_model_path: string | null;
+  tts_voice_path: string | null;
+  /** Whether the whisper model is loaded in-process (low-latency mode). */
+  whisper_in_process: boolean;
+  /** Whether LLM post-processing is enabled for transcription cleanup. */
+  llm_cleanup_enabled: boolean;
+}
+
+export async function openhumanVoiceStatus(): Promise<CommandResponse<VoiceStatus>> {
+  return await callCoreRpc<CommandResponse<VoiceStatus>>({
+    method: 'openhuman.voice_status',
+    params: {},
+  });
+}
+
+export async function openhumanVoiceTranscribe(
+  audioPath: string,
+  context?: string,
+  skipCleanup?: boolean
+): Promise<CommandResponse<VoiceSpeechResult>> {
+  return await callCoreRpc<CommandResponse<VoiceSpeechResult>>({
+    method: 'openhuman.voice_transcribe',
+    params: { audio_path: audioPath, context, skip_cleanup: skipCleanup },
+  });
+}
+
+export async function openhumanVoiceTranscribeBytes(
+  audioBytes: number[],
+  extension?: string,
+  context?: string,
+  skipCleanup?: boolean
+): Promise<CommandResponse<VoiceSpeechResult>> {
+  return await callCoreRpc<CommandResponse<VoiceSpeechResult>>({
+    method: 'openhuman.voice_transcribe_bytes',
+    params: { audio_bytes: audioBytes, extension, context, skip_cleanup: skipCleanup },
+  });
+}
+
+export async function openhumanVoiceTts(
+  text: string,
+  outputPath?: string
+): Promise<CommandResponse<VoiceTtsResult>> {
+  return await callCoreRpc<CommandResponse<VoiceTtsResult>>({
+    method: 'openhuman.voice_tts',
+    params: { text, output_path: outputPath },
   });
 }

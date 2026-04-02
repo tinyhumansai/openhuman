@@ -1,0 +1,39 @@
+# Build artifacts
+target/
+app/src-tauri/target/
+
+# Node / frontend (not needed for core binary)
+app/
+node_modules/
+dist/
+.vite/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitmodules
+
+# CI / docs
+.github/
+docs/
+*.md
+!Cargo.lock
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Tests (not needed in build context)
+tests/
+scripts/

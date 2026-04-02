@@ -6,11 +6,19 @@ use crate::openhuman::memory::store::types::{
     NamespaceRetrievalContext, RetrievalScoreBreakdown,
 };
 
+use super::events;
+use super::fts5;
 use super::UnifiedMemory;
 
 const GRAPH_WEIGHT: f64 = 0.55;
 const VECTOR_WEIGHT: f64 = 0.30;
 const KEYWORD_WEIGHT: f64 = 0.15;
+const EPISODIC_WEIGHT: f64 = 0.20;
+
+// Adjusted weights when episodic signal is present
+const GRAPH_WEIGHT_WITH_EPISODIC: f64 = 0.45;
+const VECTOR_WEIGHT_WITH_EPISODIC: f64 = 0.25;
+const KEYWORD_WEIGHT_WITH_EPISODIC: f64 = 0.10;
 
 const RECALL_PRIORITY_WEIGHT: f64 = 0.45;
 const RECALL_GRAPH_WEIGHT: f64 = 0.30;
@@ -86,9 +94,6 @@ impl UnifiedMemory {
         let ns = Self::sanitize_namespace(namespace);
         let docs = self.load_documents_for_scope(&ns).await?;
         let kvs = self.kv_records_for_scope(&ns).await?;
-        if docs.is_empty() && kvs.is_empty() {
-            return Ok(Vec::new());
-        }
 
         let graph_relations = self
             .graph_relations_for_scope(&ns)
@@ -182,6 +187,123 @@ impl UnifiedMemory {
                     keyword_relevance: keyword,
                     vector_similarity: 0.0,
                     graph_relevance: 0.0,
+                    episodic_relevance: 0.0,
+                    freshness,
+                    final_score,
+                },
+                document_id: None,
+                chunk_id: None,
+                supporting_relations: Vec::new(),
+            });
+        }
+
+        // Episodic FTS5 search — search past conversation turns.
+        // Only merge episodic results when querying the global namespace,
+        // since episodic entries are session-scoped, not namespace-scoped.
+        let episodic_hits = if ns == "global" {
+            fts5::episodic_search(&self.conn, query, limit as usize).unwrap_or_else(|e| {
+                tracing::warn!("[query] episodic search failed: {e}");
+                Vec::new()
+            })
+        } else {
+            Vec::new()
+        };
+
+        if !episodic_hits.is_empty() {
+            tracing::debug!(
+                "[query] merging {} episodic hits for '{}'",
+                episodic_hits.len(),
+                query
+            );
+
+            // Reweight existing document/KV hits when episodic signal is present.
+            let has_episodic = true;
+            if has_episodic {
+                for hit in &mut hits {
+                    if hit.kind == MemoryItemKind::Document {
+                        let bd = &hit.score_breakdown;
+                        let new_score = (bd.graph_relevance * GRAPH_WEIGHT_WITH_EPISODIC)
+                            + (bd.vector_similarity * VECTOR_WEIGHT_WITH_EPISODIC)
+                            + (bd.keyword_relevance * KEYWORD_WEIGHT_WITH_EPISODIC);
+                        hit.score = new_score;
+                        hit.score_breakdown.final_score = new_score;
+                    }
+                }
+            }
+
+            for entry in &episodic_hits {
+                let freshness = Self::recency_score(entry.timestamp, now);
+                // Episodic FTS5 returns results ordered by rank (best first).
+                // Normalize position to a 0-1 relevance score.
+                let position_idx = episodic_hits
+                    .iter()
+                    .position(|e| e.id == entry.id)
+                    .unwrap_or(0);
+                let fts_relevance = 1.0 - (position_idx as f64 / episodic_hits.len().max(1) as f64);
+
+                let episodic_score = (fts_relevance * 0.7) + (freshness * 0.3);
+                let final_score = episodic_score * EPISODIC_WEIGHT;
+
+                // Truncate long episodic content for context display (UTF-8 safe).
+                let content = match entry.content.char_indices().nth(500) {
+                    Some((byte_idx, _)) => format!("{}...", &entry.content[..byte_idx]),
+                    None => entry.content.clone(),
+                };
+
+                hits.push(NamespaceMemoryHit {
+                    id: format!("episodic:{}", entry.id.unwrap_or(0)),
+                    kind: MemoryItemKind::Episodic,
+                    namespace: ns.clone(),
+                    key: format!("{}:{}", entry.session_id, entry.role),
+                    title: entry.lesson.clone(),
+                    content,
+                    category: "episodic".to_string(),
+                    source_type: Some(entry.role.clone()),
+                    updated_at: entry.timestamp,
+                    score: final_score,
+                    score_breakdown: RetrievalScoreBreakdown {
+                        keyword_relevance: 0.0,
+                        vector_similarity: 0.0,
+                        graph_relevance: 0.0,
+                        episodic_relevance: fts_relevance,
+                        freshness,
+                        final_score,
+                    },
+                    document_id: None,
+                    chunk_id: None,
+                    supporting_relations: Vec::new(),
+                });
+            }
+        }
+
+        // Event FTS5 search — search extracted facts, decisions, preferences.
+        let event_hits = events::event_search_fts(&self.conn, &ns, query, limit as usize)
+            .unwrap_or_else(|e| {
+                tracing::warn!("[query] event search failed: {e}");
+                Vec::new()
+            });
+
+        for (idx, event) in event_hits.iter().enumerate() {
+            let freshness = Self::recency_score(event.created_at, now);
+            let fts_relevance = 1.0 - (idx as f64 / event_hits.len().max(1) as f64);
+            let final_score = (fts_relevance * 0.6) + (freshness * 0.4);
+
+            hits.push(NamespaceMemoryHit {
+                id: format!("event:{}", event.event_id),
+                kind: MemoryItemKind::Event,
+                namespace: event.namespace.clone(),
+                key: format!("{}:{}", event.event_type.as_str(), event.segment_id),
+                title: event.subject.clone(),
+                content: event.content.clone(),
+                category: event.event_type.as_str().to_string(),
+                source_type: Some("event".to_string()),
+                updated_at: event.created_at,
+                score: final_score,
+                score_breakdown: RetrievalScoreBreakdown {
+                    keyword_relevance: fts_relevance,
+                    vector_similarity: 0.0,
+                    graph_relevance: 0.0,
+                    episodic_relevance: 0.0,
                     freshness,
                     final_score,
                 },
@@ -271,6 +393,7 @@ impl UnifiedMemory {
                     keyword_relevance: priority,
                     vector_similarity: 0.0,
                     graph_relevance: graph,
+                    episodic_relevance: 0.0,
                     freshness,
                     final_score,
                 },
@@ -312,6 +435,7 @@ impl UnifiedMemory {
                     keyword_relevance: priority,
                     vector_similarity: 0.0,
                     graph_relevance: 0.0,
+                    episodic_relevance: 0.0,
                     freshness,
                     final_score,
                 },
@@ -873,6 +997,7 @@ impl UnifiedMemory {
             keyword_relevance,
             vector_similarity,
             graph_relevance,
+            episodic_relevance: 0.0,
             freshness: 0.0,
             final_score,
         }
@@ -887,6 +1012,7 @@ impl UnifiedMemory {
             keyword_relevance,
             vector_similarity,
             graph_relevance: 0.0,
+            episodic_relevance: 0.0,
             freshness: 0.0,
             final_score,
         }
@@ -1089,6 +1215,12 @@ impl UnifiedMemory {
                     format!("{title}: {}", hit.content.trim())
                 }
                 MemoryItemKind::Kv => format!("[kv:{}] {}", hit.key, hit.content.trim()),
+                MemoryItemKind::Episodic => {
+                    format!("[episodic:{}] {}", hit.key, hit.content.trim())
+                }
+                MemoryItemKind::Event => {
+                    format!("[event:{}] {}", hit.key, hit.content.trim())
+                }
             };
             parts.push(summary);
 
@@ -1217,5 +1349,121 @@ mod tests {
         assert!(hits
             .iter()
             .any(|hit| matches!(hit.kind, crate::openhuman::memory::MemoryItemKind::Kv)));
+    }
+
+    #[tokio::test]
+    async fn query_returns_episodic_hits_when_available() {
+        use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
+
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        // Insert an episodic entry that matches the query.
+        fts5::episodic_insert(
+            &memory.conn,
+            &EpisodicEntry {
+                id: None,
+                session_id: "sess-1".into(),
+                timestamp: 1000.0,
+                role: "user".into(),
+                content: "I have been using Tokio for async Rust development".into(),
+                lesson: None,
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+
+        let hits = memory
+            .query_namespace_hits("global", "Tokio async Rust", 10)
+            .await
+            .unwrap();
+
+        let episodic_hits: Vec<_> = hits
+            .iter()
+            .filter(|h| h.kind == crate::openhuman::memory::MemoryItemKind::Episodic)
+            .collect();
+        assert!(
+            !episodic_hits.is_empty(),
+            "Expected at least one Episodic hit for 'Tokio async Rust'"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_returns_event_hits_when_available() {
+        use crate::openhuman::memory::store::events::{self, EventRecord, EventType};
+
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        // Insert an event that matches the query.
+        events::event_insert(
+            &memory.conn,
+            &EventRecord {
+                event_id: "evt-q-1".into(),
+                segment_id: "seg-q-1".into(),
+                session_id: "s1".into(),
+                namespace: "global".into(),
+                event_type: EventType::Decision,
+                content: "We decided to use PostgreSQL as the primary database".into(),
+                subject: Some("database choice".into()),
+                timestamp_ref: None,
+                confidence: 0.85,
+                embedding: None,
+                source_turn_ids: None,
+                created_at: 1000.0,
+            },
+        )
+        .unwrap();
+
+        let hits = memory
+            .query_namespace_hits("global", "PostgreSQL database", 10)
+            .await
+            .unwrap();
+
+        let event_hits: Vec<_> = hits
+            .iter()
+            .filter(|h| h.kind == crate::openhuman::memory::MemoryItemKind::Event)
+            .collect();
+        assert!(
+            !event_hits.is_empty(),
+            "Expected at least one Event hit for 'PostgreSQL database'"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_episodic_hits_have_correct_kind() {
+        use crate::openhuman::memory::store::fts5::{self, EpisodicEntry};
+
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        fts5::episodic_insert(
+            &memory.conn,
+            &EpisodicEntry {
+                id: None,
+                session_id: "sess-kind".into(),
+                timestamp: 2000.0,
+                role: "assistant".into(),
+                content: "The deployment pipeline uses GitHub Actions for CI".into(),
+                lesson: Some("CI runs on push to main".into()),
+                tool_calls_json: None,
+                cost_microdollars: 0,
+            },
+        )
+        .unwrap();
+
+        let hits = memory
+            .query_namespace_hits("global", "GitHub Actions deployment", 10)
+            .await
+            .unwrap();
+
+        for hit in hits.iter().filter(|h| h.id.starts_with("episodic:")) {
+            assert_eq!(
+                hit.kind,
+                crate::openhuman::memory::MemoryItemKind::Episodic,
+                "Hits with 'episodic:' id prefix must have kind Episodic"
+            );
+        }
     }
 }

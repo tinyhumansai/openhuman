@@ -7,10 +7,10 @@ pub mod presets;
 mod schemas;
 
 mod install;
-mod model_ids;
+pub(crate) mod model_ids;
 mod ollama_api;
 mod parse;
-mod paths;
+pub(crate) mod paths;
 mod service;
 mod types;
 
@@ -23,6 +23,7 @@ pub use schemas::{
     all_controller_schemas as all_local_ai_controller_schemas,
     all_registered_controllers as all_local_ai_registered_controllers,
 };
+pub(crate) use service::whisper_engine;
 pub use service::LocalAiService;
 pub use types::{
     LocalAiAssetStatus, LocalAiAssetsStatus, LocalAiDownloadProgressItem, LocalAiDownloadsProgress,

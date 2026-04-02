@@ -9,6 +9,7 @@ import {
 
 interface ToolsStepProps {
   onNext: (enabledTools: string[]) => void;
+  onBack?: () => void;
 }
 
 const CATEGORY_DESCRIPTIONS: Record<ToolCategory, string> = {
@@ -20,7 +21,7 @@ const CATEGORY_DESCRIPTIONS: Record<ToolCategory, string> = {
   Automation: 'Cron jobs and scheduled tasks',
 };
 
-const ToolsStep = ({ onNext }: ToolsStepProps) => {
+const ToolsStep = ({ onNext, onBack: _onBack }: ToolsStepProps) => {
   const toolsByCategory = getToolsByCategory();
   const [enabled, setEnabled] = useState<Record<string, boolean>>(() => {
     const defaults: Record<string, boolean> = {};
@@ -93,7 +94,7 @@ const ToolsStep = ({ onNext }: ToolsStepProps) => {
 
       <button
         onClick={() => onNext(enabledList)}
-        className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl">
+        className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
         Continue
       </button>
     </div>

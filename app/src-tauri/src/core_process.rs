@@ -17,6 +17,7 @@ pub enum CoreRunMode {
 pub struct CoreProcessHandle {
     child: Arc<Mutex<Option<Child>>>,
     task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    restart_lock: Arc<Mutex<()>>,
     port: u16,
     core_bin: Option<PathBuf>,
     run_mode: CoreRunMode,
@@ -27,6 +28,7 @@ impl CoreProcessHandle {
         Self {
             child: Arc::new(Mutex::new(None)),
             task: Arc::new(Mutex::new(None)),
+            restart_lock: Arc::new(Mutex::new(())),
             port,
             core_bin,
             run_mode,
@@ -35,6 +37,11 @@ impl CoreProcessHandle {
 
     pub fn rpc_url(&self) -> String {
         format!("http://127.0.0.1:{}/rpc", self.port)
+    }
+
+    /// Acquire the restart lock to serialize overlapping restart requests.
+    pub async fn restart_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.restart_lock.lock().await
     }
 
     async fn is_rpc_port_open(&self) -> bool {
@@ -177,6 +184,76 @@ impl CoreProcessHandle {
         Err("core process did not become ready".to_string())
     }
 
+    /// Restart the core process to pick up updated macOS permission grants.
+    ///
+    /// macOS caches permission state per-process; the running sidecar never sees
+    /// a newly granted permission until it restarts. This method shuts down the
+    /// current child, waits until the RPC port is free (so `ensure_running` does not
+    /// fast-return while the old listener is still bound), then spawns a fresh instance.
+    ///
+    /// If another process is listening on the core port (e.g. manual `openhuman core run`),
+    /// shutdown does not stop it — we time out and return an error instead of a false success.
+    ///
+    /// Issue: <https://github.com/tinyhumansai/openhuman/issues/133>
+    pub async fn restart(&self) -> Result<(), String> {
+        log::info!("[core] restarting core process for permission refresh");
+
+        let had_managed_child = {
+            let guard = self.child.lock().await;
+            guard.is_some()
+        };
+        log::debug!(
+            "[core] restart: had_managed_child={} before shutdown",
+            had_managed_child
+        );
+
+        self.shutdown().await;
+        log::debug!("[core] restart: shutdown complete, checking port {}", self.port);
+
+        // If we never spawned the sidecar (something else was already listening), we cannot free
+        // the port — fail fast with a clear message instead of polling for 8s.
+        if !had_managed_child && self.is_rpc_port_open().await {
+            log::error!(
+                "[core] restart: no child to stop but port {} is open — another process owns it",
+                self.port
+            );
+            return Err(format!(
+                "Core RPC port {} is already in use by another process (OpenHuman did not start it). Quit any `openhuman core run` in a terminal or free the port, then relaunch the app. You can also set OPENHUMAN_CORE_PORT to a different port.",
+                self.port
+            ));
+        }
+
+        // After kill+wait on our child, the port should close; poll briefly in case the OS is slow
+        // to release the socket.
+        const POLL_MS: u64 = 50;
+        const MAX_WAIT_MS: u64 = 10_000;
+        let mut waited_ms: u64 = 0;
+        while self.is_rpc_port_open().await {
+            if waited_ms >= MAX_WAIT_MS {
+                log::error!(
+                    "[core] restart: port {} still in use after {}ms (had_managed_child={})",
+                    self.port,
+                    MAX_WAIT_MS,
+                    had_managed_child
+                );
+                return Err(format!(
+                    "Core RPC port {} did not become free after stopping the sidecar. Quit any other process using this port (e.g. `openhuman core run`) or change OPENHUMAN_CORE_PORT.",
+                    self.port
+                ));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(POLL_MS)).await;
+            waited_ms += POLL_MS;
+        }
+
+        log::debug!("[core] restart: port free, calling ensure_running");
+        let result = self.ensure_running().await;
+        match &result {
+            Ok(()) => log::info!("[core] restart: core process ready after restart"),
+            Err(e) => log::error!("[core] restart: failed to restart core process: {e}"),
+        }
+        result
+    }
+
     /// Stop the core process this handle spawned (child or in-process task). Safe to call if
     /// nothing was spawned or core was already external.
     pub async fn shutdown(&self) {
@@ -185,6 +262,26 @@ impl CoreProcessHandle {
             log::info!("[core] terminating child core process on app shutdown");
             if let Err(e) = child.kill().await {
                 log::warn!("[core] failed to kill child core process: {e}");
+            }
+            // Wait for the process to exit so the RPC listen socket is released before restart
+            // checks the port (otherwise we can spuriously hit "port still in use").
+            match timeout(
+                Duration::from_secs(12),
+                child.wait(),
+            )
+            .await
+            {
+                Ok(Ok(status)) => {
+                    log::debug!("[core] child core process reaped after kill: {status}");
+                }
+                Ok(Err(e)) => {
+                    log::warn!("[core] wait on child core process after kill: {e}");
+                }
+                Err(_) => {
+                    log::warn!(
+                        "[core] timed out waiting for child core process to exit after kill (12s)"
+                    );
+                }
             }
         }
         let mut task_guard = self.task.lock().await;
@@ -244,9 +341,12 @@ pub fn default_core_bin() -> Option<PathBuf> {
         }
     }
 
-    // Dev ergonomics: allow an explicit staged sidecar from src-tauri/binaries in
-    // debug builds before falling back to self-subcommand spawning.
-    if cfg!(debug_assertions) {
+    // Dev: prefer a staged sidecar under src-tauri/binaries, then use the same search as
+    // release (next to the .app, Resources/, etc.). Previously we returned None here when the
+    // folder was empty, which forced `core run` on the GUI binary — a different TCC identity than
+    // `openhuman-core-*` and misleading "still denied" after granting the sidecar name.
+    #[cfg(debug_assertions)]
+    {
         let binaries_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
         if let Ok(entries) = std::fs::read_dir(&binaries_dir) {
             for entry in entries.flatten() {
@@ -267,8 +367,6 @@ pub fn default_core_bin() -> Option<PathBuf> {
                 }
             }
         }
-
-        return None;
     }
 
     let exe = std::env::current_exe().ok()?;

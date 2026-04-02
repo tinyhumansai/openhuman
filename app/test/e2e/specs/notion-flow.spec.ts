@@ -19,17 +19,24 @@
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
   clickButton,
+  clickNativeButton,
   clickText,
   dumpAccessibilityTree,
   textExists,
   waitForText,
-  waitForWebView,
-  waitForWindowVisible,
 } from '../helpers/element-helpers';
+import {
+  navigateToHome,
+  navigateToIntelligence,
+  navigateToSettings,
+  navigateToSkills,
+  performFullLogin,
+  waitForHomePage,
+} from '../helpers/shared-flows';
 import {
   clearRequestLog,
   getRequestLog,
@@ -44,36 +51,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const LOG_PREFIX = '[NotionFlow]';
-
-/**
- * Click a native XCUIElementTypeButton by its label/title attribute.
- */
-async function clickNativeButton(text, timeout = 10_000) {
-  const selector =
-    `//XCUIElementTypeButton[contains(@label, "${text}") or ` + `contains(@title, "${text}")]`;
-  const el = await browser.$(selector);
-  await el.waitForExist({ timeout, timeoutMsg: `Button "${text}" not found within ${timeout}ms` });
-
-  const location = await el.getLocation();
-  const size = await el.getSize();
-  const centerX = Math.round(location.x + size.width / 2);
-  const centerY = Math.round(location.y + size.height / 2);
-
-  await browser.performActions([
-    {
-      type: 'pointer',
-      id: 'mouse1',
-      parameters: { pointerType: 'mouse' },
-      actions: [
-        { type: 'pointerMove', duration: 10, x: centerX, y: centerY },
-        { type: 'pointerDown', button: 0 },
-        { type: 'pause', duration: 50 },
-        { type: 'pointerUp', button: 0 },
-      ],
-    },
-  ]);
-  await browser.releaseActions();
-}
 
 /**
  * Poll the mock server request log until a matching request appears.
@@ -101,126 +78,7 @@ async function waitForTextToDisappear(text, timeout = 10_000) {
   return false;
 }
 
-/**
- * Wait until one of the candidate texts appears on screen (Home page markers).
- */
-async function waitForHomePage(timeout = 15_000) {
-  const candidates = [
-    'Test',
-    'Good morning',
-    'Good afternoon',
-    'Good evening',
-    'Message OpenHuman',
-    'Upgrade to Premium',
-  ];
-
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    for (const text of candidates) {
-      if (await textExists(text)) return text;
-    }
-    await browser.pause(1_000);
-  }
-  return null;
-}
-
-/**
- * Click the first matching text from a list of candidates, with retry.
- */
-async function clickFirstCandidate(candidates, label, timeout = 10_000) {
-  for (const text of candidates) {
-    if (await textExists(text)) {
-      await clickText(text, timeout);
-      console.log(`${LOG_PREFIX} ${label}: clicked "${text}"`);
-
-      const advanced = await waitForTextToDisappear(text, 8_000);
-      if (advanced) return text;
-
-      console.log(`${LOG_PREFIX} ${label}: "${text}" still visible, retrying click...`);
-      await clickText(text, 5_000);
-      const retryAdvanced = await waitForTextToDisappear(text, 5_000);
-      if (retryAdvanced) return text;
-
-      const tree = await dumpAccessibilityTree();
-      console.log(
-        `${LOG_PREFIX} ${label}: "${text}" still visible after retry. Tree:\n`,
-        tree.slice(0, 4000)
-      );
-      return null;
-    }
-  }
-
-  const tree = await dumpAccessibilityTree();
-  console.log(`${LOG_PREFIX} ${label}: no candidates found. Tree:\n`, tree.slice(0, 4000));
-  return null;
-}
-
-/**
- * Navigate back to Home via the sidebar Home button.
- */
-async function navigateToHome() {
-  await clickNativeButton('Home', 10_000);
-  console.log(`${LOG_PREFIX} Clicked Home nav`);
-  await browser.pause(2_000);
-  const homeText = await waitForHomePage(10_000);
-  if (!homeText) {
-    const tree = await dumpAccessibilityTree();
-    console.log(
-      `${LOG_PREFIX} navigateToHome: Home page not reached. Tree:\n`,
-      tree.slice(0, 4000)
-    );
-    throw new Error('navigateToHome: Home page not reached after clicking Home nav');
-  }
-}
-
-/**
- * Perform the full login + onboarding flow via deep link.
- */
-async function performFullLogin(token = 'e2e-test-token') {
-  await triggerAuthDeepLink(token);
-
-  await waitForWindowVisible(25_000);
-  await waitForWebView(15_000);
-  await waitForAppReady(15_000);
-
-  // Onboarding Step 1: InviteCodeStep — skip
-  await clickText('Skip for now', 10_000);
-  console.log(`${LOG_PREFIX} Clicked "Skip for now"`);
-
-  const stepChanged = await waitForTextToDisappear('Skip for now', 8_000);
-  if (!stepChanged) {
-    console.log(`${LOG_PREFIX} Step did not advance, retrying...`);
-    await clickText('Skip', 5_000);
-    await waitForTextToDisappear('Skip', 5_000);
-  }
-  await browser.pause(2_000);
-
-  // Onboarding Step 2: FeaturesStep
-  const featResult = await clickFirstCandidate(['Looks Amazing', 'Bring It On'], 'FeaturesStep');
-  if (!featResult) throw new Error('FeaturesStep button not found');
-  await browser.pause(2_000);
-
-  // Onboarding Step 3: PrivacyStep
-  const privResult = await clickFirstCandidate(['Got it', 'Continue'], 'PrivacyStep');
-  if (!privResult) throw new Error('PrivacyStep button not found');
-  await browser.pause(2_000);
-
-  // Onboarding Step 4: GetStartedStep
-  const startResult = await clickFirstCandidate(["Let's Go", "I'm Ready"], 'GetStartedStep');
-  if (!startResult) throw new Error('GetStartedStep button not found');
-  await browser.pause(3_000);
-
-  const homeText = await waitForHomePage(15_000);
-  if (!homeText) {
-    const tree = await dumpAccessibilityTree();
-    console.log(
-      `${LOG_PREFIX} Home page not reached after onboarding. Tree:\n`,
-      tree.slice(0, 4000)
-    );
-    throw new Error('Full login + onboarding did not reach Home page');
-  }
-  console.log(`${LOG_PREFIX} Home page confirmed: found "${homeText}"`);
-}
+// waitForHomePage, navigateToHome, performFullLogin are imported from shared-flows
 
 /**
  * Counter for unique JWT suffixes.
@@ -240,12 +98,7 @@ async function reAuthAndGoHome(token = 'e2e-notion-token') {
   await triggerAuthDeepLink(token);
   await browser.pause(5_000);
 
-  try {
-    await clickNativeButton('Home', 5_000);
-    await browser.pause(2_000);
-  } catch {
-    // Home button might not be visible yet
-  }
+  await navigateToHome();
 
   const homeText = await waitForHomePage(15_000);
   if (!homeText) {
@@ -270,9 +123,11 @@ async function findNotionInUI() {
 
   // Check Intelligence page
   try {
-    await clickNativeButton('Intelligence', 5_000);
-    await browser.pause(2_000);
-    if (await textExists('Notion')) {
+    await navigateToIntelligence();
+    const hash = await browser.execute(() => window.location.hash);
+    if (!hash.includes('/intelligence')) {
+      console.log(`${LOG_PREFIX} Intelligence navigation failed (hash: ${hash})`);
+    } else if (await textExists('Notion')) {
       console.log(`${LOG_PREFIX} Notion found on Intelligence page`);
       return true;
     }
@@ -285,14 +140,7 @@ async function findNotionInUI() {
   return false;
 }
 
-/**
- * Navigate to the Settings page and look for Notion.
- */
-async function navigateToSettings() {
-  await clickNativeButton('Settings', 10_000);
-  console.log(`${LOG_PREFIX} Clicked Settings nav`);
-  await browser.pause(3_000);
-}
+// navigateToSettings is imported from shared-flows
 
 /**
  * Open the Notion skill setup/management modal.
@@ -559,11 +407,19 @@ describe('Notion Integration Flows', () => {
 
       // Navigate to Intelligence page to see skills list
       try {
-        await clickNativeButton('Intelligence', 10_000);
-        await browser.pause(3_000);
-        console.log(`${LOG_PREFIX} 8.2.1: Navigated to Intelligence page`);
+        await navigateToIntelligence();
+        const hash = await browser.execute(() => window.location.hash);
+        if (!hash.includes('/intelligence')) {
+          console.log(
+            `${LOG_PREFIX} 8.2.1: Intelligence navigation failed (hash: ${hash}), falling back to Home`
+          );
+          await navigateToHome();
+        } else {
+          await browser.pause(3_000);
+          console.log(`${LOG_PREFIX} 8.2.1: Navigated to Intelligence page`);
+        }
       } catch {
-        console.log(`${LOG_PREFIX} 8.2.1: Intelligence nav not found — checking Home for skills`);
+        console.log(`${LOG_PREFIX} 8.2.1: Intelligence nav error — checking Home for skills`);
         await navigateToHome();
       }
 
@@ -944,11 +800,18 @@ describe('Notion Integration Flows', () => {
       expect(homeMarker).toBeTruthy();
       console.log(`${LOG_PREFIX} 8.4.4: App stable after permission downgrade: "${homeMarker}"`);
 
-      // Verify auth calls were made during each re-auth
+      // Verify auth calls were made during each re-auth.
+      // The app may call /telegram/me, /teams, /settings, or consume tokens
+      // via /telegram/login-tokens — any of these confirm auth activity.
       const allRequests = getRequestLog();
-      const meCall = allRequests.find(r => r.url.includes('/telegram/me'));
-      const teamsCall = allRequests.find(r => r.url.includes('/teams'));
-      expect(meCall || teamsCall).toBeTruthy();
+      const authCall = allRequests.find(
+        r =>
+          r.url.includes('/telegram/me') ||
+          r.url.includes('/teams') ||
+          r.url.includes('/settings') ||
+          r.url.includes('/telegram/login-tokens/')
+      );
+      expect(authCall).toBeTruthy();
       console.log(`${LOG_PREFIX} 8.4.4: Auth calls confirmed during permission changes`);
 
       await navigateToHome();

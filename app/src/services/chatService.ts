@@ -42,7 +42,7 @@ export interface ChatEventListeners {
   onError?: (event: ChatErrorEvent) => void;
 }
 
-export async function subscribeChatEvents(listeners: ChatEventListeners): Promise<() => void> {
+export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   const socket = socketService.getSocket();
   if (!socket) return () => {};
 

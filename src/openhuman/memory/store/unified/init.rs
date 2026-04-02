@@ -109,6 +109,15 @@ impl UnifiedMemory {
         // the store is initialised.
         conn.execute_batch(super::fts5::EPISODIC_INIT_SQL)?;
 
+        // Conversation segmentation tables.
+        conn.execute_batch(super::segments::SEGMENTS_INIT_SQL)?;
+
+        // Event extraction tables.
+        conn.execute_batch(super::events::EVENTS_INIT_SQL)?;
+
+        // User profile accumulation table.
+        conn.execute_batch(super::profile::PROFILE_INIT_SQL)?;
+
         Ok(Self {
             workspace_dir: workspace_dir.to_path_buf(),
             db_path,

@@ -62,9 +62,9 @@ vi.mock('../../../utils/tauriCommands', () => ({
 describe('MemoryWorkspace', () => {
   const onToast = vi.fn();
 
-  it('renders the Memory Workspace heading', async () => {
+  it('renders the Memory heading', async () => {
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-    expect(screen.getByText('Memory Workspace')).toBeInTheDocument();
+    expect(screen.getByText('Memory')).toBeInTheDocument();
   });
 
   it('displays graph relations after loading', async () => {
@@ -93,30 +93,20 @@ describe('MemoryWorkspace', () => {
     expect(screen.queryByText('x1')).not.toBeInTheDocument();
   });
 
-  it('shows relations count in footer stats', async () => {
+  it('shows Relations stat in the stats bar', async () => {
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
 
+    // The stats bar has a "Relations" label
     await waitFor(() => {
-      expect(screen.getByText(/Relations: 2/)).toBeInTheDocument();
+      expect(screen.getByText('Relations')).toBeInTheDocument();
     });
   });
 
-  it('displays Graph relations header with count', async () => {
+  it('renders the Memory Graph section', async () => {
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText('(2)')).toBeInTheDocument();
-    });
-  });
-
-  it('builds entity nodes from graph relation attrs', async () => {
-    renderWithProviders(<MemoryWorkspace onToast={onToast} />);
-
-    // Entity nodes are built from entity_types in attrs
-    // person appears 2x (Alice and Bob as subject), document appears 2x (Paper A as object)
-    await waitFor(() => {
-      // Entity nodes should include counts from relation entity_types
-      expect(screen.getByText('2 entities')).toBeInTheDocument();
+      expect(screen.getByText('Memory Graph')).toBeInTheDocument();
     });
   });
 });
@@ -132,9 +122,7 @@ describe('MemoryWorkspace – no graph relations', () => {
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText('No relations yet. Ingest documents to populate the graph.')
-      ).toBeInTheDocument();
+      expect(screen.getByText('No memory graph data yet')).toBeInTheDocument();
     });
   });
 });

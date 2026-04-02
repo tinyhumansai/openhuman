@@ -1125,7 +1125,7 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
         "echo tool should return the message: {call_result}"
     );
 
-    // 5. Trigger sync (tick)
+    // 5. Trigger sync (routes to onSync via skill/sync RPC)
     let sync = post_json_rpc(
         &rpc_base,
         24,
@@ -1133,12 +1133,9 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
         json!({"skill_id": "e2e-runtime"}),
     )
     .await;
-    let sync_result = assert_no_jsonrpc_error(&sync, "skills_sync");
-    assert_eq!(
-        sync_result.get("ok"),
-        Some(&json!(true)),
-        "sync should acknowledge: {sync_result}"
-    );
+    // skills_sync now routes through "skill/sync" → onSync().  The e2e skill
+    // does not export onSync, so handle_js_call returns null (no error).
+    let _sync_result = assert_no_jsonrpc_error(&sync, "skills_sync");
 
     // 6. Stop the skill
     let stop = post_json_rpc(
@@ -1552,6 +1549,176 @@ async fn team_rpc_e2e() {
     )
     .await;
     assert_no_jsonrpc_error(&role_change, "team_change_member_role");
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn about_app_rpc_list_lookup_and_search() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    fn inner(outer: &Value) -> Value {
+        outer
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| outer.clone())
+    }
+
+    let list = post_json_rpc(&rpc_base, 200, "openhuman.about_app_list", json!({})).await;
+    let list_outer = assert_no_jsonrpc_error(&list, "about_app_list");
+    let list_result = inner(list_outer);
+    let capabilities = list_result
+        .as_array()
+        .expect("about_app list should return an array");
+    assert!(
+        capabilities.len() >= 40,
+        "expected large capability catalog, got: {list_result}"
+    );
+    assert!(capabilities.iter().any(|capability| {
+        capability.get("id").and_then(Value::as_str) == Some("local_ai.download_model")
+    }));
+
+    let filtered = post_json_rpc(
+        &rpc_base,
+        201,
+        "openhuman.about_app_list",
+        json!({ "category": "local_ai" }),
+    )
+    .await;
+    let filtered_outer = assert_no_jsonrpc_error(&filtered, "about_app_list filtered");
+    let filtered_result = inner(filtered_outer);
+    let filtered_capabilities = filtered_result
+        .as_array()
+        .expect("filtered about_app list should return an array");
+    assert!(
+        !filtered_capabilities.is_empty(),
+        "expected local_ai capabilities: {filtered_result}"
+    );
+    assert!(filtered_capabilities.iter().all(|capability| {
+        capability.get("category").and_then(Value::as_str) == Some("local_ai")
+    }));
+
+    let lookup = post_json_rpc(
+        &rpc_base,
+        202,
+        "openhuman.about_app_lookup",
+        json!({ "id": "team.generate_invite_codes" }),
+    )
+    .await;
+    let lookup_outer = assert_no_jsonrpc_error(&lookup, "about_app_lookup");
+    let lookup_result = inner(lookup_outer);
+    assert_eq!(
+        lookup_result.get("id").and_then(Value::as_str),
+        Some("team.generate_invite_codes")
+    );
+    assert_eq!(
+        lookup_result.get("category").and_then(Value::as_str),
+        Some("team")
+    );
+
+    let search = post_json_rpc(
+        &rpc_base,
+        203,
+        "openhuman.about_app_search",
+        json!({ "query": "invite" }),
+    )
+    .await;
+    let search_outer = assert_no_jsonrpc_error(&search, "about_app_search");
+    let search_result = inner(search_outer);
+    let search_capabilities = search_result
+        .as_array()
+        .expect("about_app search should return an array");
+    assert!(
+        search_capabilities.iter().any(|capability| {
+            capability.get("id").and_then(Value::as_str) == Some("team.join_via_invite_code")
+        }),
+        "expected invite-related capability in search results: {search_result}"
+    );
+    assert!(
+        search_capabilities.iter().any(|capability| {
+            capability.get("id").and_then(Value::as_str) == Some("team.generate_invite_codes")
+        }),
+        "expected invite generation capability in search results: {search_result}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn voice_status_returns_availability() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _whisper_guard = EnvVarGuard::unset("WHISPER_BIN");
+    let _piper_guard = EnvVarGuard::unset("PIPER_BIN");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // voice_status does not require auth — it only checks filesystem availability
+    let status = post_json_rpc(&rpc_base, 1, "openhuman.voice_status", json!({})).await;
+    let result = assert_no_jsonrpc_error(&status, "voice_status");
+
+    // Without whisper/piper installed in the test env, both should be unavailable
+    assert!(
+        result.get("stt_available").is_some(),
+        "expected stt_available field: {result}"
+    );
+    assert!(
+        result.get("tts_available").is_some(),
+        "expected tts_available field: {result}"
+    );
+    assert!(
+        result.get("stt_model_id").is_some(),
+        "expected stt_model_id field: {result}"
+    );
+    assert!(
+        result.get("tts_voice_id").is_some(),
+        "expected tts_voice_id field: {result}"
+    );
+
+    // Verify that without binaries, availability is false
+    assert_eq!(
+        result.get("stt_available").and_then(Value::as_bool),
+        Some(false),
+        "stt should be unavailable without whisper binary"
+    );
+    assert_eq!(
+        result.get("tts_available").and_then(Value::as_bool),
+        Some(false),
+        "tts should be unavailable without piper binary"
+    );
 
     mock_join.abort();
     rpc_join.abort();

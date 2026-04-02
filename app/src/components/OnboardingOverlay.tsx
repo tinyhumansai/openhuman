@@ -2,39 +2,33 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import Onboarding from '../pages/onboarding/Onboarding';
-import { selectIsOnboarded, selectOnboardingDeferred } from '../store/authSelectors';
-import { setOnboardingDeferredForUser } from '../store/authSlice';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { useAppSelector } from '../store/hooks';
 import { DEV_FORCE_ONBOARDING } from '../utils/config';
 import {
-  DEFAULT_WORKSPACE_ONBOARDING_FLAG,
-  openhumanWorkspaceOnboardingFlagExists,
+  getOnboardingCompleted,
+  setOnboardingCompleted as persistOnboardingCompleted,
 } from '../utils/tauriCommands';
 
 /**
  * Full-screen overlay that renders the onboarding flow on top of any page
  * when the user has not completed onboarding.
  *
- * Checks both Redux `isOnboarded` and the workspace flag file.
- * Waits for the user profile to load before making a decision.
+ * Reads `onboarding_completed` from the core config (persisted in config.toml).
  */
 const OnboardingOverlay = () => {
-  const dispatch = useAppDispatch();
   const token = useAppSelector(state => state.auth.token);
   const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
   const user = useAppSelector(state => state.user.user);
-  const isOnboarded = useAppSelector(selectIsOnboarded);
-  const isDeferred = useAppSelector(selectOnboardingDeferred);
-  const [hasWorkspaceFlag, setHasWorkspaceFlag] = useState<boolean | null>(null);
-  const [dismissed, setDismissed] = useState(false);
+
+  /** null = still loading, true/false = resolved from core config */
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
   const [userLoadTimedOut, setUserLoadTimedOut] = useState(false);
 
   // Reset local state on logout so re-login starts fresh.
   useEffect(() => {
     if (!token) {
       setUserLoadTimedOut(false);
-      setHasWorkspaceFlag(null);
-      setDismissed(false);
+      setOnboardingCompleted(null);
     }
   }, [token]);
 
@@ -49,53 +43,48 @@ const OnboardingOverlay = () => {
 
   // User is ready when profile loaded or timeout elapsed.
   const userReady = !!user?._id || userLoadTimedOut;
+
+  // Read onboarding_completed from core config.
   useEffect(() => {
     if (!token || !isAuthBootstrapComplete || !userReady) return;
 
     let mounted = true;
     const check = async () => {
       try {
-        const exists = await openhumanWorkspaceOnboardingFlagExists(
-          DEFAULT_WORKSPACE_ONBOARDING_FLAG
-        );
-        if (mounted) setHasWorkspaceFlag(exists);
+        const completed = await getOnboardingCompleted();
+        if (mounted) setOnboardingCompleted(completed);
       } catch {
-        if (mounted) setHasWorkspaceFlag(false);
+        if (mounted) setOnboardingCompleted(false);
       }
     };
     void check();
     return () => {
       mounted = false;
     };
-  }, [token, isAuthBootstrapComplete, userReady, isOnboarded]);
+  }, [token, isAuthBootstrapComplete, userReady]);
 
-  const handleComplete = useCallback(() => {
-    setDismissed(true);
-  }, []);
-
-  const handleDefer = useCallback(() => {
-    if (user?._id) {
-      dispatch(setOnboardingDeferredForUser({ userId: user._id, deferred: true }));
+  const handleDone = useCallback(async () => {
+    setOnboardingCompleted(true);
+    try {
+      await persistOnboardingCompleted(true);
+    } catch {
+      console.warn('[onboarding] Failed to persist onboarding_completed');
     }
-    setDismissed(true);
-  }, [dispatch, user]);
+  }, []);
 
   // Don't show if not logged in, bootstrap not complete, or user not ready
   if (!token || !isAuthBootstrapComplete || !userReady) return null;
 
-  // Still loading workspace flag
-  if (hasWorkspaceFlag === null) return null;
+  // Still loading the flag from core
+  if (onboardingCompleted === null) return null;
 
-  // Determine if onboarding should show
-  const shouldShow = DEV_FORCE_ONBOARDING
-    ? !dismissed
-    : !isOnboarded && !hasWorkspaceFlag && !isDeferred && !dismissed;
+  const shouldShow = DEV_FORCE_ONBOARDING ? !onboardingCompleted : !onboardingCompleted;
 
   if (!shouldShow) return null;
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] bg-canvas-900/95 backdrop-blur-md flex items-center justify-center">
-      <Onboarding onComplete={handleComplete} onDefer={handleDefer} />
+      <Onboarding onComplete={handleDone} onDefer={handleDone} />
     </div>,
     document.body
   );

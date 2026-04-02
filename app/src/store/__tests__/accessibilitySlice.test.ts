@@ -4,6 +4,7 @@ import type { AccessibilityStatus, CaptureTestResult } from '../../utils/tauriCo
 import reducer, {
   clearAccessibilityError,
   fetchAccessibilityStatus,
+  refreshPermissionsWithRestart,
   runCaptureTest,
   setAccessibilityStatus,
   startAccessibilitySession,
@@ -49,6 +50,7 @@ const sampleStatus: AccessibilityStatus = {
   },
   denylist: ['wallet'],
   is_context_blocked: false,
+  permission_check_process_path: '/test/app/src-tauri/binaries/openhuman-core-aarch64-apple-darwin',
 };
 
 describe('accessibilitySlice', () => {
@@ -75,6 +77,27 @@ describe('accessibilitySlice', () => {
     );
     expect(fulfilled.isLoading).toBe(false);
     expect(fulfilled.status?.permissions.accessibility).toBe('granted');
+  });
+
+  it('stores permission_check_process_path from fetched status', () => {
+    const fulfilled = reducer(
+      undefined,
+      fetchAccessibilityStatus.fulfilled(sampleStatus, 'req-path', undefined)
+    );
+    expect(fulfilled.status?.permission_check_process_path).toBe(
+      '/test/app/src-tauri/binaries/openhuman-core-aarch64-apple-darwin'
+    );
+  });
+
+  it('stores permission_check_process_path after refreshPermissionsWithRestart', () => {
+    const fulfilled = reducer(
+      undefined,
+      refreshPermissionsWithRestart.fulfilled(sampleStatus, 'req-restart', undefined)
+    );
+    expect(fulfilled.isRestartingCore).toBe(false);
+    expect(fulfilled.status?.permission_check_process_path).toBe(
+      '/test/app/src-tauri/binaries/openhuman-core-aarch64-apple-darwin'
+    );
   });
 
   it('tracks session start/stop async flags', () => {

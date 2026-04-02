@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
@@ -15,6 +15,28 @@ const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/tinyhumans
 
 fn registry_url() -> String {
     std::env::var("SKILLS_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string())
+}
+
+/// If `SKILLS_LOCAL_DIR` is set, return the local skills directory path.
+/// This enables local development by reading skills directly from disk
+/// instead of downloading from the remote registry.
+fn local_skills_dir() -> Option<PathBuf> {
+    std::env::var("SKILLS_LOCAL_DIR").ok().map(PathBuf::from)
+}
+
+/// Check if a URL is a local file path (absolute path or file:// URI).
+fn is_local_path(url: &str) -> bool {
+    url.starts_with('/') || url.starts_with("file://")
+}
+
+/// Read a file from a local path or file:// URI.
+fn read_local_file(url: &str) -> Result<Vec<u8>, String> {
+    let path = if let Some(stripped) = url.strip_prefix("file://") {
+        PathBuf::from(stripped)
+    } else {
+        PathBuf::from(url)
+    };
+    std::fs::read(&path).map_err(|e| format!("failed to read local file {}: {e}", path.display()))
 }
 
 fn cache_path(workspace_dir: &Path) -> std::path::PathBuf {
@@ -59,11 +81,37 @@ fn tag_categories(registry: &mut RemoteSkillRegistry) {
     }
 }
 
-/// Fetch the remote skill registry. Uses cache unless `force` is true or cache is stale.
+/// Fetch the skill registry. Supports both remote HTTP URLs and local file paths.
+///
+/// When `SKILLS_REGISTRY_URL` points to a local file (absolute path or `file://` URI),
+/// the registry is read directly from disk — no caching is applied so changes are
+/// picked up immediately (ideal for local development).
+///
+/// For remote URLs, uses a 1-hour disk cache unless `force` is true.
 pub async fn registry_fetch(
     workspace_dir: &Path,
     force: bool,
 ) -> Result<RemoteSkillRegistry, String> {
+    let url = registry_url();
+
+    // --- Local file path: read directly, skip cache for instant dev feedback ---
+    if is_local_path(&url) {
+        log::info!("[registry] reading local registry from {url}");
+        let bytes = read_local_file(&url)?;
+        let body = String::from_utf8(bytes)
+            .map_err(|e| format!("registry file is not valid UTF-8: {e}"))?;
+        let mut registry: RemoteSkillRegistry = serde_json::from_str(&body)
+            .map_err(|e| format!("failed to parse local registry JSON: {e}"))?;
+        tag_categories(&mut registry);
+        log::info!(
+            "[registry] loaded {} core + {} third-party skills from local file",
+            registry.skills.core.len(),
+            registry.skills.third_party.len()
+        );
+        return Ok(registry);
+    }
+
+    // --- Remote URL: use disk cache ---
     if !force {
         if let Some(cached) = read_cache(workspace_dir) {
             if is_cache_fresh(&cached) {
@@ -73,7 +121,6 @@ pub async fn registry_fetch(
         }
     }
 
-    let url = registry_url();
     log::info!("[registry] fetching registry from {url}");
 
     let client = reqwest::Client::builder()
@@ -156,8 +203,59 @@ pub async fn registry_search(
     Ok(results)
 }
 
-/// Install a skill by downloading its JS bundle and manifest from the registry.
+/// Fetch bytes from a URL — supports both local file paths and HTTP URLs.
+async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
+    if is_local_path(url) {
+        return read_local_file(url);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("failed to fetch {url}: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("fetch {url} failed with status {}", resp.status()));
+    }
+
+    resp.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| format!("failed to read response from {url}: {e}"))
+}
+
+/// Install a skill from the registry or local directory.
+///
+/// When `SKILLS_LOCAL_DIR` is set, copies files directly from the local skills
+/// directory (e.g. `$SKILLS_LOCAL_DIR/<skill_id>/`) instead of downloading.
+/// This also works when registry entry URLs are local file paths.
 pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), String> {
+    // --- Fast path: SKILLS_LOCAL_DIR copies directly from local dev directory ---
+    if let Some(local_dir) = local_skills_dir() {
+        let local_skill = local_dir.join(skill_id);
+        if local_skill.exists() {
+            log::info!(
+                "[registry] installing '{skill_id}' from local dir: {}",
+                local_skill.display()
+            );
+            let skill_dir = workspace_dir.join("skills").join(skill_id);
+            copy_dir_recursive(&local_skill, &skill_dir)?;
+            log::info!("[registry] skill '{skill_id}' installed from local dir");
+            return Ok(());
+        }
+        log::warn!(
+            "[registry] SKILLS_LOCAL_DIR set but '{skill_id}' not found at {}; falling back to registry",
+            local_skill.display()
+        );
+    }
+
+    // --- Standard path: fetch from registry (remote or local URLs) ---
     let registry = registry_fetch(workspace_dir, false).await?;
 
     let entry = registry
@@ -172,46 +270,19 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
     let skill_dir = workspace_dir.join("skills").join(skill_id);
     std::fs::create_dir_all(&skill_dir).map_err(|e| format!("failed to create skill dir: {e}"))?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+    // Fetch manifest (local or remote)
+    log::info!(
+        "[registry] fetching manifest for '{skill_id}' from {}",
+        entry.manifest_url
+    );
+    let manifest_bytes = fetch_url_bytes(&entry.manifest_url).await?;
 
-    // Download manifest
-    log::info!("[registry] downloading manifest for '{skill_id}'");
-    let manifest_resp = client
-        .get(&entry.manifest_url)
-        .send()
-        .await
-        .map_err(|e| format!("failed to download manifest: {e}"))?;
-    if !manifest_resp.status().is_success() {
-        return Err(format!(
-            "manifest download failed with status {}",
-            manifest_resp.status()
-        ));
-    }
-    let manifest_bytes = manifest_resp
-        .bytes()
-        .await
-        .map_err(|e| format!("failed to read manifest: {e}"))?;
-
-    // Download JS bundle
-    log::info!("[registry] downloading JS bundle for '{skill_id}'");
-    let js_resp = client
-        .get(&entry.download_url)
-        .send()
-        .await
-        .map_err(|e| format!("failed to download JS bundle: {e}"))?;
-    if !js_resp.status().is_success() {
-        return Err(format!(
-            "JS download failed with status {}",
-            js_resp.status()
-        ));
-    }
-    let js_bytes = js_resp
-        .bytes()
-        .await
-        .map_err(|e| format!("failed to read JS bundle: {e}"))?;
+    // Fetch JS bundle (local or remote)
+    log::info!(
+        "[registry] fetching JS bundle for '{skill_id}' from {}",
+        entry.download_url
+    );
+    let js_bytes = fetch_url_bytes(&entry.download_url).await?;
 
     // Verify checksum if present
     if let Some(expected) = &entry.checksum_sha256 {
@@ -219,7 +290,6 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
         hasher.update(&js_bytes);
         let actual = format!("{:x}", hasher.finalize());
         if actual != *expected {
-            // Clean up the directory we created
             let _ = std::fs::remove_dir_all(&skill_dir);
             return Err(format!(
                 "checksum mismatch for '{skill_id}': expected {expected}, got {actual}"
@@ -235,6 +305,35 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
         .map_err(|e| format!("failed to write JS bundle: {e}"))?;
 
     log::info!("[registry] skill '{skill_id}' installed successfully");
+    Ok(())
+}
+
+/// Recursively copy a directory tree from `src` to `dst`.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| format!("failed to create dir {}: {e}", dst.display()))?;
+
+    let entries =
+        std::fs::read_dir(src).map_err(|e| format!("failed to read dir {}: {e}", src.display()))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("failed to read dir entry: {e}"))?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path).map_err(|e| {
+                format!(
+                    "failed to copy {} -> {}: {e}",
+                    src_path.display(),
+                    dst_path.display()
+                )
+            })?;
+        }
+    }
+
     Ok(())
 }
 

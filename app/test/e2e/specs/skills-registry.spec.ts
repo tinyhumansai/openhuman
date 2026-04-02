@@ -14,6 +14,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { navigateToSkills } from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 function stepLog(message: string, context?: unknown): void {
@@ -70,19 +71,33 @@ describe('Skills registry flow', () => {
   });
 
   it('can navigate to skills page', async () => {
-    stepLog('Looking for Skills navigation item');
-    try {
-      await clickText('Skills', 10_000);
-      stepLog('Clicked Skills nav item');
-    } catch {
-      stepLog('Skills nav item not found, dumping accessibility tree');
-      await dumpAccessibilityTree();
-      throw new Error('Could not find Skills navigation item');
-    }
+    stepLog('Navigating to Skills page');
+    clearRequestLog();
+    await navigateToSkills();
 
-    // Wait for the skills page to render
+    // Verify hash changed to /skills
+    const currentHash = await browser.execute(() => window.location.hash);
+    stepLog(`Current hash: ${currentHash}`);
+    expect(currentHash).toContain('/skills');
+
+    // Wait for skills page content to render and verify a UI marker
     await browser.pause(2_000);
-    stepLog('Skills page should be visible');
+    const hasSkillsContent =
+      (await textExists('Install')) ||
+      (await textExists('Available')) ||
+      (await textExists('Skills')) ||
+      (await textExists('Telegram')) ||
+      (await textExists('Notion'));
+
+    if (!hasSkillsContent) {
+      const tree = await dumpAccessibilityTree();
+      const log = getRequestLog();
+      stepLog('Skills page content not found after navigation');
+      stepLog('Accessibility tree:', tree.slice(0, 4000));
+      stepLog('Request log:', log);
+    }
+    expect(hasSkillsContent).toBe(true);
+    stepLog('Skills page verified');
   });
 
   it('displays available skills from registry', async () => {

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
+import { useLocalModelStatus } from '../hooks/useLocalModelStatus';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import { inferenceApi, type ModelInfo } from '../services/api/inferenceApi';
 import {
@@ -19,6 +20,7 @@ import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
   addMessageLocal,
+  addReaction,
   createThreadLocal,
   fetchSuggestedQuestions,
   setActiveThread,
@@ -26,12 +28,17 @@ import {
   setSelectedThread,
 } from '../store/threadSlice';
 import type { ThreadMessage } from '../types/thread';
+import { getSegmentDelay, segmentMessage } from '../utils/messageSegmentation';
 import {
   isTauri,
+  type LocalAiChatMessage,
   openhumanAutocompleteAccept,
   openhumanAutocompleteCurrent,
-  openhumanLocalAiTranscribeBytes,
-  openhumanLocalAiTts,
+  openhumanLocalAiChat,
+  openhumanLocalAiShouldReact,
+  openhumanVoiceStatus,
+  openhumanVoiceTranscribeBytes,
+  openhumanVoiceTts,
 } from '../utils/tauriCommands';
 
 const DEFAULT_THREAD_ID = 'default-thread';
@@ -62,21 +69,13 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 function getInlineCompletionSuffix(input: string, suggestion: string): string {
-  const normalizedInput = input;
-  const normalizedSuggestion = suggestion;
-
-  if (!normalizedInput || !normalizedSuggestion) {
-    return '';
+  if (!input || !suggestion) return '';
+  // If backend returns full string (starts with input), extract the suffix portion.
+  if (suggestion.startsWith(input)) {
+    const suffix = suggestion.slice(input.length);
+    return suffix || '';
   }
-
-  if (normalizedSuggestion === normalizedInput) {
-    return '';
-  }
-
-  if (normalizedSuggestion.startsWith(normalizedInput)) {
-    return normalizedSuggestion.slice(normalizedInput.length);
-  }
-
+  // Suggestion doesn't start with current input — it's stale; discard it.
   return '';
 }
 
@@ -114,11 +113,26 @@ const Conversations = () => {
     Record<string, ToolTimelineEntry[]>
   >({});
   const rustChat = useRustChat();
+  const isLocalModelActive = useLocalModelStatus();
+  const isLocalModelActiveRef = useRef(isLocalModelActive);
+  const [isDelivering, setIsDelivering] = useState(false);
+  const deliveryActiveRef = useRef(false);
+  const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+  const defaultChannelType = useAppSelector(
+    state => state.channelConnections?.defaultMessagingChannel ?? 'web'
+  );
+  const pendingReactionRef = useRef<
+    Map<string, { msgId: string; content: string; threadId: string }>
+  >(new Map());
 
   const selectedThreadIdRef = useRef(selectedThreadId);
   useEffect(() => {
     selectedThreadIdRef.current = selectedThreadId;
   }, [selectedThreadId]);
+
+  useEffect(() => {
+    isLocalModelActiveRef.current = isLocalModelActive;
+  }, [isLocalModelActive]);
 
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
   const [isLoadingBudget, setIsLoadingBudget] = useState(false);
@@ -131,6 +145,7 @@ const Conversations = () => {
   const lastSpokenMessageIdRef = useRef<string | null>(null);
   const autocompleteDebounceRef = useRef<number | null>(null);
   const autocompleteRequestSeqRef = useRef(0);
+  const sendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getAudioExtension = (mimeType: string): string => {
     const lower = mimeType.toLowerCase();
@@ -254,6 +269,7 @@ const Conversations = () => {
 
   useEffect(() => {
     return () => {
+      deliveryActiveRef.current = false;
       mediaRecorderRef.current?.stop();
       mediaStreamRef.current?.getTracks().forEach(track => track.stop());
       replyAudioRef.current?.pause();
@@ -267,13 +283,37 @@ const Conversations = () => {
     }
   }, [inputMode, isRecording]);
 
+  // Proactively check voice binary availability when switching to voice mode
+  useEffect(() => {
+    if (inputMode !== 'voice' || !rustChat) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const resp = await openhumanVoiceStatus();
+        if (cancelled) return;
+        const status = resp.result;
+        if (!status.stt_available) {
+          setVoiceStatus(
+            'Speech-to-text unavailable: whisper-cli binary or STT model not found. Check Settings > Local Models.'
+          );
+        } else {
+          setVoiceStatus('Ready — tap "Start Talking" to record.');
+        }
+      } catch {
+        if (!cancelled) {
+          setVoiceStatus('Could not check voice availability.');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [inputMode, rustChat]);
+
   useEffect(() => {
     if (!rustChat || socketStatus !== 'connected') return;
 
-    let cleanup: (() => void) | null = null;
-    let mounted = true;
-
-    subscribeChatEvents({
+    const cleanup = subscribeChatEvents({
       onToolCall: (event: ChatToolCallEvent) => {
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
@@ -325,7 +365,7 @@ const Conversations = () => {
           return;
         }
 
-        dispatch(addInferenceResponse({ content: event.full_response, threadId: event.thread_id }));
+        // Update tool timeline
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
           if (existing.length === 0) return prev;
@@ -336,11 +376,70 @@ const Conversations = () => {
             ),
           };
         });
-        setIsSending(false);
-        dispatch(setActiveThread(null));
+        if (sendingTimeoutRef.current) {
+          clearTimeout(sendingTimeoutRef.current);
+          sendingTimeoutRef.current = null;
+        }
+
+        // Fire-and-forget: auto-react to the user's message
+        const pending = pendingReactionRef.current.get(event.thread_id);
+        if (pending) {
+          maybeAutoReact(pending.msgId, pending.content, pending.threadId);
+          pendingReactionRef.current.delete(event.thread_id);
+        }
+
+        // Multi-bubble delivery gate: only when local model is active
+        if (!isLocalModelActiveRef.current) {
+          dispatch(
+            addInferenceResponse({ content: event.full_response, threadId: event.thread_id })
+          );
+          setIsSending(false);
+          dispatch(setActiveThread(null));
+          return;
+        }
+
+        const segments = segmentMessage(event.full_response);
+
+        if (segments.length <= 1) {
+          dispatch(
+            addInferenceResponse({ content: event.full_response, threadId: event.thread_id })
+          );
+          setIsSending(false);
+          dispatch(setActiveThread(null));
+          return;
+        }
+
+        // Async delivery: show each segment as a separate bubble with a typing pause
+        setIsDelivering(true);
+        deliveryActiveRef.current = true;
+
+        void (async () => {
+          for (let i = 0; i < segments.length; i++) {
+            if (!deliveryActiveRef.current) break;
+
+            if (i > 0) {
+              await new Promise<void>(resolve =>
+                setTimeout(resolve, getSegmentDelay(segments[i - 1]))
+              );
+            }
+
+            if (!deliveryActiveRef.current) break;
+
+            dispatch(addInferenceResponse({ content: segments[i], threadId: event.thread_id }));
+          }
+
+          deliveryActiveRef.current = false;
+          setIsDelivering(false);
+          setIsSending(false);
+          // activeThreadId was already cleared by the first addInferenceResponse dispatch
+        })();
       },
       onError: event => {
         if (event.thread_id !== selectedThreadIdRef.current) return;
+        if (sendingTimeoutRef.current) {
+          clearTimeout(sendingTimeoutRef.current);
+          sendingTimeoutRef.current = null;
+        }
         setIsSending(false);
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
@@ -352,6 +451,9 @@ const Conversations = () => {
             ),
           };
         });
+
+        // Clear pending reaction so stale callbacks are ignored
+        pendingReactionRef.current.delete(event.thread_id);
 
         if (event.error_type !== 'cancelled') {
           // Deduplicate: skip if the last message is already an error
@@ -377,23 +479,70 @@ const Conversations = () => {
           dispatch(setActiveThread(null));
         }
       },
-    }).then(fn => {
-      if (mounted) cleanup = fn;
     });
 
-    return () => {
-      mounted = false;
-      cleanup?.();
-    };
+    return cleanup;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rustChat, socketStatus]);
+
+  /**
+   * Segment a complete response string and dispatch each segment as a
+   * separate message bubble with a typing pause between them.
+   * Local-model-only path — no cloud API calls.
+   */
+  const deliverLocalResponse = async (fullResponse: string, threadId: string) => {
+    const segments = segmentMessage(fullResponse);
+
+    if (segments.length <= 1) {
+      dispatch(addInferenceResponse({ content: fullResponse, threadId }));
+      return;
+    }
+
+    setIsDelivering(true);
+    deliveryActiveRef.current = true;
+
+    for (let i = 0; i < segments.length; i++) {
+      if (!deliveryActiveRef.current) break;
+
+      if (i > 0) {
+        await new Promise<void>(resolve => setTimeout(resolve, getSegmentDelay(segments[i - 1])));
+      }
+
+      if (!deliveryActiveRef.current) break;
+
+      dispatch(addInferenceResponse({ content: segments[i], threadId }));
+    }
+
+    deliveryActiveRef.current = false;
+    setIsDelivering(false);
+  };
+
+  /**
+   * Fire-and-forget: ask the local model if we should auto-react to the
+   * user's message with an emoji. Adds a personal touch based on channel type.
+   */
+  const maybeAutoReact = (userMessageId: string, messageContent: string, threadId: string) => {
+    if (!isTauri() || !isLocalModelActiveRef.current) return;
+
+    void openhumanLocalAiShouldReact(messageContent, defaultChannelType)
+      .then(response => {
+        const decision = response.result;
+        if (decision?.should_react && decision.emoji) {
+          console.debug('[conversations:auto-react] reacting with', decision.emoji);
+          dispatch(addReaction({ threadId, messageId: userMessageId, emoji: decision.emoji }));
+        }
+      })
+      .catch(err => {
+        console.debug('[conversations:auto-react] failed:', err);
+      });
+  };
 
   const handleSendMessage = async (text?: string) => {
     const normalized = text ?? inputValue;
     const trimmed = normalized.trim();
 
     if (!trimmed || !selectedThreadId || isSending) return;
-    if (socketStatus !== 'connected') {
+    if (!isLocalModelActiveRef.current && socketStatus !== 'connected') {
       setSendError('Realtime socket is not connected.');
       return;
     }
@@ -414,19 +563,91 @@ const Conversations = () => {
     };
 
     dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
+    pendingReactionRef.current.set(sendingThreadId, {
+      msgId: userMessage.id,
+      content: trimmed,
+      threadId: sendingThreadId,
+    });
 
     setInputValue('');
     setSendError(null);
     setIsSending(true);
+    // Safety: auto-clear isSending if no response arrives within 120s
+    if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
+    sendingTimeoutRef.current = setTimeout(() => {
+      console.warn('[chat] safety timeout: clearing isSending after 120s with no response');
+      setIsSending(false);
+      dispatch(setActiveThread(null));
+      sendingTimeoutRef.current = null;
+    }, 120_000);
     setToolTimelineByThread(prev => ({ ...prev, [sendingThreadId]: [] }));
     dispatch(setActiveThread(sendingThreadId));
 
+    // ── Local Ollama path ────────────────────────────────────────────────────
+    // When a local model is ready, bypass the cloud socket entirely.
+    // Zero cloud tokens consumed on this path.
+    if (isLocalModelActiveRef.current) {
+      try {
+        // Build message history: convert stored messages + the new user turn
+        const storedMessages =
+          (
+            store.getState() as {
+              thread: {
+                messagesByThreadId: Record<string, import('../types/thread').ThreadMessage[]>;
+              };
+            }
+          ).thread.messagesByThreadId[sendingThreadId] ?? [];
+
+        const history: LocalAiChatMessage[] = storedMessages
+          .filter(m => m.sender === 'user' || m.sender === 'agent')
+          .map(m => ({
+            role: m.sender === 'user' ? ('user' as const) : ('assistant' as const),
+            content: m.content,
+          }));
+
+        console.debug('[conversations:local] sending to local model', {
+          historyLength: history.length,
+          threadId: sendingThreadId,
+        });
+
+        const response = await openhumanLocalAiChat(history);
+        const reply = response.result?.trim() ?? '';
+
+        if (!reply) {
+          throw new Error('Local model returned an empty response.');
+        }
+
+        await deliverLocalResponse(reply, sendingThreadId);
+        pendingReactionRef.current.delete(sendingThreadId);
+        maybeAutoReact(userMessage.id, trimmed, sendingThreadId);
+      } catch (err) {
+        pendingReactionRef.current.delete(sendingThreadId);
+        const msg = err instanceof Error ? err.message : String(err);
+        setSendError(msg);
+        dispatch(
+          addInferenceResponse({
+            content: 'Local model error — please try again.',
+            threadId: sendingThreadId,
+          })
+        );
+      } finally {
+        setIsSending(false);
+        dispatch(setActiveThread(null));
+      }
+      return;
+    }
+
+    // ── Cloud socket path (unchanged) ────────────────────────────────────────
     try {
       await chatSend({ threadId: sendingThreadId, message: trimmed, model: selectedModel });
 
       // setIsSending(false) and setActiveThread(null) happen in the onDone/onError event handlers
     } catch (err) {
       // Chat loop errors are emitted via socket events; this catch handles emit-level failures.
+      if (sendingTimeoutRef.current) {
+        clearTimeout(sendingTimeoutRef.current);
+        sendingTimeoutRef.current = null;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(msg);
       setIsSending(false);
@@ -453,7 +674,15 @@ const Conversations = () => {
       const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
       const audioBytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       const extension = getAudioExtension(mimeType || blob.type);
-      const result = await openhumanLocalAiTranscribeBytes(audioBytes, extension);
+
+      // Build conversation context from recent messages for LLM cleanup.
+      const recentMessages = messages.slice(-10);
+      const context =
+        recentMessages.length > 0
+          ? recentMessages.map(m => `${m.sender}: ${m.content}`).join('\n')
+          : undefined;
+
+      const result = await openhumanVoiceTranscribeBytes(audioBytes, extension, context);
       const transcript = result.result.text.trim();
 
       if (!transcript) {
@@ -550,7 +779,7 @@ const Conversations = () => {
 
     void (async () => {
       try {
-        const ttsResult = await openhumanLocalAiTts(latestAgentMessage.content);
+        const ttsResult = await openhumanVoiceTts(latestAgentMessage.content);
         if (cancelled) return;
 
         const audioSrc = convertFileSrc(ttsResult.result.output_path);
@@ -583,11 +812,33 @@ const Conversations = () => {
       setInputValue(prev => prev + inlineSuffix);
       setInlineSuggestionValue('');
       if (isTauri()) {
-        void openhumanAutocompleteAccept({ suggestion: inputValue + inlineSuffix }).catch(() => {
+        void openhumanAutocompleteAccept({
+          suggestion: inputValue + inlineSuffix,
+          skip_apply: true,
+        }).catch(() => {
           // Keep local UX smooth even if accept RPC fails.
         });
       }
       return;
+    }
+
+    if (e.key === 'ArrowRight' && inlineSuffix.length > 0) {
+      const textarea = e.currentTarget;
+      if (
+        textarea.selectionStart === inputValue.length &&
+        textarea.selectionEnd === inputValue.length
+      ) {
+        e.preventDefault();
+        setInputValue(prev => prev + inlineSuffix);
+        setInlineSuggestionValue('');
+        if (isTauri()) {
+          void openhumanAutocompleteAccept({
+            suggestion: inputValue + inlineSuffix,
+            skip_apply: true,
+          }).catch(() => {});
+        }
+        return;
+      }
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -729,10 +980,77 @@ const Conversations = () => {
                         </svg>
                       )}
                     </button>
+                    {(() => {
+                      const myReactions =
+                        (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
+                      const hasReactions = myReactions.length > 0;
+                      // Show reaction row if there are existing reactions (any sender)
+                      // or if this is an agent message (manual picker available)
+                      if (!hasReactions && msg.sender !== 'agent') return null;
+                      return (
+                        <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
+                          {myReactions.map(emoji => (
+                            <button
+                              key={emoji}
+                              onClick={() =>
+                                selectedThreadId &&
+                                dispatch(
+                                  addReaction({
+                                    threadId: selectedThreadId,
+                                    messageId: msg.id,
+                                    emoji,
+                                  })
+                                )
+                              }
+                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-600/20 border border-primary-500/30 text-xs transition-colors hover:bg-primary-600/30"
+                              title={`Remove ${emoji}`}>
+                              {emoji}
+                            </button>
+                          ))}
+                          {msg.sender === 'agent' &&
+                            (reactionPickerMsgId === msg.id ? (
+                              <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-white/10">
+                                {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
+                                  <button
+                                    key={emoji}
+                                    onClick={() => {
+                                      if (selectedThreadId) {
+                                        dispatch(
+                                          addReaction({
+                                            threadId: selectedThreadId,
+                                            messageId: msg.id,
+                                            emoji,
+                                          })
+                                        );
+                                      }
+                                      setReactionPickerMsgId(null);
+                                    }}
+                                    className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
+                                    title={emoji}>
+                                    {emoji}
+                                  </button>
+                                ))}
+                                <button
+                                  onClick={() => setReactionPickerMsgId(null)}
+                                  className="ml-0.5 text-stone-600 hover:text-stone-400 text-xs px-0.5">
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setReactionPickerMsgId(msg.id)}
+                                className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-white/5 hover:bg-white/15 text-stone-500 hover:text-stone-300 text-xs transition-all"
+                                title="Add reaction">
+                                +
+                              </button>
+                            ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
-              {activeThreadId === selectedThreadId && isSending && (
+              {((activeThreadId === selectedThreadId && isSending) || isDelivering) && (
                 <div className="flex justify-start">
                   <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-3">
                     <div className="flex items-center gap-1">
@@ -989,7 +1307,7 @@ const Conversations = () => {
               <div className="relative flex-1 rounded-xl border border-white/10 bg-white/5 focus-within:ring-1 focus-within:ring-primary-500/50 focus-within:border-primary-500/50 transition-all">
                 <div
                   aria-hidden
-                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal">
+                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
                   <span className="invisible">{inputValue}</span>
                   <span className="text-stone-500/50">{inlineCompletionSuffix}</span>
                 </div>
@@ -1000,7 +1318,7 @@ const Conversations = () => {
                   placeholder="Type a message..."
                   rows={1}
                   disabled={isSending || !rustChat}
-                  className="relative z-10 w-full resize-none border-0 bg-transparent px-4 py-2.5 text-sm placeholder:text-stone-500 focus:outline-none focus:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="relative z-10 w-full resize-none border-0 bg-transparent px-4 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans placeholder:text-stone-500 focus:outline-none focus:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
               <button

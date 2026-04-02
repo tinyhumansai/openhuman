@@ -2,13 +2,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{self, Duration};
 
-use super::capture::parse_foreground_output;
-use super::context::AppContext;
 use super::engine::{global_engine, AccessibilityEngine, EngineState};
 use super::helpers::{
     generate_suggestions, parse_vision_summary_output, truncate_tail, validate_input_action,
 };
 use super::types::{CaptureFrame, InputActionParams, StartSessionParams};
+use crate::openhuman::accessibility::{parse_foreground_output, AppContext};
 use crate::openhuman::config::ScreenIntelligenceConfig;
 
 // ── parse_foreground_output ─────────────────────────────────────────────
