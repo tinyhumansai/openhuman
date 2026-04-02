@@ -6,5 +6,10 @@ description = "Core RPC URL and sidecar restart"
 allow = [
     "core_rpc_url",
     "restart_core_process",
+    "service_install_direct",
+    "service_start_direct",
+    "service_stop_direct",
+    "service_status_direct",
+    "service_uninstall_direct",
 ]
 deny = []
