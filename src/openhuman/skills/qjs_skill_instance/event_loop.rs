@@ -39,20 +39,22 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
             if let Err(e) = job
                 .client
                 .store_skill_sync(
-                    &job.skill, "default", &job.title, &job.content, None, None, None, None, None,
+                    &job.skill,
+                    "default",
+                    &job.title,
+                    &job.content,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
                     None,
                 )
                 .await
             {
-                log::warn!(
-                    "[memory] store_skill_sync failed for '{}': {e}",
-                    job.title
-                );
+                log::warn!("[memory] store_skill_sync failed for '{}': {e}", job.title);
             } else {
-                log::info!(
-                    "[memory] store_skill_sync succeeded for '{}'",
-                    job.title
-                );
+                log::info!("[memory] store_skill_sync succeeded for '{}'", job.title);
             }
         }
         log::debug!("[memory] memory-write worker shutting down");
@@ -455,7 +457,13 @@ async fn handle_message(
             let result = handle_js_void_call(rt, ctx, "onTick", "{}").await;
             if result.is_ok() {
                 // Persist any state published during tick to memory
-                persist_state_to_memory(skill_id, "tick sync", ops_state, memory_client, memory_write_tx);
+                persist_state_to_memory(
+                    skill_id,
+                    "tick sync",
+                    ops_state,
+                    memory_client,
+                    memory_write_tx,
+                );
             }
             let _ = reply.send(result);
         }

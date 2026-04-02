@@ -773,10 +773,7 @@ fn handle_skills_sync(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
-        log::debug!(
-            "[skills] handle_skills_sync: skill_id={}",
-            p.skill_id
-        );
+        log::debug!("[skills] handle_skills_sync: skill_id={}", p.skill_id);
         let engine = require_engine()?;
         log::debug!(
             "[skills] handle_skills_sync: dispatching skill/sync to engine for '{}'",
