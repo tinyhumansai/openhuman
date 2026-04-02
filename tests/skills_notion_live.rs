@@ -18,6 +18,20 @@ use serde_json::{json, Value};
 
 use openhuman_core::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
 
+/// Truncate a string to at most `max_bytes` without panicking on multi-byte
+/// char boundaries.  Falls back to the nearest char boundary at or before
+/// `max_bytes`.
+fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn try_find_skills_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("SKILL_DEBUG_DIR") {
         let p = PathBuf::from(&dir);
@@ -121,7 +135,7 @@ async fn notion_live_with_real_data() {
             eprintln!("  GET /settings → HTTP {status}");
             if status.is_success() {
                 eprintln!("  ✓ Backend reachable, JWT valid");
-                eprintln!("  Body: {}...", &body[..body.len().min(200)]);
+                eprintln!("  Body: {}...", truncate_str(&body, 200));
             } else if status.as_u16() == 502 {
                 eprintln!("  ✗ Backend DOWN (502 Bad Gateway)");
                 eprintln!("  The staging server is unreachable. OAuth proxy will fail.");
@@ -154,11 +168,11 @@ async fn notion_live_with_real_data() {
             eprintln!("  HTTP {status}");
             if status.is_success() {
                 eprintln!("  ✓ Notion API accessible via proxy");
-                eprintln!("  Body: {}...", &body[..body.len().min(300)]);
+                eprintln!("  Body: {}...", truncate_str(&body, 300));
             } else {
                 eprintln!(
                     "  ✗ Proxy returned {status}: {}...",
-                    &body[..body.len().min(200)]
+                    truncate_str(&body, 200)
                 );
             }
         }
@@ -258,7 +272,7 @@ async fn notion_live_with_real_data() {
             for content in &result.content {
                 match content {
                     openhuman_core::openhuman::skills::types::ToolContent::Text { text } => {
-                        eprintln!("  Result: {}...", &text[..text.len().min(500)]);
+                        eprintln!("  Result: {}...", truncate_str(text, 500));
                     }
                     _ => {}
                 }
@@ -282,7 +296,7 @@ async fn notion_live_with_real_data() {
             for content in &result.content {
                 match content {
                     openhuman_core::openhuman::skills::types::ToolContent::Text { text } => {
-                        eprintln!("  Result: {}...", &text[..text.len().min(500)]);
+                        eprintln!("  Result: {}...", truncate_str(text, 500));
                     }
                     _ => {}
                 }
