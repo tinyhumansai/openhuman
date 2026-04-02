@@ -1,40 +1,9 @@
 use serde_json::{Map, Value};
-use std::sync::OnceLock;
-use tokio::sync::Mutex;
 
-use super::engine::SubconsciousEngine;
+use super::global::get_or_init_engine;
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::rpc::RpcOutcome;
-
-/// Global engine instance, lazily initialized on first RPC call.
-static ENGINE: OnceLock<Mutex<Option<SubconsciousEngine>>> = OnceLock::new();
-
-fn engine_lock() -> &'static Mutex<Option<SubconsciousEngine>> {
-    ENGINE.get_or_init(|| Mutex::new(None))
-}
-
-/// Initialize the global engine (called lazily).
-async fn ensure_engine() -> Result<(), String> {
-    let lock = engine_lock();
-    let mut guard = lock.lock().await;
-    if guard.is_some() {
-        return Ok(());
-    }
-
-    let config = crate::openhuman::config::Config::load_or_init()
-        .await
-        .map_err(|e| format!("load config: {e}"))?;
-
-    // Create memory client for the engine
-    let memory =
-        crate::openhuman::memory::MemoryClient::from_workspace_dir(config.workspace_dir.clone())
-            .ok()
-            .map(std::sync::Arc::new);
-
-    *guard = Some(SubconsciousEngine::new(&config, memory));
-    Ok(())
-}
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![schemas("status"), schemas("trigger"), schemas("actions")]
@@ -122,8 +91,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
 
 fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        ensure_engine().await?;
-        let lock = engine_lock();
+        let lock = get_or_init_engine().await?;
         let guard = lock.lock().await;
         let engine = guard
             .as_ref()
@@ -135,8 +103,7 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_trigger(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        ensure_engine().await?;
-        let lock = engine_lock();
+        let lock = get_or_init_engine().await?;
         let guard = lock.lock().await;
         let engine = guard
             .as_ref()
@@ -161,13 +128,11 @@ fn handle_actions(params: Map<String, Value>) -> ControllerFuture {
             crate::openhuman::memory::MemoryClient::from_workspace_dir(config.workspace_dir)
                 .map_err(|e| format!("memory client: {e}"))?;
 
-        // List all KV entries in the subconscious namespace
         let entries = memory
             .kv_list_namespace("subconscious")
             .await
             .map_err(|e| format!("list actions: {e}"))?;
 
-        // Filter to action entries (keys starting with "actions:"), parse and return
         let mut actions: Vec<Value> = Vec::new();
         for entry in entries {
             let key = entry.get("key").and_then(|v| v.as_str()).unwrap_or("");
@@ -188,7 +153,6 @@ fn handle_actions(params: Map<String, Value>) -> ControllerFuture {
             }));
         }
 
-        // Sort by timestamp descending (most recent first)
         actions.sort_by(|a, b| {
             let ta = a.get("tick_at").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let tb = b.get("tick_at").and_then(|v| v.as_f64()).unwrap_or(0.0);

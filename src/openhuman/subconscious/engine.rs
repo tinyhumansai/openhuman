@@ -101,20 +101,40 @@ impl SubconsciousEngine {
     }
 
     /// Execute a single subconscious tick. Public for manual triggering via RPC.
+    ///
+    /// The entire tick holds the state lock to prevent concurrent ticks
+    /// from duplicating work (fixes CodeRabbit #1: serialize executions).
     pub async fn tick(&self) -> Result<TickResult> {
         let started = std::time::Instant::now();
         let tick_at = now_secs();
 
+        // Hold the lock for the entire tick to prevent concurrent execution
         let mut state = self.state.lock().await;
+
+        // Load persisted decision log if this is the first tick (fixes #5)
+        if state.total_ticks == 0 {
+            if let Some(ref memory) = self.memory {
+                if let Ok(Some(value)) = memory
+                    .kv_get(Some(SUBCONSCIOUS_NAMESPACE), DECISION_LOG_KEY)
+                    .await
+                {
+                    if let Some(json) = value.as_str() {
+                        if let Ok(log) = DecisionLog::from_json(json) {
+                            state.decision_log = log;
+                            debug!("[subconscious] loaded persisted decision log");
+                        }
+                    }
+                }
+            }
+        }
+
         state.decision_log.prune_expired();
         let last_tick_at = state.last_tick_at;
-        drop(state); // Release lock during I/O
 
         // 1. Read HEARTBEAT.md tasks
         let tasks = read_heartbeat_tasks(&self.workspace_dir).await;
         if tasks.is_empty() {
             debug!("[subconscious] HEARTBEAT.md empty or missing, skipping tick");
-            let mut state = self.state.lock().await;
             state.last_tick_at = tick_at;
             state.total_ticks += 1;
             return Ok(TickResult {
@@ -138,7 +158,7 @@ impl SubconsciousEngine {
 
         // 2. Assemble current state (delta since last tick)
         let memory_ref = self.memory.as_ref().map(|m| m.as_ref());
-        let report = build_situation_report(
+        let (report, new_doc_ids) = build_situation_report_with_doc_ids(
             memory_ref,
             &self.workspace_dir,
             last_tick_at,
@@ -146,37 +166,45 @@ impl SubconsciousEngine {
         )
         .await;
 
-        // 3. Check if there's any state to evaluate against tasks
-        let has_changes = !report.contains("No state changes detected")
-            && !report.contains("No changes since last tick");
+        // 3. Filter out already-surfaced doc IDs (fixes #3: dedup)
+        let unsurfaced_doc_ids = state.decision_log.filter_unsurfaced(&new_doc_ids);
+        let has_new_data = !unsurfaced_doc_ids.is_empty();
+
+        // 4. Check if there's actually new state to evaluate
+        let has_memory_changes = report.contains("new/updated");
+        let has_changes = has_new_data || has_memory_changes;
 
         let output = if !has_changes {
-            debug!("[subconscious] no state changes, skipping inference");
+            debug!("[subconscious] no actionable changes, skipping inference");
             TickOutput {
                 decision: Decision::Noop,
-                reason: "No state changes since last tick.".to_string(),
+                reason: "No new state changes since last tick.".to_string(),
                 actions: vec![],
             }
         } else {
-            // 4. Build task-driven prompt and call local model
+            // 5. Build task-driven prompt and call local model
             let prompt = build_subconscious_prompt(&tasks, &report);
             debug!(
-                "[subconscious] calling local model ({} tasks, prompt_chars={})",
+                "[subconscious] calling local model ({} tasks, {} new docs)",
                 tasks.len(),
-                prompt.chars().count()
+                unsurfaced_doc_ids.len()
             );
-            self.evaluate_with_local_model(&prompt).await?
+            // Release lock during LLM call (it's slow)
+            drop(state);
+            let result = self.evaluate_with_local_model(&prompt).await?;
+            state = self.state.lock().await;
+            result
         };
 
-        // 4. Update state
-        let mut state = self.state.lock().await;
+        // 6. Update state
         state.last_tick_at = tick_at;
         state.total_ticks += 1;
 
-        // 5. Record decision (skip noop to avoid log bloat)
+        // 7. Record decision with actual doc IDs (fixes #3: dedup)
         if output.decision != Decision::Noop {
-            // TODO: extract source doc IDs from the report for proper dedup
-            state.decision_log.record(tick_at, &output, vec![]);
+            state
+                .decision_log
+                .record(tick_at, &output, unsurfaced_doc_ids.clone());
 
             if output.decision == Decision::Escalate {
                 state.total_escalations += 1;
@@ -186,29 +214,25 @@ impl SubconsciousEngine {
         let duration_ms = started.elapsed().as_millis() as u64;
         drop(state);
 
-        // 6. Persist decision log
+        // 8. Persist decision log
         self.save_decision_log().await;
 
-        // 7. Handle actions
-        match output.decision {
-            Decision::Escalate => {
-                self.handle_escalation(&output, &report).await;
+        // 9. Handle actions — always store as RecommendedAction JSON (fixes #4)
+        if !output.actions.is_empty() {
+            if let Ok(json) = serde_json::to_string(&output.actions) {
+                self.store_actions(&json).await;
             }
-            Decision::Act if !output.actions.is_empty() => {
-                // Store local model's recommended actions for the UI
-                if let Ok(json) = serde_json::to_string(&output.actions) {
-                    self.store_actions(&json).await;
-                }
-            }
-            _ => {}
+        }
+        if output.decision == Decision::Escalate {
+            self.handle_escalation(&output, &report).await;
         }
 
         Ok(TickResult {
             tick_at,
             output,
-            source_doc_ids: vec![], // TODO: populate from report
+            source_doc_ids: unsurfaced_doc_ids,
             duration_ms,
-            tokens_used: 0, // TODO: get from provider response
+            tokens_used: 0,
         })
     }
 
@@ -303,12 +327,12 @@ impl SubconsciousEngine {
         .await
         {
             Ok(outcome) => {
-                info!(
-                    "[subconscious] escalation resolved: {}",
-                    &outcome.value[..outcome.value.len().min(500)]
-                );
-                // Store the resolved actions in the subconscious namespace
-                self.store_actions(&outcome.value).await;
+                info!("[subconscious] escalation resolved");
+                // Normalize agent response to RecommendedAction format (fixes #4)
+                let actions = normalize_escalation_response(&outcome.value, &output.reason);
+                if let Ok(json) = serde_json::to_string(&actions) {
+                    self.store_actions(&json).await;
+                }
             }
             Err(e) => {
                 warn!("[subconscious] escalation agent call failed: {e}");
@@ -323,8 +347,10 @@ impl SubconsciousEngine {
     /// Store action results in the subconscious memory namespace for the UI to consume.
     async fn store_actions(&self, content: &str) {
         if let Some(ref memory) = self.memory {
-            let timestamp = now_secs();
-            let key = format!("actions:{:.0}", timestamp);
+            // Use millisecond precision + random suffix to avoid key collisions (fixes #7)
+            let timestamp_ms = (now_secs() * 1000.0) as u64;
+            let suffix = rand_suffix();
+            let key = format!("actions:{timestamp_ms}:{suffix}");
             let value = serde_json::Value::String(content.to_string());
             if let Err(e) = memory
                 .kv_set(Some(SUBCONSCIOUS_NAMESPACE), &key, &value)
@@ -414,6 +440,92 @@ fn parse_tick_output(text: &str) -> Result<TickOutput> {
         reason: format!("Unparseable model output: {}", &text[..text.len().min(100)]),
         actions: vec![],
     })
+}
+
+/// Normalize the agent's escalation response into RecommendedAction format.
+/// Ensures consistent schema regardless of what the agent returns.
+fn normalize_escalation_response(
+    agent_response: &str,
+    reason: &str,
+) -> Vec<super::types::RecommendedAction> {
+    // Try parsing as JSON with an actions array
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(agent_response) {
+        if let Some(actions) = value.get("actions").and_then(|a| a.as_array()) {
+            let mut result = Vec::new();
+            for action in actions {
+                if let Ok(ra) =
+                    serde_json::from_value::<super::types::RecommendedAction>(action.clone())
+                {
+                    result.push(ra);
+                }
+            }
+            if !result.is_empty() {
+                return result;
+            }
+        }
+    }
+
+    // Fallback: wrap the raw response as a single notify action
+    vec![super::types::RecommendedAction {
+        action_type: super::types::ActionType::EscalateToAgent,
+        description: format!(
+            "Escalation resolved: {}",
+            &agent_response[..agent_response.len().min(300)]
+        ),
+        priority: super::types::Priority::High,
+        task: Some(reason.to_string()),
+    }]
+}
+
+/// Generate a short random suffix for KV key uniqueness.
+fn rand_suffix() -> u32 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    std::time::SystemTime::now().hash(&mut hasher);
+    std::thread::current().id().hash(&mut hasher);
+    (hasher.finish() % 10000) as u32
+}
+
+/// Wrapper around build_situation_report that also returns new doc IDs.
+async fn build_situation_report_with_doc_ids(
+    memory: Option<&super::super::memory::MemoryClient>,
+    workspace_dir: &std::path::Path,
+    last_tick_at: f64,
+    token_budget: u32,
+) -> (String, Vec<String>) {
+    let report = build_situation_report(memory, workspace_dir, last_tick_at, token_budget).await;
+
+    // Extract doc IDs from memory if available
+    let mut doc_ids = Vec::new();
+    if let Some(client) = memory {
+        if let Ok(docs) = client.list_documents(None).await {
+            let is_cold_start = last_tick_at <= 0.0;
+            if let Some(arr) = docs
+                .as_array()
+                .or_else(|| docs.get("documents").and_then(|v| v.as_array()))
+            {
+                for doc in arr {
+                    let updated_at = doc
+                        .get("updated_at")
+                        .or_else(|| doc.get("updatedAt"))
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    if is_cold_start || updated_at > last_tick_at {
+                        if let Some(id) = doc
+                            .get("document_id")
+                            .or_else(|| doc.get("documentId"))
+                            .and_then(|v| v.as_str())
+                        {
+                            doc_ids.push(id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (report, doc_ids)
 }
 
 /// Read tasks from HEARTBEAT.md in the workspace.

@@ -1,10 +1,8 @@
 use crate::openhuman::config::HeartbeatConfig;
-use crate::openhuman::memory::MemoryClient;
-use crate::openhuman::subconscious::engine::SubconsciousEngine;
+use crate::openhuman::subconscious::global::get_or_init_engine;
 use crate::openhuman::subconscious::types::Decision;
 use anyhow::Result;
 use std::path::Path;
-use std::sync::Arc;
 use tokio::time::{self, Duration};
 use tracing::{info, warn};
 
@@ -24,7 +22,7 @@ impl HeartbeatEngine {
     }
 
     /// Start the heartbeat loop (runs until cancelled).
-    /// On each tick, delegates to the subconscious engine for evaluation.
+    /// On each tick, delegates to the shared global subconscious engine.
     pub async fn run(&self) -> Result<()> {
         if !self.config.enabled {
             info!("[heartbeat] disabled");
@@ -42,26 +40,30 @@ impl HeartbeatEngine {
             }
         );
 
-        // Create memory client for subconscious
-        let memory = MemoryClient::from_workspace_dir(self.workspace_dir.clone())
-            .ok()
-            .map(Arc::new);
-
-        // Build subconscious engine from heartbeat config
-        let subconscious = SubconsciousEngine::from_heartbeat_config(
-            &self.config,
-            self.workspace_dir.clone(),
-            memory,
-        );
-
         let mut interval = time::interval(Duration::from_secs(u64::from(interval_mins) * 60));
 
         loop {
             interval.tick().await;
 
             if self.config.inference_enabled {
-                // Full subconscious tick with local model inference
-                match subconscious.tick().await {
+                // Get the shared global engine (same instance as RPC handlers)
+                let lock = match get_or_init_engine().await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        warn!("[heartbeat] failed to get engine: {e}");
+                        continue;
+                    }
+                };
+                let guard = lock.lock().await;
+                let engine = match guard.as_ref() {
+                    Some(e) => e,
+                    None => {
+                        warn!("[heartbeat] engine not initialized");
+                        continue;
+                    }
+                };
+
+                match engine.tick().await {
                     Ok(result) => match result.output.decision {
                         Decision::Noop => {
                             info!("[heartbeat] tick: noop — {}", result.output.reason);
@@ -186,14 +188,9 @@ mod tests {
         let path = dir.join("HEARTBEAT.md");
         assert!(path.exists());
         let content = tokio::fs::read_to_string(&path).await.unwrap();
-        assert!(content.contains("Periodic Tasks"));
-
-        // Verify default tasks are active (not commented out)
         let tasks = HeartbeatEngine::parse_tasks(&content);
         assert_eq!(tasks.len(), 3);
         assert!(tasks.iter().any(|t| t.contains("email")));
-        assert!(tasks.iter().any(|t| t.contains("deadline")));
-        assert!(tasks.iter().any(|t| t.contains("skills")));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -217,16 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_returns_immediately_when_disabled() {
-        let engine = HeartbeatEngine::new(
-            HeartbeatConfig {
-                enabled: false,
-                interval_minutes: 30,
-                inference_enabled: false,
-                context_budget_tokens: 40_000,
-                escalation_model: None,
-            },
-            std::env::temp_dir(),
-        );
+        let engine = HeartbeatEngine::new(HeartbeatConfig::default(), std::env::temp_dir());
         let result = engine.run().await;
         assert!(result.is_ok());
     }

@@ -1,5 +1,6 @@
 pub mod decision_log;
 pub mod engine;
+pub mod global;
 pub mod prompt;
 mod schemas;
 pub mod situation_report;
