@@ -29,6 +29,15 @@ const OnboardingOverlay = () => {
   const [dismissed, setDismissed] = useState(false);
   const [userLoadTimedOut, setUserLoadTimedOut] = useState(false);
 
+  // Reset local state on logout so re-login starts fresh.
+  useEffect(() => {
+    if (!token) {
+      setUserLoadTimedOut(false);
+      setHasWorkspaceFlag(null);
+      setDismissed(false);
+    }
+  }, [token]);
+
   // Timeout: if user profile hasn't loaded after 3s but we have token + bootstrap,
   // proceed anyway so onboarding isn't permanently invisible.
   useEffect(() => {
@@ -39,9 +48,6 @@ const OnboardingOverlay = () => {
   }, [token, isAuthBootstrapComplete, user?._id]);
 
   // User is ready when profile loaded or timeout elapsed.
-  // Note: userLoadTimedOut is sticky across sessions but harmless — when token
-  // is null (logged out) the early-return guard prevents any visible effect,
-  // and the workspace flag check doesn't require userId.
   const userReady = !!user?._id || userLoadTimedOut;
   useEffect(() => {
     if (!token || !isAuthBootstrapComplete || !userReady) return;
