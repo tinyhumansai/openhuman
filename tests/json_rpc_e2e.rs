@@ -1125,7 +1125,7 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
         "echo tool should return the message: {call_result}"
     );
 
-    // 5. Trigger sync (tick)
+    // 5. Trigger sync (routes to onSync via skill/sync RPC)
     let sync = post_json_rpc(
         &rpc_base,
         24,
@@ -1133,12 +1133,9 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
         json!({"skill_id": "e2e-runtime"}),
     )
     .await;
-    let sync_result = assert_no_jsonrpc_error(&sync, "skills_sync");
-    assert_eq!(
-        sync_result.get("ok"),
-        Some(&json!(true)),
-        "sync should acknowledge: {sync_result}"
-    );
+    // skills_sync now routes through "skill/sync" → onSync().  The e2e skill
+    // does not export onSync, so handle_js_call returns null (no error).
+    let _sync_result = assert_no_jsonrpc_error(&sync, "skills_sync");
 
     // 6. Stop the skill
     let stop = post_json_rpc(

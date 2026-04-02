@@ -329,27 +329,33 @@ async fn skills_sync_rpc_calls_on_sync_not_on_tick() {
     let snap = engine.start_skill(skill_id).await.expect("start");
     eprintln!("  Started: {:?}", snap.status);
 
-    // Call skill/sync directly (this is what the RPC handler should route to)
+    // Exercise the full controller path via try_invoke_registered_rpc so we
+    // verify handle_skills_sync routes to "skill/sync" (not "skill/tick").
+    // This catches regressions in the controller layer that engine.rpc() would bypass.
+    let rpc_params: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_value(json!({"skill_id": skill_id})).unwrap();
     let sync_result = tokio::time::timeout(
         Duration::from_secs(15),
-        engine.rpc(skill_id, "skill/sync", json!({})),
+        try_invoke_registered_rpc("openhuman.skills_sync", rpc_params),
     )
     .await;
 
-    // skill/sync should return a JSON value (from handle_js_call, not handle_js_void_call)
     match &sync_result {
-        Ok(Ok(val)) => {
-            eprintln!("  skill/sync returned Value: {val}");
-            // The key difference: skill/sync returns the JS result (Value),
-            // while skill/tick returns { "ok": true } from void handler.
-            // This verifies we're going through the Rpc handler, not the Tick handler.
+        Ok(Some(Ok(val))) => {
+            eprintln!("  openhuman.skills_sync returned: {val}");
+            // The result comes from handle_js_call("onSync") which returns the
+            // JS value (typically null/undefined).  The old buggy path returned
+            // {"ok": true} from handle_js_void_call("onTick").
         }
-        Ok(Err(e)) => {
-            eprintln!("  skill/sync error: {e}");
-            // An error from onSync not being defined is still fine —
+        Ok(Some(Err(e))) => {
+            eprintln!("  openhuman.skills_sync error: {e}");
+            // An error from onSync not being defined is still acceptable —
             // the important thing is it tried onSync, not onTick.
         }
-        Err(_) => panic!("skill/sync TIMED OUT"),
+        Ok(None) => {
+            panic!("openhuman.skills_sync not found in registered controllers");
+        }
+        Err(_) => panic!("openhuman.skills_sync TIMED OUT"),
     }
 
     // Also verify the namespace gets a title with "periodic sync" (not "tick sync")
