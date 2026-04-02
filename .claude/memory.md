@@ -8,6 +8,7 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Socket not connected at startup** — `SocketProvider` only connects when a Redux `auth.token` is set. At fresh launch (no token), socket is null, so any `callCoreRpc()` call falls back to `fetch()`. Always use `invoke('core_rpc_relay')` for local sidecar RPC calls.
 - **`openhuman.agent_server_status` doesn't exist** — This RPC method is not registered in the core. The gate checks it but it always errors. The gate passes if either service is Running OR agent server is running OR core is reachable.
 - **Cargo incremental builds can serve stale UI** — If the app shows old frontend after a Rust rebuild, run `cargo clean --manifest-path app/src-tauri/Cargo.toml` before rebuilding.
+- **`build.rs` missing `rerun-if-changed` causes stale ACL / "Command not found" at runtime** — `app/src-tauri/build.rs` had no `cargo:rerun-if-changed` directives for `permissions/` or `capabilities/`. Adding/changing TOML or JSON files there did not re-trigger `tauri-build`, so ACL tables were stale and registered commands silently failed. Fixed by adding `println!("cargo:rerun-if-changed=permissions")` and `println!("cargo:rerun-if-changed=capabilities")` in `build.rs` (issue #270). Also: any new Tauri command must have a matching entry in a `permissions/` TOML file or it will hit the same error even if it is in `generate_handler!`.
 - **macOS deep links require .app bundle** — `yarn tauri dev` does NOT support deep links. Must use `yarn tauri build --debug --bundles app`.
 
 ## Strict Rules
@@ -49,14 +50,6 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Recovery Phrase moved to Settings** — MnemonicStep was removed from onboarding (was step 5). The same BIP39 generate/import functionality now lives in `app/src/components/settings/panels/RecoveryPhrasePanel.tsx`, accessible via Settings > Recovery Phrase. Onboarding completion logic moved into `handleSkillsNext` in `Onboarding.tsx`.
 - **E2E tests find onboarding buttons by label text** — `shared-flows.ts`, `login-flow.spec.ts`, `auth-access-control.spec.ts`, and `voice-mode.spec.ts` locate buttons by their visible label. Changing button labels requires updating all four files. Note: `voice-mode.spec.ts` still references legacy labels that don't match current steps (pre-existing tech debt).
 - **`ScreenPermissionsStep` always shows Continue** — The Continue button is always visible regardless of permission grant status, allowing users to skip the permissions step (#274).
-
-## Build Blockers: macOS Tahoe + whisper-rs
-
-- **`whisper-rs` breaks `cargo build` on macOS Tahoe (Apple Silicon)** — Added in main via `whisper-rs = "0.16"` (voice feature #178). Apple clang 21+ refuses `-mcpu=native` when `--target=arm64-apple-macosx` is also set. This is NOT fixable by updating CLT.
-- **Root cause** — ggml cmake sets `GGML_NATIVE=ON` by default; the cmake crate appends `--target` to clang, triggering the incompatibility. Happens even with the latest toolchain.
-- **Workaround** — Patch `~/.cargo/registry/src/index.crates.io-*/whisper-rs-sys-0.15.0/build.rs`: add `config.define("GGML_NATIVE", "OFF");` (for `target_os = "macos" && target_arch = "aarch64"`) just before the `config.build()` call.
-- **Patch is fragile** — Resets on `cargo clean`, crate version bump, or registry re-download. Deleting build cache alone (`target/debug/build/whisper-rs-sys-*`) is NOT enough — cmake regenerates with the same bad flags.
-- **Correct fix** — Needs an upstream patch in `whisper-rs-sys` or a Cargo feature to opt out of `GGML_NATIVE` on Apple Silicon cross-builds.
 
 ## Build Blockers: macOS Tahoe + whisper-rs
 
