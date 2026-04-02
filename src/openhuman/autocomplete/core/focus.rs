@@ -243,24 +243,6 @@ pub(super) fn focused_text_context_verbose() -> Result<FocusedTextContext, Strin
     Err("autocomplete is only supported on macOS".to_string())
 }
 
-fn normalize_ax_value(raw: &str) -> String {
-    let v = raw.trim();
-    if v.eq_ignore_ascii_case("missing value") {
-        String::new()
-    } else {
-        v.to_string()
-    }
-}
-
-fn parse_ax_number(raw: &str) -> Option<i32> {
-    let trimmed = normalize_ax_value(raw);
-    if trimmed.is_empty() {
-        return None;
-    }
-    let cleaned = trimmed.replace(',', ".");
-    cleaned.parse::<f64>().ok().map(|v| v.round() as i32)
-}
-
 /// Validate that the currently focused element still matches the target we generated the
 /// suggestion for. Returns Ok if it matches or if validation is inconclusive (to avoid
 /// false negatives). Returns Err if it clearly does not match.
