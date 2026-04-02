@@ -1,6 +1,7 @@
 //! Shared types for the multi-agent harness: requests, results, task status.
 
 use super::archetypes::AgentArchetype;
+use crate::openhuman::tool_timeout::tool_execution_timeout_duration;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -48,7 +49,7 @@ pub struct SubAgentRequest {
 }
 
 fn default_subagent_timeout() -> Duration {
-    Duration::from_secs(120)
+    tool_execution_timeout_duration()
 }
 
 fn is_default_timeout(d: &Duration) -> bool {

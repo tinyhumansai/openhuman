@@ -1,5 +1,6 @@
 use super::traits::{Tool, ToolResult};
 use crate::openhuman::config::DelegateAgentConfig;
+use crate::openhuman::tool_timeout::tool_execution_timeout_secs;
 use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
@@ -8,9 +9,6 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-
-/// Default timeout for sub-agent provider calls.
-const DELEGATE_TIMEOUT_SECS: u64 = 120;
 
 /// Tool that delegates a subtask to a named agent with a different
 /// provider/model configuration. Enables multi-agent workflows where
@@ -250,9 +248,10 @@ impl Tool for DelegateTool {
 
         let temperature = agent_config.temperature.unwrap_or(0.7);
 
+        let delegate_timeout_secs = tool_execution_timeout_secs();
         // Wrap the provider call in a timeout to prevent indefinite blocking
         let result = tokio::time::timeout(
-            Duration::from_secs(DELEGATE_TIMEOUT_SECS),
+            Duration::from_secs(delegate_timeout_secs),
             provider.chat_with_system(
                 agent_config.system_prompt.as_deref(),
                 &full_prompt,
@@ -269,7 +268,7 @@ impl Tool for DelegateTool {
                     success: false,
                     output: String::new(),
                     error: Some(format!(
-                        "Agent '{agent_name}' timed out after {DELEGATE_TIMEOUT_SECS}s"
+                        "Agent '{agent_name}' timed out after {delegate_timeout_secs}s"
                     )),
                 });
             }

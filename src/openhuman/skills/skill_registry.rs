@@ -307,6 +307,29 @@ impl SkillRegistry {
         self.skills.read().contains_key(skill_id)
     }
 
+    /// Merge `patch` into a running skill's `published_state` (e.g. ping scheduler health).
+    pub fn merge_published_state(
+        &self,
+        skill_id: &str,
+        patch: HashMap<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        let skills = self.skills.read();
+        let entry = skills
+            .get(skill_id)
+            .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
+        let mut state = entry.state.write();
+        if state.status != SkillStatus::Running {
+            return Err(format!(
+                "Skill '{}' is not running (status: {:?})",
+                skill_id, state.status
+            ));
+        }
+        for (k, v) in patch {
+            state.published_state.insert(k, v);
+        }
+        Ok(())
+    }
+
     /// Send a message to a specific skill's message loop.
     /// Returns an error if the skill is not registered or the channel is full.
     pub fn send_message(&self, skill_id: &str, msg: SkillMessage) -> Result<(), String> {

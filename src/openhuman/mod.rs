@@ -38,6 +38,7 @@ pub mod service;
 pub mod skills;
 pub mod subconscious;
 pub mod team;
+pub mod tool_timeout;
 pub mod tools;
 pub mod util;
 pub mod voice;

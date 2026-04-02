@@ -1155,6 +1155,19 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
         Some("e2e-runtime")
     );
 
+    let data_stats = post_json_rpc(
+        &rpc_base,
+        211,
+        "openhuman.skills_data_stats",
+        json!({"skill_id": "e2e-runtime"}),
+    )
+    .await;
+    let ds = assert_no_jsonrpc_error(&data_stats, "skills_data_stats");
+    assert_eq!(ds.get("exists"), Some(&json!(true)));
+    assert!(ds.get("path").and_then(Value::as_str).is_some());
+    assert!(ds.get("total_bytes").and_then(Value::as_u64).is_some());
+    assert!(ds.get("file_count").and_then(Value::as_u64).is_some());
+
     // 3. List tools
     let tools = post_json_rpc(
         &rpc_base,

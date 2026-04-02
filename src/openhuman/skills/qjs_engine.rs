@@ -879,4 +879,56 @@ impl RuntimeEngine {
     pub fn skill_data_dir(&self, skill_id: &str) -> PathBuf {
         self.skills_data_dir.join(skill_id)
     }
+
+    /// Total file count and byte size under the skill's data directory (recursive).
+    pub fn skill_data_directory_stats(&self, skill_id: &str) -> SkillDataDirectoryStats {
+        let path = self.skill_data_dir(skill_id);
+        let exists = path.exists();
+        let (total_bytes, file_count) = directory_byte_and_file_count(&path).unwrap_or((0, 0));
+        SkillDataDirectoryStats {
+            exists,
+            path: path.display().to_string(),
+            total_bytes,
+            file_count,
+        }
+    }
+}
+
+/// Disk usage for a skill's persisted data folder (exposed to the UI for sync summary).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillDataDirectoryStats {
+    pub exists: bool,
+    pub path: String,
+    pub total_bytes: u64,
+    pub file_count: u64,
+}
+
+fn directory_byte_and_file_count(path: &std::path::Path) -> std::io::Result<(u64, u64)> {
+    use std::fs;
+    if !path.exists() {
+        return Ok((0, 0));
+    }
+    let mut total_bytes = 0u64;
+    let mut file_count = 0u64;
+    fn walk(
+        path: &std::path::Path,
+        total_bytes: &mut u64,
+        file_count: &mut u64,
+    ) -> std::io::Result<()> {
+        let read = fs::read_dir(path)?;
+        for entry in read {
+            let entry = entry?;
+            let meta = entry.metadata()?;
+            let p = entry.path();
+            if meta.is_dir() {
+                walk(&p, total_bytes, file_count)?;
+            } else if meta.is_file() {
+                *total_bytes += meta.len();
+                *file_count += 1;
+            }
+        }
+        Ok(())
+    }
+    walk(path, &mut total_bytes, &mut file_count)?;
+    Ok((total_bytes, file_count))
 }

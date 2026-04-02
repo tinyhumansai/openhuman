@@ -37,6 +37,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         skills_schema("data_read"),
         skills_schema("data_write"),
         skills_schema("data_dir"),
+        skills_schema("data_stats"),
         skills_schema("enable"),
         skills_schema("disable"),
         skills_schema("is_enabled"),
@@ -141,6 +142,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: skills_schema("data_dir"),
             handler: handle_skills_data_dir,
+        },
+        RegisteredController {
+            schema: skills_schema("data_stats"),
+            handler: handle_skills_data_stats,
         },
         RegisteredController {
             schema: skills_schema("enable"),
@@ -525,6 +530,18 @@ fn skills_schema(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "data_stats" => ControllerSchema {
+            namespace: "skills",
+            function: "data_stats",
+            description: "Recursive file count and byte size for a skill's data directory.",
+            inputs: vec![skill_id_input("The skill ID.")],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "exists, path, total_bytes, file_count.",
+                required: true,
+            }],
+        },
         "enable" => ControllerSchema {
             namespace: "skills",
             function: "enable",
@@ -888,6 +905,16 @@ fn handle_skills_data_dir(params: Map<String, Value>) -> ControllerFuture {
         let engine = require_engine()?;
         let path = engine.skill_data_dir(&p.skill_id);
         Ok(serde_json::json!({ "path": path.display().to_string() }))
+    })
+}
+
+fn handle_skills_data_stats(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p: SkillIdParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        let engine = require_engine()?;
+        let stats = engine.skill_data_directory_stats(&p.skill_id);
+        serde_json::to_value(&stats).map_err(|e| e.to_string())
     })
 }
 
