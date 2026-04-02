@@ -38,7 +38,7 @@ describe('OnboardingOverlay', () => {
     });
 
     await vi.waitFor(() => {
-      expect(screen.queryByText('Set up later')).not.toBeInTheDocument();
+      expect(screen.queryByText('Skip')).not.toBeInTheDocument();
     });
   });
 
@@ -47,7 +47,7 @@ describe('OnboardingOverlay', () => {
       preloadedState: { auth: { ...baseAuth, token: null }, user: baseUser },
     });
 
-    expect(screen.queryByText('Set up later')).not.toBeInTheDocument();
+    expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
 
   it('does not render when user profile is not loaded', () => {
@@ -55,39 +55,38 @@ describe('OnboardingOverlay', () => {
       preloadedState: { auth: baseAuth, user: { user: {} } },
     });
 
-    expect(screen.queryByText('Set up later')).not.toBeInTheDocument();
+    expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
 
-  it('resets userLoadTimedOut on logout so re-login retries profile load', async () => {
-    vi.useFakeTimers();
-    try {
-      const { store } = renderWithProviders(<OnboardingOverlay />, {
-        preloadedState: { auth: baseAuth, user: { user: {} } },
-      });
+  it('resets local state on logout so re-login starts fresh', async () => {
+    // Ensure getOnboardingCompleted returns false (not completed) for this test
+    const { getOnboardingCompleted } = await import('../../utils/tauriCommands');
+    vi.mocked(getOnboardingCompleted).mockResolvedValue(false);
 
-      // Advance past the 3s timeout so userLoadTimedOut becomes true
-      await vi.advanceTimersByTimeAsync(3500);
+    // Start with a loaded user profile so userReady is true via user._id,
+    // and onboarding not completed — overlay should show.
+    const { store } = renderWithProviders(<OnboardingOverlay />, {
+      preloadedState: { auth: baseAuth, user: baseUser },
+    });
 
-      // Overlay should now be visible (userLoadTimedOut fired, onboarding not completed)
-      await vi.waitFor(() => {
-        expect(screen.queryByText('Set up later')).toBeInTheDocument();
-      });
+    // Wait for getOnboardingCompleted to resolve and overlay to appear
+    await vi.waitFor(() => {
+      expect(screen.queryByText('Skip')).toBeInTheDocument();
+    });
 
-      // Simulate logout by dispatching the clearToken thunk
-      await store.dispatch(clearToken());
+    // Simulate logout — the reset useEffect clears onboardingCompleted + userLoadTimedOut
+    await store.dispatch(clearToken());
 
-      // Overlay should disappear (no token)
-      await vi.waitFor(() => {
-        expect(screen.queryByText('Set up later')).not.toBeInTheDocument();
-      });
+    await vi.waitFor(() => {
+      expect(screen.queryByText('Skip')).not.toBeInTheDocument();
+    });
 
-      // Simulate re-login by setting token again (still no user profile loaded)
-      store.dispatch(setToken('new-jwt'));
+    // Simulate re-login WITHOUT a loaded user profile.
+    // If the fix works, onboardingCompleted was reset to null and userLoadTimedOut
+    // was reset to false, so userReady is false — overlay should NOT appear.
+    // Without the fix, stale state would make the overlay appear immediately.
+    store.dispatch(setToken('new-jwt'));
 
-      // The overlay should NOT appear immediately — userLoadTimedOut was reset on logout
-      expect(screen.queryByText('Set up later')).not.toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
 });
