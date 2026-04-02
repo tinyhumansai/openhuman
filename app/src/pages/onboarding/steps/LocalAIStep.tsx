@@ -10,22 +10,37 @@ import {
 interface LocalAIStepProps {
   onNext: (result: { consentGiven: boolean; downloadStarted: boolean }) => void;
   onBack?: () => void;
+  onDownloadError?: (message: string) => void;
 }
 
-const LocalAIStep = ({ onNext, onBack: _onBack }: LocalAIStepProps) => {
+const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepProps) => {
   const downloadStartedRef = useRef(false);
+  // Tracks whether onDownloadError has already been called for this download attempt,
+  // so that two concurrent failures don't fire the callback twice.
+  const errorReportedRef = useRef(false);
 
   const handleConsent = useCallback(() => {
     if (downloadStartedRef.current) return;
     downloadStartedRef.current = true;
+    errorReportedRef.current = false;
+
+    const reportError = (source: string, err: unknown) => {
+      console.warn(`[LocalAIStep] Download failed (${source}):`, err);
+      if (!errorReportedRef.current) {
+        errorReportedRef.current = true;
+        onDownloadError?.('Local AI setup encountered an issue');
+      }
+    };
 
     // Fire-and-forget: start downloads in the background — the global snackbar tracks progress
-    void openhumanLocalAiDownload(false).catch(() => {});
-    void openhumanLocalAiDownloadAllAssets(false).catch(() => {});
+    void openhumanLocalAiDownload(false).catch((err: unknown) => reportError('ollama', err));
+    void openhumanLocalAiDownloadAllAssets(false).catch((err: unknown) =>
+      reportError('assets', err)
+    );
 
     // Advance to next step immediately
     onNext({ consentGiven: true, downloadStarted: true });
-  }, [onNext]);
+  }, [onNext, onDownloadError]);
 
   return (
     <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
