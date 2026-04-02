@@ -250,11 +250,19 @@ fn format_llm_context_message(query: Option<&str>, hits: &[NamespaceMemoryHit]) 
                 .supporting_relations
                 .iter()
                 .map(|relation| {
+                    let subject_type = extract_entity_type(&relation.attrs, "subject");
+                    let object_type = extract_entity_type(&relation.attrs, "object");
+                    let subject_label = match subject_type {
+                        Some(t) => format!("{} ({})", relation.subject, t),
+                        None => relation.subject.clone(),
+                    };
+                    let object_label = match object_type {
+                        Some(t) => format!("{} ({})", relation.object, t),
+                        None => relation.object.clone(),
+                    };
                     format!(
                         "{} -[{}]-> {}",
-                        relation.subject.as_str(),
-                        relation.predicate.as_str(),
-                        relation.object.as_str()
+                        subject_label, relation.predicate, object_label
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1130,6 +1138,18 @@ mod tests {
         let message = format_llm_context_message(Some("who owns atlas"), &[hit])
             .expect("context message should exist");
         assert!(message.contains("Query: who owns atlas"));
+        // Without entity_types in attrs, relations render without type annotations.
         assert!(message.contains("Alice -[OWNS]-> Atlas"));
+    }
+
+    #[test]
+    fn format_llm_context_message_includes_entity_types_when_present() {
+        let hit = sample_hit_with_entity_types();
+        let message = format_llm_context_message(Some("who owns atlas"), &[hit])
+            .expect("context message should exist");
+        assert!(
+            message.contains("Alice (PERSON) -[OWNS]-> Atlas (PROJECT)"),
+            "expected entity types in relation text, got: {message}"
+        );
     }
 }

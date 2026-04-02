@@ -1203,6 +1203,18 @@ impl UnifiedMemory {
         }
     }
 
+    fn entity_label_with_type(name: &str, attrs: &serde_json::Value, role: &str) -> String {
+        let entity_type = attrs
+            .get("entity_types")
+            .and_then(|et| et.get(role))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        match entity_type {
+            Some(t) => format!("{name} ({t})"),
+            None => name.to_string(),
+        }
+    }
+
     fn format_context_text(hits: &[NamespaceMemoryHit], query: Option<&str>) -> String {
         let mut parts = Vec::new();
         if let Some(query) = query {
@@ -1229,9 +1241,13 @@ impl UnifiedMemory {
                     .supporting_relations
                     .iter()
                     .map(|relation| {
+                        let subject_label =
+                            Self::entity_label_with_type(&relation.subject, &relation.attrs, "subject");
+                        let object_label =
+                            Self::entity_label_with_type(&relation.object, &relation.attrs, "object");
                         format!(
                             "{} -[{}]-> {}",
-                            relation.subject, relation.predicate, relation.object
+                            subject_label, relation.predicate, object_label
                         )
                     })
                     .collect::<Vec<_>>()
@@ -1465,5 +1481,167 @@ mod tests {
                 "Hits with 'episodic:' id prefix must have kind Episodic"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn query_supporting_relations_contain_entity_types() {
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        let document_id = memory
+            .upsert_document(NamespaceDocumentInput {
+                namespace: "team".to_string(),
+                key: "alice-google".to_string(),
+                title: "Alice at Google".to_string(),
+                content: "Alice works on Project Alpha at Google.".to_string(),
+                source_type: "doc".to_string(),
+                priority: "high".to_string(),
+                tags: vec!["decision".to_string()],
+                metadata: json!({}),
+                category: "core".to_string(),
+                session_id: None,
+                document_id: None,
+            })
+            .await
+            .unwrap();
+
+        // Upsert graph relations with entity types in attrs (mimics ingestion pipeline).
+        memory
+            .graph_upsert_namespace(
+                "team",
+                "Alice",
+                "WORKS_FOR",
+                "Google",
+                &json!({
+                    "document_id": document_id,
+                    "entity_types": {
+                        "subject": "PERSON",
+                        "object": "ORGANIZATION"
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+        memory
+            .graph_upsert_namespace(
+                "team",
+                "Alice",
+                "OWNS",
+                "Project Alpha",
+                &json!({
+                    "document_id": document_id,
+                    "entity_types": {
+                        "subject": "PERSON",
+                        "object": "PROJECT"
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        // Query path: entity types should appear in supporting_relations attrs.
+        let hits = memory
+            .query_namespace_hits("team", "Alice", 5)
+            .await
+            .unwrap();
+        assert!(!hits.is_empty(), "should return at least one hit");
+
+        let hit = &hits[0];
+        assert!(
+            !hit.supporting_relations.is_empty(),
+            "hit should have supporting relations"
+        );
+
+        // Verify entity types are present in the attrs of supporting relations.
+        for relation in &hit.supporting_relations {
+            let entity_types = relation.attrs.get("entity_types");
+            assert!(
+                entity_types.is_some(),
+                "relation {} -[{}]-> {} should have entity_types in attrs",
+                relation.subject,
+                relation.predicate,
+                relation.object
+            );
+            let et = entity_types.unwrap();
+            let subject_type = et.get("subject").and_then(|v| v.as_str());
+            assert_eq!(
+                subject_type,
+                Some("PERSON"),
+                "subject_type should be PERSON for Alice"
+            );
+        }
+
+        // Recall path: entity types should also appear.
+        let recall_hits = memory.recall_namespace_memories("team", 5).await.unwrap();
+        assert!(!recall_hits.is_empty(), "recall should return hits");
+
+        let recall_hit = &recall_hits[0];
+        assert!(
+            !recall_hit.supporting_relations.is_empty(),
+            "recall hit should have supporting relations"
+        );
+        for relation in &recall_hit.supporting_relations {
+            let entity_types = relation.attrs.get("entity_types");
+            assert!(
+                entity_types.is_some(),
+                "recall relation should have entity_types in attrs"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn format_context_text_includes_entity_types() {
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+
+        let document_id = memory
+            .upsert_document(NamespaceDocumentInput {
+                namespace: "team".to_string(),
+                key: "atlas-status".to_string(),
+                title: "Atlas status".to_string(),
+                content: "Project Atlas is owned by Alice at Google.".to_string(),
+                source_type: "doc".to_string(),
+                priority: "high".to_string(),
+                tags: vec!["decision".to_string()],
+                metadata: json!({}),
+                category: "core".to_string(),
+                session_id: None,
+                document_id: None,
+            })
+            .await
+            .unwrap();
+
+        memory
+            .graph_upsert_namespace(
+                "team",
+                "Alice",
+                "OWNS",
+                "Atlas",
+                &json!({
+                    "document_id": document_id,
+                    "entity_types": {
+                        "subject": "PERSON",
+                        "object": "PROJECT"
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        let context = memory
+            .query_namespace_context_data("team", "who owns atlas", 5)
+            .await
+            .unwrap();
+        // Entity names are normalized to uppercase during graph upsert.
+        assert!(
+            context.context_text.contains("ALICE (PERSON)"),
+            "context_text should include entity type for Alice, got: {}",
+            context.context_text
+        );
+        assert!(
+            context.context_text.contains("ATLAS (PROJECT)"),
+            "context_text should include entity type for Atlas, got: {}",
+            context.context_text
+        );
     }
 }
