@@ -16,9 +16,6 @@ export interface ChatSendError {
   message: string;
 }
 
-export function chatSendError(
-  code: ChatSendErrorCode,
-  message: string,
-): ChatSendError {
+export function chatSendError(code: ChatSendErrorCode, message: string): ChatSendError {
   return { code, message };
 }

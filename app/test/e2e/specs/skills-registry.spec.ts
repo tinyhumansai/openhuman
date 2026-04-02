@@ -135,9 +135,7 @@ describe('Skills registry flow', () => {
     await navigateToSkills();
     await browser.pause(1_500);
     const hasNamedSkill =
-      (await textExists('Telegram')) ||
-      (await textExists('Notion')) ||
-      (await textExists('Gmail'));
+      (await textExists('Telegram')) || (await textExists('Notion')) || (await textExists('Gmail'));
     stepLog(`Registry skill name visible: ${hasNamedSkill}`);
     expect(hasNamedSkill).toBe(true);
   });

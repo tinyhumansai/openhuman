@@ -569,9 +569,7 @@ const Conversations = () => {
 
     if (!trimmed || !selectedThreadId || isSending) return;
     if (!isLocalModelActiveRef.current && socketStatus !== 'connected') {
-      setSendError(
-        chatSendError('socket_disconnected', 'Realtime socket is not connected.'),
-      );
+      setSendError(chatSendError('socket_disconnected', 'Realtime socket is not connected.'));
       return;
     }
 
@@ -608,8 +606,8 @@ const Conversations = () => {
       setSendError(
         chatSendError(
           'safety_timeout',
-          'No response from the assistant after 2 minutes. Try again or check your connection.',
-        ),
+          'No response from the assistant after 2 minutes. Try again or check your connection.'
+        )
       );
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
@@ -728,9 +726,7 @@ const Conversations = () => {
       await handleSendMessage(transcript);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setSendError(
-        chatSendError('voice_transcription', `Voice transcription failed: ${message}`),
-      );
+      setSendError(chatSendError('voice_transcription', `Voice transcription failed: ${message}`));
       setVoiceStatus(null);
     } finally {
       setIsTranscribing(false);
@@ -743,8 +739,8 @@ const Conversations = () => {
       setSendError(
         chatSendError(
           'microphone_unavailable',
-          'Microphone capture is unavailable in this runtime. Use Text mode, or run the desktop app bundle with microphone permissions enabled.',
-        ),
+          'Microphone capture is unavailable in this runtime. Use Text mode, or run the desktop app bundle with microphone permissions enabled.'
+        )
       );
       return;
     }
@@ -780,9 +776,7 @@ const Conversations = () => {
         setIsRecording(false);
         mediaStreamRef.current?.getTracks().forEach(track => track.stop());
         mediaStreamRef.current = null;
-        setSendError(
-          chatSendError('microphone_recording', 'Microphone recording failed.'),
-        );
+        setSendError(chatSendError('microphone_recording', 'Microphone recording failed.'));
       };
       recorder.onstop = () => {
         void transcribeAndSendAudio(recorder.mimeType);
@@ -795,9 +789,7 @@ const Conversations = () => {
       recorder.start();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setSendError(
-        chatSendError('microphone_access', `Microphone access failed: ${message}`),
-      );
+      setSendError(chatSendError('microphone_access', `Microphone access failed: ${message}`));
       setVoiceStatus(null);
     }
   };
@@ -1336,9 +1328,7 @@ const Conversations = () => {
 
           {sendError && (
             <div className="flex items-center justify-between mb-2">
-              <p
-                className="text-xs text-coral-500"
-                data-chat-send-error-code={sendError.code}>
+              <p className="text-xs text-coral-500" data-chat-send-error-code={sendError.code}>
                 {sendError.message}
               </p>
               <button

@@ -14,7 +14,6 @@
  */
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
-import { completeOnboardingIfVisible } from '../helpers/shared-flows';
 import {
   clickText,
   dumpAccessibilityTree,
@@ -22,6 +21,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { completeOnboardingIfVisible } from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 async function waitForRequest(method, urlFragment, timeout = 15_000) {

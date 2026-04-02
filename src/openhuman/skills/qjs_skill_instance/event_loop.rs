@@ -6,9 +6,11 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
 use crate::openhuman::memory::MemoryClientRef;
-use crate::openhuman::tool_timeout::{tool_execution_timeout_duration, tool_execution_timeout_secs};
 use crate::openhuman::skills::quickjs_libs::qjs_ops;
 use crate::openhuman::skills::types::{SkillMessage, SkillStatus, ToolResult};
+use crate::openhuman::tool_timeout::{
+    tool_execution_timeout_duration, tool_execution_timeout_secs,
+};
 
 use super::js_handlers::{
     call_lifecycle, handle_cron_trigger, handle_js_call, handle_js_void_call, handle_server_event,

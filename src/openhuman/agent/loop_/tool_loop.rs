@@ -285,9 +285,11 @@ pub(crate) async fn run_tool_call_loop(
             );
 
             let result = if let Some(tool) = find_tool(tools_registry, &call.name) {
-                let tool_deadline = crate::openhuman::tool_timeout::tool_execution_timeout_duration();
+                let tool_deadline =
+                    crate::openhuman::tool_timeout::tool_execution_timeout_duration();
                 let timeout_secs = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
-                match tokio::time::timeout(tool_deadline, tool.execute(call.arguments.clone())).await
+                match tokio::time::timeout(tool_deadline, tool.execute(call.arguments.clone()))
+                    .await
                 {
                     Ok(Ok(r)) => {
                         if r.success {

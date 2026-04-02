@@ -6,7 +6,11 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import { textExists, waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
-import { completeOnboardingIfVisible, navigateToHome, waitForHomePage } from '../helpers/shared-flows';
+import {
+  completeOnboardingIfVisible,
+  navigateToHome,
+  waitForHomePage,
+} from '../helpers/shared-flows';
 import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 describe('Socket reconnect skill sync smoke', () => {
@@ -32,9 +36,7 @@ describe('Socket reconnect skill sync smoke', () => {
     home = await waitForHomePage(15_000);
 
     const ok =
-      home ||
-      (await textExists('Message OpenHuman')) ||
-      (await textExists('Upgrade to Premium'));
+      home || (await textExists('Message OpenHuman')) || (await textExists('Upgrade to Premium'));
     expect(ok).toBeTruthy();
   });
 });

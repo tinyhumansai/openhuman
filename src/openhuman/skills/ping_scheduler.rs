@@ -225,10 +225,7 @@ impl PingScheduler {
             _ => {
                 // Network or other error: merge into published_state, keep running
                 let mut patch = HashMap::new();
-                patch.insert(
-                    "connection_status".to_string(),
-                    serde_json::json!("error"),
-                );
+                patch.insert("connection_status".to_string(), serde_json::json!("error"));
                 patch.insert(
                     "connection_error".to_string(),
                     serde_json::json!(error_message),

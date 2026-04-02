@@ -5,7 +5,7 @@
 export async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  label: string,
+  label: string
 ): Promise<T> {
   if (timeoutMs <= 0) return promise;
 
