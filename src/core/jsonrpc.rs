@@ -697,11 +697,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invoke_memory_init_missing_required_param_fails() {
-        let err = invoke_method(default_state(), "openhuman.memory_init", json!({}))
-            .await
-            .expect_err("missing jwt_token should fail");
-        assert!(err.contains("jwt_token"));
+    async fn invoke_memory_init_accepts_empty_params() {
+        // jwt_token is optional (accepted for backward compat but ignored).
+        // The call may still fail for workspace reasons in test, but must NOT
+        // fail with a missing-param error for jwt_token.
+        let result = invoke_method(default_state(), "openhuman.memory_init", json!({})).await;
+        if let Err(ref e) = result {
+            assert!(
+                !e.contains("missing required param") || !e.contains("jwt_token"),
+                "jwt_token should be optional, got: {e}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -736,12 +736,14 @@ pub async fn graph_query(
     Ok(RpcOutcome::single_log(rows, "memory graph queried"))
 }
 
+/// Initialise the local-only (SQLite) memory subsystem for the current workspace.
+///
+/// `request.jwt_token` is accepted for backward compatibility but ignored — all
+/// memory operations are local.  Remote/cloud sync is a future consideration.
 pub async fn memory_init(
     request: MemoryInitRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<MemoryInitResponse>>, String> {
-    if request.jwt_token.trim().is_empty() {
-        return Err("jwt_token must not be empty".to_string());
-    }
+    let _ = request.jwt_token; // accepted but unused — memory is local-only
     let workspace_dir = current_workspace_dir().await?;
     let client = Arc::new(MemoryClient::from_workspace_dir(workspace_dir.clone())?);
     *lock_memory_client_state()? = Some(client);

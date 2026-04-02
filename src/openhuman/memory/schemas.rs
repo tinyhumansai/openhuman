@@ -153,12 +153,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "init" => ControllerSchema {
             namespace: "memory",
             function: "init",
-            description: "Initialise the memory subsystem for the current workspace.",
+            description: "Initialise the local-only (SQLite) memory subsystem for the current workspace. The jwt_token parameter is accepted for backward compatibility but ignored — memory is entirely local.",
             inputs: vec![FieldSchema {
                 name: "jwt_token",
-                ty: TypeSchema::String,
-                comment: "JWT token for authenticating the memory session.",
-                required: true,
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Accepted for backward compatibility but ignored — memory is local-only. Remote sync is a future consideration.",
+                required: false,
             }],
             outputs: vec![FieldSchema {
                 name: "result",

@@ -203,9 +203,14 @@ export async function restartCoreProcess(): Promise<void> {
 // --- Memory Commands ---
 
 /**
- * Initialise the TinyHumans memory client in Rust with the user's JWT token
- * (sourced from `authSlice.token` in Redux). Call this after login and after
- * Redux Persist rehydration.
+ * Initialise the local-only (SQLite) memory subsystem in the Rust core.
+ *
+ * The `token` parameter is accepted for backward compatibility with callers
+ * that pass the user's JWT, but the core **ignores** it — all memory storage
+ * and retrieval is local.  Remote/cloud memory sync is a future consideration.
+ *
+ * Call this after login and after Redux Persist rehydration so the core
+ * process has a ready memory client for the current workspace.
  */
 export async function syncMemoryClientToken(token: string): Promise<void> {
   console.debug(
@@ -213,12 +218,13 @@ export async function syncMemoryClientToken(token: string): Promise<void> {
     !!token,
     isTauri()
   );
-  if (!isTauri() || !token) {
-    console.debug('[memory] syncMemoryClientToken: exit — skipped (not Tauri or empty token)');
+  if (!isTauri()) {
+    console.debug('[memory] syncMemoryClientToken: exit — skipped (not Tauri)');
     return;
   }
   try {
-    console.debug('[memory] syncMemoryClientToken: payload → memory.init');
+    console.debug('[memory] syncMemoryClientToken: payload → memory.init (local-only)');
+    // jwt_token is passed for backward compatibility but ignored by the core.
     await callCoreRpc<boolean>({ method: 'openhuman.memory_init', params: { jwt_token: token } });
     console.info('[memory] syncMemoryClientToken: exit — ok');
   } catch (err) {

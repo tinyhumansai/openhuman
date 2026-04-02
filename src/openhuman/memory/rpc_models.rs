@@ -43,10 +43,15 @@ pub struct ApiEnvelope<T> {
 #[serde(deny_unknown_fields)]
 pub struct EmptyRequest {}
 
+/// Request payload for `openhuman.memory_init`.
+///
+/// `jwt_token` is accepted for backward compatibility but **not used** — memory
+/// is local-only (SQLite).  Remote/cloud memory sync is a future consideration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryInitRequest {
-    pub jwt_token: String,
+    #[serde(default)]
+    pub jwt_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

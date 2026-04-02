@@ -12,16 +12,17 @@ pub type MemoryClientRef = Arc<MemoryClient>;
 
 pub struct MemoryState(pub std::sync::Mutex<Option<MemoryClientRef>>);
 
+/// Local-only memory client backed by SQLite in the user's workspace directory.
+///
+/// All memory storage and retrieval happens on-device; there is no remote sync.
+/// Remote/cloud memory sync is a future consideration — until then the memory
+/// subsystem operates entirely locally via [`UnifiedMemory`].
 #[derive(Clone)]
 pub struct MemoryClient {
     inner: Arc<UnifiedMemory>,
 }
 
 impl MemoryClient {
-    pub fn from_token(_jwt_token: String) -> Option<Self> {
-        Self::new_local().ok()
-    }
-
     pub fn new_local() -> Result<Self, String> {
         let workspace_dir = dirs::home_dir()
             .ok_or_else(|| "Failed to resolve home directory".to_string())?
