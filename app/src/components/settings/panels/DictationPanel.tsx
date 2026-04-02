@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 
-import { checkDictationAvailability, setHotkey } from '../../../store/dictationSlice';
+import {
+  checkDictationAvailability,
+  setHotkey,
+  setShowFloatingLauncher,
+} from '../../../store/dictationSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { isTauri, registerDictationHotkey } from '../../../utils/tauriCommands';
 import SettingsBackButton from '../components/SettingsBackButton';
@@ -9,7 +13,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 const DictationPanel = () => {
   const dispatch = useAppDispatch();
   const { navigateBack } = useSettingsNavigation();
-  const { hotkey, voiceStatus, statusCheckError, isCheckingStatus } =
+  const { hotkey, showFloatingLauncher, voiceStatus, statusCheckError, isCheckingStatus } =
     useAppSelector(s => s.dictation);
   const [hotkeyInput, setHotkeyInput] = useState(hotkey);
   const [isSavingHotkey, setIsSavingHotkey] = useState(false);
@@ -120,12 +124,7 @@ const DictationPanel = () => {
                 value={voiceStatus.stt_model_path ?? `not found (id: ${voiceStatus.stt_model_id})`}
                 ok={!!voiceStatus.stt_model_path}
               />
-              <StatusRow
-                label="Model ID"
-                value={voiceStatus.stt_model_id}
-                ok={true}
-                muted
-              />
+              <StatusRow label="Model ID" value={voiceStatus.stt_model_id} ok={true} muted />
             </div>
           )}
         </div>
@@ -134,10 +133,9 @@ const DictationPanel = () => {
         {voiceStatus && !voiceStatus.stt_model_path && !isCheckingStatus && (
           <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
             <p className="text-xs text-amber-400 leading-relaxed">
-              Model file <code className="text-amber-300">{voiceStatus.stt_model_id}</code> was
-              not found. Go to{' '}
-              <strong className="text-amber-300">Settings → Local AI Model</strong> to download
-              it, or place the file at{' '}
+              Model file <code className="text-amber-300">{voiceStatus.stt_model_id}</code> was not
+              found. Go to <strong className="text-amber-300">Settings → Local AI Model</strong> to
+              download it, or place the file at{' '}
               <code className="text-amber-300 break-all">
                 ~/.openhuman/models/local-ai/stt/{voiceStatus.stt_model_id}
               </code>
@@ -173,6 +171,32 @@ const DictationPanel = () => {
             Modifiers: <code>CmdOrCtrl</code>, <code>Alt</code>, <code>Shift</code>,{' '}
             <code>Super</code> (also accepts CommandOrControl)
           </p>
+        </div>
+
+        {/* Floating launcher preference */}
+        <div className="bg-stone-800/50 rounded-xl border border-stone-700/40 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-white">Always show floating Start button</p>
+              <p className="text-xs text-stone-400 mt-0.5">
+                If disabled, dictation starts via hotkey only while idle.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showFloatingLauncher}
+              onClick={() => dispatch(setShowFloatingLauncher(!showFloatingLauncher))}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                showFloatingLauncher ? 'bg-primary-600' : 'bg-stone-600'
+              }`}>
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  showFloatingLauncher ? 'translate-x-6' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
         </div>
 
         {/* How to use */}
