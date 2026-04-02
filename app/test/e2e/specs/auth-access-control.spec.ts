@@ -14,13 +14,9 @@
  *   1.3    Logout via Settings menu
  *   1.3.1  Revoked session auto-logout
  *
- * Onboarding steps (Onboarding.tsx — 6 steps):
- *   Step 0: WelcomeStep       — "Continue"
- *   Step 1: LocalAIStep       — "Continue"
- *   Step 2: ScreenPermissions — "Continue Without Permission"
- *   Step 3: ToolsStep         — "Continue"
- *   Step 4: SkillsStep        — "Finish Setup" (fires onboarding-complete)
- *   Step 5: MnemonicStep      — checkbox + "Finish Setup"
+ * Onboarding steps (Onboarding.tsx — 5 steps, indices 0–4):
+ *   Welcome → Local AI → Screen & Accessibility → Enable Tools → Install Skills
+ *   (each step: primary "Continue"; final step completes onboarding)
  *
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
@@ -42,6 +38,7 @@ import {
   navigateToHome,
   navigateToSettings,
   waitForHomePage,
+  walkOnboarding,
 } from '../helpers/shared-flows';
 import {
   clearRequestLog,
@@ -78,132 +75,7 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
   return undefined;
 }
 
-/**
- * Poll for the first matching text from candidates until timeout,
- * then click it. Returns the clicked text or null if none found.
- */
-async function clickFirstMatch(candidates, timeout = 5_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    for (const text of candidates) {
-      if (await textExists(text)) {
-        await clickText(text, Math.max(deadline - Date.now(), 1_000));
-        return text;
-      }
-    }
-    await browser.pause(500);
-  }
-  return null;
-}
-
-// navigateViaHash, navigateToHome, navigateToSettings, navigateToBilling,
-// waitForHomePage are imported from shared-flows
-
-/**
- * Walk through the real onboarding steps (Onboarding.tsx — 6 steps).
- *
- *   Step 0: WelcomeStep       — "Continue"
- *   Step 1: LocalAIStep       — "Continue" (skip Ollama)
- *   Step 2: ScreenPermissions — "Continue Without Permission" or "Continue"
- *   Step 3: ToolsStep         — "Continue"
- *   Step 4: SkillsStep        — "Finish Setup" (fires onboarding-complete)
- *   Step 5: MnemonicStep      — checkbox + "Finish Setup"
- */
-async function walkOnboarding() {
-  // Poll a few times before concluding onboarding never mounted
-  const markers = ['Welcome', 'Skip', 'Continue'];
-  let onboardingVisible = false;
-  for (let attempt = 0; attempt < 6; attempt++) {
-    for (const m of markers) {
-      if (await textExists(m)) {
-        onboardingVisible = true;
-        break;
-      }
-    }
-    if (onboardingVisible) break;
-    await browser.pause(500);
-  }
-
-  if (!onboardingVisible) {
-    console.log('[AuthAccess] Onboarding overlay not visible after polling — skipping');
-    await browser.pause(2_000);
-    return;
-  }
-
-  // Step 0: WelcomeStep — click "Continue"
-  if (await textExists('Welcome')) {
-    const clicked = await clickFirstMatch(['Continue'], 10_000);
-    if (clicked) console.log(`[AuthAccess] WelcomeStep: clicked "${clicked}"`);
-    await browser.pause(2_000);
-  }
-
-  // Step 1: LocalAIStep — "Continue" button
-  {
-    const clicked = await clickFirstMatch(['Continue'], 10_000);
-    if (clicked) {
-      console.log(`[AuthAccess] LocalAIStep: clicked "${clicked}"`);
-      await browser.pause(2_000);
-    }
-  }
-
-  // Step 2: ScreenPermissionsStep — click "Continue Without Permission"
-  {
-    const clicked = await clickFirstMatch(['Continue Without Permission', 'Continue'], 10_000);
-    if (clicked) {
-      console.log(`[AuthAccess] ScreenPermissionsStep: clicked "${clicked}"`);
-      await browser.pause(2_000);
-    }
-  }
-
-  // Step 3: ToolsStep — click "Continue"
-  {
-    const toolsVisible = await textExists('Enable Tools');
-    if (toolsVisible) {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
-      if (clicked) {
-        console.log(`[AuthAccess] ToolsStep: clicked "${clicked}"`);
-        await browser.pause(2_000);
-      }
-    }
-  }
-
-  // Step 4: SkillsStep — click "Continue"
-  {
-    const skillsVisible = await textExists('Install Skills');
-    if (skillsVisible) {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
-      if (clicked) {
-        console.log(`[AuthAccess] SkillsStep: clicked "${clicked}"`);
-        await browser.pause(3_000);
-      }
-    }
-  }
-
-  // Step 5: MnemonicStep — tick checkbox and click "Finish Setup"
-  // Note: Do NOT dump accessibility tree here — it would leak the recovery phrase.
-  {
-    const mnemonicVisible = await textExists('Your Recovery Phrase');
-    if (mnemonicVisible) {
-      console.log(
-        '[AuthAccess] MnemonicStep: visible [tree dump redacted — contains recovery phrase]'
-      );
-      try {
-        await browser.execute(() => {
-          const checkbox = document.querySelector('input[type="checkbox"]') as HTMLInputElement;
-          if (checkbox && !checkbox.checked) checkbox.click();
-        });
-      } catch (err) {
-        console.log('[AuthAccess] MnemonicStep: checkbox click failed:', err);
-      }
-      await browser.pause(1_000);
-      const clicked = await clickFirstMatch(['Finish Setup'], 10_000);
-      if (clicked) {
-        console.log(`[AuthAccess] MnemonicStep: clicked "${clicked}"`);
-        await browser.pause(3_000);
-      }
-    }
-  }
-}
+// walkOnboarding, waitForHomePage imported from shared-flows
 
 /**
  * Perform full login via deep link. Walks onboarding. Leaves app on Home page.
@@ -237,7 +109,7 @@ async function performFullLogin(token = 'e2e-test-token') {
   }
 
   // Walk real onboarding steps
-  await walkOnboarding();
+  await walkOnboarding('[AuthAccess]');
 
   const homeText = await waitForHomePage(15_000);
   if (!homeText) {

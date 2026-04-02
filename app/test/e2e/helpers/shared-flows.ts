@@ -182,99 +182,73 @@ export async function navigateToConversations() {
 }
 
 // ---------------------------------------------------------------------------
-// Onboarding walkthrough (Onboarding.tsx — 6 real steps)
+// Onboarding walkthrough (Onboarding.tsx — 5 steps, indices 0–4)
 // ---------------------------------------------------------------------------
 
+/** True when the full-screen onboarding overlay is likely visible. */
+async function onboardingOverlayLikelyVisible(): Promise<boolean> {
+  return (
+    (await textExists('Skip')) ||
+    (await textExists('Welcome')) ||
+    (await textExists('Run AI Models Locally')) ||
+    (await textExists('Screen & Accessibility')) ||
+    (await textExists('Enable Tools')) ||
+    (await textExists('Install Skills'))
+  );
+}
+
 /**
- * Walk through the real onboarding steps:
- *   Step 0: WelcomeStep       — "Continue"
- *   Step 1: LocalAIStep       — "Continue"
- *   Step 2: ScreenPermissions — "Continue Without Permission"
- *   Step 3: ToolsStep         — "Continue"
- *   Step 4: SkillsStep        — "Finish Setup" (fires onboarding-complete)
- *   Step 5: MnemonicStep      — checkbox + "Finish Setup"
+ * Walk through onboarding: Welcome → Local AI → Screen & Accessibility → Tools → Skills.
+ * Each step uses the shared primary button label "Continue" (see OnboardingNextButton).
+ * Completing the last step dismisses the overlay.
  */
 export async function walkOnboarding(logPrefix = '[E2E]') {
-  // Detect onboarding overlay. The Onboarding.tsx parent renders a "Skip" defer
-  // button (top-right), and step 0 is WelcomeStep with "Continue".
-  const onboardingVisible =
-    (await textExists('Welcome')) ||
-    (await textExists('Skip')) ||
-    (await textExists('Continue')) ||
-    (await textExists('Finish Setup'));
+  let visible = false;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (await onboardingOverlayLikelyVisible()) {
+      visible = true;
+      break;
+    }
+    await browser.pause(400);
+  }
 
-  if (!onboardingVisible) {
+  if (!visible) {
     console.log(`${logPrefix} Onboarding overlay not visible — skipping`);
-    await browser.pause(3_000);
+    await browser.pause(1_000);
     return;
   }
 
-  // Step 0: WelcomeStep
-  if (await textExists('Welcome')) {
-    const clicked = await clickFirstMatch(['Continue'], 10_000);
-    if (clicked) console.log(`${logPrefix} WelcomeStep: clicked "${clicked}"`);
-    await browser.pause(2_000);
-  }
+  // Up to 6 "Continue" clicks — covers 5 steps plus one retry if the list is still loading.
+  for (let step = 0; step < 6; step++) {
+    if (!(await onboardingOverlayLikelyVisible())) {
+      console.log(`${logPrefix} Onboarding dismissed after step ${step}`);
+      return;
+    }
 
-  // Step 1: LocalAIStep — "Continue" button
-  {
-    const clicked = await clickFirstMatch(['Continue'], 10_000);
+    const clicked = await clickFirstMatch(['Continue'], 12_000);
     if (clicked) {
-      console.log(`${logPrefix} LocalAIStep: clicked "${clicked}"`);
-      await browser.pause(2_000);
+      console.log(`${logPrefix} Onboarding step ${step}: clicked Continue`);
+      await browser.pause(step >= 4 ? 4_000 : 2_000);
+    } else {
+      if (await textExists('Install Skills')) {
+        await browser.pause(2_500);
+        const retry = await clickFirstMatch(['Continue'], 10_000);
+        if (retry) {
+          console.log(`${logPrefix} Onboarding step ${step}: retry Continue on Install Skills`);
+          await browser.pause(4_000);
+        }
+      }
+      break;
     }
   }
+}
 
-  // Step 2: ScreenPermissionsStep
-  {
-    const clicked = await clickFirstMatch(['Continue'], 10_000);
-    if (clicked) {
-      console.log(`${logPrefix} ScreenPermissionsStep: clicked "${clicked}"`);
-      await browser.pause(2_000);
-    }
-  }
-
-  // Step 3: ToolsStep
-  {
-    if (await textExists('Enable Tools')) {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
-      if (clicked) {
-        console.log(`${logPrefix} ToolsStep: clicked "${clicked}"`);
-        await browser.pause(2_000);
-      }
-    }
-  }
-
-  // Step 4: SkillsStep
-  {
-    if (await textExists('Install Skills')) {
-      const clicked = await clickFirstMatch(['Continue'], 10_000);
-      if (clicked) {
-        console.log(`${logPrefix} SkillsStep: clicked "${clicked}"`);
-        await browser.pause(3_000);
-      }
-    }
-  }
-
-  // Step 5: MnemonicStep
-  {
-    if (await textExists('Your Recovery Phrase')) {
-      console.log(`${logPrefix} MnemonicStep: visible`);
-      try {
-        await browser.execute(() => {
-          const checkbox = document.querySelector('input[type="checkbox"]') as HTMLInputElement;
-          if (checkbox && !checkbox.checked) checkbox.click();
-        });
-      } catch (err) {
-        console.log(`${logPrefix} MnemonicStep: checkbox failed:`, err);
-      }
-      await browser.pause(1_000);
-      const clicked = await clickFirstMatch(['Finish Setup'], 10_000);
-      if (clicked) {
-        console.log(`${logPrefix} MnemonicStep: clicked "${clicked}"`);
-        await browser.pause(3_000);
-      }
-    }
+/**
+ * If onboarding is showing, walk through it. Safe no-op when already on Home / no overlay.
+ */
+export async function completeOnboardingIfVisible(logPrefix = '[E2E]') {
+  if (await onboardingOverlayLikelyVisible()) {
+    await walkOnboarding(logPrefix);
   }
 }
 
