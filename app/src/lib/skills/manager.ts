@@ -30,6 +30,7 @@ import {
   runtimeSkillDataRead,
   runtimeSkillDataWrite,
 } from "../../utils/tauriCommands";
+import { toolExecutionTimeoutMsFromEnv, withTimeout } from "../../utils/withTimeout";
 // Env vars kept for reverse RPC compatibility (may be used by skills via state)
 
 
@@ -108,6 +109,15 @@ class SkillManager {
       emitSkillStateChange(skillId);
       throw err;
     }
+  }
+
+  /**
+   * After realtime socket reconnect: refresh tool lists for every running skill so
+   * `tool:sync` matches the Rust engine (issue #215).
+   */
+  async resyncRunningSkillsAfterReconnect(): Promise<void> {
+    const ids = [...this.runtimes.keys()];
+    await Promise.all(ids.map((id) => this.activateSkill(id)));
   }
 
   /**
@@ -197,7 +207,12 @@ class SkillManager {
       console.error(`[SkillManager] callTool failed — skill "${skillId}" has no running runtime`);
       throw new Error(`Skill ${skillId} is not running`);
     }
-    const result = await runtime.callTool(name, args);
+    const timeoutMs = toolExecutionTimeoutMsFromEnv();
+    const result = await withTimeout(
+      runtime.callTool(name, args),
+      timeoutMs,
+      `[SkillManager] callTool skill="${skillId}" tool="${name}"`,
+    );
     console.log(`[SkillManager] callTool result skill="${skillId}" tool="${name}" isError=${result.isError}`);
     return result;
   }
@@ -229,16 +244,25 @@ class SkillManager {
    * Progress updates are published to Redux via the skill's state fields.
    */
   async triggerSync(skillId: string): Promise<void> {
+    const timeoutMs = toolExecutionTimeoutMsFromEnv();
     const runtime = this.runtimes.get(skillId);
     if (runtime) {
-      await runtime.triggerSync();
+      await withTimeout(
+        runtime.triggerSync(),
+        timeoutMs,
+        `[SkillManager] triggerSync skill="${skillId}"`,
+      );
     } else {
       // Try via core RPC pass-through
       try {
-        await callCoreRpc({
-          method: "openhuman.skills_sync",
-          params: { skill_id: skillId },
-        });
+        await withTimeout(
+          callCoreRpc({
+            method: "openhuman.skills_sync",
+            params: { skill_id: skillId },
+          }),
+          timeoutMs,
+          `[SkillManager] skills_sync skill="${skillId}"`,
+        );
       } catch {
         // Skill not running — skip sync silently
       }
@@ -366,30 +390,27 @@ class SkillManager {
     // Revoke OAuth credential before stopping so the running skill can clean up
     // its in-memory state and the event loop deletes oauth_credential.json.
     let revokeSucceeded = false;
-    if (credentialId) {
-      try {
-        await rpcRevokeOAuth(skillId, credentialId);
-        revokeSucceeded = true;
-      } catch (err) {
-        console.debug(
-          "[SkillManager] oauth/revoked failed (runtime may be stopped):",
-          err,
-        );
-      }
+    try {
+      await rpcRevokeOAuth(skillId, credentialId ?? "default");
+      revokeSucceeded = true;
+    } catch (err) {
+      console.debug(
+        "[SkillManager] oauth/revoked failed (runtime may be stopped):",
+        err,
+      );
     }
 
-    await this.stopSkill(skillId);
-
-    // Host-side fallback: if the RPC couldn't reach the runtime (already stopped,
-    // or non-OAuth skill), delete the persisted credential file so it isn't
-    // restored on next start.
-    if (!revokeSucceeded) {
-      await removePersistedOAuthCredential(skillId).catch((err) => {
-        console.debug(
-          "[SkillManager] host-side credential cleanup failed:",
-          err,
-        );
-      });
+    try {
+      await this.stopSkill(skillId);
+    } finally {
+      if (!revokeSucceeded) {
+        await removePersistedOAuthCredential(skillId).catch((err) => {
+          console.debug(
+            "[SkillManager] host-side credential cleanup failed:",
+            err,
+          );
+        });
+      }
     }
 
     await rpcSetSetupComplete(skillId, false).catch(() => {});

@@ -2099,7 +2099,7 @@ export async function runtimeDisableSkill(skillId: string): Promise<void> {
 
 export async function runtimeSkillDataStats(skillId: string): Promise<RuntimeSkillDataStats> {
   return await callCoreRpc<RuntimeSkillDataStats>({
-    method: 'openhuman.skills_status',
+    method: 'openhuman.skills_data_stats',
     params: { skill_id: skillId },
   });
 }

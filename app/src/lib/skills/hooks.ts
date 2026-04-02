@@ -7,6 +7,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { SkillSyncStatsLike } from '../../pages/skillsSyncUi';
+import { runtimeSkillDataStats } from '../../utils/tauriCommands';
 import type { SkillConnectionStatus, SkillHostConnectionState } from './types';
 import { onSkillStateChange } from './skillEvents';
 import {
@@ -208,4 +210,50 @@ export function useSkillConnectionInfo(skillId: string): {
     error,
     isInitialized: !!hostState?.is_initialized,
   };
+}
+
+/**
+ * Disk usage under the skill data directory (from core RPC). Refreshes on skill events
+ * and periodically while the skill is connected.
+ */
+export function useSkillDataDirectoryStats(
+  skillId: string,
+  fetchEnabled: boolean,
+): Pick<SkillSyncStatsLike, 'localDataBytes' | 'localFileCount'> | undefined {
+  const [stats, setStats] = useState<
+    Pick<SkillSyncStatsLike, 'localDataBytes' | 'localFileCount'> | undefined
+  >(undefined);
+
+  useEffect(() => {
+    if (!fetchEnabled) {
+      setStats(undefined);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const d = await runtimeSkillDataStats(skillId);
+        if (!cancelled) {
+          setStats({
+            localDataBytes: d.total_bytes,
+            localFileCount: d.file_count,
+          });
+        }
+      } catch {
+        if (!cancelled) setStats(undefined);
+      }
+    };
+    void load();
+    const interval = setInterval(load, 30_000);
+    const unsub = onSkillStateChange((id) => {
+      if (!id || id === skillId) void load();
+    });
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      unsub();
+    };
+  }, [skillId, fetchEnabled]);
+
+  return stats;
 }
