@@ -215,7 +215,7 @@ fn ensure_helper_binary() -> Result<PathBuf, String> {
 
 #[cfg(target_os = "macos")]
 fn unified_swift_source() -> String {
-    r#"import Cocoa
+    r##"import Cocoa
 import Foundation
 import ApplicationServices
 
@@ -625,5 +625,5 @@ DispatchQueue.global(qos: .userInitiated).async {
 }
 
 app.run()
-"#.to_string()
+"##.to_string()
 }
