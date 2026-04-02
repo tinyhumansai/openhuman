@@ -102,15 +102,9 @@ export function MemoryStatsBar(props: MemoryStatsBarProps) {
             {stat.label}
           </div>
           <div className={`text-xl font-semibold ${stat.color}`}>
-            {loading ? (
-              <div className="h-7 w-16 rounded bg-white/5 animate-pulse" />
-            ) : (
-              stat.value
-            )}
+            {loading ? <div className="h-7 w-16 rounded bg-white/5 animate-pulse" /> : stat.value}
           </div>
-          {stat.sub && (
-            <div className="text-[11px] text-stone-500 mt-0.5">{stat.sub}</div>
-          )}
+          {stat.sub && <div className="text-[11px] text-stone-500 mt-0.5">{stat.sub}</div>}
         </div>
       ))}
     </div>

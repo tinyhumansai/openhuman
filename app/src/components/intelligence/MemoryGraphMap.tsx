@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { GraphRelation } from '../../utils/tauriCommands';
 
@@ -57,10 +57,7 @@ function buildGraph(relations: GraphRelation[]): { nodes: GraphNode[]; edges: Gr
     const objKey = r.object.toLowerCase();
 
     const existing = entitySet.get(subKey);
-    entitySet.set(subKey, {
-      namespace: r.namespace,
-      count: (existing?.count ?? 0) + 1,
-    });
+    entitySet.set(subKey, { namespace: r.namespace, count: (existing?.count ?? 0) + 1 });
 
     const existingObj = entitySet.get(objKey);
     entitySet.set(objKey, {
@@ -86,9 +83,7 @@ function buildGraph(relations: GraphRelation[]): { nodes: GraphNode[]; edges: Gr
   }));
 
   const edges: GraphEdge[] = cappedRelations
-    .filter(
-      r => allowedIds.has(r.subject.toLowerCase()) && allowedIds.has(r.object.toLowerCase())
-    )
+    .filter(r => allowedIds.has(r.subject.toLowerCase()) && allowedIds.has(r.object.toLowerCase()))
     .map(r => ({
       source: r.subject.toLowerCase(),
       target: r.object.toLowerCase(),
@@ -120,8 +115,10 @@ function runSimulation(nodes: GraphNode[], edges: GraphEdge[], iterations = 150)
         const force = REPULSION / (dist2 + 1);
         const fx = (dx / Math.sqrt(dist2 + 1)) * force;
         const fy = (dy / Math.sqrt(dist2 + 1)) * force;
-        a.vx -= fx; a.vy -= fy;
-        b.vx += fx; b.vy += fy;
+        a.vx -= fx;
+        a.vy -= fy;
+        b.vx += fx;
+        b.vy += fy;
       }
     }
     for (const edge of edges) {
@@ -134,13 +131,16 @@ function runSimulation(nodes: GraphNode[], edges: GraphEdge[], iterations = 150)
       const delta = dist - 120;
       const fx = (dx / dist) * delta * ATTRACTION;
       const fy = (dy / dist) * delta * ATTRACTION;
-      a.vx += fx; a.vy += fy;
-      b.vx -= fx; b.vy -= fy;
+      a.vx += fx;
+      a.vy += fy;
+      b.vx -= fx;
+      b.vy -= fy;
     }
     for (const n of nodeList) {
       n.vx += (cx - n.x) * CENTER_FORCE;
       n.vy += (cy - n.y) * CENTER_FORCE;
-      n.vx *= DAMPING; n.vy *= DAMPING;
+      n.vx *= DAMPING;
+      n.vy *= DAMPING;
       n.x = Math.max(40, Math.min(WIDTH - 40, n.x + n.vx));
       n.y = Math.max(40, Math.min(HEIGHT - 40, n.y + n.vy));
     }
@@ -155,39 +155,27 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
   const [hoveredEdge, setHoveredEdge] = useState<number | null>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [namespacePalette, setNamespacePalette] = useState<Map<string, string>>(new Map());
-  const rafRef = useRef<number | null>(null);
-
-  // Build and simulate graph when relations change
-  useEffect(() => {
+  // Build graph data from relations (synchronous, deterministic)
+  const { initialNodes, initialEdges, palette } = useMemo(() => {
     if (relations.length === 0) {
-      setNodes([]);
-      setEdges([]);
-      return;
+      return { initialNodes: [] as GraphNode[], initialEdges: [] as GraphEdge[], palette: new Map<string, string>() };
     }
-
     const { nodes: rawNodes, edges: rawEdges } = buildGraph(relations);
-
-    // Assign namespace colors
     const namespaces = [...new Set(rawNodes.map(n => n.namespace ?? '__none__'))];
-    const palette = new Map<string, string>();
+    const p = new Map<string, string>();
     namespaces.forEach((ns, i) => {
-      palette.set(ns, NAMESPACE_COLORS[i % NAMESPACE_COLORS.length]);
+      p.set(ns, NAMESPACE_COLORS[i % NAMESPACE_COLORS.length]);
     });
-    setNamespacePalette(palette);
-
-    // Run simulation off-main-thread via rAF so the browser can paint first
-    rafRef.current = requestAnimationFrame(() => {
-      const simulated = runSimulation(rawNodes, rawEdges);
-      setNodes(simulated);
-      setEdges(rawEdges);
-    });
-
-    return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-      }
-    };
+    const simulated = runSimulation(rawNodes, rawEdges);
+    return { initialNodes: simulated, initialEdges: rawEdges, palette: p };
   }, [relations]);
+
+  // Sync memo results into state (needed for interactive selection/hover)
+  useEffect(() => {
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    setNamespacePalette(palette);
+  }, [initialNodes, initialEdges, palette]);
 
   const getNodeColor = useCallback(
     (node: GraphNode): string => {
@@ -247,23 +235,14 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
 
       <div
         className="w-full overflow-hidden rounded-lg border border-white/5"
-        style={{ minHeight: 320 }}
-      >
+        style={{ minHeight: 320 }}>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           width="100%"
           style={{ display: 'block', background: 'rgba(0,0,0,0.25)' }}
-          onClick={() => setSelectedNode(null)}
-        >
+          onClick={() => setSelectedNode(null)}>
           <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="8"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto"
-            >
+            <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
               <polygon points="0 0, 8 3, 0 6" fill="rgba(255,255,255,0.18)" />
             </marker>
           </defs>
@@ -275,9 +254,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
             if (!src || !tgt) return null;
 
             const isHighlighted =
-              selectedNode === null ||
-              edge.source === selectedNode ||
-              edge.target === selectedNode;
+              selectedNode === null || edge.source === selectedNode || edge.target === selectedNode;
 
             const midX = (src.x + tgt.x) / 2;
             const midY = (src.y + tgt.y) / 2;
@@ -309,8 +286,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                         ? 'rgba(255,255,255,0.3)'
                         : 'rgba(255,255,255,0.08)'
                   }
-                  style={{ pointerEvents: 'none', userSelect: 'none', transition: 'fill 0.15s' }}
-                >
+                  style={{ pointerEvents: 'none', userSelect: 'none', transition: 'fill 0.15s' }}>
                   {truncate(edge.predicate, 18)}
                 </text>
               </g>
@@ -333,8 +309,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                 onClick={e => {
                   e.stopPropagation();
                   setSelectedNode(selectedNode === node.id ? null : node.id);
-                }}
-              >
+                }}>
                 {(isCenter || isSelected) && (
                   <circle r={r + 5} fill="none" stroke={color} strokeWidth={2} opacity={0.4} />
                 )}
@@ -352,8 +327,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                   fontSize={isCenter ? 11 : 9}
                   fontWeight={isCenter ? 600 : 400}
                   fill={isDimmed ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.85)'}
-                  style={{ pointerEvents: 'none', userSelect: 'none', transition: 'fill 0.15s' }}
-                >
+                  style={{ pointerEvents: 'none', userSelect: 'none', transition: 'fill 0.15s' }}>
                   {isCenter && node.id !== 'you' ? 'You' : truncate(node.label)}
                 </text>
               </g>

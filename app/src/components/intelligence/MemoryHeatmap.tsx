@@ -13,10 +13,10 @@ const DAY_LABELS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
 
 const INTENSITY_COLORS = [
   'rgba(255,255,255,0.04)', // 0 events
-  'rgba(74,131,221,0.25)',  // 1
-  'rgba(74,131,221,0.45)',  // 2-3
-  'rgba(74,131,221,0.65)',  // 4-6
-  'rgba(74,131,221,0.85)',  // 7+
+  'rgba(74,131,221,0.25)', // 1
+  'rgba(74,131,221,0.45)', // 2-3
+  'rgba(74,131,221,0.65)', // 4-6
+  'rgba(74,131,221,0.85)', // 7+
 ];
 
 function getIntensity(count: number): number {
@@ -41,7 +41,12 @@ function formatDate(date: Date): string {
 }
 
 export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
-  const [hoveredCell, setHoveredCell] = useState<{ date: Date; count: number; x: number; y: number } | null>(null);
+  const [hoveredCell, setHoveredCell] = useState<{
+    date: Date;
+    count: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const { grid, monthLabels, totalEvents, maxDailyCount, totalWeeks } = useMemo(() => {
     // The window: 6 months ago through today
@@ -89,20 +94,12 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
 
       const cellDate = new Date(cursor);
       const key = dateToKey(cellDate);
-      cells.push({
-        date: cellDate,
-        count: countMap.get(key) ?? 0,
-        weekIdx,
-        dayIdx: d,
-      });
+      cells.push({ date: cellDate, count: countMap.get(key) ?? 0, weekIdx, dayIdx: d });
 
       // Track month labels (on the first Sunday-row cell of each new month)
       if (cellDate.getMonth() !== lastMonth && d === 0) {
         lastMonth = cellDate.getMonth();
-        months.push({
-          label: cellDate.toLocaleDateString('en-US', { month: 'short' }),
-          weekIdx,
-        });
+        months.push({ label: cellDate.toLocaleDateString('en-US', { month: 'short' }), weekIdx });
       }
 
       cursor.setDate(cursor.getDate() + 1);
@@ -230,11 +227,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
       {hoveredCell && (
         <div
           className="fixed z-50 px-2 py-1 rounded-md bg-stone-800 border border-white/10 text-[11px] text-white shadow-lg pointer-events-none"
-          style={{
-            left: hoveredCell.x,
-            top: hoveredCell.y - 32,
-            transform: 'translateX(-50%)',
-          }}>
+          style={{ left: hoveredCell.x, top: hoveredCell.y - 32, transform: 'translateX(-50%)' }}>
           <span className="font-medium">
             {hoveredCell.count} event{hoveredCell.count !== 1 ? 's' : ''}
           </span>{' '}

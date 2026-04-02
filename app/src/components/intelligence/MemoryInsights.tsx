@@ -170,11 +170,7 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
 
     return categoryOrder
       .filter(cat => (buckets.get(cat)?.length ?? 0) > 0)
-      .map(cat => ({
-        category: cat,
-        ...CATEGORY_CONFIG[cat],
-        items: buckets.get(cat)!,
-      }));
+      .map(cat => ({ category: cat, ...CATEGORY_CONFIG[cat], items: buckets.get(cat)! }));
   }, [relations]);
 
   if (loading) {
@@ -224,11 +220,10 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
                 isExpanded ? 'col-span-2 lg:col-span-3' : ''
               }`}>
               <button
-                onClick={() =>
-                  setExpandedCategory(isExpanded ? null : group.category)
-                }
+                onClick={() => setExpandedCategory(isExpanded ? null : group.category)}
                 className="flex items-center gap-2 w-full text-left mb-2">
-                <div className={`w-7 h-7 rounded-md ${group.bgColor} flex items-center justify-center flex-shrink-0`}>
+                <div
+                  className={`w-7 h-7 rounded-md ${group.bgColor} flex items-center justify-center flex-shrink-0`}>
                   <svg
                     className={`w-4 h-4 ${group.color}`}
                     fill="none"
@@ -265,7 +260,9 @@ export function MemoryInsights({ relations, loading }: MemoryInsightsProps) {
                   <div
                     key={`${item.subject}-${item.predicate}-${item.object}-${idx}`}
                     className="flex items-start gap-1.5 text-[11px] leading-relaxed">
-                    <span className="text-white/80 font-medium shrink-0 max-w-[30%] truncate" title={item.subject}>
+                    <span
+                      className="text-white/80 font-medium shrink-0 max-w-[30%] truncate"
+                      title={item.subject}>
                       {item.subject}
                     </span>
                     <span className="text-stone-500 shrink-0 italic">{item.predicate}</span>

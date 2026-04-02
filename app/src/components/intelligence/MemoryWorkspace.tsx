@@ -77,7 +77,15 @@ function normalizeMemoryDocuments(payload: unknown): MemoryDoc[] {
 function extractTimestamp(raw: unknown): number | null {
   const record = asRecord(raw);
   if (!record) return null;
-  for (const key of ['createdAt', 'created_at', 'updatedAt', 'updated_at', 'timestamp', 'insertedAt', 'inserted_at']) {
+  for (const key of [
+    'createdAt',
+    'created_at',
+    'updatedAt',
+    'updated_at',
+    'timestamp',
+    'insertedAt',
+    'inserted_at',
+  ]) {
     const value = record[key];
     if (typeof value === 'number' && Number.isFinite(value)) {
       return value > 9999999999 ? value / 1000 : value;
@@ -111,11 +119,7 @@ function isSameLocalDay(left: Date, right: Date): boolean {
 // ---------------------------------------------------------------------------
 
 export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
-  const {
-    sessions,
-    isLoading: statsLoading,
-    refetch: refetchStats,
-  } = useIntelligenceStats();
+  const { sessions, isLoading: statsLoading, refetch: refetchStats } = useIntelligenceStats();
 
   const [memoryDocs, setMemoryDocs] = useState<MemoryDoc[]>([]);
   const [memoryNamespaces, setMemoryNamespaces] = useState<string[]>([]);
@@ -208,8 +212,12 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     }
   }, [selectedFile]);
 
-  useEffect(() => { loadWorkspace(); }, [loadWorkspace]);
-  useEffect(() => { loadSelectedFile(); }, [loadSelectedFile]);
+  useEffect(() => {
+    loadWorkspace();
+  }, [loadWorkspace]);
+  useEffect(() => {
+    loadSelectedFile();
+  }, [loadSelectedFile]);
 
   // ---------------------------------------------------------------------------
   // Management handlers
@@ -225,7 +233,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
         await memoryDeleteDocument(doc.documentId, doc.namespace);
         await loadWorkspace();
         await refetchStats();
-        onToast({ type: 'success', title: 'Document Deleted', message: `${doc.documentId} removed from ${doc.namespace}` });
+        onToast({
+          type: 'success',
+          title: 'Document Deleted',
+          message: `${doc.documentId} removed from ${doc.namespace}`,
+        });
       } catch (error) {
         setMemoryActionError(error instanceof Error ? error.message : 'Delete failed');
       }
@@ -269,7 +281,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     setMemoryActionError(null);
     try {
       let existing = '';
-      try { existing = await aiReadMemoryFile('memory.md'); } catch { existing = ''; }
+      try {
+        existing = await aiReadMemoryFile('memory.md');
+      } catch {
+        existing = '';
+      }
       const timestamp = new Date().toLocaleString();
       const noteBlock = `\n\n## Manual note (${timestamp})\n${memoryNote.trim()}\n`;
       const nextContent = existing ? `${existing}${noteBlock}` : `# Memory\n${noteBlock}`;
@@ -278,7 +294,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       await loadWorkspace();
       await loadSelectedFile();
       await refetchStats();
-      onToast({ type: 'success', title: 'Memory Updated', message: 'Your note was saved to memory.md' });
+      onToast({
+        type: 'success',
+        title: 'Memory Updated',
+        message: 'Your note was saved to memory.md',
+      });
     } catch (error) {
       setMemoryActionError(error instanceof Error ? error.message : 'Failed to save note');
     } finally {
@@ -334,7 +354,9 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             </p>
           </div>
           <button
-            onClick={() => { void Promise.all([loadWorkspace(), refetchStats()]); }}
+            onClick={() => {
+              void Promise.all([loadWorkspace(), refetchStats()]);
+            }}
             disabled={memoryWorkspaceLoading || statsLoading}
             className="px-3 py-1.5 text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-stone-300 disabled:opacity-40 transition-colors">
             {memoryWorkspaceLoading ? 'Loading...' : 'Refresh'}
@@ -381,7 +403,8 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             </svg>
             <h3 className="text-sm font-semibold text-white">Files & Management</h3>
             <span className="text-xs text-stone-500">
-              {memoryFilesList.length} files · {memoryNamespaces.length} namespaces · {memoryDocs.length} docs
+              {memoryFilesList.length} files · {memoryNamespaces.length} namespaces ·{' '}
+              {memoryDocs.length} docs
             </span>
           </div>
         </button>
@@ -435,7 +458,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                   {memoryNamespaces.length === 0 ? (
                     <option value="">No namespaces</option>
                   ) : (
-                    memoryNamespaces.map(ns => <option key={ns} value={ns}>{ns}</option>)
+                    memoryNamespaces.map(ns => (
+                      <option key={ns} value={ns}>
+                        {ns}
+                      </option>
+                    ))
                   )}
                 </select>
 
@@ -507,8 +534,12 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                       key={`${doc.namespace}:${doc.documentId}`}
                       className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-stone-950/50 px-3 py-2">
                       <div className="min-w-0">
-                        <div className="text-xs text-white truncate">{doc.title || doc.documentId}</div>
-                        <div className="text-[11px] text-stone-400 truncate">{doc.namespace} · {doc.documentId}</div>
+                        <div className="text-xs text-white truncate">
+                          {doc.title || doc.documentId}
+                        </div>
+                        <div className="text-[11px] text-stone-400 truncate">
+                          {doc.namespace} · {doc.documentId}
+                        </div>
                       </div>
                       <button
                         onClick={() => void handleDeleteMemoryDoc(doc)}
