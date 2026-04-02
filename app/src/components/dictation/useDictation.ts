@@ -2,8 +2,8 @@ import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { resetDictation, setError, setStatus, setTranscript } from '../../store/dictationSlice';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { registerDictationHotkey } from '../../utils/tauriCommands';
 
 const TARGET_SAMPLE_RATE = 16000;
@@ -255,17 +255,20 @@ export function useDictation() {
             ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
           }
 
-          console.debug('[dictation] calling voice_transcribe_bytes ext=%s bytes=%d', ext, bytes.length);
+          console.debug(
+            '[dictation] calling voice_transcribe_bytes ext=%s bytes=%d',
+            ext,
+            bytes.length
+          );
           const response = await callCoreRpc<TranscribeResult>({
             method: 'openhuman.voice_transcribe_bytes',
-            params: {
-              audio_bytes: bytes,
-              extension: ext,
-              skip_cleanup: false,
-            },
+            params: { audio_bytes: bytes, extension: ext, skip_cleanup: false },
           });
           if (sessionIdRef.current !== sessionId) {
-            console.debug('[dictation] ignoring stale transcription response session=%d', sessionId);
+            console.debug(
+              '[dictation] ignoring stale transcription response session=%d',
+              sessionId
+            );
             return;
           }
 
@@ -386,12 +389,5 @@ export function useDictation() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [hotkey]);
 
-  return {
-    status,
-    isSupported,
-    startRecording,
-    stopRecording,
-    toggle,
-    dismiss,
-  };
+  return { status, isSupported, startRecording, stopRecording, toggle, dismiss };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { resetDictation } from '../../store/dictationSlice';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { openhumanAccessibilityInputAction } from '../../utils/tauriCommands';
 import { useDictation } from './useDictation';
 
@@ -23,7 +23,9 @@ const STATUS_LABELS: Record<string, string> = {
 
 const DictationOverlay = () => {
   const dispatch = useAppDispatch();
-  const { status, transcript, error, hotkey } = useAppSelector(s => s.dictation);
+  const { status, transcript, error, hotkey, showFloatingLauncher } = useAppSelector(
+    s => s.dictation
+  );
   const { startRecording, stopRecording, dismiss } = useDictation();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
@@ -53,10 +55,7 @@ const DictationOverlay = () => {
     const panelHeight = panelRef.current?.offsetHeight ?? 220;
     const maxX = Math.max(12, window.innerWidth - panelWidth - 12);
     const maxY = Math.max(12, window.innerHeight - panelHeight - 12);
-    return {
-      x: Math.max(12, Math.min(x, maxX)),
-      y: Math.max(12, Math.min(y, maxY)),
-    };
+    return { x: Math.max(12, Math.min(x, maxX)), y: Math.max(12, Math.min(y, maxY)) };
   };
 
   // Keyboard shortcut: Escape to dismiss
@@ -151,6 +150,7 @@ const DictationOverlay = () => {
   };
 
   if (status === 'idle') {
+    if (!showFloatingLauncher) return null;
     return (
       <div
         className="fixed z-50 pointer-events-auto"
@@ -193,7 +193,9 @@ const DictationOverlay = () => {
           onPointerMove={handleDragMove}
           onPointerUp={handleDragEnd}
           onPointerCancel={handleDragEnd}>
-          <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${STATUS_COLORS[status] ?? 'bg-stone-800'}`} />
+          <div
+            className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${STATUS_COLORS[status] ?? 'bg-stone-800'}`}
+          />
           <span className="text-sm font-medium text-white">
             {STATUS_LABELS[status] ?? 'Dictation'}
           </span>
