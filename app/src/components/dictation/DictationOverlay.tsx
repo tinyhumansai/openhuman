@@ -21,6 +21,48 @@ const STATUS_LABELS: Record<string, string> = {
   error: 'Error',
 };
 
+type EditableTarget = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
+
+const isTextInput = (el: Element): el is HTMLInputElement | HTMLTextAreaElement =>
+  el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+
+const isEditableElement = (el: Element | null): el is EditableTarget =>
+  !!el && (isTextInput(el) || (el instanceof HTMLElement && el.isContentEditable));
+
+const insertIntoEditableTarget = (target: EditableTarget, text: string): boolean => {
+  if (isTextInput(target)) {
+    target.focus();
+    const hasSelection =
+      typeof target.selectionStart === 'number' && typeof target.selectionEnd === 'number';
+    if (hasSelection) {
+      target.setRangeText(text, target.selectionStart ?? 0, target.selectionEnd ?? 0, 'end');
+    } else {
+      target.value = `${target.value}${text}`;
+    }
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }
+
+  if (target instanceof HTMLElement && target.isContentEditable) {
+    target.focus();
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    } else {
+      target.append(document.createTextNode(text));
+    }
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }
+
+  return false;
+};
+
 const DictationOverlay = () => {
   const dispatch = useAppDispatch();
   const { status, transcript, error, hotkey, showFloatingLauncher } = useAppSelector(
@@ -30,6 +72,7 @@ const DictationOverlay = () => {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
   const prevStatusRef = useRef(status);
+  const lastEditableRef = useRef<EditableTarget | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
 
   const getActiveDefaultPosition = () => {
@@ -69,6 +112,18 @@ const DictationOverlay = () => {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [dismiss]);
+
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target as Element | null;
+      if (!isEditableElement(target)) return;
+      // Ignore overlay-owned elements so we keep the app context target.
+      if (panelRef.current?.contains(target)) return;
+      lastEditableRef.current = target;
+    };
+    window.addEventListener('focusin', onFocusIn);
+    return () => window.removeEventListener('focusin', onFocusIn);
+  }, []);
 
   useEffect(() => {
     if (position === null) {
@@ -130,7 +185,30 @@ const DictationOverlay = () => {
 
   const handleInsert = async () => {
     if (!transcript) return;
-    console.debug('[dictation] inserting transcript via accessibility action');
+    console.debug('[dictation] inserting transcript into active context');
+    const insertEvent = new CustomEvent<{ text: string }>('dictation://insert-text', {
+      detail: { text: transcript },
+      cancelable: true,
+    });
+    window.dispatchEvent(insertEvent);
+    if (insertEvent.defaultPrevented) {
+      console.debug('[dictation] transcript handled by app context listener');
+      dispatch(resetDictation());
+      return;
+    }
+
+    const active = document.activeElement;
+    const preferredTarget =
+      (isEditableElement(active) && !panelRef.current?.contains(active) ? active : null) ??
+      lastEditableRef.current;
+
+    if (preferredTarget && insertIntoEditableTarget(preferredTarget, transcript)) {
+      console.debug('[dictation] inserted transcript into DOM editable target');
+      dispatch(resetDictation());
+      return;
+    }
+
+    console.debug('[dictation] no DOM target found, trying accessibility action');
     try {
       await openhumanAccessibilityInputAction({ action: 'type', text: transcript });
       dispatch(resetDictation());
