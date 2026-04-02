@@ -120,40 +120,49 @@ impl AccessibilityEngine {
             return Err("screen intelligence is macOS-only in V1".to_string());
         }
 
+        let mut spawned_new_session = false;
         {
             let mut state = self.inner.lock().await;
             if state.session.is_some() {
-                return Ok(self.status().await.session);
-            }
-            state.permissions = detect_permissions();
-            if state.permissions.screen_recording != PermissionState::Granted {
-                return Err("screen recording permission is not granted".to_string());
-            }
+                tracing::debug!(
+                    "[screen_intelligence] enable requested while session already active"
+                );
+            } else {
+                state.permissions = detect_permissions();
+                if state.permissions.screen_recording != PermissionState::Granted {
+                    return Err("screen recording permission is not granted".to_string());
+                }
 
-            let now = now_ms();
-            state.features.screen_monitoring = true;
-            state.features.predictive_input = state.config.autocomplete_enabled;
-            state.session = Some(SessionRuntime {
-                started_at_ms: now,
-                expires_at_ms: i64::MAX,
-                ttl_secs: 0,
-                panic_hotkey: state.config.panic_stop_hotkey.clone(),
-                stop_reason: None,
-                last_capture_at_ms: None,
-                frames: VecDeque::new(),
-                last_context: None,
-                task: None,
-                vision_enabled: state.config.vision_enabled,
-                vision_state: "idle".to_string(),
-                vision_queue_depth: 0,
-                last_vision_at_ms: None,
-                last_vision_summary: None,
-                vision_summaries: VecDeque::new(),
-                vision_task: None,
-                vision_tx: None,
-            });
-            state.last_event = Some("screen_intelligence_enabled".to_string());
-            state.last_error = None;
+                let now = now_ms();
+                state.features.screen_monitoring = true;
+                state.features.predictive_input = state.config.autocomplete_enabled;
+                state.session = Some(SessionRuntime {
+                    started_at_ms: now,
+                    expires_at_ms: i64::MAX,
+                    ttl_secs: 0,
+                    panic_hotkey: state.config.panic_stop_hotkey.clone(),
+                    stop_reason: None,
+                    last_capture_at_ms: None,
+                    frames: VecDeque::new(),
+                    last_context: None,
+                    task: None,
+                    vision_enabled: state.config.vision_enabled,
+                    vision_state: "idle".to_string(),
+                    vision_queue_depth: 0,
+                    last_vision_at_ms: None,
+                    last_vision_summary: None,
+                    vision_summaries: VecDeque::new(),
+                    vision_task: None,
+                    vision_tx: None,
+                });
+                state.last_event = Some("screen_intelligence_enabled".to_string());
+                state.last_error = None;
+                spawned_new_session = true;
+            }
+        }
+
+        if !spawned_new_session {
+            return Ok(self.status().await.session);
         }
 
         let (vision_tx, vision_rx) = tokio::sync::mpsc::unbounded_channel::<CaptureFrame>();
@@ -935,5 +944,54 @@ impl AccessibilityEngine {
             "whitelist_only" => whitelisted && !blacklisted,
             _ => !blacklisted,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn enable_with_existing_session_does_not_deadlock() {
+        let engine = Arc::new(AccessibilityEngine {
+            inner: Mutex::new(EngineState::new(ScreenIntelligenceConfig {
+                enabled: true,
+                ..Default::default()
+            })),
+        });
+
+        {
+            let mut state = engine.inner.lock().await;
+            state.session = Some(SessionRuntime {
+                started_at_ms: now_ms(),
+                expires_at_ms: i64::MAX,
+                ttl_secs: 300,
+                panic_hotkey: state.config.panic_stop_hotkey.clone(),
+                stop_reason: None,
+                last_capture_at_ms: None,
+                frames: VecDeque::new(),
+                last_context: None,
+                task: None,
+                vision_enabled: state.config.vision_enabled,
+                vision_state: "idle".to_string(),
+                vision_queue_depth: 0,
+                last_vision_at_ms: None,
+                last_vision_summary: None,
+                vision_summaries: VecDeque::new(),
+                vision_task: None,
+                vision_tx: None,
+            });
+        }
+
+        let result = time::timeout(Duration::from_millis(250), engine.enable()).await;
+        assert!(
+            result.is_ok(),
+            "enable should not deadlock with an active session"
+        );
+        assert!(
+            result.unwrap().is_ok(),
+            "enable should return the existing session status"
+        );
     }
 }
