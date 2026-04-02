@@ -279,14 +279,22 @@ fn append_section(report: &mut String, remaining: &mut usize, section: &str) {
     if *remaining == 0 {
         return;
     }
-    if section.len() <= *remaining {
+    // +1 for the trailing newline we append
+    let needed = section.len().saturating_add(1);
+    if needed <= *remaining {
         report.push_str(section);
         report.push('\n');
-        *remaining -= section.len() + 1;
+        *remaining -= needed;
     } else {
-        // Truncate at char boundary
-        let truncated = &section[..*remaining];
-        report.push_str(truncated);
+        // Truncate at a valid UTF-8 char boundary
+        let budget = *remaining;
+        let truncate_at = section
+            .char_indices()
+            .take_while(|(i, _)| *i < budget)
+            .last()
+            .map(|(i, ch)| i + ch.len_utf8())
+            .unwrap_or(0);
+        report.push_str(&section[..truncate_at]);
         report.push_str("\n[... truncated — token budget exceeded]\n");
         *remaining = 0;
     }
@@ -309,7 +317,29 @@ mod tests {
         let mut report = String::new();
         let mut remaining = 10;
         append_section(&mut report, &mut remaining, "Hello, this is a long section");
-        assert!(report.contains("Hello, th"));
+        assert!(report.starts_with("Hello, thi"));
+        assert!(report.contains("truncated"));
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn append_section_exact_fit_does_not_underflow() {
+        let mut report = String::new();
+        // "Hello" (5 bytes) + newline (1 byte) = 6 bytes needed
+        let mut remaining = 6;
+        append_section(&mut report, &mut remaining, "Hello");
+        assert_eq!(report, "Hello\n");
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn append_section_truncates_at_char_boundary() {
+        let mut report = String::new();
+        // "日本語" is 9 bytes (3 chars × 3 bytes each)
+        // Budget of 5 should truncate to "日" (3 bytes), not panic
+        let mut remaining = 5;
+        append_section(&mut report, &mut remaining, "日本語タスク");
+        assert!(report.starts_with("日"));
         assert!(report.contains("truncated"));
         assert_eq!(remaining, 0);
     }
