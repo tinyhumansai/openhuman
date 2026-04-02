@@ -15,6 +15,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from './element-helpers';
+import { supportsExecuteScript } from './platform';
 
 // ---------------------------------------------------------------------------
 // Generic helpers
@@ -75,16 +76,43 @@ export async function clickFirstMatch(candidates, timeout = 5_000) {
 // Navigation helpers (JS hash-based — icon-only sidebar buttons)
 // ---------------------------------------------------------------------------
 
+/** Appium Mac2 cannot run W3C Execute Script in WKWebView — use sidebar labels instead. */
+const HASH_TO_SIDEBAR_LABEL = {
+  '/skills': 'Skills',
+  '/home': 'Home',
+  '/conversations': 'Conversations',
+  '/settings': 'Settings',
+  '/intelligence': 'Intelligence',
+};
+
 export async function navigateViaHash(hash) {
-  try {
-    await browser.execute(h => {
-      window.location.hash = h;
-    }, hash);
-    await browser.pause(2_000);
-    const currentHash = await browser.execute(() => window.location.hash);
-    console.log(`[E2E] Navigated to ${hash} (current: ${currentHash})`);
-  } catch (err) {
-    console.log(`[E2E] Hash navigation to ${hash} failed:`, err);
+  const normalized = String(hash).replace(/\/$/, '') || hash;
+
+  if (supportsExecuteScript()) {
+    try {
+      await browser.execute(h => {
+        window.location.hash = h;
+      }, hash);
+      await browser.pause(2_000);
+      const currentHash = await browser.execute(() => window.location.hash);
+      console.log(`[E2E] Navigated to ${hash} (current: ${currentHash})`);
+    } catch (err) {
+      console.log(`[E2E] Hash navigation to ${hash} failed:`, err);
+    }
+    return;
+  }
+
+  const label = HASH_TO_SIDEBAR_LABEL[normalized];
+  if (label) {
+    try {
+      await clickText(label, 12_000);
+      await browser.pause(2_000);
+      console.log(`[E2E] Mac2 sidebar navigation to ${hash} via "${label}"`);
+    } catch (err) {
+      console.log(`[E2E] Mac2 sidebar navigation to ${hash} failed:`, err);
+    }
+  } else {
+    console.log(`[E2E] Mac2: no sidebar label mapped for hash ${hash}`);
   }
 }
 
@@ -92,12 +120,20 @@ export async function navigateToHome() {
   await navigateViaHash('/home');
   const homeText = await waitForHomePage(10_000);
   if (!homeText) {
-    try {
-      await browser.execute(() => {
-        window.location.hash = '/home';
-      });
-    } catch {
-      /* ignore */
+    if (supportsExecuteScript()) {
+      try {
+        await browser.execute(() => {
+          window.location.hash = '/home';
+        });
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        await clickText('Home', 8_000);
+      } catch {
+        /* ignore */
+      }
     }
     await browser.pause(2_000);
     await waitForHomePage(10_000);
