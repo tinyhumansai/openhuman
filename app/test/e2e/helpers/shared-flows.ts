@@ -185,16 +185,22 @@ export async function navigateToConversations() {
 // Onboarding walkthrough (Onboarding.tsx — 5 steps, indices 0–4)
 // ---------------------------------------------------------------------------
 
+/** Labels used to detect the onboarding overlay (same strings as Onboarding copy). */
+export const ONBOARDING_OVERLAY_TEXTS = [
+  'Skip',
+  'Welcome',
+  'Run AI Models Locally',
+  'Screen & Accessibility',
+  'Enable Tools',
+  'Install Skills',
+] as const;
+
 /** True when the full-screen onboarding overlay is likely visible. */
 async function onboardingOverlayLikelyVisible(): Promise<boolean> {
-  return (
-    (await textExists('Skip')) ||
-    (await textExists('Welcome')) ||
-    (await textExists('Run AI Models Locally')) ||
-    (await textExists('Screen & Accessibility')) ||
-    (await textExists('Enable Tools')) ||
-    (await textExists('Install Skills'))
-  );
+  for (const label of ONBOARDING_OVERLAY_TEXTS) {
+    if (await textExists(label)) return true;
+  }
+  return false;
 }
 
 /**
@@ -230,11 +236,14 @@ export async function walkOnboarding(logPrefix = '[E2E]') {
       console.log(`${logPrefix} Onboarding step ${step}: clicked Continue`);
       await browser.pause(step >= 4 ? 4_000 : 2_000);
     } else {
-      if (await textExists('Install Skills')) {
+      const installSkillsLabel = ONBOARDING_OVERLAY_TEXTS[ONBOARDING_OVERLAY_TEXTS.length - 1]!;
+      if (await textExists(installSkillsLabel)) {
         await browser.pause(2_500);
         const retry = await clickFirstMatch(['Continue'], 10_000);
         if (retry) {
-          console.log(`${logPrefix} Onboarding step ${step}: retry Continue on Install Skills`);
+          console.log(
+            `${logPrefix} Onboarding step ${step}: retry Continue on ${installSkillsLabel}`
+          );
           await browser.pause(4_000);
         }
       }

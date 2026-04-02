@@ -36,6 +36,7 @@ import { toolExecutionTimeoutMsFromEnv, withTimeout } from "../../utils/withTime
 
 class SkillManager {
   private runtimes = new Map<string, SkillRuntime>();
+  private resyncAfterReconnectInProgress = false;
 
   /**
    * Get skill-specific load parameters (e.g., wallet address for wallet skill)
@@ -116,8 +117,14 @@ class SkillManager {
    * `tool:sync` matches the Rust engine (issue #215).
    */
   async resyncRunningSkillsAfterReconnect(): Promise<void> {
-    const ids = [...this.runtimes.keys()];
-    await Promise.all(ids.map((id) => this.activateSkill(id)));
+    if (this.resyncAfterReconnectInProgress) return;
+    this.resyncAfterReconnectInProgress = true;
+    try {
+      const ids = [...this.runtimes.keys()];
+      await Promise.all(ids.map((id) => this.activateSkill(id)));
+    } finally {
+      this.resyncAfterReconnectInProgress = false;
+    }
   }
 
   /**

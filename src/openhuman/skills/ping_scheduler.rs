@@ -230,7 +230,7 @@ impl PingScheduler {
                     "connection_error".to_string(),
                     serde_json::json!(error_message),
                 );
-                if let Err(e) = registry.merge_published_state(skill_id, patch) {
+                if let Err(e) = registry.merge_published_state(skill_id, patch).await {
                     log::warn!(
                         "[ping] Could not merge ping failure into published state for '{}': {}",
                         skill_id,

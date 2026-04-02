@@ -884,7 +884,18 @@ impl RuntimeEngine {
     pub fn skill_data_directory_stats(&self, skill_id: &str) -> SkillDataDirectoryStats {
         let path = self.skill_data_dir(skill_id);
         let exists = path.exists();
-        let (total_bytes, file_count) = directory_byte_and_file_count(&path).unwrap_or((0, 0));
+        let (total_bytes, file_count) = match directory_byte_and_file_count(&path) {
+            Ok(v) => v,
+            Err(err) => {
+                log::warn!(
+                    "skill data directory stats failed for '{}': {} — {}",
+                    skill_id,
+                    path.display(),
+                    err
+                );
+                (0, 0)
+            }
+        };
         SkillDataDirectoryStats {
             exists,
             path: path.display().to_string(),
