@@ -123,6 +123,13 @@ probe = ["dep:probe-rs"]
 rag-pdf = ["dep:pdf-extract"]
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "serde-big-array"]
 
+# Fix whisper-rs-sys CRT mismatch on Windows MSVC (LNK2038).
+# Upstream cmake build defaults to /MD but Rust uses /MT.
+# This fork adds config.static_crt(true) to the build script.
+# See: https://github.com/tinyhumansai/openhuman/issues/273
+[patch.crates-io]
+whisper-rs-sys = { git = "https://github.com/tinyhumansai/whisper-rs-sys.git", branch = "main" }
+
 # Fast CI builds: trade runtime perf for compile speed
 [profile.ci]
 inherits = "release"
