@@ -10,14 +10,26 @@
 //!   cargo test --test skills_sync_memory_test -- --nocapture
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::json;
 use tempfile::tempdir;
 
+use openhuman_core::core::all::try_invoke_registered_rpc;
 use openhuman_core::openhuman::memory::MemoryClient;
 use openhuman_core::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
+
+/// Serializes tests in this binary: `set_global_engine` mutates the process-wide
+/// GLOBAL_ENGINE, so parallel tests would cross-wire engine instances.
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("skills_sync_memory_test env lock poisoned")
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +101,7 @@ async fn create_engine_with_memory(
 /// Test that `skill/sync` RPC triggers `onSync()` and persists state to memory.
 #[tokio::test]
 async fn sync_rpc_persists_to_memory() {
+    let _lock = env_lock();
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .is_test(true)
@@ -216,6 +229,7 @@ async fn sync_rpc_persists_to_memory() {
 /// Test that `skill/tick` also persists state to memory.
 #[tokio::test]
 async fn tick_persists_to_memory() {
+    let _lock = env_lock();
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .is_test(true)
@@ -292,6 +306,7 @@ async fn tick_persists_to_memory() {
 /// `"skill/tick"` instead of `"skill/sync"`.
 #[tokio::test]
 async fn skills_sync_rpc_calls_on_sync_not_on_tick() {
+    let _lock = env_lock();
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Debug)
         .is_test(true)

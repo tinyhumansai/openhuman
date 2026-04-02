@@ -381,6 +381,7 @@ async fn handle_message(
                         &format!("cron sync ({})", schedule_id),
                         ops_state,
                         memory_client,
+                        memory_write_tx,
                     );
                 }
                 Err(e) => {
@@ -454,7 +455,7 @@ async fn handle_message(
             let result = handle_js_void_call(rt, ctx, "onTick", "{}").await;
             if result.is_ok() {
                 // Persist any state published during tick to memory
-                persist_state_to_memory(skill_id, "tick sync", ops_state, memory_client);
+                persist_state_to_memory(skill_id, "tick sync", ops_state, memory_client, memory_write_tx);
             }
             let _ = reply.send(result);
         }
@@ -624,6 +625,7 @@ async fn handle_message(
                             "periodic sync",
                             ops_state,
                             &memory_client_opt,
+                            memory_write_tx,
                         );
                     }
                     result
