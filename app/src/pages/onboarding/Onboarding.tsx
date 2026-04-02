@@ -12,7 +12,6 @@ import {
   setOnboardingCompleted,
 } from '../../utils/tauriCommands';
 import LocalAIStep from './steps/LocalAIStep';
-import MnemonicStep from './steps/MnemonicStep';
 import ScreenPermissionsStep from './steps/ScreenPermissionsStep';
 import SkillsStep from './steps/SkillsStep';
 import ToolsStep from './steps/ToolsStep';
@@ -46,7 +45,7 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
     enabledTools: [],
     connectedSources: [],
   });
-  const totalSteps = 6;
+  const totalSteps = 5;
 
   // Auto-dismiss the error banner after LOCAL_AI_ERROR_DISMISS_MS milliseconds.
   useEffect(() => {
@@ -141,11 +140,6 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       console.warn('[onboarding] Failed to notify backend of onboarding completion');
     }
 
-    // Advance to mnemonic step
-    handleNext();
-  };
-
-  const handleMnemonicComplete = async () => {
     // Mark onboarded in Redux (belt-and-suspenders alongside config)
     if (user?._id) {
       dispatch(setOnboardedForUser({ userId: user._id, value: true }));
@@ -179,8 +173,6 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
         return <ToolsStep onNext={handleToolsNext} onBack={handleBack} />;
       case 4:
         return <SkillsStep onNext={handleSkillsNext} onBack={handleBack} />;
-      case 5:
-        return <MnemonicStep onNext={handleMnemonicComplete} onBack={handleBack} />;
       default:
         return null;
     }

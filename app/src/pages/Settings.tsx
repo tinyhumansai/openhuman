@@ -14,6 +14,7 @@ import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
 import ProfilePanel from '../components/settings/panels/ProfilePanel';
+import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SkillsPanel from '../components/settings/panels/SkillsPanel';
 import TauriCommandsPanel from '../components/settings/panels/TauriCommandsPanel';
@@ -51,6 +52,7 @@ const Settings = () => {
         <Route path="developer-options" element={<DeveloperOptionsPanel />} />
         <Route path="tauri-commands" element={<TauriCommandsPanel />} />
         <Route path="memory-debug" element={<MemoryDebugPanel />} />
+        <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />
       </Routes>
     </div>
   );

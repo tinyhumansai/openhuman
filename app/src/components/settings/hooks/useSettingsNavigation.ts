@@ -21,7 +21,8 @@ export type SettingsRoute =
   | 'ai'
   | 'local-model'
   | 'tauri-commands'
-  | 'memory-debug';
+  | 'memory-debug'
+  | 'recovery-phrase';
 
 interface SettingsNavigationHook {
   currentRoute: SettingsRoute;
@@ -62,6 +63,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/local-model')) return 'local-model';
     if (path.includes('/settings/tauri-commands')) return 'tauri-commands';
     if (path.includes('/settings/memory-debug')) return 'memory-debug';
+    if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';
     return 'home';
   };
 
