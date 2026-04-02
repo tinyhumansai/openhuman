@@ -11,7 +11,7 @@
  *
  *   Phase 2 — Onboarding steps (6 steps in Onboarding.tsx):
  *     Step 0: WelcomeStep       — "Continue"
- *     Step 1: LocalAIStep       — "Use Local Models"
+ *     Step 1: LocalAIStep       — "Continue"
  *     Step 2: ScreenPermissions — "Continue Without Permission" or "Continue"
  *     Step 3: ToolsStep         — "Continue"
  *     Step 4: SkillsStep        — "Finish Setup"
@@ -200,7 +200,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
   //
   // Steps in order:
   //   0: WelcomeStep       — "Continue" button
-  //   1: LocalAIStep       — "Use Local Models"
+  //   1: LocalAIStep       — "Continue"
   //   2: ScreenPermissions — "Continue Without Permission" or "Continue"
   //   3: ToolsStep         — "Continue" button
   //   4: SkillsStep        — "Finish Setup" button (fires onboarding-complete)
@@ -238,8 +238,8 @@ describe('Login flow — complete with mock data (Linux)', () => {
     const onboardingVisible =
       (await textExists('Welcome')) ||
       (await textExists('Skip')) ||
-      (await textExists('Use Local Models')) ||
-      (await textExists('Continue'));
+      (await textExists('Continue')) ||
+      (await textExists('Finish Setup'));
 
     if (!onboardingVisible) {
       console.log('[LoginFlow] Onboarding overlay not visible — skipping step walkthrough');
@@ -256,9 +256,9 @@ describe('Login flow — complete with mock data (Linux)', () => {
       await browser.pause(2_000);
     }
 
-    // Step 1: LocalAIStep — only has "Use Local Models" button now
+    // Step 1: LocalAIStep — "Continue" button
     {
-      const clicked = await clickFirstMatch(['Use Local Models', 'Continue'], 10_000);
+      const clicked = await clickFirstMatch(['Continue'], 10_000);
       if (clicked) {
         console.log(`[LoginFlow] LocalAIStep: clicked "${clicked}"`);
         await browser.pause(2_000);
@@ -286,11 +286,11 @@ describe('Login flow — complete with mock data (Linux)', () => {
       }
     }
 
-    // Step 4: SkillsStep — click "Finish Setup" (no skills connected in E2E)
+    // Step 4: SkillsStep — click "Continue" (no skills connected in E2E)
     {
       const skillsVisible = await textExists('Install Skills');
       if (skillsVisible) {
-        const clicked = await clickFirstMatch(['Finish Setup'], 10_000);
+        const clicked = await clickFirstMatch(['Continue'], 10_000);
         if (clicked) {
           console.log(`[LoginFlow] SkillsStep: clicked "${clicked}"`);
           await browser.pause(3_000);

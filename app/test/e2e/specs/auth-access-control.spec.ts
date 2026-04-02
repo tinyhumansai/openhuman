@@ -16,7 +16,7 @@
  *
  * Onboarding steps (Onboarding.tsx — 6 steps):
  *   Step 0: WelcomeStep       — "Continue"
- *   Step 1: LocalAIStep       — "Use Local Models"
+ *   Step 1: LocalAIStep       — "Continue"
  *   Step 2: ScreenPermissions — "Continue Without Permission"
  *   Step 3: ToolsStep         — "Continue"
  *   Step 4: SkillsStep        — "Finish Setup" (fires onboarding-complete)
@@ -103,7 +103,7 @@ async function clickFirstMatch(candidates, timeout = 5_000) {
  * Walk through the real onboarding steps (Onboarding.tsx — 6 steps).
  *
  *   Step 0: WelcomeStep       — "Continue"
- *   Step 1: LocalAIStep       — "Use Local Models" (skip Ollama)
+ *   Step 1: LocalAIStep       — "Continue" (skip Ollama)
  *   Step 2: ScreenPermissions — "Continue Without Permission" or "Continue"
  *   Step 3: ToolsStep         — "Continue"
  *   Step 4: SkillsStep        — "Finish Setup" (fires onboarding-complete)
@@ -111,7 +111,7 @@ async function clickFirstMatch(candidates, timeout = 5_000) {
  */
 async function walkOnboarding() {
   // Poll a few times before concluding onboarding never mounted
-  const markers = ['Welcome', 'Skip', 'Use Local Models', 'Continue'];
+  const markers = ['Welcome', 'Skip', 'Continue'];
   let onboardingVisible = false;
   for (let attempt = 0; attempt < 6; attempt++) {
     for (const m of markers) {
@@ -137,9 +137,9 @@ async function walkOnboarding() {
     await browser.pause(2_000);
   }
 
-  // Step 1: LocalAIStep — only has "Use Local Models" button now
+  // Step 1: LocalAIStep — "Continue" button
   {
-    const clicked = await clickFirstMatch(['Use Local Models', 'Continue'], 10_000);
+    const clicked = await clickFirstMatch(['Continue'], 10_000);
     if (clicked) {
       console.log(`[AuthAccess] LocalAIStep: clicked "${clicked}"`);
       await browser.pause(2_000);
@@ -167,11 +167,11 @@ async function walkOnboarding() {
     }
   }
 
-  // Step 4: SkillsStep — click "Finish Setup"
+  // Step 4: SkillsStep — click "Continue"
   {
     const skillsVisible = await textExists('Install Skills');
     if (skillsVisible) {
-      const clicked = await clickFirstMatch(['Finish Setup'], 10_000);
+      const clicked = await clickFirstMatch(['Continue'], 10_000);
       if (clicked) {
         console.log(`[AuthAccess] SkillsStep: clicked "${clicked}"`);
         await browser.pause(3_000);

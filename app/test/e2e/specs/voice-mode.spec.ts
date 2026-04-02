@@ -68,8 +68,8 @@ async function completeOnboardingIfVisible() {
 
   if (await textExists("Let's Go")) {
     await clickText("Let's Go", 10_000);
-  } else if (await textExists("I'm Ready")) {
-    await clickText("I'm Ready", 10_000);
+  } else if (await textExists('Finish Setup')) {
+    await clickText('Finish Setup', 10_000);
   }
 }
 

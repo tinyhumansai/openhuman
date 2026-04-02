@@ -7,6 +7,7 @@ import {
   requestAccessibilityPermission,
 } from '../../../store/accessibilitySlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface ScreenPermissionsStepProps {
   onNext: (accessibilityPermissionGranted: boolean) => void;
@@ -62,8 +63,8 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
         </div>
       </div>
 
-      {!isGranted ? (
-        <div className="space-y-2">
+      {!isGranted && (
+        <div className="space-y-2 mb-3">
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -97,13 +98,9 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
             </div>
           )}
         </div>
-      ) : (
-        <button
-          onClick={() => onNext(isGranted)}
-          className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
-          Continue
-        </button>
       )}
+
+      <OnboardingNextButton onClick={() => onNext(isGranted)} />
     </div>
   );
 };

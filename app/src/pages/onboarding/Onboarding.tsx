@@ -178,9 +178,9 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       case 3:
         return <ToolsStep onNext={handleToolsNext} onBack={handleBack} />;
       case 4:
-        return <SkillsStep onComplete={handleSkillsNext} onBack={handleBack} />;
+        return <SkillsStep onNext={handleSkillsNext} onBack={handleBack} />;
       case 5:
-        return <MnemonicStep onComplete={handleMnemonicComplete} onBack={handleBack} />;
+        return <MnemonicStep onNext={handleMnemonicComplete} onBack={handleBack} />;
       default:
         return null;
     }

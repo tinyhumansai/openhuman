@@ -10,17 +10,18 @@ import {
   MNEMONIC_GENERATE_WORD_COUNT,
   validateMnemonicPhrase,
 } from '../../../utils/cryptoKeys';
+import OnboardingNextButton from '../components/OnboardingNextButton';
 
 const BIP39_IMPORT_LENGTHS = [12, 15, 18, 21, 24] as const;
 
 const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 interface MnemonicStepProps {
-  onComplete: () => void | Promise<void>;
+  onNext: () => void | Promise<void>;
   onBack?: () => void;
 }
 
-const MnemonicStep = ({ onComplete, onBack: _onBack }: MnemonicStepProps) => {
+const MnemonicStep = ({ onNext, onBack: _onBack }: MnemonicStepProps) => {
   const dispatch = useAppDispatch();
   const user = useAppSelector(state => state.user.user);
   const [mode, setMode] = useState<'generate' | 'import'>('generate');
@@ -165,7 +166,7 @@ const MnemonicStep = ({ onComplete, onBack: _onBack }: MnemonicStepProps) => {
       }
       dispatch(setEncryptionKeyForUser({ userId: user._id, key: aesKey }));
       await skillManager.setWalletAddress(walletAddress);
-      await onComplete();
+      await onNext();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
     } finally {
@@ -323,16 +324,13 @@ const MnemonicStep = ({ onComplete, onBack: _onBack }: MnemonicStepProps) => {
 
       {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
 
-      <button
+      <OnboardingNextButton
+        label="Finish Setup"
         onClick={handleContinue}
-        disabled={!canContinue || loading}
-        className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
-        {loading
-          ? 'Securing Your Data...'
-          : mode === 'import'
-            ? 'Import & Finish Setup'
-            : "I'm Ready! Let's Go!"}
-      </button>
+        disabled={!canContinue}
+        loading={loading}
+        loadingLabel="Securing Your Data..."
+      />
     </div>
   );
 };

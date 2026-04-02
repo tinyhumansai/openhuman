@@ -14,7 +14,7 @@ describe('LocalAIStep', () => {
     const onNext = vi.fn();
     renderWithProviders(<LocalAIStep onNext={onNext} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /use local models/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
 
     expect(onNext).toHaveBeenCalledOnce();
     expect(onNext).toHaveBeenCalledWith({ consentGiven: true, downloadStarted: true });
@@ -28,7 +28,7 @@ describe('LocalAIStep', () => {
     const onDownloadError = vi.fn();
     renderWithProviders(<LocalAIStep onNext={onNext} onDownloadError={onDownloadError} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /use local models/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
 
     // onNext still fires immediately
     expect(onNext).toHaveBeenCalledOnce();
@@ -50,7 +50,7 @@ describe('LocalAIStep', () => {
     const onDownloadError = vi.fn();
     renderWithProviders(<LocalAIStep onNext={onNext} onDownloadError={onDownloadError} />);
 
-    fireEvent.click(screen.getByRole('button', { name: /use local models/i }));
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
 
     await waitFor(() => {
       expect(onDownloadError).toHaveBeenCalledOnce();
@@ -66,7 +66,7 @@ describe('LocalAIStep', () => {
     const onNext = vi.fn();
     renderWithProviders(<LocalAIStep onNext={onNext} />);
 
-    const button = screen.getByRole('button', { name: /use local models/i });
+    const button = screen.getByRole('button', { name: /continue/i });
     fireEvent.click(button);
     fireEvent.click(button);
 

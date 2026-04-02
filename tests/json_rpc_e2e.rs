@@ -685,6 +685,88 @@ async fn json_rpc_rejects_non_object_params_with_clear_error() {
     rpc_join.abort();
 }
 
+#[tokio::test]
+async fn json_rpc_screen_intelligence_capture_test_returns_stable_shape() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let capture = post_json_rpc(
+        &rpc_base,
+        1002,
+        "openhuman.screen_intelligence_capture_test",
+        json!({}),
+    )
+    .await;
+    let capture_outer = assert_no_jsonrpc_error(&capture, "screen_intelligence_capture_test");
+    let capture_result = capture_outer.get("result").unwrap_or(capture_outer);
+
+    assert!(
+        capture_result.get("ok").and_then(Value::as_bool).is_some(),
+        "expected bool ok field: {capture_result}"
+    );
+    assert!(
+        matches!(
+            capture_result.get("capture_mode").and_then(Value::as_str),
+            Some("windowed" | "fullscreen")
+        ),
+        "expected capture_mode field: {capture_result}"
+    );
+    assert!(
+        capture_result
+            .get("timing_ms")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "expected timing_ms field: {capture_result}"
+    );
+
+    let ok = capture_result
+        .get("ok")
+        .and_then(Value::as_bool)
+        .expect("ok should be bool");
+    let image_ref = capture_result.get("image_ref").and_then(Value::as_str);
+    let error = capture_result.get("error").and_then(Value::as_str);
+
+    if ok {
+        assert!(
+            image_ref
+                .map(|value| value.starts_with("data:image/png;base64,"))
+                .unwrap_or(false),
+            "successful capture should include a PNG data URL: {capture_result}"
+        );
+        assert!(
+            error.is_none(),
+            "successful capture should not include an error"
+        );
+    } else {
+        assert!(
+            image_ref.is_none(),
+            "failed capture should not include image data"
+        );
+        assert!(
+            error.is_some(),
+            "failed capture should include an error message"
+        );
+    }
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 // ---------------------------------------------------------------------------
 // Skills registry E2E: fetch, search, install, list, uninstall
 // ---------------------------------------------------------------------------

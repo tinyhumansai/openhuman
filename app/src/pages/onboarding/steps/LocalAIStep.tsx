@@ -4,6 +4,7 @@ import {
   openhumanLocalAiDownload,
   openhumanLocalAiDownloadAllAssets,
 } from '../../../utils/tauriCommands';
+import OnboardingNextButton from '../components/OnboardingNextButton';
 
 /* ---------- component ---------- */
 
@@ -80,11 +81,7 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
         </div>
       </div>
 
-      <button
-        onClick={handleConsent}
-        className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
-        Use Local Models
-      </button>
+      <OnboardingNextButton label="Continue" onClick={handleConsent} />
     </div>
   );
 };
