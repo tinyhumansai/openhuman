@@ -1,6 +1,22 @@
 export const CORE_RPC_URL =
   import.meta.env.VITE_OPENHUMAN_CORE_RPC_URL || 'http://127.0.0.1:7788/rpc';
 
+/** Matches core `OPENHUMAN_TOOL_TIMEOUT_SECS` (default 120s, max 3600s). */
+const DEFAULT_TOOL_TIMEOUT_SECS = 120;
+const MAX_TOOL_TIMEOUT_SECS = 3600;
+
+function parseToolTimeoutSecs(): number {
+  const raw = import.meta.env.VITE_TOOL_TIMEOUT_SECS as string | undefined;
+  if (raw === undefined || raw === '') return DEFAULT_TOOL_TIMEOUT_SECS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > MAX_TOOL_TIMEOUT_SECS) {
+    return DEFAULT_TOOL_TIMEOUT_SECS;
+  }
+  return Math.round(n);
+}
+
+export const TOOL_TIMEOUT_SECS = parseToolTimeoutSecs();
+
 export const IS_DEV = import.meta.env.DEV;
 
 /** Dev only: skip `.skip_onboarding` workspace check and ignore onboarded state so `/onboarding` always shows. Set `VITE_DEV_FORCE_ONBOARDING=true` in `.env.local`. */

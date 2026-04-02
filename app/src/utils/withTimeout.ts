@@ -1,3 +1,5 @@
+import { TOOL_TIMEOUT_SECS } from './config';
+
 /**
  * Reject with a clear error if `promise` does not settle within `timeoutMs`.
  * Clears the timer when the promise completes.
@@ -25,9 +27,5 @@ export async function withTimeout<T>(
 
 /** Default matches core `OPENHUMAN_TOOL_TIMEOUT_SECS` (120). */
 export function toolExecutionTimeoutMsFromEnv(): number {
-  const raw = import.meta.env.VITE_TOOL_TIMEOUT_SECS as string | undefined;
-  if (raw === undefined || raw === '') return 120_000;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0 || n > 3600) return 120_000;
-  return Math.round(n * 1000);
+  return Math.round(TOOL_TIMEOUT_SECS * 1000);
 }
