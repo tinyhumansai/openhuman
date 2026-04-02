@@ -276,6 +276,18 @@ export async function memoryDeleteDocument(
   });
 }
 
+export async function memoryClearNamespace(
+  namespace: string
+): Promise<{ cleared: boolean; namespace: string }> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<{ cleared: boolean; namespace: string }>({
+    method: 'openhuman.memory_clear_namespace',
+    params: { namespace },
+  });
+}
+
 export async function memoryQueryNamespace(
   namespace: string,
   query: string,

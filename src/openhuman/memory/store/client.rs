@@ -104,6 +104,10 @@ impl MemoryClient {
         self.inner.delete_document(namespace, document_id).await
     }
 
+    pub async fn clear_namespace(&self, namespace: &str) -> Result<(), String> {
+        self.inner.clear_namespace(namespace).await
+    }
+
     pub async fn clear_skill_memory(
         &self,
         skill_id: &str,

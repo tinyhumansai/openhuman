@@ -504,6 +504,17 @@ pub struct NamespaceOnlyParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ClearNamespaceParams {
+    pub namespace: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ClearNamespaceResult {
+    pub cleared: bool,
+    pub namespace: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DeleteDocParams {
     pub namespace: String,
     pub document_id: String,
@@ -654,6 +665,25 @@ pub async fn doc_delete(params: DeleteDocParams) -> Result<RpcOutcome<serde_json
         .delete_document(&params.namespace, &params.document_id)
         .await?;
     Ok(RpcOutcome::single_log(result, "memory document deleted"))
+}
+
+pub async fn clear_namespace(
+    params: ClearNamespaceParams,
+) -> Result<RpcOutcome<ClearNamespaceResult>, String> {
+    let client = active_memory_client().await?;
+    log::debug!(
+        "[memory] clear_namespace RPC: namespace={}",
+        params.namespace
+    );
+    client.clear_namespace(&params.namespace).await?;
+    let msg = format!("memory namespace '{}' cleared", params.namespace);
+    Ok(RpcOutcome::single_log(
+        ClearNamespaceResult {
+            cleared: true,
+            namespace: params.namespace,
+        },
+        &msg,
+    ))
 }
 
 pub async fn context_query(params: QueryNamespaceParams) -> Result<RpcOutcome<String>, String> {
