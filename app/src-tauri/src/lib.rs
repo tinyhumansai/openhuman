@@ -3,14 +3,48 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 mod core_process;
 
+use std::sync::Mutex;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, RunEvent,
+    AppHandle, Emitter, Manager, RunEvent,
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
+
+/// Tracks the currently registered dictation hotkey string so we can unregister it later.
+struct DictationHotkeyState(Mutex<Vec<String>>);
+
+fn expand_dictation_shortcuts(shortcut: &str) -> Vec<String> {
+    let trimmed = shortcut.trim();
+    if trimmed.is_empty() {
+        return vec![];
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if trimmed.contains("CmdOrCtrl") {
+            let cmd_variant = trimmed.replace("CmdOrCtrl", "Cmd");
+            let ctrl_variant = trimmed.replace("CmdOrCtrl", "Ctrl");
+            if cmd_variant == ctrl_variant {
+                return vec![cmd_variant];
+            }
+            return vec![cmd_variant, ctrl_variant];
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if trimmed.contains("CmdOrCtrl") {
+            return vec![trimmed.replace("CmdOrCtrl", "Ctrl")];
+        }
+    }
+
+    vec![trimmed.to_string()]
+}
 
 #[tauri::command]
 fn core_rpc_url() -> String {
@@ -106,6 +140,96 @@ async fn restart_core_process(
     state.inner().restart().await
 }
 
+/// Register (or re-register) the global dictation toggle hotkey.
+/// Emits `dictation://toggle` to all webviews when the shortcut is pressed.
+#[tauri::command]
+async fn register_dictation_hotkey(
+    app: AppHandle,
+    shortcut: String,
+) -> Result<(), String> {
+    log::info!("[dictation] register_dictation_hotkey: shortcut={shortcut}");
+
+    // Unregister the old shortcut if one is already registered.
+    {
+        let state = app.state::<DictationHotkeyState>();
+        let mut guard = state.0.lock().unwrap();
+        let old_shortcuts = guard.clone();
+        guard.clear();
+        for old in old_shortcuts {
+            log::debug!("[dictation] unregistering previous shortcut: {old}");
+            if let Err(e) = app.global_shortcut().unregister(old.as_str()) {
+                log::warn!("[dictation] failed to unregister old shortcut '{old}': {e}");
+            }
+        }
+    }
+
+    let expanded_shortcuts = expand_dictation_shortcuts(&shortcut);
+    if expanded_shortcuts.is_empty() {
+        return Err("Shortcut cannot be empty".to_string());
+    }
+    log::info!(
+        "[dictation] expanded shortcuts: {}",
+        expanded_shortcuts.join(", ")
+    );
+
+    for shortcut_variant in &expanded_shortcuts {
+        let app_clone = app.clone();
+        app.global_shortcut()
+            .on_shortcut(shortcut_variant.as_str(), move |_app, _sc, event| {
+                if event.state == ShortcutState::Pressed {
+                    log::debug!("[dictation] hotkey pressed — emitting dictation://toggle");
+                    if let Err(e) = app_clone.emit("dictation://toggle", ()) {
+                        log::warn!("[dictation] emit failed: {e}");
+                    }
+                }
+            })
+            .map_err(|e| {
+                log::error!(
+                    "[dictation] failed to register shortcut '{shortcut_variant}': {e}"
+                );
+                format!("Failed to register shortcut '{shortcut_variant}': {e}")
+            })?;
+    }
+
+    // Persist all newly registered shortcuts.
+    {
+        let state = app.state::<DictationHotkeyState>();
+        let mut guard = state.0.lock().unwrap();
+        *guard = expanded_shortcuts.clone();
+    }
+
+    log::info!(
+        "[dictation] shortcuts registered: {}",
+        expanded_shortcuts.join(", ")
+    );
+    Ok(())
+}
+
+/// Unregister the global dictation hotkey (if any).
+#[tauri::command]
+async fn unregister_dictation_hotkey(app: AppHandle) -> Result<(), String> {
+    log::info!("[dictation] unregister_dictation_hotkey: called");
+    let state = app.state::<DictationHotkeyState>();
+    let mut guard = state.0.lock().unwrap();
+    if guard.is_empty() {
+        log::debug!("[dictation] no shortcut registered — nothing to unregister");
+    } else {
+        let old_shortcuts = guard.clone();
+        guard.clear();
+        for old in old_shortcuts {
+            log::debug!("[dictation] unregistering shortcut: {old}");
+            app.global_shortcut()
+                .unregister(old.as_str())
+                .map_err(|e| {
+                    log::warn!("[dictation] failed to unregister '{old}': {e}");
+                    format!("Failed to unregister shortcut '{old}': {e}")
+                })?;
+            log::info!("[dictation] shortcut unregistered: {old}");
+        }
+    }
+    Ok(())
+}
+
 fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
@@ -186,6 +310,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .manage(DictationHotkeyState(Mutex::new(Vec::new())))
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
             {
@@ -235,7 +361,9 @@ pub fn run() {
             service_start_direct,
             service_stop_direct,
             service_status_direct,
-            service_uninstall_direct
+            service_uninstall_direct,
+            register_dictation_hotkey,
+            unregister_dictation_hotkey
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

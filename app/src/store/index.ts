@@ -19,6 +19,7 @@ import {
   syncMemoryClientToken,
 } from '../utils/tauriCommands';
 import accessibilityReducer from './accessibilitySlice';
+import dictationReducer from './dictationSlice';
 import aiReducer from './aiSlice';
 import authReducer, { setOnboardedForUser, setToken } from './authSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
@@ -131,6 +132,7 @@ export const store = configureStore({
     intelligence: intelligenceReducer,
     invite: inviteReducer,
     accessibility: accessibilityReducer,
+    dictation: dictationReducer,
     channelConnections: persistedChannelConnectionsReducer,
     webhooks: webhooksReducer,
   },
