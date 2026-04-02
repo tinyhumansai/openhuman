@@ -332,13 +332,11 @@ async fn notion_live_with_real_data() {
     eprintln!("  Waiting 3s for async memory persistence...");
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Verify memory documents were created
-    eprintln!("  Checking local memory store...");
-    let workspace_dir = real_data_dir.join("workspace");
-    let memory_result =
-        openhuman_core::openhuman::memory::MemoryClient::from_workspace_dir(workspace_dir.clone());
-
-    match memory_result {
+    // Verify memory documents were created.
+    // The RuntimeEngine initializes its MemoryClient via new_local() which
+    // uses ~/.openhuman/workspace, so we check there.
+    eprintln!("  Checking local memory store (~/.openhuman/workspace)...");
+    match openhuman_core::openhuman::memory::MemoryClient::new_local() {
         Ok(memory_client) => {
             let namespace = "skill-notion";
             match memory_client.list_documents(Some(namespace)).await {
@@ -371,7 +369,6 @@ async fn notion_live_with_real_data() {
                 Err(e) => eprintln!("  Failed to list documents: {e}"),
             }
 
-            // Also check namespaces
             match memory_client.list_namespaces().await {
                 Ok(namespaces) => {
                     eprintln!("  All namespaces: {:?}", namespaces);
@@ -380,27 +377,7 @@ async fn notion_live_with_real_data() {
             }
         }
         Err(e) => {
-            eprintln!(
-                "  Could not create MemoryClient for workspace {}: {e}",
-                workspace_dir.display()
-            );
-            eprintln!(
-                "  (Memory verification skipped — engine uses ~/.openhuman/workspace by default)"
-            );
-
-            // Try default location
-            if let Ok(default_client) = openhuman_core::openhuman::memory::MemoryClient::new_local()
-            {
-                let namespace = "skill-notion";
-                if let Ok(docs) = default_client.list_documents(Some(namespace)).await {
-                    let count = docs
-                        .get("documents")
-                        .and_then(|d| d.as_array())
-                        .map(|a| a.len())
-                        .unwrap_or(0);
-                    eprintln!("  Documents in default workspace '{namespace}': {count}");
-                }
-            }
+            eprintln!("  Could not create MemoryClient: {e}");
         }
     }
 
