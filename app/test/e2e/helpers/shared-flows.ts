@@ -182,7 +182,8 @@ export async function navigateToConversations() {
 }
 
 // ---------------------------------------------------------------------------
-// Onboarding walkthrough (Onboarding.tsx — 5 steps, indices 0–4)
+// Onboarding walkthrough
+// Current flow: Welcome → Local AI → Screen & Accessibility → Tools → Skills (5 steps, indices 0–4).
 // ---------------------------------------------------------------------------
 
 /** Labels used to detect the onboarding overlay (same strings as Onboarding copy). */
@@ -253,12 +254,14 @@ export async function walkOnboarding(logPrefix = '[E2E]') {
 }
 
 /**
- * If onboarding is showing, walk through it. Safe no-op when already on Home / no overlay.
+ * Walk through onboarding if it is visible, or no-op if already on Home.
+ *
+ * Delegates to walkOnboarding, which polls up to 8 × 400 ms for the overlay
+ * to appear before giving up — safe to call unconditionally after auth so
+ * timing races do not cause the helper to skip onboarding prematurely.
  */
 export async function completeOnboardingIfVisible(logPrefix = '[E2E]') {
-  if (await onboardingOverlayLikelyVisible()) {
-    await walkOnboarding(logPrefix);
-  }
+  await walkOnboarding(logPrefix);
 }
 
 // ---------------------------------------------------------------------------
