@@ -12,8 +12,8 @@ import {
   memoryGraphQuery,
   memoryListDocuments,
   memoryListNamespaces,
-  type MemoryQueryResult,
   memoryQueryNamespace,
+  type MemoryQueryResult,
   memoryRecallNamespace,
 } from '../../utils/tauriCommands';
 import { MemoryGraphMap } from './MemoryGraphMap';

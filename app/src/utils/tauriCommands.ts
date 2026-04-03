@@ -303,10 +303,7 @@ export interface MemoryQueryResult {
  * `openhuman.memory_recall_context` via the registry-based RPC handler.
  */
 interface MemoryQueryEnvelope {
-  data?: {
-    llm_context_message?: string | null;
-    context?: MemoryRetrievalContext | null;
-  };
+  data?: { llm_context_message?: string | null; context?: MemoryRetrievalContext | null };
   llm_context_message?: string | null;
   context?: MemoryRetrievalContext | null;
 }
