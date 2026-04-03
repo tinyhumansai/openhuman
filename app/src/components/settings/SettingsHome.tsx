@@ -482,10 +482,10 @@ const SettingsHome = () => {
 
       {/* Log Out & Clear Data Confirmation Modal */}
       {showLogoutAndClearModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-          <div className="bg-stone-900 rounded-2xl max-w-md w-full p-6 border border-stone-700/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-stone-200">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center">
                 <svg
                   className="w-5 h-5 text-amber-400"
                   fill="none"
@@ -500,12 +500,12 @@ const SettingsHome = () => {
                 </svg>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-white">Log Out & Clear App Data</h3>
+                <h3 className="text-lg font-semibold text-stone-900">Log Out & Clear App Data</h3>
               </div>
             </div>
 
             <div className="mb-6">
-              <p className="text-stone-300 text-sm leading-relaxed">
+              <p className="text-stone-700 text-sm leading-relaxed">
                 This will sign you out and permanently delete ALL data including: • App settings and
                 conversations • Email data from Gmail • Chat history from Telegram • Cached files
                 from Notion • All other skills data
@@ -515,8 +515,8 @@ const SettingsHome = () => {
               </p>
 
               {error && (
-                <div className="mt-3 p-3 rounded-lg bg-coral-500/10 border border-coral-500/20">
-                  <p className="text-coral-400 text-sm">{error}</p>
+                <div className="mt-3 p-3 rounded-lg bg-coral-100 border border-coral-500/20">
+                  <p className="text-coral-600 text-sm">{error}</p>
                 </div>
               )}
             </div>
@@ -528,7 +528,7 @@ const SettingsHome = () => {
                   setError(null);
                 }}
                 disabled={isLoading}
-                className="flex-1 px-4 py-2 rounded-lg border border-stone-600 text-stone-300 hover:bg-stone-800 transition-colors disabled:opacity-50">
+                className="flex-1 px-4 py-2 rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-100 transition-colors disabled:opacity-50">
                 Cancel
               </button>
               <button

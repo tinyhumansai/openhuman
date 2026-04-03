@@ -58,37 +58,37 @@ export function MemoryStatsBar(props: MemoryStatsBarProps) {
       label: 'Storage',
       value: estimatedStorageBytes > 0 ? formatBytes(estimatedStorageBytes) : '--',
       sub: totalFiles > 0 ? `${formatNumber(totalFiles)} files` : undefined,
-      color: 'text-primary-300',
+      color: 'text-primary-500',
     },
     {
       label: 'Documents',
       value: formatNumber(totalDocs),
       sub: docsToday > 0 ? `+${docsToday} today` : undefined,
-      color: 'text-emerald-300',
+      color: 'text-emerald-600',
     },
     {
       label: 'Namespaces',
       value: formatNumber(totalNamespaces),
       sub: undefined,
-      color: 'text-amber-300',
+      color: 'text-amber-600',
     },
     {
       label: 'Relations',
       value: formatNumber(totalRelations),
       sub: undefined,
-      color: 'text-lavender-300',
+      color: 'text-lavender-600',
     },
     {
       label: 'First Memory',
       value: oldestDocTimestamp ? formatTimeAgo(oldestDocTimestamp) : '--',
       sub: newestDocTimestamp ? `Latest: ${formatTimeAgo(newestDocTimestamp)}` : undefined,
-      color: 'text-sky-300',
+      color: 'text-sky-600',
     },
     {
       label: 'Sessions',
       value: totalSessions !== null ? formatNumber(totalSessions) : '--',
       sub: totalTokens !== null ? `${formatNumber(totalTokens)} tokens` : undefined,
-      color: 'text-rose-300',
+      color: 'text-rose-600',
     },
   ];
 
@@ -97,12 +97,12 @@ export function MemoryStatsBar(props: MemoryStatsBarProps) {
       {stats.map(stat => (
         <div
           key={stat.label}
-          className="rounded-xl border border-white/10 bg-black/20 p-3 transition-colors hover:bg-black/30">
+          className="rounded-xl border border-stone-200 bg-stone-50 p-3 transition-colors hover:bg-stone-100">
           <div className="text-[11px] uppercase tracking-wide text-stone-500 mb-1">
             {stat.label}
           </div>
           <div className={`text-xl font-semibold ${stat.color}`}>
-            {loading ? <div className="h-7 w-16 rounded bg-white/5 animate-pulse" /> : stat.value}
+            {loading ? <div className="h-7 w-16 rounded bg-stone-200 animate-pulse" /> : stat.value}
           </div>
           {stat.sub && <div className="text-[11px] text-stone-500 mt-0.5">{stat.sub}</div>}
         </div>

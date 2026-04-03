@@ -12,13 +12,13 @@ const SettingsHeader = ({
   onBack,
 }: SettingsHeaderProps) => {
   return (
-    <div className={`bg-black/30 border-b border-stone-700 p-3 relative ${className}`}>
+    <div className={`bg-stone-50 border-b border-stone-200 p-3 relative ${className}`}>
       <div className="flex items-center">
         {/* Back button */}
         {showBackButton && onBack && (
           <button
             onClick={onBack}
-            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-stone-800/50 transition-colors mr-3"
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-stone-200 transition-colors mr-3"
             aria-label="Go back">
             <svg
               className="w-5 h-5 opacity-70"
@@ -36,7 +36,7 @@ const SettingsHeader = ({
         )}
 
         {/* Title */}
-        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <h2 className="text-lg font-semibold text-stone-900">{title}</h2>
       </div>
     </div>
   );

@@ -4,11 +4,11 @@ import { HashRouter as Router } from 'react-router-dom';
 import { PersistGate } from 'redux-persist/integration/react';
 
 import AppRoutes from './AppRoutes';
+import BottomTabBar from './components/BottomTabBar';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import DictationOverlay from './components/dictation/DictationOverlay';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
-import MiniSidebar from './components/MiniSidebar';
 import OnboardingOverlay from './components/OnboardingOverlay';
 import SocketProvider from './providers/SocketProvider';
 import UserProvider from './providers/UserProvider';
@@ -41,20 +41,11 @@ function App() {
             <SocketProvider>
               <Router>
                 <ServiceBlockingGate>
-                  <div className="relative h-screen flex flex-col overflow-hidden">
-                    <div className="flex-1 flex overflow-hidden">
-                      <MiniSidebar />
-                      <div className="flex flex-col flex-1 relative overflow-hidden">
-                        <div className="flex-1 overflow-y-auto">
-                          <AppRoutes />
-                        </div>
-                        <div className="pointer-events-none flex-shrink-0 flex justify-center z-50">
-                          <div className="w-full px-3 py-1.5 text-[9px] uppercase tracking-[0.18em] text-white/40 text-center bg-[#000]">
-                            OpenHuman is in early beta
-                          </div>
-                        </div>
-                      </div>
+                  <div className="relative h-screen flex flex-col overflow-hidden bg-[#F5F5F5]">
+                    <div className="flex-1 overflow-y-auto">
+                      <AppRoutes />
                     </div>
+                    <BottomTabBar />
                   </div>
                   <OnboardingOverlay />
                   <DictationOverlay />

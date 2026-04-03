@@ -174,17 +174,17 @@ const TeamMembersPanel = () => {
               {members.map(member => (
                 <div
                   key={member._id}
-                  className="flex items-center justify-between p-3 rounded-xl border border-stone-700/50 bg-stone-800/40">
+                  className="flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-white">
                   <div className="flex items-center gap-3 min-w-0">
                     {/* Avatar */}
                     <div className="w-8 h-8 rounded-full bg-stone-700/60 flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-semibold text-stone-300">
+                      <span className="text-xs font-semibold text-stone-600">
                         {displayName(member).charAt(0).toUpperCase()}
                       </span>
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-white truncate">
+                        <span className="text-sm font-medium text-stone-900 truncate">
                           {displayName(member)}
                         </span>
                         {isCurrentUser(member) && (
@@ -204,7 +204,7 @@ const TeamMembersPanel = () => {
                         value={member.role.toUpperCase()}
                         onChange={e => handleChangeRole(member, e.target.value as TeamRole)}
                         disabled={changingRoleId === member._id}
-                        className="px-2 py-1 text-[10px] font-medium rounded-full border bg-stone-800 text-stone-300 border-stone-600 focus:outline-none focus:border-primary-500/50 disabled:opacity-50">
+                        className="px-2 py-1 text-[10px] font-medium rounded-full border bg-white text-stone-700 border-stone-300 focus:outline-none focus:border-primary-500/50 disabled:opacity-50">
                         {ROLES.map(r => (
                           <option key={r} value={r}>
                             {r}
@@ -253,9 +253,9 @@ const TeamMembersPanel = () => {
 
           {/* Remove Member Confirmation Modal */}
           {memberToRemove && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-stone-900 rounded-2xl p-6 w-full max-w-md border border-stone-700/50">
-                <h3 className="text-lg font-semibold text-white mb-4">Remove Team Member</h3>
+            <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
+                <h3 className="text-lg font-semibold text-stone-900 mb-4">Remove Team Member</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -267,8 +267,8 @@ const TeamMembersPanel = () => {
                   <div className="text-sm text-stone-400">
                     <p>
                       Are you sure you want to remove{' '}
-                      <strong className="text-white">{displayName(memberToRemove)}</strong> from the
-                      team?
+                      <strong className="text-stone-900">{displayName(memberToRemove)}</strong> from
+                      the team?
                     </p>
                     <p className="mt-2 text-coral-400">
                       They will lose access to the team and all team resources.
@@ -279,7 +279,7 @@ const TeamMembersPanel = () => {
                     <button
                       onClick={() => setMemberToRemove(null)}
                       disabled={removingId === memberToRemove._id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button
@@ -296,9 +296,9 @@ const TeamMembersPanel = () => {
 
           {/* Change Role Confirmation Modal */}
           {roleChangeConfirmation && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-stone-900 rounded-2xl p-6 w-full max-w-md border border-stone-700/50">
-                <h3 className="text-lg font-semibold text-white mb-4">Change Member Role</h3>
+            <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
+                <h3 className="text-lg font-semibold text-stone-900 mb-4">Change Member Role</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">

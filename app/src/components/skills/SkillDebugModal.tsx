@@ -106,20 +106,20 @@ export default function SkillDebugModal({ skillId, skillName, onClose }: SkillDe
 
   const content = (
     <div
-      className="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9999] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true">
       <div
         ref={modalRef}
-        className="bg-stone-900 border border-stone-600 rounded-3xl shadow-large w-full max-w-[600px] max-h-[80vh] overflow-hidden animate-fade-up focus:outline-none"
+        className="bg-white border border-stone-200 rounded-3xl shadow-large w-full max-w-[600px] max-h-[80vh] overflow-hidden animate-fade-up focus:outline-none"
         style={{ animationDuration: '200ms' }}
         tabIndex={-1}
         onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="p-4 border-b border-stone-700/50 flex items-center justify-between">
+        <div className="p-4 border-b border-stone-200 flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold text-white">
+            <h2 className="text-base font-semibold text-stone-900">
               Debug: {skillName}
             </h2>
             <div className="flex items-center gap-2 mt-1">
@@ -130,7 +130,7 @@ export default function SkillDebugModal({ skillId, skillName, onClose }: SkillDe
           </div>
           <button
             onClick={onClose}
-            className="p-1 text-stone-400 hover:text-white transition-colors rounded-lg hover:bg-stone-700/50">
+            className="p-1 text-stone-400 hover:text-stone-900 transition-colors rounded-lg hover:bg-stone-100">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -138,15 +138,15 @@ export default function SkillDebugModal({ skillId, skillName, onClose }: SkillDe
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-stone-700/50">
+        <div className="flex border-b border-stone-200">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 py-2 text-xs font-medium transition-colors ${
                 activeTab === tab.id
-                  ? 'text-primary-400 border-b-2 border-primary-400'
-                  : 'text-stone-400 hover:text-stone-300'
+                  ? 'text-primary-500 border-b-2 border-primary-500'
+                  : 'text-stone-600 hover:text-stone-700'
               }`}>
               {tab.label}
             </button>
@@ -181,9 +181,9 @@ export default function SkillDebugModal({ skillId, skillName, onClose }: SkillDe
 
 function StatusBadge({ label, variant = 'default' }: { label: string; variant?: 'default' | 'green' | 'blue' }) {
   const colors = {
-    default: 'bg-stone-700 text-stone-300',
-    green: 'bg-sage-500/20 text-sage-400',
-    blue: 'bg-primary-500/20 text-primary-400',
+    default: 'bg-stone-100 text-stone-600',
+    green: 'bg-sage-100 text-sage-600',
+    blue: 'bg-primary-100 text-primary-500',
   };
   return (
     <span className={`px-2 py-0.5 text-[10px] font-mono rounded ${colors[variant]}`}>
@@ -221,7 +221,7 @@ function StateTab({
         {stateEntries.length === 0 ? (
           <p className="text-xs text-stone-500 italic">No published state</p>
         ) : (
-          <pre className="text-xs text-stone-300 font-mono bg-black/30 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
+          <pre className="text-xs text-stone-700 font-mono bg-stone-50 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
             {formatJson(snap.state)}
           </pre>
         )}
@@ -229,7 +229,7 @@ function StateTab({
 
       {/* Raw snapshot */}
       <Section title="Raw Snapshot">
-        <pre className="text-xs text-stone-400 font-mono bg-black/30 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+        <pre className="text-xs text-stone-600 font-mono bg-stone-50 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
           {formatJson(snap)}
         </pre>
       </Section>
@@ -270,13 +270,13 @@ function ToolsTab({
         const hasResult = toolResult?.toolName === tool.name;
 
         return (
-          <div key={tool.name} className="border border-stone-700/50 rounded-xl overflow-hidden">
+          <div key={tool.name} className="border border-stone-200 rounded-xl overflow-hidden">
             {/* Tool header */}
             <button
               onClick={() => setExpandedTool(isExpanded ? null : tool.name)}
-              className="w-full flex items-center justify-between p-3 text-left hover:bg-white/5 transition-colors">
+              className="w-full flex items-center justify-between p-3 text-left hover:bg-stone-50 transition-colors">
               <div className="min-w-0">
-                <span className="text-sm font-mono text-primary-400">{tool.name}</span>
+                <span className="text-sm font-mono text-primary-500">{tool.name}</span>
                 <p className="text-xs text-stone-400 mt-0.5 line-clamp-1">{tool.description}</p>
               </div>
               <svg
@@ -290,14 +290,14 @@ function ToolsTab({
 
             {/* Expanded content */}
             {isExpanded && (
-              <div className="px-3 pb-3 space-y-2 border-t border-stone-700/30">
+              <div className="px-3 pb-3 space-y-2 border-t border-stone-200">
                 {/* Input schema */}
                 {tool.inputSchema != null && (
                   <div className="mt-2">
                     <label className="text-[10px] font-medium text-stone-500 uppercase tracking-wider">
                       Input Schema
                     </label>
-                    <pre className="text-xs text-stone-400 font-mono bg-black/30 rounded-lg p-2 mt-1 overflow-x-auto max-h-32 overflow-y-auto">
+                    <pre className="text-xs text-stone-600 font-mono bg-stone-50 rounded-lg p-2 mt-1 overflow-x-auto max-h-32 overflow-y-auto">
                       {formatJson(tool.inputSchema)}
                     </pre>
                   </div>
@@ -313,7 +313,7 @@ function ToolsTab({
                     onChange={e => setToolArgs({ ...toolArgs, [tool.name]: e.target.value })}
                     placeholder="{}"
                     rows={3}
-                    className="w-full mt-1 px-3 py-2 text-xs font-mono bg-black/30 border border-stone-700 rounded-lg text-stone-300 placeholder-stone-600 focus:outline-none focus:border-primary-500/50 resize-y"
+                    className="w-full mt-1 px-3 py-2 text-xs font-mono bg-stone-50 border border-stone-200 rounded-lg text-stone-700 placeholder-stone-400 focus:outline-none focus:border-primary-500/50 resize-y"
                   />
                 </div>
 
@@ -321,7 +321,7 @@ function ToolsTab({
                 <button
                   onClick={() => onCallTool(tool.name)}
                   disabled={isLoading}
-                  className="w-full py-2 text-xs font-medium bg-primary-500/20 text-primary-400 border border-primary-500/30 rounded-lg hover:bg-primary-500/30 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
+                  className="w-full py-2 text-xs font-medium bg-primary-50 text-primary-500 border border-primary-500/30 rounded-lg hover:bg-primary-100 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
                   {isLoading ? (
                     <>
                       <svg className="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
@@ -344,7 +344,7 @@ function ToolsTab({
                       </span>
                       <span className="text-[10px] text-stone-500">{toolResult.durationMs}ms</span>
                     </div>
-                    <pre className="text-xs font-mono text-stone-300 whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+                    <pre className="text-xs font-mono text-stone-700 whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
                       {formatJson(toolResult.result)}
                     </pre>
                   </div>
@@ -371,7 +371,7 @@ function KV({ label, value, isError }: { label: string; value: string; isError?:
   return (
     <div className="flex items-center gap-2 py-0.5">
       <span className="text-xs text-stone-500 font-mono min-w-[120px]">{label}</span>
-      <span className={`text-xs font-mono ${isError ? 'text-red-400' : 'text-stone-300'}`}>{value}</span>
+      <span className={`text-xs font-mono ${isError ? 'text-red-500' : 'text-stone-700'}`}>{value}</span>
     </div>
   );
 }

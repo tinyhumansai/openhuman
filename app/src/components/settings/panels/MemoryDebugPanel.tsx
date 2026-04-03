@@ -158,17 +158,17 @@ const MemoryDebugPanel = () => {
             <PrimaryButton onClick={() => void loadDocuments()} loading={documentsLoading}>
               Refresh Documents
             </PrimaryButton>
-            <label className="block text-xs text-stone-300">
+            <label className="block text-xs text-stone-600">
               Namespace Filter (optional)
               <input
                 value={documentsNamespaceFilter}
                 onChange={e => setDocumentsNamespaceFilter(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
+                className="mt-1 w-full rounded border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900"
                 placeholder="e.g. conversations"
               />
             </label>
             {documentsError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
+              <div className="text-xs text-coral-700 border border-coral-300 bg-coral-50 rounded p-2">
                 {documentsError}
               </div>
             )}
@@ -181,9 +181,9 @@ const MemoryDebugPanel = () => {
                 {documents.map(doc => (
                   <div
                     key={`${doc.namespace}:${doc.documentId}`}
-                    className="rounded border border-stone-700 bg-black/20 p-2">
-                    <div className="text-xs text-white break-all">ID: {doc.documentId}</div>
-                    <div className="text-xs text-stone-300 break-all">
+                    className="rounded border border-stone-200 bg-stone-50 p-2">
+                    <div className="text-xs text-stone-900 break-all">ID: {doc.documentId}</div>
+                    <div className="text-xs text-stone-600 break-all">
                       Namespace: {doc.namespace}
                     </div>
                     {doc.title ? (
@@ -204,8 +204,8 @@ const MemoryDebugPanel = () => {
               </div>
             )}
             <details className="text-xs">
-              <summary className="cursor-pointer text-stone-300">Raw documents response</summary>
-              <pre className="mt-2 rounded border border-stone-700 bg-black/20 p-2 overflow-auto text-[11px] leading-5">
+              <summary className="cursor-pointer text-stone-600">Raw documents response</summary>
+              <pre className="mt-2 rounded border border-stone-200 bg-stone-50 p-2 overflow-auto text-[11px] leading-5">
                 {JSON.stringify(documentsRaw, null, 2)}
               </pre>
             </details>
@@ -230,11 +230,11 @@ const MemoryDebugPanel = () => {
               Refresh Namespaces
             </PrimaryButton>
             {namespacesError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
+              <div className="text-xs text-coral-700 border border-coral-300 bg-coral-50 rounded p-2">
                 {namespacesError}
               </div>
             )}
-            <div className="rounded border border-stone-700 bg-black/20 p-2 text-xs">
+            <div className="rounded border border-stone-200 bg-stone-50 p-2 text-xs">
               {namespaces.length > 0 ? namespaces.join('\n') : 'No namespaces found.'}
             </div>
           </div>
@@ -254,33 +254,33 @@ const MemoryDebugPanel = () => {
             </svg>
           }>
           <div className="space-y-3">
-            <label className="block text-xs text-stone-300">
+            <label className="block text-xs text-stone-600">
               Namespace
               <input
                 value={namespaceInput}
                 onChange={e => setNamespaceInput(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
+                className="mt-1 w-full rounded border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900"
                 placeholder="e.g. conversations"
               />
             </label>
 
-            <label className="block text-xs text-stone-300">
+            <label className="block text-xs text-stone-600">
               Query
               <textarea
                 value={queryInput}
                 onChange={e => setQueryInput(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
+                className="mt-1 w-full rounded border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900"
                 rows={3}
                 placeholder="What do I remember about..."
               />
             </label>
 
-            <label className="block text-xs text-stone-300">
+            <label className="block text-xs text-stone-600">
               Max Chunks
               <input
                 value={maxChunksInput}
                 onChange={e => setMaxChunksInput(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
+                className="mt-1 w-full rounded border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900"
               />
             </label>
 
@@ -301,23 +301,23 @@ const MemoryDebugPanel = () => {
             </div>
 
             {queryError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
+              <div className="text-xs text-coral-700 border border-coral-300 bg-coral-50 rounded p-2">
                 Query error: {queryError}
               </div>
             )}
             {recallError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
+              <div className="text-xs text-coral-700 border border-coral-300 bg-coral-50 rounded p-2">
                 Recall error: {recallError}
               </div>
             )}
 
             <div className="space-y-2">
               <div className="text-xs text-stone-400">Query response</div>
-              <pre className="rounded border border-stone-700 bg-black/20 p-2 overflow-auto text-[11px] leading-5 min-h-16">
+              <pre className="rounded border border-stone-200 bg-stone-50 p-2 overflow-auto text-[11px] leading-5 min-h-16">
                 {queryResult ?? ''}
               </pre>
               <div className="text-xs text-stone-400">Recall response</div>
-              <pre className="rounded border border-stone-700 bg-black/20 p-2 overflow-auto text-[11px] leading-5 min-h-16">
+              <pre className="rounded border border-stone-200 bg-stone-50 p-2 overflow-auto text-[11px] leading-5 min-h-16">
                 {recallResult ?? ''}
               </pre>
             </div>

@@ -77,13 +77,13 @@ const AgentChatPanel = () => {
 
       <div className="flex-1 overflow-y-auto px-6 pb-10 space-y-6">
         <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Overrides</h3>
+          <h3 className="text-lg font-semibold text-stone-900">Overrides</h3>
           <p className="text-sm text-stone-400">
             Inference uses your OpenHuman backend (config API URL and session). Optional model and
             temperature override the defaults for this panel only.
           </p>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="space-y-2 text-sm text-gray-300">
+            <label className="space-y-2 text-sm text-stone-600">
               Model
               <input
                 className="input input-bordered w-full text-slate-900 bg-white"
@@ -92,7 +92,7 @@ const AgentChatPanel = () => {
                 onChange={event => setModelOverride(event.target.value)}
               />
             </label>
-            <label className="space-y-2 text-sm text-gray-300">
+            <label className="space-y-2 text-sm text-stone-600">
               Temperature
               <input
                 className="input input-bordered w-full text-slate-900 bg-white"
@@ -105,24 +105,24 @@ const AgentChatPanel = () => {
         </section>
 
         <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-white">Conversation</h3>
+          <h3 className="text-lg font-semibold text-stone-900">Conversation</h3>
           {error && (
-            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700">
               {error}
             </div>
           )}
-          <div className="rounded-xl border border-stone-800/60 bg-black/40 p-4 space-y-3">
+          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 space-y-3">
             {messages.length === 0 && (
               <div className="text-sm text-stone-400">Start a conversation with the agent.</div>
             )}
             {messages.map((message, index) => (
               <div key={`${message.role}-${index}`} className="space-y-1">
-                <div className="text-[11px] uppercase tracking-wide text-stone-400">
+                <div className="text-[11px] uppercase tracking-wide text-stone-500">
                   {message.role === 'user' ? 'You' : 'Agent'}
                 </div>
                 <div
                   className={`text-sm whitespace-pre-wrap ${
-                    message.role === 'user' ? 'text-white' : 'text-emerald-200'
+                    message.role === 'user' ? 'text-stone-900' : 'text-emerald-700'
                   }`}>
                   {message.text}
                 </div>

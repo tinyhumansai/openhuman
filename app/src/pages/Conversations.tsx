@@ -899,22 +899,22 @@ const Conversations = () => {
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
 
   return (
-    <div className="h-full relative z-10 flex overflow-hidden">
+    <div className="h-full relative z-10 flex overflow-hidden bg-[#F5F5F5]">
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-stone-200 bg-white">
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold truncate">
+            <div className="flex items-center gap-3">
+              <h3 className="text-xl font-bold text-stone-900 truncate">
                 {selectedThread?.title || DEFAULT_THREAD_TITLE}
               </h3>
               {selectedThread?.isActive && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sage-500/20 text-sage-500 flex-shrink-0">
+                <span className="text-[11px] px-2.5 py-0.5 rounded-full border border-sage-300 bg-sage-50 text-sage-600 font-medium flex-shrink-0">
                   Active
                 </span>
               )}
             </div>
             {selectedThread?.createdAt && (
-              <p className="text-xs text-stone-500 mt-0.5">
+              <p className="text-xs text-stone-400 mt-0.5">
                 Created {formatRelativeTime(selectedThread.createdAt)}
               </p>
             )}
@@ -927,7 +927,7 @@ const Conversations = () => {
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className={`flex ${i % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
                   <div
-                    className={`h-12 rounded-2xl animate-pulse bg-white/5 ${
+                    className={`h-12 rounded-2xl animate-pulse bg-stone-100 ${
                       i % 2 === 0 ? 'w-2/3' : 'w-1/2'
                     }`}
                   />
@@ -966,11 +966,11 @@ const Conversations = () => {
                     <div
                       className={`rounded-2xl px-4 py-2.5 ${
                         msg.sender === 'user'
-                          ? 'bg-primary-600/20 rounded-br-md'
-                          : 'bg-white/5 rounded-bl-md'
+                          ? 'bg-primary-500 text-white rounded-br-md'
+                          : 'bg-stone-200/80 text-stone-900 rounded-bl-md'
                       }`}>
                       {msg.sender === 'agent' ? (
-                        <div className="text-sm prose prose-invert prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-black/30 prose-pre:rounded-lg prose-code:text-primary-300 prose-code:text-xs prose-a:text-primary-400 prose-headings:text-sm prose-headings:font-semibold prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
+                        <div className="text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-stone-300/50 prose-pre:rounded-lg prose-code:text-primary-700 prose-code:text-xs prose-a:text-primary-500 prose-headings:text-sm prose-headings:font-semibold prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
                           <Markdown>{msg.content}</Markdown>
                         </div>
                       ) : (
@@ -978,14 +978,14 @@ const Conversations = () => {
                       )}
                       <p
                         className={`text-[10px] mt-1 ${
-                          msg.sender === 'user' ? 'text-primary-400/50' : 'text-stone-600'
+                          msg.sender === 'user' ? 'text-white/60' : 'text-stone-400'
                         }`}>
                         {formatRelativeTime(msg.createdAt)}
                       </p>
                     </div>
                     <button
                       onClick={() => handleCopyMessage(msg.id, msg.content)}
-                      className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-white/10 text-stone-600 hover:text-stone-300 transition-all`}
+                      className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-all`}
                       title="Copy message">
                       {copiedMessageId === msg.id ? (
                         <svg
@@ -1037,14 +1037,14 @@ const Conversations = () => {
                                   })
                                 )
                               }
-                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-600/20 border border-primary-500/30 text-xs transition-colors hover:bg-primary-600/30"
+                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
                               title={`Remove ${emoji}`}>
                               {emoji}
                             </button>
                           ))}
                           {msg.sender === 'agent' &&
                             (reactionPickerMsgId === msg.id ? (
-                              <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-white/10">
+                              <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100">
                                 {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
                                   <button
                                     key={emoji}
@@ -1074,7 +1074,7 @@ const Conversations = () => {
                             ) : (
                               <button
                                 onClick={() => setReactionPickerMsgId(msg.id)}
-                                className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-white/5 hover:bg-white/15 text-stone-500 hover:text-stone-300 text-xs transition-all"
+                                className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 hover:bg-stone-200 text-stone-500 hover:text-stone-300 text-xs transition-all"
                                 title="Add reaction">
                                 +
                               </button>
@@ -1087,7 +1087,7 @@ const Conversations = () => {
               ))}
               {((activeThreadId === selectedThreadId && isSending) || isDelivering) && (
                 <div className="flex justify-start">
-                  <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-3">
+                  <div className="bg-stone-200/80 rounded-2xl rounded-bl-md px-4 py-3">
                     <div className="flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
                       <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
@@ -1104,10 +1104,10 @@ const Conversations = () => {
                       <span
                         className={`rounded-full px-2 py-0.5 text-[10px] ${
                           entry.status === 'running'
-                            ? 'bg-amber-500/20 text-amber-300'
+                            ? 'bg-amber-100 text-amber-600'
                             : entry.status === 'success'
-                              ? 'bg-sage-500/20 text-sage-300'
-                              : 'bg-coral-500/20 text-coral-300'
+                              ? 'bg-sage-100 text-sage-600'
+                              : 'bg-coral-100 text-coral-600'
                         }`}>
                         {entry.status}
                       </span>
@@ -1121,7 +1121,7 @@ const Conversations = () => {
                     onClick={() => {
                       if (selectedThreadId) void chatCancel(selectedThreadId);
                     }}
-                    className="text-xs text-stone-400 hover:text-stone-200 transition-colors">
+                    className="text-xs text-stone-500 hover:text-stone-700 transition-colors">
                     Cancel
                   </button>
                 </div>
@@ -1146,7 +1146,7 @@ const Conversations = () => {
                     void handleSendMessage(s.text);
                   }}
                   disabled={isSending || !rustChat}
-                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-[12px] whitespace-nowrap bg-white/5 text-stone-400 hover:bg-white/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-[12px] whitespace-nowrap bg-white text-stone-500 border border-stone-200 hover:bg-stone-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                   {s.text}
                 </button>
               ))}
@@ -1154,9 +1154,9 @@ const Conversations = () => {
           </div>
         )}
 
-        <div className="flex-shrink-0 border-t border-white/10 px-4 py-3">
+        <div className="flex-shrink-0 border-t border-stone-200 bg-white px-4 py-3">
           {teamUsage && teamUsage.remainingUsd <= 0 && (
-            <div className="mb-3 p-3 rounded-xl bg-coral-500/10 border border-coral-500/20 flex items-center justify-between gap-3">
+            <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
                 <svg
                   className="w-4 h-4 text-coral-400 flex-shrink-0"
@@ -1170,7 +1170,7 @@ const Conversations = () => {
                     d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
                   />
                 </svg>
-                <p className="text-xs text-coral-300 truncate">
+                <p className="text-xs text-coral-600 truncate">
                   Daily inference budget exhausted. Top up to continue.
                 </p>
               </div>
@@ -1187,20 +1187,20 @@ const Conversations = () => {
               <span className="text-xs text-stone-600">Loading models…</span>
             ) : (
               <>
-                <span className="text-xs text-stone-500">Model</span>
+                <span className="text-sm font-medium text-stone-700">Model</span>
                 <select
                   value={selectedModel}
                   onChange={e => setSelectedModel(e.target.value)}
                   disabled={isSending}
-                  className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-stone-300 focus:outline-none focus:ring-1 focus:ring-primary-500/50 disabled:opacity-50 cursor-pointer">
+                  className="bg-stone-100 border-0 rounded-full px-3 py-1 text-xs text-stone-600 focus:outline-none focus:ring-1 focus:ring-primary-500/50 disabled:opacity-50 cursor-pointer">
                   {availableModels.length > 0 ? (
                     availableModels.map(m => (
-                      <option key={m.id} value={m.id} className="bg-stone-900">
+                      <option key={m.id} value={m.id} className="bg-white">
                         {m.id}
                       </option>
                     ))
                   ) : (
-                    <option value={selectedModel} className="bg-stone-900">
+                    <option value={selectedModel} className="bg-white">
                       {selectedModel}
                     </option>
                   )}
@@ -1208,7 +1208,7 @@ const Conversations = () => {
               </>
             )}
             <div className="flex-1" />
-            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+            <div className="flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1">
               <span className="text-[10px] text-stone-500 px-1">Input</span>
               <button
                 type="button"
@@ -1217,7 +1217,7 @@ const Conversations = () => {
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   inputMode === 'text'
                     ? 'bg-primary-600 text-white'
-                    : 'text-stone-300 hover:bg-white/10'
+                    : 'text-stone-500 hover:bg-stone-100'
                 }`}>
                 Text
               </button>
@@ -1228,12 +1228,12 @@ const Conversations = () => {
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   inputMode === 'voice'
                     ? 'bg-primary-600 text-white'
-                    : 'text-stone-300 hover:bg-white/10'
+                    : 'text-stone-500 hover:bg-stone-100'
                 }`}>
                 Voice
               </button>
             </div>
-            <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+            <div className="flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1">
               <span className="text-[10px] text-stone-500 px-1">Reply</span>
               <button
                 type="button"
@@ -1241,7 +1241,7 @@ const Conversations = () => {
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   replyMode === 'text'
                     ? 'bg-primary-600 text-white'
-                    : 'text-stone-300 hover:bg-white/10'
+                    : 'text-stone-500 hover:bg-stone-100'
                 }`}>
                 Text
               </button>
@@ -1252,7 +1252,7 @@ const Conversations = () => {
                 className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
                   replyMode === 'voice'
                     ? 'bg-primary-600 text-white'
-                    : 'text-stone-300 hover:bg-white/10'
+                    : 'text-stone-500 hover:bg-stone-100'
                 }`}>
                 Voice
               </button>
@@ -1286,7 +1286,7 @@ const Conversations = () => {
                         fill="none"
                         stroke="currentColor"
                         strokeWidth="2.5"
-                        className="text-white/10"
+                        className="text-stone-200"
                       />
                       {teamUsage ? (
                         <circle
@@ -1333,15 +1333,15 @@ const Conversations = () => {
               </p>
               <button
                 onClick={() => setSendError(null)}
-                className="text-xs text-stone-500 hover:text-stone-300 transition-colors ml-2 flex-shrink-0">
+                className="text-xs text-stone-500 hover:text-stone-700 transition-colors ml-2 flex-shrink-0">
                 Dismiss
               </button>
             </div>
           )}
 
           {inputMode === 'text' ? (
-            <div className="flex items-end gap-2">
-              <div className="relative flex-1 rounded-xl border border-white/10 bg-white/5 focus-within:ring-1 focus-within:ring-primary-500/50 focus-within:border-primary-500/50 transition-all">
+            <div className="flex items-end gap-3">
+              <div className="relative flex-1 rounded-xl border border-stone-200 bg-white focus-within:ring-1 focus-within:ring-primary-500/50 focus-within:border-primary-500/50 transition-all">
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
@@ -1356,15 +1356,31 @@ const Conversations = () => {
                   placeholder="Type a message..."
                   rows={1}
                   disabled={isSending || !rustChat}
-                  className="relative z-10 w-full resize-none border-0 bg-transparent px-4 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans placeholder:text-stone-500 focus:outline-none focus:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
+                {/* Mic icon inside input */}
+                <button
+                  type="button"
+                  onClick={() => setInputMode('voice')}
+                  disabled={isRecording || isTranscribing || !rustChat}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 z-20 text-stone-400 hover:text-stone-600 transition-colors disabled:opacity-40"
+                  title="Switch to voice input">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={1.8}
+                      d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+                    />
+                  </svg>
+                </button>
               </div>
               <button
                 onClick={() => {
                   void handleSendMessage();
                 }}
                 disabled={!inputValue.trim() || isSending || !rustChat}
-                className="p-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                 {isSending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle
@@ -1386,8 +1402,8 @@ const Conversations = () => {
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 12h14M12 5l7 7-7 7"
+                      strokeWidth={2.5}
+                      d="M9 5l7 7-7 7"
                     />
                   </svg>
                 )}

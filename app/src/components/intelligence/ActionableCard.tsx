@@ -87,13 +87,13 @@ function SnoozeDropdownPortal({ isOpen, buttonRef, onClose, onSnooze }: SnoozeDr
     <div
       ref={dropdownRef}
       data-snooze-dropdown
-      className="fixed py-1 bg-stone-900 border border-stone-700 rounded-lg shadow-xl min-w-[120px] z-[9999] animate-fade-in"
+      className="fixed py-1 bg-white border border-stone-200 rounded-lg shadow-xl min-w-[120px] z-[9999] animate-fade-in"
       style={{ top: position.top, left: position.left }}>
       {SNOOZE_OPTIONS.map(option => (
         <button
           key={option.label}
           onClick={() => onSnooze(option.duration)}
-          className="w-full text-left px-3 py-1.5 text-xs text-white hover:bg-stone-800 transition-colors cursor-pointer">
+          className="w-full text-left px-3 py-1.5 text-xs text-stone-900 hover:bg-stone-100 transition-colors cursor-pointer">
           {option.label}
         </button>
       ))}
@@ -235,7 +235,7 @@ export function ActionableCard({
   const priorityClasses = {
     critical: 'border-coral-500/30 bg-coral-500/5',
     important: 'border-amber-500/30 bg-amber-500/5',
-    normal: 'border-white/10 bg-white/[0.02]',
+    normal: 'border-stone-200 bg-stone-50',
   };
 
   const priorityDotClasses = {
@@ -258,13 +258,13 @@ export function ActionableCard({
       <div
         className={`
           relative p-4 rounded-xl border backdrop-blur-sm transition-all duration-200
-          hover:bg-white/[0.04] hover:border-white/20
+          hover:bg-stone-50 hover:border-stone-200
           ${priorityClasses[item.priority]}
         `}>
         {/* Main content row */}
         <div className="flex items-start gap-3">
           {/* Icon */}
-          <div className="w-8 h-8 flex items-center justify-center text-white/70 flex-shrink-0 mt-0.5">
+          <div className="w-8 h-8 flex items-center justify-center text-stone-600 flex-shrink-0 mt-0.5">
             {sourceIcon}
           </div>
 
@@ -272,7 +272,7 @@ export function ActionableCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3">
               <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-medium text-white leading-snug">{item.title}</h3>
+                <h3 className="text-sm font-medium text-stone-900 leading-snug">{item.title}</h3>
                 {item.description && (
                   <p className="text-xs text-stone-400 mt-1 leading-relaxed">{item.description}</p>
                 )}

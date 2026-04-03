@@ -131,24 +131,24 @@ const DictationPanel = () => {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-5 max-w-md mx-auto w-full">
         <div>
-          <h2 className="text-lg font-semibold text-white mb-1">Voice Dictation</h2>
-          <p className="text-sm text-stone-400">
+          <h2 className="text-lg font-semibold text-stone-900 mb-1">Voice Dictation</h2>
+          <p className="text-sm text-stone-500">
             Transcribe speech to text using your microphone and local AI.
           </p>
         </div>
 
         {/* STT Engine Status */}
-        <div className="bg-stone-800/50 rounded-xl border border-stone-700/40 p-4 space-y-3">
+        <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-white">Speech-to-Text Engine</p>
+              <p className="text-sm font-medium text-stone-900">Speech-to-Text Engine</p>
               <p className="text-xs text-stone-400 mt-0.5">{statusLabel()}</p>
             </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => void dispatch(checkDictationAvailability())}
                 disabled={isCheckingStatus}
-                className="text-xs text-stone-400 hover:text-white transition-colors disabled:opacity-40 px-2 py-1 rounded border border-stone-700 hover:border-stone-500">
+                className="text-xs text-stone-400 hover:text-stone-900 transition-colors disabled:opacity-40 px-2 py-1 rounded border border-stone-200 hover:border-stone-300">
                 {isCheckingStatus ? '...' : 'Refresh'}
               </button>
               <div className={`w-2.5 h-2.5 rounded-full ${statusColor()}`} />
@@ -157,7 +157,7 @@ const DictationPanel = () => {
 
           {/* Detailed status rows */}
           {voiceStatus && (
-            <div className="space-y-1.5 pt-1 border-t border-stone-700/40">
+            <div className="space-y-1.5 pt-1 border-t border-stone-200">
               <StatusRow
                 label="Whisper binary"
                 value={voiceStatus.whisper_binary ?? 'not found'}
@@ -180,12 +180,12 @@ const DictationPanel = () => {
 
         {/* Model not found guidance */}
         {voiceStatus && !voiceStatus.stt_model_path && !isCheckingStatus && (
-          <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4">
-            <p className="text-xs text-amber-400 leading-relaxed">
-              Model file <code className="text-amber-300">{voiceStatus.stt_model_id}</code> was not
-              found. Go to <strong className="text-amber-300">Settings → Local AI Model</strong> to
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+            <p className="text-xs text-amber-700 leading-relaxed">
+              Model file <code className="text-amber-700">{voiceStatus.stt_model_id}</code> was not
+              found. Go to <strong className="text-amber-700">Settings → Local AI Model</strong> to
               download it, or place the file at{' '}
-              <code className="text-amber-300 break-all">
+              <code className="text-amber-700 break-all">
                 {(sttModelDirectory ?? '<workspace>/models/local-ai/stt') +
                   (sttModelDirectory?.includes('\\') ? '\\' : '/') +
                   voiceStatus.stt_model_id}
@@ -195,9 +195,9 @@ const DictationPanel = () => {
         )}
 
         {/* Global Hotkey */}
-        <div className="bg-stone-800/50 rounded-xl border border-stone-700/40 p-4 space-y-3">
+        <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
           <div>
-            <p className="text-sm font-medium text-white">Global Hotkey</p>
+            <p className="text-sm font-medium text-stone-900">Global Hotkey</p>
             <p className="text-xs text-stone-400 mt-0.5">
               Press anywhere to start / stop dictation
             </p>
@@ -208,7 +208,7 @@ const DictationPanel = () => {
               value={hotkeyInput}
               onChange={e => setHotkeyInput(e.target.value)}
               placeholder="e.g. CmdOrCtrl+Shift+D"
-              className="flex-1 bg-stone-700/60 border border-stone-600/50 rounded-lg px-3 py-2 text-sm text-white placeholder-stone-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              className="flex-1 bg-white border border-stone-200 rounded-lg px-3 py-2 text-sm text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500"
             />
             <button
               onClick={() => void handleSaveHotkey()}
@@ -217,18 +217,20 @@ const DictationPanel = () => {
               {isSavingHotkey ? 'Saving...' : hotkeySuccess ? 'Saved!' : 'Save'}
             </button>
           </div>
-          {hotkeyError && <p className="text-xs text-red-400">{hotkeyError}</p>}
-          <p className="text-xs text-stone-500">
+          {hotkeyError && <p className="text-xs text-red-600">{hotkeyError}</p>}
+          <p className="text-xs text-stone-400">
             Modifiers: <code>CmdOrCtrl</code>, <code>Alt</code>, <code>Shift</code>,{' '}
             <code>Super</code> (also accepts CommandOrControl)
           </p>
         </div>
 
         {/* Floating launcher preference */}
-        <div className="bg-stone-800/50 rounded-xl border border-stone-700/40 p-4 space-y-3">
+        <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-3">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-medium text-white">Always show floating Start button</p>
+              <p className="text-sm font-medium text-stone-900">
+                Always show floating Start button
+              </p>
               <p className="text-xs text-stone-400 mt-0.5">
                 If disabled, dictation starts via hotkey only while idle.
               </p>
@@ -251,9 +253,9 @@ const DictationPanel = () => {
         </div>
 
         {/* How to use */}
-        <div className="bg-stone-800/50 rounded-xl border border-stone-700/40 p-4 space-y-2">
-          <p className="text-sm font-medium text-white">How to use</p>
-          <ol className="text-xs text-stone-400 space-y-1.5 list-decimal list-inside">
+        <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-2">
+          <p className="text-sm font-medium text-stone-900">How to use</p>
+          <ol className="text-xs text-stone-500 space-y-1.5 list-decimal list-inside">
             <li>Press the global hotkey (or click Record in the overlay)</li>
             <li>Speak clearly into your microphone</li>
             <li>Press the hotkey again (or click Stop) to finish</li>
@@ -280,8 +282,8 @@ const StatusRow = ({ label, value, ok, muted }: StatusRowProps) => (
         muted ? 'bg-stone-600' : ok ? 'bg-green-400' : 'bg-red-400'
       }`}
     />
-    <span className="text-stone-500 flex-shrink-0 w-28">{label}</span>
-    <span className="text-stone-300 break-all leading-relaxed">{value}</span>
+    <span className="text-stone-400 flex-shrink-0 w-28">{label}</span>
+    <span className="text-stone-600 break-all leading-relaxed">{value}</span>
   </div>
 );
 

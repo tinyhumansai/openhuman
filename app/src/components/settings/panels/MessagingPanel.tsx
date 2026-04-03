@@ -23,14 +23,11 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const STATUS_STYLES: Record<ChannelConnectionStatus, { label: string; className: string }> = {
-  connected: { label: 'Connected', className: 'bg-sage-500/20 text-sage-300 border-sage-500/30' },
-  connecting: {
-    label: 'Connecting',
-    className: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
-  },
+  connected: { label: 'Connected', className: 'bg-sage-50 text-sage-700 border-sage-200' },
+  connecting: { label: 'Connecting', className: 'bg-amber-50 text-amber-700 border-amber-200' },
   disconnected: {
     label: 'Disconnected',
-    className: 'bg-stone-500/20 text-stone-300 border-stone-500/30',
+    className: 'bg-stone-100 text-stone-600 border-stone-200',
   },
   error: { label: 'Error', className: 'bg-coral-500/20 text-coral-300 border-coral-500/30' },
 };
@@ -334,8 +331,8 @@ const MessagingPanel = () => {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Default channel selector */}
-        <section className="rounded-xl border border-stone-800/60 bg-black/40 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Default Messaging Channel</h3>
+        <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Default Messaging Channel</h3>
           <div className="grid grid-cols-2 gap-2">
             {definitions.map(def => {
               const channelId = def.id as ChannelType;
@@ -349,8 +346,8 @@ const MessagingPanel = () => {
                   disabled={busyKeys[busyKey]}
                   className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                     selected
-                      ? 'border-primary-500/60 bg-primary-500/20 text-primary-200'
-                      : 'border-stone-700 bg-stone-900/30 text-stone-300 hover:border-stone-500'
+                      ? 'border-primary-500/60 bg-primary-50 text-primary-600'
+                      : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
                   }`}>
                   {def.display_name}
                 </button>
@@ -358,7 +355,7 @@ const MessagingPanel = () => {
             })}
           </div>
           <p className="text-xs text-stone-400">
-            Active route: <span className="text-primary-300">{recommendedRoute}</span>
+            Active route: <span className="text-primary-600">{recommendedRoute}</span>
           </p>
         </section>
 
@@ -369,7 +366,7 @@ const MessagingPanel = () => {
         )}
 
         {loading && (
-          <div className="rounded-xl border border-stone-800/60 bg-black/40 p-4 text-sm text-stone-400">
+          <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-400">
             Loading channel definitions...
           </div>
         )}
@@ -379,18 +376,16 @@ const MessagingPanel = () => {
           definitions.map(def => {
             const channelId = def.id as ChannelType;
             return (
-              <section
-                key={channelId}
-                className="rounded-xl border border-stone-800/60 bg-black/40 p-4">
+              <section key={channelId} className="rounded-xl border border-stone-200 bg-white p-4">
                 <div className="mb-4">
-                  <h3 className="text-base font-semibold text-white">{def.display_name}</h3>
+                  <h3 className="text-base font-semibold text-stone-900">{def.display_name}</h3>
                   <p className="text-xs text-stone-400">{def.description}</p>
                   {def.capabilities.length > 0 && (
                     <div className="flex gap-1.5 mt-2">
                       {def.capabilities.map(cap => (
                         <span
                           key={cap}
-                          className="px-1.5 py-0.5 text-[10px] rounded bg-stone-800 text-stone-400 border border-stone-700">
+                          className="px-1.5 py-0.5 text-[10px] rounded bg-stone-100 text-stone-500 border border-stone-200">
                           {cap.replace(/_/g, ' ')}
                         </span>
                       ))}
@@ -408,13 +403,13 @@ const MessagingPanel = () => {
                     return (
                       <div
                         key={spec.mode}
-                        className="rounded-lg border border-stone-800 bg-stone-900/20 p-3">
+                        className="rounded-lg border border-stone-200 bg-stone-50 p-3">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-sm font-medium text-white">
+                            <p className="text-sm font-medium text-stone-900">
                               {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
                             </p>
-                            <p className="text-xs text-stone-400 mt-1">{spec.description}</p>
+                            <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
                             {connection?.lastError && (
                               <p className="text-xs text-coral-300 mt-1">{connection.lastError}</p>
                             )}
@@ -435,7 +430,7 @@ const MessagingPanel = () => {
                                 value={fieldValues[compositeKey]?.[field.key] ?? ''}
                                 onChange={e => updateField(compositeKey, field.key, e.target.value)}
                                 placeholder={field.placeholder || field.label}
-                                className="w-full rounded-lg border border-stone-700 bg-stone-900 px-3 py-2 text-sm text-white placeholder:text-stone-500 focus:outline-none focus:border-primary-500/60"
+                                className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-primary-500/60"
                               />
                             ))}
                           </div>
@@ -453,7 +448,7 @@ const MessagingPanel = () => {
                             type="button"
                             disabled={busyKeys[compositeKey] || status === 'disconnected'}
                             onClick={() => handleDisconnect(channelId, spec.mode)}
-                            className="rounded-lg border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-300 hover:border-stone-500 disabled:opacity-50">
+                            className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
                             Disconnect
                           </button>
                         </div>

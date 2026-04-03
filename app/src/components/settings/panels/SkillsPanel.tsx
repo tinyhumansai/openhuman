@@ -72,15 +72,15 @@ const SkillsPanel = () => {
       <SettingsHeader title="Skills" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto px-6 pb-10 space-y-6">
-        <section className="rounded-xl border border-stone-800/60 bg-black/40 p-4 space-y-3">
+        <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
           <div>
-            <h3 className="text-lg font-semibold text-white">Browser Access</h3>
+            <h3 className="text-lg font-semibold text-stone-900">Browser Access</h3>
             <p className="text-xs text-stone-400">
               Allow the browser tool to visit any public domain (private and file URLs are still
               blocked).
             </p>
           </div>
-          <label className="flex items-center gap-3 text-sm text-stone-300">
+          <label className="flex items-center gap-3 text-sm text-stone-600">
             <input
               type="checkbox"
               className="checkbox checkbox-primary"
@@ -109,11 +109,11 @@ const SkillsPanel = () => {
         </section>
 
         {error && (
-          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-600">
             {error}
           </div>
         )}
-        <div className="rounded-xl border border-stone-800/60 bg-black/40">
+        <div className="rounded-xl border border-stone-200 bg-white">
           {loading && <div className="p-4 text-sm text-stone-400">Loading integrations...</div>}
           {!loading && integrations.length === 0 && (
             <div className="p-4 text-sm text-stone-400">
@@ -122,8 +122,8 @@ const SkillsPanel = () => {
           )}
           {!loading &&
             Object.entries(groupedIntegrations).map(([category, items]) => (
-              <div key={category} className="border-b border-stone-800/60 last:border-0">
-                <div className="px-4 pt-4 pb-2 text-xs uppercase tracking-wide text-stone-500">
+              <div key={category} className="border-b border-stone-200 last:border-0">
+                <div className="px-4 pt-4 pb-2 text-xs uppercase tracking-wide text-stone-400">
                   {CATEGORY_LABELS[category as IntegrationCategory] ?? category}
                 </div>
                 <div>
@@ -185,25 +185,25 @@ function IntegrationRow({
 }) {
   const statusStyle =
     integration.status === 'Active'
-      ? 'bg-sage-500/20 text-sage-300 border-sage-500/30'
+      ? 'bg-sage-50 text-sage-700 border-sage-200'
       : integration.status === 'Available'
         ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-        : 'bg-stone-500/20 text-stone-300 border-stone-500/30';
+        : 'bg-stone-100 text-stone-600 border-stone-200';
 
   return (
     <div
       className={`flex items-center justify-between gap-4 p-4 ${
-        isLast ? '' : 'border-b border-stone-800/60'
+        isLast ? '' : 'border-b border-stone-200'
       }`}>
       <div className="flex items-center gap-3 text-left flex-1 min-w-0">
-        <div className="w-6 h-6 flex items-center justify-center text-white/70">
+        <div className="w-6 h-6 flex items-center justify-center text-stone-500">
           <span className="text-xs font-semibold uppercase">{integration.name.slice(0, 2)}</span>
         </div>
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-white truncate">{integration.name}</div>
-          <div className="text-xs text-stone-400 line-clamp-2">{integration.description}</div>
+          <div className="text-sm font-semibold text-stone-900 truncate">{integration.name}</div>
+          <div className="text-xs text-stone-500 line-clamp-2">{integration.description}</div>
           {integration.setup_hints.length > 0 && (
-            <div className="mt-1 text-[11px] text-stone-500">{integration.setup_hints[0]}</div>
+            <div className="mt-1 text-[11px] text-stone-400">{integration.setup_hints[0]}</div>
           )}
         </div>
       </div>
@@ -213,7 +213,7 @@ function IntegrationRow({
           className={`px-2 py-1 text-[11px] font-semibold uppercase border rounded-full ${statusStyle}`}>
           {integration.status}
         </span>
-        <label className="flex items-center gap-2 text-xs text-stone-300">
+        <label className="flex items-center gap-2 text-xs text-stone-600">
           <input
             type="checkbox"
             className="checkbox checkbox-primary"

@@ -85,7 +85,7 @@ const OnboardingOverlay = () => {
   if (!shouldShow) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[9999] bg-canvas-900/95 backdrop-blur-md flex items-center justify-center">
+    <div className="fixed inset-0 z-[9999] bg-white/95 backdrop-blur-md flex items-center justify-center">
       <Onboarding onComplete={handleDone} onDefer={handleDone} />
     </div>,
     document.body

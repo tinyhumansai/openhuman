@@ -9,7 +9,6 @@ interface ConnectionIndicatorProps {
 
 const ConnectionIndicator = ({
   status: overrideStatus,
-  description = 'Your device is now connected to the OpenHuman AI. Keep the app running to keep the connection alive. You can message your assistant with the button below.',
   className = '',
 }: ConnectionIndicatorProps) => {
   // Use socket store status, but allow override via props
@@ -28,15 +27,13 @@ const ConnectionIndicator = ({
   const config = statusConfig[status];
 
   return (
-    <div className={`mb-6 ${className}`}>
-      <div className="flex items-center justify-center space-x-2 mb-3">
+    <div className={`${className}`}>
+      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-stone-50 border border-stone-200">
         <div
-          className={`w-2 h-2 ${config.color} rounded-full ${status === 'connected' ? 'animate-pulse' : ''}`}></div>
-        <span className={`text-sm ${config.textColor}`}>{config.text}</span>
+          className={`w-2 h-2 ${config.color} rounded-full ${status === 'connected' ? 'animate-pulse' : ''}`}
+        />
+        <span className={`text-xs font-medium ${config.textColor}`}>{config.text}</span>
       </div>
-      {description && (
-        <p className="text-xs opacity-60 text-center leading-relaxed">{description}</p>
-      )}
     </div>
   );
 };

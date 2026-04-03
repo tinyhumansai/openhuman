@@ -378,9 +378,11 @@ const BillingPanel = () => {
         <div className="space-y-2">
           <div className="max-w-md mt-4 mx-auto px-4 space-y-3">
             {/* ── Current Plan Header ───────────────────────────────── */}
-            <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 p-3">
+            <div className="rounded-2xl border border-stone-200 bg-white p-3">
               <div className="flex items-center justify-between mb-1.5">
-                <h3 className="text-sm font-semibold text-white">Current Plan — {currentTier}</h3>
+                <h3 className="text-sm font-semibold text-stone-900">
+                  Current Plan — {currentTier}
+                </h3>
                 {hasActive && (
                   <button
                     onClick={handleManageSubscription}
@@ -402,9 +404,9 @@ const BillingPanel = () => {
             </div>
 
             {/* ── Inference Budget (Team Usage) ─────────────────────── */}
-            <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 p-3">
+            <div className="rounded-2xl border border-stone-200 bg-white p-3">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-white">Inference Budget</h3>
+                <h3 className="text-sm font-semibold text-stone-900">Inference Budget</h3>
                 {isLoadingCredits && <span className="text-[10px] text-stone-500">Loading…</span>}
                 {teamUsage && !isLoadingCredits && (
                   <span className="text-xs text-stone-400">
@@ -456,20 +458,20 @@ const BillingPanel = () => {
             </div>
 
             {/* ── Credits Balance & Top-up ──────────────────────────── */}
-            <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 p-3">
-              <h3 className="text-sm font-semibold text-white mb-2">Credits Balance</h3>
+            <div className="rounded-2xl border border-stone-200 bg-white p-3">
+              <h3 className="text-sm font-semibold text-stone-900 mb-2">Credits Balance</h3>
               {creditBalance ? (
                 <div className="space-y-1.5 mb-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-stone-400">General credits</span>
-                    <span className="text-xs font-medium text-white">
+                    <span className="text-xs font-medium text-stone-900">
                       ${creditBalance.balanceUsd.toFixed(2)}
                     </span>
                   </div>
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-stone-400">Top-up credits</span>
-                      <span className="text-xs font-medium text-white">
+                      <span className="text-xs font-medium text-stone-900">
                         ${creditBalance.topUpBalanceUsd.toFixed(2)}
                         {creditBalance.topUpBaselineUsd != null &&
                           creditBalance.topUpBaselineUsd > 0 && (
@@ -536,7 +538,7 @@ const BillingPanel = () => {
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 billingInterval === 'monthly'
                   ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
-                  : 'text-stone-400 hover:text-stone-300'
+                  : 'text-stone-500 hover:text-stone-700'
               } ${paymentMethod === 'crypto' ? 'opacity-40 cursor-not-allowed' : ''}`}>
               Monthly
             </button>
@@ -545,7 +547,7 @@ const BillingPanel = () => {
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 billingInterval === 'annual'
                   ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
-                  : 'text-stone-400 hover:text-stone-300'
+                  : 'text-stone-500 hover:text-stone-700'
               }`}>
               Annual
             </button>
@@ -566,15 +568,15 @@ const BillingPanel = () => {
                     className={`rounded-2xl border p-3 transition-all ${
                       isCurrent
                         ? 'border-primary-500/40 bg-primary-500/5'
-                        : 'border-stone-700/50 bg-stone-800/40'
+                        : 'border-stone-200 bg-white'
                     }`}>
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="text-sm font-semibold text-white">{plan.name}</h4>
+                          <h4 className="text-sm font-semibold text-stone-900">{plan.name}</h4>
                           {/* Features inline with title */}
                           {plan.features.map(f => (
-                            <span key={f.text} className="text-xs text-stone-300">
+                            <span key={f.text} className="text-xs text-stone-600">
                               <span className="text-stone-500 mx-1">•</span>
                               {f.text}
                             </span>
@@ -591,7 +593,7 @@ const BillingPanel = () => {
                           )}
                         </div>
                         <div className="mt-0.5 flex items-baseline gap-1">
-                          <span className="text-xl font-bold text-white">
+                          <span className="text-xl font-bold text-stone-900">
                             {displayPrice(plan, billingInterval)}
                           </span>
                           {plan.tier !== 'FREE' && (
@@ -669,7 +671,7 @@ const BillingPanel = () => {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                     />
                   </svg>
-                  <p className="text-xs text-amber-300">
+                  <p className="text-xs text-amber-700">
                     Waiting for payment confirmation... Complete checkout in the browser window that
                     opened.
                   </p>
@@ -678,9 +680,9 @@ const BillingPanel = () => {
             )}
 
             {/* ── Pay with crypto toggle ────────────────────────────── */}
-            <div className="flex items-center justify-between rounded-xl bg-stone-800/40 border border-stone-700/40 p-3 mx-4">
+            <div className="flex items-center justify-between rounded-xl bg-stone-50 border border-stone-200 p-3 mx-4">
               <div>
-                <p className="text-xs font-medium text-white">Pay with Crypto</p>
+                <p className="text-xs font-medium text-stone-900">Pay with Crypto</p>
                 <p className="text-[11px] text-stone-400 mt-0.5">
                   You can choose to pay annually using crypto
                 </p>
@@ -702,11 +704,11 @@ const BillingPanel = () => {
 
             {/* ── Auto-Recharge Credits ─────────────────────────────── */}
             <div className="px-4 pt-2">
-              <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 overflow-hidden">
+              <div className="rounded-2xl border border-stone-200 bg-white overflow-hidden">
                 {/* Header row */}
                 <div className="flex items-center justify-between p-3">
                   <div>
-                    <p className="text-xs font-semibold text-white">Auto-Recharge Credits</p>
+                    <p className="text-xs font-semibold text-stone-900">Auto-Recharge Credits</p>
                     <p className="text-[11px] text-stone-400 mt-0.5">
                       Automatically top up when your balance runs low
                     </p>
@@ -770,11 +772,11 @@ const BillingPanel = () => {
 
                 {/* Settings — only shown when enabled */}
                 {!arLoading && arSettings?.enabled && (
-                  <div className="border-t border-stone-700/50 px-3 pt-3 pb-2 space-y-3">
+                  <div className="border-t border-stone-200 px-3 pt-3 pb-2 space-y-3">
                     {/* Status row */}
                     <div className="flex items-center gap-3 flex-wrap">
                       {arSettings.inFlight && (
-                        <span className="flex items-center gap-1 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5">
+                        <span className="flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
                           <svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
                             <circle
                               className="opacity-25"
@@ -844,7 +846,7 @@ const BillingPanel = () => {
                             className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                               arThreshold === v
                                 ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                                : 'bg-stone-700/40 text-stone-400 border-stone-600/40 hover:text-stone-300'
+                                : 'bg-stone-100 text-stone-500 border-stone-200 hover:text-stone-700'
                             }`}>
                             ${v}
                           </button>
@@ -863,7 +865,7 @@ const BillingPanel = () => {
                             className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                               arAmount === v
                                 ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                                : 'bg-stone-700/40 text-stone-400 border-stone-600/40 hover:text-stone-300'
+                                : 'bg-stone-100 text-stone-500 border-stone-200 hover:text-stone-700'
                             }`}>
                             ${v}
                           </button>
@@ -882,7 +884,7 @@ const BillingPanel = () => {
                             className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                               arWeeklyLimit === v
                                 ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                                : 'bg-stone-700/40 text-stone-400 border-stone-600/40 hover:text-stone-300'
+                                : 'bg-stone-100 text-stone-500 border-stone-200 hover:text-stone-700'
                             }`}>
                             ${v}
                           </button>
@@ -914,9 +916,9 @@ const BillingPanel = () => {
                 )}
 
                 {/* Payment methods */}
-                <div className="border-t border-stone-700/50 px-3 py-2.5">
+                <div className="border-t border-stone-200 px-3 py-2.5">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-[11px] font-medium text-stone-300">Payment Methods</p>
+                    <p className="text-[11px] font-medium text-stone-600">Payment Methods</p>
                     <button
                       onClick={handleAddCard}
                       className="text-[11px] text-primary-400 hover:text-primary-300 font-medium transition-colors">
@@ -931,7 +933,7 @@ const BillingPanel = () => {
                       ))}
                     </div>
                   ) : cards.length === 0 ? (
-                    <div className="flex items-center gap-2 rounded-lg bg-stone-700/20 border border-stone-700/30 p-2.5">
+                    <div className="flex items-center gap-2 rounded-lg bg-stone-50 border border-stone-200 p-2.5">
                       <svg
                         className="w-4 h-4 text-stone-500 flex-shrink-0"
                         fill="none"
@@ -958,7 +960,7 @@ const BillingPanel = () => {
                         return (
                           <div
                             key={card.id}
-                            className="flex items-center gap-2 rounded-lg bg-stone-700/20 border border-stone-700/30 px-2.5 py-2">
+                            className="flex items-center gap-2 rounded-lg bg-stone-50 border border-stone-200 px-2.5 py-2">
                             {/* Card icon */}
                             <svg
                               className="w-4 h-4 text-stone-400 flex-shrink-0"
@@ -976,7 +978,7 @@ const BillingPanel = () => {
                             {/* Card info */}
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-xs text-white font-medium">
+                                <span className="text-xs text-stone-900 font-medium">
                                   {cardBrandLabel(card.brand)} ••••{card.last4}
                                 </span>
                                 {card.isDefault && (
@@ -997,7 +999,7 @@ const BillingPanel = () => {
                                 <button
                                   onClick={() => handleSetDefault(card.id)}
                                   disabled={!!settingDefaultId || !!deletingCardId}
-                                  className="text-[10px] text-stone-400 hover:text-stone-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1">
+                                  className="text-[10px] text-stone-500 hover:text-stone-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1">
                                   {isSettingDefault ? '…' : 'Set default'}
                                 </button>
                               )}
@@ -1037,8 +1039,8 @@ const BillingPanel = () => {
             {/* ── Upgrade benefits ───────────────────────────────────── */}
             <div className="px-4 pb-4 pt-2">
               <div className="rounded-xl bg-gradient-to-br from-primary-500/10 to-sage-500/10 border border-primary-500/20 p-4">
-                <h3 className="text-sm font-semibold text-white mb-2">Why upgrade?</h3>
-                <ul className="space-y-1.5 text-xs text-stone-300">
+                <h3 className="text-sm font-semibold text-stone-900 mb-2">Why upgrade?</h3>
+                <ul className="space-y-1.5 text-xs text-stone-600">
                   <li className="flex items-start gap-2">
                     <svg
                       className="w-4 h-4 text-sage-400 flex-shrink-0 mt-0.5"

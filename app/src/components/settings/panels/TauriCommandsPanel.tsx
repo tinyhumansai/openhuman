@@ -707,7 +707,7 @@ const TauriCommandsPanel = () => {
                   label="Runtime Kind"
                   helpText="JavaScript execution environment for skills. 'native' uses V8 engine for maximum performance and compatibility. 'docker' provides isolation but requires Docker. 'wasm' offers security with some limitations.">
                   <input
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                    className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                     placeholder="native"
                     value={runtimeKind}
                     onChange={event => setRuntimeKind(event.target.value)}
@@ -734,14 +734,16 @@ const TauriCommandsPanel = () => {
 
               {skills.length > 0 && (
                 <div className="space-y-4">
-                  <h5 className="text-sm font-medium text-gray-300">Skills</h5>
+                  <h5 className="text-sm font-medium text-stone-600">Skills</h5>
                   <div className="grid gap-3 max-h-52 overflow-y-auto">
                     {skills.map(item => (
                       <div
                         key={item.snapshot.skill_id}
                         className="flex items-center justify-between rounded-lg border border-white/10 bg-white/5 backdrop-blur-sm px-4 py-3">
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm text-white font-medium">{item.snapshot.name}</div>
+                          <div className="text-sm text-stone-900 font-medium">
+                            {item.snapshot.name}
+                          </div>
                           <div className="text-xs text-gray-400 truncate">
                             {item.snapshot.skill_id}
                           </div>
@@ -762,11 +764,11 @@ const TauriCommandsPanel = () => {
                 <div className="md:col-span-2">
                   <div className="space-y-4">
                     {/* Live Status Display */}
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-stone-900/40 border border-stone-800/60">
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-white border border-stone-200">
                       <div className="flex items-center gap-3">
                         <DaemonHealthIndicator size="md" />
                         <div>
-                          <div className="text-white font-medium">
+                          <div className="text-stone-900 font-medium">
                             Agent Status: {daemonHealth.status}
                           </div>
                           <div className="text-xs text-gray-400">
@@ -799,7 +801,7 @@ const TauriCommandsPanel = () => {
                         {Object.entries(daemonHealth.components).map(([name, health]) => (
                           <div
                             key={name}
-                            className="flex items-center gap-2 p-2 rounded bg-stone-800/40">
+                            className="flex items-center gap-2 p-2 rounded bg-stone-50">
                             <div
                               className={`w-2 h-2 rounded-full ${
                                 health.status === 'ok'
@@ -809,7 +811,7 @@ const TauriCommandsPanel = () => {
                                     : 'bg-red-500'
                               }`}
                             />
-                            <span className="capitalize text-gray-300">{name}</span>
+                            <span className="capitalize text-stone-600">{name}</span>
                             {health.restart_count > 0 && (
                               <span className="text-xs text-yellow-400">
                                 ({health.restart_count})
@@ -856,9 +858,9 @@ const TauriCommandsPanel = () => {
                     </ActionPanel>
 
                     {/* Auto-start Toggle */}
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-stone-800/40 border border-stone-700/60">
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-stone-50 border border-stone-200">
                       <div>
-                        <div className="text-sm font-medium text-gray-300">Auto-start Agent</div>
+                        <div className="text-sm font-medium text-stone-700">Auto-start Agent</div>
                         <div className="text-xs text-gray-500">
                           Automatically start agent on app launch
                         </div>
@@ -875,9 +877,9 @@ const TauriCommandsPanel = () => {
                     </div>
 
                     {/* Tray Toggle */}
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-stone-800/40 border border-stone-700/60">
+                    <div className="flex items-center justify-between p-3 rounded-lg bg-stone-50 border border-stone-200">
                       <div>
-                        <div className="text-sm font-medium text-gray-300">Show Daemon Tray</div>
+                        <div className="text-sm font-medium text-stone-700">Show Daemon Tray</div>
                         <div className="text-xs text-gray-500">
                           Keep OpenHuman Core tray icon visible in daemon host mode
                         </div>
@@ -939,7 +941,7 @@ const TauriCommandsPanel = () => {
                   helpText="Convert sensitive data to encrypted format using the system's secure encryption. Useful for safely storing API keys, tokens, or other confidential information in configuration files."
                   fullWidth>
                   <textarea
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[90px] resize-y"
+                    className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[90px] resize-y"
                     placeholder="Plaintext"
                     value={encryptInput}
                     onChange={event => setEncryptInput(event.target.value)}
@@ -950,7 +952,7 @@ const TauriCommandsPanel = () => {
                   helpText="Convert encrypted data back to readable format. Only works with data encrypted by this system. Use this to verify encrypted values or retrieve original content when needed."
                   fullWidth>
                   <textarea
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[90px] resize-y"
+                    className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[90px] resize-y"
                     placeholder="Ciphertext"
                     value={decryptInput}
                     onChange={event => setDecryptInput(event.target.value)}
@@ -994,7 +996,7 @@ const TauriCommandsPanel = () => {
                 label="Backend"
                 helpText="Memory storage system for conversations and agent memory. 'sqlite' for local file storage (default), 'postgres' for scalable database, 'redis' for high-performance caching, 'neo4j' for graph relationships.">
                 <input
-                  className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                   placeholder="sqlite"
                   value={memoryBackend}
                   onChange={event => setMemoryBackend(event.target.value)}
@@ -1010,7 +1012,7 @@ const TauriCommandsPanel = () => {
                 label="Embedding Provider"
                 helpText="AI service for generating vector embeddings for semantic search and memory retrieval. 'openai' for high quality, 'cohere' for multilingual, 'huggingface' for local models, 'none' to disable.">
                 <input
-                  className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                   placeholder="openai"
                   value={embeddingProvider}
                   onChange={event => setEmbeddingProvider(event.target.value)}
@@ -1020,7 +1022,7 @@ const TauriCommandsPanel = () => {
                 label="Embedding Model"
                 helpText="Specific model for generating vector embeddings. OpenAI: 'text-embedding-3-small' (fast, cost-effective) or 'text-embedding-3-large' (higher accuracy). Must match your provider.">
                 <input
-                  className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                   placeholder="text-embedding-3-small"
                   value={embeddingModel}
                   onChange={event => setEmbeddingModel(event.target.value)}
@@ -1030,7 +1032,7 @@ const TauriCommandsPanel = () => {
                 label="Embedding Dimensions"
                 helpText="Vector size for embeddings. Must match your model: text-embedding-3-small supports 512-1536 (default 1536), text-embedding-3-large supports up to 3072. Higher dimensions = better accuracy, more storage.">
                 <input
-                  className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                   placeholder="1536"
                   value={embeddingDims}
                   onChange={event => setEmbeddingDims(event.target.value)}
@@ -1087,7 +1089,7 @@ const TauriCommandsPanel = () => {
                   helpText="Full path to hardware device for introspection. Common paths: /dev/tty.usbmodem* (macOS USB), /dev/ttyUSB* (Linux), COM* (Windows). Use 'Discover Devices' to find available hardware."
                   fullWidth>
                   <input
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                    className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                     placeholder="Device path (e.g. /dev/tty.usbmodem)"
                     value={hardwarePath}
                     onChange={event => setHardwarePath(event.target.value)}
@@ -1102,7 +1104,7 @@ const TauriCommandsPanel = () => {
                 helpText="Path to existing agent workspace for data migration. Leave empty to migrate from default locations. Supports importing from OpenClaw, AutoGen, and other agent frameworks. Run dry-run first to preview changes."
                 fullWidth>
                 <input
-                  className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                   placeholder="Source workspace (optional)"
                   value={migrationSource}
                   onChange={event => setMigrationSource(event.target.value)}
@@ -1162,12 +1164,12 @@ const TauriCommandsPanel = () => {
             loading={operationLoading === 'sendChat'}>
             {/* Agent Chat - Preserve original styling */}
             <div className="space-y-6">
-              <h4 className="text-lg font-medium text-white">Agent Chat</h4>
+              <h4 className="text-lg font-medium text-stone-900">Agent Chat</h4>
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2 text-sm text-gray-300">
+                <label className="space-y-2 text-sm text-stone-600">
                   Model Override
                   <input
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                    className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                     placeholder="gpt-4.1-mini"
                     value={chatModel}
                     onChange={event => setChatModel(event.target.value)}
@@ -1177,10 +1179,10 @@ const TauriCommandsPanel = () => {
                     claude-3-sonnet. Leave empty for system default.
                   </p>
                 </label>
-                <label className="space-y-2 text-sm text-gray-300">
+                <label className="space-y-2 text-sm text-stone-600">
                   Temperature
                   <input
-                    className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
+                    className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200"
                     placeholder="0.7"
                     value={chatTemperature}
                     onChange={event => setChatTemperature(event.target.value)}
@@ -1193,7 +1195,7 @@ const TauriCommandsPanel = () => {
               </div>
               <div className="space-y-3">
                 <textarea
-                  className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[120px] resize-y"
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[120px] resize-y"
                   placeholder="Send a message to the agent..."
                   value={chatInput}
                   onChange={event => setChatInput(event.target.value)}
@@ -1204,7 +1206,7 @@ const TauriCommandsPanel = () => {
                 </p>
               </div>
               <button
-                className="bg-primary-600 hover:bg-primary-500 active:bg-primary-700 text-white font-medium px-6 py-3 rounded-lg transition-all duration-200 ease-in-out shadow-soft hover:shadow-medium focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:ring-offset-2 focus:ring-offset-black disabled:opacity-50 disabled:cursor-not-allowed"
+                className="bg-primary-600 hover:bg-primary-500 active:bg-primary-700 text-white font-medium px-6 py-3 rounded-lg transition-all duration-200 ease-in-out shadow-soft hover:shadow-medium focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:ring-offset-2 focus:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={sendChat}>
                 Send Message
               </button>
@@ -1214,7 +1216,7 @@ const TauriCommandsPanel = () => {
                     <div
                       key={`${entry.role}-${index}`}
                       className={`text-sm ${
-                        entry.role === 'user' ? 'text-white' : 'text-emerald-200'
+                        entry.role === 'user' ? 'text-stone-900' : 'text-emerald-700'
                       }`}>
                       <span className="font-semibold uppercase text-[10px] tracking-wide">
                         {entry.role}
@@ -1229,7 +1231,7 @@ const TauriCommandsPanel = () => {
             {/* Output Console */}
             <div className="space-y-6">
               <div>
-                <h4 className="text-lg font-medium text-white flex items-center gap-2">
+                <h4 className="text-lg font-medium text-stone-900 flex items-center gap-2">
                   <DocumentTextIcon className="h-5 w-5" />
                   Output Console
                 </h4>
@@ -1245,7 +1247,7 @@ const TauriCommandsPanel = () => {
               )}
               <div className="space-y-3">
                 <textarea
-                  className="w-full px-4 py-3 rounded-lg bg-stone-900/40 border border-stone-800/60 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[240px] font-mono text-xs resize-y"
+                  className="w-full px-4 py-3 rounded-lg bg-white border border-stone-200 text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/30 focus:outline-none transition-all duration-200 min-h-[240px] font-mono text-xs resize-y"
                   value={output}
                   readOnly
                   placeholder="Command output will appear here..."

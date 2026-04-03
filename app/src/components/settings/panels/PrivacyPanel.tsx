@@ -40,11 +40,11 @@ const PrivacyPanel = () => {
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
               Anonymized Analytics
             </h3>
-            <div className="bg-stone-800/50 rounded-xl border border-stone-700/50 overflow-hidden">
+            <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
               <div className="flex items-center justify-between p-4">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-white">Share Anonymized Usage Data</p>
-                  <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                  <p className="text-sm font-medium text-stone-900">Share Anonymized Usage Data</p>
+                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">
                     Help improve OpenHuman by sharing anonymous crash reports and usage analytics.
                     All data is fully anonymized &mdash; no personal data, messages, wallet keys, or
                     session information is ever collected.
@@ -68,7 +68,7 @@ const PrivacyPanel = () => {
           </div>
 
           {/* Info Box */}
-          <div className="p-4 bg-stone-800/30 rounded-xl border border-stone-700/30">
+          <div className="p-4 bg-stone-50 rounded-xl border border-stone-200">
             <div className="flex items-start space-x-3">
               <svg
                 className="w-5 h-5 text-stone-400 mt-0.5 flex-shrink-0"
@@ -81,7 +81,7 @@ const PrivacyPanel = () => {
                 />
               </svg>
               <div>
-                <p className="text-xs text-stone-400 leading-relaxed">
+                <p className="text-xs text-stone-500 leading-relaxed">
                   All analytics and bug reports are fully anonymized. When enabled, we collect only
                   crash information, device type, and the file location of errors. We never access
                   your messages, session data, wallet keys, API keys, or any personally identifiable

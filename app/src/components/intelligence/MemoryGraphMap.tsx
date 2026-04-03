@@ -208,10 +208,10 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-        <p className="text-sm font-semibold text-white mb-3">Memory Graph</p>
+      <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+        <p className="text-sm font-semibold text-stone-900 mb-3">Memory Graph</p>
         <div className="flex items-center justify-center" style={{ minHeight: 320 }}>
-          <div className="flex gap-2 items-center text-stone-400 text-sm">
+          <div className="flex gap-2 items-center text-stone-600 text-sm">
             <div className="w-4 h-4 rounded-full border-2 border-primary-500 border-t-transparent animate-spin" />
             Loading graph…
           </div>
@@ -222,10 +222,10 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
 
   if (nodes.length === 0) {
     return (
-      <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-        <p className="text-sm font-semibold text-white mb-3">Memory Graph</p>
+      <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+        <p className="text-sm font-semibold text-stone-900 mb-3">Memory Graph</p>
         <div className="flex items-center justify-center" style={{ minHeight: 320 }}>
-          <p className="text-stone-400 text-sm">No memory graph data yet</p>
+          <p className="text-stone-600 text-sm">No memory graph data yet</p>
         </div>
       </div>
     );
@@ -234,20 +234,20 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
   const maxConn = Math.max(...nodes.map(n => n.connectionCount), 1);
 
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
-      <p className="text-sm font-semibold text-white mb-3">Memory Graph</p>
+    <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
+      <p className="text-sm font-semibold text-stone-900 mb-3">Memory Graph</p>
 
       <div
-        className="w-full overflow-hidden rounded-lg border border-white/5"
+        className="w-full overflow-hidden rounded-lg border border-stone-200"
         style={{ minHeight: 320 }}>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           width="100%"
-          style={{ display: 'block', background: 'rgba(0,0,0,0.25)' }}
+          style={{ display: 'block', background: 'rgba(248,248,247,1)' }}
           onClick={() => setSelectedNode(null)}>
           <defs>
             <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-              <polygon points="0 0, 8 3, 0 6" fill="rgba(255,255,255,0.18)" />
+              <polygon points="0 0, 8 3, 0 6" fill="rgba(0,0,0,0.25)" />
             </marker>
           </defs>
 
@@ -270,7 +270,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                   y1={src.y}
                   x2={tgt.x}
                   y2={tgt.y}
-                  stroke={isHighlighted ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.05)'}
+                  stroke={isHighlighted ? 'rgba(0,0,0,0.22)' : 'rgba(0,0,0,0.08)'}
                   strokeWidth={isHighlighted ? 1.5 : 1}
                   markerEnd="url(#arrowhead)"
                   style={{ cursor: 'pointer', transition: 'stroke 0.15s' }}
@@ -285,10 +285,10 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                   fontSize={9}
                   fill={
                     hoveredEdge === i
-                      ? 'rgba(255,255,255,0.85)'
+                      ? 'rgba(0,0,0,0.7)'
                       : isHighlighted
-                        ? 'rgba(255,255,255,0.3)'
-                        : 'rgba(255,255,255,0.08)'
+                        ? 'rgba(0,0,0,0.35)'
+                        : 'rgba(0,0,0,0.1)'
                   }
                   style={{ pointerEvents: 'none', userSelect: 'none', transition: 'fill 0.15s' }}>
                   {truncate(edge.predicate, 18)}
@@ -321,7 +321,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                   r={r}
                   fill={color}
                   opacity={isDimmed ? 0.15 : isSelected ? 1 : 0.82}
-                  stroke={isSelected ? 'white' : 'rgba(255,255,255,0.18)'}
+                  stroke={isSelected ? 'rgba(0,0,0,0.6)' : 'rgba(255,255,255,0.5)'}
                   strokeWidth={isSelected ? 2 : 1}
                   style={{ transition: 'opacity 0.15s' }}
                 />
@@ -330,7 +330,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                   textAnchor="middle"
                   fontSize={isCenter ? 11 : 9}
                   fontWeight={isCenter ? 600 : 400}
-                  fill={isDimmed ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.85)'}
+                  fill={isDimmed ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.75)'}
                   style={{ pointerEvents: 'none', userSelect: 'none', transition: 'fill 0.15s' }}>
                   {isCenter && node.id !== 'you' ? 'You' : truncate(node.label)}
                 </text>

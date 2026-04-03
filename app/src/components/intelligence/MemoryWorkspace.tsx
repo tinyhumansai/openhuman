@@ -345,11 +345,11 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   return (
     <section className="space-y-4 animate-fade-up">
       {/* Header */}
-      <div className="glass rounded-2xl p-5 border border-white/10">
+      <div className="glass rounded-2xl p-5 border border-stone-200">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
-            <h2 className="text-lg font-semibold text-white">Memory</h2>
-            <p className="text-sm text-stone-400">
+            <h2 className="text-lg font-semibold text-stone-900">Memory</h2>
+            <p className="text-sm text-stone-600">
               Your AI's knowledge graph, extracted insights, and ingestion activity.
             </p>
           </div>
@@ -358,7 +358,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
               void Promise.all([loadWorkspace(), refetchStats()]);
             }}
             disabled={memoryWorkspaceLoading || statsLoading}
-            className="px-3 py-1.5 text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-stone-300 disabled:opacity-40 transition-colors">
+            className="px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 border border-stone-200 rounded-lg text-stone-600 disabled:opacity-40 transition-colors">
             {memoryWorkspaceLoading ? 'Loading...' : 'Refresh'}
           </button>
         </div>
@@ -389,10 +389,10 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       <MemoryHeatmap timestamps={heatmapTimestamps} loading={memoryWorkspaceLoading} />
 
       {/* Collapsible: Files & Management */}
-      <div className="rounded-xl border border-white/10 bg-black/20">
+      <div className="rounded-xl border border-stone-200 bg-stone-50">
         <button
           onClick={() => setManageOpen(!manageOpen)}
-          className="w-full flex items-center justify-between p-4 text-left hover:bg-white/5 transition-colors rounded-xl">
+          className="w-full flex items-center justify-between p-4 text-left hover:bg-stone-100 transition-colors rounded-xl">
           <div className="flex items-center gap-2">
             <svg
               className={`w-4 h-4 text-stone-400 transition-transform ${manageOpen ? 'rotate-90' : ''}`}
@@ -401,7 +401,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
               viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
-            <h3 className="text-sm font-semibold text-white">Files & Management</h3>
+            <h3 className="text-sm font-semibold text-stone-900">Files & Management</h3>
             <span className="text-xs text-stone-500">
               {memoryFilesList.length} files · {memoryNamespaces.length} namespaces ·{' '}
               {memoryDocs.length} docs
@@ -415,7 +415,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             <div>
               <h4 className="text-xs font-medium text-stone-400 mb-2">Memory Files</h4>
               <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-3">
-                <div className="rounded-lg border border-white/10 bg-stone-950/50 p-2 h-52 overflow-y-auto">
+                <div className="rounded-lg border border-stone-200 bg-white p-2 h-52 overflow-y-auto">
                   {memoryFilesList.length === 0 ? (
                     <div className="text-xs text-stone-500 p-2">No files found.</div>
                   ) : (
@@ -425,21 +425,21 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                         onClick={() => setSelectedFile(filePath)}
                         className={`w-full text-left px-2 py-1.5 rounded text-xs mb-1 border transition-colors ${
                           selectedFile === filePath
-                            ? 'border-primary-400/40 bg-primary-500/20 text-primary-200'
-                            : 'border-transparent hover:border-white/10 hover:bg-white/5 text-stone-300'
+                            ? 'border-primary-400/40 bg-primary-100 text-primary-600'
+                            : 'border-transparent hover:border-stone-200 hover:bg-stone-50 text-stone-600'
                         }`}>
                         {filePath}
                       </button>
                     ))
                   )}
                 </div>
-                <div className="rounded-lg border border-white/10 bg-stone-950/50 p-3 h-52 overflow-auto">
+                <div className="rounded-lg border border-stone-200 bg-white p-3 h-52 overflow-auto">
                   {selectedFileLoading ? (
-                    <div className="text-xs text-stone-400">Loading file...</div>
+                    <div className="text-xs text-stone-600">Loading file...</div>
                   ) : selectedFileError ? (
-                    <div className="text-xs text-coral-300">{selectedFileError}</div>
+                    <div className="text-xs text-coral-600">{selectedFileError}</div>
                   ) : (
-                    <pre className="text-[11px] leading-5 text-stone-200 whitespace-pre-wrap">
+                    <pre className="text-[11px] leading-5 text-stone-700 whitespace-pre-wrap">
                       {selectedFileContent || 'Empty file'}
                     </pre>
                   )}
@@ -454,7 +454,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                 <select
                   value={selectedNamespace}
                   onChange={e => setSelectedNamespace(e.target.value)}
-                  className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white mb-3 focus:outline-none focus:border-primary-500/50">
+                  className="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-lg text-stone-900 mb-3 focus:outline-none focus:border-primary-500/50">
                   {memoryNamespaces.length === 0 ? (
                     <option value="">No namespaces</option>
                   ) : (
@@ -471,20 +471,20 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                   value={queryInput}
                   onChange={e => setQueryInput(e.target.value)}
                   rows={2}
-                  className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white mb-2 focus:outline-none focus:border-primary-500/50"
+                  className="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-lg text-stone-900 mb-2 focus:outline-none focus:border-primary-500/50"
                   placeholder="Search this namespace..."
                 />
                 <div className="flex gap-2 mb-3">
                   <button
                     onClick={() => void handleQueryNamespace()}
                     disabled={!selectedNamespace || !queryInput.trim() || queryLoading}
-                    className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-stone-200 disabled:opacity-40">
+                    className="px-3 py-1.5 text-xs rounded-lg border border-stone-200 bg-stone-50 hover:bg-stone-100 text-stone-700 disabled:opacity-40">
                     {queryLoading ? 'Querying...' : 'Run Query'}
                   </button>
                   <button
                     onClick={() => void handleRecallNamespace()}
                     disabled={!selectedNamespace || recallLoading}
-                    className="px-3 py-1.5 text-xs rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-stone-200 disabled:opacity-40">
+                    className="px-3 py-1.5 text-xs rounded-lg border border-stone-200 bg-stone-50 hover:bg-stone-100 text-stone-700 disabled:opacity-40">
                     {recallLoading ? 'Recalling...' : 'Run Recall'}
                   </button>
                 </div>
@@ -494,17 +494,17 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                   value={memoryNote}
                   onChange={e => setMemoryNote(e.target.value)}
                   rows={2}
-                  className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white mb-2 focus:outline-none focus:border-primary-500/50"
+                  className="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-lg text-stone-900 mb-2 focus:outline-none focus:border-primary-500/50"
                   placeholder="Store a durable user fact, preference, or decision"
                 />
                 <button
                   onClick={() => void handleSaveMemoryNote()}
                   disabled={!memoryNote.trim() || memoryNoteSaving}
-                  className="px-3 py-1.5 text-xs rounded-lg border border-primary-500/40 bg-primary-500/20 hover:bg-primary-500/30 text-primary-200 disabled:opacity-40">
+                  className="px-3 py-1.5 text-xs rounded-lg border border-primary-500/40 bg-primary-100 hover:bg-primary-100 text-primary-600 disabled:opacity-40">
                   {memoryNoteSaving ? 'Saving...' : 'Save Note'}
                 </button>
                 {memoryActionError && (
-                  <div className="mt-2 text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
+                  <div className="mt-2 text-xs text-coral-600 border border-coral-500/30 bg-coral-100 rounded p-2">
                     {memoryActionError}
                   </div>
                 )}
@@ -515,13 +515,13 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
                   <div>
                     <div className="text-[11px] text-stone-500 mb-1">Query response</div>
-                    <pre className="rounded-lg border border-white/10 bg-stone-950/50 p-2 h-28 overflow-auto text-[11px] leading-5 text-stone-200 whitespace-pre-wrap">
+                    <pre className="rounded-lg border border-stone-200 bg-white p-2 h-28 overflow-auto text-[11px] leading-5 text-stone-700 whitespace-pre-wrap">
                       {queryResult || 'No query result yet.'}
                     </pre>
                   </div>
                   <div>
                     <div className="text-[11px] text-stone-500 mb-1">Recall response</div>
-                    <pre className="rounded-lg border border-white/10 bg-stone-950/50 p-2 h-28 overflow-auto text-[11px] leading-5 text-stone-200 whitespace-pre-wrap">
+                    <pre className="rounded-lg border border-stone-200 bg-white p-2 h-28 overflow-auto text-[11px] leading-5 text-stone-700 whitespace-pre-wrap">
                       {recallResult || 'No recall result yet.'}
                     </pre>
                   </div>
@@ -532,9 +532,9 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                   {memoryDocs.slice(0, 8).map(doc => (
                     <div
                       key={`${doc.namespace}:${doc.documentId}`}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-stone-950/50 px-3 py-2">
+                      className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 bg-stone-50 px-3 py-2">
                       <div className="min-w-0">
-                        <div className="text-xs text-white truncate">
+                        <div className="text-xs text-stone-900 truncate">
                           {doc.title || doc.documentId}
                         </div>
                         <div className="text-[11px] text-stone-400 truncate">
@@ -543,7 +543,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                       </div>
                       <button
                         onClick={() => void handleDeleteMemoryDoc(doc)}
-                        className="text-[11px] px-2 py-1 rounded border border-coral-500/30 text-coral-300 hover:bg-coral-500/10 shrink-0">
+                        className="text-[11px] px-2 py-1 rounded border border-coral-500/30 text-coral-600 hover:bg-coral-100 shrink-0">
                         Delete
                       </button>
                     </div>
@@ -560,7 +560,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
       {/* Warnings */}
       {(memoryWorkspaceError || (!isTauri() && !memoryWorkspaceLoading)) && (
-        <div className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded-lg p-3">
+        <div className="text-xs text-amber-600 border border-amber-500/30 bg-amber-100 rounded-lg p-3">
           {memoryWorkspaceError ||
             'Memory workspace requires the desktop Tauri runtime to load real data.'}
         </div>

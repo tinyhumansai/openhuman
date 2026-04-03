@@ -29,14 +29,14 @@ const formatRemaining = (remainingMs: number | null): string => {
 const PermissionBadge = ({ label, value }: { label: string; value: string }) => {
   const colorClass =
     value === 'granted'
-      ? 'bg-green-900/40 text-green-300 border-green-700/40'
+      ? 'bg-green-50 text-green-700 border-green-200'
       : value === 'denied'
-        ? 'bg-red-900/40 text-red-300 border-red-700/40'
-        : 'bg-stone-800/60 text-stone-300 border-stone-700';
+        ? 'bg-red-50 text-red-600 border-red-200'
+        : 'bg-stone-100 text-stone-600 border-stone-200';
 
   return (
-    <div className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 p-3">
-      <span className="text-sm text-stone-200">{label}</span>
+    <div className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 p-3">
+      <span className="text-sm text-stone-700">{label}</span>
       <span className={`rounded-md border px-2 py-1 text-xs uppercase tracking-wide ${colorClass}`}>
         {value}
       </span>
@@ -117,8 +117,8 @@ const AccessibilityPanel = () => {
       />
 
       <div className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full p-4 space-y-4">
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Permissions</h3>
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Permissions</h3>
           <PermissionBadge
             label="Screen Recording"
             value={status?.permissions.screen_recording ?? 'unknown'}
@@ -133,14 +133,14 @@ const AccessibilityPanel = () => {
           />
 
           {anyPermissionDenied && (
-            <div className="rounded-xl border border-amber-700/40 bg-amber-900/20 p-3 text-sm text-amber-200 space-y-1">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700 space-y-1">
               <p>
                 After granting in System Settings, click &ldquo;Restart &amp; Refresh&rdquo; below.
               </p>
               {status?.permission_check_process_path ? (
                 <p className="opacity-75 text-xs">
                   Enable the same app macOS lists for this path (TCC is per executable).{' '}
-                  <span className="font-mono break-all text-stone-300">
+                  <span className="font-mono break-all text-stone-600">
                     {status.permission_check_process_path}
                   </span>
                 </p>
@@ -158,21 +158,21 @@ const AccessibilityPanel = () => {
             type="button"
             onClick={() => void dispatch(requestAccessibilityPermission('screen_recording'))}
             disabled={isRequestingPermissions || isRestartingCore}
-            className="mt-1 rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
+            className="mt-1 rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Request Screen Recording'}
           </button>
           <button
             type="button"
             onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
             disabled={isRequestingPermissions || isRestartingCore}
-            className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
+            className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Request Accessibility'}
           </button>
           <button
             type="button"
             onClick={() => void dispatch(requestAccessibilityPermission('input_monitoring'))}
             disabled={isRequestingPermissions || isRestartingCore}
-            className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
+            className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Open Input Monitoring'}
           </button>
 
@@ -181,7 +181,7 @@ const AccessibilityPanel = () => {
               type="button"
               onClick={() => void dispatch(refreshPermissionsWithRestart())}
               disabled={isRestartingCore || isLoading}
-              className="rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-2 text-sm text-amber-200 disabled:opacity-50">
+              className="rounded-lg border border-amber-500/60 bg-amber-50 px-3 py-2 text-sm text-amber-700 disabled:opacity-50">
               {isRestartingCore ? 'Restarting core…' : 'Restart & Refresh Permissions'}
             </button>
           ) : (
@@ -189,17 +189,17 @@ const AccessibilityPanel = () => {
               type="button"
               onClick={() => void dispatch(fetchAccessibilityStatus())}
               disabled={isLoading || isRestartingCore}
-              className="rounded-lg border border-stone-600 bg-stone-800/60 px-3 py-2 text-sm text-stone-200 disabled:opacity-50">
+              className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700 disabled:opacity-50">
               {isLoading ? 'Refreshing…' : 'Refresh Status'}
             </button>
           )}
         </section>
 
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Features</h3>
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Features</h3>
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Screen Monitoring</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Screen Monitoring</span>
             <input
               type="checkbox"
               checked={screenMonitoring}
@@ -212,8 +212,8 @@ const AccessibilityPanel = () => {
             />
           </label>
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Device Control</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Device Control</span>
             <input
               type="checkbox"
               checked={deviceControl}
@@ -226,8 +226,8 @@ const AccessibilityPanel = () => {
             />
           </label>
 
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Predictive Input</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Predictive Input</span>
             <input
               type="checkbox"
               checked={predictiveInput}
@@ -241,9 +241,9 @@ const AccessibilityPanel = () => {
           </label>
         </section>
 
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Session</h3>
-          <div className="text-sm text-stone-300 space-y-1">
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Session</h3>
+          <div className="text-sm text-stone-700 space-y-1">
             <div>Status: {status?.session.active ? 'Active' : 'Stopped'}</div>
             <div>Remaining: {remaining}</div>
             <div>Frames (ephemeral): {status?.session.frames_in_memory ?? 0}</div>
@@ -273,52 +273,52 @@ const AccessibilityPanel = () => {
                 )
               }
               disabled={startDisabled}
-              className="rounded-lg border border-green-500/60 bg-green-500/20 px-3 py-2 text-sm text-green-200 disabled:opacity-50">
+              className="rounded-lg border border-green-500/60 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
               {isStartingSession ? 'Starting…' : 'Start Session'}
             </button>
             <button
               type="button"
               onClick={() => void dispatch(stopAccessibilitySession('manual_stop'))}
               disabled={stopDisabled}
-              className="rounded-lg border border-red-500/60 bg-red-500/20 px-3 py-2 text-sm text-red-200 disabled:opacity-50">
+              className="rounded-lg border border-red-500/60 bg-red-50 px-3 py-2 text-sm text-red-600 disabled:opacity-50">
               {isStoppingSession ? 'Stopping…' : 'Stop Session'}
             </button>
             <button
               type="button"
               onClick={() => void dispatch(flushAccessibilityVision())}
               disabled={isFlushingVision || !status?.session.active}
-              className="rounded-lg border border-cyan-500/60 bg-cyan-500/20 px-3 py-2 text-sm text-cyan-200 disabled:opacity-50">
+              className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
               {isFlushingVision ? 'Analyzing…' : 'Analyze Now'}
             </button>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Vision Summaries</h3>
+            <h3 className="text-sm font-semibold text-stone-900">Vision Summaries</h3>
             <button
               type="button"
               onClick={() => void dispatch(fetchAccessibilityVisionRecent(10))}
               disabled={isLoadingVision}
-              className="rounded-lg border border-stone-600 bg-stone-800/60 px-3 py-1.5 text-xs text-stone-200 disabled:opacity-50">
+              className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-1.5 text-xs text-stone-700 disabled:opacity-50">
               {isLoadingVision ? 'Refreshing…' : 'Refresh'}
             </button>
           </div>
 
           {recentVisionSummaries.length === 0 ? (
-            <div className="text-xs text-stone-400">No summaries yet.</div>
+            <div className="text-xs text-stone-500">No summaries yet.</div>
           ) : (
             <div className="space-y-2">
               {recentVisionSummaries.map(summary => (
                 <div
                   key={summary.id}
-                  className="rounded-xl border border-stone-700 bg-stone-900/50 p-3 text-xs text-stone-200">
-                  <div className="text-stone-400">
+                  className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-200">
+                  <div className="text-stone-500">
                     {new Date(summary.captured_at_ms).toLocaleTimeString()} ·{' '}
                     {summary.app_name ?? 'Unknown App'}
                     {summary.window_title ? ` · ${summary.window_title}` : ''}
                   </div>
-                  <div className="mt-1 text-stone-100">{summary.actionable_notes}</div>
+                  <div className="mt-1 text-stone-800">{summary.actionable_notes}</div>
                 </div>
               ))}
             </div>
@@ -326,13 +326,13 @@ const AccessibilityPanel = () => {
         </section>
 
         {!status?.platform_supported && (
-          <div className="rounded-xl border border-amber-700/40 bg-amber-900/20 p-3 text-sm text-amber-200">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700">
             Accessibility Automation V1 is currently supported on macOS only.
           </div>
         )}
 
         {lastError && (
-          <div className="rounded-xl border border-red-700/40 bg-red-900/20 p-3 text-sm text-red-200">
+          <div className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-600">
             {lastError}
           </div>
         )}
