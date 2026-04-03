@@ -312,7 +312,7 @@ const AccessibilityPanel = () => {
               {recentVisionSummaries.map(summary => (
                 <div
                   key={summary.id}
-                  className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-200">
+                  className="rounded-xl border border-stone-200 bg-stone-50 p-3 text-xs text-stone-600">
                   <div className="text-stone-500">
                     {new Date(summary.captured_at_ms).toLocaleTimeString()} ·{' '}
                     {summary.app_name ?? 'Unknown App'}

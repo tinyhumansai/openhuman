@@ -3,7 +3,6 @@ import { selectSocketStatus } from '../store/socketSelectors';
 
 interface ConnectionIndicatorProps {
   status?: 'connected' | 'disconnected' | 'connecting';
-  description?: string;
   className?: string;
 }
 

@@ -29,7 +29,7 @@ const STATUS_STYLES: Record<ChannelConnectionStatus, { label: string; className:
     label: 'Disconnected',
     className: 'bg-stone-100 text-stone-600 border-stone-200',
   },
-  error: { label: 'Error', className: 'bg-coral-500/20 text-coral-300 border-coral-500/30' },
+  error: { label: 'Error', className: 'bg-coral-50 text-coral-600 border-coral-200' },
 };
 
 const AUTH_MODE_LABELS: Record<string, string> = {

@@ -178,7 +178,7 @@ const TeamMembersPanel = () => {
                   <div className="flex items-center gap-3 min-w-0">
                     {/* Avatar */}
                     <div className="w-8 h-8 rounded-full bg-stone-700/60 flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-semibold text-stone-600">
+                      <span className="text-xs font-semibold text-white">
                         {displayName(member).charAt(0).toUpperCase()}
                       </span>
                     </div>
@@ -310,7 +310,7 @@ const TeamMembersPanel = () => {
                   <div className="text-sm text-stone-400">
                     <p>
                       Change{' '}
-                      <strong className="text-white">
+                      <strong className="text-stone-900 font-semibold">
                         {displayName(roleChangeConfirmation.member)}
                       </strong>
                       's role from{' '}

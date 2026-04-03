@@ -134,11 +134,11 @@ const AIPanel = () => {
                 <span className="text-primary-600 font-medium">{localAiStatus.state}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-400">Target Model</span>
+                <span className="text-stone-500">Target Model</span>
                 <span className="text-green-600 font-medium">{localAiStatus.model_id}</span>
               </div>
               {localAiStatus.download_progress != null && (
-                <div className="text-xs text-gray-300">
+                <div className="text-xs text-stone-500">
                   Download: {(localAiStatus.download_progress * 100).toFixed(0)}%
                 </div>
               )}

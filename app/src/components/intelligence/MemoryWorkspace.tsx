@@ -500,7 +500,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
                 <button
                   onClick={() => void handleSaveMemoryNote()}
                   disabled={!memoryNote.trim() || memoryNoteSaving}
-                  className="px-3 py-1.5 text-xs rounded-lg border border-primary-500/40 bg-primary-100 hover:bg-primary-100 text-primary-600 disabled:opacity-40">
+                  className="px-3 py-1.5 text-xs rounded-lg border border-primary-500/40 bg-primary-100 hover:bg-primary-200 text-primary-600 disabled:opacity-40">
                   {memoryNoteSaving ? 'Saving...' : 'Save Note'}
                 </button>
                 {memoryActionError && (

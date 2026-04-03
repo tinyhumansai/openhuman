@@ -80,7 +80,13 @@ const PrimaryButton: React.FC<PrimaryButtonProps> = ({
       disabled={disabled || loading}>
       <div className="flex items-center gap-2">
         {loading && (
-          <div className="h-4 w-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+          <div
+            className={`h-4 w-4 border-2 rounded-full animate-spin ${
+              variant === 'primary'
+                ? 'border-white/40 border-t-white'
+                : 'border-stone-600/40 border-t-stone-600'
+            }`}
+          />
         )}
         <span>{children}</span>
       </div>

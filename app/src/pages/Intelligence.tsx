@@ -273,7 +273,7 @@ export default function Intelligence() {
                   <button
                     onClick={usingMemoryData ? refreshConscious : handleAnalyzeNow}
                     disabled={isRunning || itemsLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed border border-stone-200 rounded-lg text-stone-300 transition-colors">
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed border border-stone-200 rounded-lg text-stone-600 transition-colors">
                     {isRunning || itemsLoading ? (
                       <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
                     ) : (

@@ -285,28 +285,8 @@ export default function Skills() {
             {/* Main card */}
             <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
               {/* Header */}
-              <div className="flex items-center justify-between mb-5">
+              <div className="mb-5">
                 <h1 className="text-xl font-bold text-stone-900">Skills</h1>
-                <button
-                  onClick={() => {
-                    /* placeholder for + Add */
-                  }}
-                  className="px-3 py-1.5 bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium rounded-lg transition-colors">
-                  + Add
-                </button>
-              </div>
-
-              {/* Filter tabs */}
-              <div className="flex items-center gap-2 mb-5">
-                <button className="px-3 py-1 text-xs font-medium rounded-full bg-stone-100 text-stone-900">
-                  All
-                </button>
-                <button className="px-3 py-1 text-xs font-medium rounded-full text-stone-500 hover:bg-stone-50 transition-colors">
-                  Account
-                </button>
-                <button className="px-3 py-1 text-xs font-medium rounded-full text-stone-500 hover:bg-stone-50 transition-colors">
-                  Other
-                </button>
               </div>
 
               {/* Skills list */}

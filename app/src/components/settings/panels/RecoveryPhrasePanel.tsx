@@ -344,12 +344,12 @@ const RecoveryPhrasePanel = () => {
                             onKeyDown={e => handleImportKeyDown(index, e)}
                             autoComplete="off"
                             spellCheck={false}
-                            className={`w-full font-mono text-sm font-medium px-2 py-1.5 rounded-lg border bg-white/10 outline-none transition-colors ${
+                            className={`w-full font-mono text-sm font-medium px-2 py-1.5 rounded-lg border bg-white text-stone-900 outline-none transition-colors ${
                               importValid === false && word.trim()
                                 ? 'border-coral-400 focus:border-coral-300'
                                 : importValid === true
                                   ? 'border-sage-400 focus:border-sage-300'
-                                  : 'border-stone-600 focus:border-primary-400'
+                                  : 'border-stone-200 focus:border-primary-400'
                             }`}
                           />
                         </div>

@@ -670,7 +670,7 @@ const LocalModelPanel = () => {
                         href="https://ollama.com"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-primary-500 hover:text-cyan-200 underline">
+                        className="text-primary-500 hover:text-primary-600 underline">
                         ollama.com
                       </a>{' '}
                       then set its path below.
