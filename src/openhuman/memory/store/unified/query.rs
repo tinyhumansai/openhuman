@@ -1241,10 +1241,16 @@ impl UnifiedMemory {
                     .supporting_relations
                     .iter()
                     .map(|relation| {
-                        let subject_label =
-                            Self::entity_label_with_type(&relation.subject, &relation.attrs, "subject");
-                        let object_label =
-                            Self::entity_label_with_type(&relation.object, &relation.attrs, "object");
+                        let subject_label = Self::entity_label_with_type(
+                            &relation.subject,
+                            &relation.attrs,
+                            "subject",
+                        );
+                        let object_label = Self::entity_label_with_type(
+                            &relation.object,
+                            &relation.attrs,
+                            "object",
+                        );
                         format!(
                             "{} -[{}]-> {}",
                             subject_label, relation.predicate, object_label
