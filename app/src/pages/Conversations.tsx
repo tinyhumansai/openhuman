@@ -899,9 +899,9 @@ const Conversations = () => {
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
 
   return (
-    <div className="h-full relative z-10 flex overflow-hidden bg-[#F5F5F5]">
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-stone-200 bg-white">
+    <div className="h-full relative z-10 flex justify-center overflow-hidden bg-[#F5F5F5] p-4 pt-6">
+      <div className="flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-stone-200">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3">
               <h3 className="text-xl font-bold text-stone-900 truncate">
@@ -1154,7 +1154,7 @@ const Conversations = () => {
           </div>
         )}
 
-        <div className="flex-shrink-0 border-t border-stone-200 bg-white px-4 py-3">
+        <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
           {teamUsage && teamUsage.remainingUsd <= 0 && (
             <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
