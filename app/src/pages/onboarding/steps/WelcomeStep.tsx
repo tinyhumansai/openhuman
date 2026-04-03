@@ -1,3 +1,5 @@
+import OnboardingNextButton from '../components/OnboardingNextButton';
+
 interface WelcomeStepProps {
   onNext: () => void;
 }
@@ -16,12 +18,7 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
           skills. Nothing is permanent—you can adjust everything later in Settings.
         </p>
       </div>
-      <button
-        type="button"
-        onClick={onNext}
-        className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl">
-        Continue
-      </button>
+      <OnboardingNextButton onClick={onNext} />
     </div>
   );
 };

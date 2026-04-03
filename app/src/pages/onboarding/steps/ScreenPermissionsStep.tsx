@@ -1,5 +1,4 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 import {
   fetchAccessibilityStatus,
@@ -7,6 +6,7 @@ import {
   requestAccessibilityPermission,
 } from '../../../store/accessibilitySlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface ScreenPermissionsStepProps {
   onNext: (accessibilityPermissionGranted: boolean) => void;
@@ -14,7 +14,6 @@ interface ScreenPermissionsStepProps {
 }
 
 const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsStepProps) => {
-  const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const { status, isLoading, isRequestingPermissions, isRestartingCore, lastError } =
     useAppSelector(state => state.accessibility);
@@ -62,23 +61,15 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
         </div>
       </div>
 
-      {!isGranted ? (
-        <div className="space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
-              disabled={isRequestingPermissions || isLoading}
-              className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
-              {isRequestingPermissions ? 'Requesting...' : 'Request Permissions'}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/settings/accessibility')}
-              className="w-full py-2.5 text-sm font-medium rounded-xl border border-stone-600 hover:border-stone-500 transition-colors">
-              Open Accessibility
-            </button>
-          </div>
+      {!isGranted && (
+        <div className="space-y-2 mb-3">
+          <button
+            type="button"
+            onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
+            disabled={isRequestingPermissions || isLoading}
+            className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
+            {isRequestingPermissions ? 'Requesting...' : 'Request Permissions'}
+          </button>
           <button
             type="button"
             onClick={() => void dispatch(refreshPermissionsWithRestart())}
@@ -97,13 +88,9 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
             </div>
           )}
         </div>
-      ) : (
-        <button
-          onClick={() => onNext(isGranted)}
-          className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
-          Continue
-        </button>
       )}
+
+      <OnboardingNextButton onClick={() => onNext(isGranted)} />
     </div>
   );
 };

@@ -195,10 +195,10 @@ jobs:
             args: --target x86_64-unknown-linux-gnu
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
-          # - platform: windows-latest
-          #   args: --target x86_64-pc-windows-msvc
-          #   target: x86_64-pc-windows-msvc
-          #   artifact_suffix: windows
+          - platform: windows-latest
+            args: --target x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-msvc
+            artifact_suffix: windows
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -501,7 +501,7 @@ jobs:
           echo "Checking staple..."
           xcrun stapler validate "$APP_PATH" || echo "WARNING: Staple validation failed"
 
-      - name: Package CLI tarball and upload to release
+      - name: Package CLI tarball and upload to release (unix)
         if: matrix.settings.platform != 'windows-latest'
         shell: bash
         env:
@@ -526,6 +526,29 @@ jobs:
             "$BIN" \
             "${{ needs.prepare-release.outputs.version }}" \
             "${{ matrix.settings.target }}"
+
+      - name: Package CLI zip and upload to release (windows)
+        if: matrix.settings.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $Version = "${{ needs.prepare-release.outputs.version }}"
+          $Target = "${{ matrix.settings.target }}"
+          $BinPath = "${{ steps.cli-paths.outputs.cli_path }}"
+          $ZipName = "openhuman-core-${Version}-${Target}.zip"
+
+          $Work = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "cli-pkg-$(Get-Random)")
+          Copy-Item $BinPath (Join-Path $Work.FullName "openhuman-core.exe")
+          Compress-Archive -Path (Join-Path $Work.FullName "openhuman-core.exe") -DestinationPath $ZipName
+
+          $Hash = (Get-FileHash -Path $ZipName -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Path "${ZipName}.sha256" -Value $Hash -NoNewline
+
+          Write-Host "[package-cli] Created $ZipName (sha256: $Hash)"
+
+          gh release upload "v${Version}" $ZipName "${ZipName}.sha256" --repo tinyhumansai/openhuman --clobber
+          Write-Host "[package-cli] Uploaded $ZipName to v${Version}"
 
       - name: Upload standalone CLI artifacts
         uses: actions/upload-artifact@v4
@@ -609,8 +632,7 @@ jobs:
               /OpenHuman_.*_x64\.dmg$/,
               /OpenHuman_.*_amd64\.AppImage$/,
               /OpenHuman_.*_amd64\.deb$/,
-              // Windows build is currently disabled in the matrix
-              // /(OpenHuman_.*_x64-setup\.exe$|OpenHuman_.*_x64.*\.msi$)/,
+              /(OpenHuman_.*_x64-setup\.exe$|OpenHuman_.*_x64.*\.msi$)/,
             ];
 
             const missing = requiredPatterns.filter((pattern) => !names.some((name) => pattern.test(name)));

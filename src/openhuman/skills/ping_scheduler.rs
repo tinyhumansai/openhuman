@@ -11,6 +11,7 @@
 //! Architecture follows the same pattern as `CronScheduler`: a background Tokio
 //! task with `tokio::select!` for a tick interval + a stop signal via a watch channel.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -222,40 +223,19 @@ impl PingScheduler {
                 }
             }
             _ => {
-                // Network or other error: update published state, keep running
-                if let Some(snap) = registry.get_skill(skill_id) {
-                    // We need to update the skill's published_state through the
-                    // registry. The SkillState is behind an Arc<RwLock<>>, which
-                    // we can reach via the snapshot's backing state. However, the
-                    // registry only exposes snapshots (copies). We use an RPC
-                    // message to let the skill instance update its own state.
-                    //
-                    // A simpler approach: directly update published_state via the
-                    // SkillState Arc that the registry entry holds. Since
-                    // SkillRegistry doesn't expose the Arc directly, we send a
-                    // state/set RPC to the skill, which is the same mechanism
-                    // the frontend uses.
-                    let _ = snap; // used for logging context
-
-                    // Send a state update via RPC (skills handle "state/set"
-                    // in their reverse-RPC handler, but here we update the
-                    // published_state directly through the skill message loop).
-                    let (tx, rx) = tokio::sync::oneshot::channel();
-                    let _ = registry.send_message(
+                // Network or other error: merge into published_state, keep running
+                let mut patch = HashMap::new();
+                patch.insert("connection_status".to_string(), serde_json::json!("error"));
+                patch.insert(
+                    "connection_error".to_string(),
+                    serde_json::json!(error_message),
+                );
+                if let Err(e) = registry.merge_published_state(skill_id, patch).await {
+                    log::warn!(
+                        "[ping] Could not merge ping failure into published state for '{}': {}",
                         skill_id,
-                        SkillMessage::Rpc {
-                            method: "state/set".to_string(),
-                            params: serde_json::json!({
-                                "partial": {
-                                    "connection_status": "error",
-                                    "connection_error": error_message,
-                                }
-                            }),
-                            reply: tx,
-                        },
+                        e
                     );
-                    // Don't block on the reply — fire-and-forget
-                    let _ = tokio::time::timeout(Duration::from_secs(5), rx).await;
                 }
             }
         }

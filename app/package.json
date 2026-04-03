@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.51.2",
+  "version": "0.51.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -32,6 +32,7 @@
     "test:e2e:auth": "bash ./scripts/e2e-auth.sh",
     "test:e2e:service-connectivity": "OPENHUMAN_SERVICE_MOCK=1 bash ./scripts/e2e-run-spec.sh test/e2e/specs/service-connectivity-flow.spec.ts service-connectivity",
     "test:e2e:skills-registry": "bash ./scripts/e2e-run-spec.sh test/e2e/specs/skills-registry.spec.ts skills-registry",
+    "test:e2e:skill-execution": "bash ./scripts/e2e-run-spec.sh test/e2e/specs/skill-execution-flow.spec.ts skill-execution",
     "test:e2e": "yarn test:e2e:build && yarn test:e2e:login && yarn test:e2e:auth",
     "test:e2e:all:flows": "bash ./scripts/e2e-run-all-flows.sh",
     "test:e2e:all": "yarn test:e2e:build && yarn test:e2e:all:flows",

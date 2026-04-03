@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::openhuman::skills::qjs_skill_instance::SkillState;
 use crate::openhuman::skills::types::{
-    SkillConfig, SkillMessage, SkillSnapshot, SkillStatus, ToolCallOrigin, ToolDefinition,
+    self, SkillConfig, SkillMessage, SkillSnapshot, SkillStatus, ToolCallOrigin, ToolDefinition,
     ToolResult,
 };
 
@@ -305,6 +305,36 @@ impl SkillRegistry {
     /// Check if a skill is registered.
     pub fn has_skill(&self, skill_id: &str) -> bool {
         self.skills.read().contains_key(skill_id)
+    }
+
+    /// Merge `patch` into a running skill's `published_state` (e.g. ping scheduler health).
+    pub async fn merge_published_state(
+        &self,
+        skill_id: &str,
+        patch: HashMap<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        {
+            let skills = self.skills.read();
+            let entry = skills
+                .get(skill_id)
+                .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
+            let mut state = entry.state.write();
+            if state.status != SkillStatus::Running {
+                return Err(format!(
+                    "Skill '{}' is not running (status: {:?})",
+                    skill_id, state.status
+                ));
+            }
+            for (k, v) in patch {
+                state.published_state.insert(k, v);
+            }
+        }
+        self.broadcast_event(
+            types::events::SKILL_STATE_CHANGED,
+            serde_json::json!({ "skill_id": skill_id }),
+        )
+        .await;
+        Ok(())
     }
 
     /// Send a message to a specific skill's message loop.

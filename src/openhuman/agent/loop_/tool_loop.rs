@@ -285,12 +285,11 @@ pub(crate) async fn run_tool_call_loop(
             );
 
             let result = if let Some(tool) = find_tool(tools_registry, &call.name) {
-                // Execute with a 120-second timeout to prevent hangs.
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(120),
-                    tool.execute(call.arguments.clone()),
-                )
-                .await
+                let tool_deadline =
+                    crate::openhuman::tool_timeout::tool_execution_timeout_duration();
+                let timeout_secs = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
+                match tokio::time::timeout(tool_deadline, tool.execute(call.arguments.clone()))
+                    .await
                 {
                     Ok(Ok(r)) => {
                         if r.success {
@@ -323,9 +322,13 @@ pub(crate) async fn run_tool_call_loop(
                         tracing::error!(
                             iteration,
                             tool = call.name.as_str(),
-                            "[agent_loop] tool execution timed out after 120s"
+                            secs = timeout_secs,
+                            "[agent_loop] tool execution timed out"
                         );
-                        format!("Error: tool '{}' timed out after 120 seconds", call.name)
+                        format!(
+                            "Error: tool '{}' timed out after {} seconds",
+                            call.name, timeout_secs
+                        )
                     }
                 }
             } else {

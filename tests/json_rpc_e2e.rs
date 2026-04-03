@@ -685,6 +685,88 @@ async fn json_rpc_rejects_non_object_params_with_clear_error() {
     rpc_join.abort();
 }
 
+#[tokio::test]
+async fn json_rpc_screen_intelligence_capture_test_returns_stable_shape() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let capture = post_json_rpc(
+        &rpc_base,
+        1002,
+        "openhuman.screen_intelligence_capture_test",
+        json!({}),
+    )
+    .await;
+    let capture_outer = assert_no_jsonrpc_error(&capture, "screen_intelligence_capture_test");
+    let capture_result = capture_outer.get("result").unwrap_or(capture_outer);
+
+    assert!(
+        capture_result.get("ok").and_then(Value::as_bool).is_some(),
+        "expected bool ok field: {capture_result}"
+    );
+    assert!(
+        matches!(
+            capture_result.get("capture_mode").and_then(Value::as_str),
+            Some("windowed" | "fullscreen")
+        ),
+        "expected capture_mode field: {capture_result}"
+    );
+    assert!(
+        capture_result
+            .get("timing_ms")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "expected timing_ms field: {capture_result}"
+    );
+
+    let ok = capture_result
+        .get("ok")
+        .and_then(Value::as_bool)
+        .expect("ok should be bool");
+    let image_ref = capture_result.get("image_ref").and_then(Value::as_str);
+    let error = capture_result.get("error").and_then(Value::as_str);
+
+    if ok {
+        assert!(
+            image_ref
+                .map(|value| value.starts_with("data:image/png;base64,"))
+                .unwrap_or(false),
+            "successful capture should include a PNG data URL: {capture_result}"
+        );
+        assert!(
+            error.is_none(),
+            "successful capture should not include an error"
+        );
+    } else {
+        assert!(
+            image_ref.is_none(),
+            "failed capture should not include image data"
+        );
+        assert!(
+            error.is_some(),
+            "failed capture should include an error message"
+        );
+    }
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 // ---------------------------------------------------------------------------
 // Skills registry E2E: fetch, search, install, list, uninstall
 // ---------------------------------------------------------------------------
@@ -1072,6 +1154,19 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
         status_result.get("skill_id").and_then(Value::as_str),
         Some("e2e-runtime")
     );
+
+    let data_stats = post_json_rpc(
+        &rpc_base,
+        211,
+        "openhuman.skills_data_stats",
+        json!({"skill_id": "e2e-runtime"}),
+    )
+    .await;
+    let ds = assert_no_jsonrpc_error(&data_stats, "skills_data_stats");
+    assert_eq!(ds.get("exists"), Some(&json!(true)));
+    assert!(ds.get("path").and_then(Value::as_str).is_some());
+    assert!(ds.get("total_bytes").and_then(Value::as_u64).is_some());
+    assert!(ds.get("file_count").and_then(Value::as_u64).is_some());
 
     // 3. List tools
     let tools = post_json_rpc(
@@ -1549,6 +1644,115 @@ async fn team_rpc_e2e() {
     )
     .await;
     assert_no_jsonrpc_error(&role_change, "team_change_member_role");
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn about_app_rpc_list_lookup_and_search() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    fn inner(outer: &Value) -> Value {
+        outer
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| outer.clone())
+    }
+
+    let list = post_json_rpc(&rpc_base, 200, "openhuman.about_app_list", json!({})).await;
+    let list_outer = assert_no_jsonrpc_error(&list, "about_app_list");
+    let list_result = inner(list_outer);
+    let capabilities = list_result
+        .as_array()
+        .expect("about_app list should return an array");
+    assert!(
+        capabilities.len() >= 40,
+        "expected large capability catalog, got: {list_result}"
+    );
+    assert!(capabilities.iter().any(|capability| {
+        capability.get("id").and_then(Value::as_str) == Some("local_ai.download_model")
+    }));
+
+    let filtered = post_json_rpc(
+        &rpc_base,
+        201,
+        "openhuman.about_app_list",
+        json!({ "category": "local_ai" }),
+    )
+    .await;
+    let filtered_outer = assert_no_jsonrpc_error(&filtered, "about_app_list filtered");
+    let filtered_result = inner(filtered_outer);
+    let filtered_capabilities = filtered_result
+        .as_array()
+        .expect("filtered about_app list should return an array");
+    assert!(
+        !filtered_capabilities.is_empty(),
+        "expected local_ai capabilities: {filtered_result}"
+    );
+    assert!(filtered_capabilities.iter().all(|capability| {
+        capability.get("category").and_then(Value::as_str) == Some("local_ai")
+    }));
+
+    let lookup = post_json_rpc(
+        &rpc_base,
+        202,
+        "openhuman.about_app_lookup",
+        json!({ "id": "team.generate_invite_codes" }),
+    )
+    .await;
+    let lookup_outer = assert_no_jsonrpc_error(&lookup, "about_app_lookup");
+    let lookup_result = inner(lookup_outer);
+    assert_eq!(
+        lookup_result.get("id").and_then(Value::as_str),
+        Some("team.generate_invite_codes")
+    );
+    assert_eq!(
+        lookup_result.get("category").and_then(Value::as_str),
+        Some("team")
+    );
+
+    let search = post_json_rpc(
+        &rpc_base,
+        203,
+        "openhuman.about_app_search",
+        json!({ "query": "invite" }),
+    )
+    .await;
+    let search_outer = assert_no_jsonrpc_error(&search, "about_app_search");
+    let search_result = inner(search_outer);
+    let search_capabilities = search_result
+        .as_array()
+        .expect("about_app search should return an array");
+    assert!(
+        search_capabilities.iter().any(|capability| {
+            capability.get("id").and_then(Value::as_str) == Some("team.join_via_invite_code")
+        }),
+        "expected invite-related capability in search results: {search_result}"
+    );
+    assert!(
+        search_capabilities.iter().any(|capability| {
+            capability.get("id").and_then(Value::as_str) == Some("team.generate_invite_codes")
+        }),
+        "expected invite generation capability in search results: {search_result}"
+    );
 
     mock_join.abort();
     rpc_join.abort();

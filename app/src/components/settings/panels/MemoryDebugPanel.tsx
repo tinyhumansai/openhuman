@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  memoryClearNamespace,
   type MemoryDebugDocument,
   memoryDeleteDocument,
   memoryListDocuments,
@@ -37,6 +38,11 @@ const MemoryDebugPanel = () => {
   const [recallError, setRecallError] = useState<string | null>(null);
   const [queryLoading, setQueryLoading] = useState(false);
   const [recallLoading, setRecallLoading] = useState(false);
+
+  const [clearNamespaceInput, setClearNamespaceInput] = useState('');
+  const [clearLoading, setClearLoading] = useState(false);
+  const [clearSuccess, setClearSuccess] = useState<string | null>(null);
+  const [clearError, setClearError] = useState<string | null>(null);
 
   const maxChunks = useMemo(() => {
     const parsed = Number(maxChunksInput);
@@ -137,6 +143,33 @@ const MemoryDebugPanel = () => {
       setRecallLoading(false);
     }
   }, [maxChunks, namespaceInput]);
+
+  const handleClearNamespace = useCallback(async () => {
+    const ns = clearNamespaceInput.trim();
+    if (!ns) return;
+
+    const confirmed = window.confirm(
+      `This will permanently delete ALL documents in namespace "${ns}". This action cannot be undone.\n\nContinue?`
+    );
+    if (!confirmed) return;
+
+    setClearLoading(true);
+    setClearError(null);
+    setClearSuccess(null);
+    try {
+      const result = await memoryClearNamespace(ns);
+      if (result.cleared) {
+        setClearSuccess(`Namespace "${result.namespace}" cleared successfully.`);
+      } else {
+        setClearSuccess(`Clear request completed for "${result.namespace}" (nothing to clear).`);
+      }
+      await refreshAll();
+    } catch (error) {
+      setClearError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClearLoading(false);
+    }
+  }, [clearNamespaceInput, refreshAll]);
 
   return (
     <div className="overflow-hidden h-full flex flex-col">
@@ -239,6 +272,71 @@ const MemoryDebugPanel = () => {
             <div className="rounded border border-stone-700 bg-black/20 p-2 text-xs">
               {namespaces.length > 0 ? namespaces.join('\n') : 'No namespaces found.'}
             </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          title="Clear Namespace"
+          priority="tools"
+          icon={
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
+            </svg>
+          }>
+          <div className="space-y-3">
+            <p className="text-xs text-stone-400">
+              Delete all documents within a namespace. This is a destructive operation and cannot be
+              undone.
+            </p>
+
+            <label className="block text-xs text-stone-300">
+              Namespace
+              {namespaces.length > 0 ? (
+                <select
+                  value={clearNamespaceInput}
+                  onChange={e => setClearNamespaceInput(e.target.value)}
+                  className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white">
+                  <option value="">-- select a namespace --</option>
+                  {namespaces.map(ns => (
+                    <option key={ns} value={ns}>
+                      {ns}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={clearNamespaceInput}
+                  onChange={e => setClearNamespaceInput(e.target.value)}
+                  className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
+                  placeholder="e.g. skill:gmail:user@example.com"
+                />
+              )}
+            </label>
+
+            <PrimaryButton
+              variant="outline"
+              onClick={() => void handleClearNamespace()}
+              loading={clearLoading}
+              disabled={!clearNamespaceInput.trim()}
+              className="border-coral-500/50 text-coral-300 hover:bg-coral-500/10">
+              Clear Namespace
+            </PrimaryButton>
+
+            {clearSuccess && (
+              <div className="text-xs text-sage-300 border border-sage-500/30 bg-sage-500/10 rounded p-2">
+                {clearSuccess}
+              </div>
+            )}
+            {clearError && (
+              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
+                {clearError}
+              </div>
+            )}
           </div>
         </SectionCard>
 

@@ -1,0 +1,47 @@
+From: ravi.kumar@vezures.xyz
+To: sanil@vezures.xyz
+Cc: asha.mehta@vezures.xyz
+Subject: Re: API contract deadline reminder
+Date: 2026-04-01 09:30:00
+
+Hi Sanil,
+
+Quick reminder — the API contract review is due by April 3. Please make sure the
+final RPC method names and response envelope strategy are documented before then.
+
+Ravi has already finished the core memory domain work. Asha is wrapping up the
+ingestion evaluation fixtures.
+
+Let me know if you need more time, but Steven wants this locked by Thursday.
+
+Best,
+Ravi
+
+---
+
+From: alerts@github.com
+To: sanil@vezures.xyz
+Subject: [tinyhumansai/openhuman] CI passed on main
+Date: 2026-04-01 10:15:00
+
+All checks passed on commit abc1234 — build, typecheck, lint.
+No action required.
+
+---
+
+From: asha.mehta@vezures.xyz
+To: sanil@vezures.xyz
+Subject: Team sync — Wednesday 2pm
+Date: 2026-04-01 11:00:00
+
+Hey Sanil,
+
+Scheduling a team sync for Wednesday April 2 at 2pm IST.
+Agenda:
+- Memory layer status update
+- Ingestion quality review
+- Skills runtime isolation discussion
+
+Please confirm your availability.
+
+Asha

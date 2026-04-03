@@ -282,6 +282,23 @@ const SettingsHome = () => {
     //   dangerous: false,
     // },
     {
+      id: 'dictation',
+      title: 'Voice Dictation',
+      description: 'Transcribe speech to text using local AI',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('dictation'),
+      dangerous: false,
+    },
+    {
       id: 'local-model',
       title: 'Local AI Model',
       description: 'Choose model tier by device capability and manage downloads',
@@ -330,6 +347,23 @@ const SettingsHome = () => {
         </svg>
       ),
       onClick: () => navigateToSettings('billing'),
+      dangerous: false,
+    },
+    {
+      id: 'recovery-phrase',
+      title: 'Recovery Phrase',
+      description: 'Generate or import your BIP39 recovery phrase for encryption and wallet',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('recovery-phrase'),
       dangerous: false,
     },
     {

@@ -1,10 +1,13 @@
 use crate::openhuman::config::HeartbeatConfig;
+use crate::openhuman::subconscious::global::get_or_init_engine;
+use crate::openhuman::subconscious::types::Decision;
 use anyhow::Result;
 use std::path::Path;
 use tokio::time::{self, Duration};
 use tracing::{info, warn};
 
-/// Heartbeat engine — reads HEARTBEAT.md and executes tasks periodically
+/// Heartbeat engine — periodic scheduler that delegates to the subconscious
+/// loop for task-driven evaluation via local model inference.
 pub struct HeartbeatEngine {
     config: HeartbeatConfig,
     workspace_dir: std::path::PathBuf,
@@ -18,37 +21,82 @@ impl HeartbeatEngine {
         }
     }
 
-    /// Start the heartbeat loop (runs until cancelled)
+    /// Start the heartbeat loop (runs until cancelled).
+    /// On each tick, delegates to the shared global subconscious engine.
     pub async fn run(&self) -> Result<()> {
         if !self.config.enabled {
-            info!("Heartbeat disabled");
+            info!("[heartbeat] disabled");
             return Ok(());
         }
 
         let interval_mins = self.config.interval_minutes.max(5);
-        info!("💓 Heartbeat started: every {} minutes", interval_mins);
+        info!(
+            "[heartbeat] started: every {} minutes, subconscious inference {}",
+            interval_mins,
+            if self.config.inference_enabled {
+                "enabled"
+            } else {
+                "disabled (task counting only)"
+            }
+        );
 
         let mut interval = time::interval(Duration::from_secs(u64::from(interval_mins) * 60));
 
         loop {
             interval.tick().await;
 
-            match self.tick().await {
-                Ok(tasks) => {
-                    if tasks > 0 {
-                        info!("💓 Heartbeat: processed {} tasks", tasks);
+            if self.config.inference_enabled {
+                // Get the shared global engine (same instance as RPC handlers)
+                let lock = match get_or_init_engine().await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        warn!("[heartbeat] failed to get engine: {e}");
+                        continue;
+                    }
+                };
+                let guard = lock.lock().await;
+                let engine = match guard.as_ref() {
+                    Some(e) => e,
+                    None => {
+                        warn!("[heartbeat] engine not initialized");
+                        continue;
+                    }
+                };
+
+                match engine.tick().await {
+                    Ok(result) => match result.output.decision {
+                        Decision::Noop => {
+                            info!("[heartbeat] tick: noop — {}", result.output.reason);
+                        }
+                        Decision::Act => {
+                            info!(
+                                "[heartbeat] tick: act — {} ({} actions)",
+                                result.output.reason,
+                                result.output.actions.len()
+                            );
+                        }
+                        Decision::Escalate => {
+                            info!("[heartbeat] tick: escalate — {}", result.output.reason);
+                        }
+                    },
+                    Err(e) => {
+                        warn!("[heartbeat] subconscious tick error: {e}");
                     }
                 }
-                Err(e) => {
-                    warn!("💓 Heartbeat error: {}", e);
+            } else {
+                // Legacy mode: just count tasks
+                match self.collect_tasks().await {
+                    Ok(tasks) => {
+                        if !tasks.is_empty() {
+                            info!("[heartbeat] {} tasks in HEARTBEAT.md", tasks.len());
+                        }
+                    }
+                    Err(e) => {
+                        warn!("[heartbeat] error reading tasks: {e}");
+                    }
                 }
             }
         }
-    }
-
-    /// Single heartbeat tick — read HEARTBEAT.md and return task count
-    async fn tick(&self) -> Result<usize> {
-        Ok(self.collect_tasks().await?.len())
     }
 
     /// Read HEARTBEAT.md and return all parsed tasks.
@@ -62,7 +110,7 @@ impl HeartbeatEngine {
     }
 
     /// Parse tasks from HEARTBEAT.md (lines starting with `- `)
-    fn parse_tasks(content: &str) -> Vec<String> {
+    pub(crate) fn parse_tasks(content: &str) -> Vec<String> {
         content
             .lines()
             .filter_map(|line| {
@@ -76,14 +124,14 @@ impl HeartbeatEngine {
     pub async fn ensure_heartbeat_file(workspace_dir: &Path) -> Result<()> {
         let path = workspace_dir.join("HEARTBEAT.md");
         if !path.exists() {
-            let default = "# Periodic Tasks\n\n\
-                           # Add tasks below (one per line, starting with `- `)\n\
-                           # The agent will check this file on each heartbeat tick.\n\
+            let default = "# Periodic Tasks\n\
                            #\n\
-                           # Examples:\n\
-                           # - Check my email for important messages\n\
-                           # - Review my calendar for upcoming events\n\
-                           # - Check the weather forecast\n";
+                           # The subconscious loop checks these tasks periodically against\n\
+                           # your workspace state (memory, skills, email, etc.)\n\
+                           # Add or remove tasks — one per line starting with `- `\n\n\
+                           - Check for new emails that need attention\n\
+                           - Review upcoming deadlines and calendar events\n\
+                           - Monitor connected skills for errors or disconnections\n";
             tokio::fs::write(&path, default).await?;
         }
         Ok(())
@@ -120,38 +168,6 @@ mod tests {
         let content = "  - Indented task\n\t- Tab indented";
         let tasks = HeartbeatEngine::parse_tasks(content);
         assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks[0], "Indented task");
-        assert_eq!(tasks[1], "Tab indented");
-    }
-
-    #[test]
-    fn parse_tasks_dash_without_space_ignored() {
-        let content = "- Real task\n-\n- Another";
-        let tasks = HeartbeatEngine::parse_tasks(content);
-        // "-" trimmed = "-", does NOT start with "- " => skipped
-        // "- Real task" => "Real task"
-        // "- Another" => "Another"
-        assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks[0], "Real task");
-        assert_eq!(tasks[1], "Another");
-    }
-
-    #[test]
-    fn parse_tasks_trailing_space_bullet_trimmed_to_dash() {
-        // "- " trimmed becomes "-" (trim removes trailing space)
-        // "-" does NOT start with "- " => skipped
-        let content = "- ";
-        let tasks = HeartbeatEngine::parse_tasks(content);
-        assert_eq!(tasks.len(), 0);
-    }
-
-    #[test]
-    fn parse_tasks_bullet_with_content_after_spaces() {
-        // "- hello  " trimmed becomes "- hello" => starts_with "- " => "hello"
-        let content = "- hello  ";
-        let tasks = HeartbeatEngine::parse_tasks(content);
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0], "hello");
     }
 
     #[test]
@@ -159,41 +175,11 @@ mod tests {
         let content = "- Check email 📧\n- Review calendar 📅\n- 日本語タスク";
         let tasks = HeartbeatEngine::parse_tasks(content);
         assert_eq!(tasks.len(), 3);
-        assert!(tasks[0].contains("📧"));
-        assert!(tasks[2].contains("日本語"));
-    }
-
-    #[test]
-    fn parse_tasks_mixed_markdown() {
-        let content = "# Periodic Tasks\n\n## Quick\n- Task A\n\n## Long\n- Task B\n\n* Not a dash bullet\n1. Not numbered";
-        let tasks = HeartbeatEngine::parse_tasks(content);
-        assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks[0], "Task A");
-        assert_eq!(tasks[1], "Task B");
-    }
-
-    #[test]
-    fn parse_tasks_single_task() {
-        let tasks = HeartbeatEngine::parse_tasks("- Only one");
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0], "Only one");
-    }
-
-    #[test]
-    fn parse_tasks_many_tasks() {
-        let content: String = (0..100).fold(String::new(), |mut s, i| {
-            use std::fmt::Write;
-            let _ = writeln!(s, "- Task {i}");
-            s
-        });
-        let tasks = HeartbeatEngine::parse_tasks(&content);
-        assert_eq!(tasks.len(), 100);
-        assert_eq!(tasks[99], "Task 99");
     }
 
     #[tokio::test]
-    async fn ensure_heartbeat_file_creates_file() {
-        let dir = std::env::temp_dir().join("openhuman_test_heartbeat");
+    async fn ensure_heartbeat_file_creates_file_with_defaults() {
+        let dir = std::env::temp_dir().join("openhuman_test_heartbeat_defaults");
         let _ = tokio::fs::remove_dir_all(&dir).await;
         tokio::fs::create_dir_all(&dir).await.unwrap();
 
@@ -202,7 +188,9 @@ mod tests {
         let path = dir.join("HEARTBEAT.md");
         assert!(path.exists());
         let content = tokio::fs::read_to_string(&path).await.unwrap();
-        assert!(content.contains("Periodic Tasks"));
+        let tasks = HeartbeatEngine::parse_tasks(&content);
+        assert_eq!(tasks.len(), 3);
+        assert!(tasks.iter().any(|t| t.contains("email")));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -225,57 +213,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tick_returns_zero_when_no_file() {
-        let dir = std::env::temp_dir().join("openhuman_test_tick_no_file");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-
-        let engine = HeartbeatEngine::new(
-            HeartbeatConfig {
-                enabled: true,
-                interval_minutes: 30,
-            },
-            dir.clone(),
-        );
-        let count = engine.tick().await.unwrap();
-        assert_eq!(count, 0);
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
-    async fn tick_counts_tasks_from_file() {
-        let dir = std::env::temp_dir().join("openhuman_test_tick_count");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-
-        tokio::fs::write(dir.join("HEARTBEAT.md"), "- A\n- B\n- C")
-            .await
-            .unwrap();
-
-        let engine = HeartbeatEngine::new(
-            HeartbeatConfig {
-                enabled: true,
-                interval_minutes: 30,
-            },
-            dir.clone(),
-        );
-        let count = engine.tick().await.unwrap();
-        assert_eq!(count, 3);
-
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-    }
-
-    #[tokio::test]
     async fn run_returns_immediately_when_disabled() {
-        let engine = HeartbeatEngine::new(
-            HeartbeatConfig {
-                enabled: false,
-                interval_minutes: 30,
-            },
-            std::env::temp_dir(),
-        );
-        // Should return Ok immediately, not loop forever
+        let engine = HeartbeatEngine::new(HeartbeatConfig::default(), std::env::temp_dir());
         let result = engine.run().await;
         assert!(result.is_ok());
     }

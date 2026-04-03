@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
+import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { useLocalModelStatus } from '../hooks/useLocalModelStatus';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import { inferenceApi, type ModelInfo } from '../services/api/inferenceApi';
@@ -107,7 +108,7 @@ const Conversations = () => {
   const [selectedModel, setSelectedModel] = useState('agentic-v1');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const socketStatus = useAppSelector(selectSocketStatus);
   const [toolTimelineByThread, setToolTimelineByThread] = useState<
     Record<string, ToolTimelineEntry[]>
@@ -138,6 +139,7 @@ const Conversations = () => {
   const [isLoadingBudget, setIsLoadingBudget] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textInputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -221,6 +223,30 @@ const Conversations = () => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
+
+  useEffect(() => {
+    const onDictationInsert = (event: Event) => {
+      const customEvent = event as CustomEvent<{ text?: string }>;
+      const text = customEvent.detail?.text?.trim();
+      if (!text) return;
+
+      customEvent.preventDefault();
+      setInputMode('text');
+      setInputValue(prev => {
+        const base = prev.trim();
+        if (!base) return text;
+        return `${base}${base.endsWith(' ') ? '' : ' '}${text}`;
+      });
+
+      window.requestAnimationFrame(() => {
+        textInputRef.current?.focus();
+      });
+    };
+
+    window.addEventListener('dictation://insert-text', onDictationInsert as EventListener);
+    return () =>
+      window.removeEventListener('dictation://insert-text', onDictationInsert as EventListener);
+  }, []);
 
   useEffect(() => {
     if (sendError && inputValue.length > 0) {
@@ -543,7 +569,7 @@ const Conversations = () => {
 
     if (!trimmed || !selectedThreadId || isSending) return;
     if (!isLocalModelActiveRef.current && socketStatus !== 'connected') {
-      setSendError('Realtime socket is not connected.');
+      setSendError(chatSendError('socket_disconnected', 'Realtime socket is not connected.'));
       return;
     }
 
@@ -577,6 +603,12 @@ const Conversations = () => {
     sendingTimeoutRef.current = setTimeout(() => {
       console.warn('[chat] safety timeout: clearing isSending after 120s with no response');
       setIsSending(false);
+      setSendError(
+        chatSendError(
+          'safety_timeout',
+          'No response from the assistant after 2 minutes. Try again or check your connection.'
+        )
+      );
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
     }, 120_000);
@@ -623,7 +655,7 @@ const Conversations = () => {
       } catch (err) {
         pendingReactionRef.current.delete(sendingThreadId);
         const msg = err instanceof Error ? err.message : String(err);
-        setSendError(msg);
+        setSendError(chatSendError('local_model_failed', msg));
         dispatch(
           addInferenceResponse({
             content: 'Local model error — please try again.',
@@ -649,7 +681,7 @@ const Conversations = () => {
         sendingTimeoutRef.current = null;
       }
       const msg = err instanceof Error ? err.message : String(err);
-      setSendError(msg);
+      setSendError(chatSendError('cloud_send_failed', msg));
       setIsSending(false);
       dispatch(setActiveThread(null));
     }
@@ -694,7 +726,7 @@ const Conversations = () => {
       await handleSendMessage(transcript);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setSendError(`Voice transcription failed: ${message}`);
+      setSendError(chatSendError('voice_transcription', `Voice transcription failed: ${message}`));
       setVoiceStatus(null);
     } finally {
       setIsTranscribing(false);
@@ -705,7 +737,10 @@ const Conversations = () => {
     if (!rustChat || isSending || isTranscribing) return;
     if (!canUseMicrophoneApi) {
       setSendError(
-        'Microphone capture is unavailable in this runtime. Use Text mode, or run the desktop app bundle with microphone permissions enabled.'
+        chatSendError(
+          'microphone_unavailable',
+          'Microphone capture is unavailable in this runtime. Use Text mode, or run the desktop app bundle with microphone permissions enabled.'
+        )
       );
       return;
     }
@@ -741,7 +776,7 @@ const Conversations = () => {
         setIsRecording(false);
         mediaStreamRef.current?.getTracks().forEach(track => track.stop());
         mediaStreamRef.current = null;
-        setSendError('Microphone recording failed.');
+        setSendError(chatSendError('microphone_recording', 'Microphone recording failed.'));
       };
       recorder.onstop = () => {
         void transcribeAndSendAudio(recorder.mimeType);
@@ -754,7 +789,7 @@ const Conversations = () => {
       recorder.start();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setSendError(`Microphone access failed: ${message}`);
+      setSendError(chatSendError('microphone_access', `Microphone access failed: ${message}`));
       setVoiceStatus(null);
     }
   };
@@ -790,7 +825,7 @@ const Conversations = () => {
         await audio.play();
       } catch {
         if (!cancelled) {
-          setSendError('Failed to play voice reply.');
+          setSendError(chatSendError('voice_playback', 'Failed to play voice reply.'));
         }
       } finally {
         if (!cancelled) {
@@ -1293,7 +1328,9 @@ const Conversations = () => {
 
           {sendError && (
             <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-coral-500">{sendError}</p>
+              <p className="text-xs text-coral-500" data-chat-send-error-code={sendError.code}>
+                {sendError.message}
+              </p>
               <button
                 onClick={() => setSendError(null)}
                 className="text-xs text-stone-500 hover:text-stone-300 transition-colors ml-2 flex-shrink-0">
@@ -1312,6 +1349,7 @@ const Conversations = () => {
                   <span className="text-stone-500/50">{inlineCompletionSuffix}</span>
                 </div>
                 <textarea
+                  ref={textInputRef}
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
                   onKeyDown={handleInputKeyDown}

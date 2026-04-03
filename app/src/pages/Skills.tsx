@@ -9,12 +9,21 @@ import {
 } from '../components/skills/shared';
 import SkillDebugModal from '../components/skills/SkillDebugModal';
 import SkillSetupModal from '../components/skills/SkillSetupModal';
-import { useAvailableSkills, useSkillConnectionStatus, useSkillState } from '../lib/skills/hooks';
+import {
+  useAvailableSkills,
+  useSkillConnectionStatus,
+  useSkillDataDirectoryStats,
+  useSkillState,
+} from '../lib/skills/hooks';
 import { skillManager } from '../lib/skills/manager';
 import { installSkill } from '../lib/skills/skillsApi';
 import type { SkillConnectionStatus, SkillHostConnectionState } from '../lib/skills/types';
 import { IS_DEV } from '../utils/config';
-import { deriveSkillSyncSummaryText, deriveSkillSyncUiState } from './skillsSyncUi';
+import {
+  deriveSkillSyncSummaryText,
+  deriveSkillSyncUiState,
+  type SkillSyncStatsLike,
+} from './skillsSyncUi';
 
 /** Status dot color for skill connection status */
 function statusDotClass(status: SkillConnectionStatus): string {
@@ -41,7 +50,28 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
   const connectionStatus = useSkillConnectionStatus(skill.id);
   const statusDisplay = STATUS_DISPLAY[connectionStatus] || STATUS_DISPLAY.offline;
   const skillState = useSkillState<SkillHostConnectionState & Record<string, unknown>>(skill.id);
-  const syncStats = undefined; // TODO: sync stats will come from RPC in future
+  const diskStats = useSkillDataDirectoryStats(skill.id, connectionStatus === 'connected');
+  const syncStats = useMemo((): SkillSyncStatsLike | undefined => {
+    const base: SkillSyncStatsLike = { ...diskStats };
+    const sc = skillState?.syncCount;
+    if (typeof sc === 'number' && Number.isFinite(sc)) base.syncCount = sc;
+    const last =
+      typeof skillState?.lastSyncAtMs === 'number'
+        ? skillState.lastSyncAtMs
+        : typeof skillState?.lastSyncTime === 'number'
+          ? skillState.lastSyncTime
+          : undefined;
+    if (last != null && Number.isFinite(last)) base.lastSyncAtMs = last;
+    if (
+      base.syncCount == null &&
+      base.lastSyncAtMs == null &&
+      base.localDataBytes == null &&
+      base.localFileCount == null
+    ) {
+      return undefined;
+    }
+    return base;
+  }, [diskStats, skillState]);
   const [manualSyncing, setManualSyncing] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const syncUi = useMemo(

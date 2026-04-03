@@ -1,6 +1,12 @@
 use std::env;
 
 fn main() {
+    // Ensure Tauri ACL is regenerated when permissions or capabilities change.
+    // Without this, cargo incremental builds may skip tauri-build and embed
+    // stale ACL tables that miss newly added permission entries.
+    println!("cargo:rerun-if-changed=permissions");
+    println!("cargo:rerun-if-changed=capabilities");
+
     maybe_override_tauri_config_for_local_builds();
     tauri_build::build();
 }

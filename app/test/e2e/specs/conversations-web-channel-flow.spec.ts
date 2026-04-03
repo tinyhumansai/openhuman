@@ -9,7 +9,11 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import { navigateToConversations, navigateViaHash, walkOnboarding } from '../helpers/shared-flows';
+import {
+  completeOnboardingIfVisible,
+  navigateToConversations,
+  navigateViaHash,
+} from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 function stepLog(message: string, context?: unknown) {
@@ -70,7 +74,7 @@ suiteRunner('Conversations web channel flow', () => {
     }
 
     stepLog('complete onboarding');
-    await walkOnboarding('[ConversationsE2E]');
+    await completeOnboardingIfVisible('[ConversationsE2E]');
 
     stepLog('open conversations');
     // Navigate via hash — "Message OpenHuman" button may not reliably open conversations

@@ -131,6 +131,22 @@ describe('Skills registry flow', () => {
     }
   });
 
+  it('shows at least one known registry skill name (tool surface)', async () => {
+    await navigateToSkills();
+    await browser.pause(1_500);
+    const hasNamedSkill =
+      (await textExists('Telegram')) || (await textExists('Notion')) || (await textExists('Gmail'));
+    stepLog(`Registry skill name visible: ${hasNamedSkill}`);
+    if (!hasNamedSkill) {
+      const tree = await dumpAccessibilityTree();
+      const log = getRequestLog();
+      stepLog('Named registry skill not found');
+      stepLog('Accessibility tree:', tree.slice(0, 4000));
+      stepLog('Request log:', log);
+    }
+    expect(hasNamedSkill).toBe(true);
+  });
+
   it('can trigger a skill uninstall action', async () => {
     clearRequestLog();
 

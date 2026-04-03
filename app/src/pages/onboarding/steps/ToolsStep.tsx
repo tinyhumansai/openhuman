@@ -6,6 +6,7 @@ import {
   TOOL_CATEGORIES,
   type ToolCategory,
 } from '../../../utils/toolDefinitions';
+import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface ToolsStepProps {
   onNext: (enabledTools: string[]) => void;
@@ -92,11 +93,7 @@ const ToolsStep = ({ onNext, onBack: _onBack }: ToolsStepProps) => {
         })}
       </div>
 
-      <button
-        onClick={() => onNext(enabledList)}
-        className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
-        Continue
-      </button>
+      <OnboardingNextButton onClick={() => onNext(enabledList)} />
     </div>
   );
 };

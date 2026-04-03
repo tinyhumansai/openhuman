@@ -11,6 +11,7 @@
 // Many types/functions are not yet consumed but are intentionally exported.
 #![allow(dead_code)]
 
+pub mod about_app;
 pub mod accessibility;
 pub mod agent;
 pub mod approval;
@@ -35,7 +36,9 @@ pub mod screen_intelligence;
 pub mod security;
 pub mod service;
 pub mod skills;
+pub mod subconscious;
 pub mod team;
+pub mod tool_timeout;
 pub mod tools;
 pub mod util;
 pub mod voice;

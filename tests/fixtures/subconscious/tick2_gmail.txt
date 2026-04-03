@@ -1,0 +1,32 @@
+From: steven@vezures.xyz
+To: sanil@vezures.xyz
+Cc: ravi.kumar@vezures.xyz
+Subject: URGENT: API contract deadline moved to tomorrow
+Date: 2026-04-01 16:00:00
+
+Sanil,
+
+Change of plans — the API contract review has been moved up to April 2 (tomorrow).
+The investor demo is now scheduled for April 4 instead of April 7, so we need
+everything locked a day earlier.
+
+Please prioritize this over other work today. Let me know if there are blockers.
+
+Steven
+
+---
+
+From: ravi.kumar@vezures.xyz
+To: sanil@vezures.xyz
+Subject: Skills runtime — credential fix landed
+Date: 2026-04-01 17:30:00
+
+Sanil,
+
+Good news — the backend team deployed the credential exchange fix.
+OAuth token refresh should now work for Gmail and Notion skills.
+I've unblocked Thread 2 and updated the tracker.
+
+The skills runtime isolation work can resume now.
+
+Ravi

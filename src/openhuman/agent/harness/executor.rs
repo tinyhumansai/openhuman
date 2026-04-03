@@ -490,7 +490,7 @@ fn resolve_timeout(archetype: AgentArchetype, config: &OrchestratorConfig) -> Du
         .archetypes
         .get(&archetype.to_string())
         .and_then(|ac| ac.timeout_secs)
-        .unwrap_or(120);
+        .unwrap_or_else(crate::openhuman::tool_timeout::tool_execution_timeout_secs);
     Duration::from_secs(secs)
 }
 

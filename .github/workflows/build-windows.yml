@@ -1,0 +1,159 @@
+name: Build Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/windows]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: "Desktop: Windows x64"
+    runs-on: windows-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: yarn
+
+      - name: Install Rust (1.93.0)
+        uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Skip first 7 lines of Cargo.lock (workspace package version bumps) so the key tracks dependency changes only
+      - name: Cargo.lock fingerprint (deps only)
+        id: cargo-lock-fingerprint
+        shell: bash
+        run: |
+          echo "hash=$(tail -n +8 Cargo.lock | openssl dgst -sha256 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Cargo registry and git sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: Windows-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash }}
+          restore-keys: |
+            Windows-cargo-registry-
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build frontend
+        run: yarn build
+        env:
+          NODE_ENV: production
+          VITE_BACKEND_URL: ${{ vars.BASE_URL }}
+          VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
+          VITE_DEBUG: ${{ vars.VITE_DEBUG }}
+
+      - name: Resolve core manifest and binary names
+        id: core-paths
+        shell: bash
+        run: |
+          if [ -f "openhuman_core/Cargo.toml" ]; then
+            CORE_DIR="openhuman_core"
+          elif [ -f "rust-core/Cargo.toml" ]; then
+            CORE_DIR="rust-core"
+          elif [ -f "Cargo.toml" ] && grep -q '^name = "openhuman"' Cargo.toml; then
+            CORE_DIR="."
+          else
+            echo "No core Cargo manifest found"
+            exit 1
+          fi
+
+          SIDE_CAR_BASE="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json','utf8'));const b=(c.bundle&&Array.isArray(c.bundle.externalBin)&&c.bundle.externalBin[0])||'binaries/openhuman-core';process.stdout.write(String(b).split('/').pop());")"
+          CORE_BIN_NAME="${SIDE_CAR_BASE}"
+
+          echo "core_dir=$CORE_DIR" >> "$GITHUB_OUTPUT"
+          echo "core_manifest=$CORE_DIR/Cargo.toml" >> "$GITHUB_OUTPUT"
+          echo "core_target_dir=target/x86_64-pc-windows-msvc/release" >> "$GITHUB_OUTPUT"
+          echo "core_bin_name=$CORE_BIN_NAME" >> "$GITHUB_OUTPUT"
+          echo "sidecar_base=$SIDE_CAR_BASE" >> "$GITHUB_OUTPUT"
+
+      - name: Build sidecar core binary
+        shell: bash
+        run: |
+          cargo build \
+            --manifest-path "$CORE_MANIFEST" \
+            --release \
+            --target x86_64-pc-windows-msvc \
+            --bin "$CORE_BIN_NAME"
+        env:
+          CORE_MANIFEST: ${{ steps.core-paths.outputs.core_manifest }}
+          CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
+
+      - name: Stage sidecar for Tauri bundler
+        shell: bash
+        run: |
+          bash scripts/release/stage-sidecar.sh \
+            x86_64-pc-windows-msvc \
+            "${{ steps.core-paths.outputs.core_target_dir }}" \
+            "${{ steps.core-paths.outputs.core_bin_name }}" \
+            "${{ steps.core-paths.outputs.sidecar_base }}"
+
+      - name: Define Tauri configuration overrides
+        id: config-overrides
+        uses: actions/github-script@v7
+        env:
+          BASE_URL: ${{ vars.BASE_URL }}
+          WITH_UPDATER: "false"
+        with:
+          script: |
+            const workspacePath = process.env.GITHUB_WORKSPACE.replace(/\\/g, '/');
+            const prefix = workspacePath.startsWith('/') ? 'file://' : 'file:///';
+            const moduleUrl = `${prefix}${workspacePath}/scripts/prepareTauriConfig.js`;
+            const { default: prepareTauriConfig } = await import(moduleUrl);
+            const config = prepareTauriConfig();
+            core.setOutput('json', JSON.stringify(config));
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0.6.2
+        id: tauri-build
+        env:
+          BASE_URL: ${{ vars.BASE_URL }}
+        with:
+          projectPath: app
+          args: -c ${{ steps.config-overrides.outputs.json }} --target x86_64-pc-windows-msvc
+          includeDebug: false
+          includeRelease: true
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: |
+            app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+
+      - name: Upload NSIS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-nsis
+          path: |
+            app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+
+      - name: Upload standalone CLI binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-cli
+          path: |
+            ${{ steps.core-paths.outputs.core_target_dir }}/${{ steps.core-paths.outputs.core_bin_name }}.exe

@@ -71,12 +71,12 @@ describe('MemoryWorkspace', () => {
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Alice')).toBeInTheDocument();
+      expect(screen.getByText('Alice', { selector: 'span' })).toBeInTheDocument();
     });
 
-    expect(screen.getByText('AUTHORED')).toBeInTheDocument();
-    expect(screen.getByText('Bob')).toBeInTheDocument();
-    expect(screen.getByText('REVIEWED')).toBeInTheDocument();
+    expect(screen.getByText('AUTHORED', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('Bob', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.getByText('REVIEWED', { selector: 'span' })).toBeInTheDocument();
     // "Paper A" appears in both graph relations and documents list,
     // so just verify at least one instance is present
     expect(screen.getAllByText('Paper A').length).toBeGreaterThanOrEqual(1);

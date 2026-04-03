@@ -3,7 +3,7 @@ import debug from 'debug';
 import { io, Socket } from 'socket.io-client';
 
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
-import { syncToolsToBackend } from '../lib/skills';
+import { skillManager, syncToolsToBackend } from '../lib/skills';
 import { store } from '../store';
 import { upsertChannelConnection } from '../store/channelConnectionsSlice';
 import { resetForUser, setSocketIdForUser, setStatusForUser } from '../store/socketSlice';
@@ -167,6 +167,9 @@ class SocketService {
       store.dispatch(setStatusForUser({ userId: uid, status: 'connected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId }));
       syncToolsToBackend();
+      void skillManager.resyncRunningSkillsAfterReconnect().catch(err => {
+        console.warn('[socket] resync running skills after reconnect failed:', err);
+      });
     });
 
     this.socket.on('ready', () => {

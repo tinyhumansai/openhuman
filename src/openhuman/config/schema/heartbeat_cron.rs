@@ -3,17 +3,38 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// Heartbeat configuration — periodic background loop that evaluates
+/// HEARTBEAT.md tasks against workspace state using local model inference.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HeartbeatConfig {
+    /// Enable the heartbeat loop.
     pub enabled: bool,
+    /// Tick interval in minutes (minimum 5).
     pub interval_minutes: u32,
+    /// Enable subconscious inference (local model evaluation).
+    /// When false, the heartbeat only counts tasks without reasoning.
+    #[serde(default)]
+    pub inference_enabled: bool,
+    /// Maximum token budget for the situation report (default 40k).
+    #[serde(default = "default_context_budget")]
+    pub context_budget_tokens: u32,
+    /// Override model for escalation (default: use config.default_model).
+    #[serde(default)]
+    pub escalation_model: Option<String>,
+}
+
+fn default_context_budget() -> u32 {
+    40_000
 }
 
 impl Default for HeartbeatConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            interval_minutes: 30,
+            interval_minutes: 15,
+            inference_enabled: false,
+            context_budget_tokens: default_context_budget(),
+            escalation_model: None,
         }
     }
 }

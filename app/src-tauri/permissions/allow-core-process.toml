@@ -1,10 +1,17 @@
 [[permission]]
 identifier = "allow-core-process"
-description = "Core RPC URL and sidecar restart"
+description = "Core RPC URL, sidecar restart, and dictation hotkey commands"
 
 [permission.commands]
 allow = [
     "core_rpc_url",
     "restart_core_process",
+    "service_install_direct",
+    "service_start_direct",
+    "service_stop_direct",
+    "service_status_direct",
+    "service_uninstall_direct",
+    "register_dictation_hotkey",
+    "unregister_dictation_hotkey",
 ]
 deny = []

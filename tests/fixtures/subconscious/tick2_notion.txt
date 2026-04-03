@@ -1,0 +1,49 @@
+# Q1 Delivery Tracker
+
+Workspace: tinyhumans / engineering
+Owner: Sanil Jain
+Last edited: 2026-04-01
+Status: In Progress
+
+## Active Threads
+
+### Thread 1: Memory Layer
+Owner: Sanil Jain
+Status: In Progress
+Due date: 2026-04-15
+Deliverables:
+- Stable document storage
+- Graph query and recall
+- Controller registry migration
+
+### Thread 2: Skills Runtime
+Owner: Ravi Kumar
+Status: In Progress
+Due date: 2026-04-10
+Deliverables:
+- Per-skill QuickJS isolation
+- OAuth credential refresh
+- Webhook routing
+
+Note: Unblocked — credential exchange API deployed by backend team.
+
+### Thread 3: Ingestion Quality
+Owner: Asha Mehta
+Status: Complete
+Due date: 2026-03-26
+Deliverables:
+- Gmail fixture evaluation
+- Notion fixture evaluation
+- GLiNER entity extraction baseline
+
+## Decisions
+
+- JSON-RPC retained as transport for desktop core
+- Namespace is the primary storage scope key
+- Controller registry pattern adopted for all RPC domains
+- API contract deadline moved to April 2 (was April 3)
+
+## Team Preferences
+
+- Sanil prefers core-first delivery over UI-first delivery
+- Ravi prefers strict ownership boundaries for parallel agents

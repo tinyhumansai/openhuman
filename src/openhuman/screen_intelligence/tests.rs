@@ -516,6 +516,29 @@ async fn capture_test_returns_diagnostics() {
 
     if !cfg!(target_os = "macos") {
         assert!(!result.ok, "should fail on non-macOS");
-        assert!(result.error.is_some());
+        assert_eq!(
+            result.error.as_deref(),
+            Some("screen capture is unsupported on this platform")
+        );
     }
+}
+
+#[tokio::test]
+async fn capture_now_without_session_is_rejected_without_hanging() {
+    let engine = Arc::new(AccessibilityEngine {
+        inner: Mutex::new(EngineState::new(ScreenIntelligenceConfig::default())),
+    });
+
+    let result = engine
+        .capture_now()
+        .await
+        .expect("capture_now should not error");
+    assert!(
+        !result.accepted,
+        "capture_now should be rejected without a session"
+    );
+    assert!(
+        result.frame.is_none(),
+        "capture_now should not produce a frame without a session"
+    );
 }

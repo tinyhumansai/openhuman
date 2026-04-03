@@ -203,9 +203,14 @@ export async function restartCoreProcess(): Promise<void> {
 // --- Memory Commands ---
 
 /**
- * Initialise the TinyHumans memory client in Rust with the user's JWT token
- * (sourced from `authSlice.token` in Redux). Call this after login and after
- * Redux Persist rehydration.
+ * Initialise the local-only (SQLite) memory subsystem in the Rust core.
+ *
+ * The `token` parameter is accepted for backward compatibility with callers
+ * that pass the user's JWT, but the core **ignores** it — all memory storage
+ * and retrieval is local.  Remote/cloud memory sync is a future consideration.
+ *
+ * Call this after login and after Redux Persist rehydration so the core
+ * process has a ready memory client for the current workspace.
  */
 export async function syncMemoryClientToken(token: string): Promise<void> {
   console.debug(
@@ -213,12 +218,13 @@ export async function syncMemoryClientToken(token: string): Promise<void> {
     !!token,
     isTauri()
   );
-  if (!isTauri() || !token) {
-    console.debug('[memory] syncMemoryClientToken: exit — skipped (not Tauri or empty token)');
+  if (!isTauri()) {
+    console.debug('[memory] syncMemoryClientToken: exit — skipped (not Tauri)');
     return;
   }
   try {
-    console.debug('[memory] syncMemoryClientToken: payload → memory.init');
+    console.debug('[memory] syncMemoryClientToken: payload → memory.init (local-only)');
+    // jwt_token is passed for backward compatibility but ignored by the core.
     await callCoreRpc<boolean>({ method: 'openhuman.memory_init', params: { jwt_token: token } });
     console.info('[memory] syncMemoryClientToken: exit — ok');
   } catch (err) {
@@ -274,6 +280,19 @@ export async function memoryDeleteDocument(
     method: 'openhuman.memory_delete_document',
     params: { document_id: documentId, namespace },
   });
+}
+
+export async function memoryClearNamespace(
+  namespace: string
+): Promise<{ cleared: boolean; namespace: string }> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  const response = await callCoreRpc<{ result: { cleared: boolean; namespace: string } }>({
+    method: 'openhuman.memory_clear_namespace',
+    params: { namespace },
+  });
+  return response.result;
 }
 
 /** A single entity returned in the structured retrieval context. */
@@ -2153,7 +2172,7 @@ export async function runtimeDisableSkill(skillId: string): Promise<void> {
 
 export async function runtimeSkillDataStats(skillId: string): Promise<RuntimeSkillDataStats> {
   return await callCoreRpc<RuntimeSkillDataStats>({
-    method: 'openhuman.skills_status',
+    method: 'openhuman.skills_data_stats',
     params: { skill_id: skillId },
   });
 }
@@ -2228,4 +2247,51 @@ export async function openhumanVoiceTts(
     method: 'openhuman.voice_tts',
     params: { text, output_path: outputPath },
   });
+}
+
+// --- Dictation Hotkey Commands ---
+
+/**
+ * Register (or re-register) the global dictation toggle hotkey.
+ * On press the Tauri shell emits `dictation://toggle` to all webviews.
+ * Desktop-only — silently no-ops in the browser.
+ */
+export async function registerDictationHotkey(shortcut: string): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[dictation] registerDictationHotkey: skipped — not running in Tauri');
+    return;
+  }
+  const normalizedShortcut = shortcut
+    .trim()
+    .replace(/\bCommandOrControl\b/gi, 'CmdOrCtrl')
+    .replace(/\bCommand\b/gi, 'Cmd')
+    .replace(/\bControl\b/gi, 'Ctrl')
+    .replace(/\bOption\b/gi, 'Alt');
+
+  console.debug(
+    '[dictation] registerDictationHotkey: shortcut=%s normalized=%s',
+    shortcut,
+    normalizedShortcut
+  );
+  try {
+    await invoke<void>('register_dictation_hotkey', { shortcut: normalizedShortcut });
+  } catch (err) {
+    console.warn('[dictation] registerDictationHotkey normalized registration failed', err);
+    throw err;
+  }
+  console.debug('[dictation] registerDictationHotkey: done');
+}
+
+/**
+ * Unregister the global dictation hotkey if one is active.
+ * Desktop-only — silently no-ops in the browser.
+ */
+export async function unregisterDictationHotkey(): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[dictation] unregisterDictationHotkey: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[dictation] unregisterDictationHotkey: invoking');
+  await invoke<void>('unregister_dictation_hotkey');
+  console.debug('[dictation] unregisterDictationHotkey: done');
 }

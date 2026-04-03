@@ -12,9 +12,10 @@ import { useAvailableSkills, useSkillConnectionStatus } from '../../../lib/skill
 import { installSkill } from '../../../lib/skills/skillsApi';
 import type { SkillConnectionStatus } from '../../../lib/skills/types';
 import { IS_DEV } from '../../../utils/config';
+import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface SkillsStepProps {
-  onComplete: (connectedSources: string[]) => void | Promise<void>;
+  onNext: (connectedSources: string[]) => void | Promise<void>;
   onBack?: () => void;
 }
 
@@ -60,7 +61,7 @@ function SkillRow({ skill, onSetup }: { skill: SkillListEntry; onSetup: () => vo
   );
 }
 
-const SkillsStep = ({ onComplete, onBack: _onBack }: SkillsStepProps) => {
+const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
   const { skills: availableSkills, loading: skillsLoading } = useAvailableSkills();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +115,7 @@ const SkillsStep = ({ onComplete, onBack: _onBack }: SkillsStepProps) => {
     setLoading(true);
     try {
       const connectedIds = sortedSkills.map(s => s.id);
-      await onComplete(connectedIds);
+      await onNext(connectedIds);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong. Please try again.');
     } finally {
@@ -152,12 +153,7 @@ const SkillsStep = ({ onComplete, onBack: _onBack }: SkillsStepProps) => {
 
       {error && <p className="text-coral-400 text-sm mb-3 text-center">{error}</p>}
 
-      <button
-        onClick={handleFinish}
-        disabled={loading}
-        className="w-full py-2.5 btn-primary text-sm font-medium rounded-xl border transition-colors border-stone-600 hover:border-sage-500 hover:bg-sage-500/10">
-        {loading ? 'Loading...' : 'Continue'}
-      </button>
+      <OnboardingNextButton onClick={handleFinish} loading={loading} loadingLabel="Loading..." />
 
       {setupModalOpen && activeSkillId && (
         <SkillSetupModal

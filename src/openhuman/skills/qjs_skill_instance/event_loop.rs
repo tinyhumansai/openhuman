@@ -5,9 +5,14 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::openhuman::memory::MemoryClientRef;
-use crate::openhuman::skills::quickjs_libs::qjs_ops;
-use crate::openhuman::skills::types::{SkillMessage, SkillStatus, ToolResult};
+use crate::openhuman::{
+    memory::MemoryClientRef,
+    skills::{
+        quickjs_libs::qjs_ops,
+        types::{SkillMessage, SkillStatus, ToolResult},
+    },
+    tool_timeout::{tool_execution_timeout_duration, tool_execution_timeout_secs},
+};
 
 use super::js_handlers::{
     call_lifecycle, handle_cron_trigger, handle_js_call, handle_js_void_call, handle_server_event,
@@ -233,7 +238,11 @@ pub(crate) async fn run_event_loop(
                     );
                 }
                 if tokio::time::Instant::now() >= ptc.deadline {
-                    log::error!("[skill:{}] Async tool call timed out after 120s", skill_id);
+                    log::error!(
+                        "[skill:{}] Async tool call timed out after {}s",
+                        skill_id,
+                        tool_execution_timeout_secs()
+                    );
                     // Dump JS error state for debugging
                     let error_info = ctx
                         .with(|js_ctx| {
@@ -357,7 +366,7 @@ async fn handle_message(
                     );
                     *pending_tool = Some(PendingToolCall {
                         reply,
-                        deadline: tokio::time::Instant::now() + Duration::from_secs(120),
+                        deadline: tokio::time::Instant::now() + tool_execution_timeout_duration(),
                     });
                 }
                 Err(e) => {
