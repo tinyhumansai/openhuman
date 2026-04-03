@@ -184,13 +184,13 @@ const Mnemonic = () => {
   const canContinue = mode === 'generate' ? confirmed : isImportComplete;
 
   return (
-    <div className="min-h-full relative flex items-center justify-center">
-      <div className="relative z-10 max-w-lg w-full mx-4">
+    <div className="min-h-full bg-[#F5F5F5] flex items-center justify-center p-4 pt-6">
+      <div className="max-w-lg w-full">
         <div className="flex justify-center mb-6">
           <LottieAnimation src="/lottie/safe3.json" height={120} width={120} />
         </div>
 
-        <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
+        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-8 animate-fade-up">
           {mode === 'generate' ? (
             <>
               <div className="text-center mb-4">

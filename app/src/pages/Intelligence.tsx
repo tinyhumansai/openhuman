@@ -250,10 +250,10 @@ export default function Intelligence() {
   ];
 
   return (
-    <div className="min-h-full relative">
-      <div className="relative z-10 min-h-full flex flex-col">
-        <div className="flex-1 p-6">
-          <div className="max-w-6xl mx-auto">
+    <div className="min-h-full bg-[#F5F5F5] p-4 pt-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6">
+          <div>
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
