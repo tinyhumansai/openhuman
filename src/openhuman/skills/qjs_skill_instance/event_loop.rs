@@ -6,7 +6,9 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
 use crate::openhuman::{
-    memory::MemoryClientRef,
+    memory::{
+        MemoryClientRef, MemoryIngestionConfig, MemoryIngestionRequest, NamespaceDocumentInput,
+    },
     skills::{
         quickjs_libs::qjs_ops,
         types::{SkillMessage, SkillStatus, ToolResult},
@@ -33,14 +35,27 @@ struct MemoryWriteJob {
 /// causes `persist_state_to_memory` to drop new writes.
 const MEMORY_WRITE_CHANNEL_CAPACITY: usize = 16;
 
-/// Spawn a bounded background worker that consumes `MemoryWriteJob` items and
-/// calls `store_skill_sync` sequentially.  Returns the sender half; dropping it
-/// shuts down the worker.
+/// Spawn a bounded background worker that consumes `MemoryWriteJob` items,
+/// calls `store_skill_sync` to persist the raw document, then runs
+/// `ingest_doc` to extract entities and relations into the memory graph.
+///
+/// When the sync content contains embedded pages (e.g. Notion sync with a
+/// `pages` array), each page with `content_text` is stored and ingested as
+/// its own document keyed by page ID.  This gives per-page entity extraction,
+/// proper dedup on re-sync, and search that returns relevant page chunks
+/// rather than the entire sync blob.
+///
+/// Returns the sender half; dropping it shuts down the worker.
 fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
     let (tx, mut rx) = mpsc::channel::<MemoryWriteJob>(MEMORY_WRITE_CHANNEL_CAPACITY);
     tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
-            log::debug!("[memory] store_skill_sync: title={}", job.title);
+            log::debug!(
+                "[memory] store_skill_sync: skill={}, title={}, content_len={}",
+                job.skill,
+                job.title,
+                job.content.len(),
+            );
             if let Err(e) = job
                 .client
                 .store_skill_sync(
@@ -58,13 +73,156 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
                 .await
             {
                 log::warn!("[memory] store_skill_sync failed for '{}': {e}", job.title);
-            } else {
-                log::info!("[memory] store_skill_sync succeeded for '{}'", job.title);
+                continue;
+            }
+            log::debug!("[memory] store_skill_sync succeeded for '{}'", job.title);
+
+            let namespace = format!("skill-{}", job.skill.trim());
+            let skill = job.skill.trim().to_lowercase();
+
+            // Skill-specific ingestion: each skill type has its own extraction
+            // strategy so page/email content is ingested individually rather
+            // than as one giant blob.
+            match skill.as_str() {
+                "notion" => {
+                    let pages = extract_pages_from_sync(&job.content);
+                    if pages.is_empty() {
+                        log::debug!(
+                            "[memory] notion: no pages with content in '{}', skipping ingestion",
+                            job.title,
+                        );
+                    } else {
+                        log::debug!(
+                            "[memory] notion: ingesting {} pages individually",
+                            pages.len(),
+                        );
+                        for page in &pages {
+                            let page_key = format!("page-{}", page.id);
+                            if let Err(e) = job
+                                .client
+                                .store_skill_sync(
+                                    &job.skill,
+                                    "default",
+                                    &page.title,
+                                    &page.content,
+                                    Some("notion".to_string()),
+                                    Some(serde_json::json!({
+                                        "page_id": page.id,
+                                        "url": page.url,
+                                    })),
+                                    None,
+                                    None,
+                                    None,
+                                    Some(page_key.clone()),
+                                )
+                                .await
+                            {
+                                log::warn!(
+                                    "[memory] notion: store page '{}' failed: {e}",
+                                    page.title,
+                                );
+                                continue;
+                            }
+                            ingest_single_doc(&job.client, &namespace, &page.title, &page.content)
+                                .await;
+                        }
+                    }
+                }
+                // Other skills: ingest the full content as a single document.
+                _ => {
+                    ingest_single_doc(&job.client, &namespace, &job.title, &job.content).await;
+                }
             }
         }
         log::debug!("[memory] memory-write worker shutting down");
     });
     tx
+}
+
+/// A page extracted from a skill sync blob.
+struct SyncPage {
+    id: String,
+    title: String,
+    url: String,
+    content: String,
+}
+
+/// Parse the sync content as JSON and extract individual pages that have
+/// `content_text`.  Returns an empty vec if the content isn't JSON or has
+/// no pages with content.
+fn extract_pages_from_sync(content: &str) -> Vec<SyncPage> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return Vec::new();
+    };
+    let Some(pages) = value.get("pages").and_then(|p| p.as_array()) else {
+        return Vec::new();
+    };
+    pages
+        .iter()
+        .filter_map(|page| {
+            let content_text = page.get("content_text")?.as_str()?;
+            if content_text.trim().is_empty() {
+                return None;
+            }
+            Some(SyncPage {
+                id: page.get("id")?.as_str()?.to_string(),
+                title: page
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("Untitled")
+                    .to_string(),
+                url: page
+                    .get("url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                content: content_text.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Store and ingest a single document into the memory graph.
+async fn ingest_single_doc(
+    client: &MemoryClientRef,
+    namespace: &str,
+    title: &str,
+    content: &str,
+) {
+    let request = MemoryIngestionRequest {
+        document: NamespaceDocumentInput {
+            namespace: namespace.to_string(),
+            key: title.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            source_type: "doc".to_string(),
+            priority: "medium".to_string(),
+            tags: Vec::new(),
+            metadata: serde_json::json!({}),
+            category: "core".to_string(),
+            session_id: None,
+            document_id: None,
+        },
+        config: MemoryIngestionConfig::default(),
+    };
+    log::debug!("[memory] ingest_doc starting for '{}'", title);
+    match client.ingest_doc(request).await {
+        Ok(result) => {
+            log::info!(
+                "[memory] ingest_doc succeeded for '{}': {} entities, {} relations, {} chunks",
+                title,
+                result.entity_count,
+                result.relation_count,
+                result.chunk_count,
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "[memory] ingest_doc failed for '{}' (non-fatal): {e}",
+                title,
+            );
+        }
+    }
 }
 
 /// Snapshot the skill's published ops state and queue it for memory persistence.
@@ -707,4 +865,95 @@ async fn handle_message(
         }
     }
     false // Don't stop
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_pages_from_notion_sync() {
+        let content = serde_json::json!({
+            "snapshot_version": "notion-sync-v2",
+            "pages": [
+                {
+                    "id": "page-1",
+                    "title": "Meeting Notes",
+                    "url": "https://notion.so/page-1",
+                    "content_text": "Attendees: Alice, Bob. Decision: ship by Friday.",
+                    "has_content": true
+                },
+                {
+                    "id": "page-2",
+                    "title": "Empty Page",
+                    "url": "https://notion.so/page-2",
+                    "content_text": "",
+                    "has_content": false
+                },
+                {
+                    "id": "page-3",
+                    "title": "Whitespace Only",
+                    "url": "https://notion.so/page-3",
+                    "content_text": "   ",
+                    "has_content": false
+                }
+            ]
+        })
+        .to_string();
+
+        let pages = extract_pages_from_sync(&content);
+        assert_eq!(pages.len(), 1, "only page with real content should be extracted");
+        assert_eq!(pages[0].id, "page-1");
+        assert_eq!(pages[0].title, "Meeting Notes");
+        assert_eq!(pages[0].content, "Attendees: Alice, Bob. Decision: ship by Friday.");
+    }
+
+    #[test]
+    fn extract_pages_skips_gmail_sync() {
+        let content = serde_json::json!({
+            "__oauth_credential": {"credentialId": "abc123"},
+            "auth_status": "authenticated",
+            "emails": [],
+            "totalEmails": 0,
+            "syncInProgress": false
+        })
+        .to_string();
+
+        let pages = extract_pages_from_sync(&content);
+        assert!(pages.is_empty(), "gmail sync data should not produce pages");
+    }
+
+    #[test]
+    fn extract_pages_skips_ops_state_with_empty_pages() {
+        let content = serde_json::json!({
+            "auth_status": "authenticated",
+            "pages": [],
+            "totalPages": 0,
+            "syncInProgress": false
+        })
+        .to_string();
+
+        let pages = extract_pages_from_sync(&content);
+        assert!(pages.is_empty(), "empty pages array should produce no results");
+    }
+
+    #[test]
+    fn extract_pages_skips_non_json() {
+        let pages = extract_pages_from_sync("this is plain text, not json");
+        assert!(pages.is_empty(), "non-JSON content should produce no results");
+    }
+
+    #[test]
+    fn extract_pages_skips_pages_without_content_text() {
+        let content = serde_json::json!({
+            "pages": [
+                {"id": "page-1", "title": "No Content Field"},
+                {"id": "page-2", "title": "Null Content", "content_text": null}
+            ]
+        })
+        .to_string();
+
+        let pages = extract_pages_from_sync(&content);
+        assert!(pages.is_empty(), "pages without content_text should be skipped");
+    }
 }
