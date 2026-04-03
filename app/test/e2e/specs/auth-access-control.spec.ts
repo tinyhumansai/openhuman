@@ -14,9 +14,9 @@
  *   1.3    Logout via Settings menu
  *   1.3.1  Revoked session auto-logout
  *
- * Onboarding steps (Onboarding.tsx — 5 steps, indices 0–4):
- *   Welcome → Local AI → Screen & Accessibility → Enable Tools → Install Skills
- *   (each step: primary "Continue"; final step completes onboarding)
+ * Onboarding steps:
+ *   Shared helper walks the current onboarding overlay and supports both the
+ *   legacy 5-step flow and the newer 6-step flow with recovery phrase setup.
  *
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
@@ -37,8 +37,9 @@ import {
   navigateToBilling,
   navigateToHome,
   navigateToSettings,
+  performFullLogin,
   waitForHomePage,
-  walkOnboarding,
+  waitForRequest as waitForSharedRequest,
 } from '../helpers/shared-flows';
 import {
   clearRequestLog,
@@ -75,51 +76,6 @@ async function waitForRequest(method, urlFragment, timeout = 15_000) {
   return undefined;
 }
 
-// walkOnboarding, waitForHomePage imported from shared-flows
-
-/**
- * Perform full login via deep link. Walks onboarding. Leaves app on Home page.
- */
-async function performFullLogin(token = 'e2e-test-token') {
-  await triggerAuthDeepLink(token);
-
-  await waitForWindowVisible(25_000);
-  await waitForWebView(15_000);
-  await waitForAppReady(15_000);
-  await waitForAuthBootstrap(15_000);
-
-  const consumeCall = await waitForRequest('POST', '/telegram/login-tokens/', 20_000);
-  if (!consumeCall) {
-    console.log(
-      '[AuthAccess] Missing consume call. Request log:',
-      JSON.stringify(getRequestLog(), null, 2)
-    );
-    throw new Error('Auth consume call missing in performFullLogin');
-  }
-  // The app may call /telegram/me or /settings for user profile
-  const meCall =
-    (await waitForRequest('GET', '/telegram/me', 10_000)) ||
-    (await waitForRequest('GET', '/settings', 10_000));
-  if (!meCall) {
-    console.log(
-      '[AuthAccess] Missing user profile call. Request log:',
-      JSON.stringify(getRequestLog(), null, 2)
-    );
-    console.log('[AuthAccess] Continuing without user profile call confirmation');
-  }
-
-  // Walk real onboarding steps
-  await walkOnboarding('[AuthAccess]');
-
-  const homeText = await waitForHomePage(15_000);
-  if (!homeText) {
-    const tree = await dumpAccessibilityTree();
-    console.log('[AuthAccess] Home page not reached after login. Tree:\n', tree.slice(0, 4000));
-    throw new Error('Full login did not reach Home page');
-  }
-  console.log(`[AuthAccess] Home page confirmed: found "${homeText}"`);
-}
-
 // ===========================================================================
 // Test suite
 // ===========================================================================
@@ -141,7 +97,32 @@ describe('Auth & Access Control', () => {
   // -------------------------------------------------------------------------
 
   it('new user registers via deep link and reaches home', async () => {
-    await performFullLogin('e2e-auth-token');
+    await performFullLogin('e2e-auth-token', '[AuthAccess]', async () => {
+      const consumeCall = await waitForSharedRequest(
+        getRequestLog,
+        'POST',
+        '/telegram/login-tokens/',
+        20_000
+      );
+      if (!consumeCall) {
+        console.log(
+          '[AuthAccess] Missing consume call. Request log:',
+          JSON.stringify(getRequestLog(), null, 2)
+        );
+        throw new Error('Auth consume call missing in performFullLogin');
+      }
+
+      const meCall =
+        (await waitForSharedRequest(getRequestLog, 'GET', '/telegram/me', 10_000)) ||
+        (await waitForSharedRequest(getRequestLog, 'GET', '/settings', 10_000));
+      if (!meCall) {
+        console.log(
+          '[AuthAccess] Missing user profile call. Request log:',
+          JSON.stringify(getRequestLog(), null, 2)
+        );
+        console.log('[AuthAccess] Continuing without user profile call confirmation');
+      }
+    });
   });
 
   it('re-authenticating with a new token for the same user returns to home', async () => {

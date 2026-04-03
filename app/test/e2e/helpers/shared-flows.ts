@@ -260,6 +260,10 @@ export const ONBOARDING_OVERLAY_TEXTS = [
   'Screen & Accessibility',
   'Enable Tools',
   'Install Skills',
+  'Lastly, your Recovery Phrase',
+  'Your Recovery Phrase',
+  'Import Recovery Phrase',
+  'Finish Setup',
 ] as const;
 
 /** True when the full-screen onboarding overlay is likely visible. */
@@ -270,10 +274,45 @@ async function onboardingOverlayLikelyVisible(): Promise<boolean> {
   return false;
 }
 
+async function completeMnemonicStep(logPrefix: string): Promise<boolean> {
+  const mnemonicVisible =
+    (await textExists('Lastly, your Recovery Phrase')) ||
+    (await textExists('Your Recovery Phrase')) ||
+    (await textExists('Import Recovery Phrase'));
+
+  if (!mnemonicVisible) {
+    return false;
+  }
+
+  console.log(`${logPrefix} MnemonicStep visible`);
+
+  try {
+    const checked = await browser.execute(() => {
+      const checkbox = document.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+      if (!checkbox) return false;
+      if (!checkbox.checked) {
+        checkbox.click();
+      }
+      return checkbox.checked;
+    });
+    console.log(`${logPrefix} MnemonicStep checkbox checked=${checked}`);
+  } catch (err) {
+    console.log(`${logPrefix} MnemonicStep checkbox interaction failed:`, err);
+  }
+
+  const clicked = await clickFirstMatch(['Finish Setup', 'Continue'], 12_000);
+  if (clicked) {
+    console.log(`${logPrefix} MnemonicStep: clicked ${clicked}`);
+    await browser.pause(4_000);
+    return true;
+  }
+
+  return false;
+}
+
 /**
- * Walk through onboarding: Welcome → Local AI → Screen & Accessibility → Tools → Skills.
- * Each step uses the shared primary button label "Continue" (see OnboardingNextButton).
- * Completing the last step dismisses the overlay.
+ * Walk through onboarding. Supports both the legacy 5-step flow and the
+ * newer 6-step variant that ends with a recovery phrase confirmation.
  */
 export async function walkOnboarding(logPrefix = '[E2E]') {
   let visible = false;
@@ -291,29 +330,41 @@ export async function walkOnboarding(logPrefix = '[E2E]') {
     return;
   }
 
-  // Up to 6 "Continue" clicks — covers 5 steps plus one retry if the list is still loading.
-  for (let step = 0; step < 6; step++) {
+  // Up to 7 passes covers the 6-step flow plus one retry while async content settles.
+  for (let step = 0; step < 7; step++) {
     if (!(await onboardingOverlayLikelyVisible())) {
       console.log(`${logPrefix} Onboarding dismissed after step ${step}`);
       return;
     }
 
-    const clicked = await clickFirstMatch(['Continue'], 12_000);
+    if (await completeMnemonicStep(logPrefix)) {
+      continue;
+    }
+
+    const clicked = await clickFirstMatch(['Continue', 'Finish Setup'], 12_000);
     if (clicked) {
-      console.log(`${logPrefix} Onboarding step ${step}: clicked Continue`);
-      await browser.pause(step >= 4 ? 4_000 : 2_000);
+      console.log(`${logPrefix} Onboarding step ${step}: clicked ${clicked}`);
+      await browser.pause(clicked === 'Finish Setup' || step >= 4 ? 4_000 : 2_000);
     } else {
       const installSkillsLabel = ONBOARDING_OVERLAY_TEXTS[ONBOARDING_OVERLAY_TEXTS.length - 1]!;
-      if (await textExists(installSkillsLabel)) {
+      if (
+        (await textExists('Install Skills')) ||
+        (await textExists('Finish Setup')) ||
+        (await textExists(installSkillsLabel))
+      ) {
         await browser.pause(2_500);
-        const retry = await clickFirstMatch(['Continue'], 10_000);
+        if (await completeMnemonicStep(logPrefix)) {
+          continue;
+        }
+        const retry = await clickFirstMatch(['Continue', 'Finish Setup'], 10_000);
         if (retry) {
-          console.log(
-            `${logPrefix} Onboarding step ${step}: retry Continue on ${installSkillsLabel}`
-          );
+          console.log(`${logPrefix} Onboarding step ${step}: retry ${retry}`);
           await browser.pause(4_000);
+          continue;
         }
       }
+      const tree = await dumpAccessibilityTree();
+      console.log(`${logPrefix} Onboarding stalled at step ${step}. Tree:\n`, tree.slice(0, 4000));
       break;
     }
   }
