@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
-import {
-  AUTH_MODE_LABELS,
-  FALLBACK_DEFINITIONS,
-  STATUS_STYLES,
-} from '../../../lib/channels/definitions';
+import ChannelCapabilities from '../../channels/ChannelCapabilities';
+import ChannelFieldInput from '../../channels/ChannelFieldInput';
+import ChannelStatusBadge from '../../channels/ChannelStatusBadge';
+import { AUTH_MODE_LABELS } from '../../../lib/channels/definitions';
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
+import { useChannelDefinitions } from '../../../hooks/useChannelDefinitions';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import {
-  completeBreakingMigration,
   disconnectChannelConnection,
   setChannelConnectionStatus,
   setDefaultMessagingChannel,
@@ -20,7 +19,6 @@ import type {
   AuthModeSpec,
   ChannelAuthMode,
   ChannelConnectionStatus,
-  ChannelDefinition,
   ChannelType,
 } from '../../../types/channels';
 import { openUrl } from '../../../utils/openUrl';
@@ -31,68 +29,11 @@ const MessagingPanel = () => {
   const { navigateBack } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const channelConnections = useAppSelector(state => state.channelConnections);
+  const { definitions, loading, error: loadError } = useChannelDefinitions();
 
-  const [definitions, setDefinitions] = useState<ChannelDefinition[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
   const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
-
-  useEffect(() => {
-    if (!channelConnections.migrationCompleted) {
-      dispatch(completeBreakingMigration());
-    }
-  }, [channelConnections.migrationCompleted, dispatch]);
-
-  // Load definitions + status from backend.
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const [defs, statusEntries] = await Promise.all([
-          channelConnectionsApi.listDefinitions().catch(() => null),
-          channelConnectionsApi.listStatus().catch(() => null),
-        ]);
-        if (cancelled) return;
-
-        // Use backend definitions if available, otherwise fall back.
-        const resolvedDefs =
-          defs && Array.isArray(defs) && defs.length > 0 ? defs : FALLBACK_DEFINITIONS;
-        setDefinitions(resolvedDefs);
-
-        // Sync status into Redux when available.
-        if (statusEntries && Array.isArray(statusEntries)) {
-          for (const entry of statusEntries) {
-            const channel = entry.channel_id as ChannelType;
-            const authMode = entry.auth_mode as ChannelAuthMode;
-            if (entry.connected) {
-              dispatch(
-                upsertChannelConnection({
-                  channel,
-                  authMode,
-                  patch: { status: 'connected', capabilities: ['read', 'write'] },
-                })
-              );
-            }
-          }
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (!cancelled) {
-          setDefinitions(FALLBACK_DEFINITIONS);
-          setError(`Could not load from backend: ${msg}`);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [dispatch]);
 
   const recommendedRoute = useMemo(() => {
     const channel = channelConnections.defaultMessagingChannel;
@@ -139,7 +80,6 @@ const MessagingPanel = () => {
           setChannelConnectionStatus({ channel, authMode: spec.mode, status: 'connecting' })
         );
 
-        // Build credentials from field values.
         const credentials: Record<string, string> = {};
         for (const field of spec.fields) {
           const val = fieldValues[key]?.[field.key]?.trim() ?? '';
@@ -163,8 +103,6 @@ const MessagingPanel = () => {
         });
 
         if (result.status === 'pending_auth' && result.auth_action) {
-          // The backend says the frontend should handle this auth flow.
-          // For now, show a message. OAuth URL handling can be added per auth_action.
           dispatch(
             upsertChannelConnection({
               channel,
@@ -176,10 +114,8 @@ const MessagingPanel = () => {
             })
           );
 
-          // If the auth_action implies an OAuth URL, try opening it.
           if (result.auth_action.includes('oauth')) {
             try {
-              // Fetch OAuth URL from the auth domain.
               const oauthResponse = await callCoreRpc<{ result: { oauthUrl?: string } }>({
                 method: 'openhuman.auth.oauth_connect',
                 params: { provider: channel, skillId: channel },
@@ -194,7 +130,6 @@ const MessagingPanel = () => {
           return;
         }
 
-        // Credential-based connection succeeded.
         dispatch(
           upsertChannelConnection({
             channel,
@@ -221,6 +156,8 @@ const MessagingPanel = () => {
     },
     [dispatch, runBusy]
   );
+
+  const displayError = error || loadError;
 
   return (
     <div className="overflow-hidden h-full flex flex-col">
@@ -256,9 +193,9 @@ const MessagingPanel = () => {
           </p>
         </section>
 
-        {error && (
+        {displayError && (
           <div className="rounded-lg border border-coral-500/40 bg-coral-500/10 px-4 py-3 text-sm text-coral-100">
-            {error}
+            {displayError}
           </div>
         )}
 
@@ -268,7 +205,6 @@ const MessagingPanel = () => {
           </div>
         )}
 
-        {/* Channel sections — driven by backend definitions */}
         {!loading &&
           definitions.map(def => {
             const channelId = def.id as ChannelType;
@@ -279,17 +215,7 @@ const MessagingPanel = () => {
                 <div className="mb-4">
                   <h3 className="text-base font-semibold text-white">{def.display_name}</h3>
                   <p className="text-xs text-stone-400">{def.description}</p>
-                  {def.capabilities.length > 0 && (
-                    <div className="flex gap-1.5 mt-2">
-                      {def.capabilities.map(cap => (
-                        <span
-                          key={cap}
-                          className="px-1.5 py-0.5 text-[10px] rounded bg-stone-800 text-stone-400 border border-stone-700">
-                          {cap.replace(/_/g, ' ')}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <ChannelCapabilities capabilities={def.capabilities} />
                 </div>
 
                 <div className="space-y-3">
@@ -297,7 +223,6 @@ const MessagingPanel = () => {
                     const compositeKey = `${channelId}:${spec.mode}`;
                     const connection = channelConnections.connections[channelId]?.[spec.mode];
                     const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
-                    const statusStyle = STATUS_STYLES[status];
 
                     return (
                       <div
@@ -313,23 +238,17 @@ const MessagingPanel = () => {
                               <p className="text-xs text-coral-300 mt-1">{connection.lastError}</p>
                             )}
                           </div>
-                          <span
-                            className={`shrink-0 px-2 py-1 text-[11px] border rounded-full ${statusStyle.className}`}>
-                            {statusStyle.label}
-                          </span>
+                          <ChannelStatusBadge status={status} />
                         </div>
 
-                        {/* Dynamic fields from backend definition */}
                         {spec.fields.length > 0 && (
                           <div className="mt-3 space-y-2">
                             {spec.fields.map(field => (
-                              <input
+                              <ChannelFieldInput
                                 key={field.key}
-                                type={field.field_type === 'secret' ? 'password' : 'text'}
+                                field={field}
                                 value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                                onChange={e => updateField(compositeKey, field.key, e.target.value)}
-                                placeholder={field.placeholder || field.label}
-                                className="w-full rounded-lg border border-stone-700 bg-stone-900 px-3 py-2 text-sm text-white placeholder:text-stone-500 focus:outline-none focus:border-primary-500/60"
+                                onChange={val => updateField(compositeKey, field.key, val)}
                               />
                             ))}
                           </div>
