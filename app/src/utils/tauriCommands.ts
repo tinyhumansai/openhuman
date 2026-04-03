@@ -282,10 +282,11 @@ export async function memoryClearNamespace(
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
   }
-  return await callCoreRpc<{ cleared: boolean; namespace: string }>({
+  const response = await callCoreRpc<{ result: { cleared: boolean; namespace: string } }>({
     method: 'openhuman.memory_clear_namespace',
     params: { namespace },
   });
+  return response.result;
 }
 
 export async function memoryQueryNamespace(
