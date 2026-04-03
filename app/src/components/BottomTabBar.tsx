@@ -119,7 +119,7 @@ const BottomTabBar = () => {
 
   return (
     <div className="flex-shrink-0 flex justify-center pb-4 pt-2 z-50">
-      <nav className="inline-flex items-center gap-1 bg-white rounded-full border border-stone-200 shadow-soft px-2 py-1.5">
+      <nav className="inline-flex items-center gap-6 bg-white rounded-full border border-stone-200 shadow-soft px-4 py-2.5">
         {tabs.map(tab => {
           const active = isActive(tab.path);
           const showBadge = tab.id === 'chat' && conversationsUnreadCount > 0;
@@ -127,10 +127,10 @@ const BottomTabBar = () => {
             <button
               key={tab.id}
               onClick={() => navigate(tab.path)}
-              className={`relative flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] transition-colors duration-150 cursor-pointer ${
+              className={`relative flex items-center gap-2 px-4 py-2 rounded-full text-sm transition-colors duration-150 cursor-pointer ${
                 active
-                  ? 'bg-stone-100 text-stone-900 font-medium'
-                  : 'text-stone-500 hover:text-stone-700 hover:bg-stone-50'
+                  ? 'bg-stone-100 text-stone-900 font-semibold'
+                  : 'text-stone-400 hover:text-stone-600'
               }`}
               aria-label={tab.label}>
               {tab.icon}
