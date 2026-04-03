@@ -307,6 +307,7 @@ impl LocalAiService {
 
         const MAX_PULL_RETRIES: usize = 3;
         const PULL_RETRY_BACKOFF_MS: u64 = 1_500;
+        const PULL_INTERRUPT_SETTLE_SECS: u64 = 20;
         let mut last_error: Option<String> = None;
 
         for attempt in 1..=MAX_PULL_RETRIES {
@@ -374,6 +375,7 @@ impl LocalAiService {
             let mut pending = String::new();
             let mut stream_error: Option<String> = None;
             let started_at = std::time::Instant::now();
+            let mut observed_bytes = false;
             while let Some(item) = stream.next().await {
                 let chunk = match item {
                     Ok(value) => value,
@@ -408,6 +410,7 @@ impl LocalAiService {
                             Some((t.saturating_sub(completed)) / speed_bps.max(1))
                         }
                     });
+                    observed_bytes |= completed > 0;
 
                     let mut status = self.status.lock();
                     if let Some(status_text) = event.status.as_deref() {
@@ -428,6 +431,18 @@ impl LocalAiService {
 
             if let Some(err) = stream_error {
                 last_error = Some(err.clone());
+                let resumed = self
+                    .wait_for_model_after_pull_interruption(
+                        model_id,
+                        attempt,
+                        MAX_PULL_RETRIES,
+                        observed_bytes,
+                        PULL_INTERRUPT_SETTLE_SECS,
+                    )
+                    .await?;
+                if resumed {
+                    break;
+                }
                 if attempt < MAX_PULL_RETRIES {
                     continue;
                 }
@@ -442,6 +457,18 @@ impl LocalAiService {
                 "ollama pull finished but model `{}` was not found",
                 model_id
             ));
+            let resumed = self
+                .wait_for_model_after_pull_interruption(
+                    model_id,
+                    attempt,
+                    MAX_PULL_RETRIES,
+                    observed_bytes,
+                    PULL_INTERRUPT_SETTLE_SECS,
+                )
+                .await?;
+            if resumed {
+                break;
+            }
             if attempt < MAX_PULL_RETRIES {
                 continue;
             }
@@ -463,6 +490,51 @@ impl LocalAiService {
         }
 
         Ok(())
+    }
+
+    async fn wait_for_model_after_pull_interruption(
+        &self,
+        model_id: &str,
+        attempt: usize,
+        max_attempts: usize,
+        observed_bytes: bool,
+        settle_window_secs: u64,
+    ) -> Result<bool, String> {
+        let wait_secs = interrupted_pull_settle_window_secs(observed_bytes, settle_window_secs);
+        if wait_secs == 0 {
+            return Ok(false);
+        }
+
+        {
+            let mut status = self.status.lock();
+            status.state = "downloading".to_string();
+            status.warning = Some(format!(
+                "Ollama pull stream disconnected. Waiting up to {wait_secs}s for ongoing download to resume before retry {}/{}.",
+                attempt + 1,
+                max_attempts
+            ));
+        }
+        log::warn!(
+            "[local_ai] pull stream interrupted for model `{}`; waiting up to {}s before retry {}/{}",
+            model_id,
+            wait_secs,
+            attempt + 1,
+            max_attempts
+        );
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
+        while std::time::Instant::now() < deadline {
+            if self.has_model(model_id).await? {
+                log::info!(
+                    "[local_ai] model `{}` became available after interrupted pull stream",
+                    model_id
+                );
+                return Ok(true);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+
+        Ok(false)
     }
 
     /// Run full diagnostics: check Ollama server health, list installed models,
@@ -684,5 +756,28 @@ impl LocalAiService {
             let name = m.name.to_ascii_lowercase();
             name == target || name.starts_with(&(target.clone() + ":"))
         }))
+    }
+}
+
+fn interrupted_pull_settle_window_secs(observed_bytes: bool, settle_window_secs: u64) -> u64 {
+    if observed_bytes {
+        settle_window_secs.max(1)
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::interrupted_pull_settle_window_secs;
+
+    #[test]
+    fn interrupted_pull_waits_when_bytes_were_observed() {
+        assert_eq!(interrupted_pull_settle_window_secs(true, 20), 20);
+    }
+
+    #[test]
+    fn interrupted_pull_does_not_wait_before_any_progress() {
+        assert_eq!(interrupted_pull_settle_window_secs(false, 20), 0);
     }
 }
