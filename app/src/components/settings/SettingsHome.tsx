@@ -444,7 +444,7 @@ const SettingsHome = () => {
     <div className="overflow-hidden h-full flex flex-col z-10 relative">
       <SettingsHeader />
 
-      <div className="flex-1 overflow-y-auto max-w-md mx-auto">
+      <div className="flex-1 overflow-y-auto">
         <div className="p-4 space-y-6">
           {/* Main Settings */}
           <div>
