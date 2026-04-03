@@ -123,14 +123,29 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
                                 );
                                 continue;
                             }
-                            ingest_single_doc(&job.client, &namespace, &page.title, &page.content)
-                                .await;
+                            ingest_single_doc(
+                                &job.client,
+                                &namespace,
+                                &page_key,
+                                &page.title,
+                                &page.content,
+                            )
+                            .await;
                         }
                     }
                 }
-                // Other skills: ingest the full content as a single document.
+                // Other skills: ingest the full content as a single document,
+                // stripping sensitive fields (OAuth credentials) first.
                 _ => {
-                    ingest_single_doc(&job.client, &namespace, &job.title, &job.content).await;
+                    let safe_content = strip_credentials(&job.content);
+                    ingest_single_doc(
+                        &job.client,
+                        &namespace,
+                        &job.title,
+                        &job.title,
+                        &safe_content,
+                    )
+                    .await;
                 }
             }
         }
@@ -182,12 +197,29 @@ fn extract_pages_from_sync(content: &str) -> Vec<SyncPage> {
         .collect()
 }
 
+/// Remove sensitive fields from a JSON sync blob before ingestion.
+fn strip_credentials(content: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return content.to_string();
+    };
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("__oauth_credential");
+    }
+    serde_json::to_string(&value).unwrap_or_else(|_| content.to_string())
+}
+
 /// Store and ingest a single document into the memory graph.
-async fn ingest_single_doc(client: &MemoryClientRef, namespace: &str, title: &str, content: &str) {
+async fn ingest_single_doc(
+    client: &MemoryClientRef,
+    namespace: &str,
+    key: &str,
+    title: &str,
+    content: &str,
+) {
     let request = MemoryIngestionRequest {
         document: NamespaceDocumentInput {
             namespace: namespace.to_string(),
-            key: title.to_string(),
+            key: key.to_string(),
             title: title.to_string(),
             content: content.to_string(),
             source_type: "doc".to_string(),
@@ -966,5 +998,25 @@ mod tests {
             pages.is_empty(),
             "pages without content_text should be skipped"
         );
+    }
+
+    #[test]
+    fn strip_credentials_removes_oauth() {
+        let content = serde_json::json!({
+            "__oauth_credential": {"credentialId": "secret123"},
+            "auth_status": "authenticated",
+            "emails": []
+        })
+        .to_string();
+
+        let safe = strip_credentials(&content);
+        assert!(!safe.contains("secret123"), "credential should be stripped");
+        assert!(safe.contains("authenticated"), "other fields preserved");
+    }
+
+    #[test]
+    fn strip_credentials_passthrough_non_json() {
+        let content = "plain text content";
+        assert_eq!(strip_credentials(content), content);
     }
 }
