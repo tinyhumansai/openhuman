@@ -1,6 +1,6 @@
 //! Automatic Ollama installer and system binary discovery.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Captured output from the Ollama install script.
 pub(crate) struct InstallResult {
@@ -9,9 +9,9 @@ pub(crate) struct InstallResult {
     pub stderr: String,
 }
 
-/// Run the platform-specific Ollama install and capture stdout/stderr.
-pub(crate) async fn run_ollama_install_script() -> Result<InstallResult, String> {
-    let mut cmd = build_install_command()?;
+/// Run the platform-specific Ollama install into the workspace and capture stdout/stderr.
+pub(crate) async fn run_ollama_install_script(install_dir: &Path) -> Result<InstallResult, String> {
+    let mut cmd = build_install_command(install_dir)?;
 
     let output = cmd
         .output()
@@ -19,7 +19,8 @@ pub(crate) async fn run_ollama_install_script() -> Result<InstallResult, String>
         .map_err(|e| format!("failed to execute Ollama installer: {e}"))?;
 
     log::debug!(
-        "[local_ai] Ollama install script finished (exit={}) stdout={} stderr={}",
+        "[local_ai] Ollama install script finished (dir={} exit={}) stdout={} stderr={}",
+        install_dir.display(),
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
@@ -32,16 +33,32 @@ pub(crate) async fn run_ollama_install_script() -> Result<InstallResult, String>
     })
 }
 
-fn build_install_command() -> Result<tokio::process::Command, String> {
+fn build_install_command(install_dir: &Path) -> Result<tokio::process::Command, String> {
     #[cfg(target_os = "windows")]
     {
         let mut cmd = tokio::process::Command::new("powershell");
+        cmd.env("OPENHUMAN_OLLAMA_INSTALL_DIR", install_dir);
         cmd.args([
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            "irm https://ollama.com/install.ps1 | iex",
+            r#"
+            $ErrorActionPreference = "Stop"
+            $ProgressPreference = "SilentlyContinue"
+            $installDir = $env:OPENHUMAN_OLLAMA_INSTALL_DIR
+            New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+            $installerUrl = "https://ollama.com/download/OllamaSetup.exe"
+            $tempInstaller = Join-Path $env:TEMP "OllamaSetup.exe"
+            Invoke-WebRequest -UseBasicParsing -Uri $installerUrl -OutFile $tempInstaller
+            $args = "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /CURRENTUSER /DIR=""$installDir"""
+            $proc = Start-Process -FilePath $tempInstaller -ArgumentList $args -PassThru
+            $proc.WaitForExit()
+            if ($proc.ExitCode -ne 0) {
+                throw "Installation failed with exit code $($proc.ExitCode)"
+            }
+            Remove-Item $tempInstaller -Force -ErrorAction SilentlyContinue
+            "#,
         ]);
         return Ok(cmd);
     }
@@ -49,16 +66,61 @@ fn build_install_command() -> Result<tokio::process::Command, String> {
     #[cfg(target_os = "macos")]
     {
         let mut cmd = tokio::process::Command::new("sh");
+        cmd.env("OPENHUMAN_OLLAMA_INSTALL_DIR", install_dir);
         cmd.arg("-lc")
-            .arg("curl -fsSL https://ollama.com/install.sh | sh");
+            .arg(
+                r#"
+                set -eu
+                for tool in curl unzip mktemp rm cp chmod mkdir; do
+                  command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
+                done
+                dest="$OPENHUMAN_OLLAMA_INSTALL_DIR"
+                tmp_dir="$(mktemp -d)"
+                cleanup() { rm -rf "$tmp_dir"; }
+                trap cleanup EXIT
+                archive="$tmp_dir/Ollama-darwin.zip"
+                echo ">>> Downloading Ollama for macOS into $dest" >&2
+                curl --fail --show-error --location --progress-bar -o "$archive" "https://ollama.com/download/Ollama-darwin.zip"
+                unzip -q "$archive" -d "$tmp_dir"
+                rm -rf "$dest"
+                mkdir -p "$dest"
+                cp -R "$tmp_dir/Ollama.app/Contents/Resources/." "$dest/"
+                chmod 755 "$dest/ollama"
+                "#,
+            );
         return Ok(cmd);
     }
 
     #[cfg(target_os = "linux")]
     {
         let mut cmd = tokio::process::Command::new("sh");
+        cmd.env("OPENHUMAN_OLLAMA_INSTALL_DIR", install_dir);
         cmd.arg("-lc")
-            .arg("curl -fsSL https://ollama.com/install.sh | sh");
+            .arg(
+                r#"
+                set -eu
+                for tool in curl tar uname rm mkdir; do
+                  command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
+                done
+                arch="$(uname -m)"
+                case "$arch" in
+                  x86_64) arch="amd64" ;;
+                  aarch64|arm64) arch="arm64" ;;
+                  *) echo "Unsupported architecture: $arch" >&2; exit 1 ;;
+                esac
+                dest="$OPENHUMAN_OLLAMA_INSTALL_DIR"
+                archive_url="https://ollama.com/download/ollama-linux-${arch}.tar.zst"
+                if ! command -v unzstd >/dev/null 2>&1; then
+                  echo "missing required tool: unzstd (zstd package)" >&2
+                  exit 1
+                fi
+                rm -rf "$dest"
+                mkdir -p "$dest"
+                echo ">>> Downloading Ollama for Linux into $dest" >&2
+                curl --fail --show-error --location --progress-bar "$archive_url" | tar --use-compress-program=unzstd -xf - -C "$dest"
+                chmod 755 "$dest/bin/ollama"
+                "#,
+            );
         return Ok(cmd);
     }
 

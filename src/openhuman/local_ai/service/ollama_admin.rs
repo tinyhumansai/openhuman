@@ -8,7 +8,7 @@ use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::ollama_api::{
     OllamaModelTag, OllamaPullEvent, OllamaPullRequest, OllamaTagsResponse, OLLAMA_BASE_URL,
 };
-use crate::openhuman::local_ai::paths::workspace_ollama_binary;
+use crate::openhuman::local_ai::paths::{find_workspace_ollama_binary, workspace_ollama_binary};
 
 use super::LocalAiService;
 
@@ -41,14 +41,13 @@ impl LocalAiService {
         // Force a fresh download regardless of existing binaries.
         self.download_and_install_ollama(config).await?;
 
-        let ollama_cmd = workspace_ollama_binary(config);
-        if !ollama_cmd.is_file() {
+        let Some(ollama_cmd) = find_workspace_ollama_binary(config) else {
             // Also check system path after install.
             let system_bin = find_system_ollama_binary()
                 .ok_or_else(|| "Ollama installed but binary not found on system".to_string())?;
             // Try to use the system binary directly.
             return self.start_and_wait_for_server(&system_bin).await;
-        }
+        };
 
         self.start_and_wait_for_server(&ollama_cmd).await
     }
@@ -115,9 +114,18 @@ impl LocalAiService {
             }
         }
 
-        let workspace_bin = workspace_ollama_binary(config);
-        if workspace_bin.is_file() {
-            return Ok(workspace_bin);
+        if let Some(workspace_bin) = find_workspace_ollama_binary(config) {
+            if self.command_works(&workspace_bin).await {
+                log::debug!(
+                    "[local_ai] using workspace-managed ollama binary: {}",
+                    workspace_bin.display()
+                );
+                return Ok(workspace_bin);
+            }
+            log::warn!(
+                "[local_ai] workspace-managed ollama binary is present but not executable, reinstalling: {}",
+                workspace_bin.display()
+            );
         }
 
         if self.command_works(Path::new("ollama")).await {
@@ -125,8 +133,7 @@ impl LocalAiService {
         }
 
         self.download_and_install_ollama(config).await?;
-        let installed = workspace_ollama_binary(config);
-        if installed.is_file() {
+        if let Some(installed) = find_workspace_ollama_binary(config) {
             Ok(installed)
         } else {
             Err("Ollama download completed but executable is missing.".to_string())
@@ -163,7 +170,7 @@ impl LocalAiService {
             status.error_category = None;
         }
 
-        let result = run_ollama_install_script().await?;
+        let result = run_ollama_install_script(&install_dir).await?;
         if !result.exit_status.success() {
             let stderr_tail: String = result
                 .stderr
@@ -211,18 +218,13 @@ impl LocalAiService {
             result.stdout.chars().take(500).collect::<String>(),
         );
 
-        let installed = find_system_ollama_binary()
+        let installed = find_workspace_ollama_binary(config)
+            .or_else(find_system_ollama_binary)
             .ok_or_else(|| "Ollama installer finished but binary was not found".to_string())?;
-        let dest = workspace_ollama_binary(config);
-        tokio::fs::copy(&installed, &dest)
-            .await
-            .map_err(|e| format!("failed to copy Ollama binary into workspace: {e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| format!("failed to set Ollama binary permissions: {e}"))?;
-        }
+        log::debug!(
+            "[local_ai] Ollama install finished with binary at {}",
+            installed.display()
+        );
 
         {
             let mut status = self.status.lock();
