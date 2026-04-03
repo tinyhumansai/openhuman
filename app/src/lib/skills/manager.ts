@@ -13,6 +13,8 @@ import {
   setSetupComplete as rpcSetSetupComplete,
   revokeOAuth as rpcRevokeOAuth,
   removePersistedOAuthCredential,
+  revokeAuth as rpcRevokeAuth,
+  removePersistedAuthCredential,
 } from "./skillsApi";
 import { syncToolsToBackend } from "./sync";
 import type {
@@ -376,30 +378,40 @@ class SkillManager {
   }
 
   /**
-   * Disconnect a skill — revoke OAuth credentials, stop it, and reset setup state.
+   * Disconnect a skill — revoke OAuth and/or auth credentials, stop it, and reset setup state.
    */
   async disconnectSkill(skillId: string): Promise<void> {
-    // Read the stored credential ID so oauth/revoked clears the right memory bucket.
+    // Read the stored credential IDs so revoke handlers clear the right data.
     let credentialId: string | undefined;
+    let authMode: string | undefined;
     try {
       const snap = await getSkillSnapshot(skillId);
-      const cred = snap?.state?.__oauth_credential as
+      const oauthCred = snap?.state?.__oauth_credential as
         | { credentialId?: string }
         | string
         | undefined;
-      if (cred && typeof cred === "object") {
-        credentialId = cred.credentialId;
+      if (oauthCred && typeof oauthCred === "object") {
+        credentialId = oauthCred.credentialId;
+      }
+      const authCred = snap?.state?.__auth_credential as
+        | { mode?: string }
+        | string
+        | undefined;
+      if (authCred && typeof authCred === "object") {
+        authMode = authCred.mode;
       }
     } catch {
       // Snapshot may fail if skill isn't registered yet
     }
 
-    // Revoke OAuth credential before stopping so the running skill can clean up
-    // its in-memory state and the event loop deletes oauth_credential.json.
-    let revokeSucceeded = false;
+    // Revoke credentials before stopping so the running skill can clean up.
+    let oauthRevokeSucceeded = false;
+    let authRevokeSucceeded = false;
+
+    // Try revoking OAuth credential
     try {
       await rpcRevokeOAuth(skillId, credentialId ?? "default");
-      revokeSucceeded = true;
+      oauthRevokeSucceeded = true;
     } catch (err) {
       console.debug(
         "[SkillManager] oauth/revoked failed (runtime may be stopped):",
@@ -407,13 +419,35 @@ class SkillManager {
       );
     }
 
+    // Try revoking auth credential
+    if (authMode) {
+      try {
+        await rpcRevokeAuth(skillId, authMode);
+        authRevokeSucceeded = true;
+      } catch (err) {
+        console.debug(
+          "[SkillManager] auth/revoked failed (runtime may be stopped):",
+          err,
+        );
+      }
+    }
+
     try {
       await this.stopSkill(skillId);
     } finally {
-      if (!revokeSucceeded) {
+      // Host-side fallback cleanup if RPC revoke failed
+      if (!oauthRevokeSucceeded) {
         await removePersistedOAuthCredential(skillId).catch((err) => {
           console.debug(
-            "[SkillManager] host-side credential cleanup failed:",
+            "[SkillManager] host-side OAuth credential cleanup failed:",
+            err,
+          );
+        });
+      }
+      if (!authRevokeSucceeded && authMode) {
+        await removePersistedAuthCredential(skillId).catch((err) => {
+          console.debug(
+            "[SkillManager] host-side auth credential cleanup failed:",
             err,
           );
         });

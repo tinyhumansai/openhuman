@@ -14,7 +14,50 @@ pub struct SkillSetup {
     pub required: bool,
     pub label: Option<String>,
     /// OAuth configuration (provider, scopes, apiBaseUrl).
+    /// Legacy — prefer `auth` for new skills.
     pub oauth: Option<serde_json::Value>,
+    /// Advanced auth configuration with multiple auth modes.
+    /// When present, the UI shows a mode selector (managed / self_hosted / text).
+    #[serde(default)]
+    pub auth: Option<SkillAuthConfig>,
+}
+
+/// Advanced auth configuration declaring available authentication modes.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SkillAuthConfig {
+    /// Available auth modes. At least one required.
+    pub modes: Vec<SkillAuthMode>,
+}
+
+/// A single authentication mode that a skill supports.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SkillAuthMode {
+    /// Mode type: "managed", "self_hosted", or "text".
+    #[serde(rename = "type")]
+    pub mode_type: String,
+    /// Display label for this mode in the UI.
+    pub label: Option<String>,
+    /// Short description shown below the label.
+    pub description: Option<String>,
+    // --- Managed mode fields ---
+    /// OAuth provider name (e.g. "google", "github", "notion").
+    pub provider: Option<String>,
+    /// OAuth scopes to request.
+    pub scopes: Option<Vec<String>>,
+    /// Base URL for API requests proxied through backend.
+    #[serde(rename = "apiBaseUrl")]
+    pub api_base_url: Option<String>,
+    // --- Self-hosted mode fields ---
+    /// Form fields for credential input (SetupField-compatible JSON objects).
+    #[serde(default)]
+    pub fields: Vec<serde_json::Value>,
+    // --- Text mode fields ---
+    /// Hint text shown above the textarea (e.g. "Paste your service account JSON").
+    #[serde(rename = "textDescription")]
+    pub text_description: Option<String>,
+    /// Placeholder text for the textarea.
+    #[serde(rename = "textPlaceholder")]
+    pub text_placeholder: Option<String>,
 }
 
 /// Raw manifest as it appears on disk.

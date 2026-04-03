@@ -120,3 +120,59 @@ pub(crate) async fn restore_oauth_credential(
         );
     }
 }
+
+/// Load a persisted auth credential from the skill's data directory and inject
+/// it into the JS context so tools have access to the credential.
+///
+/// Reads `{data_dir}/auth_credential.json` which is written by the
+/// `auth/complete` handler and deleted by `auth/revoked`.
+///
+/// For managed mode, also bridges to `globalThis.oauth.__setCredential()`.
+pub(crate) async fn restore_auth_credential(
+    ctx: &rquickjs::AsyncContext,
+    skill_id: &str,
+    data_dir: &std::path::Path,
+) {
+    let cred_path = data_dir.join("auth_credential.json");
+    let cred_json = match std::fs::read_to_string(&cred_path) {
+        Ok(s) if !s.is_empty() => s,
+        _ => return,
+    };
+
+    // Inject credential into auth bridge and in-memory state.
+    // For managed mode, also bridge to the oauth credential system.
+    let code = format!(
+        r#"(function() {{
+            var cred = {cred};
+            if (typeof globalThis.auth !== 'undefined' && globalThis.auth.__setCredential) {{
+                globalThis.auth.__setCredential(cred);
+            }}
+            if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
+                globalThis.state.set('__auth_credential', cred);
+            }}
+            // For managed mode, also bridge to oauth system for backward compat
+            if (cred && cred.mode === 'managed' && cred.credentials) {{
+                if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{
+                    globalThis.oauth.__setCredential(cred.credentials);
+                }}
+                if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
+                    globalThis.state.set('__oauth_credential', cred.credentials);
+                }}
+            }}
+            return true;
+        }})()"#,
+        cred = cred_json
+    );
+
+    let restored = ctx
+        .with(|js_ctx| js_ctx.eval::<bool, _>(code.as_bytes()).unwrap_or(false))
+        .await;
+
+    if restored {
+        log::info!(
+            "[skill:{}] Restored auth credential from {}",
+            skill_id,
+            cred_path.display()
+        );
+    }
+}

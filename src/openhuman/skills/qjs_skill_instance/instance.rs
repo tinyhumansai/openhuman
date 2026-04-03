@@ -9,7 +9,10 @@ use crate::openhuman::skills::types::{SkillConfig, SkillMessage, SkillSnapshot, 
 
 use super::event_loop::run_event_loop;
 use super::js_handlers::{call_lifecycle, handle_js_call};
-use super::js_helpers::{drive_jobs, extract_tools, format_js_exception, restore_oauth_credential};
+use super::js_helpers::{
+    drive_jobs, extract_tools, format_js_exception, restore_auth_credential,
+    restore_oauth_credential,
+};
 use super::types::{BridgeDeps, QjsSkillInstance, SkillState};
 
 impl QjsSkillInstance {
@@ -193,6 +196,7 @@ impl QjsSkillInstance {
             }
 
             restore_oauth_credential(&ctx, &config.skill_id, &data_dir).await;
+            restore_auth_credential(&ctx, &config.skill_id, &data_dir).await;
 
             // Call init() lifecycle
             if let Err(e) = call_lifecycle(&rt, &ctx, "init").await {

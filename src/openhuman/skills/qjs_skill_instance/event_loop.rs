@@ -18,7 +18,7 @@ use super::js_handlers::{
     call_lifecycle, handle_cron_trigger, handle_js_call, handle_js_void_call, handle_server_event,
     read_pending_tool_result, start_async_tool_call,
 };
-use super::js_helpers::{drive_jobs, restore_oauth_credential};
+use super::js_helpers::{drive_jobs, restore_auth_credential, restore_oauth_credential};
 use super::types::SkillState;
 
 /// Payload queued for the background memory-write worker.
@@ -338,10 +338,11 @@ async fn handle_message(
                 tool_name
             );
 
-            // Lazy-load persisted OAuth credential before calling the tool
+            // Lazy-load persisted credentials before calling the tool
             restore_oauth_credential(ctx, skill_id, data_dir).await;
+            restore_auth_credential(ctx, skill_id, data_dir).await;
             log::debug!(
-                "[skill:{}] event_loop: OAuth credential restored for tool '{}'",
+                "[skill:{}] event_loop: credentials restored for tool '{}'",
                 skill_id,
                 tool_name
             );
@@ -521,8 +522,9 @@ async fn handle_message(
                 tunnel_id,
             );
 
-            // Restore OAuth credential in case the handler needs authenticated API calls
+            // Restore credentials in case the handler needs authenticated API calls
             restore_oauth_credential(ctx, skill_id, data_dir).await;
+            restore_auth_credential(ctx, skill_id, data_dir).await;
 
             let args = serde_json::json!({
                 "correlationId": correlation_id,
@@ -695,6 +697,166 @@ async fn handle_message(
                     let params_str =
                         serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
                     handle_js_void_call(rt, ctx, "onOAuthRevoked", &params_str)
+                        .await
+                        .map(|()| serde_json::json!({ "ok": true }))
+                }
+                "auth/complete" => {
+                    // Inject auth credential into the auth bridge + in-memory state
+                    let cred_json =
+                        serde_json::to_string(&params).unwrap_or_else(|_| "null".to_string());
+                    let is_managed = params
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .map(|m| m == "managed")
+                        .unwrap_or(false);
+
+                    // Inject into globalThis.auth + state; for managed mode also bridge to oauth
+                    let managed_bridge = if is_managed {
+                        let creds_json = serde_json::to_string(
+                            params.get("credentials").unwrap_or(&serde_json::Value::Null),
+                        )
+                        .unwrap_or_else(|_| "null".to_string());
+                        format!(
+                            r#"
+                            if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{
+                                globalThis.oauth.__setCredential({creds});
+                            }}
+                            if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
+                                globalThis.state.set('__oauth_credential', {creds});
+                            }}"#,
+                            creds = creds_json
+                        )
+                    } else {
+                        String::new()
+                    };
+
+                    let code = format!(
+                        r#"(function() {{
+                            if (typeof globalThis.auth !== 'undefined' && globalThis.auth.__setCredential) {{
+                                globalThis.auth.__setCredential({cred});
+                            }}
+                            if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
+                                globalThis.state.set('__auth_credential', {cred});
+                            }}
+                            {managed_bridge}
+                        }})()"#,
+                        cred = cred_json,
+                        managed_bridge = managed_bridge
+                    );
+                    ctx.with(|js_ctx| {
+                        let _ = js_ctx.eval::<rquickjs::Value, _>(code.as_bytes());
+                    })
+                    .await;
+
+                    // Persist auth credential to disk
+                    let cred_path = data_dir.join("auth_credential.json");
+                    if let Err(e) = std::fs::write(&cred_path, &cred_json) {
+                        log::error!(
+                            "[skill:{}] Failed to persist auth credential: {e}",
+                            skill_id
+                        );
+                    } else {
+                        log::info!(
+                            "[skill:{}] Auth credential persisted to {}",
+                            skill_id,
+                            cred_path.display()
+                        );
+                    }
+
+                    // For managed mode, also persist as oauth_credential.json for backward compat
+                    if is_managed {
+                        let oauth_cred_json = serde_json::to_string(
+                            params.get("credentials").unwrap_or(&serde_json::Value::Null),
+                        )
+                        .unwrap_or_else(|_| "null".to_string());
+                        let oauth_path = data_dir.join("oauth_credential.json");
+                        if let Err(e) = std::fs::write(&oauth_path, &oauth_cred_json) {
+                            log::error!(
+                                "[skill:{}] Failed to persist managed OAuth credential: {e}",
+                                skill_id
+                            );
+                        }
+                    }
+
+                    // Call skill's onAuthComplete lifecycle hook for validation
+                    let params_str =
+                        serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
+                    handle_js_call(rt, ctx, "onAuthComplete", &params_str).await
+                }
+                "auth/revoked" => {
+                    let is_managed = params
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .map(|m| m == "managed")
+                        .unwrap_or(false);
+
+                    // Clear auth credential from JS and state
+                    let managed_clear = if is_managed {
+                        r#"
+                        if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {
+                            globalThis.oauth.__setCredential(null);
+                        }
+                        if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {
+                            globalThis.state.set('__oauth_credential', '');
+                        }"#
+                    } else {
+                        ""
+                    };
+
+                    let clear_code = format!(
+                        r#"(function() {{
+                            if (typeof globalThis.auth !== 'undefined' && globalThis.auth.__setCredential) {{
+                                globalThis.auth.__setCredential(null);
+                            }}
+                            if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
+                                globalThis.state.set('__auth_credential', '');
+                            }}
+                            {managed_clear}
+                        }})()"#,
+                        managed_clear = managed_clear
+                    );
+                    ctx.with(|js_ctx| {
+                        let _ = js_ctx.eval::<rquickjs::Value, _>(clear_code.as_bytes());
+                    })
+                    .await;
+
+                    // Remove persisted credential files
+                    let cred_path = data_dir.join("auth_credential.json");
+                    let _ = std::fs::remove_file(&cred_path);
+                    if is_managed {
+                        let oauth_path = data_dir.join("oauth_credential.json");
+                        let _ = std::fs::remove_file(&oauth_path);
+                    }
+                    log::info!(
+                        "[skill:{}] Auth credential cleared from store and disk",
+                        skill_id
+                    );
+
+                    // Fire-and-forget: delete memory for this integration
+                    if let Some(client) = memory_client_opt {
+                        let skill = skill_id.to_string();
+                        let integration_id = params
+                            .get("integrationId")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        tokio::spawn(async move {
+                            if let Err(e) = client.clear_skill_memory(&skill, &integration_id).await
+                            {
+                                log::warn!("[memory] clear_skill_memory failed: {e}");
+                            } else {
+                                log::info!(
+                                    "[memory] Cleared memory for {}:{}",
+                                    skill,
+                                    integration_id
+                                );
+                            }
+                        });
+                    }
+
+                    let params_str =
+                        serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
+                    handle_js_void_call(rt, ctx, "onAuthRevoked", &params_str)
                         .await
                         .map(|()| serde_json::json!({ "ok": true }))
                 }
