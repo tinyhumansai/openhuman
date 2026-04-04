@@ -13,7 +13,7 @@
  *  - handleContinue — import mode: happy path, validation failure, no user
  *  - Loading state during continue
  *  - Navigation to /home on success
- *  - Redux dispatch of setEncryptionKeyForUser
+ *  - Core-state setEncryptionKey persistence
  */
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -36,12 +36,16 @@ const {
   mockDeriveAesKey,
   mockDeriveEvm,
   mockSetWalletAddress,
+  mockSetEncryptionKey,
+  mockUseCoreState,
 } = vi.hoisted(() => ({
   mockGenerateMnemonicPhrase: vi.fn(() => FIXED_MNEMONIC),
   mockValidateMnemonicPhrase: vi.fn(() => true),
   mockDeriveAesKey: vi.fn(() => 'aes-key-hex'),
   mockDeriveEvm: vi.fn(() => '0xDeAdBeEf'),
   mockSetWalletAddress: vi.fn().mockResolvedValue(undefined),
+  mockSetEncryptionKey: vi.fn().mockResolvedValue(undefined),
+  mockUseCoreState: vi.fn(),
 }));
 
 vi.mock('../src/utils/cryptoKeys', () => ({
@@ -54,6 +58,10 @@ vi.mock('../src/utils/cryptoKeys', () => ({
 
 vi.mock('../src/lib/skills/manager', () => ({
   skillManager: { setWalletAddress: mockSetWalletAddress },
+}));
+
+vi.mock('../src/providers/CoreStateProvider', () => ({
+  useCoreState: () => mockUseCoreState(),
 }));
 
 // LottieAnimation makes network calls; stub it out
@@ -72,10 +80,7 @@ const FIXED_WORDS = FIXED_MNEMONIC.split(' '); // 24 words
 const mockUser: Partial<User> = { _id: 'user-123', username: 'tester' };
 
 /** Render with a user already in the store. */
-const renderWithUser = () =>
-  renderWithProviders(<Mnemonic />, {
-    preloadedState: { user: { user: mockUser as User, loading: false, error: null } },
-  });
+const renderWithUser = () => renderWithProviders(<Mnemonic />);
 
 /** Render without a user in the store (unauthenticated). */
 const renderWithoutUser = () => renderWithProviders(<Mnemonic />);
@@ -93,6 +98,22 @@ const fillAllImportWords = (phrase = FIXED_MNEMONIC) => {
 
 /** Get the Continue button. */
 const continueButton = () => screen.getByRole('button', { name: /import & continue|let's go/i });
+
+beforeEach(() => {
+  mockGenerateMnemonicPhrase.mockClear();
+  mockValidateMnemonicPhrase.mockClear();
+  mockDeriveAesKey.mockClear();
+  mockDeriveEvm.mockClear();
+  mockSetWalletAddress.mockClear();
+  mockSetEncryptionKey.mockClear();
+  mockUseCoreState.mockReturnValue({
+    snapshot: {
+      currentUser: mockUser,
+      sessionToken: 'jwt-token',
+    },
+    setEncryptionKey: mockSetEncryptionKey,
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Generate mode — initial render
@@ -431,8 +452,8 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     });
   });
 
-  it('dispatches setEncryptionKeyForUser with userId and derived AES key', async () => {
-    const { store } = renderWithUser();
+  it('calls setEncryptionKey with the derived AES key', async () => {
+    renderWithUser();
     fireEvent.click(screen.getByRole('checkbox'));
 
     await act(async () => {
@@ -440,10 +461,7 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     });
 
     await waitFor(() => expect(mockSetWalletAddress).toHaveBeenCalled());
-
-    const authState = store.getState().auth as unknown as Record<string, unknown>;
-    // The encryption key should be stored under the user's id
-    expect(authState.encryptionKeyByUser).toMatchObject({ 'user-123': 'aes-key-hex' });
+    expect(mockSetEncryptionKey).toHaveBeenCalledWith('aes-key-hex');
   });
 
   it('calls deriveAesKeyFromMnemonic and deriveEvmAddressFromMnemonic with the mnemonic', async () => {
@@ -471,19 +489,19 @@ describe('Mnemonic — handleContinue: generate mode', () => {
   });
 
   it('shows "User not loaded" error when user._id is missing', async () => {
-    renderWithoutUser();
-    // Manually enable Continue (can't check the box and navigate since no user)
-    // We need to directly click after enabling. Simulate by rendering with checkbox ticked.
-    renderWithProviders(<Mnemonic />, {
-      preloadedState: { user: { user: null, loading: false, error: null } },
+    mockUseCoreState.mockReturnValue({
+      snapshot: {
+        currentUser: null,
+        sessionToken: 'jwt-token',
+      },
+      setEncryptionKey: mockSetEncryptionKey,
     });
+    renderWithoutUser();
 
     // The checkbox click + continue in generate mode with no user
-    const checkboxes = screen.getAllByRole('checkbox');
-    fireEvent.click(checkboxes[checkboxes.length - 1]);
-    const buttons = screen.getAllByRole('button', { name: /let's go/i });
+    fireEvent.click(screen.getByRole('checkbox'));
     await act(async () => {
-      fireEvent.click(buttons[buttons.length - 1]);
+      fireEvent.click(continueButton());
     });
 
     await waitFor(() => expect(screen.getAllByText(/user not loaded/i).length).toBeGreaterThan(0));
@@ -505,7 +523,7 @@ describe('Mnemonic — handleContinue: generate mode', () => {
   });
 
   it('does not navigate when unconfirmed in generate mode', async () => {
-    const { store } = renderWithUser();
+    renderWithUser();
     // Do NOT check the checkbox
     await act(async () => {
       fireEvent.click(continueButton());
@@ -514,9 +532,7 @@ describe('Mnemonic — handleContinue: generate mode', () => {
     // No dispatch should have happened
     await new Promise(r => setTimeout(r, 50));
     expect(mockSetWalletAddress).not.toHaveBeenCalled();
-    expect(
-      (store.getState().auth as unknown as Record<string, unknown>).encryptionKeyByUser ?? {}
-    ).not.toMatchObject({ 'user-123': expect.anything() });
+    expect(mockSetEncryptionKey).not.toHaveBeenCalled();
   });
 });
 
@@ -542,8 +558,8 @@ describe('Mnemonic — handleContinue: import mode', () => {
     expect(mockDeriveAesKey).toHaveBeenCalledWith(FIXED_MNEMONIC);
   });
 
-  it('dispatches setEncryptionKeyForUser on successful import', async () => {
-    const { store } = renderWithUser();
+  it('calls setEncryptionKey on successful import', async () => {
+    renderWithUser();
     switchToImport();
     fillAllImportWords();
 
@@ -552,8 +568,7 @@ describe('Mnemonic — handleContinue: import mode', () => {
     });
 
     await waitFor(() => expect(mockSetWalletAddress).toHaveBeenCalled());
-    const authState = store.getState().auth as unknown as Record<string, unknown>;
-    expect(authState.encryptionKeyByUser).toMatchObject({ 'user-123': 'aes-key-hex' });
+    expect(mockSetEncryptionKey).toHaveBeenCalledWith('aes-key-hex');
   });
 
   it('does not call deriveAesKey when validation fails', async () => {
@@ -574,9 +589,14 @@ describe('Mnemonic — handleContinue: import mode', () => {
   it('shows "User not loaded" error when user is absent during import', async () => {
     mockValidateMnemonicPhrase.mockReturnValue(true);
 
-    renderWithProviders(<Mnemonic />, {
-      preloadedState: { user: { user: null, loading: false, error: null } },
+    mockUseCoreState.mockReturnValue({
+      snapshot: {
+        currentUser: null,
+        sessionToken: 'jwt-token',
+      },
+      setEncryptionKey: mockSetEncryptionKey,
     });
+    renderWithProviders(<Mnemonic />);
     switchToImport();
     fillAllImportWords();
 
