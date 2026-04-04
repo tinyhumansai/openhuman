@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
 import createDebug from 'debug';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { billingApi } from '../../../services/api/billingApi';
@@ -17,11 +17,11 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import {
   annualSavings,
   buildPlanId,
+  isUpgrade as checkIsUpgrade,
   displayPrice,
   formatStorageLimit,
   formatUsdAmount,
   getPlanMeta,
-  isUpgrade as checkIsUpgrade,
   PLANS,
 } from './billingHelpers';
 
@@ -102,7 +102,9 @@ const BillingPanel = () => {
 
   const currentTier: PlanTier = currentPlan?.plan ?? activeTeam?.team.subscription?.plan ?? 'FREE';
   const hasActive =
-    currentPlan?.hasActiveSubscription ?? activeTeam?.team.subscription?.hasActiveSubscription ?? false;
+    currentPlan?.hasActiveSubscription ??
+    activeTeam?.team.subscription?.hasActiveSubscription ??
+    false;
   const planExpiry = currentPlan?.planExpiry ?? activeTeam?.team.subscription?.planExpiry ?? null;
   const currentPlanMeta = getPlanMeta(currentTier);
 
@@ -1132,7 +1134,10 @@ const BillingPanel = () => {
                         d="M5 13l4 4L19 7"
                       />
                     </svg>
-                    <span>Higher tiers increase your premium-usage discount and included usage every cycle</span>
+                    <span>
+                      Higher tiers increase your premium-usage discount and included usage every
+                      cycle
+                    </span>
                   </li>
                   {currentTier === 'FREE' && (
                     <li className="flex items-start gap-2">

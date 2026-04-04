@@ -47,7 +47,10 @@ export const PLANS: PlanMeta[] = [
     storageLimitBytes: 10 * 1024 * 1024 * 1024,
     features: [
       { text: 'Higher included premium usage every billing cycle', included: true },
-      { text: '20% premium-usage discount across integrations, bandwidth, and inference', included: true },
+      {
+        text: '20% premium-usage discount across integrations, bandwidth, and inference',
+        included: true,
+      },
       { text: 'Pay-as-you-go top-ups for overflow usage', included: true },
     ],
   },
