@@ -23,7 +23,11 @@ describe('billingApi', () => {
           id: 'sub_123',
           status: 'active',
           currentPeriodEnd: '2026-12-31T00:00:00.000Z',
+          quantity: 1,
         },
+        monthlyBudgetUsd: 20,
+        weeklyBudgetUsd: 10,
+        fiveHourCapUsd: 3,
       };
       mockCallCoreCommand.mockResolvedValue(planData);
 
@@ -39,6 +43,9 @@ describe('billingApi', () => {
         hasActiveSubscription: false,
         planExpiry: null,
         subscription: null,
+        monthlyBudgetUsd: 1,
+        weeklyBudgetUsd: 0.5,
+        fiveHourCapUsd: 0.15,
       };
       mockCallCoreCommand.mockResolvedValue(planData);
 
@@ -47,6 +54,7 @@ describe('billingApi', () => {
       expect(result.plan).toBe('FREE');
       expect(result.hasActiveSubscription).toBe(false);
       expect(result.subscription).toBeNull();
+      expect(result.weeklyBudgetUsd).toBe(0.5);
     });
 
     it('should propagate errors', async () => {
