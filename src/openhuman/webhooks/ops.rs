@@ -169,9 +169,13 @@ pub async fn get_tunnel(config: &Config, id: &str) -> Result<RpcOutcome<Value>, 
         return Err("id is required".to_string());
     }
     let encoded_id = urlencoding::encode(id);
-    let data =
-        get_authed_value(config, Method::GET, &format!("/webhooks/core/{encoded_id}"), None)
-            .await?;
+    let data = get_authed_value(
+        config,
+        Method::GET,
+        &format!("/webhooks/core/{encoded_id}"),
+        None,
+    )
+    .await?;
     Ok(RpcOutcome::single_log(data, "webhook tunnel fetched"))
 }
 
