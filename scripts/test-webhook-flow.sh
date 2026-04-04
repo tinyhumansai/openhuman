@@ -30,7 +30,7 @@ deletes the tunnel unless told to keep it.
 Options:
   --keep                 Keep the backend tunnel and local echo registration
   --name <name>          Tunnel name override
-  --path <path>          Request path suffix to send after /webhooks/<uuid>
+  --path <path>          Request path suffix to send after /webhooks/ingress/<uuid>
   --method <method>      HTTP method to send (default: POST)
   --payload <json>       Raw JSON payload string to send
   -h, --help             Show this help
@@ -118,7 +118,7 @@ echo "Tunnel name: $TUNNEL_NAME"
 
 CREATE_BODY="$(jq -n --arg name "$TUNNEL_NAME" '{name: $name, description: "Live webhook echo flow test"}')"
 CREATE_RESP="$(
-  curl -fsS "${BACKEND_URL%/}/tunnels" \
+  curl -fsS "${BACKEND_URL%/}/webhooks/core" \
     -H 'Content-Type: application/json' \
     -H "Authorization: Bearer $SESSION_TOKEN" \
     -d "$CREATE_BODY"
@@ -145,7 +145,7 @@ cleanup() {
     "$(jq -n --arg tunnel_uuid "$TUNNEL_UUID" '{tunnel_uuid: $tunnel_uuid}')" >/dev/null || true
 
   echo "Deleting backend tunnel..."
-  curl -fsS -X DELETE "${BACKEND_URL%/}/tunnels/${TUNNEL_ID}" \
+  curl -fsS -X DELETE "${BACKEND_URL%/}/webhooks/core/${TUNNEL_ID}" \
     -H "Authorization: Bearer $SESSION_TOKEN" >/dev/null || true
 }
 
@@ -162,7 +162,7 @@ REGISTER_PARAMS="$(
 )"
 rpc_call "openhuman.webhooks_register_echo" "$REGISTER_PARAMS" >/dev/null
 
-WEBHOOK_URL="${BACKEND_URL%/}/webhooks/${TUNNEL_UUID}${HOOK_PATH}"
+WEBHOOK_URL="${BACKEND_URL%/}/webhooks/ingress/${TUNNEL_UUID}${HOOK_PATH}"
 echo "Triggering: ${HOOK_METHOD} ${WEBHOOK_URL}"
 
 RESPONSE_BODY_FILE="$(mktemp)"

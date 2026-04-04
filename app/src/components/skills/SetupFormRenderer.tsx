@@ -174,6 +174,22 @@ export default function SetupFormRenderer({
               </select>
             )}
 
+            {/* Textarea */}
+            {field.type === "textarea" && (
+              <textarea
+                value={String(value ?? "")}
+                onChange={(e) => updateValue(field.name, e.target.value)}
+                placeholder={field.placeholder ?? undefined}
+                disabled={loading}
+                rows={8}
+                className={`w-full px-3 py-2.5 bg-stone-50 border rounded-xl text-sm text-stone-900 placeholder-stone-400 font-mono focus:outline-none focus:ring-1 transition-colors resize-y ${
+                  fieldError
+                    ? "border-coral-500/50 focus:ring-coral-500/30"
+                    : "border-stone-200 focus:ring-primary-500/30 focus:border-primary-500/50"
+                }`}
+              />
+            )}
+
             {/* Boolean toggle */}
             {field.type === "boolean" && (
               <label className="flex items-center space-x-3 cursor-pointer">

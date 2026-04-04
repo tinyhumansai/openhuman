@@ -1,19 +1,28 @@
 /**
  * Multi-step setup wizard for a single skill.
- * Manages the state machine: start -> render form -> submit -> next/error/complete.
- * For OAuth skills, shows a login button instead of form steps.
- * Ensures the skill is running (starts it if needed) before starting the setup flow.
+ *
+ * Supports two sequential phases:
+ * 1. **Auth phase** (optional): If the skill declares `setup.auth`, the user
+ *    picks an auth mode (managed / self_hosted / text), enters credentials,
+ *    and the skill validates them via `onAuthComplete`.
+ * 2. **Setup phase**: The normal setup flow runs (`onSetupStart` → form steps
+ *    → `onSetupSubmit`).
+ *
+ * For legacy skills with only `setup.oauth`, the OAuth config is auto-synthesized
+ * as a single "managed" auth mode.
  */
 
 import { useState, useEffect, useCallback } from "react";
 import { useSkillSnapshot } from "../../lib/skills/hooks.ts";
 import { skillManager } from "../../lib/skills/manager.ts";
 import { listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
+import { callCoreRpc } from "../../services/coreRpcClient.ts";
 import { apiClient } from "../../services/apiClient.ts";
 import { openUrl } from "../../utils/openUrl.ts";
-import type { SetupStep, SetupFieldError } from "../../lib/skills/types.ts";
+import type { SetupStep, SetupFieldError, AuthMode, SkillAuthConfig } from "../../lib/skills/types.ts";
 import SetupFormRenderer from "./SetupFormRenderer.tsx";
-import {IS_DEV} from "../../utils/config.ts";
+import AuthModeSelector from "./AuthModeSelector.tsx";
+import { IS_DEV } from "../../utils/config.ts";
 
 interface SkillSetupWizardProps {
   skillId: string;
@@ -27,9 +36,16 @@ interface OAuthConfig {
 }
 
 type WizardState =
+  // Auth phases
   | { phase: "loading" }
+  | { phase: "auth_mode_select"; auth: SkillAuthConfig }
+  | { phase: "auth_form"; mode: AuthMode; errors?: SetupFieldError[] | null }
+  | { phase: "auth_submitting"; mode: AuthMode }
+  | { phase: "auth_managed_waiting"; mode: AuthMode }
+  // Legacy OAuth (when no setup.auth, only setup.oauth)
   | { phase: "oauth"; oauth: OAuthConfig }
   | { phase: "oauth_waiting"; oauth: OAuthConfig }
+  // Setup phases (run after auth succeeds, or directly for non-auth skills)
   | { phase: "step"; step: SetupStep; errors?: SetupFieldError[] | null }
   | { phase: "submitting"; step: SetupStep }
   | { phase: "complete"; message?: string }
@@ -42,23 +58,148 @@ export default function SkillSetupWizard({
 }: SkillSetupWizardProps) {
   const [state, setState] = useState<WizardState>({ phase: "loading" });
 
-  // Watch skill snapshot for OAuth completion via RPC-backed hook
+  // Watch skill snapshot for OAuth/managed completion
   const snap = useSkillSnapshot(skillId);
   const isConnected = snap?.connection_status === "connected" || snap?.setup_complete === true;
 
-  // When skill state changes to connected during OAuth waiting, mark complete
+  // --- Transition from auth to setup ---
+
+  const transitionToSetup = useCallback(async () => {
+    try {
+      // Ensure skill runtime is running
+      try {
+        await startSkill(skillId);
+      } catch {
+        // May already be running
+      }
+
+      const firstStep = await skillManager.startSetup(skillId);
+      if (!firstStep) {
+        // No setup steps needed — auth alone is sufficient
+        await setSetupComplete(skillId, true);
+        setState({ phase: "complete", message: "Successfully connected!" });
+      } else {
+        setState({ phase: "step", step: firstStep });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setState({ phase: "error", message: msg });
+    }
+  }, [skillId]);
+
+  // --- Managed OAuth ---
+
+  const handleManagedAuth = useCallback(
+    async (mode: AuthMode) => {
+      if (!mode.provider) {
+        setState({ phase: "error", message: "Managed mode requires a provider." });
+        return;
+      }
+      try {
+        const shouldShowJson = IS_DEV ? 'responseType=json&' : '';
+        const data = await apiClient.get<{ oauthUrl?: string }>(
+          `/auth/${mode.provider}/connect?${shouldShowJson}skillId=${skillId}`,
+        );
+        if (!data.oauthUrl) {
+          setState({ phase: "error", message: "Failed to get OAuth URL from backend." });
+          return;
+        }
+        await openUrl(data.oauthUrl);
+        setState({ phase: "auth_managed_waiting", mode });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setState({ phase: "error", message: `OAuth connection failed: ${msg}` });
+      }
+    },
+    [skillId],
+  );
+
+  // --- Auth mode selection ---
+
+  const handleAuthModeSelected = useCallback(
+    (mode: AuthMode) => {
+      if (mode.type === "managed") {
+        handleManagedAuth(mode);
+      } else {
+        // self_hosted or text: show credential form
+        setState({ phase: "auth_form", mode });
+      }
+    },
+    [handleManagedAuth],
+  );
+
+  // --- Auth form submission ---
+
+  const handleAuthFormSubmit = useCallback(
+    async (values: Record<string, unknown>) => {
+      if (state.phase !== "auth_form") return;
+
+      const { mode } = state;
+      setState({ phase: "auth_submitting", mode });
+
+      try {
+        // Ensure skill runtime is running
+        try {
+          await startSkill(skillId);
+        } catch {
+          // May already be running
+        }
+
+        // Build credential payload
+        const credentials =
+          mode.type === "text"
+            ? { content: values.content }
+            : values;
+
+        // Send auth/complete RPC to skill
+        const result = await callCoreRpc({
+          method: "openhuman.skills_rpc",
+          params: {
+            skill_id: skillId,
+            method: "auth/complete",
+            params: { mode: mode.type, credentials },
+          },
+        }) as { status?: string; errors?: SetupFieldError[]; message?: string } | null;
+
+        if (result?.status === "error" && result.errors) {
+          setState({ phase: "auth_form", mode, errors: result.errors });
+          return;
+        }
+
+        if (result?.status === "error") {
+          setState({
+            phase: "error",
+            message: result.message ?? "Auth validation failed.",
+          });
+          return;
+        }
+
+        // Auth succeeded — transition to setup phase
+        await transitionToSetup();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setState({ phase: "error", message: msg });
+      }
+    },
+    [state, skillId, transitionToSetup],
+  );
+
+  // Detect managed OAuth completion
   useEffect(() => {
+    if (state.phase === "auth_managed_waiting" && isConnected) {
+      setTimeout(() => { transitionToSetup(); }, 0);
+    }
+    // Legacy OAuth completion
     if (
       (state.phase === "oauth" || state.phase === "oauth_waiting") &&
       isConnected
     ) {
       setSetupComplete(skillId, true).catch(() => {});
-      // Schedule state update to avoid synchronous setState inside an effect
       setTimeout(() => {
         setState({ phase: "complete", message: "Successfully connected!" });
       }, 0);
     }
-  }, [isConnected, state.phase, skillId]);
+  }, [isConnected, state.phase, skillId, transitionToSetup]);
 
   // Start the setup flow on mount
   useEffect(() => {
@@ -68,7 +209,6 @@ export default function SkillSetupWizard({
       try {
         console.log("[SkillSetupWizard] initSetup", skillId);
 
-        // Find the available skill entry from the registry for OAuth config
         const available = await listAvailable();
         const entry = available.find(e => e.id === skillId);
 
@@ -82,9 +222,26 @@ export default function SkillSetupWizard({
           return;
         }
 
-        const setup = entry.setup as { required?: boolean; oauth?: OAuthConfig } | null | undefined;
+        const setup = entry.setup as {
+          required?: boolean;
+          oauth?: OAuthConfig;
+          auth?: SkillAuthConfig;
+        } | null | undefined;
 
-        // If the skill has OAuth config, show OAuth login directly
+        // Priority 1: Advanced auth config
+        if (setup?.auth && setup.auth.modes.length > 0) {
+          if (!cancelled) {
+            if (setup.auth.modes.length === 1) {
+              const mode = setup.auth.modes[0];
+              handleAuthModeSelected(mode);
+            } else {
+              setState({ phase: "auth_mode_select", auth: setup.auth });
+            }
+          }
+          return;
+        }
+
+        // Priority 2: Legacy OAuth config
         if (setup?.oauth) {
           if (!cancelled) {
             setState({
@@ -98,7 +255,7 @@ export default function SkillSetupWizard({
           return;
         }
 
-        // Non-OAuth skills need the runtime running for setup steps
+        // Priority 3: Non-auth — start form-based setup directly
         try {
           await startSkill(skillId);
           console.log("[SkillSetupWizard] skill started via RPC", skillId);
@@ -120,7 +277,7 @@ export default function SkillSetupWizard({
           if (!firstStep) {
             setState({
               phase: "error",
-              message: "This skill requires OAuth setup but no setup steps were returned. Try restarting the app.",
+              message: "This skill requires setup but no setup steps were returned. Try restarting the app.",
             });
           } else {
             setState({ phase: "step", step: firstStep });
@@ -139,36 +296,11 @@ export default function SkillSetupWizard({
     return () => {
       cancelled = true;
     };
-  }, [skillId]);
+  }, [skillId, handleAuthModeSelected]);
 
-  const handleOAuthLogin = useCallback(async () => {
-    if (state.phase !== "oauth") return;
+  // --- Setup form submission (existing flow) ---
 
-    const { oauth } = state;
-
-    try {
-      const shouldShowJson = IS_DEV ? 'responseType=json&' : ''
-      // Call backend to get the real OAuth authorization URL
-      const data = await apiClient.get<{ oauthUrl?: string }>(
-        `/auth/${oauth.provider}/connect?${shouldShowJson}skillId=${skillId}`,
-      );
-
-      if (!data.oauthUrl) {
-        console.error("[SkillSetupWizard] Backend did not return oauthUrl:", data);
-        setState({ phase: "error", message: "Failed to get OAuth URL from backend." });
-        return;
-      }
-
-      await openUrl(data.oauthUrl);
-      setState({ phase: "oauth_waiting", oauth });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[SkillSetupWizard] OAuth connect error:", err);
-      setState({ phase: "error", message: `OAuth connection failed: ${msg}` });
-    }
-  }, [state, skillId]);
-
-  const handleSubmit = useCallback(
+  const handleSetupSubmit = useCallback(
     async (values: Record<string, unknown>) => {
       if (state.phase !== "step") return;
 
@@ -210,8 +342,44 @@ export default function SkillSetupWizard({
     [state, skillId],
   );
 
+  // --- Legacy OAuth handler ---
+
+  const handleOAuthLogin = useCallback(async () => {
+    if (state.phase !== "oauth") return;
+
+    const { oauth } = state;
+
+    try {
+      const shouldShowJson = IS_DEV ? 'responseType=json&' : '';
+      const data = await apiClient.get<{ oauthUrl?: string }>(
+        `/auth/${oauth.provider}/connect?${shouldShowJson}skillId=${skillId}`,
+      );
+
+      if (!data.oauthUrl) {
+        console.error("[SkillSetupWizard] Backend did not return oauthUrl:", data);
+        setState({ phase: "error", message: "Failed to get OAuth URL from backend." });
+        return;
+      }
+
+      await openUrl(data.oauthUrl);
+      setState({ phase: "oauth_waiting", oauth });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[SkillSetupWizard] OAuth connect error:", err);
+      setState({ phase: "error", message: `OAuth connection failed: ${msg}` });
+    }
+  }, [state, skillId]);
+
+  // --- Cancel ---
+
   const handleCancel = useCallback(async () => {
-    if (state.phase !== "oauth" && state.phase !== "oauth_waiting") {
+    if (
+      state.phase !== "oauth" &&
+      state.phase !== "oauth_waiting" &&
+      state.phase !== "auth_mode_select" &&
+      state.phase !== "auth_form" &&
+      state.phase !== "auth_managed_waiting"
+    ) {
       try {
         await skillManager.cancelSetup(skillId);
       } catch {
@@ -221,35 +389,59 @@ export default function SkillSetupWizard({
     onCancel();
   }, [skillId, onCancel, state.phase]);
 
-  // Render based on current wizard state
+  // --- Render ---
+
   switch (state.phase) {
     case "loading":
+      return <LoadingView />;
+
+    case "auth_mode_select":
       return (
-        <div className="flex items-center justify-center py-12">
-          <svg
-            className="animate-spin h-6 w-6 text-primary-500"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle
-              className="opacity-25"
-              cx="12"
-              cy="12"
-              r="10"
-              stroke="currentColor"
-              strokeWidth="4"
-            />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-          </svg>
-          <span className="ml-3 text-sm text-stone-400">
-            Starting setup...
-          </span>
+        <div className="py-4">
+          <AuthModeSelector
+            modes={state.auth.modes}
+            onSelect={handleAuthModeSelected}
+          />
+          <div className="mt-4">
+            <button
+              onClick={handleCancel}
+              className="w-full py-2.5 text-sm font-medium text-stone-600 bg-stone-100 border border-stone-200 rounded-xl hover:bg-stone-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
+      );
+
+    case "auth_form":
+      return (
+        <SetupFormRenderer
+          step={buildAuthFormStep(state.mode)}
+          errors={state.errors}
+          loading={false}
+          onSubmit={handleAuthFormSubmit}
+          onCancel={handleCancel}
+        />
+      );
+
+    case "auth_submitting":
+      return (
+        <SetupFormRenderer
+          step={buildAuthFormStep(state.mode)}
+          loading={true}
+          onSubmit={() => {}}
+          onCancel={() => {}}
+        />
+      );
+
+    case "auth_managed_waiting":
+      return (
+        <OAuthLoginView
+          provider={state.mode.provider ?? "service"}
+          onLogin={() => handleManagedAuth(state.mode)}
+          onCancel={handleCancel}
+          waiting={true}
+        />
       );
 
     case "oauth":
@@ -278,7 +470,7 @@ export default function SkillSetupWizard({
           step={state.step}
           errors={state.errors}
           loading={false}
-          onSubmit={handleSubmit}
+          onSubmit={handleSetupSubmit}
           onCancel={handleCancel}
         />
       );
@@ -288,8 +480,8 @@ export default function SkillSetupWizard({
         <SetupFormRenderer
           step={state.step}
           loading={true}
-          onSubmit={() => { }}
-          onCancel={() => { }}
+          onSubmit={() => {}}
+          onCancel={() => {}}
         />
       );
 
@@ -359,6 +551,81 @@ export default function SkillSetupWizard({
         </div>
       );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Build a synthetic SetupStep from an AuthMode for rendering via SetupFormRenderer. */
+function buildAuthFormStep(mode: AuthMode): SetupStep {
+  if (mode.type === "text") {
+    return {
+      id: "auth_text",
+      title: mode.label ?? "Credential Text",
+      description: mode.textDescription ?? "Paste your credential content below.",
+      fields: [
+        {
+          name: "content",
+          type: "textarea",
+          label: "Credential Content",
+          required: true,
+          placeholder: mode.textPlaceholder ?? undefined,
+        },
+      ],
+    };
+  }
+
+  // self_hosted: use the mode's declared fields
+  return {
+    id: `auth_${mode.type}`,
+    title: mode.label ?? "Enter Credentials",
+    description: mode.description ?? "Provide your credentials to connect.",
+    fields: (mode.fields ?? []).map(f => ({
+      name: f.name ?? "",
+      type: f.type ?? "text",
+      label: f.label ?? f.name ?? "",
+      required: f.required ?? false,
+      default: f.default,
+      placeholder: f.placeholder,
+      description: f.description,
+      options: f.options,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Loading View
+// ---------------------------------------------------------------------------
+
+function LoadingView() {
+  return (
+    <div className="flex items-center justify-center py-12">
+      <svg
+        className="animate-spin h-6 w-6 text-primary-500"
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle
+          className="opacity-25"
+          cx="12"
+          cy="12"
+          r="10"
+          stroke="currentColor"
+          strokeWidth="4"
+        />
+        <path
+          className="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+        />
+      </svg>
+      <span className="ml-3 text-sm text-stone-400">
+        Starting setup...
+      </span>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

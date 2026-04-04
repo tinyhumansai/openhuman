@@ -8,6 +8,7 @@ let requestLog = [];
 let mockBehavior = {};
 let server = null;
 const openSockets = new Set();
+let mockTunnels = [];
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -109,6 +110,10 @@ function clearRequestLog() {
   requestLog = [];
 }
 
+function resetMockTunnels() {
+  mockTunnels = [];
+}
+
 function setMockBehavior(key, value) {
   mockBehavior[key] = String(value);
 }
@@ -156,6 +161,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function createMockTunnel(payload = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    uuid: crypto.randomUUID(),
+    name: String(payload.name || "Mock Tunnel").trim(),
+    description: String(payload.description || "").trim(),
+    isActive: payload.isActive ?? true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 async function handleRequest(req, res) {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -189,6 +207,7 @@ async function handleRequest(req, res) {
     const keepRequests = parsedBody?.keepRequests === true;
     if (!keepBehavior) resetMockBehavior();
     if (!keepRequests) clearRequestLog();
+    resetMockTunnels();
     json(res, 200, {
       success: true,
       data: {
@@ -301,6 +320,57 @@ async function handleRequest(req, res) {
   if (method === "GET" && /^\/auth\/integrations\/?(\?.*)?$/.test(url)) {
     json(res, 200, { success: true, data: [] });
     return;
+  }
+
+  if (method === "POST" && /^\/webhooks\/core\/?$/.test(url)) {
+    const tunnel = createMockTunnel(parsedBody || {});
+    mockTunnels.unshift(tunnel);
+    json(res, 200, { success: true, data: tunnel });
+    return;
+  }
+
+  if (method === "GET" && /^\/webhooks\/core\/?(\?.*)?$/.test(url)) {
+    json(res, 200, { success: true, data: mockTunnels });
+    return;
+  }
+
+  if (method === "GET" && /^\/webhooks\/core\/bandwidth\/?(\?.*)?$/.test(url)) {
+    json(res, 200, { success: true, data: { remainingBudgetUsd: 10 } });
+    return;
+  }
+
+  const webhookCoreMatch = url.match(/^\/webhooks\/core\/([^/?]+)\/?(\?.*)?$/);
+  if (webhookCoreMatch) {
+    const [, tunnelId] = webhookCoreMatch;
+    const tunnelIndex = mockTunnels.findIndex((entry) => entry.id === tunnelId);
+    const tunnel = tunnelIndex >= 0 ? mockTunnels[tunnelIndex] : null;
+
+    if (!tunnel) {
+      json(res, 404, { success: false, error: "Tunnel not found" });
+      return;
+    }
+
+    if (method === "GET") {
+      json(res, 200, { success: true, data: tunnel });
+      return;
+    }
+
+    if (method === "PATCH") {
+      const updated = {
+        ...tunnel,
+        ...(parsedBody || {}),
+        updatedAt: new Date().toISOString(),
+      };
+      mockTunnels[tunnelIndex] = updated;
+      json(res, 200, { success: true, data: updated });
+      return;
+    }
+
+    if (method === "DELETE") {
+      mockTunnels.splice(tunnelIndex, 1);
+      json(res, 200, { success: true, data: tunnel });
+      return;
+    }
   }
 
   // --- Payments / Credits / Billing ---

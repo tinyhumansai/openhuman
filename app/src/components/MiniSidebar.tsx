@@ -107,7 +107,7 @@ const navItems = [
   {
     id: 'channels',
     label: 'Channels',
-    path: '/settings/messaging',
+    path: '/channels',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -168,11 +168,10 @@ const MiniSidebar = () => {
       return (
         location.pathname === '/settings' ||
         (location.pathname.startsWith('/settings/') &&
-          !location.pathname.startsWith('/settings/messaging') &&
           !location.pathname.startsWith('/settings/cron-jobs'))
       );
     }
-    if (path === '/settings/messaging') return location.pathname.startsWith('/settings/messaging');
+    if (path === '/channels') return location.pathname.startsWith('/channels');
     if (path === '/settings/cron-jobs') return location.pathname.startsWith('/settings/cron-jobs');
     if (path === '/conversations') return location.pathname.startsWith('/conversations');
     return location.pathname === path;

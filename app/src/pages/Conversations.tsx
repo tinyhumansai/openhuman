@@ -80,6 +80,36 @@ function getInlineCompletionSuffix(input: string, suggestion: string): string {
   return '';
 }
 
+function formatResetTime(isoStr: string): string {
+  const ms = new Date(isoStr).getTime() - Date.now();
+  if (ms <= 0) return 'now';
+  const mins = Math.ceil(ms / 60_000);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (hours < 24) return remMins > 0 ? `in ${hours}h ${remMins}m` : `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `in ${days}d ${remHours}h` : `in ${days}d`;
+}
+
+function LimitPill({ label, usedPct }: { label: string; usedPct: number }) {
+  const barColor =
+    usedPct >= 1 ? 'bg-coral-500' : usedPct >= 0.8 ? 'bg-amber-500' : 'bg-primary-500';
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-[9px] text-stone-400 font-medium uppercase">{label}</span>
+      <div className="w-8 h-1.5 rounded-full bg-stone-200 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+          style={{ width: `${Math.min(100, usedPct * 100)}%` }}
+        />
+      </div>
+      <span className="text-[9px] text-stone-500 tabular-nums">{Math.round(usedPct * 100)}%</span>
+    </div>
+  );
+}
+
 const Conversations = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
@@ -1155,32 +1185,39 @@ const Conversations = () => {
         )}
 
         <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
-          {teamUsage && teamUsage.remainingUsd <= 0 && (
-            <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <svg
-                  className="w-4 h-4 text-coral-400 flex-shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                  />
-                </svg>
-                <p className="text-xs text-coral-600 truncate">
-                  Daily inference budget exhausted. Top up to continue.
-                </p>
+          {teamUsage &&
+            (teamUsage.remainingUsd <= 0 ||
+              (teamUsage.fiveHourCapUsd > 0 &&
+                teamUsage.fiveHourSpendUsd >= teamUsage.fiveHourCapUsd)) && (
+              <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <svg
+                    className="w-4 h-4 text-coral-400 flex-shrink-0"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                    />
+                  </svg>
+                  <p className="text-xs text-coral-600 truncate">
+                    {teamUsage.remainingUsd <= 0
+                      ? 'Weekly inference budget exhausted. Top up to continue.'
+                      : `5-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
+                  </p>
+                </div>
+                {teamUsage.remainingUsd <= 0 && (
+                  <button
+                    onClick={() => navigate('/settings/billing')}
+                    className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
+                    Top Up
+                  </button>
+                )}
               </div>
-              <button
-                onClick={() => navigate('/settings/billing')}
-                className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
-                Top Up
-              </button>
-            </div>
-          )}
+            )}
 
           <div className="flex items-center gap-2 mb-2">
             {isLoadingModels ? (
@@ -1257,73 +1294,66 @@ const Conversations = () => {
                 Voice
               </button>
             </div>
-            {(isLoadingBudget || teamUsage) &&
-              (() => {
-                const size = 22;
-                const r = 9;
-                const circ = 2 * Math.PI * r;
-                const pct = teamUsage
-                  ? Math.min(1, teamUsage.remainingUsd / teamUsage.cycleBudgetUsd)
-                  : 0;
-                const dash = pct * circ;
-                return (
-                  <div
-                    className="flex items-center gap-1.5"
-                    title={
-                      teamUsage
-                        ? `$${teamUsage.remainingUsd.toFixed(2)} of $${teamUsage.cycleBudgetUsd.toFixed(2)} remaining`
-                        : 'Loading budget…'
-                    }>
-                    <svg
-                      width={size}
-                      height={size}
-                      viewBox={`0 0 ${size} ${size}`}
-                      className="-rotate-90">
-                      <circle
-                        cx={size / 2}
-                        cy={size / 2}
-                        r={r}
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        className="text-stone-200"
-                      />
-                      {teamUsage ? (
-                        <circle
-                          cx={size / 2}
-                          cy={size / 2}
-                          r={r}
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeDasharray={`${dash} ${circ}`}
-                          strokeLinecap="round"
-                          className={pct < 0.2 ? 'text-amber-500' : 'text-primary-500'}
-                          style={{ transition: 'stroke-dasharray 0.3s ease' }}
-                        />
-                      ) : (
-                        <circle
-                          cx={size / 2}
-                          cy={size / 2}
-                          r={r}
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeDasharray={`${circ * 0.25} ${circ}`}
-                          strokeLinecap="round"
-                          className="text-stone-600 animate-spin origin-center"
-                          style={{ transformOrigin: `${size / 2}px ${size / 2}px` }}
-                        />
-                      )}
-                    </svg>
-                    {teamUsage && (
-                      <span className="text-[10px] text-stone-500">
-                        ${teamUsage.remainingUsd.toFixed(2)}
-                      </span>
-                    )}
+            {(isLoadingBudget || teamUsage) && (
+              <div className="relative group">
+                {teamUsage ? (
+                  <div className="flex items-center gap-2">
+                    <LimitPill
+                      label="5h"
+                      usedPct={
+                        teamUsage.fiveHourCapUsd > 0
+                          ? Math.min(1, teamUsage.fiveHourSpendUsd / teamUsage.fiveHourCapUsd)
+                          : 0
+                      }
+                    />
+                    <LimitPill
+                      label="7d"
+                      usedPct={
+                        teamUsage.cycleBudgetUsd > 0
+                          ? Math.min(
+                              1,
+                              (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) /
+                                teamUsage.cycleBudgetUsd
+                            )
+                          : 0
+                      }
+                    />
                   </div>
-                );
-              })()}
+                ) : (
+                  <span className="text-[10px] text-stone-400 animate-pulse">loading…</span>
+                )}
+                {teamUsage && (
+                  <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
+                    <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-stone-400">5-hour limit</span>
+                        <span>
+                          ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
+                          {teamUsage.fiveHourCapUsd.toFixed(2)}
+                          {teamUsage.fiveHourResetsAt && (
+                            <span className="text-stone-400 ml-1">
+                              — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-stone-400">Weekly limit</span>
+                        <span>
+                          ${teamUsage.remainingUsd.toFixed(2)} / $
+                          {teamUsage.cycleBudgetUsd.toFixed(2)} left
+                          {teamUsage.cycleEndsAt && (
+                            <span className="text-stone-400 ml-1">
+                              — resets {formatResetTime(teamUsage.cycleEndsAt)}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {sendError && (

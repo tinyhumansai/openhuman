@@ -2,84 +2,13 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use super::registry_types::{
-    AvailableSkillEntry, CachedRegistry, InstalledSkillInfo, RegistrySkillEntry,
-    RemoteSkillRegistry, SkillCategory,
+use super::registry_cache::{
+    cache_path, is_cache_fresh, is_local_path, local_skills_dir, read_cache, read_local_file,
+    registry_url, tag_categories, write_cache,
 };
-
-/// Cache TTL in seconds (1 hour).
-const CACHE_TTL_SECS: i64 = 3600;
-
-/// Default registry URL (GitHub raw on the `build` branch).
-const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/tinyhumansai/openhuman-skills/refs/heads/build/skills/registry.json";
-
-fn registry_url() -> String {
-    std::env::var("SKILLS_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string())
-}
-
-/// If `SKILLS_LOCAL_DIR` is set, return the local skills directory path.
-/// This enables local development by reading skills directly from disk
-/// instead of downloading from the remote registry.
-fn local_skills_dir() -> Option<PathBuf> {
-    std::env::var("SKILLS_LOCAL_DIR").ok().map(PathBuf::from)
-}
-
-/// Check if a URL is a local file path (absolute path or file:// URI).
-fn is_local_path(url: &str) -> bool {
-    url.starts_with('/') || url.starts_with("file://")
-}
-
-/// Read a file from a local path or file:// URI.
-fn read_local_file(url: &str) -> Result<Vec<u8>, String> {
-    let path = if let Some(stripped) = url.strip_prefix("file://") {
-        PathBuf::from(stripped)
-    } else {
-        PathBuf::from(url)
-    };
-    std::fs::read(&path).map_err(|e| format!("failed to read local file {}: {e}", path.display()))
-}
-
-fn cache_path(workspace_dir: &Path) -> std::path::PathBuf {
-    workspace_dir.join("skills").join(".registry-cache.json")
-}
-
-fn is_cache_fresh(cached: &CachedRegistry) -> bool {
-    let Ok(fetched) = chrono::DateTime::parse_from_rfc3339(&cached.fetched_at) else {
-        return false;
-    };
-    let now = chrono::Utc::now();
-    (now - fetched.to_utc()).num_seconds() < CACHE_TTL_SECS
-}
-
-fn read_cache(workspace_dir: &Path) -> Option<CachedRegistry> {
-    let path = cache_path(workspace_dir);
-    let content = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&content).ok()
-}
-
-fn write_cache(workspace_dir: &Path, registry: &RemoteSkillRegistry) -> Result<(), String> {
-    let cached = CachedRegistry {
-        fetched_at: chrono::Utc::now().to_rfc3339(),
-        registry: registry.clone(),
-    };
-    let path = cache_path(workspace_dir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("failed to create cache dir: {e}"))?;
-    }
-    let json = serde_json::to_string_pretty(&cached).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| format!("failed to write cache: {e}"))?;
-    Ok(())
-}
-
-/// Tag each entry with its category based on which list it came from.
-fn tag_categories(registry: &mut RemoteSkillRegistry) {
-    for entry in &mut registry.skills.core {
-        entry.category = SkillCategory::Core;
-    }
-    for entry in &mut registry.skills.third_party {
-        entry.category = SkillCategory::ThirdParty;
-    }
-}
+use super::registry_types::{
+    AvailableSkillEntry, InstalledSkillInfo, RegistrySkillEntry, RemoteSkillRegistry,
+};
 
 /// Fetch the skill registry. Supports both remote HTTP URLs and local file paths.
 ///
@@ -457,7 +386,8 @@ pub async fn skills_list_available(
 
 #[cfg(test)]
 mod tests {
-    use super::super::registry_types::RegistrySkillCategories;
+    use super::super::registry_cache::{cache_path, is_cache_fresh, write_cache};
+    use super::super::registry_types::{CachedRegistry, RegistrySkillCategories, SkillCategory};
     use super::*;
 
     fn make_workspace() -> tempfile::TempDir {

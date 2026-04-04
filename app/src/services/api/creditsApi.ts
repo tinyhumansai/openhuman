@@ -13,6 +13,16 @@ export interface TeamUsage {
   dailyUsage: number;
   totalInputTokensThisCycle: number;
   totalOutputTokensThisCycle: number;
+  /** 5-hour rolling window: amount spent (USD) */
+  fiveHourSpendUsd: number;
+  /** 5-hour rolling window: cap for the user's plan (USD) */
+  fiveHourCapUsd: number;
+  /** ISO timestamp when the oldest 5-hour window entry expires (null if window is empty) */
+  fiveHourResetsAt: string | null;
+  /** ISO timestamp when the current weekly cycle started */
+  cycleStartDate: string;
+  /** ISO timestamp when the current weekly cycle ends */
+  cycleEndsAt: string;
 }
 
 export interface TopUpResult {
