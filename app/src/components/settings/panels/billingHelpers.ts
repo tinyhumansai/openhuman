@@ -13,7 +13,7 @@ export interface PlanMeta {
   monthlyBudgetUsd: number;
   weeklyBudgetUsd: number;
   fiveHourCapUsd: number;
-  marginPercent: number;
+  discountPercent: number;
   storageLimitBytes: number;
   features: PlanFeature[];
 }
@@ -27,12 +27,12 @@ export const PLANS: PlanMeta[] = [
     monthlyBudgetUsd: 1,
     weeklyBudgetUsd: 0.5,
     fiveHourCapUsd: 0.15,
-    marginPercent: 100,
+    discountPercent: 0,
     storageLimitBytes: 100 * 1024 * 1024,
     features: [
       { text: 'Base access to integrations and inference', included: true },
       { text: 'Pay-as-you-go top-ups when included usage runs out', included: true },
-      { text: 'Highest internal markup', included: true },
+      { text: 'No subscription discount on premium usage', included: true },
     ],
   },
   {
@@ -43,11 +43,11 @@ export const PLANS: PlanMeta[] = [
     monthlyBudgetUsd: 20,
     weeklyBudgetUsd: 10,
     fiveHourCapUsd: 3,
-    marginPercent: 80,
+    discountPercent: 20,
     storageLimitBytes: 10 * 1024 * 1024 * 1024,
     features: [
       { text: 'Higher included premium usage every billing cycle', included: true },
-      { text: 'Lower markup on integrations, bandwidth, and inference', included: true },
+      { text: '20% premium-usage discount across integrations, bandwidth, and inference', included: true },
       { text: 'Pay-as-you-go top-ups for overflow usage', included: true },
     ],
   },
@@ -59,11 +59,11 @@ export const PLANS: PlanMeta[] = [
     monthlyBudgetUsd: 200,
     weeklyBudgetUsd: 100,
     fiveHourCapUsd: 30,
-    marginPercent: 60,
+    discountPercent: 40,
     storageLimitBytes: 200 * 1024 * 1024 * 1024,
     features: [
       { text: 'Largest included premium usage allocation', included: true },
-      { text: 'Lowest markup on premium integrations and inference', included: true },
+      { text: '40% premium-usage discount across integrations and inference', included: true },
       { text: 'Best fit for heavy bandwidth and agent workloads', included: true },
     ],
   },

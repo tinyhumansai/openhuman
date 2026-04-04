@@ -441,7 +441,7 @@ const BillingPanel = () => {
                   {currentPlanMeta && (
                     <>
                       <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                        Internal markup: {currentPlanMeta.marginPercent}%
+                        Premium-usage discount: {currentPlanMeta.discountPercent}%
                       </span>
                       <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
                         Storage: {formatStorageLimit(currentPlanMeta.storageLimitBytes)}
@@ -679,7 +679,7 @@ const BillingPanel = () => {
                             5-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
                           </span>
                           <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                            Markup: {plan.marginPercent}%
+                            Discount: {plan.discountPercent}%
                           </span>
                           <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
                             Storage: {formatStorageLimit(plan.storageLimitBytes)}
@@ -1134,7 +1134,7 @@ const BillingPanel = () => {
                         d="M5 13l4 4L19 7"
                       />
                     </svg>
-                    <span>Higher tiers reduce markup and include more premium usage every cycle</span>
+                    <span>Higher tiers increase your premium-usage discount and included usage every cycle</span>
                   </li>
                   {currentTier === 'FREE' && (
                     <li className="flex items-start gap-2">

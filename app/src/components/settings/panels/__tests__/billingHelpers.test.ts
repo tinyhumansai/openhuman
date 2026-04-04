@@ -26,7 +26,7 @@ describe('PLANS', () => {
     const free = PLANS.find(p => p.tier === 'FREE')!;
     expect(free.monthlyPrice).toBe(0);
     expect(free.annualPrice).toBe(0);
-    expect(free.marginPercent).toBe(100);
+    expect(free.discountPercent).toBe(0);
     expect(free.weeklyBudgetUsd).toBe(0.5);
   });
 
@@ -34,7 +34,7 @@ describe('PLANS', () => {
     const basic = PLANS.find(p => p.tier === 'BASIC')!;
     expect(basic.monthlyPrice).toBe(20);
     expect(basic.annualPrice).toBe(200);
-    expect(basic.marginPercent).toBe(80);
+    expect(basic.discountPercent).toBe(20);
     expect(basic.monthlyBudgetUsd).toBe(20);
     expect(basic.weeklyBudgetUsd).toBe(10);
     expect(basic.fiveHourCapUsd).toBe(3);
@@ -44,7 +44,7 @@ describe('PLANS', () => {
     const pro = PLANS.find(p => p.tier === 'PRO')!;
     expect(pro.monthlyPrice).toBe(200);
     expect(pro.annualPrice).toBe(2000);
-    expect(pro.marginPercent).toBe(60);
+    expect(pro.discountPercent).toBe(40);
     expect(pro.monthlyBudgetUsd).toBe(200);
     expect(pro.weeklyBudgetUsd).toBe(100);
     expect(pro.fiveHourCapUsd).toBe(30);
@@ -107,7 +107,7 @@ describe('displayPrice', () => {
       expect(displayPrice(freePlan, 'monthly')).toBe('$0');
     });
 
-    it('should return $25 for BASIC plan', () => {
+    it('should return $20 for BASIC plan', () => {
       expect(displayPrice(basicPlan, 'monthly')).toBe('$20');
     });
 
@@ -137,6 +137,11 @@ describe('displayPrice', () => {
       name: 'Custom',
       monthlyPrice: 50,
       annualPrice: 480,
+      monthlyBudgetUsd: 50,
+      weeklyBudgetUsd: 25,
+      fiveHourCapUsd: 7.5,
+      discountPercent: 30,
+      storageLimitBytes: 50 * 1024 * 1024 * 1024,
       features: [],
     };
     expect(displayPrice(custom, 'monthly')).toBe('$50');
@@ -178,6 +183,11 @@ describe('annualSavings', () => {
       name: 'No Savings',
       monthlyPrice: 10,
       annualPrice: 120, // 10 * 12, no discount
+      monthlyBudgetUsd: 10,
+      weeklyBudgetUsd: 5,
+      fiveHourCapUsd: 1.5,
+      discountPercent: 20,
+      storageLimitBytes: 1024,
       features: [],
     };
     expect(annualSavings(noSavings, 'annual')).toBeNull();
@@ -189,6 +199,11 @@ describe('annualSavings', () => {
       name: 'Big Discount',
       monthlyPrice: 100,
       annualPrice: 600, // 50% off
+      monthlyBudgetUsd: 100,
+      weeklyBudgetUsd: 50,
+      fiveHourCapUsd: 15,
+      discountPercent: 40,
+      storageLimitBytes: 1024,
       features: [],
     };
     expect(annualSavings(bigDiscount, 'annual')).toBe(50);
