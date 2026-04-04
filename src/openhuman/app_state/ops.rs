@@ -1,11 +1,15 @@
-use std::fs;
-use std::path::PathBuf;
-use std::time::Duration;
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use log::{debug, warn};
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use reqwest::{header::AUTHORIZATION, Client, Method, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tempfile::NamedTempFile;
 
 use crate::api::config::effective_api_url;
 use crate::api::jwt::{bearer_authorization_value, get_session_token};
@@ -16,6 +20,7 @@ use crate::rpc::RpcOutcome;
 
 const LOG_PREFIX: &str = "[app_state]";
 const APP_STATE_FILENAME: &str = "app-state.json";
+static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -80,23 +85,116 @@ fn app_state_path(config: &Config) -> Result<PathBuf, String> {
     Ok(state_dir.join(APP_STATE_FILENAME))
 }
 
-fn load_stored_app_state(config: &Config) -> Result<StoredAppState, String> {
+fn corrupted_app_state_path(path: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    path.with_extension(format!("json.corrupted.{timestamp}"))
+}
+
+fn quarantine_corrupted_app_state(path: &Path, reason: &str) {
+    let quarantine_path = corrupted_app_state_path(path);
+    warn!(
+        "{LOG_PREFIX} quarantining corrupted app state {} -> {} ({reason})",
+        path.display(),
+        quarantine_path.display()
+    );
+
+    if let Err(rename_error) = fs::rename(path, &quarantine_path) {
+        warn!(
+            "{LOG_PREFIX} failed to quarantine {} via rename: {}",
+            path.display(),
+            rename_error
+        );
+        if let Err(remove_error) = fs::remove_file(path) {
+            warn!(
+                "{LOG_PREFIX} failed to remove unreadable app state {}: {}",
+                path.display(),
+                remove_error
+            );
+        }
+    }
+}
+
+fn load_stored_app_state_unlocked(config: &Config) -> Result<StoredAppState, String> {
     let path = app_state_path(config)?;
     if !path.exists() {
         return Ok(StoredAppState::default());
     }
 
-    let raw =
-        fs::read_to_string(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    serde_json::from_str::<StoredAppState>(&raw)
-        .map_err(|e| format!("failed to parse {}: {e}", path.display()))
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            warn!(
+                "{LOG_PREFIX} failed to read {}; falling back to defaults: {}",
+                path.display(),
+                error
+            );
+            quarantine_corrupted_app_state(&path, &error.to_string());
+            return Ok(StoredAppState::default());
+        }
+    };
+
+    match serde_json::from_str::<StoredAppState>(&raw) {
+        Ok(state) => Ok(state),
+        Err(error) => {
+            warn!(
+                "{LOG_PREFIX} failed to parse {}; falling back to defaults: {}",
+                path.display(),
+                error
+            );
+            quarantine_corrupted_app_state(&path, &error.to_string());
+            Ok(StoredAppState::default())
+        }
+    }
 }
 
-fn save_stored_app_state(config: &Config, state: &StoredAppState) -> Result<(), String> {
+fn load_stored_app_state(config: &Config) -> Result<StoredAppState, String> {
+    let _guard = APP_STATE_FILE_LOCK.lock();
+    load_stored_app_state_unlocked(config)
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| format!("failed to sync directory {}: {e}", parent.display()))?;
+    }
+    Ok(())
+}
+
+fn save_stored_app_state_unlocked(config: &Config, state: &StoredAppState) -> Result<(), String> {
     let path = app_state_path(config)?;
     let payload = serde_json::to_string_pretty(state)
         .map_err(|e| format!("failed to serialize app state: {e}"))?;
-    fs::write(&path, payload).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("failed to resolve parent dir for {}", path.display()))?;
+    let mut temp_file = NamedTempFile::new_in(parent)
+        .map_err(|e| format!("failed to create temp file in {}: {e}", parent.display()))?;
+    temp_file
+        .write_all(payload.as_bytes())
+        .map_err(|e| format!("failed to write temp app state for {}: {e}", path.display()))?;
+    temp_file
+        .as_file_mut()
+        .sync_all()
+        .map_err(|e| format!("failed to sync temp app state for {}: {e}", path.display()))?;
+    sync_parent_dir(&path)?;
+    temp_file.persist(&path).map_err(|e| {
+        format!(
+            "failed to persist app state {}: {}",
+            path.display(),
+            e.error
+        )
+    })?;
+    sync_parent_dir(&path)?;
+    Ok(())
+}
+
+fn save_stored_app_state(config: &Config, state: &StoredAppState) -> Result<(), String> {
+    let _guard = APP_STATE_FILE_LOCK.lock();
+    save_stored_app_state_unlocked(config, state)
 }
 
 fn build_client() -> Result<Client, String> {
@@ -111,7 +209,13 @@ fn build_client() -> Result<Client, String> {
 
 fn resolve_base(config: &Config) -> Result<Url, String> {
     let base = effective_api_url(&config.api_url);
-    Url::parse(base.trim()).map_err(|e| format!("invalid api_url '{}': {e}", base))
+    let mut parsed =
+        Url::parse(base.trim()).map_err(|e| format!("invalid api_url '{}': {e}", base))?;
+    if !parsed.path().ends_with('/') && parsed.path() != "/" {
+        let normalized = format!("{}/", parsed.path());
+        parsed.set_path(&normalized);
+    }
+    Ok(parsed)
 }
 
 async fn fetch_current_user(config: &Config, token: &str) -> Result<Option<Value>, String> {
@@ -188,7 +292,8 @@ pub async fn update_local_state(
     patch: StoredAppStatePatch,
 ) -> Result<RpcOutcome<StoredAppState>, String> {
     let config = config_rpc::load_config_with_timeout().await?;
-    let mut current = load_stored_app_state(&config)?;
+    let _guard = APP_STATE_FILE_LOCK.lock();
+    let mut current = load_stored_app_state_unlocked(&config)?;
 
     if let Some(encryption_key) = patch.encryption_key {
         current.encryption_key = encryption_key.and_then(|value| {
@@ -208,7 +313,7 @@ pub async fn update_local_state(
         current.onboarding_tasks = onboarding_tasks;
     }
 
-    save_stored_app_state(&config, &current)?;
+    save_stored_app_state_unlocked(&config, &current)?;
 
     debug!(
         "{LOG_PREFIX} local state updated encryption_key={} wallet={} onboarding_tasks={}",

@@ -490,7 +490,7 @@ fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
 fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
-        ty: TypeSchema::String,
+        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
         comment,
         required: false,
     }

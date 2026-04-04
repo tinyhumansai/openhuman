@@ -16,6 +16,7 @@
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { getBackendUrl } from '../services/backendUrl';
 import type {
   ActionableItem,
@@ -179,7 +180,7 @@ export function useConsciousItems(): UseConsciousItemsResult {
     } catch (err) {
       console.warn('[conscious] Failed to trigger analysis:', err);
     }
-  }, [authToken, isRunning]);
+  }, [isRunning]);
 
   // Initial fetch
   useEffect(() => {

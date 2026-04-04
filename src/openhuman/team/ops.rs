@@ -34,7 +34,13 @@ fn build_client() -> Result<Client, String> {
 
 fn resolve_base(config: &Config) -> Result<Url, String> {
     let base = effective_api_url(&config.api_url);
-    Url::parse(base.trim()).map_err(|e| format!("invalid api_url '{}': {e}", base))
+    let mut parsed =
+        Url::parse(base.trim()).map_err(|e| format!("invalid api_url '{}': {e}", base))?;
+    if !parsed.path().ends_with('/') && parsed.path() != "/" {
+        let normalized = format!("{}/", parsed.path());
+        parsed.set_path(&normalized);
+    }
+    Ok(parsed)
 }
 
 fn require_token(config: &Config) -> Result<String, String> {
