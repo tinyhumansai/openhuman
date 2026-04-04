@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import createDebug from 'debug';
 
 import { billingApi } from '../../../services/api/billingApi';
 import {
@@ -10,19 +11,23 @@ import {
 } from '../../../services/api/creditsApi';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { fetchCurrentUser } from '../../../store/userSlice';
-import type { PlanTier } from '../../../types/api';
+import type { CurrentPlanData, PlanTier } from '../../../types/api';
 import { openUrl } from '../../../utils/openUrl';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import {
   annualSavings,
   buildPlanId,
-  isUpgrade as checkIsUpgrade,
   displayPrice,
+  formatStorageLimit,
+  formatUsdAmount,
+  getPlanMeta,
+  isUpgrade as checkIsUpgrade,
   PLANS,
 } from './billingHelpers';
 
 // ── Constants ────────────────────────────────────────────────────────────────
+const log = createDebug('openhuman:billing-panel');
 const THRESHOLD_OPTIONS = [5, 10, 20] as const;
 const RECHARGE_OPTIONS = [10, 20, 50, 100] as const;
 const WEEKLY_LIMIT_OPTIONS = [25, 50, 100, 200, 500] as const;
@@ -53,12 +58,8 @@ const BillingPanel = () => {
   const activeTeam = teams.find(t => t.team._id === activeTeamId);
   const teamName = activeTeam?.team.name;
 
-  // Derive plan from active team (team is source of truth)
-  const currentTier: PlanTier = activeTeam?.team.subscription?.plan ?? 'FREE';
-  const hasActive = activeTeam?.team.subscription?.hasActiveSubscription ?? false;
-  const planExpiry = activeTeam?.team.subscription?.planExpiry;
-
   // Credits & usage state
+  const [currentPlan, setCurrentPlan] = useState<CurrentPlanData | null>(null);
   const [creditBalance, setCreditBalance] = useState<CreditBalance | null>(null);
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
   const [isLoadingCredits, setIsLoadingCredits] = useState(false);
@@ -101,17 +102,31 @@ const BillingPanel = () => {
   const [deletingCardId, setDeletingCardId] = useState<string | null>(null);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
+  const currentTier: PlanTier = currentPlan?.plan ?? activeTeam?.team.subscription?.plan ?? 'FREE';
+  const hasActive =
+    currentPlan?.hasActiveSubscription ?? activeTeam?.team.subscription?.hasActiveSubscription ?? false;
+  const planExpiry = currentPlan?.planExpiry ?? activeTeam?.team.subscription?.planExpiry ?? null;
+  const currentPlanMeta = getPlanMeta(currentTier);
+
   // Fetch current plan, credits balance, and team usage on mount
   useEffect(() => {
-    billingApi.getCurrentPlan().catch(console.error);
-
     setIsLoadingCredits(true);
-    Promise.all([creditsApi.getBalance(), creditsApi.getTeamUsage()])
-      .then(([balance, usage]) => {
+    Promise.all([billingApi.getCurrentPlan(), creditsApi.getBalance(), creditsApi.getTeamUsage()])
+      .then(([plan, balance, usage]) => {
+        log(
+          '[load] plan=%s active=%s weeklyBudget=%s',
+          plan.plan,
+          plan.hasActiveSubscription,
+          plan.weeklyBudgetUsd
+        );
+        setCurrentPlan(plan);
         setCreditBalance(balance);
         setTeamUsage(usage);
       })
-      .catch(console.error)
+      .catch(error => {
+        log('[load] failed: %O', error);
+        console.error(error);
+      })
       .finally(() => setIsLoadingCredits(false));
   }, []);
 
@@ -267,7 +282,9 @@ const BillingPanel = () => {
 
       // Fetch current plan from backend, then refresh user/teams in store
       try {
-        await billingApi.getCurrentPlan();
+        const plan = await billingApi.getCurrentPlan();
+        log('[payment-success] plan=%s active=%s', plan.plan, plan.hasActiveSubscription);
+        setCurrentPlan(plan);
       } catch (e) {
         console.error('Failed to fetch current plan after payment', e);
       }
@@ -308,6 +325,8 @@ const BillingPanel = () => {
 
       try {
         const plan = await billingApi.getCurrentPlan();
+        log('[poll] plan=%s active=%s', plan.plan, plan.hasActiveSubscription);
+        setCurrentPlan(plan);
         if (plan.hasActiveSubscription && plan.plan !== currentTierRef.current) {
           dispatch(fetchCurrentUser());
           setIsPurchasing(false);
@@ -329,10 +348,12 @@ const BillingPanel = () => {
     try {
       if (paymentMethod === 'crypto') {
         const { hostedUrl } = await billingApi.createCoinbaseCharge(tier, 'annual');
+        log('[purchase] crypto tier=%s', tier);
         await openUrl(hostedUrl);
       } else {
         const planId = buildPlanId(tier, billingInterval);
         const { checkoutUrl } = await billingApi.purchasePlan(planId);
+        log('[purchase] stripe planId=%s', planId);
         if (checkoutUrl) await openUrl(checkoutUrl);
       }
       startPolling();
@@ -355,6 +376,7 @@ const BillingPanel = () => {
   const handleTopUp = async (amountUsd: number) => {
     setIsToppingUp(true);
     try {
+      log('[top-up] amountUsd=%s', amountUsd);
       const result = await creditsApi.topUp(amountUsd, 'stripe');
       await openUrl(result.url);
     } catch (err) {
@@ -401,6 +423,33 @@ const BillingPanel = () => {
                   })}
                 </p>
               )}
+              <p className="text-xs text-stone-500">
+                Your subscription includes premium usage each cycle. Pay-as-you-go credits cover
+                overage after the included budget is consumed.
+              </p>
+              {currentPlan && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    Included monthly value: {formatUsdAmount(currentPlan.monthlyBudgetUsd)}
+                  </span>
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    7-day cycle budget: {formatUsdAmount(currentPlan.weeklyBudgetUsd)}
+                  </span>
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    5-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
+                  </span>
+                  {currentPlanMeta && (
+                    <>
+                      <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                        Internal markup: {currentPlanMeta.marginPercent}%
+                      </span>
+                      <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                        Storage: {formatStorageLimit(currentPlanMeta.storageLimitBytes)}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ── Inference Budget (Team Usage) ─────────────────────── */}
@@ -444,9 +493,19 @@ const BillingPanel = () => {
                       k tokens this cycle
                     </span>
                   </div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="text-[11px] text-stone-500">
+                      5-hour cap: ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
+                      {teamUsage.fiveHourCapUsd.toFixed(2)}
+                    </span>
+                    <span className="text-[11px] text-stone-500">
+                      Cycle ends {new Date(teamUsage.cycleEndsAt).toLocaleDateString('en-US')}
+                    </span>
+                  </div>
                   {teamUsage.remainingUsd <= 0 && (
                     <p className="text-[11px] text-coral-400 mt-1.5">
-                      Budget exhausted — top up your credits to continue using AI features.
+                      Included subscription usage is exhausted. Top up credits to continue using AI
+                      features without waiting for the next cycle.
                     </p>
                   )}
                 </>
@@ -459,7 +518,7 @@ const BillingPanel = () => {
 
             {/* ── Credits Balance & Top-up ──────────────────────────── */}
             <div className="rounded-2xl border border-stone-200 bg-white p-3">
-              <h3 className="text-sm font-semibold text-stone-900 mb-2">Credits Balance</h3>
+              <h3 className="text-sm font-semibold text-stone-900 mb-2">Pay-as-You-Go Credits</h3>
               {creditBalance ? (
                 <div className="space-y-1.5 mb-3">
                   <div className="flex items-center justify-between">
@@ -514,6 +573,10 @@ const BillingPanel = () => {
               ) : (
                 <p className="text-xs text-stone-500 mb-3">Unable to load balance</p>
               )}
+              <p className="mb-3 text-[11px] text-stone-500">
+                Subscription usage is consumed first. Top-up credits are reserved for overflow
+                inference, bandwidth, and integration usage.
+              </p>
               <div className="flex gap-2">
                 {[5, 10, 25].map(amount => (
                   <button
@@ -604,6 +667,23 @@ const BillingPanel = () => {
                               (billed ${plan.annualPrice}/yr)
                             </span>
                           )}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            Included monthly value: {formatUsdAmount(plan.monthlyBudgetUsd)}
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            7-day cycle: {formatUsdAmount(plan.weeklyBudgetUsd)}
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            5-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            Markup: {plan.marginPercent}%
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            Storage: {formatStorageLimit(plan.storageLimitBytes)}
+                          </span>
                         </div>
                       </div>
 
@@ -1054,7 +1134,7 @@ const BillingPanel = () => {
                         d="M5 13l4 4L19 7"
                       />
                     </svg>
-                    <span>Unlock higher daily limits for more AI interactions</span>
+                    <span>Higher tiers reduce markup and include more premium usage every cycle</span>
                   </li>
                   {currentTier === 'FREE' && (
                     <li className="flex items-start gap-2">
@@ -1071,7 +1151,8 @@ const BillingPanel = () => {
                         />
                       </svg>
                       <span>
-                        Save up to 20% with annual plans and never worry about hitting limits
+                        Annual billing lowers the effective monthly price, and top-ups let you keep
+                        going when usage spikes
                       </span>
                     </li>
                   )}
