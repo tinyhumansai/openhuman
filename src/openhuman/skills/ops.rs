@@ -138,3 +138,92 @@ fn read_skill_md_description(path: &Path) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_skills_dir_creates_dir_and_readme() {
+        let dir = tempfile::tempdir().unwrap();
+        init_skills_dir(dir.path()).unwrap();
+        let skills_dir = dir.path().join("skills");
+        assert!(skills_dir.is_dir());
+        let readme = skills_dir.join("README.md");
+        assert!(readme.exists());
+        let content = std::fs::read_to_string(&readme).unwrap();
+        assert!(content.contains("Skills"));
+    }
+
+    #[test]
+    fn init_skills_dir_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        init_skills_dir(dir.path()).unwrap();
+        init_skills_dir(dir.path()).unwrap(); // should not fail
+    }
+
+    #[test]
+    fn load_skills_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        init_skills_dir(dir.path()).unwrap();
+        let skills = load_skills(dir.path());
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn load_skills_with_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        init_skills_dir(dir.path()).unwrap();
+        let skill_dir = dir.path().join("skills").join("my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("skill.json"),
+            r#"{"name":"My Skill","description":"A test","version":"1.0"}"#,
+        )
+        .unwrap();
+        let skills = load_skills(dir.path());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "My Skill");
+        assert_eq!(skills[0].description, "A test");
+        assert_eq!(skills[0].version, "1.0");
+    }
+
+    #[test]
+    fn load_skills_fallback_name_from_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        init_skills_dir(dir.path()).unwrap();
+        let skill_dir = dir.path().join("skills").join("fallback-name");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        // No skill.json, but has a SKILL.md
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "# Title\n\nThis is the description.",
+        )
+        .unwrap();
+        let skills = load_skills(dir.path());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "fallback-name");
+        assert_eq!(skills[0].description, "This is the description.");
+    }
+
+    #[test]
+    fn load_skills_ignores_hidden_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        init_skills_dir(dir.path()).unwrap();
+        let hidden = dir.path().join("skills").join(".hidden");
+        std::fs::create_dir_all(&hidden).unwrap();
+        let skills = load_skills(dir.path());
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn parse_skill_manifest_missing_fields_uses_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("skill.json");
+        std::fs::write(&path, "{}").unwrap();
+        let skill = parse_skill_manifest(&path, "fallback");
+        assert_eq!(skill.name, "fallback");
+        assert!(skill.description.is_empty());
+        assert!(skill.tags.is_empty());
+    }
+}

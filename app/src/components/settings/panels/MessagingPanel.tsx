@@ -19,54 +19,11 @@ import type {
   ChannelConnectionStatus,
   ChannelType,
 } from '../../../types/channels';
-import { BACKEND_URL, TELEGRAM_BOT_USERNAME } from '../../../utils/config';
 import { openUrl } from '../../../utils/openUrl';
 import ChannelFieldInput from '../../channels/ChannelFieldInput';
 import ChannelStatusBadge from '../../channels/ChannelStatusBadge';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-
-function normalizeBaseUrl(baseUrl?: string): string {
-  return (baseUrl || 'https://api.tinyhumans.ai').trim().replace(/\/+$/, '');
-}
-
-function buildManagedChannelLaunchUrl(
-  channel: ChannelType,
-  token: string,
-  launchUrl?: string
-): string | undefined {
-  if (launchUrl) return launchUrl;
-
-  if (channel === 'telegram') {
-    return `https://t.me/${encodeURIComponent(TELEGRAM_BOT_USERNAME)}?start=${encodeURIComponent(token)}`;
-  }
-
-  if (channel === 'discord') {
-    return `${normalizeBaseUrl(BACKEND_URL)}/auth/discord/connect?linkToken=${encodeURIComponent(token)}`;
-  }
-
-  return undefined;
-}
-
-function buildManagedChannelInstruction(
-  channel: ChannelType,
-  token: string,
-  launchUrl?: string
-): string {
-  if (channel === 'telegram') {
-    return launchUrl
-      ? 'Continue in Telegram to finish linking your account.'
-      : `Open Telegram and message @${TELEGRAM_BOT_USERNAME} with this link token: ${token}`;
-  }
-
-  if (channel === 'discord') {
-    return launchUrl
-      ? 'Continue in Discord to finish linking your account.'
-      : `Use this Discord link token to continue linking your account: ${token}`;
-  }
-
-  return `Use this link token to continue: ${token}`;
-}
 
 const MessagingPanel = () => {
   const { navigateBack } = useSettingsNavigation();
@@ -326,7 +283,8 @@ const MessagingPanel = () => {
                                 key={field.key}
                                 field={field}
                                 value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                                onChange={e => updateField(compositeKey, field.key, e)}
+                                onChange={value => updateField(compositeKey, field.key, value)}
+                                // placeholder={field.placeholder || field.label}
                                 // className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-primary-500/60"
                               />
                             ))}

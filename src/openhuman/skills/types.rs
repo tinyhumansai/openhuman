@@ -40,7 +40,6 @@ pub enum SkillMessage {
         data: serde_json::Value,
     },
     /// Trigger a cron job by name.
-    #[allow(dead_code)]
     CronTrigger { schedule_id: String },
     /// Request the skill to stop.
     Stop {
@@ -85,7 +84,6 @@ pub enum SkillMessage {
         reply: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
     /// Notify the skill of an error from an async operation.
-    #[allow(dead_code)]
     Error {
         error_type: String,
         message: String,
@@ -251,10 +249,177 @@ fn default_memory_limit() -> usize {
 }
 
 /// Events emitted from the runtime to the frontend via Tauri.
-#[allow(dead_code)]
 pub mod events {
-    pub const SKILL_STATUS_CHANGED: &str = "runtime:skill-status-changed";
+    /// Skill published state has changed.
     pub const SKILL_STATE_CHANGED: &str = "runtime:skill-state-changed";
-    pub const SKILL_TOOLS_CHANGED: &str = "runtime:skill-tools-changed";
-    pub const SKILL_LOG: &str = "runtime:skill-log";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with(entries: &[(&str, &str)]) -> HashMap<String, serde_json::Value> {
+        entries
+            .iter()
+            .map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string())))
+            .collect()
+    }
+
+    // --- Status-based early returns ---
+
+    #[test]
+    fn pending_returns_offline() {
+        assert_eq!(
+            derive_connection_status(SkillStatus::Pending, true, &HashMap::new()),
+            "offline"
+        );
+    }
+
+    #[test]
+    fn stopped_returns_offline() {
+        assert_eq!(
+            derive_connection_status(SkillStatus::Stopped, true, &HashMap::new()),
+            "offline"
+        );
+    }
+
+    #[test]
+    fn stopping_returns_offline() {
+        assert_eq!(
+            derive_connection_status(SkillStatus::Stopping, true, &HashMap::new()),
+            "offline"
+        );
+    }
+
+    #[test]
+    fn error_status_returns_error() {
+        assert_eq!(
+            derive_connection_status(SkillStatus::Error, true, &HashMap::new()),
+            "error"
+        );
+    }
+
+    #[test]
+    fn initializing_returns_connecting() {
+        assert_eq!(
+            derive_connection_status(SkillStatus::Initializing, false, &HashMap::new()),
+            "connecting"
+        );
+    }
+
+    // --- No published state ---
+
+    #[test]
+    fn running_setup_complete_no_state_returns_connected() {
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &HashMap::new()),
+            "connected"
+        );
+    }
+
+    #[test]
+    fn running_no_setup_no_state_returns_setup_required() {
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, false, &HashMap::new()),
+            "setup_required"
+        );
+    }
+
+    // --- Published connection_status ---
+
+    #[test]
+    fn conn_error_returns_error() {
+        let st = state_with(&[("connection_status", "error")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "error"
+        );
+    }
+
+    #[test]
+    fn auth_error_returns_error() {
+        let st = state_with(&[("auth_status", "error")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "error"
+        );
+    }
+
+    #[test]
+    fn conn_connecting_returns_connecting() {
+        let st = state_with(&[("connection_status", "connecting")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "connecting"
+        );
+    }
+
+    #[test]
+    fn auth_authenticating_returns_connecting() {
+        let st = state_with(&[("auth_status", "authenticating")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "connecting"
+        );
+    }
+
+    #[test]
+    fn conn_connected_no_auth_returns_connected() {
+        let st = state_with(&[("connection_status", "connected")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "connected"
+        );
+    }
+
+    #[test]
+    fn conn_connected_auth_authenticated_returns_connected() {
+        let st = state_with(&[
+            ("connection_status", "connected"),
+            ("auth_status", "authenticated"),
+        ]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "connected"
+        );
+    }
+
+    #[test]
+    fn conn_connected_auth_not_authenticated() {
+        let st = state_with(&[
+            ("connection_status", "connected"),
+            ("auth_status", "not_authenticated"),
+        ]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "not_authenticated"
+        );
+    }
+
+    #[test]
+    fn conn_disconnected_setup_complete_returns_disconnected() {
+        let st = state_with(&[("connection_status", "disconnected")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "disconnected"
+        );
+    }
+
+    #[test]
+    fn conn_disconnected_no_setup_returns_setup_required() {
+        let st = state_with(&[("connection_status", "disconnected")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, false, &st),
+            "setup_required"
+        );
+    }
+
+    #[test]
+    fn unknown_state_falls_through_to_connecting() {
+        let st = state_with(&[("connection_status", "unknown_value")]);
+        assert_eq!(
+            derive_connection_status(SkillStatus::Running, true, &st),
+            "connecting"
+        );
+    }
 }

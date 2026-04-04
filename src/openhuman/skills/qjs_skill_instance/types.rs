@@ -10,7 +10,6 @@ use crate::openhuman::skills::skill_registry::SkillRegistry;
 use crate::openhuman::skills::types::{SkillConfig, SkillMessage, SkillStatus, ToolDefinition};
 
 /// Dependencies passed to a skill instance for bridge installation.
-#[allow(dead_code)]
 pub struct BridgeDeps {
     pub cron_scheduler: Arc<CronScheduler>,
     pub skill_registry: Arc<SkillRegistry>,
