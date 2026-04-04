@@ -1,17 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
+import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { fetchTeams } from '../../../store/teamSlice';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const TeamManagementPanel = () => {
   const { teamId } = useParams<{ teamId: string }>();
   const { navigateBack, navigateToSettings } = useSettingsNavigation();
-  const dispatch = useAppDispatch();
-  const { teams } = useAppSelector(state => state.team);
+  const { teams, refreshTeams } = useCoreState();
+  const initialFetchAttemptedRef = useRef(false);
 
   const teamEntry = teams.find(t => t.team._id === teamId);
   const isAdmin = teamEntry?.role.toUpperCase() === 'ADMIN';
@@ -25,10 +24,16 @@ const TeamManagementPanel = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (teams.length === 0) {
-      dispatch(fetchTeams());
+    if (teams.length > 0) {
+      initialFetchAttemptedRef.current = true;
+      return;
     }
-  }, [dispatch, teams.length]);
+
+    if (!initialFetchAttemptedRef.current) {
+      initialFetchAttemptedRef.current = true;
+      void refreshTeams();
+    }
+  }, [refreshTeams, teams.length]);
 
   // Redirect if user doesn't have admin access to this team
   useEffect(() => {
@@ -50,7 +55,7 @@ const TeamManagementPanel = () => {
     setError(null);
     try {
       await teamApi.updateTeam(teamId, { name: editTeamName.trim() });
-      dispatch(fetchTeams());
+      await refreshTeams();
       setIsEditModalOpen(false);
     } catch (err) {
       setError(
@@ -69,6 +74,7 @@ const TeamManagementPanel = () => {
     setError(null);
     try {
       await teamApi.deleteTeam(teamId);
+      await refreshTeams();
       navigateBack(); // Navigate back after deletion
     } catch (err) {
       setError(
@@ -111,15 +117,15 @@ const TeamManagementPanel = () => {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-md mx-auto p-4 space-y-4">
           {/* Team Info */}
-          <div className="rounded-xl border border-stone-700/50 bg-stone-800/40 p-4">
+          <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-lg bg-stone-700/60 flex items-center justify-center">
-                <span className="text-sm font-semibold text-stone-300">
+              <div className="w-10 h-10 rounded-lg bg-stone-200 flex items-center justify-center">
+                <span className="text-sm font-semibold text-stone-700">
                   {team.name.charAt(0).toUpperCase()}
                 </span>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-white">{team.name}</h3>
+                <h3 className="text-lg font-semibold text-stone-900">{team.name}</h3>
                 <p className="text-xs text-stone-500">
                   {team.subscription.plan} Plan • Created{' '}
                   {new Date(team.createdAt).toLocaleDateString()}
@@ -137,10 +143,10 @@ const TeamManagementPanel = () => {
             {/* Members */}
             <button
               onClick={() => navigateToSettings(`team/manage/${teamId}/members`)}
-              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-700/50 bg-stone-800/40 hover:bg-stone-800/60 transition-all text-left">
+              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 transition-all text-left">
               <div className="flex items-center gap-3">
                 <svg
-                  className="w-5 h-5 text-primary-400"
+                  className="w-5 h-5 text-primary-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24">
@@ -152,7 +158,7 @@ const TeamManagementPanel = () => {
                   />
                 </svg>
                 <div>
-                  <div className="font-medium text-sm text-white">Members</div>
+                  <div className="font-medium text-sm text-stone-900">Members</div>
                   <p className="text-xs text-stone-500">Manage team members and roles</p>
                 </div>
               </div>
@@ -173,10 +179,10 @@ const TeamManagementPanel = () => {
             {/* Invites */}
             <button
               onClick={() => navigateToSettings(`team/manage/${teamId}/invites`)}
-              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-700/50 bg-stone-800/40 hover:bg-stone-800/60 transition-all text-left">
+              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 transition-all text-left">
               <div className="flex items-center gap-3">
                 <svg
-                  className="w-5 h-5 text-primary-400"
+                  className="w-5 h-5 text-primary-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24">
@@ -188,7 +194,7 @@ const TeamManagementPanel = () => {
                   />
                 </svg>
                 <div>
-                  <div className="font-medium text-sm text-white">Invites</div>
+                  <div className="font-medium text-sm text-stone-900">Invites</div>
                   <p className="text-xs text-stone-500">Generate and manage invite codes</p>
                 </div>
               </div>
@@ -209,10 +215,10 @@ const TeamManagementPanel = () => {
             {/* Edit Team Settings */}
             <button
               onClick={handleEditTeam}
-              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-700/50 bg-stone-800/40 hover:bg-stone-800/60 transition-all text-left">
+              className="w-full flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-stone-50 hover:bg-stone-100 transition-all text-left">
               <div className="flex items-center gap-3">
                 <svg
-                  className="w-5 h-5 text-primary-400"
+                  className="w-5 h-5 text-primary-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24">
@@ -224,7 +230,7 @@ const TeamManagementPanel = () => {
                   />
                 </svg>
                 <div>
-                  <div className="font-medium text-sm text-white">Team Settings</div>
+                  <div className="font-medium text-sm text-stone-900">Team Settings</div>
                   <p className="text-xs text-stone-500">Edit team name and settings</p>
                 </div>
               </div>
@@ -283,19 +289,19 @@ const TeamManagementPanel = () => {
 
           {/* Edit Team Modal */}
           {isEditModalOpen && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-stone-900 rounded-2xl p-6 w-full max-w-md border border-stone-700/50">
-                <h3 className="text-lg font-semibold text-white mb-4">Edit Team Settings</h3>
+            <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
+                <h3 className="text-lg font-semibold text-stone-900 mb-4">Edit Team Settings</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                    <p className="text-xs text-coral-400">{error}</p>
+                    <p className="text-xs text-coral-600">{error}</p>
                   </div>
                 )}
 
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-stone-300 mb-2">
+                    <label className="block text-sm font-medium text-stone-700 mb-2">
                       Team Name
                     </label>
                     <input
@@ -303,7 +309,7 @@ const TeamManagementPanel = () => {
                       value={editTeamName}
                       onChange={e => setEditTeamName(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && handleUpdateTeam()}
-                      className="w-full px-3 py-2 text-sm bg-stone-800/60 border border-stone-700/50 rounded-xl text-white placeholder-stone-500 focus:outline-none focus:border-primary-500/50"
+                      className="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50"
                       placeholder="Enter team name"
                     />
                   </div>
@@ -312,7 +318,7 @@ const TeamManagementPanel = () => {
                     <button
                       onClick={() => setIsEditModalOpen(false)}
                       disabled={isUpdating}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button
@@ -329,13 +335,13 @@ const TeamManagementPanel = () => {
 
           {/* Delete Team Modal */}
           {isDeleteModalOpen && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-stone-900 rounded-2xl p-6 w-full max-w-md border border-stone-700/50">
-                <h3 className="text-lg font-semibold text-white mb-4">Delete Team</h3>
+            <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
+                <h3 className="text-lg font-semibold text-stone-900 mb-4">Delete Team</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
-                    <p className="text-xs text-coral-400">{error}</p>
+                    <p className="text-xs text-coral-600">{error}</p>
                   </div>
                 )}
 
@@ -343,7 +349,7 @@ const TeamManagementPanel = () => {
                   <div className="text-sm text-stone-400">
                     <p>
                       Are you sure you want to delete{' '}
-                      <strong className="text-white">{teamEntry?.team.name}</strong>?
+                      <strong className="text-stone-900">{teamEntry?.team.name}</strong>?
                     </p>
                     <p className="mt-2 text-coral-400">
                       This action cannot be undone. All team data will be permanently removed.
@@ -354,7 +360,7 @@ const TeamManagementPanel = () => {
                     <button
                       onClick={() => setIsDeleteModalOpen(false)}
                       disabled={isDeleting}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button

@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use base64::Engine;
 use reqwest::header::AUTHORIZATION;
-use reqwest::{Client, Url};
+use reqwest::{Client, Method, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
@@ -21,9 +21,8 @@ fn build_backend_reqwest_client() -> Result<Client> {
         .map_err(|e| anyhow::anyhow!("failed to build HTTP client: {e}"))
 }
 
-fn parse_settings_response_json(text: &str) -> Result<Value> {
-    let v: Value =
-        serde_json::from_str(text).with_context(|| format!("parse /settings JSON: {text}"))?;
+fn parse_api_response_json(text: &str) -> Result<Value> {
+    let v: Value = serde_json::from_str(text).with_context(|| format!("parse API JSON: {text}"))?;
     let Some(obj) = v.as_object() else {
         return Ok(v);
     };
@@ -34,7 +33,7 @@ fn parse_settings_response_json(text: &str) -> Result<Value> {
                 .or_else(|| obj.get("error"))
                 .and_then(|x| x.as_str())
                 .unwrap_or("request unsuccessful");
-            anyhow::bail!("/settings failed: {msg}");
+            anyhow::bail!("API request failed: {msg}");
         }
         if let Some(data) = obj.get("data") {
             if !data.is_null() {
@@ -65,14 +64,29 @@ fn user_id_from_object(obj: &serde_json::Map<String, Value>) -> Option<String> {
     None
 }
 
-/// Best-effort user id from a `GET /settings` body (unwraps `data`, checks root then nested `user`).
-pub fn user_id_from_settings_payload(settings: &Value) -> Option<String> {
-    let obj = settings.as_object()?;
+/// Best-effort user id from an authenticated profile payload.
+///
+/// Accepts a raw user object or an envelope that nests the user under `data`
+/// or `user`.
+pub fn user_id_from_profile_payload(payload: &Value) -> Option<String> {
+    let obj = payload.as_object()?;
+    if let Some(data) = obj.get("data").and_then(|v| v.as_object()) {
+        return user_id_from_object(data).or_else(|| {
+            data.get("user")
+                .and_then(|u| u.as_object())
+                .and_then(user_id_from_object)
+        });
+    }
+
     user_id_from_object(obj).or_else(|| {
         obj.get("user")
             .and_then(|u| u.as_object())
             .and_then(user_id_from_object)
     })
+}
+
+pub fn user_id_from_auth_me_payload(payload: &Value) -> Option<String> {
+    user_id_from_profile_payload(payload)
 }
 
 /// JSON body returned by the backend after OAuth connect starts.
@@ -218,23 +232,23 @@ impl BackendOAuthClient {
         Ok(ConnectResponse { oauth_url, state })
     }
 
-    /// `GET /settings` — current user settings for the Bearer session JWT (used after login).
-    pub async fn fetch_settings(&self, bearer_jwt: &str) -> Result<Value> {
-        let url = self.base.join("settings").context("build /settings URL")?;
+    /// `GET /auth/me` — current authenticated user profile for the Bearer session JWT.
+    pub async fn fetch_current_user(&self, bearer_jwt: &str) -> Result<Value> {
+        let url = self.base.join("auth/me").context("build /auth/me URL")?;
         let resp = self
             .client
             .get(url)
             .header(AUTHORIZATION, bearer_authorization_value(bearer_jwt))
             .send()
             .await
-            .context("GET /settings")?;
+            .context("GET /auth/me")?;
 
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            anyhow::bail!("GET /settings failed ({status}): {text}");
+            anyhow::bail!("GET /auth/me failed ({status}): {text}");
         }
-        parse_settings_response_json(&text)
+        parse_api_response_json(&text)
     }
 
     /// `POST /telegram/login-tokens/:token/consume` — exchange a one-time login token for a JWT.
@@ -277,10 +291,83 @@ impl BackendOAuthClient {
         Ok(jwt)
     }
 
-    /// Confirms the JWT is accepted by the API using `GET /settings`.
+    /// Confirms the JWT is accepted by the API using `GET /auth/me`.
     pub async fn validate_session_token(&self, bearer_jwt: &str) -> Result<()> {
-        let _ = self.fetch_settings(bearer_jwt).await?;
+        let _ = self.fetch_current_user(bearer_jwt).await?;
         Ok(())
+    }
+
+    /// `POST /auth/channels/:channel/link-token` — create a short-lived channel link token.
+    pub async fn create_channel_link_token(
+        &self,
+        channel: &str,
+        bearer_jwt: &str,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        let encoded_channel = urlencoding::encode(channel);
+
+        let url = self
+            .base
+            .join(&format!("auth/channels/{encoded_channel}/link-token"))
+            .context("build channel link-token URL")?;
+
+        let resp = self
+            .client
+            .post(url)
+            .header(AUTHORIZATION, bearer_authorization_value(bearer_jwt))
+            .send()
+            .await
+            .context("create channel link token")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("create channel link token failed ({status}): {text}");
+        }
+
+        parse_api_response_json(&text)
+    }
+
+    /// Generic authenticated JSON request helper for backend API routes that
+    /// follow the standard `{ success, data, message }` envelope.
+    pub async fn authed_json(
+        &self,
+        bearer_jwt: &str,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        let url = self
+            .base
+            .join(path.trim_start_matches('/'))
+            .with_context(|| format!("build URL for {path}"))?;
+
+        let mut request = self
+            .client
+            .request(method.clone(), url.clone())
+            .header(AUTHORIZATION, bearer_authorization_value(bearer_jwt));
+
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+
+        let response = request
+            .send()
+            .await
+            .with_context(|| format!("backend request {} {}", method.as_str(), url.path()))?;
+
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!(
+                "{} {} failed ({status}): {text}",
+                method.as_str(),
+                url.path()
+            );
+        }
+
+        parse_api_response_json(&text)
     }
 
     /// `GET /auth/integrations`

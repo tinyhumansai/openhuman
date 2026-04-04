@@ -8,6 +8,7 @@ let requestLog = [];
 let mockBehavior = {};
 let server = null;
 const openSockets = new Set();
+let mockTunnels = [];
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -84,8 +85,16 @@ function getMockTeam() {
       createdBy: "test-user-123",
       isPersonal: true,
       maxMembers: 1,
-      subscription: { plan, hasActiveSubscription: isActive, planExpiry: expiry },
-      usage: { dailyTokenLimit: 1000, remainingTokens: 1000, activeSessionCount: 0 },
+      subscription: {
+        plan,
+        hasActiveSubscription: isActive,
+        planExpiry: expiry,
+      },
+      usage: {
+        dailyTokenLimit: 1000,
+        remainingTokens: 1000,
+        activeSessionCount: 0,
+      },
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
@@ -99,6 +108,10 @@ function getRequestLog() {
 
 function clearRequestLog() {
   requestLog = [];
+}
+
+function resetMockTunnels() {
+  mockTunnels = [];
 }
 
 function setMockBehavior(key, value) {
@@ -139,6 +152,28 @@ function tryParseJson(raw) {
   }
 }
 
+function getDelayMs(key) {
+  const value = Number(mockBehavior[key] || 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createMockTunnel(payload = {}) {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    uuid: crypto.randomUUID(),
+    name: String(payload.name || "Mock Tunnel").trim(),
+    description: String(payload.description || "").trim(),
+    isActive: payload.isActive ?? true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 async function handleRequest(req, res) {
   const method = req.method ?? "GET";
   const url = req.url ?? "/";
@@ -172,9 +207,13 @@ async function handleRequest(req, res) {
     const keepRequests = parsedBody?.keepRequests === true;
     if (!keepBehavior) resetMockBehavior();
     if (!keepRequests) clearRequestLog();
+    resetMockTunnels();
     json(res, 200, {
       success: true,
-      data: { behavior: getMockBehavior(), requestCount: getRequestLog().length },
+      data: {
+        behavior: getMockBehavior(),
+        requestCount: getRequestLog().length,
+      },
     });
     return;
   }
@@ -202,7 +241,10 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (method === "POST" && /^\/telegram\/login-tokens\/[^/]+\/consume\/?$/.test(url)) {
+  if (
+    method === "POST" &&
+    /^\/telegram\/login-tokens\/[^/]+\/consume\/?$/.test(url)
+  ) {
     if (mockBehavior.token === "expired") {
       json(res, 401, { success: false, error: "Token expired or invalid" });
       return;
@@ -224,7 +266,14 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (method === "GET" && /^\/telegram\/me\/?(\?.*)?$/.test(url)) {
+  if (
+    method === "GET" &&
+    (/^\/telegram\/me\/?(\?.*)?$/.test(url) || /^\/auth\/me\/?(\?.*)?$/.test(url))
+  ) {
+    const delayMs = getDelayMs("telegramMeDelayMs");
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
     if (mockBehavior.telegramMeStatus) {
       const status = Number(mockBehavior.telegramMeStatus) || 500;
       json(res, status, {
@@ -242,7 +291,10 @@ async function handleRequest(req, res) {
   }
 
   if (method === "GET" && /^\/settings\/?(\?.*)?$/.test(url)) {
-    json(res, 200, { success: true, data: { _id: "e2e-user-1", username: "e2e" } });
+    json(res, 200, {
+      success: true,
+      data: { _id: "e2e-user-1", username: "e2e" },
+    });
     return;
   }
 
@@ -273,9 +325,63 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (method === "POST" && /^\/webhooks\/core\/?$/.test(url)) {
+    const tunnel = createMockTunnel(parsedBody || {});
+    mockTunnels.unshift(tunnel);
+    json(res, 200, { success: true, data: tunnel });
+    return;
+  }
+
+  if (method === "GET" && /^\/webhooks\/core\/?(\?.*)?$/.test(url)) {
+    json(res, 200, { success: true, data: mockTunnels });
+    return;
+  }
+
+  if (method === "GET" && /^\/webhooks\/core\/bandwidth\/?(\?.*)?$/.test(url)) {
+    json(res, 200, { success: true, data: { remainingBudgetUsd: 10 } });
+    return;
+  }
+
+  const webhookCoreMatch = url.match(/^\/webhooks\/core\/([^/?]+)\/?(\?.*)?$/);
+  if (webhookCoreMatch) {
+    const [, tunnelId] = webhookCoreMatch;
+    const tunnelIndex = mockTunnels.findIndex((entry) => entry.id === tunnelId);
+    const tunnel = tunnelIndex >= 0 ? mockTunnels[tunnelIndex] : null;
+
+    if (!tunnel) {
+      json(res, 404, { success: false, error: "Tunnel not found" });
+      return;
+    }
+
+    if (method === "GET") {
+      json(res, 200, { success: true, data: tunnel });
+      return;
+    }
+
+    if (method === "PATCH") {
+      const updated = {
+        ...tunnel,
+        ...(parsedBody || {}),
+        updatedAt: new Date().toISOString(),
+      };
+      mockTunnels[tunnelIndex] = updated;
+      json(res, 200, { success: true, data: updated });
+      return;
+    }
+
+    if (method === "DELETE") {
+      mockTunnels.splice(tunnelIndex, 1);
+      json(res, 200, { success: true, data: tunnel });
+      return;
+    }
+  }
+
   // --- Payments / Credits / Billing ---
 
-  if (method === "GET" && /^\/payments\/credits\/balance\/?(\?.*)?$/.test(url)) {
+  if (
+    method === "GET" &&
+    /^\/payments\/credits\/balance\/?(\?.*)?$/.test(url)
+  ) {
     json(res, 200, {
       success: true,
       data: { balanceUsd: 10, topUpBalanceUsd: 0, topUpBaselineUsd: 0 },
@@ -364,7 +470,10 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (method === "GET" && /^\/payments\/credits\/auto-recharge\/?(\?.*)?$/.test(url)) {
+  if (
+    method === "GET" &&
+    /^\/payments\/credits\/auto-recharge\/?(\?.*)?$/.test(url)
+  ) {
     json(res, 200, {
       success: true,
       data: {
@@ -388,7 +497,10 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (method === "GET" && /^\/payments\/credits\/auto-recharge\/cards\/?(\?.*)?$/.test(url)) {
+  if (
+    method === "GET" &&
+    /^\/payments\/credits\/auto-recharge\/cards\/?(\?.*)?$/.test(url)
+  ) {
     json(res, 200, { success: true, data: { cards: [], defaultCardId: null } });
     return;
   }
@@ -400,7 +512,11 @@ async function handleRequest(req, res) {
 
   if (method === "POST" && /^\/openai\/v1\/chat\/completions\/?$/.test(url)) {
     json(res, 200, {
-      choices: [{ message: { role: "assistant", content: "Hello from e2e mock agent" } }],
+      choices: [
+        {
+          message: { role: "assistant", content: "Hello from e2e mock agent" },
+        },
+      ],
     });
     return;
   }
@@ -419,10 +535,16 @@ async function handleRequest(req, res) {
 
   if (method === "GET" && /^\/auth\/telegram\/connect\/?(\?.*)?$/.test(url)) {
     if (mockBehavior.telegramDuplicate === "true") {
-      json(res, 409, { success: false, error: "Telegram account already linked to another user" });
+      json(res, 409, {
+        success: false,
+        error: "Telegram account already linked to another user",
+      });
       return;
     }
-    json(res, 200, { success: true, data: { oauthUrl: `${origin}/mock-telegram-oauth` } });
+    json(res, 200, {
+      success: true,
+      data: { oauthUrl: `${origin}/mock-telegram-oauth` },
+    });
     return;
   }
 
@@ -448,20 +570,29 @@ async function handleRequest(req, res) {
       json(res, 401, { success: false, error: "OAuth token has expired" });
       return;
     }
-    json(res, 200, { success: true, data: { oauthUrl: `${origin}/mock-google-oauth` } });
+    json(res, 200, {
+      success: true,
+      data: { oauthUrl: `${origin}/mock-google-oauth` },
+    });
     return;
   }
 
   if (method === "POST" && /^\/telegram\/command\/?$/.test(url)) {
     if (mockBehavior.telegramUnauthorized === "true") {
-      json(res, 403, { success: false, error: "Unauthorized: insufficient permissions" });
+      json(res, 403, {
+        success: false,
+        error: "Unauthorized: insufficient permissions",
+      });
       return;
     }
     if (mockBehavior.telegramCommandError === "true") {
       json(res, 400, { success: false, error: "Invalid command format" });
       return;
     }
-    json(res, 200, { success: true, data: { result: "Command executed successfully" } });
+    json(res, 200, {
+      success: true,
+      data: { result: "Command executed successfully" },
+    });
     return;
   }
 
@@ -469,7 +600,12 @@ async function handleRequest(req, res) {
     const level = mockBehavior.telegramPermission || "read";
     json(res, 200, {
       success: true,
-      data: { level, canRead: true, canWrite: level !== "read", canInitiate: level === "admin" },
+      data: {
+        level,
+        canRead: true,
+        canWrite: level !== "read",
+        canInitiate: level === "admin",
+      },
     });
     return;
   }
@@ -477,7 +613,10 @@ async function handleRequest(req, res) {
   if (method === "POST" && /^\/telegram\/webhook\/configure\/?$/.test(url)) {
     json(res, 200, {
       success: true,
-      data: { webhookUrl: "https://api.example.com/webhook/telegram", active: true },
+      data: {
+        webhookUrl: "https://api.example.com/webhook/telegram",
+        active: true,
+      },
     });
     return;
   }
@@ -491,7 +630,12 @@ async function handleRequest(req, res) {
     const level = mockBehavior.notionPermission || "read";
     json(res, 200, {
       success: true,
-      data: { level, canRead: true, canWrite: level !== "read", canCreate: level !== "read" },
+      data: {
+        level,
+        canRead: true,
+        canWrite: level !== "read",
+        canCreate: level !== "read",
+      },
     });
     return;
   }
@@ -500,7 +644,12 @@ async function handleRequest(req, res) {
     const level = mockBehavior.gmailPermission || "read";
     json(res, 200, {
       success: true,
-      data: { level, canRead: true, canWrite: level !== "read", canInitiate: level === "admin" },
+      data: {
+        level,
+        canRead: true,
+        canWrite: level !== "read",
+        canInitiate: level === "admin",
+      },
     });
     return;
   }
@@ -555,7 +704,10 @@ async function handleRequest(req, res) {
   }
 
   if (method === "POST" && /^\/invite\/redeem\/?$/.test(url)) {
-    json(res, 200, { success: true, data: { message: "Invite code redeemed successfully" } });
+    json(res, 200, {
+      success: true,
+      data: { message: "Invite code redeemed successfully" },
+    });
     return;
   }
   if (method === "GET" && /^\/invite\/my-codes\/?(\?.*)?$/.test(url)) {
@@ -566,7 +718,10 @@ async function handleRequest(req, res) {
     json(res, 200, { success: true, data: { valid: true } });
     return;
   }
-  if (method === "POST" && /^\/telegram\/settings\/onboarding-complete\/?$/.test(url)) {
+  if (
+    method === "POST" &&
+    /^\/telegram\/settings\/onboarding-complete\/?$/.test(url)
+  ) {
     json(res, 200, { success: true, data: {} });
     return;
   }
@@ -590,7 +745,8 @@ async function handleRequest(req, res) {
           ? {
               id: "sub_mock_123",
               status: "active",
-              currentPeriodEnd: expiry || new Date(Date.now() + 30 * 86400000).toISOString(),
+              currentPeriodEnd:
+                expiry || new Date(Date.now() + 30 * 86400000).toISOString(),
             }
           : null,
       },
@@ -602,7 +758,10 @@ async function handleRequest(req, res) {
   // consolidated handlers (with mockBehavior checks). Only the coinbase
   // charge-status polling endpoint remains here.
 
-  if (method === "GET" && /^\/payments\/coinbase\/charge\/[^/]+\/?(\?.*)?$/.test(url)) {
+  if (
+    method === "GET" &&
+    /^\/payments\/coinbase\/charge\/[^/]+\/?(\?.*)?$/.test(url)
+  ) {
     const status = mockBehavior.cryptoStatus || "NEW";
     json(res, 200, {
       success: true,
@@ -610,7 +769,12 @@ async function handleRequest(req, res) {
         status,
         payment: {
           status,
-          amountPaid: status === "UNDERPAID" ? "150.00" : status === "OVERPAID" ? "350.00" : "250.00",
+          amountPaid:
+            status === "UNDERPAID"
+              ? "150.00"
+              : status === "OVERPAID"
+                ? "350.00"
+                : "250.00",
           amountExpected: "250.00",
           currency: "USDC",
           underpaidAmount: mockBehavior.cryptoUnderpaidAmount || "0",
@@ -622,7 +786,10 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (method === "GET" && /^\/mock-(telegram|notion|google)-oauth\/?(\?.*)?$/.test(url)) {
+  if (
+    method === "GET" &&
+    /^\/mock-(telegram|notion|google)-oauth\/?(\?.*)?$/.test(url)
+  ) {
     html(res, 200, "<html><body><h1>Mock OAuth</h1></body></html>");
     return;
   }
@@ -633,7 +800,10 @@ async function handleRequest(req, res) {
 
   // Catch-all: fail fast so tests notice missing mock endpoints.
   console.log(`[MockServer] UNHANDLED ${method} ${url}`);
-  json(res, 404, { success: false, error: `Mock server: no handler for ${method} ${url}` });
+  json(res, 404, {
+    success: false,
+    error: `Mock server: no handler for ${method} ${url}`,
+  });
 }
 
 function handleSocketIOMessage(socket, text, sid) {

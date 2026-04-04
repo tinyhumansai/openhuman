@@ -801,12 +801,12 @@ describe('Notion Integration Flows', () => {
       console.log(`${LOG_PREFIX} 8.4.4: App stable after permission downgrade: "${homeMarker}"`);
 
       // Verify auth calls were made during each re-auth.
-      // The app may call /telegram/me, /teams, /settings, or consume tokens
+      // The app may call /auth/me, /teams, /settings, or consume tokens
       // via /telegram/login-tokens — any of these confirm auth activity.
       const allRequests = getRequestLog();
       const authCall = allRequests.find(
         r =>
-          r.url.includes('/telegram/me') ||
+          r.url.includes('/auth/me') ||
           r.url.includes('/teams') ||
           r.url.includes('/settings') ||
           r.url.includes('/telegram/login-tokens/')

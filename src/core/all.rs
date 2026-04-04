@@ -39,6 +39,7 @@ fn registry() -> &'static [RegisteredController] {
 fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
     controllers.extend(crate::openhuman::about_app::all_about_app_registered_controllers());
+    controllers.extend(crate::openhuman::app_state::all_app_state_registered_controllers());
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
@@ -68,12 +69,14 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
     controllers.extend(crate::openhuman::voice::all_voice_registered_controllers());
     controllers.extend(crate::openhuman::subconscious::all_subconscious_registered_controllers());
+    controllers.extend(crate::openhuman::webhooks::all_webhooks_registered_controllers());
     controllers
 }
 
 fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());
+    schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
@@ -101,6 +104,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
     schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
+    schemas.extend(crate::openhuman::webhooks::all_webhooks_controller_schemas());
     schemas
 }
 
@@ -120,6 +124,7 @@ pub fn rpc_method_name(schema: &ControllerSchema) -> String {
 pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     match namespace {
         "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
+        "app_state" => Some("Expose core-owned app shell state for frontend polling."),
         "auth" => Some("Manage app session and provider credentials."),
         "autocomplete" => Some("Inline autocomplete engine controls and style settings."),
         "channels" => Some("Channel definitions, connections, and lifecycle management."),
@@ -140,6 +145,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "team" => Some("Team member management, invites, and role changes via the backend."),
         "voice" => Some("Speech-to-text and text-to-speech using local models."),
         "subconscious" => Some("Periodic local-model background awareness loop."),
+        "webhooks" => {
+            Some("Webhook tunnel registrations and captured request/response debug logs.")
+        }
         _ => None,
     }
 }

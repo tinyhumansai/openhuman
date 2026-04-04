@@ -4,8 +4,9 @@ use serde_json::{Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::memory::rpc::{
-    self, DeleteDocParams, GraphQueryParams, GraphUpsertParams, IngestDocParams, KvGetDeleteParams,
-    KvSetParams, NamespaceOnlyParams, PutDocParams, QueryNamespaceParams, RecallNamespaceParams,
+    self, ClearNamespaceParams, DeleteDocParams, GraphQueryParams, GraphUpsertParams,
+    IngestDocParams, KvGetDeleteParams, KvSetParams, NamespaceOnlyParams, PutDocParams,
+    QueryNamespaceParams, RecallNamespaceParams,
 };
 use crate::openhuman::memory::{
     DeleteDocumentRequest, EmptyRequest, ListDocumentsRequest, ListMemoryFilesRequest,
@@ -43,6 +44,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("kv_list_namespace"),
         schemas("graph_upsert"),
         schemas("graph_query"),
+        schemas("clear_namespace"),
     ]
 }
 
@@ -140,6 +142,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             schema: schemas("graph_query"),
             handler: handle_graph_query,
         },
+        RegisteredController {
+            schema: schemas("clear_namespace"),
+            handler: handle_clear_namespace,
+        },
     ]
 }
 
@@ -153,12 +159,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "init" => ControllerSchema {
             namespace: "memory",
             function: "init",
-            description: "Initialise the memory subsystem for the current workspace.",
+            description: "Initialise the local-only (SQLite) memory subsystem for the current workspace. The jwt_token parameter is accepted for backward compatibility but ignored — memory is entirely local.",
             inputs: vec![FieldSchema {
                 name: "jwt_token",
-                ty: TypeSchema::String,
-                comment: "JWT token for authenticating the memory session.",
-                required: true,
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Accepted for backward compatibility but ignored — memory is local-only. Remote sync is a future consideration.",
+                required: false,
             }],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -872,6 +878,34 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
 
+        // ----- bulk operations -----
+        "clear_namespace" => ControllerSchema {
+            namespace: "memory",
+            function: "clear_namespace",
+            description:
+                "Delete all documents, vector chunks, KV entries, and graph relations for a namespace.",
+            inputs: vec![FieldSchema {
+                name: "namespace",
+                ty: TypeSchema::String,
+                comment: "Namespace to clear completely.",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "cleared",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the namespace was cleared.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "namespace",
+                    ty: TypeSchema::String,
+                    comment: "The namespace that was cleared.",
+                    required: true,
+                },
+            ],
+        },
+
         // ----- fallback -----
         _other => ControllerSchema {
             namespace: "memory",
@@ -1060,6 +1094,13 @@ fn handle_graph_query(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let payload = parse_params::<GraphQueryParams>(params)?;
         to_json(rpc::graph_query(payload).await?)
+    })
+}
+
+fn handle_clear_namespace(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload = parse_params::<ClearNamespaceParams>(params)?;
+        to_json(rpc::clear_namespace(payload).await?)
     })
 }
 

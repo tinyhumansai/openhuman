@@ -23,39 +23,45 @@ import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
+import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
 import SettingsHome from '../components/settings/SettingsHome';
 
 const Settings = () => {
   return (
-    <div className="h-full overflow-hidden flex flex-col z-10 relative">
-      <Routes>
-        <Route index element={<SettingsHome />} />
-        <Route path="connections" element={<ConnectionsPanel />} />
-        <Route path="messaging" element={<MessagingPanel />} />
-        <Route path="cron-jobs" element={<CronJobsPanel />} />
-        <Route path="screen-intelligence" element={<ScreenIntelligencePanel />} />
-        <Route path="autocomplete" element={<AutocompletePanel />} />
-        <Route path="privacy" element={<PrivacyPanel />} />
-        <Route path="profile" element={<ProfilePanel />} />
-        <Route path="advanced" element={<AdvancedPanel />} />
-        <Route path="agent-chat" element={<AgentChatPanel />} />
-        <Route path="ai" element={<AIPanel />} />
-        <Route path="accessibility" element={<AccessibilityPanel />} />
-        <Route path="dictation" element={<DictationPanel />} />
-        <Route path="local-model" element={<LocalModelPanel />} />
-        <Route path="billing" element={<BillingPanel />} />
-        <Route path="skills" element={<SkillsPanel />} />
-        <Route path="team" element={<TeamPanel />} />
-        <Route path="team/manage/:teamId" element={<TeamManagementPanel />} />
-        <Route path="team/manage/:teamId/members" element={<TeamMembersPanel />} />
-        <Route path="team/manage/:teamId/invites" element={<TeamInvitesPanel />} />
-        <Route path="team/members" element={<TeamMembersPanel />} />
-        <Route path="team/invites" element={<TeamInvitesPanel />} />
-        <Route path="developer-options" element={<DeveloperOptionsPanel />} />
-        <Route path="tauri-commands" element={<TauriCommandsPanel />} />
-        <Route path="memory-debug" element={<MemoryDebugPanel />} />
-        <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />
-      </Routes>
+    <div className="h-full overflow-y-auto bg-[#F5F5F5] p-4 pt-6">
+      <div
+        className="max-w-2xl mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden flex flex-col min-h-0"
+        style={{ maxHeight: 'calc(100vh - 7rem)' }}>
+        <Routes>
+          <Route index element={<SettingsHome />} />
+          <Route path="connections" element={<ConnectionsPanel />} />
+          <Route path="messaging" element={<MessagingPanel />} />
+          <Route path="cron-jobs" element={<CronJobsPanel />} />
+          <Route path="screen-intelligence" element={<ScreenIntelligencePanel />} />
+          <Route path="autocomplete" element={<AutocompletePanel />} />
+          <Route path="privacy" element={<PrivacyPanel />} />
+          <Route path="profile" element={<ProfilePanel />} />
+          <Route path="advanced" element={<AdvancedPanel />} />
+          <Route path="agent-chat" element={<AgentChatPanel />} />
+          <Route path="ai" element={<AIPanel />} />
+          <Route path="accessibility" element={<AccessibilityPanel />} />
+          <Route path="dictation" element={<DictationPanel />} />
+          <Route path="local-model" element={<LocalModelPanel />} />
+          <Route path="billing" element={<BillingPanel />} />
+          <Route path="skills" element={<SkillsPanel />} />
+          <Route path="team" element={<TeamPanel />} />
+          <Route path="team/manage/:teamId" element={<TeamManagementPanel />} />
+          <Route path="team/manage/:teamId/members" element={<TeamMembersPanel />} />
+          <Route path="team/manage/:teamId/invites" element={<TeamInvitesPanel />} />
+          <Route path="team/members" element={<TeamMembersPanel />} />
+          <Route path="team/invites" element={<TeamInvitesPanel />} />
+          <Route path="developer-options" element={<DeveloperOptionsPanel />} />
+          <Route path="tauri-commands" element={<TauriCommandsPanel />} />
+          <Route path="webhooks-debug" element={<WebhooksDebugPanel />} />
+          <Route path="memory-debug" element={<MemoryDebugPanel />} />
+          <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />
+        </Routes>
+      </div>
     </div>
   );
 };

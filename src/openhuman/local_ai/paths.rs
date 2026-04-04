@@ -19,12 +19,44 @@ pub(crate) fn workspace_ollama_dir(config: &Config) -> PathBuf {
 }
 
 pub(crate) fn workspace_ollama_binary(config: &Config) -> PathBuf {
+    if cfg!(target_os = "linux") {
+        return workspace_ollama_dir(config).join("bin").join("ollama");
+    }
+
     let name = if cfg!(windows) {
         "ollama.exe"
     } else {
         "ollama"
     };
     workspace_ollama_dir(config).join(name)
+}
+
+pub(crate) fn workspace_ollama_binary_candidates(config: &Config) -> Vec<PathBuf> {
+    let dir = workspace_ollama_dir(config);
+    let binary_name = if cfg!(windows) {
+        "ollama.exe"
+    } else {
+        "ollama"
+    };
+
+    let mut candidates = Vec::new();
+    if cfg!(target_os = "linux") {
+        candidates.push(dir.join("bin").join(binary_name));
+    }
+    candidates.push(dir.join(binary_name));
+    candidates.push(
+        dir.join("Ollama.app")
+            .join("Contents")
+            .join("Resources")
+            .join(binary_name),
+    );
+    candidates
+}
+
+pub(crate) fn find_workspace_ollama_binary(config: &Config) -> Option<PathBuf> {
+    workspace_ollama_binary_candidates(config)
+        .into_iter()
+        .find(|candidate| candidate.is_file())
 }
 
 pub(crate) fn workspace_local_models_dir(config: &Config) -> PathBuf {
@@ -196,5 +228,39 @@ mod tests {
             tts_model_target_path(&config),
             PathBuf::from("/tmp/voice.onnx")
         );
+    }
+
+    #[test]
+    fn workspace_ollama_binary_matches_platform_layout() {
+        let (_tmp, config) = temp_config();
+        let root = config_root_dir(&config).join("bin").join("ollama");
+
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                workspace_ollama_binary(&config),
+                root.join("bin").join("ollama")
+            );
+        } else if cfg!(windows) {
+            assert_eq!(workspace_ollama_binary(&config), root.join("ollama.exe"));
+        } else {
+            assert_eq!(workspace_ollama_binary(&config), root.join("ollama"));
+        }
+    }
+
+    #[test]
+    fn find_workspace_ollama_binary_supports_legacy_flat_layout() {
+        let (_tmp, config) = temp_config();
+        let dir = workspace_ollama_dir(&config);
+        std::fs::create_dir_all(&dir).expect("create workspace ollama dir");
+
+        let legacy = dir.join(if cfg!(windows) {
+            "ollama.exe"
+        } else {
+            "ollama"
+        });
+        std::fs::write(&legacy, b"stub").expect("write legacy binary");
+
+        let found = find_workspace_ollama_binary(&config).expect("find workspace binary");
+        assert_eq!(found, legacy);
     }
 }

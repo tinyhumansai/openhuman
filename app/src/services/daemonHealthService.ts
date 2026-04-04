@@ -4,6 +4,7 @@
  * Manages health monitoring for the openhuman daemon by polling
  * `openhuman.health_snapshot` over core RPC from the frontend.
  */
+import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { store } from '../store';
 import {
   type ComponentHealth,
@@ -177,7 +178,7 @@ export class DaemonHealthService {
    * Get the current user ID for daemon state management.
    */
   private getUserId(): string {
-    const token = store.getState().auth.token;
+    const token = getCoreStateSnapshot().snapshot.sessionToken;
     if (!token) return '__pending__';
 
     try {

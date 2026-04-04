@@ -915,6 +915,129 @@ globalThis.data = {
 })();
 
 // ============================================================================
+// Advanced Auth Bridge API (self-hosted / text credential management)
+// ============================================================================
+(function () {
+  globalThis.__authCredential = null;
+
+  globalThis.auth = {
+    /**
+     * Get the full auth credential object, or null if not set.
+     * Shape: { mode: "managed"|"self_hosted"|"text", credentials: {...} }
+     */
+    getCredential: function () {
+      return globalThis.__authCredential;
+    },
+
+    /**
+     * Get the auth mode string, or null.
+     * @returns {"managed"|"self_hosted"|"text"|null}
+     */
+    getMode: function () {
+      return globalThis.__authCredential ? globalThis.__authCredential.mode : null;
+    },
+
+    /**
+     * Get just the credentials map (e.g. { client_id, client_secret, url, content }).
+     * @returns {Object|null}
+     */
+    getCredentials: function () {
+      return globalThis.__authCredential ? globalThis.__authCredential.credentials : null;
+    },
+
+    /**
+     * Make an HTTP request with credentials auto-injected.
+     * For self_hosted: auto-adds Authorization header from client_id/client_secret.
+     * For managed: delegates to oauth.fetch.
+     * For text: no auto-injection (skill should handle manually).
+     */
+    fetch: async function (url, options) {
+      if (!globalThis.__authCredential) {
+        return {
+          status: 401,
+          headers: {},
+          body: JSON.stringify({ error: 'No auth credential. Complete auth setup first.' }),
+        };
+      }
+
+      var mode = globalThis.__authCredential.mode;
+      var creds = globalThis.__authCredential.credentials;
+
+      // Managed mode: delegate to oauth.fetch for proxy behavior
+      if (mode === 'managed' && typeof globalThis.oauth !== 'undefined') {
+        return globalThis.oauth.fetch(url, options);
+      }
+
+      var headers = {};
+      if (options && options.headers) {
+        for (var k in options.headers) {
+          headers[k] = options.headers[k];
+        }
+      }
+      if (!headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+      }
+
+      // Check for existing Authorization header (case-insensitive)
+      var hasAuth = false;
+      for (var hk in headers) {
+        if (hk.toLowerCase() === 'authorization') { hasAuth = true; break; }
+      }
+
+      // Self-hosted: auto-inject basic auth if client_id + client_secret present
+      if (mode === 'self_hosted' && creds.client_id && creds.client_secret && !hasAuth) {
+        headers['Authorization'] = 'Basic ' + btoa(creds.client_id + ':' + creds.client_secret);
+        hasAuth = true;
+      }
+
+      // Self-hosted with access_token or refresh_token: inject Bearer token
+      if (mode === 'self_hosted' && !hasAuth && creds.access_token) {
+        headers['Authorization'] = 'Bearer ' + creds.access_token;
+        hasAuth = true;
+      }
+
+      // Do NOT auto-inject session JWT for text mode or when auth is already set.
+      // Text mode credentials are opaque — the skill handles auth manually.
+
+      var fetchOpts = {
+        method: (options && options.method) || 'GET',
+        headers: headers,
+        body: options ? options.body : undefined,
+        timeout: options ? options.timeout : undefined,
+      };
+
+      console.log('[auth.fetch] ' + fetchOpts.method + ' ' + url + ' (mode=' + mode + ')');
+      var result = await net.fetch(url, fetchOpts);
+      console.log('[auth.fetch] response status=' + result.status);
+
+      // Auto-clear on 401/403 so user is prompted to re-auth
+      if (result.status === 401 || result.status === 403) {
+        console.warn('[auth.fetch] Got ' + result.status + ' — clearing invalid credential');
+        globalThis.__authCredential = null;
+        if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {
+          globalThis.state.set('__auth_credential', '');
+          globalThis.state.setPartial({
+            connection_status: 'error',
+            connection_error: 'Auth credential expired or invalid. Please reconnect.',
+            auth_status: 'not_authenticated',
+          });
+        }
+      }
+
+      return result;
+    },
+
+    /**
+     * Internal: set credential (called by runtime on auth/complete).
+     * Skills should not call this directly.
+     */
+    __setCredential: function (cred) {
+      globalThis.__authCredential = cred;
+    },
+  };
+})();
+
+// ============================================================================
 // Tools array (skills assign to this global)
 // ============================================================================
 globalThis.tools = [];
@@ -1065,7 +1188,7 @@ globalThis.webhook = {
     var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
     var jwtToken = __ops.get_session_token() || '';
 
-    var result = await net.fetch(backendUrl + '/tunnels', {
+    var result = await net.fetch(backendUrl + '/webhooks/core', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1080,7 +1203,7 @@ globalThis.webhook = {
       throw new Error('Failed to create tunnel: ' + parsed.status + ' ' + parsed.body);
     }
     var data = JSON.parse(parsed.body);
-    var tunnel = data.tunnel || data;
+    var tunnel = data.data || data.tunnel || data;
 
     // Auto-register this tunnel to the calling skill
     if (tunnel.uuid) {
@@ -1088,7 +1211,7 @@ globalThis.webhook = {
     }
 
     // Build webhook URL for the caller
-    tunnel.webhookUrl = backendUrl + '/webhooks/' + tunnel.uuid;
+    tunnel.webhookUrl = backendUrl.replace(/\/$/, '') + '/webhooks/ingress/' + tunnel.uuid;
 
     console.log('[webhook] Created tunnel: ' + name + ' → ' + tunnel.webhookUrl);
     return tunnel;
@@ -1108,19 +1231,26 @@ globalThis.webhook = {
    * @param {string} tunnelUuid - The tunnel UUID to delete
    */
   deleteTunnel: async function (tunnelUuid) {
-    // Verify ownership locally first (will throw if not owned), but don't
-    // unregister yet — we need the backend DELETE to succeed first so we
-    // don't orphan tunnels if the network call fails.
+    var registration = null;
     webhook.list().forEach(function (reg) {
-      // webhook.list() only returns this skill's registrations, so if the
-      // tunnelUuid isn't among them the skill doesn't own it.
+      if (reg.tunnel_uuid === tunnelUuid) {
+        registration = reg;
+      }
     });
+    if (!registration) {
+      throw new Error('[webhook] Tunnel is not registered to this skill: ' + tunnelUuid);
+    }
+    if (!registration.backend_tunnel_id) {
+      throw new Error(
+        '[webhook] Missing backend tunnel id for deleteTunnel; re-create or re-register this tunnel'
+      );
+    }
 
     // Delete from backend first
     var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
     var jwtToken = __ops.get_session_token() || '';
 
-    var result = await net.fetch(backendUrl + '/tunnels/' + tunnelUuid, {
+    var result = await net.fetch(backendUrl + '/webhooks/core/' + registration.backend_tunnel_id, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer ' + jwtToken },
       timeout: 10000,

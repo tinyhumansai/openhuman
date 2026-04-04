@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom';
 
-import { useAppSelector } from '../store/hooks';
+import { useCoreState } from '../providers/CoreStateProvider';
 import RouteLoadingScreen from './RouteLoadingScreen';
 
 /**
@@ -9,14 +9,13 @@ import RouteLoadingScreen from './RouteLoadingScreen';
  * - Logged in → /home (Home handles onboarding redirect if needed)
  */
 const DefaultRedirect = () => {
-  const token = useAppSelector(state => state.auth.token);
-  const isAuthBootstrapComplete = useAppSelector(state => state.auth.isAuthBootstrapComplete);
+  const { isBootstrapping, snapshot } = useCoreState();
 
-  if (!isAuthBootstrapComplete) {
+  if (isBootstrapping) {
     return <RouteLoadingScreen />;
   }
 
-  if (token) {
+  if (snapshot.sessionToken) {
     return <Navigate to="/home" replace />;
   }
 

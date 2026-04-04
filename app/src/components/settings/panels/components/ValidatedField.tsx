@@ -35,26 +35,26 @@ const ValidatedField: React.FC<ValidatedFieldProps> = ({
 
   const inputClasses = `
     w-full px-4 py-3 rounded-lg border transition-all duration-200
-    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black
+    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white
     disabled:opacity-50 disabled:cursor-not-allowed
     ${
       hasError
-        ? 'border-coral-500/60 bg-coral-500/10 text-coral-200 placeholder-coral-400/50 focus:border-coral-500 focus:ring-coral-500/30'
+        ? 'border-coral-500/60 bg-coral-50 text-coral-700 placeholder-coral-400/50 focus:border-coral-500 focus:ring-coral-500/30'
         : isValid
-          ? 'border-sage-500/60 bg-sage-500/5 text-white placeholder-stone-400 focus:border-sage-500 focus:ring-sage-500/30'
-          : 'border-stone-800/60 bg-stone-900/40 text-white placeholder-stone-400 focus:border-primary-500/50 focus:ring-primary-500/30'
+          ? 'border-sage-500/60 bg-sage-50 text-stone-900 placeholder-stone-400 focus:border-sage-500 focus:ring-sage-500/30'
+          : 'border-stone-200 bg-white text-stone-900 placeholder-stone-400 focus:border-primary-500/50 focus:ring-primary-500/30'
     }
   `;
 
   return (
     <label
-      className={`space-y-3 text-sm text-gray-300 ${fullWidth ? 'md:col-span-2' : ''} ${className}`}>
+      className={`space-y-3 text-sm text-stone-600 ${fullWidth ? 'md:col-span-2' : ''} ${className}`}>
       <div>
         <span className="font-medium">
           {label}
           {required && <span className="text-coral-400 ml-1">*</span>}
         </span>
-        {helpText && <p className="text-xs text-gray-400 leading-relaxed mt-1">{helpText}</p>}
+        {helpText && <p className="text-xs text-stone-500 leading-relaxed mt-1">{helpText}</p>}
       </div>
 
       <div className="relative">
@@ -81,7 +81,7 @@ const ValidatedField: React.FC<ValidatedFieldProps> = ({
 
       {/* Error message */}
       {hasError && (
-        <div className="flex items-center gap-2 text-xs text-coral-300">
+        <div className="flex items-center gap-2 text-xs text-coral-600">
           <ExclamationTriangleIcon className="h-3 w-3 flex-shrink-0" />
           <span>{error}</span>
         </div>
@@ -124,26 +124,26 @@ const ValidatedSelect: React.FC<ValidatedSelectProps> = ({
 
   const selectClasses = `
     w-full px-4 py-3 rounded-lg border transition-all duration-200
-    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black
+    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white
     disabled:opacity-50 disabled:cursor-not-allowed
     ${
       hasError
-        ? 'border-coral-500/60 bg-coral-500/10 text-coral-200 focus:border-coral-500 focus:ring-coral-500/30'
+        ? 'border-coral-500/60 bg-coral-50 text-coral-700 focus:border-coral-500 focus:ring-coral-500/30'
         : isValid
-          ? 'border-sage-500/60 bg-sage-500/5 text-white focus:border-sage-500 focus:ring-sage-500/30'
-          : 'border-stone-800/60 bg-stone-900/40 text-white focus:border-primary-500/50 focus:ring-primary-500/30'
+          ? 'border-sage-500/60 bg-sage-50 text-stone-900 focus:border-sage-500 focus:ring-sage-500/30'
+          : 'border-stone-200 bg-white text-stone-900 focus:border-primary-500/50 focus:ring-primary-500/30'
     }
   `;
 
   return (
     <label
-      className={`space-y-3 text-sm text-gray-300 ${fullWidth ? 'md:col-span-2' : ''} ${className}`}>
+      className={`space-y-3 text-sm text-stone-600 ${fullWidth ? 'md:col-span-2' : ''} ${className}`}>
       <div>
         <span className="font-medium">
           {label}
           {required && <span className="text-coral-400 ml-1">*</span>}
         </span>
-        {helpText && <p className="text-xs text-gray-400 leading-relaxed mt-1">{helpText}</p>}
+        {helpText && <p className="text-xs text-stone-500 leading-relaxed mt-1">{helpText}</p>}
       </div>
 
       <div className="relative">
@@ -174,7 +174,7 @@ const ValidatedSelect: React.FC<ValidatedSelectProps> = ({
 
       {/* Error message */}
       {hasError && (
-        <div className="flex items-center gap-2 text-xs text-coral-300">
+        <div className="flex items-center gap-2 text-xs text-coral-600">
           <ExclamationTriangleIcon className="h-3 w-3 flex-shrink-0" />
           <span>{error}</span>
         </div>

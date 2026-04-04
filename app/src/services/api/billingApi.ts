@@ -1,5 +1,4 @@
 import type {
-  ApiResponse,
   CoinbaseChargeData,
   CurrentPlanData,
   PlanIdentifier,
@@ -7,7 +6,7 @@ import type {
   PortalSessionData,
   PurchasePlanData,
 } from '../../types/api';
-import { apiClient } from '../apiClient';
+import { callCoreCommand } from '../coreCommandClient';
 
 /**
  * Billing API endpoints
@@ -18,10 +17,7 @@ export const billingApi = {
    * GET /payments/stripe/currentPlan
    */
   getCurrentPlan: async (): Promise<CurrentPlanData> => {
-    const response = await apiClient.get<ApiResponse<CurrentPlanData>>(
-      '/payments/stripe/currentPlan'
-    );
-    return response.data;
+    return await callCoreCommand<CurrentPlanData>('openhuman.billing_get_current_plan');
   },
 
   /**
@@ -29,11 +25,7 @@ export const billingApi = {
    * POST /payments/stripe/purchasePlan
    */
   purchasePlan: async (plan: PlanIdentifier): Promise<PurchasePlanData> => {
-    const response = await apiClient.post<ApiResponse<PurchasePlanData>>(
-      '/payments/stripe/purchasePlan',
-      { plan }
-    );
-    return response.data;
+    return await callCoreCommand<PurchasePlanData>('openhuman.billing_purchase_plan', { plan });
   },
 
   /**
@@ -41,9 +33,7 @@ export const billingApi = {
    * POST /payments/stripe/portal
    */
   createPortalSession: async (): Promise<PortalSessionData> => {
-    const response =
-      await apiClient.post<ApiResponse<PortalSessionData>>('/payments/stripe/portal');
-    return response.data;
+    return await callCoreCommand<PortalSessionData>('openhuman.billing_create_portal_session');
   },
 
   /**
@@ -54,10 +44,9 @@ export const billingApi = {
     plan: PlanTier,
     interval: 'annual' = 'annual'
   ): Promise<CoinbaseChargeData> => {
-    const response = await apiClient.post<ApiResponse<CoinbaseChargeData>>(
-      '/payments/coinbase/charge',
-      { plan, interval }
-    );
-    return response.data;
+    return await callCoreCommand<CoinbaseChargeData>('openhuman.billing_create_coinbase_charge', {
+      plan,
+      interval,
+    });
   },
 };

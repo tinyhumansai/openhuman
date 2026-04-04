@@ -1,31 +1,10 @@
-import { useEffect, useRef } from 'react';
-
-import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { fetchCurrentUser } from '../store/userSlice';
+import { useCoreState } from '../providers/CoreStateProvider';
 
 /**
- * Hook to access user data and automatically fetch it when token is available
+ * Hook to access the current core-owned user snapshot.
  */
 export const useUser = () => {
-  const dispatch = useAppDispatch();
-  const token = useAppSelector(state => state.auth.token);
-  const user = useAppSelector(state => state.user.user);
-  const isLoading = useAppSelector(state => state.user.isLoading);
-  const error = useAppSelector(state => state.user.error);
-  const lastAutoFetchTokenRef = useRef<string | null>(null);
+  const { isBootstrapping, snapshot, refresh } = useCoreState();
 
-  useEffect(() => {
-    if (!token) {
-      lastAutoFetchTokenRef.current = null;
-      return;
-    }
-
-    // Auto-fetch at most once per token to avoid infinite retry loops on persistent 401s.
-    if (!user && !isLoading && lastAutoFetchTokenRef.current !== token) {
-      lastAutoFetchTokenRef.current = token;
-      dispatch(fetchCurrentUser());
-    }
-  }, [token, user, isLoading, dispatch]);
-
-  return { user, isLoading, error, refetch: () => dispatch(fetchCurrentUser()) };
+  return { user: snapshot.currentUser, isLoading: isBootstrapping, error: null, refetch: refresh };
 };

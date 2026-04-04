@@ -378,6 +378,9 @@ impl LocalAiService {
         let response = self
             .http
             .get(url)
+            // Large model assets (STT/TTS) can take minutes on slower links.
+            // Avoid inheriting the short default client timeout for these streams.
+            .timeout(std::time::Duration::from_secs(30 * 60))
             .send()
             .await
             .map_err(|e| format!("failed to start {label} download: {e}"))?;

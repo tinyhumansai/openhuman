@@ -29,7 +29,7 @@ function statusDotClass(status: SkillConnectionStatus): string {
     case 'error':
       return 'bg-coral-400';
     default:
-      return 'bg-stone-600';
+      return 'bg-stone-300';
   }
 }
 
@@ -38,13 +38,13 @@ function SkillRow({ skill, onSetup }: { skill: SkillListEntry; onSetup: () => vo
   const statusDisplay = STATUS_DISPLAY[connectionStatus] || STATUS_DISPLAY.offline;
 
   return (
-    <div className="flex items-center gap-3 p-3 rounded-xl border border-stone-700 bg-stone-900 hover:border-stone-600 transition-colors">
-      <div className="w-6 h-6 flex items-center justify-center text-white opacity-70 flex-shrink-0">
+    <div className="flex items-center gap-3 p-3 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-colors">
+      <div className="w-6 h-6 flex items-center justify-center text-stone-600 flex-shrink-0">
         {skill.icon || <DefaultIcon />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white truncate">{skill.name}</span>
+          <span className="text-sm font-medium text-stone-900 truncate">{skill.name}</span>
           <div
             className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass(connectionStatus)}`}
           />
@@ -53,7 +53,7 @@ function SkillRow({ skill, onSetup }: { skill: SkillListEntry; onSetup: () => vo
           </span>
         </div>
         {skill.description && (
-          <p className="text-xs opacity-50 mt-0.5 truncate">{skill.description}</p>
+          <p className="text-xs text-stone-500 mt-0.5 truncate">{skill.description}</p>
         )}
       </div>
       <SkillActionButton skill={skill} connectionStatus={connectionStatus} onOpenModal={onSetup} />
@@ -124,10 +124,10 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
   };
 
   return (
-    <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
+    <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2">Install Skills</h1>
-        <p className="opacity-70 text-sm">
+        <h1 className="text-xl font-bold mb-2 text-stone-900">Install Skills</h1>
+        <p className="text-stone-600 text-sm">
           Skills give OpenHuman richer context & access to your workflow. All data consumed by
           skills is saved and processed locally. You can connect as many skills as you want.
         </p>

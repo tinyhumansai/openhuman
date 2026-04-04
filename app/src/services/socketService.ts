@@ -2,6 +2,7 @@ import { isTauri as coreIsTauri, invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { io, Socket } from 'socket.io-client';
 
+import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { SocketIOMCPTransportImpl } from '../lib/mcp';
 import { skillManager, syncToolsToBackend } from '../lib/skills';
 import { store } from '../store';
@@ -54,27 +55,47 @@ interface ChannelConnectionUpdatedEvent {
   capabilities?: string[];
 }
 
-function isChannelConnectionUpdatePayload(value: unknown): value is ChannelConnectionUpdatedEvent {
-  if (!value || typeof value !== 'object') return false;
+function normalizeChannelConnectionUpdatePayload(
+  value: unknown
+): ChannelConnectionUpdatedEvent | null {
+  if (!value || typeof value !== 'object') return null;
+
   const obj = value as Record<string, unknown>;
   const channel = obj.channel;
-  const authMode = obj.authMode;
+  const authMode = obj.authMode ?? obj.auth_mode;
   const status = obj.status;
-  return (
-    (channel === 'telegram' || channel === 'discord') &&
-    (authMode === 'managed_dm' ||
-      authMode === 'oauth' ||
-      authMode === 'bot_token' ||
-      authMode === 'api_key') &&
-    (status === 'connected' ||
-      status === 'connecting' ||
-      status === 'disconnected' ||
-      status === 'error')
-  );
+  const lastError = obj.lastError ?? obj.last_error;
+  const capabilities = obj.capabilities;
+
+  const isKnownChannel = channel === 'telegram' || channel === 'discord' || channel === 'web';
+  const isKnownAuthMode =
+    authMode === 'managed_dm' ||
+    authMode === 'oauth' ||
+    authMode === 'bot_token' ||
+    authMode === 'api_key';
+  const isKnownStatus =
+    status === 'connected' ||
+    status === 'connecting' ||
+    status === 'disconnected' ||
+    status === 'error';
+
+  if (!isKnownChannel || !isKnownAuthMode || !isKnownStatus) {
+    return null;
+  }
+
+  return {
+    channel,
+    authMode,
+    status,
+    lastError: typeof lastError === 'string' ? lastError : undefined,
+    capabilities: Array.isArray(capabilities)
+      ? capabilities.filter((item): item is string => typeof item === 'string')
+      : undefined,
+  };
 }
 
 function getSocketUserId(): string {
-  const token = store.getState().auth.token;
+  const token = getCoreStateSnapshot().snapshot.sessionToken;
   if (!token) return '__pending__';
 
   try {
@@ -195,20 +216,25 @@ class SocketService {
       store.dispatch(setStatusForUser({ userId: uid, status: 'disconnected' }));
     });
 
-    this.socket.on('channel:connection-updated', data => {
-      if (!isChannelConnectionUpdatePayload(data)) return;
+    const handleChannelConnectionUpdated = (data: unknown) => {
+      const payload = normalizeChannelConnectionUpdatePayload(data);
+      if (!payload) return;
+
       store.dispatch(
         upsertChannelConnection({
-          channel: data.channel,
-          authMode: data.authMode,
+          channel: payload.channel,
+          authMode: payload.authMode,
           patch: {
-            status: data.status,
-            lastError: data.lastError,
-            capabilities: data.capabilities ?? [],
+            status: payload.status,
+            lastError: payload.lastError,
+            ...(payload.capabilities !== undefined && { capabilities: payload.capabilities }),
           },
         })
       );
-    });
+    };
+
+    this.socket.on('channel:connection-updated', handleChannelConnectionUpdated);
+    this.socket.on('channel_connection_updated', handleChannelConnectionUpdated);
 
     this.socket.on('channel:managed-dm-verified', data => {
       const obj = data as Record<string, unknown> | null;

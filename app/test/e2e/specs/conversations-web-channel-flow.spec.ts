@@ -9,7 +9,11 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import { navigateToConversations, navigateViaHash, walkOnboarding } from '../helpers/shared-flows';
+import {
+  completeOnboardingIfVisible,
+  navigateToConversations,
+  navigateViaHash,
+} from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 function stepLog(message: string, context?: unknown) {
@@ -64,13 +68,13 @@ suiteRunner('Conversations web channel flow', () => {
     // triggerAuthDeepLinkBypass uses key=auth which sets the token directly
     // (no /telegram/login-tokens/ consume call). Wait for user profile instead.
     stepLog('wait for user profile request');
-    const profileCall = await waitForRequest('GET', '/telegram/me', 15_000);
+    const profileCall = await waitForRequest('GET', '/auth/me', 15_000);
     if (!profileCall) {
       stepLog('user profile call not found — bypass token may have been set without API call');
     }
 
     stepLog('complete onboarding');
-    await walkOnboarding('[ConversationsE2E]');
+    await completeOnboardingIfVisible('[ConversationsE2E]');
 
     stepLog('open conversations');
     // Navigate via hash — "Message OpenHuman" button may not reliably open conversations

@@ -1,5 +1,6 @@
-import type { GetMeResponse, User } from '../../types/api';
+import type { User } from '../../types/api';
 import { apiClient } from '../apiClient';
+import { callCoreCommand } from '../coreCommandClient';
 
 /**
  * User API endpoints
@@ -7,14 +8,10 @@ import { apiClient } from '../apiClient';
 export const userApi = {
   /**
    * Get current authenticated user information
-   * GET /telegram/me
+   * Core RPC -> GET /auth/me
    */
   getMe: async (): Promise<User> => {
-    const response = await apiClient.get<GetMeResponse>('/telegram/me');
-    if (!response.success) {
-      throw new Error(response.error || 'Failed to fetch user data');
-    }
-    return response.data;
+    return await callCoreCommand<User>('openhuman.auth_get_me');
   },
 
   /**

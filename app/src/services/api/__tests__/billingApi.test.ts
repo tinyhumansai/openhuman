@@ -1,26 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { billingApi } from '../billingApi';
+const mockCallCoreCommand = vi.fn();
 
-// Mock the apiClient module
-const mockGet = vi.fn();
-const mockPost = vi.fn();
-
-vi.mock('../../apiClient', () => ({
-  apiClient: {
-    get: (...args: unknown[]) => mockGet(...args),
-    post: (...args: unknown[]) => mockPost(...args),
-  },
+vi.mock('../../coreCommandClient', () => ({
+  callCoreCommand: (...args: unknown[]) => mockCallCoreCommand(...args),
 }));
+
+const { billingApi } = await import('../billingApi');
 
 describe('billingApi', () => {
   beforeEach(() => {
-    mockGet.mockReset();
-    mockPost.mockReset();
+    mockCallCoreCommand.mockReset();
   });
 
   describe('getCurrentPlan', () => {
-    it('should call GET /payments/stripe/currentPlan', async () => {
+    it('should call openhuman.billing_get_current_plan', async () => {
       const planData = {
         plan: 'BASIC',
         hasActiveSubscription: true,
@@ -29,13 +23,17 @@ describe('billingApi', () => {
           id: 'sub_123',
           status: 'active',
           currentPeriodEnd: '2026-12-31T00:00:00.000Z',
+          quantity: 1,
         },
+        monthlyBudgetUsd: 20,
+        weeklyBudgetUsd: 10,
+        fiveHourCapUsd: 3,
       };
-      mockGet.mockResolvedValue({ success: true, data: planData });
+      mockCallCoreCommand.mockResolvedValue(planData);
 
       const result = await billingApi.getCurrentPlan();
 
-      expect(mockGet).toHaveBeenCalledWith('/payments/stripe/currentPlan');
+      expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_get_current_plan');
       expect(result).toEqual(planData);
     });
 
@@ -45,60 +43,58 @@ describe('billingApi', () => {
         hasActiveSubscription: false,
         planExpiry: null,
         subscription: null,
+        monthlyBudgetUsd: 1,
+        weeklyBudgetUsd: 0.5,
+        fiveHourCapUsd: 0.15,
       };
-      mockGet.mockResolvedValue({ success: true, data: planData });
+      mockCallCoreCommand.mockResolvedValue(planData);
 
       const result = await billingApi.getCurrentPlan();
 
       expect(result.plan).toBe('FREE');
       expect(result.hasActiveSubscription).toBe(false);
       expect(result.subscription).toBeNull();
+      expect(result.weeklyBudgetUsd).toBe(0.5);
     });
 
-    it('should propagate errors from apiClient', async () => {
-      mockGet.mockRejectedValue({ success: false, error: 'Unauthorized' });
+    it('should propagate errors', async () => {
+      mockCallCoreCommand.mockRejectedValue(new Error('Unauthorized'));
 
-      await expect(billingApi.getCurrentPlan()).rejects.toEqual({
-        success: false,
-        error: 'Unauthorized',
-      });
+      await expect(billingApi.getCurrentPlan()).rejects.toThrow('Unauthorized');
     });
   });
 
   describe('purchasePlan', () => {
-    it('should call POST /payments/stripe/purchasePlan with plan ID', async () => {
+    it('should call openhuman.billing_purchase_plan with plan ID', async () => {
       const checkoutData = {
         checkoutUrl: 'https://checkout.stripe.com/c/pay/cs_test_123',
         sessionId: 'cs_test_123',
       };
-      mockPost.mockResolvedValue({ success: true, data: checkoutData });
+      mockCallCoreCommand.mockResolvedValue(checkoutData);
 
       const result = await billingApi.purchasePlan('BASIC_MONTHLY');
 
-      expect(mockPost).toHaveBeenCalledWith('/payments/stripe/purchasePlan', {
+      expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_purchase_plan', {
         plan: 'BASIC_MONTHLY',
       });
       expect(result).toEqual(checkoutData);
     });
 
     it('should pass yearly plan IDs correctly', async () => {
-      mockPost.mockResolvedValue({
-        success: true,
-        data: { checkoutUrl: 'https://stripe.com/...', sessionId: 'cs_456' },
+      mockCallCoreCommand.mockResolvedValue({
+        checkoutUrl: 'https://stripe.com/...',
+        sessionId: 'cs_456',
       });
 
       await billingApi.purchasePlan('PRO_YEARLY');
 
-      expect(mockPost).toHaveBeenCalledWith('/payments/stripe/purchasePlan', {
+      expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_purchase_plan', {
         plan: 'PRO_YEARLY',
       });
     });
 
     it('should return null checkoutUrl when session creation has no URL', async () => {
-      mockPost.mockResolvedValue({
-        success: true,
-        data: { checkoutUrl: null, sessionId: 'cs_789' },
-      });
+      mockCallCoreCommand.mockResolvedValue({ checkoutUrl: null, sessionId: 'cs_789' });
 
       const result = await billingApi.purchasePlan('BASIC_MONTHLY');
 
@@ -106,31 +102,27 @@ describe('billingApi', () => {
       expect(result.sessionId).toBe('cs_789');
     });
 
-    it('should propagate errors from apiClient', async () => {
-      mockPost.mockRejectedValue({ success: false, error: 'Invalid plan' });
+    it('should propagate errors', async () => {
+      mockCallCoreCommand.mockRejectedValue(new Error('Invalid plan'));
 
-      await expect(billingApi.purchasePlan('BASIC_MONTHLY')).rejects.toEqual({
-        success: false,
-        error: 'Invalid plan',
-      });
+      await expect(billingApi.purchasePlan('BASIC_MONTHLY')).rejects.toThrow('Invalid plan');
     });
   });
 
   describe('createPortalSession', () => {
-    it('should call POST /payments/stripe/portal with no body', async () => {
+    it('should call openhuman.billing_create_portal_session', async () => {
       const portalData = { portalUrl: 'https://billing.stripe.com/p/session/test_123' };
-      mockPost.mockResolvedValue({ success: true, data: portalData });
+      mockCallCoreCommand.mockResolvedValue(portalData);
 
       const result = await billingApi.createPortalSession();
 
-      expect(mockPost).toHaveBeenCalledWith('/payments/stripe/portal');
+      expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_create_portal_session');
       expect(result).toEqual(portalData);
     });
 
     it('should return the portal URL string', async () => {
-      mockPost.mockResolvedValue({
-        success: true,
-        data: { portalUrl: 'https://billing.stripe.com/session/abc' },
+      mockCallCoreCommand.mockResolvedValue({
+        portalUrl: 'https://billing.stripe.com/session/abc',
       });
 
       const result = await billingApi.createPortalSession();
@@ -138,29 +130,28 @@ describe('billingApi', () => {
       expect(result.portalUrl).toBe('https://billing.stripe.com/session/abc');
     });
 
-    it('should propagate errors from apiClient', async () => {
-      mockPost.mockRejectedValue({ success: false, error: 'Unable to resolve Stripe customer' });
+    it('should propagate errors', async () => {
+      mockCallCoreCommand.mockRejectedValue(new Error('Unable to resolve Stripe customer'));
 
-      await expect(billingApi.createPortalSession()).rejects.toEqual({
-        success: false,
-        error: 'Unable to resolve Stripe customer',
-      });
+      await expect(billingApi.createPortalSession()).rejects.toThrow(
+        'Unable to resolve Stripe customer'
+      );
     });
   });
 
   describe('createCoinbaseCharge', () => {
-    it('should call POST /payments/coinbase/charge with plan and interval', async () => {
+    it('should call openhuman.billing_create_coinbase_charge with plan and interval', async () => {
       const chargeData = {
         gatewayTransactionId: 'charge_abc',
         hostedUrl: 'https://commerce.coinbase.com/charges/abc',
         status: 'created',
         expiresAt: '2026-01-31T12:15:00.000Z',
       };
-      mockPost.mockResolvedValue({ success: true, data: chargeData });
+      mockCallCoreCommand.mockResolvedValue(chargeData);
 
       const result = await billingApi.createCoinbaseCharge('BASIC', 'annual');
 
-      expect(mockPost).toHaveBeenCalledWith('/payments/coinbase/charge', {
+      expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_create_coinbase_charge', {
         plan: 'BASIC',
         interval: 'annual',
       });
@@ -168,19 +159,16 @@ describe('billingApi', () => {
     });
 
     it('should default interval to annual', async () => {
-      mockPost.mockResolvedValue({
-        success: true,
-        data: {
-          gatewayTransactionId: 'charge_xyz',
-          hostedUrl: 'https://commerce.coinbase.com/charges/xyz',
-          status: 'created',
-          expiresAt: '2026-01-31T12:15:00.000Z',
-        },
+      mockCallCoreCommand.mockResolvedValue({
+        gatewayTransactionId: 'charge_xyz',
+        hostedUrl: 'https://commerce.coinbase.com/charges/xyz',
+        status: 'created',
+        expiresAt: '2026-01-31T12:15:00.000Z',
       });
 
       await billingApi.createCoinbaseCharge('PRO');
 
-      expect(mockPost).toHaveBeenCalledWith('/payments/coinbase/charge', {
+      expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_create_coinbase_charge', {
         plan: 'PRO',
         interval: 'annual',
       });
@@ -188,14 +176,11 @@ describe('billingApi', () => {
 
     it('should return hosted URL for payment redirect', async () => {
       const expectedUrl = 'https://commerce.coinbase.com/charges/test';
-      mockPost.mockResolvedValue({
-        success: true,
-        data: {
-          gatewayTransactionId: 'charge_t',
-          hostedUrl: expectedUrl,
-          status: 'created',
-          expiresAt: '2026-01-31T12:15:00.000Z',
-        },
+      mockCallCoreCommand.mockResolvedValue({
+        gatewayTransactionId: 'charge_t',
+        hostedUrl: expectedUrl,
+        status: 'created',
+        expiresAt: '2026-01-31T12:15:00.000Z',
       });
 
       const result = await billingApi.createCoinbaseCharge('BASIC', 'annual');
@@ -203,16 +188,14 @@ describe('billingApi', () => {
       expect(result.hostedUrl).toBe(expectedUrl);
     });
 
-    it('should propagate errors from apiClient', async () => {
-      mockPost.mockRejectedValue({
-        success: false,
-        error: 'Crypto payments are only available for annual plans',
-      });
+    it('should propagate errors', async () => {
+      mockCallCoreCommand.mockRejectedValue(
+        new Error('Crypto payments are only available for annual plans')
+      );
 
-      await expect(billingApi.createCoinbaseCharge('BASIC', 'annual')).rejects.toEqual({
-        success: false,
-        error: 'Crypto payments are only available for annual plans',
-      });
+      await expect(billingApi.createCoinbaseCharge('BASIC', 'annual')).rejects.toThrow(
+        'Crypto payments are only available for annual plans'
+      );
     });
   });
 });

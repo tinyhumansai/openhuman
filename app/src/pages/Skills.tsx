@@ -29,13 +29,13 @@ import {
 function statusDotClass(status: SkillConnectionStatus): string {
   switch (status) {
     case 'connected':
-      return 'bg-sage-400';
+      return 'bg-sage-500';
     case 'connecting':
-      return 'bg-amber-400 animate-pulse';
+      return 'bg-amber-500 animate-pulse';
     case 'error':
-      return 'bg-coral-400';
+      return 'bg-coral-500';
     default:
-      return 'bg-stone-600';
+      return 'bg-stone-400';
   }
 }
 
@@ -97,16 +97,16 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
   };
 
   return (
-    <div className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] transition-colors">
+    <div className="flex items-center gap-3 p-3 rounded-xl bg-white border border-stone-100 hover:bg-stone-50 transition-colors">
       {/* Icon */}
-      <div className="w-8 h-8 flex items-center justify-center text-white opacity-70 flex-shrink-0">
+      <div className="w-8 h-8 flex items-center justify-center text-stone-600 flex-shrink-0">
         {skill.icon || <DefaultIcon />}
       </div>
 
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white truncate">{skill.name}</span>
+          <span className="text-sm font-medium text-stone-900 truncate">{skill.name}</span>
           <div
             className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass(connectionStatus)}`}
           />
@@ -119,7 +119,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
         )}
         {isSyncing && (
           <div className="mt-1.5">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-800">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
               {syncUi.progressPercent != null ? (
                 <div
                   className="h-full rounded-full bg-primary-400 transition-all duration-300"
@@ -130,7 +130,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
               )}
             </div>
             {syncUi.progressMessage && (
-              <p className="text-[11px] text-primary-300 truncate mt-1">{syncUi.progressMessage}</p>
+              <p className="text-[11px] text-primary-600 truncate mt-1">{syncUi.progressMessage}</p>
             )}
             {syncUi.metricsText && (
               <p className="text-[11px] text-stone-500 truncate mt-0.5">{syncUi.metricsText}</p>
@@ -147,7 +147,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
             <button
               onClick={isSyncing ? undefined : handleSync}
               disabled={isSyncing}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-40"
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors disabled:opacity-40"
               title="Sync">
               <svg
                 className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
@@ -168,7 +168,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
                 e.stopPropagation();
                 onSetup();
               }}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-white hover:bg-white/10 transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
               title="Settings">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -191,7 +191,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
                 e.stopPropagation();
                 setDebugOpen(true);
               }}
-              className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-amber-400 hover:bg-amber-500/10 transition-colors"
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"
               title="Debug">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -278,33 +278,30 @@ export default function Skills() {
   };
 
   return (
-    <div className="min-h-full relative">
-      <div className="relative z-10 min-h-full flex flex-col">
-        <div className="flex-1 p-6">
-          <div className="max-w-2xl mx-auto">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-6">
-              <h1 className="text-xl font-bold text-white">Skills</h1>
-            </div>
-
-            {/* Active Skills */}
-            <div className="animate-fade-up" style={{ animationDelay: '100ms' }}>
-              <div className="mb-3">
-                <h2 className="text-sm font-semibold text-white opacity-80">Active Skills</h2>
+    <div className="min-h-full bg-[#F5F5F5]">
+      <div className="min-h-full flex flex-col">
+        <div className="flex-1 flex items-start justify-center p-4 pt-6">
+          <div className="max-w-lg w-full">
+            {/* Main card */}
+            <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
+              {/* Header */}
+              <div className="mb-5">
+                <h1 className="text-xl font-bold text-stone-900">Skills</h1>
               </div>
 
+              {/* Skills list */}
               {skillsLoading || installing ? (
-                <div className="glass rounded-2xl p-6 text-center">
-                  <p className="text-sm text-stone-500">
+                <div className="py-8 text-center">
+                  <p className="text-sm text-stone-400">
                     {installing ? `Installing ${installing}...` : 'Loading skills...'}
                   </p>
                 </div>
               ) : sortedSkillsList.length === 0 ? (
-                <div className="glass rounded-2xl p-6 text-center">
-                  <p className="text-sm text-stone-500">No skills discovered</p>
+                <div className="py-8 text-center">
+                  <p className="text-sm text-stone-400">No skills discovered</p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {sortedSkillsList.map(skill => (
                     <SkillCard key={skill.id} skill={skill} onSetup={() => openSkillSetup(skill)} />
                   ))}

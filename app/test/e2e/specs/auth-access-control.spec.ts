@@ -96,9 +96,9 @@ async function performFullLogin(token = 'e2e-test-token') {
     );
     throw new Error('Auth consume call missing in performFullLogin');
   }
-  // The app may call /telegram/me or /settings for user profile
+  // The app may call /auth/me or /settings for user profile
   const meCall =
-    (await waitForRequest('GET', '/telegram/me', 10_000)) ||
+    (await waitForRequest('GET', '/auth/me', 10_000)) ||
     (await waitForRequest('GET', '/settings', 10_000));
   if (!meCall) {
     console.log(

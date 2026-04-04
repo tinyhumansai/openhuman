@@ -2,12 +2,12 @@ import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
+import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { skillManager } from '../lib/skills/manager';
 import { emitSkillStateChange } from '../lib/skills/skillEvents';
 import { startSkill } from '../lib/skills/skillsApi';
 import { consumeLoginToken } from '../services/api/authApi';
-import { store } from '../store';
-import { setToken } from '../store/authSlice';
+import { storeSession } from './tauriCommands';
 
 const focusMainWindow = async () => {
   try {
@@ -22,12 +22,12 @@ const focusMainWindow = async () => {
 
 const waitForAuthReadiness = async (maxAttempts = 10, delayMs = 150) => {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const authState = store.getState().auth;
-    if (authState.isAuthBootstrapComplete || authState.token) {
+    const coreState = getCoreStateSnapshot();
+    if (!coreState.isBootstrapping || coreState.snapshot.sessionToken) {
       console.log('[DeepLink][auth] app ready', {
         attempt,
-        hasToken: Boolean(authState.token),
-        authBootstrapComplete: authState.isAuthBootstrapComplete,
+        hasToken: Boolean(coreState.snapshot.sessionToken),
+        authBootstrapComplete: !coreState.isBootstrapping,
       });
       return;
     }
@@ -56,12 +56,12 @@ const handleAuthDeepLink = async (parsed: URL) => {
   await waitForAuthReadiness();
 
   if (key === 'auth') {
-    store.dispatch(setToken(token));
+    await storeSession(token, {});
     console.log('[DeepLink][auth] bypass token applied');
     window.location.hash = '/home';
   } else {
     const jwtToken = await consumeLoginToken(token);
-    store.dispatch(setToken(jwtToken));
+    await storeSession(jwtToken, {});
     console.log('[DeepLink][auth] login token consumed');
     window.location.hash = '/home';
   }

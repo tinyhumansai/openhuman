@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 
+import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { fetchInvites } from '../../../store/teamSlice';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -11,27 +10,30 @@ const TeamInvitesPanel = () => {
   const { teamId } = useParams<{ teamId: string }>();
   const location = useLocation();
   const { navigateBack } = useSettingsNavigation();
-  const dispatch = useAppDispatch();
-  const user = useAppSelector(state => state.user.user);
-  const { teams, invites, isLoadingInvites } = useAppSelector(state => state.team);
+  const { snapshot, teams, teamInvitesById, refreshTeamInvites } = useCoreState();
+  const user = snapshot.currentUser;
 
   // Check if we're in team management context (has teamId in URL)
   const isInManagementContext = location.pathname.includes('/team/manage/');
   const currentTeamId = isInManagementContext ? teamId : user?.activeTeamId;
   const currentTeam = teams.find(t => t.team._id === currentTeamId);
   const isAdmin = currentTeam?.role.toUpperCase() === 'ADMIN';
+  const invites = currentTeamId ? (teamInvitesById[currentTeamId] ?? []) : [];
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingInvites, setIsLoadingInvites] = useState(false);
 
   // Confirmation modal state
   const [inviteToRevoke, setInviteToRevoke] = useState<{ id: string; code: string } | null>(null);
 
   useEffect(() => {
-    if (currentTeamId) dispatch(fetchInvites(currentTeamId));
-  }, [currentTeamId, dispatch]);
+    if (!currentTeamId) return;
+    setIsLoadingInvites(true);
+    void refreshTeamInvites(currentTeamId).finally(() => setIsLoadingInvites(false));
+  }, [currentTeamId, refreshTeamInvites]);
 
   const handleGenerate = async () => {
     if (!currentTeamId) return;
@@ -39,7 +41,7 @@ const TeamInvitesPanel = () => {
     setError(null);
     try {
       await teamApi.createInvite(currentTeamId);
-      dispatch(fetchInvites(currentTeamId));
+      await refreshTeamInvites(currentTeamId);
     } catch (err) {
       setError(
         err && typeof err === 'object' && 'error' in err
@@ -74,7 +76,7 @@ const TeamInvitesPanel = () => {
 
     try {
       await teamApi.revokeInvite(currentTeamId, inviteToRevoke.id);
-      dispatch(fetchInvites(currentTeamId));
+      await refreshTeamInvites(currentTeamId);
       setInviteToRevoke(null);
     } catch (err) {
       setError(
@@ -204,8 +206,8 @@ const TeamInvitesPanel = () => {
                     key={invite._id}
                     className={`rounded-xl border p-3 ${
                       isInactive
-                        ? 'border-stone-700/30 bg-stone-800/20 opacity-60'
-                        : 'border-stone-700/50 bg-stone-800/40'
+                        ? 'border-stone-200 bg-stone-50 opacity-60'
+                        : 'border-stone-200 bg-white'
                     }`}>
                     <div className="flex items-center justify-between mb-2">
                       {/* Code with status label */}
@@ -213,8 +215,8 @@ const TeamInvitesPanel = () => {
                         <code
                           className={`text-sm font-mono px-2 py-1 rounded-lg ${
                             isInactive
-                              ? 'text-stone-500 bg-stone-900/30'
-                              : 'text-white bg-stone-900/60'
+                              ? 'text-stone-500 bg-stone-100'
+                              : 'text-stone-900 bg-stone-200'
                           }`}>
                           {invite.code}
                         </code>
@@ -236,7 +238,7 @@ const TeamInvitesPanel = () => {
                           disabled={status !== 'active'}
                           className={`p-1.5 rounded-lg transition-colors ${
                             status === 'active'
-                              ? 'text-stone-400 hover:text-white hover:bg-stone-700/50'
+                              ? 'text-stone-500 hover:text-stone-900 hover:bg-stone-100'
                               : 'text-stone-600 cursor-not-allowed'
                           }`}
                           aria-label="Copy invite code">
@@ -329,9 +331,9 @@ const TeamInvitesPanel = () => {
 
           {/* Revoke Invite Confirmation Modal */}
           {inviteToRevoke && (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-stone-900 rounded-2xl p-6 w-full max-w-md border border-stone-700/50">
-                <h3 className="text-lg font-semibold text-white mb-4">Revoke Invite Code</h3>
+            <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
+                <h3 className="text-lg font-semibold text-stone-900 mb-4">Revoke Invite Code</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -343,7 +345,7 @@ const TeamInvitesPanel = () => {
                   <div className="text-sm text-stone-400">
                     <p>
                       Are you sure you want to revoke the invite code{' '}
-                      <code className="text-white bg-stone-800/60 px-1.5 py-0.5 rounded font-mono text-xs">
+                      <code className="text-stone-900 bg-stone-100 px-1.5 py-0.5 rounded font-mono text-xs">
                         {inviteToRevoke.code}
                       </code>
                       ?
@@ -357,7 +359,7 @@ const TeamInvitesPanel = () => {
                     <button
                       onClick={() => setInviteToRevoke(null)}
                       disabled={revokingId === inviteToRevoke.id}
-                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 transition-colors disabled:opacity-50">
+                      className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 transition-colors disabled:opacity-50">
                       Cancel
                     </button>
                     <button

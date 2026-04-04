@@ -1,4 +1,5 @@
 use crate::openhuman::config::Config;
+use crate::openhuman::local_ai::device::DeviceProfile;
 use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::types::LocalAiStatus;
 
@@ -97,8 +98,11 @@ impl LocalAiService {
 
     pub async fn bootstrap(&self, config: &Config) {
         let _guard = self.bootstrap_lock.lock().await;
-        if !config.local_ai.enabled {
-            *self.status.lock() = LocalAiStatus::disabled(config);
+        let device = crate::openhuman::local_ai::device::detect_device_profile();
+        let effective_config = config_with_recommended_tier_if_unselected(config, &device);
+
+        if !effective_config.local_ai.enabled {
+            *self.status.lock() = LocalAiStatus::disabled(&effective_config);
             return;
         }
 
@@ -112,13 +116,13 @@ impl LocalAiService {
 
         {
             let mut status = self.status.lock();
-            status.model_id = model_ids::effective_chat_model_id(config);
-            status.chat_model_id = model_ids::effective_chat_model_id(config);
-            status.vision_model_id = model_ids::effective_vision_model_id(config);
-            status.embedding_model_id = model_ids::effective_embedding_model_id(config);
-            status.stt_model_id = model_ids::effective_stt_model_id(config);
-            status.tts_voice_id = model_ids::effective_tts_voice_id(config);
-            status.quantization = model_ids::effective_quantization(config);
+            status.model_id = model_ids::effective_chat_model_id(&effective_config);
+            status.chat_model_id = model_ids::effective_chat_model_id(&effective_config);
+            status.vision_model_id = model_ids::effective_vision_model_id(&effective_config);
+            status.embedding_model_id = model_ids::effective_embedding_model_id(&effective_config);
+            status.stt_model_id = model_ids::effective_stt_model_id(&effective_config);
+            status.tts_voice_id = model_ids::effective_tts_voice_id(&effective_config);
+            status.quantization = model_ids::effective_quantization(&effective_config);
             status.state = "loading".to_string();
             status.warning = Some("Connecting to local Ollama runtime".to_string());
             status.download_progress = None;
@@ -132,11 +136,11 @@ impl LocalAiService {
             status.backend_reason = Some("Inference delegated to Ollama runtime".to_string());
             status.model_path = Some(format!(
                 "ollama://{}",
-                model_ids::effective_chat_model_id(config)
+                model_ids::effective_chat_model_id(&effective_config)
             ));
         }
 
-        if let Err(first_err) = self.ensure_ollama_server(config).await {
+        if let Err(first_err) = self.ensure_ollama_server(&effective_config).await {
             log::warn!(
                 "[local_ai] ensure_ollama_server failed, retrying with fresh install: {first_err}"
             );
@@ -148,7 +152,7 @@ impl LocalAiService {
                 status.error_detail = None;
                 status.error_category = None;
             }
-            if let Err(err) = self.ensure_ollama_server_fresh(config).await {
+            if let Err(err) = self.ensure_ollama_server_fresh(&effective_config).await {
                 let mut status = self.status.lock();
                 status.state = "degraded".to_string();
                 let is_install_error = status.error_category.as_deref() == Some("install");
@@ -156,24 +160,24 @@ impl LocalAiService {
                     status.warning = Some(err);
                 } else {
                     status.error_category = Some("server".to_string());
-                    status.warning = Some(format_degraded_warning(&err, config));
+                    status.warning = Some(format_degraded_warning(&err, &effective_config));
                 }
                 return;
             }
         }
 
-        if let Err(err) = self.ensure_models_available(config).await {
+        if let Err(err) = self.ensure_models_available(&effective_config).await {
             let mut status = self.status.lock();
             status.state = "degraded".to_string();
             status.error_category = Some("download".to_string());
-            status.warning = Some(format_degraded_warning(&err, config));
+            status.warning = Some(format_degraded_warning(&err, &effective_config));
             return;
         }
 
         // Attempt to load whisper model in-process if configured (blocking I/O).
-        if config.local_ai.whisper_in_process {
+        if effective_config.local_ai.whisper_in_process {
             if let Ok(model_path) =
-                crate::openhuman::local_ai::paths::resolve_stt_model_path(config)
+                crate::openhuman::local_ai::paths::resolve_stt_model_path(&effective_config)
             {
                 let model = std::path::PathBuf::from(&model_path);
                 let handle = self.whisper.clone();
@@ -201,20 +205,20 @@ impl LocalAiService {
 
         let mut status = self.status.lock();
         status.state = "ready".to_string();
-        status.vision_state = if config.local_ai.preload_vision_model {
+        status.vision_state = if effective_config.local_ai.preload_vision_model {
             "ready".to_string()
         } else {
             "idle".to_string()
         };
-        status.embedding_state = if config.local_ai.preload_embedding_model {
+        status.embedding_state = if effective_config.local_ai.preload_embedding_model {
             "ready".to_string()
         } else {
             "idle".to_string()
         };
-        if !config.local_ai.preload_stt_model {
+        if !effective_config.local_ai.preload_stt_model {
             status.stt_state = "idle".to_string();
         }
-        if !config.local_ai.preload_tts_voice {
+        if !effective_config.local_ai.preload_tts_voice {
             status.tts_state = "idle".to_string();
         }
         status.warning = None;
@@ -227,7 +231,7 @@ impl LocalAiService {
         status.eta_seconds = None;
         status.model_path = Some(format!(
             "ollama://{}",
-            model_ids::effective_chat_model_id(config)
+            model_ids::effective_chat_model_id(&effective_config)
         ));
     }
 
@@ -247,6 +251,39 @@ impl LocalAiService {
             }
         }
     }
+}
+
+fn config_with_recommended_tier_if_unselected(config: &Config, device: &DeviceProfile) -> Config {
+    let selected_tier = config
+        .local_ai
+        .selected_tier
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let current_tier =
+        crate::openhuman::local_ai::presets::current_tier_from_config(&config.local_ai);
+    if selected_tier.is_some()
+        || matches!(
+            current_tier,
+            crate::openhuman::local_ai::presets::ModelTier::Low
+                | crate::openhuman::local_ai::presets::ModelTier::Medium
+                | crate::openhuman::local_ai::presets::ModelTier::High
+        )
+    {
+        return config.clone();
+    }
+
+    let recommended = crate::openhuman::local_ai::presets::recommend_tier(device);
+    let mut effective_config = config.clone();
+    crate::openhuman::local_ai::presets::apply_preset_to_config(
+        &mut effective_config.local_ai,
+        recommended,
+    );
+    tracing::debug!(
+        ?recommended,
+        "[local_ai] bootstrap: no tier selected, using recommended preset"
+    );
+    effective_config
 }
 
 /// Append a tier step-down hint when the current tier is Medium or High.
@@ -281,5 +318,50 @@ mod tests {
 
         assert!(service.should_run_memory_autosummary(&config));
         assert!(!service.should_run_memory_autosummary(&config));
+    }
+
+    #[test]
+    fn bootstrap_uses_recommended_tier_when_selection_missing() {
+        let config = Config::default();
+        let device = DeviceProfile {
+            total_ram_bytes: 4 * 1024 * 1024 * 1024,
+            cpu_count: 4,
+            cpu_brand: String::new(),
+            os_name: String::new(),
+            os_version: String::new(),
+            has_gpu: false,
+            gpu_description: None,
+        };
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        // If config already matches a built-in preset, preserve user defaults
+        // and keep selected_tier unset.
+        assert!(effective.local_ai.selected_tier.is_none());
+        assert_eq!(
+            effective.local_ai.chat_model_id,
+            config.local_ai.chat_model_id
+        );
+    }
+
+    #[test]
+    fn bootstrap_keeps_existing_selected_tier() {
+        let mut config = Config::default();
+        config.local_ai.selected_tier = Some("high".to_string());
+        let original_chat_model = config.local_ai.chat_model_id.clone();
+        let device = DeviceProfile {
+            total_ram_bytes: 4 * 1024 * 1024 * 1024,
+            cpu_count: 4,
+            cpu_brand: String::new(),
+            os_name: String::new(),
+            os_version: String::new(),
+            has_gpu: false,
+            gpu_description: None,
+        };
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert_eq!(effective.local_ai.selected_tier.as_deref(), Some("high"));
+        assert_eq!(effective.local_ai.chat_model_id, original_chat_model);
     }
 }

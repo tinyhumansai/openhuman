@@ -32,6 +32,10 @@ export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;
 /** Backend API URL (web fallback when core RPC is unavailable). */
 export const BACKEND_URL = import.meta.env.VITE_BACKEND_URL as string | undefined;
 
+/** Telegram bot username used for managed DM linking when backend does not return a launch URL. */
+export const TELEGRAM_BOT_USERNAME =
+  (import.meta.env.VITE_TELEGRAM_BOT_USERNAME as string | undefined) || 'openhuman_bot';
+
 /** Dev only: auto-inject JWT token to skip login flow. */
 export const DEV_JWT_TOKEN = import.meta.env.DEV
   ? (import.meta.env.VITE_DEV_JWT_TOKEN as string | undefined)

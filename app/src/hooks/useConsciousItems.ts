@@ -15,10 +15,9 @@
  */
 import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useSelector } from 'react-redux';
 
+import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { getBackendUrl } from '../services/backendUrl';
-import type { RootState } from '../store';
 import type {
   ActionableItem,
   ActionableItemPriority,
@@ -143,8 +142,6 @@ export interface UseConsciousItemsResult {
 }
 
 export function useConsciousItems(): UseConsciousItemsResult {
-  const authToken = useSelector((state: RootState) => state.auth.token);
-
   const [items, setItems] = useState<ActionableItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
@@ -159,12 +156,12 @@ export function useConsciousItems(): UseConsciousItemsResult {
     setLoading(true);
     setError(null);
     try {
-      const context = await memoryQueryNamespace(
+      const queryResult = await memoryQueryNamespace(
         'conscious',
         'actionable items priority source title description',
         20
       );
-      const extracted = extractActionablesFromContext(context);
+      const extracted = extractActionablesFromContext(queryResult.text);
       setItems(extracted.map(mapToActionableItem));
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load conscious items';
@@ -176,13 +173,14 @@ export function useConsciousItems(): UseConsciousItemsResult {
   }, []);
 
   const triggerAnalysis = useCallback(async () => {
+    const authToken = getCoreStateSnapshot().snapshot.sessionToken;
     if (!isTauri() || !authToken || isRunning) return;
     try {
       await consciousLoopRun(authToken, await getBackendUrl());
     } catch (err) {
       console.warn('[conscious] Failed to trigger analysis:', err);
     }
-  }, [authToken, isRunning]);
+  }, [isRunning]);
 
   // Initial fetch
   useEffect(() => {

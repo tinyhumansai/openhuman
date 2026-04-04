@@ -2,7 +2,7 @@
 //!
 //! Use [`crate::api::config`] for default base URL and env normalization,
 //! [`crate::api::jwt`] for session token retrieval and bearer formatting,
-//! [`crate::api::rest`] for authenticated REST calls (`/auth/...`, `GET /settings`, etc.),
+//! [`crate::api::rest`] for authenticated REST calls (`/auth/...`, `GET /auth/me`, etc.),
 //! and [`crate::api::socket`] for Socket.IO WebSocket URLs.
 //! [`crate::api::models`] holds shared DTOs for auth and realtime (server-adjacent).
 
@@ -17,7 +17,7 @@ pub use config::{
 };
 pub use jwt::{bearer_authorization_value, get_session_token};
 pub use rest::{
-    decrypt_handoff_blob, user_id_from_settings_payload, BackendOAuthClient, ConnectResponse,
-    IntegrationSummary, IntegrationTokensHandoff,
+    decrypt_handoff_blob, user_id_from_auth_me_payload, user_id_from_profile_payload,
+    BackendOAuthClient, ConnectResponse, IntegrationSummary, IntegrationTokensHandoff,
 };
 pub use socket::websocket_url;

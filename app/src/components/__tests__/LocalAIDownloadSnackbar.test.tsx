@@ -41,4 +41,32 @@ describe('LocalAIDownloadSnackbar', () => {
     // Reset mock
     vi.mocked(tauriCommands.isTauri).mockReturnValue(false);
   });
+
+  it('renders immediately when status reports bootstrap activity before downloads progress catches up', async () => {
+    const tauriCommands = await import('../../utils/tauriCommands');
+    vi.mocked(tauriCommands.isTauri).mockReturnValue(true);
+    vi.mocked(tauriCommands.openhumanLocalAiStatus).mockResolvedValue({
+      result: {
+        state: 'loading',
+        download_progress: 0.42,
+        downloaded_bytes: 512 * 1024 * 1024,
+        total_bytes: 1024 * 1024 * 1024,
+        warning: 'Connecting to local Ollama runtime',
+      } as never,
+      logs: [],
+    });
+    vi.mocked(tauriCommands.openhumanLocalAiDownloadsProgress).mockResolvedValue({
+      result: { state: 'idle', progress: null } as never,
+      logs: [],
+    });
+
+    renderWithProviders(<LocalAIDownloadSnackbar />);
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Loading model...')).toBeInTheDocument();
+      expect(screen.getByText('512 MB / 1.0 GB')).toBeInTheDocument();
+    });
+
+    vi.mocked(tauriCommands.isTauri).mockReturnValue(false);
+  });
 });

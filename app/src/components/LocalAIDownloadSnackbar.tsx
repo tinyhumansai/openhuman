@@ -5,6 +5,7 @@ import {
   formatBytes,
   formatEta,
   progressFromDownloads,
+  progressFromStatus,
   statusLabel,
 } from '../utils/localAiHelpers';
 import {
@@ -60,32 +61,47 @@ const LocalAIDownloadSnackbar = () => {
     return () => clearInterval(timerRef.current);
   }, [tauriAvailable]);
 
+  const downloadState = downloads?.state;
+  const currentState =
+    downloadState === 'loading' || downloadState === 'downloading' || downloadState === 'installing'
+      ? downloadState
+      : (status?.state ?? downloadState ?? 'idle');
   const isDownloading =
-    status?.state === 'downloading' ||
-    status?.state === 'installing' ||
-    downloads?.state === 'downloading' ||
+    currentState === 'loading' ||
+    currentState === 'downloading' ||
+    currentState === 'installing' ||
     (downloads?.progress != null && downloads.progress > 0 && downloads.progress < 1);
 
   // Auto-show when a new download starts: track prior state in a ref and
   // reset dismissed on the transition edge (not-downloading → downloading).
   const wasDownloadingRef = useRef(false);
-  if (isDownloading && !wasDownloadingRef.current && dismissed) {
-    setDismissed(false);
-  }
-  wasDownloadingRef.current = !!isDownloading;
+  useEffect(() => {
+    if (isDownloading && !wasDownloadingRef.current && dismissed) {
+      setDismissed(false);
+    }
+    wasDownloadingRef.current = !!isDownloading;
+  }, [dismissed, isDownloading]);
 
   const handleDismiss = useCallback(() => setDismissed(true), []);
   const handleToggleCollapse = useCallback(() => setCollapsed(prev => !prev), []);
 
   if (!tauriAvailable || !isDownloading || dismissed) return null;
 
-  const progress = progressFromDownloads(downloads);
+  // Use currentState as the source of truth for the fallback sentinel so the
+  // label (derived from currentState) and the progress bar stay in sync.
+  // We still forward download_progress from status so a real numeric value
+  // isn't lost when the downloads object has no progress field.
+  // When status is absent, progressFromStatus(null) returns 0, which is the
+  // correct baseline while data hasn't arrived yet.
+  const statusForProgress: LocalAiStatus | null = status
+    ? { ...status, state: currentState }
+    : null;
+  const progress = progressFromDownloads(downloads) ?? progressFromStatus(statusForProgress);
   const percent = progress != null ? Math.round(progress * 100) : null;
-  const speed = downloads?.speed_bps;
-  const eta = downloads?.eta_seconds;
-  const downloaded = downloads?.downloaded_bytes;
-  const total = downloads?.total_bytes;
-  const currentState = downloads?.state ?? status?.state ?? 'downloading';
+  const speed = downloads?.speed_bps ?? status?.download_speed_bps;
+  const eta = downloads?.eta_seconds ?? status?.eta_seconds;
+  const downloaded = downloads?.downloaded_bytes ?? status?.downloaded_bytes;
+  const total = downloads?.total_bytes ?? status?.total_bytes;
   const label = statusLabel(currentState);
   const isInstallingPhase = currentState === 'installing';
   const phaseDetail = downloads?.warning ?? status?.warning;

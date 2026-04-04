@@ -14,6 +14,7 @@
 pub mod about_app;
 pub mod accessibility;
 pub mod agent;
+pub mod app_state;
 pub mod approval;
 pub mod autocomplete;
 pub mod billing;

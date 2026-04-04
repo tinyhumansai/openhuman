@@ -173,21 +173,21 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
   const canUninstall = !isOperating && installed;
 
   return (
-    <div className="h-screen w-screen flex items-center justify-center bg-[#0a0d12] text-white px-6">
-      <div className="w-full max-w-xl rounded-2xl border border-white/15 bg-black/30 p-6 space-y-4">
+    <div className="h-screen w-screen flex items-center justify-center bg-stone-50 text-stone-900 px-6">
+      <div className="w-full max-w-xl rounded-2xl border border-stone-200 bg-white p-6 space-y-4">
         <h1 className="text-xl font-semibold">OpenHuman Service Required</h1>
-        <p className="text-sm text-white/70">
+        <p className="text-sm text-stone-600">
           The desktop service must be installed and running before the app can continue. Use the
           buttons below to set up or restart the service.
         </p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-          <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-            <div className="text-white/60">Service</div>
+          <div className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+            <div className="text-stone-600">Service</div>
             <div className="font-medium">{serviceStateText}</div>
           </div>
-          <div className="rounded-lg border border-white/10 bg-white/5 p-3">
-            <div className="text-white/60">Agent Server</div>
+          <div className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+            <div className="text-stone-600">Agent Server</div>
             <div className="font-medium">{agentRunning ? 'Running' : 'Not Running'}</div>
           </div>
         </div>
@@ -251,7 +251,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               canStop
                 ? 'bg-red-600 hover:bg-red-500 text-white cursor-pointer'
-                : 'bg-white/5 text-white/30 cursor-not-allowed'
+                : 'bg-stone-50 text-stone-300 cursor-not-allowed'
             }`}>
             Stop Service
           </button>
@@ -265,7 +265,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               canRestart
                 ? 'bg-cyan-700 hover:bg-cyan-600 text-white cursor-pointer'
-                : 'bg-white/5 text-white/30 cursor-not-allowed'
+                : 'bg-stone-50 text-stone-300 cursor-not-allowed'
             }`}>
             Restart Service
           </button>
@@ -279,7 +279,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               canUninstall
                 ? 'bg-amber-700 hover:bg-amber-600 text-white cursor-pointer'
-                : 'bg-white/5 text-white/30 cursor-not-allowed'
+                : 'bg-stone-50 text-stone-300 cursor-not-allowed'
             }`}>
             Uninstall Service
           </button>
@@ -289,7 +289,7 @@ const ServiceBlockingGate = ({ children }: ServiceBlockingGateProps) => {
               console.warn('[ServiceGate] REFRESH clicked');
               void refreshStatus({ showChecking: true, clearError: true });
             }}
-            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-white/10 hover:bg-white/20 text-white cursor-pointer">
+            className="px-3 py-2 rounded-lg text-sm font-medium transition-colors bg-stone-100 hover:bg-stone-200 text-stone-900 cursor-pointer">
             Refresh
           </button>
         </div>

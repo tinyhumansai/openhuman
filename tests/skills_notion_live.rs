@@ -129,7 +129,7 @@ async fn notion_live_with_real_data() {
         .unwrap();
 
     let health = client
-        .get(format!("{backend_url}/settings"))
+        .get(format!("{backend_url}/auth/me"))
         .header("Authorization", format!("Bearer {jwt_token}"))
         .send()
         .await;
@@ -138,7 +138,7 @@ async fn notion_live_with_real_data() {
         Ok(resp) => {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            eprintln!("  GET /settings → HTTP {status}");
+            eprintln!("  GET /auth/me → HTTP {status}");
             if status.is_success() {
                 eprintln!("  ✓ Backend reachable, JWT valid");
                 eprintln!("  Body: {}...", truncate_str(&body, 200));

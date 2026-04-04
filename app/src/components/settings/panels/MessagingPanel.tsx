@@ -3,6 +3,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useChannelDefinitions } from '../../../hooks/useChannelDefinitions';
 import { AUTH_MODE_LABELS } from '../../../lib/channels/definitions';
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
+import { createChannelLinkToken } from '../../../services/api/authApi';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import {
@@ -18,12 +19,54 @@ import type {
   ChannelConnectionStatus,
   ChannelType,
 } from '../../../types/channels';
+import { BACKEND_URL, TELEGRAM_BOT_USERNAME } from '../../../utils/config';
 import { openUrl } from '../../../utils/openUrl';
-import ChannelCapabilities from '../../channels/ChannelCapabilities';
 import ChannelFieldInput from '../../channels/ChannelFieldInput';
 import ChannelStatusBadge from '../../channels/ChannelStatusBadge';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+
+function normalizeBaseUrl(baseUrl?: string): string {
+  return (baseUrl || 'https://api.tinyhumans.ai').trim().replace(/\/+$/, '');
+}
+
+function buildManagedChannelLaunchUrl(
+  channel: ChannelType,
+  token: string,
+  launchUrl?: string
+): string | undefined {
+  if (launchUrl) return launchUrl;
+
+  if (channel === 'telegram') {
+    return `https://t.me/${encodeURIComponent(TELEGRAM_BOT_USERNAME)}?start=${encodeURIComponent(token)}`;
+  }
+
+  if (channel === 'discord') {
+    return `${normalizeBaseUrl(BACKEND_URL)}/auth/discord/connect?linkToken=${encodeURIComponent(token)}`;
+  }
+
+  return undefined;
+}
+
+function buildManagedChannelInstruction(
+  channel: ChannelType,
+  token: string,
+  launchUrl?: string
+): string {
+  if (channel === 'telegram') {
+    return launchUrl
+      ? 'Continue in Telegram to finish linking your account.'
+      : `Open Telegram and message @${TELEGRAM_BOT_USERNAME} with this link token: ${token}`;
+  }
+
+  if (channel === 'discord') {
+    return launchUrl
+      ? 'Continue in Discord to finish linking your account.'
+      : `Use this Discord link token to continue linking your account: ${token}`;
+  }
+
+  return `Use this link token to continue: ${token}`;
+}
 
 const MessagingPanel = () => {
   const { navigateBack } = useSettingsNavigation();
@@ -34,6 +77,7 @@ const MessagingPanel = () => {
   const [error, setError] = useState<string | null>(null);
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
   const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
+  const [pendingInstruction, setPendingInstruction] = useState<Record<string, string>>({});
 
   const recommendedRoute = useMemo(() => {
     const channel = channelConnections.defaultMessagingChannel;
@@ -97,22 +141,69 @@ const MessagingPanel = () => {
           if (val) credentials[field.key] = val;
         }
 
+        const isManagedLinkFlow =
+          (channel === 'telegram' && spec.mode === 'managed_dm') ||
+          (channel === 'discord' && spec.mode === 'oauth');
+
+        if (isManagedLinkFlow) {
+          try {
+            const link = await createChannelLinkToken(channel);
+            const launchUrl = buildManagedChannelLaunchUrl(channel, link.token, link.launchUrl);
+            const instruction = buildManagedChannelInstruction(channel, link.token, launchUrl);
+
+            dispatch(
+              upsertChannelConnection({
+                channel,
+                authMode: spec.mode,
+                patch: { status: 'connecting' },
+              })
+            );
+
+            setPendingInstruction(prev => ({ ...prev, [key]: instruction }));
+
+            if (launchUrl) {
+              try {
+                await openUrl(launchUrl);
+              } catch {
+                // Opening the URL failed — include the URL so the user can copy it manually.
+                setPendingInstruction(prev => ({
+                  ...prev,
+                  [key]: `${instruction} (URL: ${launchUrl})`,
+                }));
+              }
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            dispatch(
+              setChannelConnectionStatus({
+                channel,
+                authMode: spec.mode,
+                status: 'error',
+                lastError: msg,
+              })
+            );
+            throw e;
+          }
+          return;
+        }
+
         const result = await channelConnectionsApi.connectChannel(channel, {
           authMode: spec.mode,
           credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
         });
 
         if (result.status === 'pending_auth' && result.auth_action) {
+          const instruction = result.message ?? `Initiate ${result.auth_action} flow`;
+
           dispatch(
             upsertChannelConnection({
               channel,
               authMode: spec.mode,
-              patch: {
-                status: 'connecting',
-                lastError: result.message ?? `Initiate ${result.auth_action} flow`,
-              },
+              patch: { status: 'connecting' },
             })
           );
+
+          setPendingInstruction(prev => ({ ...prev, [key]: instruction }));
 
           if (result.auth_action.includes('oauth')) {
             try {
@@ -129,6 +220,12 @@ const MessagingPanel = () => {
           }
           return;
         }
+
+        setPendingInstruction(prev => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
 
         dispatch(
           upsertChannelConnection({
@@ -165,8 +262,8 @@ const MessagingPanel = () => {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* Default channel selector */}
-        <section className="rounded-xl border border-stone-800/60 bg-black/40 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Default Messaging Channel</h3>
+        <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Default Messaging Channel</h3>
           <div className="grid grid-cols-2 gap-2">
             {definitions.map(def => {
               const channelId = def.id as ChannelType;
@@ -180,8 +277,8 @@ const MessagingPanel = () => {
                   disabled={busyKeys[busyKey]}
                   className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                     selected
-                      ? 'border-primary-500/60 bg-primary-500/20 text-primary-200'
-                      : 'border-stone-700 bg-stone-900/30 text-stone-300 hover:border-stone-500'
+                      ? 'border-primary-500/60 bg-primary-50 text-primary-600'
+                      : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
                   }`}>
                   {def.display_name}
                 </button>
@@ -189,7 +286,7 @@ const MessagingPanel = () => {
             })}
           </div>
           <p className="text-xs text-stone-400">
-            Active route: <span className="text-primary-300">{recommendedRoute}</span>
+            Active route: <span className="text-primary-600">{recommendedRoute}</span>
           </p>
         </section>
 
@@ -200,7 +297,7 @@ const MessagingPanel = () => {
         )}
 
         {loading && (
-          <div className="rounded-xl border border-stone-800/60 bg-black/40 p-4 text-sm text-stone-400">
+          <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm text-stone-400">
             Loading channel definitions...
           </div>
         )}
@@ -209,13 +306,21 @@ const MessagingPanel = () => {
           definitions.map(def => {
             const channelId = def.id as ChannelType;
             return (
-              <section
-                key={channelId}
-                className="rounded-xl border border-stone-800/60 bg-black/40 p-4">
+              <section key={channelId} className="rounded-xl border border-stone-200 bg-white p-4">
                 <div className="mb-4">
-                  <h3 className="text-base font-semibold text-white">{def.display_name}</h3>
+                  <h3 className="text-base font-semibold text-stone-900">{def.display_name}</h3>
                   <p className="text-xs text-stone-400">{def.description}</p>
-                  <ChannelCapabilities capabilities={def.capabilities} />
+                  {def.capabilities.length > 0 && (
+                    <div className="flex gap-1.5 mt-2">
+                      {def.capabilities.map(cap => (
+                        <span
+                          key={cap}
+                          className="px-1.5 py-0.5 text-[10px] rounded bg-stone-100 text-stone-500 border border-stone-200">
+                          {cap.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-3">
@@ -224,18 +329,23 @@ const MessagingPanel = () => {
                     const connection = channelConnections.connections[channelId]?.[spec.mode];
                     const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
 
+                    const instruction = pendingInstruction[compositeKey];
+
                     return (
                       <div
                         key={spec.mode}
-                        className="rounded-lg border border-stone-800 bg-stone-900/20 p-3">
+                        className="rounded-lg border border-stone-200 bg-stone-50 p-3">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <p className="text-sm font-medium text-white">
+                            <p className="text-sm font-medium text-stone-900">
                               {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
                             </p>
-                            <p className="text-xs text-stone-400 mt-1">{spec.description}</p>
+                            <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
                             {connection?.lastError && (
                               <p className="text-xs text-coral-300 mt-1">{connection.lastError}</p>
+                            )}
+                            {instruction && (
+                              <p className="text-xs text-primary-500 mt-1">{instruction}</p>
                             )}
                           </div>
                           <ChannelStatusBadge status={status} />
@@ -248,7 +358,9 @@ const MessagingPanel = () => {
                                 key={field.key}
                                 field={field}
                                 value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                                onChange={val => updateField(compositeKey, field.key, val)}
+                                onChange={value => updateField(compositeKey, field.key, value)}
+                                // placeholder={field.placeholder || field.label}
+                                // className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-primary-500/60"
                               />
                             ))}
                           </div>
@@ -266,7 +378,7 @@ const MessagingPanel = () => {
                             type="button"
                             disabled={busyKeys[compositeKey] || status === 'disconnected'}
                             onClick={() => handleDisconnect(channelId, spec.mode)}
-                            className="rounded-lg border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-300 hover:border-stone-500 disabled:opacity-50">
+                            className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
                             Disconnect
                           </button>
                         </div>

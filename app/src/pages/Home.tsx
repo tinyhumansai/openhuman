@@ -4,55 +4,12 @@ import { useNavigate } from 'react-router-dom';
 import ConnectionIndicator from '../components/ConnectionIndicator';
 import { useUser } from '../hooks/useUser';
 import {
-  isTauri,
-  type LocalAiStatus,
-  openhumanLocalAiDownload,
-  openhumanLocalAiStatus,
-} from '../utils/tauriCommands';
-
-const progressFromStatus = (status: LocalAiStatus | null): number => {
-  if (!status) return 0;
-  if (typeof status.download_progress === 'number') {
-    return Math.max(0, Math.min(1, status.download_progress));
-  }
-  switch (status.state) {
-    case 'ready':
-      return 1;
-    case 'loading':
-      return 0.92;
-    case 'downloading':
-      return 0.25;
-    case 'installing':
-      return 0.1;
-    case 'idle':
-      return 0;
-    default:
-      return 0;
-  }
-};
-
-const formatBytes = (bytes?: number | null): string => {
-  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '0 B';
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes / 1024;
-  let unit = units[0];
-  for (let i = 1; i < units.length && value >= 1024; i += 1) {
-    value /= 1024;
-    unit = units[i];
-  }
-  return `${value.toFixed(value >= 10 ? 0 : 1)} ${unit}`;
-};
-
-const formatEta = (etaSeconds?: number | null): string => {
-  if (typeof etaSeconds !== 'number' || !Number.isFinite(etaSeconds) || etaSeconds <= 0) {
-    return '';
-  }
-  const mins = Math.floor(etaSeconds / 60);
-  const secs = etaSeconds % 60;
-  if (mins <= 0) return `${secs}s`;
-  return `${mins}m ${secs.toString().padStart(2, '0')}s`;
-};
+  bootstrapLocalAiWithRecommendedPreset,
+  ensureRecommendedLocalAiPresetIfNeeded,
+  triggerLocalAiAssetBootstrap,
+} from '../utils/localAiBootstrap';
+import { formatBytes, formatEta, progressFromStatus } from '../utils/localAiHelpers';
+import { isTauri, type LocalAiStatus, openhumanLocalAiStatus } from '../utils/tauriCommands';
 
 const Home = () => {
   const { user } = useUser();
@@ -61,6 +18,10 @@ const Home = () => {
   const [localAiStatus, setLocalAiStatus] = useState<LocalAiStatus | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const autoRetryDoneRef = useRef(false);
+  const initialBootstrapHandledRef = useRef(false);
+  const initialBootstrapInFlightRef = useRef(false);
+  const initialBootstrapPendingDownloadRef = useRef(false);
+  const initialBootstrapAttemptsRef = useRef(0);
 
   // Get greeting based on time
   const getGreeting = () => {
@@ -75,21 +36,103 @@ const Home = () => {
     navigate('/conversations');
   };
 
+  const refreshLocalAiStatus = async () => {
+    const status = await openhumanLocalAiStatus();
+    setLocalAiStatus(status.result);
+    return status.result;
+  };
+
+  const runManualBootstrap = async (force: boolean) => {
+    setDownloadBusy(true);
+    try {
+      await bootstrapLocalAiWithRecommendedPreset(
+        force,
+        force ? '[Home re-bootstrap]' : '[Home manual bootstrap]'
+      );
+      await refreshLocalAiStatus();
+    } catch (error) {
+      console.warn('[Home] manual Local AI bootstrap failed:', error);
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!isTauri()) return;
+    const MAX_INITIAL_BOOTSTRAP_ATTEMPTS = 3;
     let mounted = true;
     const load = async () => {
       try {
         const status = await openhumanLocalAiStatus();
         if (mounted) {
           setLocalAiStatus(status.result);
+
           // Auto-retry bootstrap once if Ollama is degraded (install/server issue).
           if (status.result?.state === 'degraded' && !autoRetryDoneRef.current) {
             autoRetryDoneRef.current = true;
-            void openhumanLocalAiDownload(true).catch(() => {});
+            console.debug('[Home] local AI is degraded; scheduling a one-time re-bootstrap');
+            void bootstrapLocalAiWithRecommendedPreset(true, '[Home degraded auto-retry]').catch(
+              error => {
+                autoRetryDoneRef.current = false;
+                console.warn('[Home] degraded local AI re-bootstrap failed:', error);
+              }
+            );
+          }
+
+          if (
+            status.result?.state === 'idle' &&
+            !initialBootstrapHandledRef.current &&
+            !initialBootstrapInFlightRef.current
+          ) {
+            initialBootstrapInFlightRef.current = true;
+            console.debug('[Home] local AI is idle; checking first-run preset selection');
+            void ensureRecommendedLocalAiPresetIfNeeded('[Home first-run]')
+              .then(async preset => {
+                const shouldTriggerBootstrap =
+                  !preset.hadSelectedTier || initialBootstrapPendingDownloadRef.current;
+
+                if (!shouldTriggerBootstrap) {
+                  console.debug(
+                    '[Home] skipping automatic first-run bootstrap because a tier is already selected'
+                  );
+                  initialBootstrapHandledRef.current = true;
+                  return;
+                }
+
+                initialBootstrapPendingDownloadRef.current = true;
+                console.debug(
+                  '[Home] selected recommended preset for first-run bootstrap',
+                  JSON.stringify({
+                    recommendedTier: preset.recommendedTier,
+                    hadSelectedTier: preset.hadSelectedTier,
+                  })
+                );
+                await triggerLocalAiAssetBootstrap(false, '[Home first-run]');
+                initialBootstrapPendingDownloadRef.current = false;
+                initialBootstrapHandledRef.current = true;
+                initialBootstrapAttemptsRef.current = 0;
+              })
+              .catch(error => {
+                initialBootstrapAttemptsRef.current += 1;
+                const attempts = initialBootstrapAttemptsRef.current;
+                if (attempts >= MAX_INITIAL_BOOTSTRAP_ATTEMPTS) {
+                  initialBootstrapPendingDownloadRef.current = false;
+                  initialBootstrapHandledRef.current = true;
+                  console.warn(
+                    '[Home] first-run local AI bootstrap failed permanently; stopping retries',
+                    { attempts, error }
+                  );
+                  return;
+                }
+                console.warn('[Home] first-run local AI bootstrap failed:', error);
+              })
+              .finally(() => {
+                initialBootstrapInFlightRef.current = false;
+              });
           }
         }
-      } catch {
+      } catch (error) {
+        console.warn('[Home] failed to load local AI status:', error);
         if (mounted) setLocalAiStatus(null);
       }
     };
@@ -120,162 +163,172 @@ const Home = () => {
   const etaText = formatEta(localAiStatus?.eta_seconds);
 
   return (
-    <div className="min-h-full relative">
-      {/* Content overlay */}
-      <div className="relative z-10 min-h-full flex flex-col">
-        {/* Main content */}
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="max-w-md w-full">
-            {/* Weather card */}
-            <div className="glass rounded-3xl p-4 shadow-large animate-fade-up text-center">
-              {/* Greeting */}
-              <h1 className="text-2xl font-bold mb-4">
-                {getGreeting()}, {userName}
-              </h1>
+    <div className="min-h-full flex flex-col items-center justify-center p-4 bg-[#F5F5F5]">
+      <div className="max-w-md w-full">
+        {/* Main card */}
+        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
+          {/* Header row: logo + version + settings */}
+          <div className="flex items-center justify-between mb-8">
+            <div className="w-9 h-9 bg-stone-900 rounded-lg flex items-center justify-center">
+              <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+              </svg>
+            </div>
+            <span className="text-xs text-stone-400">web, 01</span>
+            <button
+              onClick={() => navigate('/settings/messaging')}
+              className="w-9 h-9 rounded-full bg-stone-100 flex items-center justify-center hover:bg-stone-200 transition-colors"
+              aria-label="Notifications">
+              <svg
+                className="w-4 h-4 text-stone-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                />
+              </svg>
+            </button>
+          </div>
 
-              {/* Connection indicators */}
-              <ConnectionIndicator />
-              {/* Get Access button */}
+          {/* Welcome title */}
+          <h1 className="text-3xl font-bold text-stone-900 text-center mb-6">Welcome Onboard</h1>
+
+          {/* Greeting */}
+          <div className="text-center mb-3">
+            <p className="text-lg font-medium text-stone-700">
+              {getGreeting()}, {userName}
+            </p>
+          </div>
+
+          {/* Connection status */}
+          <div className="flex justify-center mb-3">
+            <ConnectionIndicator />
+          </div>
+
+          {/* Description */}
+          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">
+            Your device is now connected to the OpenHuman AI. Keep the app running to keep the
+            connection alive. You can message your assistant with the button below.
+          </p>
+
+          {/* CTA button */}
+          <button
+            onClick={handleStartCooking}
+            className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-xl transition-colors duration-200">
+            Message OpenHuman
+          </button>
+        </div>
+
+        {/* Local AI card (desktop only) */}
+        {isTauri() && (
+          <div className="mt-3 bg-white rounded-2xl shadow-soft border border-stone-200 px-4 py-4 text-left">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] uppercase tracking-wide text-stone-400">
+                Local model runtime
+              </div>
               <button
-                onClick={handleStartCooking}
-                className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl">
-                Message OpenHuman 🔥
+                onClick={() => navigate('/settings/local-model')}
+                className="text-xs text-primary-500 hover:text-primary-600 transition-colors">
+                Manage
               </button>
             </div>
 
-            {isTauri() && (
-              <div className="my-3 rounded-3xl border border-stone-700/80 bg-black/45 px-3 py-3 text-left">
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] uppercase tracking-wide text-stone-400">
-                    Local model runtime
-                  </div>
-                  <button
-                    onClick={() => navigate('/settings/local-model')}
-                    className="text-xs text-cyan-300 hover:text-cyan-200 transition-colors">
-                    Manage
-                  </button>
-                </div>
+            <div className="mt-2 flex items-center justify-between text-xs">
+              <span className="text-stone-600">
+                {localAiStatus?.model_id ?? 'gemma3:4b-it-qat'}
+              </span>
+              <span className="text-stone-700 capitalize">
+                {localAiStatus?.state ?? 'starting'}
+              </span>
+            </div>
 
-                <div className="mt-2 flex items-center justify-between text-xs">
-                  <span className="text-stone-300">
-                    {localAiStatus?.model_id ?? 'gemma3:4b-it-qat'}
-                  </span>
-                  <span className="text-stone-200 capitalize">
-                    {localAiStatus?.state ?? 'starting'}
-                  </span>
-                </div>
+            <div className="mt-2 h-2 rounded-full bg-stone-100 overflow-hidden">
+              <div
+                className={`h-full bg-gradient-to-r from-primary-500 to-primary-400 transition-all duration-500 ${
+                  indeterminateDownload ? 'animate-pulse' : ''
+                }`}
+                style={{
+                  width: `${Math.round((indeterminateDownload ? 1 : modelProgress) * 100)}%`,
+                }}
+              />
+            </div>
 
-                <div className="mt-2 h-2 rounded-full bg-stone-800 overflow-hidden">
-                  <div
-                    className={`h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-500 ${
-                      indeterminateDownload ? 'animate-pulse' : ''
-                    }`}
-                    style={{
-                      width: `${Math.round((indeterminateDownload ? 1 : modelProgress) * 100)}%`,
-                    }}
-                  />
-                </div>
-
-                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-stone-400">
-                  <span>
-                    {isInstalling
-                      ? 'Installing Ollama runtime...'
-                      : indeterminateDownload
-                        ? 'Downloading...'
-                        : `${Math.round(modelProgress * 100)}%`}
-                  </span>
-                  {downloadedText && (
-                    <span className="truncate text-stone-300" title={downloadedText}>
-                      {downloadedText}
-                    </span>
-                  )}
-                  {speedText && <span className="text-blue-300">{speedText}</span>}
-                  {etaText && <span className="text-cyan-300">ETA {etaText}</span>}
-                </div>
-                {localAiStatus?.warning && (
-                  <div
-                    className="mt-1 text-[11px] text-stone-400 truncate"
-                    title={localAiStatus.warning}>
-                    {localAiStatus.warning}
-                  </div>
-                )}
-
-                {isInstallError && localAiStatus?.error_detail && (
-                  <div className="mt-2">
-                    <button
-                      onClick={() => setShowErrorDetail(v => !v)}
-                      className="text-[11px] text-red-400 hover:text-red-300 underline">
-                      {showErrorDetail ? 'Hide error details' : 'Show error details'}
-                    </button>
-                    {showErrorDetail && (
-                      <pre className="mt-1 max-h-32 overflow-auto rounded bg-stone-900/80 p-2 text-[10px] text-red-300 leading-tight whitespace-pre-wrap break-words">
-                        {localAiStatus.error_detail}
-                      </pre>
-                    )}
-                    <p className="mt-1 text-[11px] text-stone-400">
-                      Install Ollama manually from{' '}
-                      <a
-                        href="https://ollama.com"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-cyan-300 hover:text-cyan-200 underline">
-                        ollama.com
-                      </a>{' '}
-                      then set its path in{' '}
-                      <button
-                        onClick={() => navigate('/settings/local-model')}
-                        className="text-cyan-300 hover:text-cyan-200 underline">
-                        Settings
-                      </button>
-                      .
-                    </p>
-                  </div>
-                )}
-
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    onClick={async () => {
-                      setDownloadBusy(true);
-                      try {
-                        await openhumanLocalAiDownload(false);
-                        const status = await openhumanLocalAiStatus();
-                        setLocalAiStatus(status.result);
-                      } finally {
-                        setDownloadBusy(false);
-                      }
-                    }}
-                    disabled={downloadBusy}
-                    className="rounded-md bg-blue-600 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-60">
-                    {downloadBusy ? 'Working...' : 'Bootstrap'}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setDownloadBusy(true);
-                      try {
-                        await openhumanLocalAiDownload(true);
-                        const status = await openhumanLocalAiStatus();
-                        setLocalAiStatus(status.result);
-                      } finally {
-                        setDownloadBusy(false);
-                      }
-                    }}
-                    disabled={downloadBusy}
-                    className="rounded-md border border-stone-600 px-2.5 py-1.5 text-[11px] font-medium text-stone-200 hover:border-stone-500 disabled:opacity-60">
-                    Re-bootstrap
-                  </button>
-                </div>
+            <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-stone-400">
+              <span>
+                {isInstalling
+                  ? 'Installing Ollama runtime...'
+                  : indeterminateDownload
+                    ? 'Downloading...'
+                    : `${Math.round(modelProgress * 100)}%`}
+              </span>
+              {downloadedText && (
+                <span className="truncate text-stone-500" title={downloadedText}>
+                  {downloadedText}
+                </span>
+              )}
+              {speedText && <span className="text-primary-500">{speedText}</span>}
+              {etaText && <span className="text-primary-600">ETA {etaText}</span>}
+            </div>
+            {localAiStatus?.warning && (
+              <div
+                className="mt-1 text-[11px] text-stone-400 truncate"
+                title={localAiStatus.warning}>
+                {localAiStatus.warning}
               </div>
             )}
 
-            <div className="mt-4 mb-8">
+            {isInstallError && localAiStatus?.error_detail && (
+              <div className="mt-2">
+                <button
+                  onClick={() => setShowErrorDetail(v => !v)}
+                  className="text-[11px] text-coral-500 hover:text-coral-600 underline">
+                  {showErrorDetail ? 'Hide error details' : 'Show error details'}
+                </button>
+                {showErrorDetail && (
+                  <pre className="mt-1 max-h-32 overflow-auto rounded bg-stone-50 p-2 text-[10px] text-coral-600 leading-tight whitespace-pre-wrap break-words">
+                    {localAiStatus.error_detail}
+                  </pre>
+                )}
+                <p className="mt-1 text-[11px] text-stone-400">
+                  Install Ollama manually from{' '}
+                  <a
+                    href="https://ollama.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary-500 hover:text-primary-600 underline">
+                    ollama.com
+                  </a>{' '}
+                  then set its path in{' '}
+                  <button
+                    onClick={() => navigate('/settings/local-model')}
+                    className="text-primary-500 hover:text-primary-600 underline">
+                    Settings
+                  </button>
+                  .
+                </p>
+              </div>
+            )}
+
+            <div className="mt-2 flex items-center gap-2">
               <button
-                onClick={() => navigate('/skills')}
-                className="btn-secondary w-full py-2.5 text-sm font-medium rounded-xl">
-                Open Skills Page
+                onClick={() => void runManualBootstrap(false)}
+                disabled={downloadBusy}
+                className="rounded-md bg-primary-500 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-primary-600 disabled:opacity-60">
+                {downloadBusy ? 'Working...' : 'Bootstrap'}
+              </button>
+              <button
+                onClick={() => void runManualBootstrap(true)}
+                disabled={downloadBusy}
+                className="rounded-md border border-stone-200 px-2.5 py-1.5 text-[11px] font-medium text-stone-600 hover:border-stone-300 disabled:opacity-60">
+                Re-bootstrap
               </button>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

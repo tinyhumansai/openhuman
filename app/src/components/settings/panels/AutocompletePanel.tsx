@@ -327,9 +327,9 @@ const AutocompletePanel = () => {
       <SettingsHeader title="Inline Autocomplete" showBackButton={true} onBack={navigateBack} />
 
       <div className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full p-4 space-y-4">
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Runtime</h3>
-          <div className="text-sm text-stone-300 space-y-1">
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Runtime</h3>
+          <div className="text-sm text-stone-700 space-y-1">
             <div>Platform supported: {status?.platform_supported ? 'yes' : 'no'}</div>
             <div>Enabled: {status?.enabled ? 'yes' : 'no'}</div>
             <div>Running: {status?.running ? 'yes' : 'no'}</div>
@@ -345,44 +345,44 @@ const AutocompletePanel = () => {
               type="button"
               onClick={() => void refreshStatus()}
               disabled={isLoading}
-              className="rounded-lg border border-stone-600 bg-stone-800/60 px-3 py-2 text-sm text-stone-200 disabled:opacity-50">
+              className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700 disabled:opacity-50">
               {isLoading ? 'Refreshing…' : 'Refresh Status'}
             </button>
             <button
               type="button"
               onClick={() => void start()}
-              className="rounded-lg border border-green-500/60 bg-green-500/20 px-3 py-2 text-sm text-green-200 disabled:opacity-50">
+              className="rounded-lg border border-green-500/60 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
               Start
             </button>
             <button
               type="button"
               onClick={() => void stop()}
-              className="rounded-lg border border-red-500/60 bg-red-500/20 px-3 py-2 text-sm text-red-200 disabled:opacity-50">
+              className="rounded-lg border border-red-500/60 bg-red-50 px-3 py-2 text-sm text-red-600 disabled:opacity-50">
               Stop
             </button>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Settings</h3>
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Enabled</span>
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Settings</h3>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Enabled</span>
             <input
               type="checkbox"
               checked={enabled}
               onChange={event => setEnabled(event.target.checked)}
             />
           </label>
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Accept With Tab</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Accept With Tab</span>
             <input
               type="checkbox"
               checked={acceptWithTab}
               onChange={event => setAcceptWithTab(event.target.checked)}
             />
           </label>
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Debounce (ms)</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Debounce (ms)</span>
             <input
               type="number"
               min={50}
@@ -390,11 +390,11 @@ const AutocompletePanel = () => {
               step={10}
               value={debounceMs}
               onChange={event => setDebounceMs(event.target.value)}
-              className="w-28 rounded border border-stone-600 bg-stone-800 px-2 py-1 text-xs text-stone-200"
+              className="w-28 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700"
             />
           </label>
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Max Chars</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Max Chars</span>
             <input
               type="number"
               min={32}
@@ -402,15 +402,15 @@ const AutocompletePanel = () => {
               step={8}
               value={maxChars}
               onChange={event => setMaxChars(event.target.value)}
-              className="w-28 rounded border border-stone-600 bg-stone-800 px-2 py-1 text-xs text-stone-200"
+              className="w-28 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700"
             />
           </label>
-          <label className="flex items-center justify-between rounded-xl border border-stone-700 bg-stone-900/50 px-3 py-2">
-            <span className="text-sm text-stone-200">Style Preset</span>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Style Preset</span>
             <select
               value={stylePreset}
               onChange={event => setStylePreset(event.target.value)}
-              className="rounded border border-stone-600 bg-stone-800 px-2 py-1 text-xs text-stone-200">
+              className="rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700">
               <option value="balanced">Balanced</option>
               <option value="concise">Concise</option>
               <option value="formal">Formal</option>
@@ -419,55 +419,55 @@ const AutocompletePanel = () => {
             </select>
           </label>
           <div className="space-y-1">
-            <div className="text-xs text-stone-300">Style Instructions</div>
+            <div className="text-xs text-stone-600">Style Instructions</div>
             <textarea
               value={styleInstructions}
               onChange={event => setStyleInstructions(event.target.value)}
               rows={3}
-              className="w-full rounded border border-stone-700 bg-stone-900/50 p-2 text-xs text-stone-200"
+              className="w-full rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700"
             />
           </div>
           <div className="space-y-1">
-            <div className="text-xs text-stone-300">Style Examples (one per line)</div>
+            <div className="text-xs text-stone-600">Style Examples (one per line)</div>
             <textarea
               value={styleExamplesText}
               onChange={event => setStyleExamplesText(event.target.value)}
               rows={3}
-              className="w-full rounded border border-stone-700 bg-stone-900/50 p-2 text-xs text-stone-200"
+              className="w-full rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700"
             />
           </div>
           <div className="space-y-1">
-            <div className="text-xs text-stone-300">
+            <div className="text-xs text-stone-600">
               Disabled Apps (one bundle/app token per line)
             </div>
             <textarea
               value={disabledAppsText}
               onChange={event => setDisabledAppsText(event.target.value)}
               rows={3}
-              className="w-full rounded border border-stone-700 bg-stone-900/50 p-2 text-xs text-stone-200"
+              className="w-full rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700"
             />
           </div>
           <button
             type="button"
             onClick={() => void saveConfig()}
             disabled={isSaving}
-            className="rounded-lg border border-primary-500/60 bg-primary-500/20 px-3 py-2 text-sm text-primary-200 disabled:opacity-50">
+            className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
             {isSaving ? 'Saving…' : 'Save Autocomplete Settings'}
           </button>
         </section>
 
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Personalization History</h3>
+            <h3 className="text-sm font-semibold text-stone-900">Personalization History</h3>
             <button
               type="button"
               onClick={() => void clearHistory()}
               disabled={isClearingHistory || historyEntries.length === 0}
-              className="rounded-lg border border-red-500/60 bg-red-500/20 px-3 py-1.5 text-xs text-red-200 disabled:opacity-40">
+              className="rounded-lg border border-red-500/60 bg-red-50 px-3 py-1.5 text-xs text-red-600 disabled:opacity-40">
               {isClearingHistory ? 'Clearing…' : 'Clear History'}
             </button>
           </div>
-          <p className="text-xs text-stone-400">
+          <p className="text-xs text-stone-500">
             {isHistoryLoading
               ? 'Loading…'
               : historyEntries.length === 0
@@ -475,26 +475,28 @@ const AutocompletePanel = () => {
                 : `${String(historyEntries.length)} accepted completion${historyEntries.length === 1 ? '' : 's'} stored — used to personalise future suggestions.`}
           </p>
           {historyEntries.length > 0 && (
-            <div className="max-h-48 overflow-y-auto rounded-xl border border-stone-700 bg-stone-900/50 p-2 space-y-1">
+            <div className="max-h-48 overflow-y-auto rounded-xl border border-stone-200 bg-stone-50 p-2 space-y-1">
               {historyEntries.map((entry, idx) => (
                 <div
                   key={`${String(entry.timestamp_ms)}-${String(idx)}`}
-                  className="flex flex-col gap-0.5 rounded-lg bg-stone-800/40 px-2 py-1.5 text-xs">
-                  <div className="flex items-center gap-2 text-stone-400">
+                  className="flex flex-col gap-0.5 rounded-lg bg-white px-2 py-1.5 text-xs border border-stone-100 text-xs">
+                  <div className="flex items-center gap-2 text-stone-500">
                     <span className="shrink-0">
                       {new Date(entry.timestamp_ms).toLocaleString()}
                     </span>
                     {entry.app_name && (
-                      <span className="rounded bg-stone-700/60 px-1 text-stone-300">
+                      <span className="rounded bg-stone-100 px-1 text-stone-600">
                         {entry.app_name}
                       </span>
                     )}
                   </div>
-                  <div className="flex items-baseline gap-1 text-stone-200 truncate">
-                    <span className="shrink-0 text-stone-500">…</span>
-                    <span className="truncate text-stone-400">{entry.context.slice(-40)}</span>
-                    <span className="shrink-0 text-stone-500">→</span>
-                    <span className="font-medium text-cyan-300 truncate">{entry.suggestion}</span>
+                  <div className="flex items-baseline gap-1 text-stone-700 truncate">
+                    <span className="shrink-0 text-stone-400">…</span>
+                    <span className="truncate text-stone-500">{entry.context.slice(-40)}</span>
+                    <span className="shrink-0 text-stone-400">→</span>
+                    <span className="font-medium text-primary-500 truncate">
+                      {entry.suggestion}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -502,61 +504,61 @@ const AutocompletePanel = () => {
           )}
         </section>
 
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-white">Test</h3>
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Test</h3>
           <div className="space-y-1">
-            <div className="text-xs text-stone-300">Context Override (optional)</div>
+            <div className="text-xs text-stone-600">Context Override (optional)</div>
             <textarea
               value={contextOverride}
               onChange={event => setContextOverride(event.target.value)}
               rows={3}
-              className="w-full rounded border border-stone-700 bg-stone-900/50 p-2 text-xs text-stone-200"
+              className="w-full rounded border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700"
             />
           </div>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => void testCurrent()}
-              className="rounded-lg border border-cyan-500/60 bg-cyan-500/20 px-3 py-2 text-sm text-cyan-200">
+              className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600">
               Get Suggestion
             </button>
             <button
               type="button"
               onClick={() => void acceptSuggestion()}
-              className="rounded-lg border border-emerald-500/60 bg-emerald-500/20 px-3 py-2 text-sm text-emerald-200">
+              className="rounded-lg border border-emerald-500/60 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
               Accept Suggestion
             </button>
             <button
               type="button"
               onClick={() => void debugFocus()}
-              className="rounded-lg border border-amber-500/60 bg-amber-500/20 px-3 py-2 text-sm text-amber-200">
+              className="rounded-lg border border-amber-500/60 bg-amber-50 px-3 py-2 text-sm text-amber-700">
               Debug Focus
             </button>
           </div>
           {focusDebug && (
-            <pre className="max-h-48 overflow-auto rounded-xl border border-stone-700 bg-stone-900/50 p-2 text-xs text-stone-200">
+            <pre className="max-h-48 overflow-auto rounded-xl border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700">
               {focusDebug}
             </pre>
           )}
         </section>
 
-        <section className="rounded-2xl border border-stone-700 bg-black/30 p-4 space-y-3">
+        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white">Live Logs</h3>
+            <h3 className="text-sm font-semibold text-stone-900">Live Logs</h3>
             <button
               type="button"
               onClick={() => setLogs([])}
-              className="rounded-lg border border-stone-600 bg-stone-800/60 px-3 py-1.5 text-xs text-stone-200">
+              className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-1.5 text-xs text-stone-700">
               Clear
             </button>
           </div>
-          <pre className="max-h-56 overflow-auto rounded-xl border border-stone-700 bg-stone-900/50 p-2 text-xs text-stone-200">
+          <pre className="max-h-56 overflow-auto rounded-xl border border-stone-200 bg-stone-50 p-2 text-xs text-stone-700">
             {logs.length > 0 ? logs.join('\n') : 'No logs yet.'}
           </pre>
         </section>
 
-        {message && <div className="text-xs text-green-300">{message}</div>}
-        {error && <div className="text-xs text-red-300">{error}</div>}
+        {message && <div className="text-xs text-green-700">{message}</div>}
+        {error && <div className="text-xs text-red-600">{error}</div>}
       </div>
     </div>
   );

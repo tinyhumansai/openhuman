@@ -75,7 +75,7 @@ export default function SkillSetupModal({
 
   const modalContent = (
     <div
-      className="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9999] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
@@ -83,7 +83,7 @@ export default function SkillSetupModal({
     >
       <div
         ref={modalRef}
-        className="bg-stone-900 border border-stone-600 rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
+        className="bg-white border border-stone-200 rounded-3xl shadow-large w-full max-w-[460px] overflow-hidden animate-fade-up focus:outline-none focus:ring-0"
         style={{
           animationDuration: "200ms",
           animationTimingFunction: "cubic-bezier(0.25, 0.46, 0.45, 0.94)",
@@ -93,13 +93,13 @@ export default function SkillSetupModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-4 border-b border-stone-700/50">
+        <div className="p-4 border-b border-stone-200">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0 pr-2">
               <div className="flex items-center gap-2">
                 <h2
                   id="skill-setup-title"
-                  className="text-base font-semibold text-white"
+                  className="text-base font-semibold text-stone-900"
                 >
                   {headerTitle}
                 </h2>
@@ -121,7 +121,7 @@ export default function SkillSetupModal({
             </div>
             <button
               onClick={onClose}
-              className="p-1 text-stone-400 hover:text-white transition-colors rounded-lg hover:bg-stone-700/50 flex-shrink-0"
+              className="p-1 text-stone-400 hover:text-stone-900 transition-colors rounded-lg hover:bg-stone-100 flex-shrink-0"
             >
               <svg
                 className="w-5 h-5"

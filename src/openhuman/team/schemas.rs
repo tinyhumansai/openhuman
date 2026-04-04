@@ -15,6 +15,26 @@ struct TeamIdParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CreateTeamParams {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateTeamParams {
+    team_id: String,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JoinTeamParams {
+    code: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RemoveMemberParams {
     team_id: String,
     user_id: String,
@@ -47,7 +67,16 @@ struct RevokeInviteParams {
 
 pub fn all_team_controller_schemas() -> Vec<ControllerSchema> {
     vec![
+        team_schemas("team_get_usage"),
         team_schemas("team_list_members"),
+        team_schemas("team_list_teams"),
+        team_schemas("team_get_team"),
+        team_schemas("team_create_team"),
+        team_schemas("team_update_team"),
+        team_schemas("team_delete_team"),
+        team_schemas("team_switch_team"),
+        team_schemas("team_leave_team"),
+        team_schemas("team_join_team"),
         team_schemas("team_create_invite"),
         team_schemas("team_list_invites"),
         team_schemas("team_revoke_invite"),
@@ -59,8 +88,44 @@ pub fn all_team_controller_schemas() -> Vec<ControllerSchema> {
 pub fn all_team_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
+            schema: team_schemas("team_get_usage"),
+            handler: handle_team_get_usage,
+        },
+        RegisteredController {
             schema: team_schemas("team_list_members"),
             handler: handle_team_list_members,
+        },
+        RegisteredController {
+            schema: team_schemas("team_list_teams"),
+            handler: handle_team_list_teams,
+        },
+        RegisteredController {
+            schema: team_schemas("team_get_team"),
+            handler: handle_team_get_team,
+        },
+        RegisteredController {
+            schema: team_schemas("team_create_team"),
+            handler: handle_team_create_team,
+        },
+        RegisteredController {
+            schema: team_schemas("team_update_team"),
+            handler: handle_team_update_team,
+        },
+        RegisteredController {
+            schema: team_schemas("team_delete_team"),
+            handler: handle_team_delete_team,
+        },
+        RegisteredController {
+            schema: team_schemas("team_switch_team"),
+            handler: handle_team_switch_team,
+        },
+        RegisteredController {
+            schema: team_schemas("team_leave_team"),
+            handler: handle_team_leave_team,
+        },
+        RegisteredController {
+            schema: team_schemas("team_join_team"),
+            handler: handle_team_join_team,
         },
         RegisteredController {
             schema: team_schemas("team_create_invite"),
@@ -87,6 +152,16 @@ pub fn all_team_registered_controllers() -> Vec<RegisteredController> {
 
 pub fn team_schemas(function: &str) -> ControllerSchema {
     match function {
+        "team_get_usage" => ControllerSchema {
+            namespace: "team",
+            function: "get_usage",
+            description: "Fetch the current authenticated user's active team usage.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "Raw usage payload returned by /teams/me/usage.",
+            )],
+        },
         "team_list_members" => ControllerSchema {
             namespace: "team",
             function: "list_members",
@@ -98,6 +173,91 @@ pub fn team_schemas(function: &str) -> ControllerSchema {
                 comment: "Raw member array returned by /teams/:teamId/members.",
                 required: true,
             }],
+        },
+        "team_list_teams" => ControllerSchema {
+            namespace: "team",
+            function: "list_teams",
+            description: "List teams for the authenticated user.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                comment: "Raw team array returned by GET /teams.",
+                required: true,
+            }],
+        },
+        "team_get_team" => ControllerSchema {
+            namespace: "team",
+            function: "get_team",
+            description: "Fetch a single team.",
+            inputs: vec![required_string("teamId", "Team id.")],
+            outputs: vec![json_output(
+                "result",
+                "Raw team object returned by GET /teams/:teamId.",
+            )],
+        },
+        "team_create_team" => ControllerSchema {
+            namespace: "team",
+            function: "create_team",
+            description: "Create a team.",
+            inputs: vec![required_string("name", "Team name.")],
+            outputs: vec![json_output(
+                "result",
+                "Raw team object returned by POST /teams.",
+            )],
+        },
+        "team_update_team" => ControllerSchema {
+            namespace: "team",
+            function: "update_team",
+            description: "Update team fields.",
+            inputs: vec![
+                required_string("teamId", "Team id."),
+                optional_string("name", "Updated team name."),
+            ],
+            outputs: vec![json_output(
+                "result",
+                "Raw team object returned by PUT /teams/:teamId.",
+            )],
+        },
+        "team_delete_team" => ControllerSchema {
+            namespace: "team",
+            function: "delete_team",
+            description: "Delete a team.",
+            inputs: vec![required_string("teamId", "Team id.")],
+            outputs: vec![json_output(
+                "result",
+                "Delete result returned by DELETE /teams/:teamId.",
+            )],
+        },
+        "team_switch_team" => ControllerSchema {
+            namespace: "team",
+            function: "switch_team",
+            description: "Switch the active team for the current user.",
+            inputs: vec![required_string("teamId", "Team id.")],
+            outputs: vec![json_output(
+                "result",
+                "Switch result returned by POST /teams/:teamId/switch.",
+            )],
+        },
+        "team_leave_team" => ControllerSchema {
+            namespace: "team",
+            function: "leave_team",
+            description: "Leave a team.",
+            inputs: vec![required_string("teamId", "Team id.")],
+            outputs: vec![json_output(
+                "result",
+                "Leave result returned by POST /teams/:teamId/leave.",
+            )],
+        },
+        "team_join_team" => ControllerSchema {
+            namespace: "team",
+            function: "join_team",
+            description: "Join a team using an invite code.",
+            inputs: vec![required_string("code", "Invite code.")],
+            outputs: vec![json_output(
+                "result",
+                "Raw team object returned by POST /teams/join.",
+            )],
         },
         "team_create_invite" => ControllerSchema {
             namespace: "team",
@@ -180,11 +340,84 @@ pub fn team_schemas(function: &str) -> ControllerSchema {
     }
 }
 
+fn handle_team_get_usage(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::team::get_usage(&config).await?)
+    })
+}
+
 fn handle_team_list_members(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let payload = deserialize_params::<TeamIdParams>(params)?;
         to_json(crate::openhuman::team::list_members(&config, &payload.team_id).await?)
+    })
+}
+
+fn handle_team_list_teams(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::team::list_teams(&config).await?)
+    })
+}
+
+fn handle_team_get_team(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<TeamIdParams>(params)?;
+        to_json(crate::openhuman::team::get_team(&config, &payload.team_id).await?)
+    })
+}
+
+fn handle_team_create_team(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<CreateTeamParams>(params)?;
+        to_json(crate::openhuman::team::create_team(&config, &payload.name).await?)
+    })
+}
+
+fn handle_team_update_team(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<UpdateTeamParams>(params)?;
+        to_json(
+            crate::openhuman::team::update_team(&config, &payload.team_id, payload.name.as_deref())
+                .await?,
+        )
+    })
+}
+
+fn handle_team_delete_team(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<TeamIdParams>(params)?;
+        to_json(crate::openhuman::team::delete_team(&config, &payload.team_id).await?)
+    })
+}
+
+fn handle_team_switch_team(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<TeamIdParams>(params)?;
+        to_json(crate::openhuman::team::switch_team(&config, &payload.team_id).await?)
+    })
+}
+
+fn handle_team_leave_team(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<TeamIdParams>(params)?;
+        to_json(crate::openhuman::team::leave_team(&config, &payload.team_id).await?)
+    })
+}
+
+fn handle_team_join_team(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<JoinTeamParams>(params)?;
+        to_json(crate::openhuman::team::join_team(&config, &payload.code).await?)
     })
 }
 
@@ -271,6 +504,15 @@ fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
         comment,
         required: false,
     }

@@ -1,8 +1,7 @@
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { skillManager } from '../../../lib/skills/manager';
-import { setEncryptionKeyForUser } from '../../../store/authSlice';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { useCoreState } from '../../../providers/CoreStateProvider';
 import {
   deriveAesKeyFromMnemonic,
   deriveEvmAddressFromMnemonic,
@@ -18,9 +17,9 @@ const BIP39_IMPORT_LENGTHS = [12, 15, 18, 21, 24] as const;
 const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const RecoveryPhrasePanel = () => {
-  const dispatch = useAppDispatch();
   const { navigateBack } = useSettingsNavigation();
-  const user = useAppSelector(state => state.user.user);
+  const { snapshot, setEncryptionKey } = useCoreState();
+  const user = snapshot.currentUser;
 
   const [mode, setMode] = useState<'generate' | 'import'>('generate');
   const [copied, setCopied] = useState(false);
@@ -184,7 +183,7 @@ const RecoveryPhrasePanel = () => {
         setError('User not loaded. Please sign in again or refresh the page.');
         return;
       }
-      dispatch(setEncryptionKeyForUser({ userId: user._id, key: aesKey }));
+      await setEncryptionKey(aesKey);
       await skillManager.setWalletAddress(walletAddress);
       setSuccess(true);
     } catch (e) {
@@ -233,12 +232,12 @@ const RecoveryPhrasePanel = () => {
                     </p>
                   </div>
 
-                  <div className="bg-black/20 rounded-2xl p-4 mb-4 border border-stone-700">
+                  <div className="bg-stone-50 rounded-2xl p-4 mb-4 border border-stone-200">
                     <div className="grid grid-cols-3 gap-2">
                       {words.map((word, index) => (
                         <div
                           key={index}
-                          className="flex items-center gap-2 bg-white/10 rounded-lg px-3 py-2 text-sm">
+                          className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 text-sm border border-stone-200">
                           <span className="text-stone-500 font-mono text-xs w-5 text-right">
                             {index + 1}.
                           </span>
@@ -250,7 +249,7 @@ const RecoveryPhrasePanel = () => {
 
                   <button
                     onClick={handleCopy}
-                    className="w-full flex items-center justify-center gap-2 border border-stone-600 hover:border-stone-500 font-medium py-2.5 text-sm rounded-xl transition-all duration-200 mb-3">
+                    className="w-full flex items-center justify-center gap-2 border border-stone-200 hover:border-stone-300 font-medium py-2.5 text-sm rounded-xl text-stone-700 transition-all duration-200 mb-3">
                     {copied ? (
                       <>
                         <svg
@@ -284,7 +283,7 @@ const RecoveryPhrasePanel = () => {
 
                   <button
                     onClick={() => setMode('import')}
-                    className="w-full text-center text-sm text-primary-400 hover:text-primary-300 transition-colors mb-3">
+                    className="w-full text-center text-sm text-primary-400 hover:text-primary-600 transition-colors mb-3">
                     I already have a recovery phrase
                   </button>
 
@@ -310,7 +309,7 @@ const RecoveryPhrasePanel = () => {
                   </div>
 
                   <div className="flex items-center gap-2 mb-3">
-                    <span className="text-xs text-stone-500">Words:</span>
+                    <span className="text-xs text-stone-400">Words:</span>
                     {BIP39_IMPORT_LENGTHS.map(len => (
                       <button
                         key={len}
@@ -318,15 +317,15 @@ const RecoveryPhrasePanel = () => {
                         onClick={() => handleWordCountChange(len)}
                         className={`px-2.5 py-1 text-xs font-medium rounded-lg transition-colors ${
                           selectedWordCount === len
-                            ? 'bg-primary-500/20 border-primary-500/40 text-primary-300 border'
-                            : 'border border-stone-700 text-stone-400 hover:border-stone-500'
+                            ? 'bg-primary-500/20 border-primary-500/40 text-primary-600 border'
+                            : 'border border-stone-200 text-stone-500 hover:border-stone-300'
                         }`}>
                         {len}
                       </button>
                     ))}
                   </div>
 
-                  <div className="bg-black/20 rounded-2xl p-4 mb-4 border border-stone-700">
+                  <div className="bg-stone-50 rounded-2xl p-4 mb-4 border border-stone-200">
                     <div className="grid grid-cols-3 gap-2">
                       {importWords.map((word, index) => (
                         <div key={index} className="flex items-center gap-1.5">
@@ -344,12 +343,12 @@ const RecoveryPhrasePanel = () => {
                             onKeyDown={e => handleImportKeyDown(index, e)}
                             autoComplete="off"
                             spellCheck={false}
-                            className={`w-full font-mono text-sm font-medium px-2 py-1.5 rounded-lg border bg-white/10 outline-none transition-colors ${
+                            className={`w-full font-mono text-sm font-medium px-2 py-1.5 rounded-lg border bg-white text-stone-900 outline-none transition-colors ${
                               importValid === false && word.trim()
                                 ? 'border-coral-400 focus:border-coral-300'
                                 : importValid === true
                                   ? 'border-sage-400 focus:border-sage-300'
-                                  : 'border-stone-600 focus:border-primary-400'
+                                  : 'border-stone-200 focus:border-primary-400'
                             }`}
                           />
                         </div>
@@ -373,7 +372,7 @@ const RecoveryPhrasePanel = () => {
 
                   <button
                     onClick={() => setMode('generate')}
-                    className="w-full text-center text-sm text-primary-400 hover:text-primary-300 transition-colors mb-3">
+                    className="w-full text-center text-sm text-primary-400 hover:text-primary-600 transition-colors mb-3">
                     Generate a new recovery phrase instead
                   </button>
                 </>

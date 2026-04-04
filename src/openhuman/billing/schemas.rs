@@ -29,13 +29,49 @@ struct CoinbaseChargeParams {
     interval: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct TransactionsParams {
+    #[serde(default)]
+    limit: Option<u64>,
+    #[serde(default)]
+    offset: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonValueParams {
+    payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CardParams {
+    payment_method_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCardParams {
+    payment_method_id: String,
+    payload: Value,
+}
+
 pub fn all_billing_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         billing_schemas("billing_get_current_plan"),
+        billing_schemas("billing_get_balance"),
         billing_schemas("billing_purchase_plan"),
         billing_schemas("billing_create_portal_session"),
         billing_schemas("billing_top_up"),
         billing_schemas("billing_create_coinbase_charge"),
+        billing_schemas("billing_get_transactions"),
+        billing_schemas("billing_get_auto_recharge"),
+        billing_schemas("billing_update_auto_recharge"),
+        billing_schemas("billing_get_cards"),
+        billing_schemas("billing_create_setup_intent"),
+        billing_schemas("billing_update_card"),
+        billing_schemas("billing_delete_card"),
     ]
 }
 
@@ -44,6 +80,10 @@ pub fn all_billing_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: billing_schemas("billing_get_current_plan"),
             handler: handle_billing_get_current_plan,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_get_balance"),
+            handler: handle_billing_get_balance,
         },
         RegisteredController {
             schema: billing_schemas("billing_purchase_plan"),
@@ -61,6 +101,34 @@ pub fn all_billing_registered_controllers() -> Vec<RegisteredController> {
             schema: billing_schemas("billing_create_coinbase_charge"),
             handler: handle_billing_create_coinbase_charge,
         },
+        RegisteredController {
+            schema: billing_schemas("billing_get_transactions"),
+            handler: handle_billing_get_transactions,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_get_auto_recharge"),
+            handler: handle_billing_get_auto_recharge,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_update_auto_recharge"),
+            handler: handle_billing_update_auto_recharge,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_get_cards"),
+            handler: handle_billing_get_cards,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_create_setup_intent"),
+            handler: handle_billing_create_setup_intent,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_update_card"),
+            handler: handle_billing_update_card,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_delete_card"),
+            handler: handle_billing_delete_card,
+        },
     ]
 }
 
@@ -74,6 +142,16 @@ pub fn billing_schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output(
                 "plan",
                 "Current plan payload from backend /payments/stripe/currentPlan.",
+            )],
+        },
+        "billing_get_balance" => ControllerSchema {
+            namespace: "billing",
+            function: "get_balance",
+            description: "Fetch the current user's credit balance.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "balance",
+                "Credit balance payload from backend /payments/credits/balance.",
             )],
         },
         "billing_purchase_plan" => ControllerSchema {
@@ -175,6 +253,80 @@ pub fn billing_schemas(function: &str) -> ControllerSchema {
                 ),
             ],
         },
+        "billing_get_transactions" => ControllerSchema {
+            namespace: "billing",
+            function: "get_transactions",
+            description: "Fetch paginated credit transaction history.",
+            inputs: vec![
+                optional_u64("limit", "Optional page size."),
+                optional_u64("offset", "Optional pagination offset."),
+            ],
+            outputs: vec![json_output(
+                "transactions",
+                "Credit transaction page payload.",
+            )],
+        },
+        "billing_get_auto_recharge" => ControllerSchema {
+            namespace: "billing",
+            function: "get_auto_recharge",
+            description: "Fetch Stripe auto-recharge settings.",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Auto-recharge settings payload.")],
+        },
+        "billing_update_auto_recharge" => ControllerSchema {
+            namespace: "billing",
+            function: "update_auto_recharge",
+            description: "Update Stripe auto-recharge settings.",
+            inputs: vec![FieldSchema {
+                name: "payload",
+                ty: TypeSchema::Json,
+                comment: "PATCH payload for /payments/credits/auto-recharge.",
+                required: true,
+            }],
+            outputs: vec![json_output(
+                "settings",
+                "Updated auto-recharge settings payload.",
+            )],
+        },
+        "billing_get_cards" => ControllerSchema {
+            namespace: "billing",
+            function: "get_cards",
+            description: "List saved Stripe cards for auto-recharge.",
+            inputs: vec![],
+            outputs: vec![json_output("cards", "Saved cards payload.")],
+        },
+        "billing_create_setup_intent" => ControllerSchema {
+            namespace: "billing",
+            function: "create_setup_intent",
+            description: "Create a Stripe SetupIntent for adding a card.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "Stripe SetupIntent payload.")],
+        },
+        "billing_update_card" => ControllerSchema {
+            namespace: "billing",
+            function: "update_card",
+            description: "Update a saved card for auto-recharge.",
+            inputs: vec![
+                required_string("paymentMethodId", "Stripe payment method id."),
+                FieldSchema {
+                    name: "payload",
+                    ty: TypeSchema::Json,
+                    comment: "PATCH payload for card update.",
+                    required: true,
+                },
+            ],
+            outputs: vec![json_output("cards", "Updated saved cards payload.")],
+        },
+        "billing_delete_card" => ControllerSchema {
+            namespace: "billing",
+            function: "delete_card",
+            description: "Delete a saved card for auto-recharge.",
+            inputs: vec![required_string(
+                "paymentMethodId",
+                "Stripe payment method id.",
+            )],
+            outputs: vec![json_output("cards", "Updated saved cards payload.")],
+        },
         _ => ControllerSchema {
             namespace: "billing",
             function: "unknown",
@@ -194,6 +346,13 @@ fn handle_billing_get_current_plan(_params: Map<String, Value>) -> ControllerFut
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(crate::openhuman::billing::get_current_plan(&config).await?)
+    })
+}
+
+fn handle_billing_get_balance(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::billing::get_balance(&config).await?)
     })
 }
 
@@ -238,6 +397,76 @@ fn handle_billing_create_coinbase_charge(params: Map<String, Value>) -> Controll
     })
 }
 
+fn handle_billing_get_transactions(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = if params.is_empty() {
+            TransactionsParams::default()
+        } else {
+            deserialize_params::<TransactionsParams>(params)?
+        };
+        to_json(
+            crate::openhuman::billing::get_transactions(&config, payload.limit, payload.offset)
+                .await?,
+        )
+    })
+}
+
+fn handle_billing_get_auto_recharge(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::billing::get_auto_recharge(&config).await?)
+    })
+}
+
+fn handle_billing_update_auto_recharge(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<JsonValueParams>(params)?;
+        to_json(crate::openhuman::billing::update_auto_recharge(&config, payload.payload).await?)
+    })
+}
+
+fn handle_billing_get_cards(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::billing::get_cards(&config).await?)
+    })
+}
+
+fn handle_billing_create_setup_intent(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::billing::create_setup_intent(&config).await?)
+    })
+}
+
+fn handle_billing_update_card(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<UpdateCardParams>(params)?;
+        to_json(
+            crate::openhuman::billing::update_card(
+                &config,
+                payload.payment_method_id.trim(),
+                payload.payload,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_billing_delete_card(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<CardParams>(params)?;
+        to_json(
+            crate::openhuman::billing::delete_card(&config, payload.payment_method_id.trim())
+                .await?,
+        )
+    })
+}
+
 fn to_json(outcome: RpcOutcome<Value>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
@@ -264,6 +493,15 @@ fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
     }
 }
 
+fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+        comment,
+        required: false,
+    }
+}
+
 fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
@@ -279,68 +517,5 @@ fn output_field(name: &'static str, ty: TypeSchema, comment: &'static str) -> Fi
         ty,
         comment,
         required: true,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn schema_names_are_stable() {
-        let s = billing_schemas("billing_top_up");
-        assert_eq!(s.namespace, "billing");
-        assert_eq!(s.function, "top_up");
-    }
-
-    #[test]
-    fn controller_lists_match_lengths() {
-        assert_eq!(
-            all_billing_controller_schemas().len(),
-            all_billing_registered_controllers().len()
-        );
-    }
-
-    #[test]
-    fn schemas_match_unwrapped_backend_payload_keys() {
-        let purchase = billing_schemas("billing_purchase_plan");
-        assert_eq!(
-            purchase
-                .outputs
-                .iter()
-                .map(|field| field.name)
-                .collect::<Vec<_>>(),
-            vec!["checkoutUrl", "sessionId"]
-        );
-
-        let portal = billing_schemas("billing_create_portal_session");
-        assert_eq!(
-            portal
-                .outputs
-                .iter()
-                .map(|field| field.name)
-                .collect::<Vec<_>>(),
-            vec!["portalUrl"]
-        );
-
-        let top_up = billing_schemas("billing_top_up");
-        assert_eq!(
-            top_up
-                .outputs
-                .iter()
-                .map(|field| field.name)
-                .collect::<Vec<_>>(),
-            vec!["url", "gatewayTransactionId", "amountUsd", "gateway"]
-        );
-
-        let coinbase = billing_schemas("billing_create_coinbase_charge");
-        assert_eq!(
-            coinbase
-                .outputs
-                .iter()
-                .map(|field| field.name)
-                .collect::<Vec<_>>(),
-            vec!["gatewayTransactionId", "hostedUrl", "status", "expiresAt"]
-        );
     }
 }

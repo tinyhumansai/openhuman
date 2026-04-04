@@ -768,10 +768,17 @@ fn handle_local_ai_presets(_params: Map<String, Value>) -> ControllerFuture {
         let recommended = crate::openhuman::local_ai::presets::recommend_tier(&device);
         let current =
             crate::openhuman::local_ai::presets::current_tier_from_config(&config.local_ai);
+        let selected_tier = config
+            .local_ai
+            .selected_tier
+            .as_ref()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty());
         let presets = crate::openhuman::local_ai::presets::all_presets();
         tracing::debug!(
             ?recommended,
             ?current,
+            selected_tier = ?selected_tier,
             preset_count = presets.len(),
             "[local_ai] presets: returning"
         );
@@ -779,6 +786,7 @@ fn handle_local_ai_presets(_params: Map<String, Value>) -> ControllerFuture {
             "presets": presets,
             "recommended_tier": recommended,
             "current_tier": current,
+            "selected_tier": selected_tier,
             "device": device,
         });
         Ok(value)

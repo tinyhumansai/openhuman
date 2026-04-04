@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import type { Tunnel } from '../../services/api/tunnelsApi';
+import { type Tunnel, tunnelsApi } from '../../services/api/tunnelsApi';
 import type { TunnelRegistration } from '../../store/webhooksSlice';
 import { BACKEND_URL } from '../../utils/config';
 
@@ -11,6 +11,12 @@ interface TunnelListProps {
   onCreateTunnel: (name: string, description?: string) => Promise<Tunnel>;
   onDeleteTunnel: (id: string) => Promise<void>;
   onRefresh: () => Promise<void>;
+  onRegisterEcho: (
+    tunnelUuid: string,
+    tunnelName?: string,
+    backendTunnelId?: string
+  ) => Promise<void>;
+  onUnregisterEcho: (tunnelUuid: string) => Promise<void>;
 }
 
 export default function TunnelList({
@@ -20,6 +26,8 @@ export default function TunnelList({
   onCreateTunnel,
   onDeleteTunnel,
   onRefresh,
+  onRegisterEcho,
+  onUnregisterEcho,
 }: TunnelListProps) {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
@@ -46,7 +54,7 @@ export default function TunnelList({
   const getRegistration = (uuid: string) => registrations.find(r => r.tunnel_uuid === uuid);
 
   const webhookUrl = (uuid: string) =>
-    `${BACKEND_URL || 'https://api.tinyhumans.ai'}/webhooks/${uuid}`;
+    tunnelsApi.ingressUrl(BACKEND_URL || 'https://api.tinyhumans.ai', uuid);
 
   return (
     <div className="space-y-4">
@@ -131,6 +139,8 @@ export default function TunnelList({
               registration={reg}
               webhookUrl={webhookUrl(tunnel.uuid)}
               onDelete={() => onDeleteTunnel(tunnel.id)}
+              onRegisterEcho={() => onRegisterEcho(tunnel.uuid, tunnel.name, tunnel.id)}
+              onUnregisterEcho={() => onUnregisterEcho(tunnel.uuid)}
               onError={setActionError}
             />
           );
@@ -147,12 +157,26 @@ interface TunnelCardProps {
   registration?: TunnelRegistration;
   webhookUrl: string;
   onDelete: () => Promise<void>;
+  onRegisterEcho: () => Promise<void>;
+  onUnregisterEcho: () => Promise<void>;
   onError: (msg: string) => void;
 }
 
-function TunnelCard({ tunnel, registration, webhookUrl, onDelete, onError }: TunnelCardProps) {
+function TunnelCard({
+  tunnel,
+  registration,
+  webhookUrl,
+  onDelete,
+  onRegisterEcho,
+  onUnregisterEcho,
+  onError,
+}: TunnelCardProps) {
   const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  const isEchoRegistered = registration?.target_kind === 'echo';
+  const isSkillRegistered = registration?.target_kind === 'skill';
 
   const handleCopy = async () => {
     try {
@@ -175,11 +199,26 @@ function TunnelCard({ tunnel, registration, webhookUrl, onDelete, onError }: Tun
     }
   };
 
+  const handleToggleEcho = async () => {
+    setToggling(true);
+    try {
+      if (isEchoRegistered) {
+        await onUnregisterEcho();
+      } else {
+        await onRegisterEcho();
+      }
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Failed to toggle echo');
+    } finally {
+      setToggling(false);
+    }
+  };
+
   return (
     <div className="p-4 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-colors">
       <div className="flex items-start justify-between">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h4 className="text-sm font-medium text-stone-900 truncate">{tunnel.name}</h4>
             <span
               className={`inline-flex items-center px-1.5 py-0.5 text-xs rounded-full ${
@@ -187,7 +226,12 @@ function TunnelCard({ tunnel, registration, webhookUrl, onDelete, onError }: Tun
               }`}>
               {tunnel.isActive ? 'Active' : 'Inactive'}
             </span>
-            {registration && (
+            {isEchoRegistered && (
+              <span className="inline-flex items-center px-1.5 py-0.5 text-xs rounded-full bg-amber-50 text-amber-700">
+                Echo
+              </span>
+            )}
+            {isSkillRegistered && registration && (
               <span className="inline-flex items-center px-1.5 py-0.5 text-xs rounded-full bg-primary-50 text-primary-700">
                 {registration.skill_id}
               </span>
@@ -207,12 +251,27 @@ function TunnelCard({ tunnel, registration, webhookUrl, onDelete, onError }: Tun
             </button>
           </div>
         </div>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="ml-3 px-2 py-1 text-xs text-coral-600 hover:text-coral-700 hover:bg-coral-50 rounded-lg transition-colors">
-          {deleting ? '...' : 'Delete'}
-        </button>
+        <div className="ml-3 flex flex-col gap-1 shrink-0">
+          {/* Echo toggle — only show if not already claimed by a skill */}
+          {!isSkillRegistered && (
+            <button
+              onClick={handleToggleEcho}
+              disabled={toggling}
+              className={`px-2 py-1 text-xs rounded-lg transition-colors ${
+                isEchoRegistered
+                  ? 'text-amber-600 hover:text-amber-700 hover:bg-amber-50'
+                  : 'text-primary-600 hover:text-primary-700 hover:bg-primary-50'
+              }`}>
+              {toggling ? '...' : isEchoRegistered ? 'Remove Echo' : 'Enable Echo'}
+            </button>
+          )}
+          <button
+            onClick={handleDelete}
+            disabled={deleting}
+            className="px-2 py-1 text-xs text-coral-600 hover:text-coral-700 hover:bg-coral-50 rounded-lg transition-colors">
+            {deleting ? '...' : 'Delete'}
+          </button>
+        </div>
       </div>
     </div>
   );

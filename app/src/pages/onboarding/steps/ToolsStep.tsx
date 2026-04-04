@@ -44,10 +44,10 @@ const ToolsStep = ({ onNext, onBack: _onBack }: ToolsStepProps) => {
     .map(([k]) => k);
 
   return (
-    <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
+    <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-5">
-        <h1 className="text-xl font-bold mb-2">Enable Tools</h1>
-        <p className="opacity-70 text-sm">
+        <h1 className="text-xl font-bold mb-2 text-stone-900">Enable Tools</h1>
+        <p className="text-stone-600 text-sm">
           Choose which capabilities OpenHuman can use on your behalf.
         </p>
       </div>
@@ -59,10 +59,10 @@ const ToolsStep = ({ onNext, onBack: _onBack }: ToolsStepProps) => {
           return (
             <div key={category}>
               <div className="mb-2">
-                <h2 className="text-xs font-semibold uppercase tracking-wide opacity-60">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-stone-500">
                   {category}
                 </h2>
-                <p className="text-xs opacity-40">{CATEGORY_DESCRIPTIONS[category]}</p>
+                <p className="text-xs text-stone-400">{CATEGORY_DESCRIPTIONS[category]}</p>
               </div>
               <div className="space-y-1">
                 {tools.map(tool => (
@@ -70,14 +70,14 @@ const ToolsStep = ({ onNext, onBack: _onBack }: ToolsStepProps) => {
                     key={tool.id}
                     type="button"
                     onClick={() => toggle(tool.id)}
-                    className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-700 bg-stone-900 hover:border-stone-600 transition-colors text-left">
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-200 bg-white hover:border-stone-300 transition-colors text-left">
                     <div className="min-w-0 flex-1">
-                      <span className="text-sm font-medium">{tool.displayName}</span>
-                      <p className="text-xs opacity-60 mt-0.5">{tool.description}</p>
+                      <span className="text-sm font-medium text-stone-900">{tool.displayName}</span>
+                      <p className="text-xs text-stone-500 mt-0.5">{tool.description}</p>
                     </div>
                     <div
                       className={`ml-3 flex-shrink-0 w-9 h-5 rounded-full transition-colors relative ${
-                        enabled[tool.id] ? 'bg-sage-500' : 'bg-stone-600'
+                        enabled[tool.id] ? 'bg-sage-500' : 'bg-stone-200'
                       }`}>
                       <div
                         className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${

@@ -123,18 +123,18 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
 
   if (loading) {
     return (
-      <div className="rounded-xl border border-white/10 bg-black/20 p-5">
-        <h3 className="text-sm font-semibold text-white mb-3">Ingestion Activity</h3>
-        <div className="h-28 rounded-lg bg-white/5 animate-pulse" />
+      <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
+        <h3 className="text-sm font-semibold text-stone-900 mb-3">Ingestion Activity</h3>
+        <div className="h-28 rounded-lg bg-stone-200 animate-pulse" />
       </div>
     );
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-5">
+    <div className="rounded-xl border border-stone-200 bg-stone-50 p-5">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">Ingestion Activity</h3>
+          <h3 className="text-sm font-semibold text-stone-900">Ingestion Activity</h3>
           <p className="text-xs text-stone-500 mt-0.5">
             {totalEvents} event{totalEvents !== 1 ? 's' : ''} over the last {MONTHS} months
             {maxDailyCount > 0 && <> · peak: {maxDailyCount}/day</>}
@@ -166,7 +166,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
               x={0}
               y={22 + i * (cellSize + CELL_GAP) + cellSize * 0.75}
               fontSize={9}
-              fill="rgba(255,255,255,0.3)"
+              fill="rgba(0,0,0,0.4)"
               style={{ userSelect: 'none' }}>
               {label}
             </text>
@@ -180,7 +180,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
             x={DAY_LABEL_WIDTH + m.weekIdx * (cellSize + CELL_GAP)}
             y={12}
             fontSize={9}
-            fill="rgba(255,255,255,0.3)"
+            fill="rgba(0,0,0,0.4)"
             style={{ userSelect: 'none' }}>
             {m.label}
           </text>
@@ -226,7 +226,7 @@ export function MemoryHeatmap({ timestamps, loading }: MemoryHeatmapProps) {
       {/* Tooltip */}
       {hoveredCell && (
         <div
-          className="fixed z-50 px-2 py-1 rounded-md bg-stone-800 border border-white/10 text-[11px] text-white shadow-lg pointer-events-none"
+          className="fixed z-50 px-2 py-1 rounded-md bg-white border border-stone-200 text-[11px] text-stone-900 shadow-lg pointer-events-none"
           style={{ left: hoveredCell.x, top: hoveredCell.y - 32, transform: 'translateX(-50%)' }}>
           <span className="font-medium">
             {hoveredCell.count} event{hoveredCell.count !== 1 ? 's' : ''}

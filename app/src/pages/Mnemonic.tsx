@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import LottieAnimation from '../components/LottieAnimation';
 import { skillManager } from '../lib/skills/manager';
-import { setEncryptionKeyForUser } from '../store/authSlice';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { useCoreState } from '../providers/CoreStateProvider';
 import {
   deriveAesKeyFromMnemonic,
   deriveEvmAddressFromMnemonic,
@@ -20,8 +19,8 @@ const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const Mnemonic = () => {
   const navigate = useNavigate();
-  const dispatch = useAppDispatch();
-  const user = useAppSelector(state => state.user.user);
+  const { snapshot, setEncryptionKey } = useCoreState();
+  const user = snapshot.currentUser;
   const [mode, setMode] = useState<'generate' | 'import'>('generate');
   const [copied, setCopied] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
@@ -167,7 +166,7 @@ const Mnemonic = () => {
         console.error('[Mnemonic] Cannot save encryption key: user not loaded');
         return;
       }
-      dispatch(setEncryptionKeyForUser({ userId: user._id, key: aesKey }));
+      await setEncryptionKey(aesKey);
       await skillManager.setWalletAddress(walletAddress);
       navigate('/home');
     } catch (e) {
@@ -184,13 +183,13 @@ const Mnemonic = () => {
   const canContinue = mode === 'generate' ? confirmed : isImportComplete;
 
   return (
-    <div className="min-h-full relative flex items-center justify-center">
-      <div className="relative z-10 max-w-lg w-full mx-4">
+    <div className="min-h-full bg-[#F5F5F5] flex items-center justify-center p-4 pt-6">
+      <div className="max-w-lg w-full">
         <div className="flex justify-center mb-6">
           <LottieAnimation src="/lottie/safe3.json" height={120} width={120} />
         </div>
 
-        <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
+        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-8 animate-fade-up">
           {mode === 'generate' ? (
             <>
               <div className="text-center mb-4">

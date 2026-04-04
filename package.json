@@ -10,6 +10,7 @@
   "scripts": {
     "build": "yarn workspace openhuman-app build",
     "compile": "yarn workspace openhuman-app compile",
+    "core:stage": "yarn workspace openhuman-app core:stage",
     "dev": "yarn workspace openhuman-app dev",
     "dev:app": "yarn workspace openhuman-app dev:app",
     "format": "yarn workspace openhuman-app format",

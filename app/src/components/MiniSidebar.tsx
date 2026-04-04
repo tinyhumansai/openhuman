@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import { useCoreState } from '../providers/CoreStateProvider';
 import { useAppSelector } from '../store/hooks';
 import { isTauri } from '../utils/tauriCommands';
 import DaemonHealthIndicator from './daemon/DaemonHealthIndicator';
@@ -138,7 +139,8 @@ const navItems = [
 const MiniSidebar = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const token = useAppSelector(state => state.auth.token);
+  const { snapshot } = useCoreState();
+  const token = snapshot.sessionToken;
   const [showDaemonPanel, setShowDaemonPanel] = useState(false);
 
   // Unread count for Conversations: threads with lastMessageAt > lastViewedAt (must be before early return)

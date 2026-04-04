@@ -750,9 +750,9 @@ describe.skip('Telegram Integration Flows', () => {
       console.log(`${LOG_PREFIX} 7.4.1: App stable after webhook setup. Home: "${homeMarker}"`);
 
       // Verify mock server received at least the authentication-related calls
-      // (login token consumption and /telegram/me are always called on re-auth)
+      // (login token consumption and /auth/me are always called on re-auth)
       const authCall = allRequests.find(r => r.url.includes('/telegram/login-tokens'));
-      const meCall = allRequests.find(r => r.url.includes('/telegram/me'));
+      const meCall = allRequests.find(r => r.url.includes('/auth/me'));
       expect(authCall || meCall).toBeTruthy();
       console.log(`${LOG_PREFIX} 7.4.1: Auth calls confirmed in request log`);
 
@@ -972,11 +972,11 @@ describe.skip('Telegram Integration Flows', () => {
 
       // Verify the app made auth calls (which trigger permission sync)
       const allRequests = getRequestLog();
-      const meCall = allRequests.find(r => r.url.includes('/telegram/me'));
+      const meCall = allRequests.find(r => r.url.includes('/auth/me'));
       const teamsCall = allRequests.find(r => r.url.includes('/teams'));
 
       console.log(
-        `${LOG_PREFIX} 7.5.4: Post re-auth calls — /telegram/me: ${!!meCall}, /teams: ${!!teamsCall}`
+        `${LOG_PREFIX} 7.5.4: Post re-auth calls — /auth/me: ${!!meCall}, /teams: ${!!teamsCall}`
       );
 
       // At least one of the auth/sync calls should have been made

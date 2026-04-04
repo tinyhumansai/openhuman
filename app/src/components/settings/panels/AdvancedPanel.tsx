@@ -11,9 +11,9 @@ const AdvancedPanel = () => {
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 h-full flex items-center justify-center">
           <div className="text-center">
-            <div className="w-16 h-16 mx-auto mb-4 bg-stone-700/50 rounded-full flex items-center justify-center">
+            <div className="w-16 h-16 mx-auto mb-4 bg-stone-100 rounded-full flex items-center justify-center">
               <svg
-                className="w-8 h-8 text-stone-400"
+                className="w-8 h-8 text-stone-500"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24">
@@ -31,12 +31,12 @@ const AdvancedPanel = () => {
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-white mb-2">Advanced Settings</h3>
-            <p className="text-stone-400 text-sm max-w-sm mx-auto">
+            <h3 className="text-lg font-medium text-stone-900 mb-2">Advanced Settings</h3>
+            <p className="text-stone-500 text-sm max-w-sm mx-auto">
               Configure advanced features, developer options, and system-level settings.
             </p>
             <div className="mt-6">
-              <span className="px-4 py-2 text-sm font-medium rounded-full border bg-stone-700/30 text-stone-300 border-stone-600/50">
+              <span className="px-4 py-2 text-sm font-medium rounded-full border bg-stone-100 text-stone-600 border-stone-200">
                 Coming Soon
               </span>
             </div>

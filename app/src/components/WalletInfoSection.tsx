@@ -3,8 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUser } from '../hooks/useUser';
 import { useSkillConnectionStatus } from '../lib/skills/hooks';
 import { skillManager } from '../lib/skills/manager';
+import { useCoreState } from '../providers/CoreStateProvider';
 import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
-import { useAppSelector } from '../store/hooks';
 
 function truncateAddress(address: string): string {
   if (!address || address.length < 12) return address;
@@ -14,9 +14,8 @@ function truncateAddress(address: string): string {
 export default function WalletInfoSection() {
   const walletStatus = useSkillConnectionStatus('wallet');
   const { user } = useUser();
-  const primaryAddress = useAppSelector(state =>
-    user?._id ? state.auth.primaryWalletAddressByUser[user._id] : undefined
-  );
+  const { snapshot } = useCoreState();
+  const primaryAddress = user?._id ? snapshot.localState.primaryWalletAddress : undefined;
 
   const [networkName, setNetworkName] = useState<string | null>(null);
   const [balance, setBalance] = useState<string | null>(null);

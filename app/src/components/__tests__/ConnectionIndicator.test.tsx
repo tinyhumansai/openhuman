@@ -20,17 +20,10 @@ describe('ConnectionIndicator', () => {
     expect(screen.getByText('Connecting')).toBeInTheDocument();
   });
 
-  it('renders description text when provided', () => {
-    renderWithProviders(
-      <ConnectionIndicator status="connected" description="Custom description" />
-    );
-    expect(screen.getByText('Custom description')).toBeInTheDocument();
-  });
-
-  it('does not render description when empty string', () => {
-    renderWithProviders(<ConnectionIndicator status="connected" description="" />);
-    // Default description should not appear
-    expect(screen.queryByText(/Keep the app running/)).not.toBeInTheDocument();
+  it('renders as a pill badge', () => {
+    renderWithProviders(<ConnectionIndicator status="connected" />);
+    // The indicator renders as an inline pill — status text is visible
+    expect(screen.getByText(/Connected to OpenHuman AI/)).toBeInTheDocument();
   });
 
   it('falls back to store socket status when no override', () => {

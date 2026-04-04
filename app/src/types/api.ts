@@ -73,7 +73,10 @@ export interface CurrentPlanData {
   plan: PlanTier;
   hasActiveSubscription: boolean;
   planExpiry: string | null;
-  subscription: { id: string; status: string; currentPeriodEnd: string } | null;
+  subscription: { id: string; status: string; currentPeriodEnd: string; quantity: number } | null;
+  monthlyBudgetUsd: number;
+  weeklyBudgetUsd: number;
+  fiveHourCapUsd: number;
 }
 
 export interface PurchasePlanData {

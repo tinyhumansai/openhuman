@@ -15,90 +15,106 @@ module.exports = {
         'serif': ['Newsreader', 'Georgia', 'Cambria', 'Times New Roman', 'Times', 'serif'],
       },
 
-      // Elevated color system - Calm, trustworthy, and sophisticated
+      // Elevated color system - Clean, light, professional
       colors: {
-        // Canvas - Background layers with subtle warmth
+        // Neutral - Light theme grayscale (from Figma design tokens)
+        neutral: {
+          0: '#FFFFFF',     // Base / surface
+          50: '#FAFAFA',
+          100: '#F5F5F5',   // App background
+          200: '#E5E5E5',
+          300: '#D4D4D4',
+          400: '#A3A3A3',
+          500: '#737373',
+          600: '#525252',
+          700: '#404040',
+          800: '#262626',
+          900: '#171717',
+          950: '#0A0A0A',
+        },
+
+        // Canvas - Background layers (mapped to neutral for compat)
         canvas: {
-          50: '#FAFAF9',    // Base background
-          100: '#F5F5F4',   // Secondary background
-          150: '#EDEDEC',   // Tertiary background
-          200: '#E5E5E3',   // Card background
-          300: '#D4D4D1',   // Hover states
+          50: '#FAFAFA',    // Base background
+          100: '#F5F5F5',   // Secondary background
+          150: '#EFEFEF',   // Tertiary background
+          200: '#E5E5E5',   // Card background
+          300: '#D4D4D4',   // Hover states
         },
 
-        // Primary - Premium ocean blue with depth (optimized for dark backgrounds)
+        // Primary - Complementary blue from Figma
         primary: {
-          50: '#F0F7FF',
-          100: '#E0EFFF',
-          200: '#C7E2FF',
-          300: '#A5D0FF',
-          400: '#7AB5FF',
-          500: '#4A83DD',   // Main brand - darker blue for dark backgrounds
-          600: '#3D6DC4',   // Hover state
-          700: '#345A9F',   // Active state
-          800: '#2D4B7F',
-          900: '#1E3052',
-          950: '#0F1A2E',
+          50: '#EFF6FF',
+          100: '#DBEAFE',
+          200: '#BFDBFE',
+          300: '#93C5FD',
+          400: '#60A5FA',
+          500: '#2F6EF4',   // Complementary Blue (Figma)
+          600: '#2563EB',   // Gradient end
+          700: '#1D4ED8',   // Active state
+          800: '#1E40AF',
+          900: '#1E3A8A',
+          950: '#172554',
         },
 
-        // Sage - Success and growth (sophisticated green)
+        // Sage - Success (from Figma: #34C759)
         sage: {
-          50: '#F7FDF9',
-          100: '#ECFAEF',
-          200: '#D4F4DC',
-          300: '#AEEAC1',
-          400: '#72D892',
-          500: '#4DC46F',   // Main success - refined green
-          600: '#3BA858',
-          700: '#318B48',
-          800: '#2B6F3C',
-          900: '#255933',
-          950: '#14371E',
+          50: '#F0FDF4',
+          100: '#DCFCE7',
+          200: '#BBF7D0',
+          300: '#86EFAC',
+          400: '#4ADE80',
+          500: '#34C759',   // Success Green (Figma)
+          600: '#16A34A',
+          700: '#15803D',
+          800: '#166534',
+          900: '#14532D',
+          950: '#052E16',
         },
 
-        // Amber - Attention and caution (warm, muted)
+        // Amber - Attention and caution (from Figma: #E8A728)
         amber: {
-          50: '#FEFDF8',
-          100: '#FEF8E7',
-          200: '#FDEEC8',
-          300: '#FBDF9A',
-          400: '#F7C960',
-          500: '#E8A838',   // Main warning - sophisticated amber
-          600: '#D18B1F',
-          700: '#B06F1A',
-          800: '#8D581B',
-          900: '#744919',
-          950: '#4A2B0B',
+          50: '#FFFBEB',
+          100: '#FEF3C7',
+          200: '#FDE68A',
+          300: '#FCD34D',
+          400: '#FBBF24',
+          500: '#E8A728',   // Alert Orange (Figma)
+          600: '#D97706',
+          700: '#B45309',
+          800: '#92400E',
+          900: '#78350F',
+          950: '#451A03',
         },
 
-        // Coral - Errors and dangers (soft, professional)
+        // Coral - Errors and dangers (from Figma: #EF4444)
         coral: {
-          50: '#FFF5F5',
-          100: '#FFEBEB',
-          200: '#FFD6D6',
-          300: '#FFB3B3',
-          400: '#FF8585',
-          500: '#F56565',   // Main error - soft coral red
-          600: '#E84855',
-          700: '#D13742',
-          800: '#B02937',
-          900: '#922330',
-          950: '#5C1419',
+          50: '#FEF2F2',
+          100: '#FEE2E2',
+          200: '#FECACA',
+          300: '#FCA5A5',
+          400: '#F87171',
+          500: '#EF4444',   // Error Red (Figma)
+          600: '#DC2626',
+          700: '#B91C1C',
+          800: '#991B1B',
+          900: '#7F1D1D',
+          950: '#450A0A',
         },
 
-        // Stone - Neutral scale with subtle warmth
+        // Stone - Neutral scale (keeping for backward compat, mapped to neutral)
         stone: {
-          50: '#FAFAF9',
-          100: '#F5F5F4',
-          200: '#E7E5E4',
-          300: '#D6D3D1',
-          400: '#A8A29E',
-          500: '#78716C',
-          600: '#57534E',
-          700: '#44403C',
-          800: '#292524',
-          900: '#1C1917',
-          950: '#0C0A09',
+          50: '#FAFAFA',
+          100: '#F5F5F5',
+          200: '#E5E5E5',
+          300: '#D4D4D4',
+          400: '#A3A3A3',
+          500: '#737373',
+          600: '#525252',
+          700: '#404040',
+          800: '#262626',
+          900: '#171717',
+          950: '#0A0A0A',
         },
 
         // Slate - Cool grays for data and charts

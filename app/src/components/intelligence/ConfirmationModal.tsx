@@ -28,10 +28,10 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 animate-fade-in"
       onClick={handleCancel}>
       <div
-        className="bg-stone-900 rounded-2xl max-w-md w-full shadow-large border border-stone-700/50 animate-slide-up"
+        className="bg-white rounded-2xl max-w-md w-full shadow-large border border-stone-200 animate-slide-up"
         onClick={e => e.stopPropagation()}>
         {/* Header */}
         <div className="p-6 pb-4">
@@ -53,8 +53,8 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
               </div>
             )}
             <div className="flex-1">
-              <h2 className="text-lg font-semibold text-white">{modal.title}</h2>
-              <p className="text-sm text-stone-400 mt-1">{modal.message}</p>
+              <h2 className="text-lg font-semibold text-stone-900">{modal.title}</h2>
+              <p className="text-sm text-stone-600 mt-1">{modal.message}</p>
             </div>
           </div>
         </div>
@@ -62,12 +62,12 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
         {/* Don't show again option */}
         {modal.showDontShowAgain && (
           <div className="px-6 pb-2">
-            <label className="flex items-center gap-2 text-sm text-stone-400 cursor-pointer">
+            <label className="flex items-center gap-2 text-sm text-stone-600 cursor-pointer">
               <input
                 type="checkbox"
                 checked={dontShowAgain}
                 onChange={e => setDontShowAgain(e.target.checked)}
-                className="rounded border-stone-600 bg-stone-800 text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                className="rounded border-stone-300 bg-stone-100 text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
               />
               Don't show similar suggestions
             </label>
@@ -75,10 +75,10 @@ export function ConfirmationModal({ modal, onClose }: ConfirmationModalProps) {
         )}
 
         {/* Actions */}
-        <div className="flex items-center justify-end gap-3 p-6 pt-4 border-t border-stone-700/50">
+        <div className="flex items-center justify-end gap-3 p-6 pt-4 border-t border-stone-200">
           <button
             onClick={handleCancel}
-            className="px-4 py-2 text-sm font-medium text-stone-400 hover:text-white rounded-lg hover:bg-stone-800 transition-colors">
+            className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900 rounded-lg hover:bg-stone-100 transition-colors">
             {modal.cancelText || 'Cancel'}
           </button>
           <button

@@ -28,7 +28,22 @@ export interface AvailableSkillEntryRpc {
   entry: string;
   auto_start: boolean;
   platforms?: string[] | null;
-  setup?: { required?: boolean; label?: string; oauth?: { provider: string; scopes: string[]; apiBaseUrl: string } } | null;
+  setup?: {
+    required?: boolean;
+    label?: string;
+    oauth?: { provider: string; scopes: string[]; apiBaseUrl: string };
+    auth?: { modes: Array<{
+      type: string;
+      label?: string;
+      description?: string;
+      provider?: string;
+      scopes?: string[];
+      apiBaseUrl?: string;
+      fields?: Array<Record<string, unknown>>;
+      textDescription?: string;
+      textPlaceholder?: string;
+    }> };
+  } | null;
   ignore_in_production: boolean;
   download_url: string;
   manifest_url: string;
@@ -137,6 +152,29 @@ export async function removePersistedOAuthCredential(skillId: string): Promise<v
   await callCoreRpc({
     method: 'openhuman.skills_data_write',
     params: { skill_id: skillId, filename: 'oauth_credential.json', content: '' },
+  });
+}
+
+/** Revoke advanced auth credential via skill RPC. */
+export async function revokeAuth(skillId: string, mode?: string): Promise<void> {
+  await callCoreRpc({
+    method: 'openhuman.skills_rpc',
+    params: {
+      skill_id: skillId,
+      method: 'auth/revoked',
+      params: { mode: mode ?? 'unknown' },
+    },
+  });
+}
+
+/**
+ * Host-side fallback: delete auth_credential.json from the skill's data dir.
+ * Used when the runtime is already stopped so auth/revoked RPC can't reach it.
+ */
+export async function removePersistedAuthCredential(skillId: string): Promise<void> {
+  await callCoreRpc({
+    method: 'openhuman.skills_data_write',
+    params: { skill_id: skillId, filename: 'auth_credential.json', content: '' },
   });
 }
 

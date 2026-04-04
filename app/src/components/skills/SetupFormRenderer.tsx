@@ -60,7 +60,7 @@ export default function SetupFormRenderer({
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* Step header */}
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-white">{step.title}</h3>
+        <h3 className="text-lg font-semibold text-stone-900">{step.title}</h3>
         {step.description && (
           <p className="text-sm text-stone-400 mt-1">{step.description}</p>
         )}
@@ -80,7 +80,7 @@ export default function SetupFormRenderer({
 
         return (
           <div key={field.name} className="space-y-1.5">
-            <label className="block text-sm font-medium text-stone-300">
+            <label className="block text-sm font-medium text-stone-700">
               {field.label}
               {field.required && (
                 <span className="text-coral-400 ml-0.5">*</span>
@@ -106,10 +106,10 @@ export default function SetupFormRenderer({
                 }
                 placeholder={field.placeholder ?? undefined}
                 disabled={loading}
-                className={`w-full px-3 py-2.5 bg-black/50 border rounded-xl text-sm text-white placeholder-stone-600 focus:outline-none focus:ring-1 transition-colors ${
+                className={`w-full px-3 py-2.5 bg-stone-50 border rounded-xl text-sm text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-1 transition-colors ${
                   fieldError
                     ? "border-coral-500/50 focus:ring-coral-500/30"
-                    : "border-stone-700 focus:ring-primary-500/30 focus:border-primary-500/50"
+                    : "border-stone-200 focus:ring-primary-500/30 focus:border-primary-500/50"
                 }`}
               />
             )}
@@ -123,10 +123,10 @@ export default function SetupFormRenderer({
                   onChange={(e) => updateValue(field.name, e.target.value)}
                   placeholder={field.placeholder ?? undefined}
                   disabled={loading}
-                  className={`w-full px-3 py-2.5 pr-10 bg-black/50 border rounded-xl text-sm text-white placeholder-stone-600 focus:outline-none focus:ring-1 transition-colors ${
+                  className={`w-full px-3 py-2.5 pr-10 bg-stone-50 border rounded-xl text-sm text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-1 transition-colors ${
                     fieldError
                       ? "border-coral-500/50 focus:ring-coral-500/30"
-                      : "border-stone-700 focus:ring-primary-500/30 focus:border-primary-500/50"
+                      : "border-stone-200 focus:ring-primary-500/30 focus:border-primary-500/50"
                   }`}
                 />
                 <button
@@ -137,7 +137,7 @@ export default function SetupFormRenderer({
                       [field.name]: !prev[field.name],
                     }))
                   }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-300"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-500 hover:text-stone-700"
                 >
                   {showPasswords[field.name] ? (
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -159,10 +159,10 @@ export default function SetupFormRenderer({
                 value={String(value ?? "")}
                 onChange={(e) => updateValue(field.name, e.target.value)}
                 disabled={loading}
-                className={`w-full px-3 py-2.5 bg-black/50 border rounded-xl text-sm text-white focus:outline-none focus:ring-1 transition-colors ${
+                className={`w-full px-3 py-2.5 bg-stone-50 border rounded-xl text-sm text-stone-900 focus:outline-none focus:ring-1 transition-colors ${
                   fieldError
                     ? "border-coral-500/50 focus:ring-coral-500/30"
-                    : "border-stone-700 focus:ring-primary-500/30 focus:border-primary-500/50"
+                    : "border-stone-200 focus:ring-primary-500/30 focus:border-primary-500/50"
                 }`}
               >
                 <option value="">Select...</option>
@@ -172,6 +172,22 @@ export default function SetupFormRenderer({
                   </option>
                 ))}
               </select>
+            )}
+
+            {/* Textarea */}
+            {field.type === "textarea" && (
+              <textarea
+                value={String(value ?? "")}
+                onChange={(e) => updateValue(field.name, e.target.value)}
+                placeholder={field.placeholder ?? undefined}
+                disabled={loading}
+                rows={8}
+                className={`w-full px-3 py-2.5 bg-stone-50 border rounded-xl text-sm text-stone-900 placeholder-stone-400 font-mono focus:outline-none focus:ring-1 transition-colors resize-y ${
+                  fieldError
+                    ? "border-coral-500/50 focus:ring-coral-500/30"
+                    : "border-stone-200 focus:ring-primary-500/30 focus:border-primary-500/50"
+                }`}
+              />
             )}
 
             {/* Boolean toggle */}
@@ -193,7 +209,7 @@ export default function SetupFormRenderer({
                     }`}
                   />
                 </div>
-                <span className="text-sm text-stone-300">
+                <span className="text-sm text-stone-700">
                   {value ? "Enabled" : "Disabled"}
                 </span>
               </label>
@@ -213,7 +229,7 @@ export default function SetupFormRenderer({
           type="button"
           onClick={onCancel}
           disabled={loading}
-          className="flex-1 py-2.5 text-sm font-medium text-stone-400 bg-stone-800/50 border border-stone-700 rounded-xl hover:bg-stone-800 transition-colors disabled:opacity-50"
+          className="flex-1 py-2.5 text-sm font-medium text-stone-600 bg-stone-100 border border-stone-200 rounded-xl hover:bg-stone-200 transition-colors disabled:opacity-50"
         >
           Cancel
         </button>

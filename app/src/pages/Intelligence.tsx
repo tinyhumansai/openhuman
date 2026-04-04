@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
 
 import { ActionableCard } from '../components/intelligence/ActionableCard';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
@@ -17,8 +16,6 @@ import {
 } from '../hooks/useIntelligenceSocket';
 import { useIntelligenceStats } from '../hooks/useIntelligenceStats';
 import { useScreenIntelligenceItems } from '../hooks/useScreenIntelligenceItems';
-import type { RootState } from '../store';
-import { setSearchFilter, setSourceFilter } from '../store/intelligenceSlice';
 import type {
   ActionableItem,
   ActionableItemSource,
@@ -30,14 +27,12 @@ import type {
 type IntelligenceTab = 'memory' | 'subconscious' | 'dreams';
 
 export default function Intelligence() {
-  const dispatch = useDispatch();
   const { aiStatus } = useIntelligenceStats();
 
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('memory');
-
-  // Redux state
-  const intelligenceState = useSelector((state: RootState) => state.intelligence);
-  const { filters } = intelligenceState;
+  const [sourceFilter, setSourceFilter] = useState<ActionableItemSource | 'all'>('all');
+  const [priorityFilter] = useState<'critical' | 'important' | 'normal' | 'all'>('all');
+  const [searchFilter, setSearchFilter] = useState('');
 
   // Conscious memory items (real data from the background analysis loop)
   const {
@@ -96,11 +91,11 @@ export default function Intelligence() {
   const filteredItems = useMemo(() => {
     const activeItems = items.filter(item => item.status === 'active');
     return filterItems(activeItems, {
-      source: filters.source,
-      priority: filters.priority,
-      searchTerm: filters.search,
+      source: sourceFilter,
+      priority: priorityFilter,
+      searchTerm: searchFilter,
     });
-  }, [items, filters.source, filters.priority, filters.search]);
+  }, [items, priorityFilter, searchFilter, sourceFilter]);
 
   const timeGroups = useMemo(() => groupItemsByTime(filteredItems), [filteredItems]);
   const stats = useMemo(() => getItemStats(filteredItems), [filteredItems]);
@@ -250,16 +245,16 @@ export default function Intelligence() {
   ];
 
   return (
-    <div className="min-h-full relative">
-      <div className="relative z-10 min-h-full flex flex-col">
-        <div className="flex-1 p-6">
-          <div className="max-w-6xl mx-auto">
+    <div className="min-h-full bg-[#F5F5F5] p-4 pt-6">
+      <div className="max-w-2xl mx-auto">
+        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6">
+          <div>
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-white">Intelligence</h1>
+                <h1 className="text-xl font-bold text-stone-900">Intelligence</h1>
                 {activeTab === 'memory' && stats.total > 0 && (
-                  <div className="text-xs bg-white/10 text-white px-2 py-1 rounded-full">
+                  <div className="text-xs bg-stone-100 text-stone-900 px-2 py-1 rounded-full">
                     {stats.total}
                   </div>
                 )}
@@ -273,7 +268,7 @@ export default function Intelligence() {
                   <button
                     onClick={usingMemoryData ? refreshConscious : handleAnalyzeNow}
                     disabled={isRunning || itemsLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed border border-white/10 rounded-lg text-stone-300 transition-colors">
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 disabled:opacity-40 disabled:cursor-not-allowed border border-stone-200 rounded-lg text-stone-600 transition-colors">
                     {isRunning || itemsLoading ? (
                       <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
                     ) : (
@@ -297,7 +292,7 @@ export default function Intelligence() {
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b border-white/10 mb-6">
+            <div className="flex border-b border-stone-200 mb-6">
               {tabs.map(tab => (
                 <button
                   key={tab.id}
@@ -305,11 +300,11 @@ export default function Intelligence() {
                   className={`relative px-4 py-2.5 text-sm font-medium transition-colors ${
                     activeTab === tab.id
                       ? 'text-primary-400 border-b-2 border-primary-400'
-                      : 'text-stone-400 hover:text-stone-300'
+                      : 'text-stone-400 hover:text-stone-700'
                   }`}>
                   {tab.label}
                   {tab.comingSoon && (
-                    <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-white/5 text-stone-500 border border-white/10">
+                    <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-stone-50 text-stone-500 border border-stone-200">
                       Soon
                     </span>
                   )}
@@ -328,17 +323,15 @@ export default function Intelligence() {
                     <input
                       type="text"
                       placeholder="Search actionable items..."
-                      value={filters.search}
-                      onChange={e => dispatch(setSearchFilter(e.target.value))}
-                      className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white placeholder-stone-500 focus:outline-none focus:border-primary-500/50 transition-colors"
+                      value={searchFilter}
+                      onChange={e => setSearchFilter(e.target.value)}
+                      className="w-full px-3 py-2 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50 transition-colors"
                     />
                   </div>
                   <select
-                    value={filters.source}
-                    onChange={e =>
-                      dispatch(setSourceFilter(e.target.value as ActionableItemSource | 'all'))
-                    }
-                    className="px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-primary-500/50 transition-colors">
+                    value={sourceFilter}
+                    onChange={e => setSourceFilter(e.target.value as ActionableItemSource | 'all')}
+                    className="px-3 py-2 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 focus:outline-none focus:border-primary-500/50 transition-colors">
                     <option value="all">All Sources</option>
                     <option value="email">Email</option>
                     <option value="calendar">Calendar</option>
@@ -356,7 +349,7 @@ export default function Intelligence() {
                     <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-primary-500/10">
                       <div className="w-8 h-8 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
                     </div>
-                    <h2 className="text-lg font-semibold text-white mb-2">
+                    <h2 className="text-lg font-semibold text-stone-900 mb-2">
                       Loading Intelligence...
                     </h2>
                     <p className="text-stone-400 text-sm">Fetching your actionable items</p>
@@ -366,7 +359,9 @@ export default function Intelligence() {
                     <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center rounded-full bg-primary-500/10">
                       <div className="w-8 h-8 border-2 border-primary-400 border-t-transparent rounded-full animate-spin" />
                     </div>
-                    <h2 className="text-lg font-semibold text-white mb-2">Analyzing your data…</h2>
+                    <h2 className="text-lg font-semibold text-stone-900 mb-2">
+                      Analyzing your data…
+                    </h2>
                     <p className="text-stone-400 text-sm">
                       The conscious loop is reviewing your connected skills
                     </p>
@@ -387,21 +382,25 @@ export default function Intelligence() {
                         />
                       </svg>
                     </div>
-                    {filters.search || filters.source !== 'all' ? (
+                    {searchFilter || sourceFilter !== 'all' ? (
                       <>
-                        <h2 className="text-lg font-semibold text-white mb-2">No matches</h2>
+                        <h2 className="text-lg font-semibold text-stone-900 mb-2">No matches</h2>
                         <p className="text-stone-400 text-sm">
                           No items match your current filters.
                         </p>
                       </>
                     ) : usingMemoryData ? (
                       <>
-                        <h2 className="text-lg font-semibold text-white mb-2">All caught up!</h2>
+                        <h2 className="text-lg font-semibold text-stone-900 mb-2">
+                          All caught up!
+                        </h2>
                         <p className="text-stone-400 text-sm">No actionable items at the moment.</p>
                       </>
                     ) : (
                       <>
-                        <h2 className="text-lg font-semibold text-white mb-2">No analysis yet</h2>
+                        <h2 className="text-lg font-semibold text-stone-900 mb-2">
+                          No analysis yet
+                        </h2>
                         <p className="text-stone-400 text-sm mb-4">
                           Run an analysis to extract actionable items from your connected skills.
                         </p>
@@ -428,10 +427,10 @@ export default function Intelligence() {
                         className="animate-fade-up"
                         style={{ animationDelay: `${groupIndex * 50}ms` }}>
                         <div className="flex items-center justify-between mb-3">
-                          <h2 className="text-sm font-semibold text-white opacity-80">
+                          <h2 className="text-sm font-semibold text-stone-900 opacity-80">
                             {group.label}
                           </h2>
-                          <div className="text-xs bg-white/10 text-white px-2 py-1 rounded-full">
+                          <div className="text-xs bg-stone-100 text-stone-900 px-2 py-1 rounded-full">
                             {group.count}
                           </div>
                         </div>
@@ -479,7 +478,7 @@ export default function Intelligence() {
                     />
                   </svg>
                 </div>
-                <h2 className="text-lg font-semibold text-white mb-2">Subconscious</h2>
+                <h2 className="text-lg font-semibold text-stone-900 mb-2">Subconscious</h2>
                 <p className="text-stone-400 text-sm mb-1">
                   OpenHuman will constantly have subconscious thoughts based on all the information
                   it has access to and the activity you have engaged with it in.
@@ -510,7 +509,7 @@ export default function Intelligence() {
                     />
                   </svg>
                 </div>
-                <h2 className="text-lg font-semibold text-white mb-2">Dreams</h2>
+                <h2 className="text-lg font-semibold text-stone-900 mb-2">Dreams</h2>
                 <p className="text-stone-400 text-sm mb-1">
                   Twice everyday, OpenHuman will generate a dream (or a summary) based on everything
                   that has happened in your life today. These dreams re then indexed and can be used

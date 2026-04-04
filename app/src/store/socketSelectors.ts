@@ -1,3 +1,4 @@
+import { getCoreStateSnapshot } from '../lib/coreState/store';
 import type { RootState } from './index';
 
 const PENDING_USER = '__pending__';
@@ -6,8 +7,8 @@ const PENDING_USER = '__pending__';
  * Derive the socket user ID from the JWT token — must match the key used
  * by socketService.ts when writing to byUser[].
  */
-function selectSocketUserId(state: RootState): string {
-  const token = state.auth.token;
+function selectSocketUserId(_state: RootState): string {
+  const token = getCoreStateSnapshot().snapshot.sessionToken;
   if (!token) return PENDING_USER;
 
   try {

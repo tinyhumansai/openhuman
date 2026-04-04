@@ -94,13 +94,13 @@ const Invites = () => {
   };
 
   return (
-    <div className="min-h-full relative">
-      <div className="relative z-10 min-h-full flex flex-col">
-        <div className="flex-1 flex items-center justify-center p-4">
-          <div className="max-w-md w-full space-y-4">
+    <div className="min-h-full bg-[#F5F5F5] flex items-center justify-center p-4 pt-6">
+      <div className="max-w-md w-full space-y-4">
+        <div>
+          <div className="space-y-4">
             {/* Redeem Section — shown only if user hasn't redeemed yet */}
             {!hasBeenInvited && (
-              <div className="glass rounded-3xl p-6 shadow-large animate-fade-up">
+              <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
                 <h2 className="text-lg font-bold mb-1">Redeem an Invite Code</h2>
                 <p className="text-xs opacity-70 mb-4">
                   Got a code from a friend? Enter it below to unlock free credits.
@@ -132,7 +132,7 @@ const Invites = () => {
             )}
 
             {/* Your Invite Codes */}
-            <div className="glass rounded-3xl p-6 shadow-large animate-fade-up">
+            <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
               <div className="mb-4">
                 <h2 className="text-lg font-bold mb-1">Your Invite Codes</h2>
                 <p className="text-xs opacity-70">

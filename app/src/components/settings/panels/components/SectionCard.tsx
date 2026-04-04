@@ -13,16 +13,16 @@ interface SectionCardProps {
 }
 
 const priorityStyles = {
-  critical: 'bg-gradient-to-br from-primary-500/10 to-primary-600/5 border-primary-500/20',
-  infrastructure: 'bg-gradient-to-br from-slate-500/8 to-slate-600/4 border-slate-500/15',
-  development: 'bg-gradient-to-br from-amber-500/8 to-amber-600/4 border-amber-500/15',
-  tools: 'bg-black/30 border-stone-600/30',
+  critical: 'bg-gradient-to-br from-primary-50 to-white border-primary-200',
+  infrastructure: 'bg-gradient-to-br from-stone-50 to-white border-stone-200',
+  development: 'bg-gradient-to-br from-amber-50 to-white border-amber-200',
+  tools: 'bg-stone-50 border-stone-200',
 } as const;
 
 const priorityIconColors = {
-  critical: 'text-primary-400',
-  infrastructure: 'text-slate-400',
-  development: 'text-amber-400',
+  critical: 'text-primary-500',
+  infrastructure: 'text-stone-500',
+  development: 'text-amber-500',
   tools: 'text-stone-400',
 } as const;
 
@@ -48,13 +48,13 @@ const SectionCard: React.FC<SectionCardProps> = ({
     <div
       className={`rounded-xl border backdrop-blur-sm transition-all duration-200 ${priorityStyles[priority]}`}>
       <div
-        className={`flex items-center justify-between p-6 ${collapsible ? 'cursor-pointer hover:bg-white/5' : ''}`}
+        className={`flex items-center justify-between p-6 ${collapsible ? 'cursor-pointer hover:bg-stone-100' : ''}`}
         onClick={handleToggle}>
         <div className="flex items-center gap-3">
           <div
             className={`flex-shrink-0 ${priorityIconColors[priority]} ${loading ? 'relative' : ''}`}>
             {loading ? (
-              <div className="h-5 w-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              <div className="h-5 w-5 border-2 border-stone-200 border-t-stone-600 rounded-full animate-spin" />
             ) : (
               React.cloneElement(icon as React.ReactElement<{ className?: string }>, {
                 className: 'h-5 w-5',
@@ -62,13 +62,13 @@ const SectionCard: React.FC<SectionCardProps> = ({
             )}
           </div>
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-semibold text-white font-display">{title}</h3>
+            <h3 className="text-xl font-semibold text-stone-900 font-display">{title}</h3>
             {hasChanges && <div className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" />}
-            {loading && <span className="text-sm text-gray-400 ml-2">Loading...</span>}
+            {loading && <span className="text-sm text-stone-500 ml-2">Loading...</span>}
           </div>
         </div>
         {collapsible && (
-          <div className="text-gray-400 transition-transform duration-200">
+          <div className="text-stone-500 transition-transform duration-200">
             {isExpanded ? (
               <ChevronDownIcon className="h-5 w-5" />
             ) : (

@@ -141,8 +141,8 @@ fn mock_upstream_router() -> Router {
             })
     }
 
-    // Matches `GET /settings` in `BackendOAuthClient::fetch_settings` (session store validation).
-    async fn settings(headers: HeaderMap) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Matches authenticated profile fetches used during session validation.
+    async fn current_user(headers: HeaderMap) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
         require_any_bearer(&headers, &[GENERAL_TOKEN, BILLING_TOKEN, TEAM_TOKEN])?;
         Ok(Json(json!({
             "success": true,
@@ -370,7 +370,8 @@ fn mock_upstream_router() -> Router {
     }
 
     Router::new()
-        .route("/settings", get(settings))
+        .route("/settings", get(current_user))
+        .route("/auth/me", get(current_user))
         .route("/openai/v1/chat/completions", post(chat_completions))
         // billing
         .route("/payments/stripe/currentPlan", get(stripe_current_plan))
@@ -565,7 +566,7 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
         "unexpected auth state shape: {state_body}"
     );
 
-    // --- auth: store session (validates JWT via mock GET /settings) ---
+    // --- auth: store session (validates JWT via mock GET /auth/me) ---
     let store = post_json_rpc(
         &rpc_base,
         4,

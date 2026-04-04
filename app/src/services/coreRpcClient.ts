@@ -87,7 +87,7 @@ function normalizeLegacyMethod(method: string): string {
   return method;
 }
 
-async function getCoreRpcUrl(): Promise<string> {
+export async function getCoreRpcUrl(): Promise<string> {
   if (resolvedCoreRpcUrl) {
     return resolvedCoreRpcUrl;
   }
@@ -117,6 +117,15 @@ async function getCoreRpcUrl(): Promise<string> {
   resolvingCoreRpcUrl = resolvePromise;
 
   return resolvePromise;
+}
+
+export async function getCoreHttpBaseUrl(): Promise<string> {
+  const rpcUrl = await getCoreRpcUrl();
+  const url = new URL(rpcUrl);
+  url.pathname = '';
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/$/, '');
 }
 
 export async function callCoreRpc<T>({

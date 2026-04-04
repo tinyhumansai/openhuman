@@ -136,3 +136,99 @@ impl PreferencesStore {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_store() -> (PreferencesStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferencesStore::new(&dir.path().to_path_buf());
+        (store, dir)
+    }
+
+    #[test]
+    fn enable_disable_roundtrip() {
+        let (store, _dir) = temp_store();
+        assert_eq!(store.is_enabled("my-skill"), None);
+        store.set_enabled("my-skill", true);
+        assert_eq!(store.is_enabled("my-skill"), Some(true));
+        store.set_enabled("my-skill", false);
+        assert_eq!(store.is_enabled("my-skill"), Some(false));
+    }
+
+    #[test]
+    fn setup_complete_also_enables() {
+        let (store, _dir) = temp_store();
+        store.set_setup_complete("s1", true);
+        assert!(store.is_setup_complete("s1"));
+        assert_eq!(store.is_enabled("s1"), Some(true));
+    }
+
+    #[test]
+    fn persistence_across_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        {
+            let store = PreferencesStore::new(&path);
+            store.set_enabled("x", true);
+            store.set_setup_complete("x", true);
+        }
+        // Reload from disk
+        let store2 = PreferencesStore::new(&path);
+        assert_eq!(store2.is_enabled("x"), Some(true));
+        assert!(store2.is_setup_complete("x"));
+    }
+
+    #[test]
+    fn missing_file_returns_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferencesStore::new(&dir.path().to_path_buf());
+        assert_eq!(store.is_enabled("nonexistent"), None);
+        assert!(!store.is_setup_complete("nonexistent"));
+    }
+
+    #[test]
+    fn corrupt_file_returns_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("skill-preferences.json");
+        std::fs::write(&file, "not valid json {{{}").unwrap();
+        let store = PreferencesStore::new(&dir.path().to_path_buf());
+        assert_eq!(store.is_enabled("any"), None);
+    }
+
+    #[test]
+    fn resolve_should_start_setup_complete_overrides() {
+        let (store, _dir) = temp_store();
+        store.set_setup_complete("s1", true);
+        // Even if manifest says false, setup_complete wins
+        assert!(store.resolve_should_start("s1", false));
+    }
+
+    #[test]
+    fn resolve_should_start_falls_back_to_enabled() {
+        let (store, _dir) = temp_store();
+        store.set_enabled("s1", true);
+        assert!(store.resolve_should_start("s1", false));
+        store.set_enabled("s1", false);
+        assert!(!store.resolve_should_start("s1", true));
+    }
+
+    #[test]
+    fn resolve_should_start_falls_back_to_manifest() {
+        let (store, _dir) = temp_store();
+        assert!(store.resolve_should_start("unknown", true));
+        assert!(!store.resolve_should_start("unknown", false));
+    }
+
+    #[test]
+    fn get_all_returns_complete_map() {
+        let (store, _dir) = temp_store();
+        store.set_enabled("a", true);
+        store.set_enabled("b", false);
+        let all = store.get_all();
+        assert_eq!(all.len(), 2);
+        assert!(all["a"].enabled);
+        assert!(!all["b"].enabled);
+    }
+}

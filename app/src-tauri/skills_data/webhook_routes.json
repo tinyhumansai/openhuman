@@ -1,0 +1,11 @@
+{
+  "registrations": [
+    {
+      "tunnel_uuid": "a318cdf6-2bd9-48a0-94fb-06373f4527a6",
+      "target_kind": "echo",
+      "skill_id": "echo",
+      "tunnel_name": "echo-debug-1775247116",
+      "backend_tunnel_id": "69d01f0c774c8aa50388115b"
+    }
+  ]
+}

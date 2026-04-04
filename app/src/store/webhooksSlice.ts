@@ -7,6 +7,7 @@ import type { Tunnel } from '../services/api/tunnelsApi';
 /** Local tunnel-to-skill registration (from the Rust core WebhookRouter). */
 export interface TunnelRegistration {
   tunnel_uuid: string;
+  target_kind?: string;
   skill_id: string;
   tunnel_name: string | null;
   backend_tunnel_id: string | null;

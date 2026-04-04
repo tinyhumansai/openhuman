@@ -43,7 +43,7 @@ function ConnectOptionRow({
   let badge: React.ReactElement;
   if (option.comingSoon) {
     badge = (
-      <span className="text-xs opacity-60 bg-stone-700 px-2 py-0.5 rounded">Coming Soon</span>
+      <span className="text-xs text-stone-500 bg-stone-100 px-2 py-0.5 rounded">Coming Soon</span>
     );
   } else if (option.skillId) {
     const cfg = STATUS_BADGE[connectionStatus];
@@ -60,16 +60,16 @@ function ConnectOptionRow({
     <button
       disabled={disabled}
       onClick={() => onConnect(option)}
-      className={`w-full flex items-start space-x-3 p-3 bg-black/50 border border-stone-700 rounded-xl transition-all duration-200 text-left ${
-        disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-stone-600 hover:shadow-medium'
+      className={`w-full flex items-start space-x-3 p-3 bg-white border border-stone-200 rounded-xl transition-all duration-200 text-left ${
+        disabled ? 'opacity-50 cursor-not-allowed' : 'hover:border-stone-300 hover:shadow-medium'
       }`}>
       <div className="flex-shrink-0 mt-0.5">{option.icon}</div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between">
-          <span className="font-medium text-sm">{option.name}</span>
+          <span className="font-medium text-sm text-stone-900">{option.name}</span>
           {badge}
         </div>
-        <p className="opacity-70 text-xs mt-1">{option.description}</p>
+        <p className="text-stone-600 text-xs mt-1">{option.description}</p>
       </div>
     </button>
   );
@@ -123,10 +123,10 @@ const ConnectStep = ({ onNext }: ConnectStepProps) => {
   };
 
   return (
-    <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
+    <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2">Connect Accounts</h1>
-        <p className="opacity-70 text-sm">
+        <h1 className="text-xl font-bold mb-2 text-stone-900">Connect Accounts</h1>
+        <p className="text-stone-600 text-sm">
           The more accounts you connect, the more powerful the intelligence will be.
         </p>
       </div>
@@ -137,11 +137,13 @@ const ConnectStep = ({ onNext }: ConnectStepProps) => {
         ))}
       </div>
 
-      <div className="mt-4 p-4 bg-sage-500/10 rounded-xl border border-sage-500/30">
+      <div className="mt-4 p-4 bg-stone-50 rounded-xl border border-stone-200">
         <div className="flex items-start space-x-2">
           <div>
-            <p className="font-medium text-sm">Remember everything is private &amp; encrypted!</p>
-            <p className="opacity-70 text-xs mt-1">
+            <p className="font-medium text-sm text-stone-900">
+              Remember everything is private &amp; encrypted!
+            </p>
+            <p className="text-stone-600 text-xs mt-1">
               All data and credentials are stored locally and follows a strict zero-data retention
               policy so you won't have to worry about anything getting leaked.
             </p>

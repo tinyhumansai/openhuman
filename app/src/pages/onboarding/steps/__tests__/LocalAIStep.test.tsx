@@ -1,15 +1,18 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
 import LocalAIStep from '../LocalAIStep';
 
-vi.mock('../../../../utils/tauriCommands', () => ({
-  openhumanLocalAiDownload: vi.fn().mockResolvedValue({} as never),
-  openhumanLocalAiDownloadAllAssets: vi.fn().mockResolvedValue({} as never),
+vi.mock('../../../../utils/localAiBootstrap', () => ({
+  bootstrapLocalAiWithRecommendedPreset: vi.fn().mockResolvedValue({} as never),
 }));
 
 describe('LocalAIStep', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('happy path: advances immediately and calls onNext with correct payload', async () => {
     const onNext = vi.fn();
     renderWithProviders(<LocalAIStep onNext={onNext} />);
@@ -20,9 +23,12 @@ describe('LocalAIStep', () => {
     expect(onNext).toHaveBeenCalledWith({ consentGiven: true, downloadStarted: true });
   });
 
-  it('error path: calls onDownloadError once when openhumanLocalAiDownload rejects', async () => {
-    const { openhumanLocalAiDownload } = await import('../../../../utils/tauriCommands');
-    vi.mocked(openhumanLocalAiDownload).mockRejectedValueOnce(new Error('network error'));
+  it('error path: calls onDownloadError once when bootstrap fails', async () => {
+    const { bootstrapLocalAiWithRecommendedPreset } =
+      await import('../../../../utils/localAiBootstrap');
+    vi.mocked(bootstrapLocalAiWithRecommendedPreset).mockRejectedValueOnce(
+      new Error('network error')
+    );
 
     const onNext = vi.fn();
     const onDownloadError = vi.fn();
@@ -40,28 +46,23 @@ describe('LocalAIStep', () => {
     expect(onDownloadError).toHaveBeenCalledWith('Local AI setup encountered an issue');
   });
 
-  it('error path: calls onDownloadError only once even if both downloads fail', async () => {
-    const { openhumanLocalAiDownload, openhumanLocalAiDownloadAllAssets } =
-      await import('../../../../utils/tauriCommands');
-    vi.mocked(openhumanLocalAiDownload).mockRejectedValueOnce(new Error('fail 1'));
-    vi.mocked(openhumanLocalAiDownloadAllAssets).mockRejectedValueOnce(new Error('fail 2'));
+  it('starts the recommended-preset bootstrap flow once', async () => {
+    const { bootstrapLocalAiWithRecommendedPreset } =
+      await import('../../../../utils/localAiBootstrap');
 
     const onNext = vi.fn();
-    const onDownloadError = vi.fn();
-    renderWithProviders(<LocalAIStep onNext={onNext} onDownloadError={onDownloadError} />);
+    renderWithProviders(<LocalAIStep onNext={onNext} />);
 
     fireEvent.click(screen.getByRole('button', { name: /continue/i }));
 
-    await waitFor(() => {
-      expect(onDownloadError).toHaveBeenCalledOnce();
-    });
+    expect(bootstrapLocalAiWithRecommendedPreset).toHaveBeenCalledOnce();
+    expect(bootstrapLocalAiWithRecommendedPreset).toHaveBeenCalledWith(false, '[LocalAIStep]');
   });
 
   it('double-click guard: download functions called only once', async () => {
-    const { openhumanLocalAiDownload, openhumanLocalAiDownloadAllAssets } =
-      await import('../../../../utils/tauriCommands');
-    vi.mocked(openhumanLocalAiDownload).mockResolvedValue({} as never);
-    vi.mocked(openhumanLocalAiDownloadAllAssets).mockResolvedValue({} as never);
+    const { bootstrapLocalAiWithRecommendedPreset } =
+      await import('../../../../utils/localAiBootstrap');
+    vi.mocked(bootstrapLocalAiWithRecommendedPreset).mockResolvedValue({} as never);
 
     const onNext = vi.fn();
     renderWithProviders(<LocalAIStep onNext={onNext} />);
@@ -71,7 +72,6 @@ describe('LocalAIStep', () => {
     fireEvent.click(button);
 
     expect(onNext).toHaveBeenCalledOnce();
-    expect(openhumanLocalAiDownload).toHaveBeenCalledOnce();
-    expect(openhumanLocalAiDownloadAllAssets).toHaveBeenCalledOnce();
+    expect(bootstrapLocalAiWithRecommendedPreset).toHaveBeenCalledOnce();
   });
 });

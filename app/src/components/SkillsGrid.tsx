@@ -36,13 +36,13 @@ function SkillRow({ skillId, name, icon, skillType, syncSummaryText, onConnect }
   return (
     <tr
       onClick={onConnect}
-      className="skill-row group hover:bg-stone-800/20 transition-all duration-300 cursor-pointer border-b border-stone-800/30 last:border-0">
+      className="skill-row group hover:bg-stone-50 transition-all duration-300 cursor-pointer border-b border-stone-200 last:border-0">
       <td className="py-2.5 px-3">
         <div className="flex items-center gap-3">
-          <div className="w-5 h-5 flex items-center justify-center text-white opacity-70 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          <div className="w-5 h-5 flex items-center justify-center text-stone-900 opacity-70 group-hover:opacity-100 transition-opacity flex-shrink-0">
             {icon || <DefaultIcon />}
           </div>
-          <span className="text-sm text-white font-medium">{name}</span>
+          <span className="text-sm text-stone-900 font-medium">{name}</span>
           <SkillTypeBadge type={skillType} />
         </div>
       </td>
@@ -67,7 +67,7 @@ function SkillRow({ skillId, name, icon, skillType, syncSummaryText, onConnect }
       </td>
       <td className="py-2.5 px-3 w-8">
         <svg
-          className="w-4 h-4 text-stone-500 group-hover:text-stone-300 transition-colors"
+          className="w-4 h-4 text-stone-500 group-hover:text-stone-700 transition-colors"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24">
@@ -144,7 +144,7 @@ export default function SkillsGrid() {
     <>
       <div className="animate-fade-up mt-4 mb-8 relative">
         <div className="flex items-center justify-between mb-3 px-1">
-          <h3 className="text-sm font-semibold text-white opacity-80">Available Skills</h3>
+          <h3 className="text-sm font-semibold text-stone-900 opacity-80">Available Skills</h3>
         </div>
         <div
           className="glass rounded-xl overflow-hidden skills-table-container relative cursor-pointer"
@@ -152,7 +152,7 @@ export default function SkillsGrid() {
           <div className="skills-table-scroll">
             <table className="w-full">
               <thead className="skills-table-header">
-                <tr className="border-b border-stone-800/30">
+                <tr className="border-b border-stone-200">
                   <th className="py-2 px-3 text-left">
                     <span className="text-xs font-medium text-stone-400 uppercase tracking-wider">
                       Skill
@@ -193,7 +193,7 @@ export default function SkillsGrid() {
               </tbody>
             </table>
           </div>
-          <div className="skills-table-overlay absolute inset-0 bg-black/80 flex items-center justify-center rounded-xl opacity-0 transition-opacity duration-200 pointer-events-none">
+          <div className="skills-table-overlay absolute inset-0 bg-black/30 flex items-center justify-center rounded-xl opacity-0 transition-opacity duration-200 pointer-events-none">
             <span className="text-sm font-medium text-white">View all skills</span>
           </div>
         </div>

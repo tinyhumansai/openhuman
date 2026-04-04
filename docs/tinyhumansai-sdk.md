@@ -375,20 +375,19 @@ Both `document_id` and `namespace` are required (validated before the request is
 
 **File:** `src-tauri/src/memory/mod.rs`
 
-The project wraps `TinyHumansMemoryClient` in a `MemoryClient` struct. Construction happens at runtime via the `init_memory_client` Tauri command, using the user's JWT from Redux `authSlice.token` — not a hardcoded API key.
+The project wraps memory operations in a `MemoryClient` struct backed by local SQLite
+(via `UnifiedMemory`). Construction happens at runtime via the `openhuman.memory_init`
+RPC method.  Memory is **local-only** — the `jwt_token` parameter in the init request
+is accepted for backward compatibility but ignored.  Remote/cloud memory sync is a
+future consideration.
 
 ```rust
-pub fn from_token(jwt_token: String) -> Option<Self> {
-    // Base URL resolved in order:
-    // 1. OPENHUMAN_BASE_URL env var
-    // 2. TINYHUMANS_BASE_URL env var
-    // 3. get_backend_url() — app's configured backend
-    let config = TinyHumanConfig::new(jwt_token).with_base_url(resolved_url);
-    TinyHumansMemoryClient::new(config).ok().map(|inner| Self { inner })
-}
+// Local-only — no remote sync.
+pub fn new_local() -> Result<Self, String> { /* ... */ }
+pub fn from_workspace_dir(workspace_dir: PathBuf) -> Result<Self, String> { /* ... */ }
 ```
 
-The client is stored as `Arc<MemoryClient>` inside a `Mutex<Option<MemoryClientRef>>` (`MemoryState`), shared across Tauri commands.
+The client is stored as `Arc<MemoryClient>` inside a `Mutex<Option<MemoryClientRef>>` (`MemoryState`), shared across RPC handlers.
 
 ---
 

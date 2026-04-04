@@ -263,6 +263,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/health", get(health_handler))
         .route("/schema", get(schema_handler))
         .route("/events", get(events_handler))
+        .route("/events/webhooks", get(webhook_events_handler))
         .route("/rpc", post(rpc_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
         .fallback(not_found_handler)
@@ -367,6 +368,38 @@ async fn events_handler(
     });
 
     Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+}
+
+async fn webhook_events_handler() -> Response {
+    let Some(engine) = crate::openhuman::skills::global_engine() else {
+        let stream = tokio_stream::once(Ok::<Event, std::convert::Infallible>(
+            Event::default()
+                .event("webhooks_debug")
+                .data("{\"event_type\":\"runtime_unavailable\"}"),
+        ));
+        return Sse::new(stream)
+            .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+            .into_response();
+    };
+
+    let rx = engine.webhook_router().subscribe_debug_events();
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |item| {
+        let event = match item {
+            Ok(ev) => ev,
+            Err(_) => return None,
+        };
+        let data = match serde_json::to_string(&event) {
+            Ok(data) => data,
+            Err(_) => return None,
+        };
+        Some(Ok::<Event, std::convert::Infallible>(
+            Event::default().event("webhooks_debug").data(data),
+        ))
+    });
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+        .into_response()
 }
 
 async fn root_handler() -> impl IntoResponse {
@@ -697,11 +730,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invoke_memory_init_missing_required_param_fails() {
-        let err = invoke_method(default_state(), "openhuman.memory_init", json!({}))
-            .await
-            .expect_err("missing jwt_token should fail");
-        assert!(err.contains("jwt_token"));
+    async fn invoke_memory_init_accepts_empty_params() {
+        // jwt_token is optional (accepted for backward compat but ignored).
+        // The call may still fail for workspace reasons in test, but must NOT
+        // fail with a missing-param error for jwt_token.
+        let result = invoke_method(default_state(), "openhuman.memory_init", json!({})).await;
+        if let Err(ref e) = result {
+            assert!(
+                !e.contains("missing required param") || !e.contains("jwt_token"),
+                "jwt_token should be optional, got: {e}"
+            );
+        }
     }
 
     #[tokio::test]

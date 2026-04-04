@@ -1,41 +1,64 @@
-import { screen } from '@testing-library/react';
-import { Route, Routes } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { describe, expect, it, vi } from 'vitest';
 
-import { renderWithProviders } from '../../test/test-utils';
 import ProtectedRoute from '../ProtectedRoute';
 
+const mockUseCoreState = vi.fn();
+
+vi.mock('../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));
+
+function renderRoute(routes: React.ReactNode, initialEntries = ['/']) {
+  return render(
+    <MemoryRouter initialEntries={initialEntries}>
+      <Routes>{routes}</Routes>
+    </MemoryRouter>
+  );
+}
+
 describe('ProtectedRoute', () => {
-  it('renders children when token exists', () => {
-    renderWithProviders(
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <div>Protected Content</div>
-            </ProtectedRoute>
-          }
-        />
-      </Routes>,
-      {
-        preloadedState: {
-          auth: {
-            token: 'valid-jwt',
-            isAuthBootstrapComplete: true,
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
-        },
-      }
+  it('renders a loading screen while bootstrapping', () => {
+    mockUseCoreState.mockReturnValue({ isBootstrapping: true, snapshot: { sessionToken: null } });
+
+    renderRoute(
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <div>Protected Content</div>
+          </ProtectedRoute>
+        }
+      />
+    );
+
+    expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
+  });
+
+  it('renders children when a session token exists', () => {
+    mockUseCoreState.mockReturnValue({
+      isBootstrapping: false,
+      snapshot: { sessionToken: 'valid-jwt' },
+    });
+
+    renderRoute(
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <div>Protected Content</div>
+          </ProtectedRoute>
+        }
+      />
     );
 
     expect(screen.getByText('Protected Content')).toBeInTheDocument();
   });
 
   it('redirects to / when no token and requireAuth=true', () => {
-    renderWithProviders(
-      <Routes>
+    mockUseCoreState.mockReturnValue({ isBootstrapping: false, snapshot: { sessionToken: null } });
+
+    renderRoute(
+      <>
         <Route
           path="/dashboard"
           element={
@@ -45,18 +68,8 @@ describe('ProtectedRoute', () => {
           }
         />
         <Route path="/" element={<div>Landing</div>} />
-      </Routes>,
-      {
-        initialEntries: ['/dashboard'],
-        preloadedState: {
-          auth: {
-            token: null,
-            isAuthBootstrapComplete: true,
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
-        },
-      }
+      </>,
+      ['/dashboard']
     );
 
     expect(screen.queryByText('Dashboard')).not.toBeInTheDocument();
@@ -64,60 +77,23 @@ describe('ProtectedRoute', () => {
   });
 
   it('redirects to custom redirectTo when no token', () => {
-    renderWithProviders(
-      <Routes>
+    mockUseCoreState.mockReturnValue({ isBootstrapping: false, snapshot: { sessionToken: null } });
+
+    renderRoute(
+      <>
         <Route
-          path="/dashboard"
+          path="/custom"
           element={
             <ProtectedRoute redirectTo="/login">
-              <div>Dashboard</div>
+              <div>Custom Protected</div>
             </ProtectedRoute>
           }
         />
         <Route path="/login" element={<div>Login Page</div>} />
-      </Routes>,
-      {
-        initialEntries: ['/dashboard'],
-        preloadedState: {
-          auth: {
-            token: null,
-            isAuthBootstrapComplete: true,
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
-        },
-      }
+      </>,
+      ['/custom']
     );
 
     expect(screen.getByText('Login Page')).toBeInTheDocument();
-  });
-
-  it('renders children when authenticated (onboarding handled by overlay)', () => {
-    renderWithProviders(
-      <Routes>
-        <Route
-          path="/home"
-          element={
-            <ProtectedRoute>
-              <div>Home Content</div>
-            </ProtectedRoute>
-          }
-        />
-      </Routes>,
-      {
-        initialEntries: ['/home'],
-        preloadedState: {
-          auth: {
-            token: 'valid-jwt',
-            isAuthBootstrapComplete: true,
-            isOnboardedByUser: {},
-            isAnalyticsEnabledByUser: {},
-          },
-          user: { user: { _id: 'u1' }, isLoading: false, error: null },
-        },
-      }
-    );
-
-    expect(screen.getByText('Home Content')).toBeInTheDocument();
   });
 });

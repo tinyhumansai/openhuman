@@ -1,5 +1,7 @@
+import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { useCoreState } from '../../../providers/CoreStateProvider';
 import { billingApi } from '../../../services/api/billingApi';
 import {
   type AutoRechargeSettings,
@@ -8,9 +10,7 @@ import {
   type SavedCard,
   type TeamUsage,
 } from '../../../services/api/creditsApi';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { fetchCurrentUser } from '../../../store/userSlice';
-import type { PlanTier } from '../../../types/api';
+import type { CurrentPlanData, PlanTier } from '../../../types/api';
 import { openUrl } from '../../../utils/openUrl';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -19,10 +19,14 @@ import {
   buildPlanId,
   isUpgrade as checkIsUpgrade,
   displayPrice,
+  formatStorageLimit,
+  formatUsdAmount,
+  getPlanMeta,
   PLANS,
 } from './billingHelpers';
 
 // ── Constants ────────────────────────────────────────────────────────────────
+const log = createDebug('openhuman:billing-panel');
 const THRESHOLD_OPTIONS = [5, 10, 20] as const;
 const RECHARGE_OPTIONS = [10, 20, 50, 100] as const;
 const WEEKLY_LIMIT_OPTIONS = [25, 50, 100, 200, 500] as const;
@@ -44,21 +48,16 @@ function cardBrandLabel(brand: string) {
 // ── Component ───────────────────────────────────────────────────────────
 const BillingPanel = () => {
   const { navigateBack } = useSettingsNavigation();
-  const dispatch = useAppDispatch();
-  const user = useAppSelector(state => state.user.user);
-  const { teams } = useAppSelector(state => state.team);
+  const { snapshot, teams, refresh } = useCoreState();
+  const user = snapshot.currentUser;
 
   // Active team context
   const activeTeamId = user?.activeTeamId;
   const activeTeam = teams.find(t => t.team._id === activeTeamId);
   const teamName = activeTeam?.team.name;
 
-  // Derive plan from active team (team is source of truth)
-  const currentTier: PlanTier = activeTeam?.team.subscription?.plan ?? 'FREE';
-  const hasActive = activeTeam?.team.subscription?.hasActiveSubscription ?? false;
-  const planExpiry = activeTeam?.team.subscription?.planExpiry;
-
   // Credits & usage state
+  const [currentPlan, setCurrentPlan] = useState<CurrentPlanData | null>(null);
   const [creditBalance, setCreditBalance] = useState<CreditBalance | null>(null);
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
   const [isLoadingCredits, setIsLoadingCredits] = useState(false);
@@ -101,17 +100,33 @@ const BillingPanel = () => {
   const [deletingCardId, setDeletingCardId] = useState<string | null>(null);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
+  const currentTier: PlanTier = currentPlan?.plan ?? activeTeam?.team.subscription?.plan ?? 'FREE';
+  const hasActive =
+    currentPlan?.hasActiveSubscription ??
+    activeTeam?.team.subscription?.hasActiveSubscription ??
+    false;
+  const planExpiry = currentPlan?.planExpiry ?? activeTeam?.team.subscription?.planExpiry ?? null;
+  const currentPlanMeta = getPlanMeta(currentTier);
+
   // Fetch current plan, credits balance, and team usage on mount
   useEffect(() => {
-    billingApi.getCurrentPlan().catch(console.error);
-
     setIsLoadingCredits(true);
-    Promise.all([creditsApi.getBalance(), creditsApi.getTeamUsage()])
-      .then(([balance, usage]) => {
+    Promise.all([billingApi.getCurrentPlan(), creditsApi.getBalance(), creditsApi.getTeamUsage()])
+      .then(([plan, balance, usage]) => {
+        log(
+          '[load] plan=%s active=%s weeklyBudget=%s',
+          plan.plan,
+          plan.hasActiveSubscription,
+          plan.weeklyBudgetUsd
+        );
+        setCurrentPlan(plan);
         setCreditBalance(balance);
         setTeamUsage(usage);
       })
-      .catch(console.error)
+      .catch(error => {
+        log('[load] failed: %O', error);
+        console.error(error);
+      })
       .finally(() => setIsLoadingCredits(false));
   }, []);
 
@@ -267,11 +282,13 @@ const BillingPanel = () => {
 
       // Fetch current plan from backend, then refresh user/teams in store
       try {
-        await billingApi.getCurrentPlan();
+        const plan = await billingApi.getCurrentPlan();
+        log('[payment-success] plan=%s active=%s', plan.plan, plan.hasActiveSubscription);
+        setCurrentPlan(plan);
       } catch (e) {
         console.error('Failed to fetch current plan after payment', e);
       }
-      dispatch(fetchCurrentUser());
+      await refresh();
 
       // Auto-hide the success banner after 5 s
       timeoutRef.current = window.setTimeout(() => setPaymentConfirmed(false), 5_000);
@@ -285,7 +302,7 @@ const BillingPanel = () => {
         timeoutRef.current = null;
       }
     };
-  }, [dispatch]);
+  }, [refresh]);
 
   // ── Poll for plan change after checkout ─────────────────────────────
   const currentTierRef = useRef(currentTier);
@@ -308,8 +325,10 @@ const BillingPanel = () => {
 
       try {
         const plan = await billingApi.getCurrentPlan();
+        log('[poll] plan=%s active=%s', plan.plan, plan.hasActiveSubscription);
+        setCurrentPlan(plan);
         if (plan.hasActiveSubscription && plan.plan !== currentTierRef.current) {
-          dispatch(fetchCurrentUser());
+          await refresh();
           setIsPurchasing(false);
           setPurchasingTier(null);
           if (pollRef.current) clearInterval(pollRef.current);
@@ -318,7 +337,7 @@ const BillingPanel = () => {
         // Ignore polling errors
       }
     }, 5_000);
-  }, [dispatch]);
+  }, [refresh]);
 
   // ── Purchase handlers ───────────────────────────────────────────────
   const handleUpgrade = async (tier: PlanTier) => {
@@ -329,10 +348,12 @@ const BillingPanel = () => {
     try {
       if (paymentMethod === 'crypto') {
         const { hostedUrl } = await billingApi.createCoinbaseCharge(tier, 'annual');
+        log('[purchase] crypto tier=%s', tier);
         await openUrl(hostedUrl);
       } else {
         const planId = buildPlanId(tier, billingInterval);
         const { checkoutUrl } = await billingApi.purchasePlan(planId);
+        log('[purchase] stripe planId=%s', planId);
         if (checkoutUrl) await openUrl(checkoutUrl);
       }
       startPolling();
@@ -355,6 +376,7 @@ const BillingPanel = () => {
   const handleTopUp = async (amountUsd: number) => {
     setIsToppingUp(true);
     try {
+      log('[top-up] amountUsd=%s', amountUsd);
       const result = await creditsApi.topUp(amountUsd, 'stripe');
       await openUrl(result.url);
     } catch (err) {
@@ -378,9 +400,11 @@ const BillingPanel = () => {
         <div className="space-y-2">
           <div className="max-w-md mt-4 mx-auto px-4 space-y-3">
             {/* ── Current Plan Header ───────────────────────────────── */}
-            <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 p-3">
+            <div className="rounded-2xl border border-stone-200 bg-white p-3">
               <div className="flex items-center justify-between mb-1.5">
-                <h3 className="text-sm font-semibold text-white">Current Plan — {currentTier}</h3>
+                <h3 className="text-sm font-semibold text-stone-900">
+                  Current Plan — {currentTier}
+                </h3>
                 {hasActive && (
                   <button
                     onClick={handleManageSubscription}
@@ -399,12 +423,39 @@ const BillingPanel = () => {
                   })}
                 </p>
               )}
+              <p className="text-xs text-stone-500">
+                Your subscription includes premium usage each cycle. Pay-as-you-go credits cover
+                overage after the included budget is consumed.
+              </p>
+              {currentPlan && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    Included monthly value: {formatUsdAmount(currentPlan.monthlyBudgetUsd)}
+                  </span>
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    7-day cycle budget: {formatUsdAmount(currentPlan.weeklyBudgetUsd)}
+                  </span>
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    5-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
+                  </span>
+                  {currentPlanMeta && (
+                    <>
+                      <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                        Premium-usage discount: {currentPlanMeta.discountPercent}%
+                      </span>
+                      <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                        Storage: {formatStorageLimit(currentPlanMeta.storageLimitBytes)}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* ── Inference Budget (Team Usage) ─────────────────────── */}
-            <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 p-3">
+            <div className="rounded-2xl border border-stone-200 bg-white p-3">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold text-white">Inference Budget</h3>
+                <h3 className="text-sm font-semibold text-stone-900">Inference Budget</h3>
                 {isLoadingCredits && <span className="text-[10px] text-stone-500">Loading…</span>}
                 {teamUsage && !isLoadingCredits && (
                   <span className="text-xs text-stone-400">
@@ -442,9 +493,19 @@ const BillingPanel = () => {
                       k tokens this cycle
                     </span>
                   </div>
+                  <div className="mt-1 flex items-center justify-between">
+                    <span className="text-[11px] text-stone-500">
+                      5-hour cap: ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
+                      {teamUsage.fiveHourCapUsd.toFixed(2)}
+                    </span>
+                    <span className="text-[11px] text-stone-500">
+                      Cycle ends {new Date(teamUsage.cycleEndsAt).toLocaleDateString('en-US')}
+                    </span>
+                  </div>
                   {teamUsage.remainingUsd <= 0 && (
                     <p className="text-[11px] text-coral-400 mt-1.5">
-                      Budget exhausted — top up your credits to continue using AI features.
+                      Included subscription usage is exhausted. Top up credits to continue using AI
+                      features without waiting for the next cycle.
                     </p>
                   )}
                 </>
@@ -456,20 +517,20 @@ const BillingPanel = () => {
             </div>
 
             {/* ── Credits Balance & Top-up ──────────────────────────── */}
-            <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 p-3">
-              <h3 className="text-sm font-semibold text-white mb-2">Credits Balance</h3>
+            <div className="rounded-2xl border border-stone-200 bg-white p-3">
+              <h3 className="text-sm font-semibold text-stone-900 mb-2">Pay-as-You-Go Credits</h3>
               {creditBalance ? (
                 <div className="space-y-1.5 mb-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-stone-400">General credits</span>
-                    <span className="text-xs font-medium text-white">
+                    <span className="text-xs font-medium text-stone-900">
                       ${creditBalance.balanceUsd.toFixed(2)}
                     </span>
                   </div>
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-stone-400">Top-up credits</span>
-                      <span className="text-xs font-medium text-white">
+                      <span className="text-xs font-medium text-stone-900">
                         ${creditBalance.topUpBalanceUsd.toFixed(2)}
                         {creditBalance.topUpBaselineUsd != null &&
                           creditBalance.topUpBaselineUsd > 0 && (
@@ -512,6 +573,10 @@ const BillingPanel = () => {
               ) : (
                 <p className="text-xs text-stone-500 mb-3">Unable to load balance</p>
               )}
+              <p className="mb-3 text-[11px] text-stone-500">
+                Subscription usage is consumed first. Top-up credits are reserved for overflow
+                inference, bandwidth, and integration usage.
+              </p>
               <div className="flex gap-2">
                 {[5, 10, 25].map(amount => (
                   <button
@@ -536,7 +601,7 @@ const BillingPanel = () => {
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 billingInterval === 'monthly'
                   ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
-                  : 'text-stone-400 hover:text-stone-300'
+                  : 'text-stone-500 hover:text-stone-700'
               } ${paymentMethod === 'crypto' ? 'opacity-40 cursor-not-allowed' : ''}`}>
               Monthly
             </button>
@@ -545,7 +610,7 @@ const BillingPanel = () => {
               className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                 billingInterval === 'annual'
                   ? 'bg-primary-500/20 text-primary-400 border border-primary-500/30'
-                  : 'text-stone-400 hover:text-stone-300'
+                  : 'text-stone-500 hover:text-stone-700'
               }`}>
               Annual
             </button>
@@ -566,15 +631,15 @@ const BillingPanel = () => {
                     className={`rounded-2xl border p-3 transition-all ${
                       isCurrent
                         ? 'border-primary-500/40 bg-primary-500/5'
-                        : 'border-stone-700/50 bg-stone-800/40'
+                        : 'border-stone-200 bg-white'
                     }`}>
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <h4 className="text-sm font-semibold text-white">{plan.name}</h4>
+                          <h4 className="text-sm font-semibold text-stone-900">{plan.name}</h4>
                           {/* Features inline with title */}
                           {plan.features.map(f => (
-                            <span key={f.text} className="text-xs text-stone-300">
+                            <span key={f.text} className="text-xs text-stone-600">
                               <span className="text-stone-500 mx-1">•</span>
                               {f.text}
                             </span>
@@ -591,7 +656,7 @@ const BillingPanel = () => {
                           )}
                         </div>
                         <div className="mt-0.5 flex items-baseline gap-1">
-                          <span className="text-xl font-bold text-white">
+                          <span className="text-xl font-bold text-stone-900">
                             {displayPrice(plan, billingInterval)}
                           </span>
                           {plan.tier !== 'FREE' && (
@@ -602,6 +667,23 @@ const BillingPanel = () => {
                               (billed ${plan.annualPrice}/yr)
                             </span>
                           )}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            Included monthly value: {formatUsdAmount(plan.monthlyBudgetUsd)}
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            7-day cycle: {formatUsdAmount(plan.weeklyBudgetUsd)}
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            5-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            Discount: {plan.discountPercent}%
+                          </span>
+                          <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                            Storage: {formatStorageLimit(plan.storageLimitBytes)}
+                          </span>
                         </div>
                       </div>
 
@@ -669,7 +751,7 @@ const BillingPanel = () => {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                     />
                   </svg>
-                  <p className="text-xs text-amber-300">
+                  <p className="text-xs text-amber-700">
                     Waiting for payment confirmation... Complete checkout in the browser window that
                     opened.
                   </p>
@@ -678,9 +760,9 @@ const BillingPanel = () => {
             )}
 
             {/* ── Pay with crypto toggle ────────────────────────────── */}
-            <div className="flex items-center justify-between rounded-xl bg-stone-800/40 border border-stone-700/40 p-3 mx-4">
+            <div className="flex items-center justify-between rounded-xl bg-stone-50 border border-stone-200 p-3 mx-4">
               <div>
-                <p className="text-xs font-medium text-white">Pay with Crypto</p>
+                <p className="text-xs font-medium text-stone-900">Pay with Crypto</p>
                 <p className="text-[11px] text-stone-400 mt-0.5">
                   You can choose to pay annually using crypto
                 </p>
@@ -702,11 +784,11 @@ const BillingPanel = () => {
 
             {/* ── Auto-Recharge Credits ─────────────────────────────── */}
             <div className="px-4 pt-2">
-              <div className="rounded-2xl border border-stone-700/50 bg-stone-800/40 overflow-hidden">
+              <div className="rounded-2xl border border-stone-200 bg-white overflow-hidden">
                 {/* Header row */}
                 <div className="flex items-center justify-between p-3">
                   <div>
-                    <p className="text-xs font-semibold text-white">Auto-Recharge Credits</p>
+                    <p className="text-xs font-semibold text-stone-900">Auto-Recharge Credits</p>
                     <p className="text-[11px] text-stone-400 mt-0.5">
                       Automatically top up when your balance runs low
                     </p>
@@ -770,11 +852,11 @@ const BillingPanel = () => {
 
                 {/* Settings — only shown when enabled */}
                 {!arLoading && arSettings?.enabled && (
-                  <div className="border-t border-stone-700/50 px-3 pt-3 pb-2 space-y-3">
+                  <div className="border-t border-stone-200 px-3 pt-3 pb-2 space-y-3">
                     {/* Status row */}
                     <div className="flex items-center gap-3 flex-wrap">
                       {arSettings.inFlight && (
-                        <span className="flex items-center gap-1 text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-full px-2 py-0.5">
+                        <span className="flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
                           <svg className="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
                             <circle
                               className="opacity-25"
@@ -844,7 +926,7 @@ const BillingPanel = () => {
                             className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                               arThreshold === v
                                 ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                                : 'bg-stone-700/40 text-stone-400 border-stone-600/40 hover:text-stone-300'
+                                : 'bg-stone-100 text-stone-500 border-stone-200 hover:text-stone-700'
                             }`}>
                             ${v}
                           </button>
@@ -863,7 +945,7 @@ const BillingPanel = () => {
                             className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                               arAmount === v
                                 ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                                : 'bg-stone-700/40 text-stone-400 border-stone-600/40 hover:text-stone-300'
+                                : 'bg-stone-100 text-stone-500 border-stone-200 hover:text-stone-700'
                             }`}>
                             ${v}
                           </button>
@@ -882,7 +964,7 @@ const BillingPanel = () => {
                             className={`px-2.5 py-1 text-xs rounded-lg border transition-colors ${
                               arWeeklyLimit === v
                                 ? 'bg-primary-500/20 text-primary-400 border-primary-500/40'
-                                : 'bg-stone-700/40 text-stone-400 border-stone-600/40 hover:text-stone-300'
+                                : 'bg-stone-100 text-stone-500 border-stone-200 hover:text-stone-700'
                             }`}>
                             ${v}
                           </button>
@@ -914,9 +996,9 @@ const BillingPanel = () => {
                 )}
 
                 {/* Payment methods */}
-                <div className="border-t border-stone-700/50 px-3 py-2.5">
+                <div className="border-t border-stone-200 px-3 py-2.5">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-[11px] font-medium text-stone-300">Payment Methods</p>
+                    <p className="text-[11px] font-medium text-stone-600">Payment Methods</p>
                     <button
                       onClick={handleAddCard}
                       className="text-[11px] text-primary-400 hover:text-primary-300 font-medium transition-colors">
@@ -931,7 +1013,7 @@ const BillingPanel = () => {
                       ))}
                     </div>
                   ) : cards.length === 0 ? (
-                    <div className="flex items-center gap-2 rounded-lg bg-stone-700/20 border border-stone-700/30 p-2.5">
+                    <div className="flex items-center gap-2 rounded-lg bg-stone-50 border border-stone-200 p-2.5">
                       <svg
                         className="w-4 h-4 text-stone-500 flex-shrink-0"
                         fill="none"
@@ -958,7 +1040,7 @@ const BillingPanel = () => {
                         return (
                           <div
                             key={card.id}
-                            className="flex items-center gap-2 rounded-lg bg-stone-700/20 border border-stone-700/30 px-2.5 py-2">
+                            className="flex items-center gap-2 rounded-lg bg-stone-50 border border-stone-200 px-2.5 py-2">
                             {/* Card icon */}
                             <svg
                               className="w-4 h-4 text-stone-400 flex-shrink-0"
@@ -976,7 +1058,7 @@ const BillingPanel = () => {
                             {/* Card info */}
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span className="text-xs text-white font-medium">
+                                <span className="text-xs text-stone-900 font-medium">
                                   {cardBrandLabel(card.brand)} ••••{card.last4}
                                 </span>
                                 {card.isDefault && (
@@ -997,7 +1079,7 @@ const BillingPanel = () => {
                                 <button
                                   onClick={() => handleSetDefault(card.id)}
                                   disabled={!!settingDefaultId || !!deletingCardId}
-                                  className="text-[10px] text-stone-400 hover:text-stone-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1">
+                                  className="text-[10px] text-stone-500 hover:text-stone-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1">
                                   {isSettingDefault ? '…' : 'Set default'}
                                 </button>
                               )}
@@ -1037,8 +1119,8 @@ const BillingPanel = () => {
             {/* ── Upgrade benefits ───────────────────────────────────── */}
             <div className="px-4 pb-4 pt-2">
               <div className="rounded-xl bg-gradient-to-br from-primary-500/10 to-sage-500/10 border border-primary-500/20 p-4">
-                <h3 className="text-sm font-semibold text-white mb-2">Why upgrade?</h3>
-                <ul className="space-y-1.5 text-xs text-stone-300">
+                <h3 className="text-sm font-semibold text-stone-900 mb-2">Why upgrade?</h3>
+                <ul className="space-y-1.5 text-xs text-stone-600">
                   <li className="flex items-start gap-2">
                     <svg
                       className="w-4 h-4 text-sage-400 flex-shrink-0 mt-0.5"
@@ -1052,7 +1134,10 @@ const BillingPanel = () => {
                         d="M5 13l4 4L19 7"
                       />
                     </svg>
-                    <span>Unlock higher daily limits for more AI interactions</span>
+                    <span>
+                      Higher tiers increase your premium-usage discount and included usage every
+                      cycle
+                    </span>
                   </li>
                   {currentTier === 'FREE' && (
                     <li className="flex items-start gap-2">
@@ -1069,7 +1154,8 @@ const BillingPanel = () => {
                         />
                       </svg>
                       <span>
-                        Save up to 20% with annual plans and never worry about hitting limits
+                        Annual billing lowers the effective monthly price, and top-ups let you keep
+                        going when usage spikes
                       </span>
                     </li>
                   )}

@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::api::config::effective_api_url;
 use crate::api::jwt::get_session_token;
-use crate::api::rest::{user_id_from_settings_payload, BackendOAuthClient};
+use crate::api::rest::{user_id_from_profile_payload, BackendOAuthClient};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
     build_session_state, parse_fields_value, profile_name_or_default, summarize_auth_profile,
@@ -55,9 +55,9 @@ pub async fn store_session(
 
     let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
     let settings = client
-        .fetch_settings(trimmed_token)
+        .fetch_current_user(trimmed_token)
         .await
-        .map_err(|e| format!("Session validation failed (GET /settings): {e:#}"))?;
+        .map_err(|e| format!("Session validation failed (GET /auth/me): {e:#}"))?;
 
     let mut metadata = std::collections::HashMap::new();
     if let Some(uid) = user_id
@@ -65,7 +65,7 @@ pub async fn store_session(
             let t = v.trim().to_string();
             (!t.is_empty()).then_some(t)
         })
-        .or_else(|| user_id_from_settings_payload(&settings))
+        .or_else(|| user_id_from_profile_payload(&settings))
     {
         metadata.insert("user_id".to_string(), uid);
     }
@@ -87,7 +87,7 @@ pub async fn store_session(
         summarize_auth_profile(&profile),
         vec![
             format!(
-                "session JWT verified via GET /settings on {}",
+                "session JWT verified via GET /auth/me on {}",
                 api_url.trim_end_matches('/')
             ),
             "session stored".to_string(),
@@ -123,6 +123,18 @@ pub async fn auth_get_session_token_json(
     ))
 }
 
+pub async fn auth_get_me(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let user = client
+        .fetch_current_user(&token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(RpcOutcome::single_log(user, "current user fetched"))
+}
+
 pub async fn consume_login_token(
     config: &Config,
     login_token: &str,
@@ -148,6 +160,33 @@ pub async fn consume_login_token(
             ),
             "session JWT received".to_string(),
         ],
+    ))
+}
+
+pub async fn auth_create_channel_link_token(
+    config: &Config,
+    channel: &str,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let channel = channel.trim();
+    if channel.is_empty() {
+        return Err("channel is required".to_string());
+    }
+    let channel = channel.to_lowercase();
+    if !matches!(channel.as_str(), "telegram" | "discord") {
+        return Err(format!("unsupported channel: {channel}"));
+    }
+
+    let api_url = effective_api_url(&config.api_url);
+    let token = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let payload = client
+        .create_channel_link_token(&channel, &token)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(RpcOutcome::single_log(
+        payload,
+        "channel link token created",
     ))
 }
 

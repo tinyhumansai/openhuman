@@ -5,13 +5,13 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import ErrorReportNotification from './components/ErrorReportNotification';
 import './index.css';
+import { getCoreStateSnapshot } from './lib/coreState/store';
 import './polyfills';
 import { initSentry } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
-import { store } from './store';
 import { setupDesktopDeepLinkListener } from './utils/desktopDeepLinkListener';
 
-setStoreForApiClient(() => store.getState().auth.token);
+setStoreForApiClient(() => getCoreStateSnapshot().snapshot.sessionToken);
 
 const ensureDefaultHashRoute = () => {
   const hash = window.location.hash;

@@ -26,34 +26,36 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
   const isGranted = accessibilityPermission === 'granted';
 
   return (
-    <div className="rounded-3xl border border-stone-700 bg-stone-900 p-8 shadow-large animate-fade-up">
+    <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-5">
-        <h1 className="text-xl font-bold mb-2">Screen & Accessibility Permissions</h1>
-        <p className="opacity-70 text-sm">
+        <h1 className="text-xl font-bold mb-2 text-stone-900">
+          Screen & Accessibility Permissions
+        </h1>
+        <p className="text-stone-600 text-sm">
           OpenHuman uses information from your screen to constantly build context about your
           workflow and assist you with desktop actions.
         </p>
       </div>
 
       <div className="space-y-3 mb-5">
-        <div className="rounded-2xl border border-sage-500/30 bg-sage-500/10 p-3">
-          <p className="text-sm font-medium mb-1">Complete Privacy</p>
-          <p className="text-xs opacity-80">
+        <div className="rounded-2xl border border-stone-200 bg-stone-50 p-3">
+          <p className="text-sm font-medium mb-1 text-stone-900">Complete Privacy</p>
+          <p className="text-xs text-stone-600">
             All screenshots and accessibility information gets processed locally by your local AI
             model. No data is sent to any third party or cloud.
           </p>
         </div>
-        <div className="rounded-2xl border border-stone-700 bg-stone-900 p-3">
-          <p className="text-xs uppercase tracking-wide opacity-60 mb-2">
+        <div className="rounded-2xl border border-stone-200 bg-white p-3">
+          <p className="text-xs uppercase tracking-wide text-stone-400 mb-2">
             Current permission state
           </p>
           <div className="flex items-center justify-between">
-            <span className="text-sm">Accessibility</span>
+            <span className="text-sm text-stone-900">Accessibility</span>
             <span
               className={`text-xs px-2 py-1 rounded-md border ${
                 isGranted
-                  ? 'bg-sage-500/20 border-sage-500/30 text-sage-300'
-                  : 'bg-amber-500/20 border-amber-500/30 text-amber-300'
+                  ? 'bg-sage-50 border-sage-200 text-sage-600'
+                  : 'bg-amber-50 border-amber-200 text-amber-600'
               }`}>
               {accessibilityPermission}
             </span>
@@ -74,7 +76,7 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
             type="button"
             onClick={() => void dispatch(refreshPermissionsWithRestart())}
             disabled={isRestartingCore || isLoading}
-            className="w-full py-2 text-sm font-medium rounded-xl border border-stone-700 hover:border-stone-500 opacity-70 hover:opacity-100 transition-all disabled:opacity-40">
+            className="w-full py-2 text-sm font-medium rounded-xl border border-stone-200 hover:border-stone-400 text-stone-600 hover:text-stone-900 opacity-70 hover:opacity-100 transition-all disabled:opacity-40">
             {isRestartingCore ? 'Restarting core...' : 'Restart & Refresh Permissions'}
           </button>
           {(lastError || status?.permission_check_process_path) && (

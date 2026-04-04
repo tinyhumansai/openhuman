@@ -20,7 +20,7 @@
  */
 import * as Sentry from '@sentry/react';
 
-import { store } from '../store';
+import { getCoreStateSnapshot } from '../lib/coreState/store';
 import { IS_DEV, SENTRY_DSN } from '../utils/config';
 import { enqueueError, registerSentrySender, type SanitizedSentryEvent } from './errorReportQueue';
 
@@ -69,10 +69,7 @@ function sanitizeException(
 
 /** Check if the current user has opted into analytics. */
 export function isAnalyticsEnabled(): boolean {
-  const state = store.getState();
-  const userId = state.user?.user?._id;
-  if (!userId) return false;
-  return state.auth.isAnalyticsEnabledByUser[userId] !== false;
+  return getCoreStateSnapshot().snapshot.analyticsEnabled;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +134,7 @@ export function initSentry(): void {
       delete event.request;
 
       // Strip user PII — keep only a stable anonymous ID
-      const userId = store.getState().user?.user?._id;
+      const userId = getCoreStateSnapshot().snapshot.currentUser?._id;
       event.user = userId ? { id: userId } : undefined;
 
       // Strip any extra/contexts that could contain Redux or localStorage data

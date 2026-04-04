@@ -62,6 +62,15 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Patch is fragile** — Resets on `cargo clean`, crate version bump, or registry re-download. Deleting build cache alone (`target/debug/build/whisper-rs-sys-*`) is NOT enough — cmake regenerates with the same bad flags.
 - **Correct fix** — Needs an upstream patch in `whisper-rs-sys` or a Cargo feature to opt out of `GGML_NATIVE` on Apple Silicon cross-builds.
 
+## UI Redesign (Light Theme — April 2026)
+
+- **Full dark-to-light redesign shipped** — All pages, components, and settings panels converted from dark glass-morphism to clean light theme based on Figma designs by Mithil (`OpenHuman-Prod` file, node `2094-250136` for tokens).
+- **Design tokens saved** in `my_docs/figma-design-tokens.md` — neutral grayscale, primary blue `#2F6EF4`, success `#34C759`, alert `#E8A728`, error `#EF4444`, SF Pro typography scale.
+- **Navigation changed**: Left `MiniSidebar` → bottom `BottomTabBar` (Home, Chat, Skills, Intelligence, Automation, Notification). Settings accessible via gear icon on Home page header.
+- **MiniSidebar.tsx retained** (not deleted) as backup. `BottomTabBar.tsx` is the active nav component.
+- **Agent message bubbles** need `bg-stone-200/80` (not `bg-stone-100`) on `#F5F5F5` background — `bg-stone-100` is nearly invisible.
+- **~55 files touched** — purely CSS class changes, zero logic/handler/state changes.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

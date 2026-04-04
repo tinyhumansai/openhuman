@@ -1,89 +1,57 @@
-import type { ApiResponse } from '../../types/api';
 import type { Team, TeamInvite, TeamMember, TeamRole, TeamWithRole } from '../../types/team';
-import { apiClient } from '../apiClient';
+import { callCoreRpc } from '../coreRpcClient';
+
+async function rpcResult<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+  const response = await callCoreRpc<{ result: T }>({ method, params });
+  return response.result;
+}
 
 export const teamApi = {
-  /** GET /teams — list all teams the user belongs to */
-  getTeams: async (): Promise<TeamWithRole[]> => {
-    const response = await apiClient.get<ApiResponse<TeamWithRole[]>>('/teams');
-    return response.data;
-  },
+  getTeams: async (): Promise<TeamWithRole[]> => rpcResult('openhuman.team_list_teams'),
 
-  /** GET /teams/:teamId */
-  getTeam: async (teamId: string): Promise<Team> => {
-    const response = await apiClient.get<ApiResponse<Team>>(`/teams/${teamId}`);
-    return response.data;
-  },
+  getTeam: async (teamId: string): Promise<Team> =>
+    rpcResult('openhuman.team_get_team', { teamId }),
 
-  /** POST /teams — create a new team */
-  createTeam: async (name: string): Promise<Team> => {
-    const response = await apiClient.post<ApiResponse<Team>>('/teams', { name });
-    return response.data;
-  },
+  createTeam: async (name: string): Promise<Team> =>
+    rpcResult('openhuman.team_create_team', { name }),
 
-  /** PUT /teams/:teamId */
-  updateTeam: async (teamId: string, data: { name?: string }): Promise<Team> => {
-    const response = await apiClient.put<ApiResponse<Team>>(`/teams/${teamId}`, data);
-    return response.data;
-  },
+  updateTeam: async (teamId: string, data: { name?: string }): Promise<Team> =>
+    rpcResult('openhuman.team_update_team', { teamId, ...data }),
 
-  /** DELETE /teams/:teamId */
   deleteTeam: async (teamId: string): Promise<void> => {
-    await apiClient.delete<ApiResponse<unknown>>(`/teams/${teamId}`);
+    await rpcResult('openhuman.team_delete_team', { teamId });
   },
 
-  /** POST /teams/:teamId/switch — set as active team */
   switchTeam: async (teamId: string): Promise<void> => {
-    await apiClient.post<ApiResponse<unknown>>(`/teams/${teamId}/switch`);
+    await rpcResult('openhuman.team_switch_team', { teamId });
   },
 
-  /** GET /teams/:teamId/members */
-  getMembers: async (teamId: string): Promise<TeamMember[]> => {
-    const response = await apiClient.get<ApiResponse<TeamMember[]>>(`/teams/${teamId}/members`);
-    return response.data;
-  },
+  getMembers: async (teamId: string): Promise<TeamMember[]> =>
+    rpcResult('openhuman.team_list_members', { teamId }),
 
-  /** DELETE /teams/:teamId/members/:userId */
   removeMember: async (teamId: string, userId: string): Promise<void> => {
-    await apiClient.delete<ApiResponse<unknown>>(`/teams/${teamId}/members/${userId}`);
+    await rpcResult('openhuman.team_remove_member', { teamId, userId });
   },
 
-  /** PUT /teams/:teamId/members/:userId/role */
   changeMemberRole: async (teamId: string, userId: string, role: TeamRole): Promise<void> => {
-    await apiClient.put<ApiResponse<unknown>>(`/teams/${teamId}/members/${userId}/role`, { role });
+    await rpcResult('openhuman.team_change_member_role', { teamId, userId, role });
   },
 
-  /** POST /teams/:teamId/leave */
   leaveTeam: async (teamId: string): Promise<void> => {
-    await apiClient.post<ApiResponse<unknown>>(`/teams/${teamId}/leave`);
+    await rpcResult('openhuman.team_leave_team', { teamId });
   },
 
-  /** POST /teams/:teamId/invites */
   createInvite: async (
     teamId: string,
     opts?: { maxUses?: number; expiresInDays?: number }
-  ): Promise<TeamInvite> => {
-    const response = await apiClient.post<ApiResponse<TeamInvite>>(
-      `/teams/${teamId}/invites`,
-      opts
-    );
-    return response.data;
-  },
+  ): Promise<TeamInvite> => rpcResult('openhuman.team_create_invite', { teamId, ...opts }),
 
-  /** GET /teams/:teamId/invites */
-  getInvites: async (teamId: string): Promise<TeamInvite[]> => {
-    const response = await apiClient.get<ApiResponse<TeamInvite[]>>(`/teams/${teamId}/invites`);
-    return response.data;
-  },
+  getInvites: async (teamId: string): Promise<TeamInvite[]> =>
+    rpcResult('openhuman.team_list_invites', { teamId }),
 
-  /** DELETE /teams/:teamId/invites/:inviteId */
   revokeInvite: async (teamId: string, inviteId: string): Promise<void> => {
-    await apiClient.delete<ApiResponse<unknown>>(`/teams/${teamId}/invites/${inviteId}`);
+    await rpcResult('openhuman.team_revoke_invite', { teamId, inviteId });
   },
 
-  /** POST /teams/join — join a team via invite code */
-  joinTeam: async (code: string): Promise<Team> => {
-    const response = await apiClient.post<ApiResponse<Team>>('/teams/join', { code });
-    return response.data;
-  },
+  joinTeam: async (code: string): Promise<Team> => rpcResult('openhuman.team_join_team', { code }),
 };

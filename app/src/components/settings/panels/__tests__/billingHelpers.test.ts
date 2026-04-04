@@ -26,18 +26,28 @@ describe('PLANS', () => {
     const free = PLANS.find(p => p.tier === 'FREE')!;
     expect(free.monthlyPrice).toBe(0);
     expect(free.annualPrice).toBe(0);
+    expect(free.discountPercent).toBe(0);
+    expect(free.weeklyBudgetUsd).toBe(0.5);
   });
 
-  it('should have BASIC plan at $25/mo and $250/yr', () => {
+  it('should have BASIC plan aligned with backend config', () => {
     const basic = PLANS.find(p => p.tier === 'BASIC')!;
-    expect(basic.monthlyPrice).toBe(25);
-    expect(basic.annualPrice).toBe(250);
+    expect(basic.monthlyPrice).toBe(20);
+    expect(basic.annualPrice).toBe(200);
+    expect(basic.discountPercent).toBe(20);
+    expect(basic.monthlyBudgetUsd).toBe(20);
+    expect(basic.weeklyBudgetUsd).toBe(10);
+    expect(basic.fiveHourCapUsd).toBe(3);
   });
 
-  it('should have PRO plan at $200/mo and $2000/yr', () => {
+  it('should have PRO plan aligned with backend config', () => {
     const pro = PLANS.find(p => p.tier === 'PRO')!;
     expect(pro.monthlyPrice).toBe(200);
     expect(pro.annualPrice).toBe(2000);
+    expect(pro.discountPercent).toBe(40);
+    expect(pro.monthlyBudgetUsd).toBe(200);
+    expect(pro.weeklyBudgetUsd).toBe(100);
+    expect(pro.fiveHourCapUsd).toBe(30);
   });
 
   it('should have features for every plan', () => {
@@ -97,8 +107,8 @@ describe('displayPrice', () => {
       expect(displayPrice(freePlan, 'monthly')).toBe('$0');
     });
 
-    it('should return $25 for BASIC plan', () => {
-      expect(displayPrice(basicPlan, 'monthly')).toBe('$25');
+    it('should return $20 for BASIC plan', () => {
+      expect(displayPrice(basicPlan, 'monthly')).toBe('$20');
     });
 
     it('should return $200 for PRO plan', () => {
@@ -111,9 +121,8 @@ describe('displayPrice', () => {
       expect(displayPrice(freePlan, 'annual')).toBe('$0');
     });
 
-    it('should return annual equivalent monthly price for BASIC ($250/12 = $21)', () => {
-      // $250 / 12 = 20.83, rounded to $21
-      expect(displayPrice(basicPlan, 'annual')).toBe('$21');
+    it('should return annual equivalent monthly price for BASIC ($200/12 = $17)', () => {
+      expect(displayPrice(basicPlan, 'annual')).toBe('$17');
     });
 
     it('should return annual equivalent monthly price for PRO ($2000/12 = $167)', () => {
@@ -128,6 +137,11 @@ describe('displayPrice', () => {
       name: 'Custom',
       monthlyPrice: 50,
       annualPrice: 480,
+      monthlyBudgetUsd: 50,
+      weeklyBudgetUsd: 25,
+      fiveHourCapUsd: 7.5,
+      discountPercent: 30,
+      storageLimitBytes: 50 * 1024 * 1024 * 1024,
       features: [],
     };
     expect(displayPrice(custom, 'monthly')).toBe('$50');
@@ -152,8 +166,8 @@ describe('annualSavings', () => {
   });
 
   it('should calculate savings for BASIC annual', () => {
-    // Monthly total: $25 * 12 = $300, Annual: $250
-    // Savings: ($300 - $250) / $300 = 16.67%, rounded to 17%
+    // Monthly total: $20 * 12 = $240, Annual: $200
+    // Savings: ($240 - $200) / $240 = 16.67%, rounded to 17%
     expect(annualSavings(basicPlan, 'annual')).toBe(17);
   });
 
@@ -169,6 +183,11 @@ describe('annualSavings', () => {
       name: 'No Savings',
       monthlyPrice: 10,
       annualPrice: 120, // 10 * 12, no discount
+      monthlyBudgetUsd: 10,
+      weeklyBudgetUsd: 5,
+      fiveHourCapUsd: 1.5,
+      discountPercent: 20,
+      storageLimitBytes: 1024,
       features: [],
     };
     expect(annualSavings(noSavings, 'annual')).toBeNull();
@@ -180,6 +199,11 @@ describe('annualSavings', () => {
       name: 'Big Discount',
       monthlyPrice: 100,
       annualPrice: 600, // 50% off
+      monthlyBudgetUsd: 100,
+      weeklyBudgetUsd: 50,
+      fiveHourCapUsd: 15,
+      discountPercent: 40,
+      storageLimitBytes: 1024,
       features: [],
     };
     expect(annualSavings(bigDiscount, 'annual')).toBe(50);

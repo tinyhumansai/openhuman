@@ -248,7 +248,8 @@ export async function navigateToConversations() {
 }
 
 // ---------------------------------------------------------------------------
-// Onboarding walkthrough (Onboarding.tsx — 5 steps, indices 0–4)
+// Onboarding walkthrough
+// Current flow: Welcome → Local AI → Screen & Accessibility → Tools → Skills (5 steps, indices 0–4).
 // ---------------------------------------------------------------------------
 
 /** Labels used to detect the onboarding overlay (same strings as Onboarding copy). */
@@ -265,6 +266,28 @@ export const ONBOARDING_OVERLAY_TEXTS = [
 async function onboardingOverlayLikelyVisible(): Promise<boolean> {
   for (const label of ONBOARDING_OVERLAY_TEXTS) {
     if (await textExists(label)) return true;
+  }
+  return false;
+}
+
+export async function isOnboardingOverlayVisible(): Promise<boolean> {
+  return onboardingOverlayLikelyVisible();
+}
+
+export async function waitForOnboardingOverlayVisible(timeout = 10_000): Promise<boolean> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (await onboardingOverlayLikelyVisible()) return true;
+    await browser.pause(400);
+  }
+  return false;
+}
+
+export async function waitForOnboardingOverlayHidden(timeout = 10_000): Promise<boolean> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (!(await onboardingOverlayLikelyVisible())) return true;
+    await browser.pause(400);
   }
   return false;
 }
@@ -319,12 +342,99 @@ export async function walkOnboarding(logPrefix = '[E2E]') {
 }
 
 /**
- * If onboarding is showing, walk through it. Safe no-op when already on Home / no overlay.
+ * Walk through onboarding if it is visible, or no-op if already on Home.
+ *
+ * Delegates to walkOnboarding, which polls up to 8 × 400 ms for the overlay
+ * to appear before giving up — safe to call unconditionally after auth so
+ * timing races do not cause the helper to skip onboarding prematurely.
  */
 export async function completeOnboardingIfVisible(logPrefix = '[E2E]') {
-  if (await onboardingOverlayLikelyVisible()) {
-    await walkOnboarding(logPrefix);
+  await walkOnboarding(logPrefix);
+}
+
+export async function waitForLoggedOutState(timeout = 10_000): Promise<string | null> {
+  const welcomeCandidates = ['Welcome', 'Sign in', 'Login', 'Get Started'];
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    for (const text of welcomeCandidates) {
+      if (await textExists(text)) {
+        return text;
+      }
+    }
+    await browser.pause(500);
   }
+  return null;
+}
+
+export async function logoutViaSettings(logPrefix = '[E2E]') {
+  await navigateToSettings();
+
+  const loggedOut = await browser.execute(() => {
+    const candidates = ['Log out', 'Logout', 'Sign out'];
+    const allElements = document.querySelectorAll('*');
+    for (const label of candidates) {
+      for (const el of allElements) {
+        const text = el.textContent?.trim() || '';
+        if (text !== label) continue;
+        const clickable = el.closest(
+          'button, [role="button"], a, [class*="MenuItem"]'
+        ) as HTMLElement | null;
+        if (clickable) {
+          clickable.click();
+          return label;
+        }
+        (el as HTMLElement).click();
+        return label;
+      }
+    }
+    return null;
+  });
+
+  if (!loggedOut) {
+    const clicked = await clickFirstMatch(['Log out', 'Logout', 'Sign out'], 10_000);
+    if (!clicked) {
+      const tree = await dumpAccessibilityTree();
+      console.log(`${logPrefix} Logout button not found. Tree:\n`, tree.slice(0, 4000));
+      throw new Error('Could not find logout button in Settings');
+    }
+    console.log(`${logPrefix} Logout clicked via text helper: "${clicked}"`);
+  } else {
+    console.log(`${logPrefix} Logout clicked: "${loggedOut}"`);
+  }
+
+  await browser.pause(2_000);
+
+  const hasConfirm =
+    (await textExists('Confirm')) || (await textExists('Yes')) || (await textExists('Log Out'));
+  if (hasConfirm) {
+    const confirmed = await browser.execute(() => {
+      const candidates = document.querySelectorAll('button, [role="button"], a');
+      for (const el of candidates) {
+        const text = el.textContent?.trim() || '';
+        const label = el.getAttribute('aria-label') || '';
+        if (
+          ['Confirm', 'Yes', 'Log Out'].some(candidate => text === candidate || label === candidate)
+        ) {
+          (el as HTMLElement).click();
+          return true;
+        }
+      }
+      return false;
+    });
+    if (!confirmed) {
+      throw new Error('Logout confirmation dialog appeared but confirm button was not clickable');
+    }
+    console.log(`${logPrefix} Logout confirmation accepted`);
+  }
+
+  const loggedOutMarker = await waitForLoggedOutState(10_000);
+  if (!loggedOutMarker) {
+    const tree = await dumpAccessibilityTree();
+    console.log(`${logPrefix} Logged-out state not detected. Tree:\n`, tree.slice(0, 4000));
+    throw new Error('Logged-out state was not visible after logout');
+  }
+
+  console.log(`${logPrefix} Logged-out state confirmed: "${loggedOutMarker}"`);
 }
 
 // ---------------------------------------------------------------------------

@@ -29,8 +29,8 @@ vi.mock('../../../utils/tauriCommands', () => ({
   aiReadMemoryFile: vi.fn().mockResolvedValue('# Memory\nSome content'),
   aiWriteMemoryFile: vi.fn().mockResolvedValue(undefined),
   memoryDeleteDocument: vi.fn().mockResolvedValue(undefined),
-  memoryQueryNamespace: vi.fn().mockResolvedValue('query result'),
-  memoryRecallNamespace: vi.fn().mockResolvedValue('recall result'),
+  memoryQueryNamespace: vi.fn().mockResolvedValue({ text: 'query result', entities: [] }),
+  memoryRecallNamespace: vi.fn().mockResolvedValue({ text: 'recall result', entities: [] }),
   memoryGraphQuery: vi.fn().mockResolvedValue([
     {
       namespace: 'research',

@@ -35,17 +35,17 @@ const InviteCodeStep = ({ onNext }: InviteCodeStepProps) => {
   };
 
   return (
-    <div className="glass rounded-3xl p-8 shadow-large animate-fade-up">
+    <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-6">
-        <h1 className="text-xl font-bold mb-2">Have an Invite Code?</h1>
-        <p className="opacity-70 text-sm">
+        <h1 className="text-xl font-bold mb-2 text-stone-900">Have an Invite Code?</h1>
+        <p className="text-stone-600 text-sm">
           Enter an invite code from a friend to unlock free credits. You can also skip this step.
         </p>
       </div>
 
       {success ? (
         <div className="text-center py-4">
-          <div className="w-12 h-12 bg-sage-500/20 rounded-full flex items-center justify-center mx-auto mb-3">
+          <div className="w-12 h-12 bg-sage-50 rounded-full flex items-center justify-center mx-auto mb-3">
             <svg
               className="w-6 h-6 text-sage-500"
               fill="none"
@@ -70,7 +70,7 @@ const InviteCodeStep = ({ onNext }: InviteCodeStepProps) => {
               onChange={e => setCode(e.target.value.toUpperCase())}
               onKeyDown={e => e.key === 'Enter' && handleRedeem()}
               placeholder="Enter invite code"
-              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-center font-mono text-lg tracking-widest placeholder:text-stone-500 placeholder:tracking-normal placeholder:font-sans placeholder:text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all"
+              className="w-full px-4 py-3 bg-stone-50 border border-stone-200 rounded-xl text-center font-mono text-lg tracking-widest text-stone-900 placeholder:text-stone-400 placeholder:tracking-normal placeholder:font-sans placeholder:text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500/50 transition-all"
               disabled={isLoading}
             />
             {error && <p className="text-coral-500 text-xs mt-2 text-center">{error}</p>}
@@ -86,7 +86,7 @@ const InviteCodeStep = ({ onNext }: InviteCodeStepProps) => {
             <button
               onClick={onNext}
               disabled={isLoading}
-              className="w-full py-2.5 text-sm font-medium rounded-xl text-stone-400 hover:text-stone-200 transition-colors">
+              className="w-full py-2.5 text-sm font-medium rounded-xl text-stone-400 hover:text-stone-700 transition-colors">
               Skip for now
             </button>
           </div>

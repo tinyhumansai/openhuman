@@ -1,137 +1,75 @@
-import { screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { clearToken, setToken } from '../../store/authSlice';
-import { renderWithProviders } from '../../test/test-utils';
 import OnboardingOverlay from '../OnboardingOverlay';
 
-// Mock tauriCommands — onboarding defaults to not completed
-vi.mock('../../utils/tauriCommands', () => ({
-  isTauri: vi.fn(() => false),
-  getOnboardingCompleted: vi.fn().mockResolvedValue(false),
-  setOnboardingCompleted: vi.fn().mockResolvedValue(true),
+const mockUseCoreState = vi.fn();
+
+vi.mock('../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));
+
+vi.mock('../../pages/onboarding/Onboarding', () => ({
+  default: ({ onComplete }: { onComplete: () => void }) => (
+    <div>
+      <button onClick={onComplete}>Skip</button>
+    </div>
+  ),
 }));
 
-// DEV_FORCE_ONBOARDING is already mocked as false in test/setup.ts
-
-const baseAuth = {
-  token: 'test-jwt',
-  isAuthBootstrapComplete: true,
-  isOnboardedByUser: {} as Record<string, boolean>,
-  onboardingDeferredByUser: {} as Record<string, number>,
-  isAnalyticsEnabledByUser: {},
-  onboardingTasksByUser: {},
-  hasIncompleteOnboardingByUser: {},
-  encryptionKeyByUser: {},
-  primaryWalletAddressByUser: {},
-};
-
-const baseUser = { user: { _id: 'user-1', username: 'tester', firstName: 'Test' } };
+function makeCoreState(overrides?: Record<string, unknown>) {
+  return {
+    isBootstrapping: false,
+    snapshot: {
+      sessionToken: 'test-jwt',
+      currentUser: { _id: 'user-1', username: 'tester', firstName: 'Test' },
+      onboardingCompleted: false,
+      ...overrides,
+    },
+    setOnboardingCompletedFlag: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 describe('OnboardingOverlay', () => {
-  it('does not render when onboarding is completed', async () => {
-    const { getOnboardingCompleted } = await import('../../utils/tauriCommands');
-    vi.mocked(getOnboardingCompleted).mockResolvedValue(true);
+  beforeEach(() => {
+    mockUseCoreState.mockReset();
+  });
 
-    renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: { auth: baseAuth, user: baseUser },
-    });
+  it('does not render when onboarding is completed', () => {
+    mockUseCoreState.mockReturnValue(makeCoreState({ onboardingCompleted: true }));
 
-    await vi.waitFor(() => {
-      expect(screen.queryByText('Skip')).not.toBeInTheDocument();
-    });
+    render(<OnboardingOverlay />);
+
+    expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
 
   it('does not render when no token', () => {
-    renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: { auth: { ...baseAuth, token: null }, user: baseUser },
-    });
+    mockUseCoreState.mockReturnValue(makeCoreState({ sessionToken: null }));
+
+    render(<OnboardingOverlay />);
 
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
 
-  it('does not render when user profile is not loaded', () => {
-    renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: { auth: baseAuth, user: { user: {} } },
-    });
+  it('does not render when user profile is not loaded yet', () => {
+    mockUseCoreState.mockReturnValue(makeCoreState({ currentUser: {} }));
+
+    render(<OnboardingOverlay />);
 
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
 
-  it('resets local state on logout so re-login starts fresh', async () => {
-    // Ensure getOnboardingCompleted returns false (not completed) for this test
-    const { getOnboardingCompleted } = await import('../../utils/tauriCommands');
-    vi.mocked(getOnboardingCompleted).mockResolvedValue(false);
+  it('renders when the user is authenticated and onboarding is incomplete', () => {
+    mockUseCoreState.mockReturnValue(makeCoreState());
 
-    // Start with a loaded user profile so userReady is true via user._id,
-    // and onboarding not completed — overlay should show.
-    const { store } = renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: { auth: baseAuth, user: baseUser },
-    });
+    render(<OnboardingOverlay />);
 
-    // Wait for getOnboardingCompleted to resolve and overlay to appear
-    await vi.waitFor(() => {
-      expect(screen.queryByText('Skip')).toBeInTheDocument();
-    });
+    expect(screen.getByText('Skip')).toBeInTheDocument();
+  });
 
-    // Simulate logout — the reset useEffect clears onboardingCompleted + userLoadTimedOut
-    await store.dispatch(clearToken());
+  it('does not render while bootstrapping', () => {
+    mockUseCoreState.mockReturnValue({ ...makeCoreState(), isBootstrapping: true });
 
-    await vi.waitFor(() => {
-      expect(screen.queryByText('Skip')).not.toBeInTheDocument();
-    });
-
-    // Simulate re-login WITHOUT a loaded user profile.
-    // If the fix works, onboardingCompleted was reset to null and userLoadTimedOut
-    // was reset to false, so userReady is false — overlay should NOT appear.
-    // Without the fix, stale state would make the overlay appear immediately.
-    store.dispatch(setToken('new-jwt'));
+    render(<OnboardingOverlay />);
 
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
-  });
-
-  it('does not render when RPC fails but Redux says onboarded', async () => {
-    const { getOnboardingCompleted } = await import('../../utils/tauriCommands');
-    vi.mocked(getOnboardingCompleted).mockRejectedValue(new Error('RPC error'));
-
-    renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: {
-        auth: { ...baseAuth, isOnboardedByUser: { 'user-1': true } },
-        user: baseUser,
-      },
-    });
-
-    await vi.waitFor(() => {
-      expect(screen.queryByText('Skip')).not.toBeInTheDocument();
-    });
-  });
-
-  it('does not render when RPC returns false but Redux says onboarded', async () => {
-    const { getOnboardingCompleted } = await import('../../utils/tauriCommands');
-    vi.mocked(getOnboardingCompleted).mockResolvedValue(false);
-
-    renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: {
-        auth: { ...baseAuth, isOnboardedByUser: { 'user-1': true } },
-        user: baseUser,
-      },
-    });
-
-    await vi.waitFor(() => {
-      expect(screen.queryByText('Skip')).not.toBeInTheDocument();
-    });
-  });
-
-  it('renders when both RPC fails and Redux says not onboarded', async () => {
-    const { getOnboardingCompleted } = await import('../../utils/tauriCommands');
-    vi.mocked(getOnboardingCompleted).mockRejectedValue(new Error('RPC error'));
-
-    renderWithProviders(<OnboardingOverlay />, {
-      preloadedState: { auth: { ...baseAuth, isOnboardedByUser: {} }, user: baseUser },
-    });
-
-    await vi.waitFor(() => {
-      expect(screen.queryByText('Skip')).toBeInTheDocument();
-    });
   });
 });

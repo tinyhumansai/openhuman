@@ -39,6 +39,21 @@ fi
 echo "[setup-dev-codesign] Creating self-signed code-signing certificate: \"$IDENTITY\""
 
 # ── Generate key + self-signed certificate ───────────────────────────────────
+cat > "$TMPDIR_CERT/openssl.conf" <<EOF
+[ req ]
+distinguished_name = req_distinguished_name
+prompt = no
+x509_extensions = v3_ca
+
+[ req_distinguished_name ]
+CN = $IDENTITY
+
+[ v3_ca ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
+extendedKeyUsage = codeSigning
+EOF
+
 openssl req \
   -newkey rsa:2048 \
   -nodes \
@@ -46,7 +61,7 @@ openssl req \
   -x509 \
   -days 3650 \
   -out "$CERT" \
-  -subj "/CN=$IDENTITY" \
+  -config "$TMPDIR_CERT/openssl.conf" \
   2>/dev/null
 
 # ── Bundle to PKCS12 ─────────────────────────────────────────────────────────
@@ -66,9 +81,10 @@ security import "$P12" \
   -T /usr/bin/security
 
 # ── Trust for code signing ───────────────────────────────────────────────────
+# Note: we add both basic and codeSign trust.
 security add-trusted-cert \
-  -d \
   -r trustRoot \
+  -p basic \
   -p codeSign \
   -k "$KEYCHAIN" \
   "$CERT"

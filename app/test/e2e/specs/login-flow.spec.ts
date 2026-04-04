@@ -7,7 +7,7 @@
  *     1. `openhuman://auth?token=...` deep link is triggered via __simulateDeepLink
  *     2. App calls POST /telegram/login-tokens/:token/consume  (mock server)
  *     3. App receives JWT, dispatches to Redux authSlice
- *     4. UserProvider calls GET /telegram/me  (mock server)
+ *     4. UserProvider calls GET /auth/me  (mock server)
  *
  *   Phase 2 — Onboarding steps (6 steps in Onboarding.tsx):
  *     Step 0: WelcomeStep       — "Continue"
@@ -168,7 +168,7 @@ describe('Login flow — complete with mock data (Linux)', () => {
     while (Date.now() < deadline) {
       const log = getRequestLog();
       call = log.find(
-        r => r.method === 'GET' && (r.url.includes('/telegram/me') || r.url.includes('/settings'))
+        r => r.method === 'GET' && (r.url.includes('/auth/me') || r.url.includes('/settings'))
       );
       if (call) break;
       await browser.pause(500);

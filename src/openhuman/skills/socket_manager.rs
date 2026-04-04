@@ -811,6 +811,22 @@ async fn handle_webhook_request(
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
+            if let Some(router) = shared.webhook_router.read().clone() {
+                router.record_parse_error(
+                    cid.clone(),
+                    data.get("tunnelUuid")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string()),
+                    data.get("method")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string()),
+                    data.get("path")
+                        .and_then(|value| value.as_str())
+                        .map(|value| value.to_string()),
+                    data.clone(),
+                    format!("bad request: {e}"),
+                );
+            }
             emit_via_channel(
                 emit_tx,
                 "webhook:response",
@@ -842,12 +858,37 @@ async fn handle_webhook_request(
         correlation_id,
     );
 
-    // Look up the owning skill via the webhook router
+    // Look up the owning target via the webhook router
     let router = shared.webhook_router.read().clone();
-    let skill_id = router.as_ref().and_then(|r| r.route(&tunnel_uuid));
+    let registration = router.as_ref().and_then(|r| r.registration(&tunnel_uuid));
+    let skill_id = registration.as_ref().and_then(|registration| {
+        (registration.target_kind == "skill").then(|| registration.skill_id.clone())
+    });
+    if let Some(router) = router.as_ref() {
+        router.record_request(&request, skill_id.clone());
+    }
 
-    let (response, resolved_skill_id) = match skill_id {
-        Some(sid) => {
+    let (response, resolved_skill_id, response_error) = match registration.as_ref() {
+        Some(registration) if registration.target_kind == "echo" => (
+            crate::openhuman::webhooks::ops::build_echo_response(&request),
+            Some("echo".to_string()),
+            None,
+        ),
+        Some(registration) if registration.target_kind == "channel" => (
+            crate::openhuman::webhooks::WebhookResponseData {
+                correlation_id: correlation_id.clone(),
+                status_code: 501,
+                headers: std::collections::HashMap::new(),
+                body: base64_encode(&format!(
+                    "{{\"error\":\"channel webhook target '{}' is not implemented in this runtime yet\"}}",
+                    registration.skill_id.replace('"', "\\\"")
+                )),
+            },
+            Some(registration.skill_id.clone()),
+            Some("channel webhook target not implemented".to_string()),
+        ),
+        Some(registration) if registration.target_kind == "skill" => {
+            let sid = registration.skill_id.clone();
             log::debug!("[socket-mgr] webhook:request routed to skill '{}'", sid,);
 
             let registry = shared.registry.read().clone();
@@ -857,18 +898,18 @@ async fn handle_webhook_request(
                         .send_webhook_request(
                             &sid,
                             correlation_id.clone(),
-                            request.method,
-                            request.path,
-                            request.headers,
-                            request.query,
-                            request.body,
-                            request.tunnel_id,
-                            request.tunnel_name,
+                            request.method.clone(),
+                            request.path.clone(),
+                            request.headers.clone(),
+                            request.query.clone(),
+                            request.body.clone(),
+                            request.tunnel_id.clone(),
+                            request.tunnel_name.clone(),
                         )
                         .await;
 
                     match result {
-                        Ok(resp) => (resp, Some(sid)),
+                        Ok(resp) => (resp, Some(sid), None),
                         Err(e) => {
                             log::warn!("[socket-mgr] Skill webhook handler error: {}", e,);
                             (
@@ -882,6 +923,7 @@ async fn handle_webhook_request(
                                     )),
                                 },
                                 Some(sid),
+                                Some(e),
                             )
                         }
                     }
@@ -896,10 +938,24 @@ async fn handle_webhook_request(
                             body: base64_encode("{\"error\":\"Runtime not ready\"}"),
                         },
                         None,
+                        Some("runtime not ready".to_string()),
                     )
                 }
             }
         }
+        Some(registration) => (
+            crate::openhuman::webhooks::WebhookResponseData {
+                correlation_id: correlation_id.clone(),
+                status_code: 400,
+                headers: std::collections::HashMap::new(),
+                body: base64_encode(&format!(
+                    "{{\"error\":\"unknown webhook target kind '{}'\"}}",
+                    registration.target_kind.replace('"', "\\\"")
+                )),
+            },
+            Some(registration.skill_id.clone()),
+            Some("unknown webhook target kind".to_string()),
+        ),
         None => {
             log::debug!(
                 "[socket-mgr] No skill registered for tunnel {}",
@@ -913,9 +969,19 @@ async fn handle_webhook_request(
                     body: base64_encode("{\"error\":\"No handler registered for this tunnel\"}"),
                 },
                 None,
+                Some("no handler registered for this tunnel".to_string()),
             )
         }
     };
+
+    if let Some(router) = router.as_ref() {
+        router.record_response(
+            &request,
+            &response,
+            resolved_skill_id.clone(),
+            response_error.clone(),
+        );
+    }
 
     // Emit webhook:response back to the backend
     emit_via_channel(
