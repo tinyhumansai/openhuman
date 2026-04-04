@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
+import { createChannelLinkToken } from '../../../services/api/authApi';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
-import { callCoreRpc } from '../../../services/coreRpcClient';
 import {
   completeBreakingMigration,
   disconnectChannelConnection,
@@ -19,6 +19,7 @@ import type {
   ChannelType,
 } from '../../../types/channels';
 import { openUrl } from '../../../utils/openUrl';
+import { BACKEND_URL, TELEGRAM_BOT_USERNAME } from '../../../utils/config';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -38,6 +39,48 @@ const AUTH_MODE_LABELS: Record<string, string> = {
   bot_token: 'Bot Token',
   api_key: 'API Key',
 };
+
+function normalizeBaseUrl(baseUrl?: string): string {
+  return (baseUrl || 'https://api.tinyhumans.ai').trim().replace(/\/+$/, '');
+}
+
+function buildManagedChannelLaunchUrl(
+  channel: ChannelType,
+  token: string,
+  launchUrl?: string
+): string | undefined {
+  if (launchUrl) return launchUrl;
+
+  if (channel === 'telegram') {
+    return `https://t.me/${encodeURIComponent(TELEGRAM_BOT_USERNAME)}?start=${encodeURIComponent(token)}`;
+  }
+
+  if (channel === 'discord') {
+    return `${normalizeBaseUrl(BACKEND_URL)}/auth/discord/connect?linkToken=${encodeURIComponent(token)}`;
+  }
+
+  return undefined;
+}
+
+function buildManagedChannelInstruction(
+  channel: ChannelType,
+  token: string,
+  launchUrl?: string
+): string {
+  if (channel === 'telegram') {
+    return launchUrl
+      ? 'Continue in Telegram to finish linking your account.'
+      : `Open Telegram and message @${TELEGRAM_BOT_USERNAME} with this link token: ${token}`;
+  }
+
+  if (channel === 'discord') {
+    return launchUrl
+      ? 'Continue in Discord to finish linking your account.'
+      : `Use this Discord link token to continue linking your account: ${token}`;
+  }
+
+  return `Use this link token to continue: ${token}`;
+}
 
 /** Fallback definitions used when the core sidecar is unreachable. */
 const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
@@ -260,6 +303,36 @@ const MessagingPanel = () => {
           if (val) credentials[field.key] = val;
         }
 
+        const isManagedLinkFlow =
+          (channel === 'telegram' && spec.mode === 'managed_dm') ||
+          (channel === 'discord' && spec.mode === 'oauth');
+
+        if (isManagedLinkFlow) {
+          const link = await createChannelLinkToken(channel);
+          const launchUrl = buildManagedChannelLaunchUrl(channel, link.token, link.launchUrl);
+          const instruction = buildManagedChannelInstruction(channel, link.token, launchUrl);
+
+          dispatch(
+            upsertChannelConnection({
+              channel,
+              authMode: spec.mode,
+              patch: {
+                status: 'connecting',
+                lastError: instruction,
+              },
+            })
+          );
+
+          if (launchUrl) {
+            try {
+              await openUrl(launchUrl);
+            } catch {
+              // Leave the instruction in state even if opening the URL fails.
+            }
+          }
+          return;
+        }
+
         const result = await channelConnectionsApi.connectChannel(channel, {
           authMode: spec.mode,
           credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
@@ -267,7 +340,6 @@ const MessagingPanel = () => {
 
         if (result.status === 'pending_auth' && result.auth_action) {
           // The backend says the frontend should handle this auth flow.
-          // For now, show a message. OAuth URL handling can be added per auth_action.
           dispatch(
             upsertChannelConnection({
               channel,
@@ -278,22 +350,6 @@ const MessagingPanel = () => {
               },
             })
           );
-
-          // If the auth_action implies an OAuth URL, try opening it.
-          if (result.auth_action.includes('oauth')) {
-            try {
-              // Fetch OAuth URL from the auth domain.
-              const oauthResponse = await callCoreRpc<{ result: { oauthUrl?: string } }>({
-                method: 'openhuman.auth.oauth_connect',
-                params: { provider: channel, skillId: channel },
-              });
-              if (oauthResponse.result?.oauthUrl) {
-                await openUrl(oauthResponse.result.oauthUrl);
-              }
-            } catch {
-              // OAuth URL fetch is best-effort.
-            }
-          }
           return;
         }
 

@@ -1,5 +1,7 @@
 import { base64ToBytes, encryptIntegrationTokens } from '../../utils/integrationTokensCrypto';
+import type { ApiResponse } from '../../types/api';
 import { callCoreRpc } from '../coreRpcClient';
+import { apiClient } from '../apiClient';
 
 interface IntegrationTokensResponse {
   success: boolean;
@@ -10,6 +12,27 @@ interface IntegrationTokensPayload {
   accessToken: string;
   refreshToken?: string;
   expiresAt: string;
+}
+
+type LinkableChannel = 'telegram' | 'discord';
+
+interface RawChannelLinkTokenData {
+  token?: string;
+  linkToken?: string;
+  jwtToken?: string;
+  url?: string;
+  linkUrl?: string;
+  authUrl?: string;
+  deepLinkUrl?: string;
+  expiresAt?: string;
+  expires_at?: string;
+  [key: string]: unknown;
+}
+
+export interface ChannelLinkTokenResult {
+  token: string;
+  launchUrl?: string;
+  expiresAt?: string;
 }
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -70,4 +93,43 @@ export async function fetchIntegrationTokens(
     normalizeKeyToHex(key)
   );
   return { success: true, data: { encrypted } };
+}
+
+/**
+ * Create a short-lived link token that can be handed to a messaging channel login flow.
+ * POST /auth/channels/:channel/link-token (auth required)
+ */
+export async function createChannelLinkToken(
+  channel: LinkableChannel
+): Promise<ChannelLinkTokenResult> {
+  const response = await apiClient.post<ApiResponse<RawChannelLinkTokenData>>(
+    `/auth/channels/${channel}/link-token`
+  );
+
+  const data = response.data;
+  const token =
+    typeof data?.token === 'string'
+      ? data.token
+      : typeof data?.linkToken === 'string'
+        ? data.linkToken
+        : typeof data?.jwtToken === 'string'
+          ? data.jwtToken
+          : '';
+
+  if (!token) {
+    throw new Error('Channel link token response missing token');
+  }
+
+  const launchUrlCandidates = [data?.url, data?.linkUrl, data?.authUrl, data?.deepLinkUrl];
+  const launchUrl = launchUrlCandidates.find(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0
+  );
+  const expiresAt =
+    typeof data?.expiresAt === 'string'
+      ? data.expiresAt
+      : typeof data?.expires_at === 'string'
+        ? data.expires_at
+        : undefined;
+
+  return { token, launchUrl, expiresAt };
 }

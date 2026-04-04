@@ -63,6 +63,7 @@ vi.mock('../utils/config', () => ({
   SKILLS_GITHUB_REPO: 'test/skills',
   SENTRY_DSN: undefined,
   BACKEND_URL: 'http://localhost:5005',
+  TELEGRAM_BOT_USERNAME: 'openhuman_bot',
   DEV_JWT_TOKEN: undefined,
 }));
 
