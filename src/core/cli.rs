@@ -32,6 +32,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         "run" | "serve" => run_server_command(&args[1..]),
         "call" => run_call_command(&args[1..]),
         "repl" | "shell" => crate::core::repl::run_repl(&args[1..]),
+        "skills" => crate::core::skills_cli::run_skills_command(&args[1..]),
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
 }
@@ -344,6 +345,7 @@ fn print_general_help(grouped: &BTreeMap<String, Vec<ControllerSchema>>) {
     println!("  openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--verbose]");
     println!("  openhuman repl [--verbose] [--eval '<cmd>'] [--batch]");
     println!("  openhuman call --method <name> [--params '<json>']");
+    println!("  openhuman skills <subcommand> [options]   (skill development runtime)");
     println!("  openhuman <namespace> <function> [--param value ...]\n");
     println!("Available namespaces:");
     for namespace in grouped.keys() {
