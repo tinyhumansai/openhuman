@@ -28,8 +28,8 @@ import {
   openhumanUpdateAnalyticsSettings,
   setOnboardingCompleted,
   storeSession,
-  logout as tauriLogout,
   syncMemoryClientToken,
+  logout as tauriLogout,
 } from '../utils/tauriCommands';
 
 const POLL_MS = 3000;

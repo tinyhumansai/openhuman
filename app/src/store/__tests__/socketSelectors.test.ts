@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { setCoreStateSnapshot, type CoreState } from '../../lib/coreState/store';
+import { type CoreState, setCoreStateSnapshot } from '../../lib/coreState/store';
 import type { RootState } from '../index';
 import { selectSocketId, selectSocketStatus } from '../socketSelectors';
 
@@ -31,9 +31,7 @@ function makeCoreState(token: string | null): CoreState {
 function makeState(
   byUser: Record<string, { status: string; socketId: string | null }> = {}
 ): RootState {
-  return {
-    socket: { byUser },
-  } as RootState;
+  return { socket: { byUser } } as RootState;
 }
 
 describe('selectSocketStatus', () => {

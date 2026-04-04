@@ -6,9 +6,7 @@ import ProtectedRoute from '../ProtectedRoute';
 
 const mockUseCoreState = vi.fn();
 
-vi.mock('../../providers/CoreStateProvider', () => ({
-  useCoreState: () => mockUseCoreState(),
-}));
+vi.mock('../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));
 
 function renderRoute(routes: React.ReactNode, initialEntries = ['/']) {
   return render(
@@ -20,10 +18,7 @@ function renderRoute(routes: React.ReactNode, initialEntries = ['/']) {
 
 describe('ProtectedRoute', () => {
   it('renders a loading screen while bootstrapping', () => {
-    mockUseCoreState.mockReturnValue({
-      isBootstrapping: true,
-      snapshot: { sessionToken: null },
-    });
+    mockUseCoreState.mockReturnValue({ isBootstrapping: true, snapshot: { sessionToken: null } });
 
     renderRoute(
       <Route
@@ -60,10 +55,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('redirects to / when no token and requireAuth=true', () => {
-    mockUseCoreState.mockReturnValue({
-      isBootstrapping: false,
-      snapshot: { sessionToken: null },
-    });
+    mockUseCoreState.mockReturnValue({ isBootstrapping: false, snapshot: { sessionToken: null } });
 
     renderRoute(
       <>
@@ -85,10 +77,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('redirects to custom redirectTo when no token', () => {
-    mockUseCoreState.mockReturnValue({
-      isBootstrapping: false,
-      snapshot: { sessionToken: null },
-    });
+    mockUseCoreState.mockReturnValue({ isBootstrapping: false, snapshot: { sessionToken: null } });
 
     renderRoute(
       <>

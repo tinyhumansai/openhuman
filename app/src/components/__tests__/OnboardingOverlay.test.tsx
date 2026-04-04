@@ -5,9 +5,7 @@ import OnboardingOverlay from '../OnboardingOverlay';
 
 const mockUseCoreState = vi.fn();
 
-vi.mock('../../providers/CoreStateProvider', () => ({
-  useCoreState: () => mockUseCoreState(),
-}));
+vi.mock('../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));
 
 vi.mock('../../pages/onboarding/Onboarding', () => ({
   default: ({ onComplete }: { onComplete: () => void }) => (
@@ -68,10 +66,7 @@ describe('OnboardingOverlay', () => {
   });
 
   it('does not render while bootstrapping', () => {
-    mockUseCoreState.mockReturnValue({
-      ...makeCoreState(),
-      isBootstrapping: true,
-    });
+    mockUseCoreState.mockReturnValue({ ...makeCoreState(), isBootstrapping: true });
 
     render(<OnboardingOverlay />);
 
