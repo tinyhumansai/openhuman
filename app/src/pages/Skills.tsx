@@ -408,7 +408,7 @@ export default function Skills() {
               {/* Header */}
               <div className="mb-3 flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-semibold text-stone-900">Connected Skills</h2>
+                  <h2 className="text-sm font-semibold text-stone-900">3rd Party Skills</h2>
                   <p className="mt-1 text-xs text-stone-500">
                     Third-party integrations and external data sources.
                   </p>
