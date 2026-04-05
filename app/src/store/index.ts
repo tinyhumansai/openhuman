@@ -20,7 +20,6 @@ import aiReducer from './aiSlice';
 import type { AuthState } from './authSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import daemonReducer from './daemonSlice';
-import dictationReducer from './dictationSlice';
 import type { IntelligenceState } from './intelligenceSlice';
 import inviteReducer from './inviteSlice';
 import socketReducer from './socketSlice';
@@ -40,12 +39,6 @@ const threadPersistConfig = {
 
 const persistedAiReducer = persistReducer(aiPersistConfig, aiReducer);
 const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
-const dictationPersistConfig = {
-  key: 'dictation',
-  storage,
-  whitelist: ['hotkey', 'showFloatingLauncher'],
-};
-const persistedDictationReducer = persistReducer(dictationPersistConfig, dictationReducer);
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
   storage,
@@ -64,7 +57,6 @@ export const store = configureStore({
     thread: persistedThreadReducer,
     invite: inviteReducer,
     accessibility: accessibilityReducer,
-    dictation: persistedDictationReducer,
     channelConnections: persistedChannelConnectionsReducer,
     webhooks: webhooksReducer,
   },

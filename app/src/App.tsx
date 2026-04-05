@@ -6,7 +6,6 @@ import { PersistGate } from 'redux-persist/integration/react';
 import AppRoutes from './AppRoutes';
 import BottomTabBar from './components/BottomTabBar';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
-import DictationOverlay from './components/dictation/DictationOverlay';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import OnboardingOverlay from './components/OnboardingOverlay';
@@ -37,7 +36,6 @@ function App() {
                     <BottomTabBar />
                   </div>
                   <OnboardingOverlay />
-                  <DictationOverlay />
                   <LocalAIDownloadSnackbar />
                 </ServiceBlockingGate>
               </Router>

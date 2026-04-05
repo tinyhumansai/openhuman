@@ -9,7 +9,6 @@ import BillingPanel from '../components/settings/panels/BillingPanel';
 import ConnectionsPanel from '../components/settings/panels/ConnectionsPanel';
 import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
-import DictationPanel from '../components/settings/panels/DictationPanel';
 import LocalModelPanel from '../components/settings/panels/LocalModelPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
@@ -45,7 +44,6 @@ const Settings = () => {
           <Route path="agent-chat" element={<AgentChatPanel />} />
           <Route path="ai" element={<AIPanel />} />
           <Route path="accessibility" element={<AccessibilityPanel />} />
-          <Route path="dictation" element={<DictationPanel />} />
           <Route path="local-model" element={<LocalModelPanel />} />
           <Route path="billing" element={<BillingPanel />} />
           <Route path="skills" element={<SkillsPanel />} />
