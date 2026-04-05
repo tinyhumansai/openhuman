@@ -229,10 +229,9 @@ const aiSettingsItems = [
 
 const Settings = () => {
   return (
-    <div className="h-full overflow-y-auto p-4 pt-6">
+    <div className="p-4 pt-6">
       <div
-        className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden flex flex-col min-h-0"
-        style={{ maxHeight: 'calc(100vh - 7rem)' }}>
+        className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
         <Routes>
           <Route index element={<SettingsHome />} />
           <Route

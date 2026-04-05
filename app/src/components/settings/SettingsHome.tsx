@@ -180,10 +180,10 @@ const SettingsHome = () => {
   ];
 
   return (
-    <div className="overflow-hidden h-full flex flex-col z-10 relative">
+    <div className="z-10 relative">
       <SettingsHeader />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         {/* Grouped Settings */}
         {groupedMenuItems.map((item, index) => (
           <SettingsMenuItem
