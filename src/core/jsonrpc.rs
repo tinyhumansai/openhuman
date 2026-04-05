@@ -553,8 +553,10 @@ pub async fn bootstrap_skill_runtime() {
 
     // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
     let base_dir = std::env::var("OPENHUMAN_WORKSPACE")
+        .ok()
+        .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
+        .unwrap_or_else(|| {
             dirs::home_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join(".openhuman")

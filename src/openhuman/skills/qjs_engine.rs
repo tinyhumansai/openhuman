@@ -357,17 +357,27 @@ impl RuntimeEngine {
         let skills_dir = self.get_skills_source_dir()?;
         let mut skill_dir = skills_dir.join(skill_id);
         let mut manifest_path = skill_dir.join("manifest.json");
+        log::debug!(
+            "[runtime] start_skill '{}': source dir={:?}, manifest exists={}",
+            skill_id, manifest_path, manifest_path.exists()
+        );
 
         if !manifest_path.exists() {
             // Try workspace skills directory
             if let Some(workspace_dir) = self.workspace_dir.read().as_ref() {
                 let ws_skill_dir = workspace_dir.join("skills").join(skill_id);
                 let ws_manifest = ws_skill_dir.join("manifest.json");
+                log::debug!(
+                    "[runtime] start_skill '{}': workspace check {:?}, exists={}",
+                    skill_id, ws_manifest, ws_manifest.exists()
+                );
                 if ws_manifest.exists() {
                     log::info!("[runtime] Found skill '{}' in workspace dir", skill_id);
                     skill_dir = ws_skill_dir;
                     manifest_path = ws_manifest;
                 }
+            } else {
+                log::warn!("[runtime] start_skill '{}': workspace_dir is not set", skill_id);
             }
         }
 
