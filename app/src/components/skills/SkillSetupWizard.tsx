@@ -689,22 +689,33 @@ function OAuthLoginView({
         // May be plaintext OAuth — continue without key
       }
 
-      // 2. Start skill runtime and wait for it to be fully running
-      try { await startSkill(skillId); } catch { /* may already be running */ }
-      for (let i = 0; i < 20; i++) {
-        try {
-          const snap = await getSkillSnapshot(skillId);
-          if (snap.status === "running") break;
-        } catch { /* not ready yet */ }
-        await new Promise((r) => setTimeout(r, 250));
+      // 2. Start skill runtime
+      try {
+        await startSkill(skillId);
+      } catch (startErr) {
+        throw new Error(`Failed to start skill: ${startErr instanceof Error ? startErr.message : String(startErr)}`);
       }
 
-      // 3. Notify skill of OAuth completion
+      // 3. Wait for skill to be fully running (QuickJS init is async)
+      let running = false;
+      for (let i = 0; i < 30; i++) {
+        try {
+          const snap = await getSkillSnapshot(skillId);
+          if (snap.status === "running") { running = true; break; }
+          if (snap.status === "error") throw new Error(`Skill init failed: ${snap.error ?? "unknown error"}`);
+        } catch (snapErr) {
+          if (snapErr instanceof Error && snapErr.message.includes("Skill init failed")) throw snapErr;
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      if (!running) throw new Error("Skill did not reach running state within timeout");
+
+      // 4. Notify skill of OAuth completion
       await skillManager.notifyOAuthComplete(skillId, id, provider, {
         clientKeyShare,
       });
 
-      // 4. Advance wizard
+      // 5. Advance wizard
       onManualComplete?.();
     } catch (err) {
       setDevError(err instanceof Error ? err.message : String(err));

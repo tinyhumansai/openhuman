@@ -350,7 +350,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       <div className="glass rounded-2xl p-5 border border-stone-200">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
-            <h2 className="text-lg font-semibold text-stone-900">Memory (EverMind)</h2>
+            <h2 className="text-lg font-semibold text-stone-900">Memory</h2>
             <p className="text-sm text-stone-500">
               Your AI's knowledge graph, extracted insights, and ingestion activity.
             </p>
