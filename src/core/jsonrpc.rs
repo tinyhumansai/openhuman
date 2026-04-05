@@ -533,6 +533,9 @@ pub async fn run_server(
         }
     });
 
+    // Launch the overlay Tauri app (transparent debug/voice panel) as a child process.
+    crate::openhuman::overlay::spawn_overlay();
+
     axum::serve(listener, app).await?;
     Ok(())
 }
