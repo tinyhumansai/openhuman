@@ -11,7 +11,10 @@ pub(crate) const CACHE_TTL_SECS: i64 = 3600;
 pub(crate) const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/tinyhumansai/openhuman-skills/refs/heads/build/skills/registry.json";
 
 pub(crate) fn registry_url() -> String {
-    std::env::var("SKILLS_REGISTRY_URL").unwrap_or_else(|_| DEFAULT_REGISTRY_URL.to_string())
+    std::env::var("SKILLS_REGISTRY_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_REGISTRY_URL.to_string())
 }
 
 /// If `SKILLS_LOCAL_DIR` is set, return the local skills directory path.
