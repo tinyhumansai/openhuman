@@ -918,7 +918,7 @@ const Conversations = () => {
   return (
     <div className="app-dotted-canvas h-full relative z-10 flex justify-center overflow-hidden p-4 pt-6">
       <div className="flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
-        <div className="flex-1 overflow-y-auto px-5 py-4">
+        <div className="flex-1 overflow-y-auto px-5 py-4 bg-stone-50">
           {isLoadingMessages ? (
             <div className="space-y-4">
               {Array.from({ length: 4 }).map((_, i) => (
@@ -1264,7 +1264,7 @@ const Conversations = () => {
 
           {inputMode === 'text' ? (
             <div className="flex items-end gap-3">
-              <div className="relative flex-1 rounded-xl border border-stone-200 bg-white focus-within:ring-1 focus-within:ring-primary-500/50 focus-within:border-primary-500/50 transition-all">
+              <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 bg-white transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
@@ -1279,7 +1279,7 @@ const Conversations = () => {
                   placeholder="Type a message..."
                   rows={1}
                   disabled={isSending || !rustChat}
-                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 focus:outline-none focus:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 placeholder:text-stone-400 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 {/* Mic icon inside input */}
                 <button
