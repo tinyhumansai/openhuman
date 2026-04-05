@@ -15,7 +15,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSkillSnapshot } from "../../lib/skills/hooks.ts";
 import { skillManager } from "../../lib/skills/manager.ts";
-import { listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
+import { getSkillSnapshot, listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
 import { callCoreRpc } from "../../services/coreRpcClient.ts";
 import { apiClient } from "../../services/apiClient.ts";
 import { openUrl } from "../../utils/openUrl.ts";
@@ -689,8 +689,15 @@ function OAuthLoginView({
         // May be plaintext OAuth — continue without key
       }
 
-      // 2. Start skill runtime
+      // 2. Start skill runtime and wait for it to be fully running
       try { await startSkill(skillId); } catch { /* may already be running */ }
+      for (let i = 0; i < 20; i++) {
+        try {
+          const snap = await getSkillSnapshot(skillId);
+          if (snap.status === "running") break;
+        } catch { /* not ready yet */ }
+        await new Promise((r) => setTimeout(r, 250));
+      }
 
       // 3. Notify skill of OAuth completion
       await skillManager.notifyOAuthComplete(skillId, id, provider, {
