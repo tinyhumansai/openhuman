@@ -82,12 +82,7 @@ const SettingsHome = () => {
       description: 'Billing, recovery phrase, team management, and linked account access',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M5 12h14M12 5v14"
-          />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5v14" />
         </svg>
       ),
       onClick: () => navigateToSettings('account'),
@@ -189,39 +184,33 @@ const SettingsHome = () => {
       <SettingsHeader />
 
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-6">
-          {/* Grouped Settings */}
-          <div>
-            {groupedMenuItems.map((item, index) => (
-              <SettingsMenuItem
-                key={item.id}
-                icon={item.icon}
-                title={item.title}
-                description={item.description}
-                onClick={item.onClick}
-                dangerous={item.dangerous}
-                isFirst={index === 0}
-                isLast={index === groupedMenuItems.length - 1}
-              />
-            ))}
-          </div>
+        {/* Grouped Settings */}
+        {groupedMenuItems.map((item, index) => (
+          <SettingsMenuItem
+            key={item.id}
+            icon={item.icon}
+            title={item.title}
+            description={item.description}
+            onClick={item.onClick}
+            dangerous={item.dangerous}
+            isFirst={index === 0}
+            // isLast={index === groupedMenuItems.length - 1}
+          />
+        ))}
 
-          {/* Destructive Actions */}
-          <div>
-            {destructiveMenuItems.map((item, index) => (
-              <SettingsMenuItem
-                key={item.id}
-                icon={item.icon}
-                title={item.title}
-                description={item.description}
-                onClick={item.onClick}
-                dangerous={item.dangerous}
-                isFirst={index === 0}
-                isLast={index === destructiveMenuItems.length - 1}
-              />
-            ))}
-          </div>
-        </div>
+        {/* Destructive Actions */}
+        {destructiveMenuItems.map((item, index) => (
+          <SettingsMenuItem
+            key={item.id}
+            icon={item.icon}
+            title={item.title}
+            description={item.description}
+            onClick={item.onClick}
+            dangerous={item.dangerous}
+            isFirst={index === 0}
+            isLast={index === destructiveMenuItems.length - 1}
+          />
+        ))}
       </div>
 
       {/* Log Out & Clear Data Confirmation Modal */}
@@ -278,7 +267,7 @@ const SettingsHome = () => {
               <button
                 onClick={handleLogoutAndClearData}
                 disabled={isLoading}
-                className="flex-1 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
+                className="flex-1 px-4 py-2 rounded-sm bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
                 {isLoading && (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle

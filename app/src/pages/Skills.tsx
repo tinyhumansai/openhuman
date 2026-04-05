@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import {
   DefaultIcon,
@@ -44,6 +45,46 @@ function statusDotClass(status: SkillConnectionStatus): string {
 interface SkillCardProps {
   skill: SkillListEntry;
   onSetup: () => void;
+}
+
+interface BuiltInSkillCardProps {
+  title: string;
+  description: string;
+  route: string;
+  icon: React.ReactNode;
+  ctaLabel?: string;
+}
+
+function BuiltInSkillCard({
+  title,
+  description,
+  route,
+  icon,
+  ctaLabel = 'Open settings',
+}: BuiltInSkillCardProps) {
+  const navigate = useNavigate();
+
+  return (
+    <button
+      type="button"
+      onClick={() => navigate(route)}
+      className="w-full rounded-xl border border-stone-200 bg-stone-50 p-4 text-left transition-colors hover:bg-white hover:border-stone-300">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white text-stone-700 shadow-sm border border-stone-200">
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-stone-900">{title}</h2>
+            <span className="rounded-lg border border-primary-200 bg-primary-50 px-2.5 py-1 text-[11px] font-medium text-primary-700">
+              {ctaLabel}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-stone-600">{description}</p>
+        </div>
+      </div>
+    </button>
+  );
 }
 
 function SkillCard({ skill, onSetup }: SkillCardProps) {
@@ -225,6 +266,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
 // ─── Main Skills Page ───────────────────────────────────────────────────────
 
 export default function Skills() {
+  const navigate = useNavigate();
   // Skills from registry via RPC
   const { skills: availableSkills, loading: skillsLoading } = useAvailableSkills();
 
@@ -277,16 +319,97 @@ export default function Skills() {
     setSetupModalOpen(true);
   };
 
+  const builtInSkills = [
+    {
+      id: 'screen-intelligence',
+      title: 'Screen Intelligence',
+      description: 'Capture windows, summarize what is on screen, and feed useful context into memory.',
+      route: '/settings/screen-intelligence',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.8}
+            d="M3 5h18v12H3zM8 21h8m-4-4v4"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'text-autocomplete',
+      title: 'Text Auto-Complete',
+      description: 'Suggest inline completions while you type and control where autocomplete is active.',
+      route: '/settings/autocomplete',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.8}
+            d="M4 7h16M4 12h10m-10 5h7m10 0l3 3m0 0l3-3m-3 3v-8"
+          />
+        </svg>
+      ),
+    },
+    {
+      id: 'voice-stt',
+      title: 'Voice Speech To Text',
+      description: 'Use the microphone for dictation and voice-driven chat with local speech recognition.',
+      route: '/settings/local-model',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.8}
+            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+          />
+        </svg>
+      ),
+    },
+  ];
+
   return (
     <div className="app-dotted-canvas min-h-full">
       <div className="min-h-full flex flex-col">
         <div className="flex-1 flex items-start justify-center p-4 pt-6">
           <div className="max-w-lg w-full">
+            <div className="mb-4 rounded-2xl border border-stone-200 bg-white p-3 shadow-soft animate-fade-up">
+              <div className="px-1 pb-3 pt-1">
+                <h2 className="text-sm font-semibold text-stone-900">Built-in Skills</h2>
+                <p className="mt-1 text-xs text-stone-500">
+                  Core desktop capabilities configured from settings.
+                </p>
+              </div>
+              <div className="space-y-2">
+                {builtInSkills.map(skill => (
+                  <BuiltInSkillCard
+                    key={skill.id}
+                    title={skill.title}
+                    description={skill.description}
+                    route={skill.route}
+                    icon={skill.icon}
+                  />
+                ))}
+              </div>
+            </div>
+
             {/* Main card */}
             <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
               {/* Header */}
               <div className="mb-5">
                 <h1 className="text-xl font-bold text-stone-900">Skills</h1>
+              </div>
+
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-stone-900">Connected Skills</h2>
+                <button
+                  type="button"
+                  onClick={() => navigate('/settings/skills')}
+                  className="text-xs font-medium text-stone-500 transition-colors hover:text-stone-800">
+                  Skill settings
+                </button>
               </div>
 
               {/* Skills list */}

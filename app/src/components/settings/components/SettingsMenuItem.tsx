@@ -31,7 +31,7 @@ const SettingsMenuItem = ({
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center justify-between p-3 bg-white ${borderClasses} hover:bg-stone-50 transition-all duration-200 text-left ${roundedClasses} focus:outline-none focus:ring-0 focus:border-inherit`}>
+      className={`w-full flex items-center justify-between py-3 px-4 bg-white ${borderClasses} hover:bg-stone-50 transition-all duration-200 text-left ${roundedClasses} focus:outline-none focus:ring-0 focus:border-inherit`}>
       <div className={`w-5 h-5 opacity-60 flex-shrink-0 mr-3 ${iconColor}`}>{icon}</div>
       <div className="flex-1">
         <div className={`font-medium text-sm mb-1 ${titleColor}`}>{title}</div>

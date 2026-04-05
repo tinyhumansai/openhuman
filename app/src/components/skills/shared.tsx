@@ -133,7 +133,7 @@ export function SkillActionButton({
     return (
       <button
         onClick={handleEnable}
-        className="px-4 py-1.5 text-xs font-medium text-sage-300 bg-sage-500/10 border border-sage-500/30 rounded-lg hover:bg-sage-500/20 transition-colors flex-shrink-0 ml-3">
+        className="ml-3 flex-shrink-0 rounded-lg border border-sage-200 bg-sage-50 px-4 py-1.5 text-xs font-medium text-sage-700 transition-colors hover:bg-sage-100">
         Enable
       </button>
     );
@@ -146,7 +146,7 @@ export function SkillActionButton({
           e.stopPropagation();
           onOpenModal();
         }}
-        className="px-4 py-1.5 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors flex-shrink-0 ml-3">
+        className="ml-3 flex-shrink-0 rounded-lg border border-primary-200 bg-primary-50 px-4 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100">
         Setup
       </button>
     );
@@ -156,7 +156,7 @@ export function SkillActionButton({
     return (
       <button
         onClick={handleEnable}
-        className="px-4 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg hover:bg-amber-500/20 transition-colors flex-shrink-0 ml-3">
+        className="ml-3 flex-shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-4 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100">
         Retry
       </button>
     );
@@ -168,7 +168,7 @@ export function SkillActionButton({
         e.stopPropagation();
         onOpenModal();
       }}
-      className="px-4 py-1.5 text-xs font-medium text-primary-300 bg-primary-500/10 border border-primary-500/30 rounded-lg hover:bg-primary-500/20 transition-colors flex-shrink-0 ml-3">
+      className="ml-3 flex-shrink-0 rounded-lg border border-primary-200 bg-primary-50 px-4 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100">
       Configure
     </button>
   );
