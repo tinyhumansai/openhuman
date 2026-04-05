@@ -7,7 +7,6 @@ import { skillManager } from '../lib/skills/manager';
 import { emitSkillStateChange } from '../lib/skills/skillEvents';
 import { startSkill } from '../lib/skills/skillsApi';
 import { consumeLoginToken } from '../services/api/authApi';
-import { callCoreRpc } from '../services/coreRpcClient';
 import { storeSession } from './tauriCommands';
 
 const focusMainWindow = async () => {
@@ -121,22 +120,12 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       return;
     }
 
-    console.log(`[DeepLink] OAuth success for skill=${skillId} integration=${integrationId}`);
+    // Extract client key share from URL params (returned directly by backend in OAuth callback).
+    const clientKeyShare = parsed.searchParams.get('clientKey') || undefined;
 
-    // 1. Fetch the client key share for encrypted OAuth (one-time handoff, 5-min TTL).
-    let clientKeyShare: string | undefined;
-    try {
-      const result = await callCoreRpc<{ result: { clientKey: string } }>({
-        method: 'openhuman.auth.oauth_fetch_client_key',
-        params: { integrationId },
-      });
-      clientKeyShare = result?.result?.clientKey;
-      if (clientKeyShare) {
-        console.log(`[DeepLink] Client key share retrieved for integration=${integrationId}`);
-      }
-    } catch (keyErr) {
-      console.warn('[DeepLink] Could not fetch client key share (may be plaintext OAuth):', keyErr);
-    }
+    console.log(
+      `[DeepLink] OAuth success for skill=${skillId} integration=${integrationId} encrypted=${!!clientKeyShare}`
+    );
 
     // 2. Start the skill in the core QuickJS runtime (if not already running).
     //    This also sets enabled=true via the preferences store.
@@ -156,7 +145,7 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       console.warn('[DeepLink] Runtime notify failed:', runtimeErr);
     }
 
-    // 3. Trigger initial data sync
+    // 4. Trigger initial data sync
     try {
       await skillManager.triggerSync(skillId);
     } catch {
