@@ -88,7 +88,7 @@ const TeamManagementPanel = () => {
 
   if (!teamEntry) {
     return (
-      <div className="overflow-hidden flex flex-col h-full">
+      <div className="">
         <SettingsHeader title="Team Management" showBackButton={true} onBack={navigateBack} />
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-stone-500">Team not found</p>
@@ -99,7 +99,7 @@ const TeamManagementPanel = () => {
 
   if (!isAdmin) {
     return (
-      <div className="overflow-hidden flex flex-col h-full">
+      <div className="">
         <SettingsHeader title="Team Management" showBackButton={true} onBack={navigateBack} />
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-stone-500">Access denied</p>
@@ -111,10 +111,10 @@ const TeamManagementPanel = () => {
   const { team } = teamEntry;
 
   return (
-    <div className="overflow-hidden flex flex-col h-full">
+    <div className="">
       <SettingsHeader title={`Manage ${team.name}`} showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         <div className="max-w-md mx-auto p-4 space-y-4">
           {/* Team Info */}
           <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">

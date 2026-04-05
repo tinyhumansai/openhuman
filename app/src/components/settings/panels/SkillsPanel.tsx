@@ -72,9 +72,9 @@ const SkillsPanel = () => {
       <SettingsHeader title="Skills" showBackButton={true} onBack={navigateBack} />
 
       <div className="p-4 space-y-4">
-        <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <div>
-            <h3 className="text-lg font-semibold text-stone-900">Browser Access</h3>
+            <h3 className="text-sm font-semibold text-stone-900">Browser Access</h3>
             <p className="text-xs text-stone-400">
               Allow the browser tool to visit any public domain (private and file URLs are still
               blocked).

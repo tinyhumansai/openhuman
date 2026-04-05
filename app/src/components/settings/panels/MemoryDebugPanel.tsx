@@ -13,8 +13,6 @@ import {
 import { MemoryTextWithEntities } from '../../intelligence/MemoryTextWithEntities';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import { PrimaryButton } from './components/ActionPanel';
-import SectionCard from './components/SectionCard';
 import { normalizeMemoryDocuments } from './memoryDebugUtils';
 
 const MemoryDebugPanel = () => {
@@ -149,7 +147,7 @@ const MemoryDebugPanel = () => {
     if (!ns) return;
 
     const confirmed = window.confirm(
-      `This will permanently delete ALL documents in namespace "${ns}". This action cannot be undone.\n\nContinue?`
+      `This will permanently delete ALL documents in namespace "${ns}". Continue?`
     );
     if (!confirmed) return;
 
@@ -159,9 +157,9 @@ const MemoryDebugPanel = () => {
     try {
       const result = await memoryClearNamespace(ns);
       if (result.cleared) {
-        setClearSuccess(`Namespace "${result.namespace}" cleared successfully.`);
+        setClearSuccess(`Namespace "${result.namespace}" cleared.`);
       } else {
-        setClearSuccess(`Clear request completed for "${result.namespace}" (nothing to clear).`);
+        setClearSuccess(`Nothing to clear in "${result.namespace}".`);
       }
       await refreshAll();
     } catch (error) {
@@ -175,258 +173,198 @@ const MemoryDebugPanel = () => {
     <div>
       <SettingsHeader title="Memory Debug" showBackButton={true} onBack={navigateBack} />
 
-      <div className="p-4 space-y-4">
-        <SectionCard
-          title="Documents"
-          priority="tools"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
-              />
-            </svg>
-          }>
-          <div className="space-y-3">
-            <PrimaryButton onClick={() => void loadDocuments()} loading={documentsLoading}>
-              Refresh Documents
-            </PrimaryButton>
-            <label className="block text-xs text-stone-300">
-              Namespace Filter (optional)
-              <input
-                value={documentsNamespaceFilter}
-                onChange={e => setDocumentsNamespaceFilter(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
-                placeholder="e.g. conversations"
-              />
-            </label>
-            {documentsError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
-                {documentsError}
-              </div>
-            )}
-            {documents.length === 0 && !documentsLoading ? (
-              <div className="text-xs text-stone-400">
-                No structured documents found. Raw response is shown below.
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {documents.map(doc => (
-                  <div
-                    key={`${doc.namespace}:${doc.documentId}`}
-                    className="rounded border border-stone-700 bg-black/20 p-2">
-                    <div className="text-xs text-white break-all">ID: {doc.documentId}</div>
-                    <div className="text-xs text-stone-300 break-all">
-                      Namespace: {doc.namespace}
-                    </div>
-                    {doc.title ? (
-                      <div className="text-xs text-stone-400">Title: {doc.title}</div>
-                    ) : null}
-                    <div className="pt-2">
-                      <PrimaryButton
-                        variant="outline"
-                        loading={deleteLoadingId === doc.documentId}
-                        disabled={Boolean(deleteLoadingId)}
-                        onClick={() => void handleDelete(doc)}
-                        className="px-3 py-1.5 text-xs">
-                        Delete
-                      </PrimaryButton>
-                    </div>
+      <div className="p-4 space-y-5">
+        {/* Documents */}
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-stone-900">Documents</h3>
+          <div className="flex gap-2">
+            <input
+              value={documentsNamespaceFilter}
+              onChange={e => setDocumentsNamespaceFilter(e.target.value)}
+              className="flex-1 rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-700 placeholder:text-stone-400"
+              placeholder="Filter by namespace..."
+            />
+            <button
+              type="button"
+              onClick={() => void loadDocuments()}
+              disabled={documentsLoading}
+              className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50">
+              {documentsLoading ? '...' : 'Refresh'}
+            </button>
+          </div>
+          {documentsError && (
+            <div className="rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
+              {documentsError}
+            </div>
+          )}
+          {documents.length === 0 && !documentsLoading ? (
+            <p className="text-xs text-stone-400">No documents found.</p>
+          ) : (
+            <div className="space-y-1">
+              {documents.map(doc => (
+                <div
+                  key={`${doc.namespace}:${doc.documentId}`}
+                  className="flex items-start justify-between gap-2 rounded-lg border border-stone-200 bg-stone-50 p-2">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-stone-900 break-all">{doc.documentId}</div>
+                    <div className="text-[11px] text-stone-500 break-all">{doc.namespace}</div>
+                    {doc.title && <div className="text-[11px] text-stone-400">{doc.title}</div>}
                   </div>
-                ))}
-              </div>
-            )}
-            <details className="text-xs">
-              <summary className="cursor-pointer text-stone-300">Raw documents response</summary>
-              <pre className="mt-2 rounded border border-stone-700 bg-black/20 p-2 overflow-auto text-[11px] leading-5">
-                {JSON.stringify(documentsRaw, null, 2)}
-              </pre>
-            </details>
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          title="Namespaces"
-          priority="tools"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 7h16M4 12h16M4 17h16"
-              />
-            </svg>
-          }>
-          <div className="space-y-3">
-            <PrimaryButton onClick={() => void loadNamespaces()} loading={namespacesLoading}>
-              Refresh Namespaces
-            </PrimaryButton>
-            {namespacesError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
-                {namespacesError}
-              </div>
-            )}
-            <div className="rounded border border-stone-700 bg-black/20 p-2 text-xs">
-              {namespaces.length > 0 ? namespaces.join('\n') : 'No namespaces found.'}
+                  <button
+                    type="button"
+                    disabled={Boolean(deleteLoadingId)}
+                    onClick={() => void handleDelete(doc)}
+                    className="shrink-0 rounded border border-stone-200 px-2 py-1 text-[10px] text-stone-500 hover:bg-stone-100 disabled:opacity-50">
+                    {deleteLoadingId === doc.documentId ? '...' : 'Delete'}
+                  </button>
+                </div>
+              ))}
             </div>
+          )}
+          <details className="text-xs">
+            <summary className="cursor-pointer text-stone-400">Raw response</summary>
+            <pre className="mt-1 max-h-32 overflow-auto rounded-lg border border-stone-200 bg-stone-950 p-2 text-[11px] text-stone-100 whitespace-pre-wrap break-words">
+              {JSON.stringify(documentsRaw, null, 2)}
+            </pre>
+          </details>
+        </section>
+
+        {/* Namespaces */}
+        <section className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-stone-900">Namespaces</h3>
+            <button
+              type="button"
+              onClick={() => void loadNamespaces()}
+              disabled={namespacesLoading}
+              className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1 text-[11px] font-medium text-stone-600 hover:bg-stone-100 disabled:opacity-50">
+              {namespacesLoading ? '...' : 'Refresh'}
+            </button>
           </div>
-        </SectionCard>
-
-        <SectionCard
-          title="Clear Namespace"
-          priority="tools"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-              />
-            </svg>
-          }>
-          <div className="space-y-3">
-            <p className="text-xs text-stone-400">
-              Delete all documents within a namespace. This is a destructive operation and cannot be
-              undone.
-            </p>
-
-            <label className="block text-xs text-stone-300">
-              Namespace
-              {namespaces.length > 0 ? (
-                <select
-                  value={clearNamespaceInput}
-                  onChange={e => setClearNamespaceInput(e.target.value)}
-                  className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white">
-                  <option value="">-- select a namespace --</option>
-                  {namespaces.map(ns => (
-                    <option key={ns} value={ns}>
-                      {ns}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  value={clearNamespaceInput}
-                  onChange={e => setClearNamespaceInput(e.target.value)}
-                  className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
-                  placeholder="e.g. skill:gmail:user@example.com"
-                />
-              )}
-            </label>
-
-            <PrimaryButton
-              variant="outline"
-              onClick={() => void handleClearNamespace()}
-              loading={clearLoading}
-              disabled={!clearNamespaceInput.trim()}
-              className="border-coral-500/50 text-coral-300 hover:bg-coral-500/10">
-              Clear Namespace
-            </PrimaryButton>
-
-            {clearSuccess && (
-              <div className="text-xs text-sage-300 border border-sage-500/30 bg-sage-500/10 rounded p-2">
-                {clearSuccess}
-              </div>
-            )}
-            {clearError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
-                {clearError}
-              </div>
-            )}
-          </div>
-        </SectionCard>
-
-        <SectionCard
-          title="Query & Recall"
-          priority="tools"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8 10h.01M12 10h.01M16 10h.01M9 16h6M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-              />
-            </svg>
-          }>
-          <div className="space-y-3">
-            <label className="block text-xs text-stone-300">
-              Namespace
-              <input
-                value={namespaceInput}
-                onChange={e => setNamespaceInput(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
-                placeholder="e.g. conversations"
-              />
-            </label>
-
-            <label className="block text-xs text-stone-300">
-              Query
-              <textarea
-                value={queryInput}
-                onChange={e => setQueryInput(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
-                rows={3}
-                placeholder="What do I remember about..."
-              />
-            </label>
-
-            <label className="block text-xs text-stone-300">
-              Max Chunks
-              <input
-                value={maxChunksInput}
-                onChange={e => setMaxChunksInput(e.target.value)}
-                className="mt-1 w-full rounded border border-stone-600 bg-black/30 px-3 py-2 text-sm text-white"
-              />
-            </label>
-
-            <div className="flex flex-wrap gap-2">
-              <PrimaryButton
-                onClick={() => void handleQuery()}
-                loading={queryLoading}
-                disabled={!namespaceInput.trim() || !queryInput.trim()}>
-                Run Query
-              </PrimaryButton>
-              <PrimaryButton
-                variant="secondary"
-                onClick={() => void handleRecall()}
-                loading={recallLoading}
-                disabled={!namespaceInput.trim()}>
-                Run Recall
-              </PrimaryButton>
+          {namespacesError && (
+            <div className="rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
+              {namespacesError}
             </div>
+          )}
+          {namespaces.length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {namespaces.map(ns => (
+                <span key={ns} className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] text-stone-600">
+                  {ns}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-stone-400">No namespaces found.</p>
+          )}
+        </section>
 
-            {queryError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
-                Query error: {queryError}
-              </div>
-            )}
-            {recallError && (
-              <div className="text-xs text-coral-300 border border-coral-500/30 bg-coral-500/10 rounded p-2">
-                Recall error: {recallError}
-              </div>
-            )}
-
+        {/* Query & Recall */}
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-stone-900">Query & Recall</h3>
+          <input
+            value={namespaceInput}
+            onChange={e => setNamespaceInput(e.target.value)}
+            className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-700 placeholder:text-stone-400"
+            placeholder="Namespace"
+          />
+          <textarea
+            value={queryInput}
+            onChange={e => setQueryInput(e.target.value)}
+            className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-700 placeholder:text-stone-400"
+            rows={2}
+            placeholder="Query text..."
+          />
+          <div className="flex items-center gap-2">
+            <input
+              value={maxChunksInput}
+              onChange={e => setMaxChunksInput(e.target.value)}
+              className="w-16 rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs text-stone-700"
+              placeholder="10"
+            />
+            <span className="text-[11px] text-stone-400">max chunks</span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={() => void handleQuery()}
+              disabled={queryLoading || !namespaceInput.trim() || !queryInput.trim()}
+              className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50">
+              {queryLoading ? '...' : 'Query'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleRecall()}
+              disabled={recallLoading || !namespaceInput.trim()}
+              className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50">
+              {recallLoading ? '...' : 'Recall'}
+            </button>
+          </div>
+          {queryError && (
+            <div className="text-xs text-coral-600">Query: {queryError}</div>
+          )}
+          {recallError && (
+            <div className="text-xs text-coral-600">Recall: {recallError}</div>
+          )}
+          {(queryResult || recallResult) && (
             <div className="space-y-2">
-              <div className="text-xs text-stone-400">Query response</div>
-              <MemoryTextWithEntities
-                text={queryResult?.text ?? ''}
-                entities={queryResult?.entities}
-                className="rounded border border-stone-700 bg-black/20 p-2 overflow-auto text-[11px] leading-5 min-h-16 whitespace-pre-wrap"
-              />
-              <div className="text-xs text-stone-400">Recall response</div>
-              <MemoryTextWithEntities
-                text={recallResult?.text ?? ''}
-                entities={recallResult?.entities}
-                className="rounded border border-stone-700 bg-black/20 p-2 overflow-auto text-[11px] leading-5 min-h-16 whitespace-pre-wrap"
-              />
+              {queryResult && (
+                <div>
+                  <div className="text-[11px] font-medium text-stone-500 mb-1">Query result</div>
+                  <MemoryTextWithEntities
+                    text={queryResult.text ?? ''}
+                    entities={queryResult.entities}
+                    className="rounded-lg border border-stone-200 bg-stone-50 p-2 text-[11px] leading-5 min-h-12 whitespace-pre-wrap"
+                  />
+                </div>
+              )}
+              {recallResult && (
+                <div>
+                  <div className="text-[11px] font-medium text-stone-500 mb-1">Recall result</div>
+                  <MemoryTextWithEntities
+                    text={recallResult.text ?? ''}
+                    entities={recallResult.entities}
+                    className="rounded-lg border border-stone-200 bg-stone-50 p-2 text-[11px] leading-5 min-h-12 whitespace-pre-wrap"
+                  />
+                </div>
+              )}
             </div>
+          )}
+        </section>
+
+        {/* Clear Namespace */}
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-stone-900">Clear Namespace</h3>
+          <p className="text-xs text-stone-400">Permanently delete all documents within a namespace.</p>
+          <div className="flex gap-2">
+            {namespaces.length > 0 ? (
+              <select
+                value={clearNamespaceInput}
+                onChange={e => setClearNamespaceInput(e.target.value)}
+                className="flex-1 rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-700">
+                <option value="">Select namespace...</option>
+                {namespaces.map(ns => (
+                  <option key={ns} value={ns}>{ns}</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                value={clearNamespaceInput}
+                onChange={e => setClearNamespaceInput(e.target.value)}
+                className="flex-1 rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-700 placeholder:text-stone-400"
+                placeholder="e.g. skill:gmail:user@example.com"
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => void handleClearNamespace()}
+              disabled={clearLoading || !clearNamespaceInput.trim()}
+              className="rounded-lg border border-coral-200 bg-coral-50 px-3 py-1.5 text-xs font-medium text-coral-600 hover:bg-coral-100 disabled:opacity-50">
+              {clearLoading ? '...' : 'Clear'}
+            </button>
           </div>
-        </SectionCard>
+          {clearSuccess && <div className="text-xs text-sage-600">{clearSuccess}</div>}
+          {clearError && <div className="text-xs text-coral-600">{clearError}</div>}
+        </section>
       </div>
     </div>
   );

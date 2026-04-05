@@ -116,7 +116,7 @@ const AccessibilityPanel = () => {
       />
 
       <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Permissions</h3>
           <PermissionBadge
             label="Accessibility"
@@ -183,7 +183,7 @@ const AccessibilityPanel = () => {
           )}
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Features</h3>
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
@@ -229,7 +229,7 @@ const AccessibilityPanel = () => {
           </label>
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Session</h3>
           <div className="text-sm text-stone-700 space-y-1">
             <div>Status: {status?.session.active ? 'Active' : 'Stopped'}</div>
@@ -281,7 +281,7 @@ const AccessibilityPanel = () => {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-stone-900">Vision Summaries</h3>
             <button

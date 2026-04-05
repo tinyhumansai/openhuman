@@ -101,10 +101,10 @@ const TeamInvitesPanel = () => {
   };
 
   return (
-    <div className="overflow-hidden flex flex-col h-full">
+    <div>
       <SettingsHeader title="Invites" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         <div className="max-w-md mx-auto p-4 space-y-4">
           {error && (
             <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">

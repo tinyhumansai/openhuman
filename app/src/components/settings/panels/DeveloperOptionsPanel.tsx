@@ -36,22 +36,6 @@ const developerItems = [
     ),
   },
   {
-    id: 'tauri-commands',
-    title: 'Tauri Command Console',
-    description: 'Run OpenHuman Tauri commands for quick testing',
-    route: 'tauri-commands',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
-        />
-      </svg>
-    ),
-  },
-  {
     id: 'webhooks-debug',
     title: 'Webhooks',
     description: 'Inspect runtime webhook registrations and captured request logs',

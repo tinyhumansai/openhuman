@@ -17,7 +17,6 @@ import ProfilePanel from '../components/settings/panels/ProfilePanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SkillsPanel from '../components/settings/panels/SkillsPanel';
-import TauriCommandsPanel from '../components/settings/panels/TauriCommandsPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -285,7 +284,6 @@ const Settings = () => {
           <Route path="team/members" element={<TeamMembersPanel />} />
           <Route path="team/invites" element={<TeamInvitesPanel />} />
           <Route path="developer-options" element={<DeveloperOptionsPanel />} />
-          <Route path="tauri-commands" element={<TauriCommandsPanel />} />
           <Route path="webhooks-debug" element={<WebhooksDebugPanel />} />
           <Route path="memory-debug" element={<MemoryDebugPanel />} />
           <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />
