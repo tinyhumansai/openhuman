@@ -15,7 +15,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSkillSnapshot } from "../../lib/skills/hooks.ts";
 import { skillManager } from "../../lib/skills/manager.ts";
-import { getSkillSnapshot, listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
+import { getSkillSnapshot, installSkill, listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
 import { callCoreRpc } from "../../services/coreRpcClient.ts";
 import { apiClient } from "../../services/apiClient.ts";
 import { openUrl } from "../../utils/openUrl.ts";
@@ -683,7 +683,12 @@ function OAuthLoginView({
       // 1. Use the manually-provided client-side encryption key
       const clientKeyShare: string | undefined = encKey || undefined;
 
-      // 2. Start skill runtime
+      // 2. Ensure skill is installed, then start the runtime
+      try {
+        await installSkill(skillId);
+      } catch {
+        // May already be installed
+      }
       try {
         await startSkill(skillId);
       } catch (startErr) {
