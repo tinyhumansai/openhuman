@@ -30,13 +30,13 @@ export default function MeshGradient() {
       ref={canvasRef}
       id="mesh-gradient"
       data-transition-in
-      className="absolute inset-0 w-full h-full opacity-20"
+      className="absolute inset-0 w-full h-full opacity-10"
       style={
         {
-          '--gradient-color-1': '#ffffff',
-          '--gradient-color-2': '#EFF6FF', // primary-50
-          '--gradient-color-3': '#cccccc', // primary-100
-          '--gradient-color-4': '#BFDBFE', // primary-200
+          '--gradient-color-1': '#0019d9',
+          '--gradient-color-2': '#b5d5ff', // primary-50
+          '--gradient-color-3': '#ffffff', // primary-100
+          '--gradient-color-4': '#4fa4ff', // primary-200
         } as React.CSSProperties
       }
     />
