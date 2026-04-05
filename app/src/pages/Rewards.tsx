@@ -22,7 +22,10 @@ const Rewards = () => {
   const channelConnections = useAppSelector(state => state.channelConnections.connections);
 
   const totalMessages = useAppSelector(state =>
-    Object.values(state.thread.messagesByThreadId).reduce((sum, messages) => sum + messages.length, 0)
+    Object.values(state.thread.messagesByThreadId).reduce(
+      (sum, messages) => sum + messages.length,
+      0
+    )
   );
 
   const hasDiscordConnection = useMemo(
@@ -125,7 +128,9 @@ const Rewards = () => {
             <div className="mt-3 text-3xl font-semibold text-stone-900">
               {unlockedCount}/{rewardRoles.length}
             </div>
-            <p className="mt-2 text-sm text-stone-600">Roles unlocked from your current app activity.</p>
+            <p className="mt-2 text-sm text-stone-600">
+              Roles unlocked from your current app activity.
+            </p>
 
             <div className="mt-5 h-2 overflow-hidden rounded-full bg-stone-100">
               <div
@@ -157,9 +162,7 @@ const Rewards = () => {
               <div
                 key={role.id}
                 className={`rounded-2xl border p-5 shadow-soft ${
-                  role.unlocked
-                    ? 'border-sage-200 bg-white'
-                    : 'border-stone-200 bg-white/90'
+                  role.unlocked ? 'border-sage-200 bg-white' : 'border-stone-200 bg-white/90'
                 }`}>
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
@@ -182,7 +185,11 @@ const Rewards = () => {
                       role.unlocked ? 'bg-sage-100 text-sage-700' : 'bg-stone-100 text-stone-500'
                     }`}>
                     {role.unlocked ? (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24">
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"
@@ -191,7 +198,11 @@ const Rewards = () => {
                         />
                       </svg>
                     ) : (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24">
                         <path
                           strokeLinecap="round"
                           strokeLinejoin="round"

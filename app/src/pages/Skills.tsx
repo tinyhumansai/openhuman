@@ -328,7 +328,8 @@ export default function Skills() {
     {
       id: 'screen-intelligence',
       title: 'Screen Intelligence',
-      description: 'Capture windows, summarize what is on screen, and feed useful context into memory.',
+      description:
+        'Capture windows, summarize what is on screen, and feed useful context into memory.',
       route: '/settings/screen-intelligence',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -344,7 +345,8 @@ export default function Skills() {
     {
       id: 'text-autocomplete',
       title: 'Text Auto-Complete',
-      description: 'Suggest inline completions while you type and control where autocomplete is active.',
+      description:
+        'Suggest inline completions while you type and control where autocomplete is active.',
       route: '/settings/autocomplete',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -360,7 +362,8 @@ export default function Skills() {
     {
       id: 'voice-stt',
       title: 'Voice Speech To Text',
-      description: 'Use the microphone for dictation and voice-driven chat with local speech recognition.',
+      description:
+        'Use the microphone for dictation and voice-driven chat with local speech recognition.',
       route: '/settings/local-model',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
