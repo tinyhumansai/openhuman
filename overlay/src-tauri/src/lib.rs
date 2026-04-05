@@ -47,6 +47,16 @@ async fn core_rpc(method: String, params: serde_json::Value) -> Result<serde_jso
     openhuman_core::core::jsonrpc::invoke_method(state, &method, params).await
 }
 
+/// Insert text into the currently focused field in the previously active app.
+#[tauri::command]
+fn insert_text_into_focused_field(text: String) -> Result<(), String> {
+    log::debug!(
+        "[overlay] insert_text_into_focused_field len={}",
+        text.chars().count()
+    );
+    openhuman_core::openhuman::accessibility::apply_text_to_focused_field(&text)
+}
+
 // ── App entry ───────────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -65,6 +75,7 @@ pub fn run() {
             get_log_history,
             set_click_through,
             core_rpc,
+            insert_text_into_focused_field,
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();

@@ -12,6 +12,14 @@ interface TranscribeResult {
   model_id: string;
 }
 
+function logOverlay(message: string, details?: Record<string, unknown>) {
+  if (details) {
+    console.debug(`[overlay] ${message}`, details);
+    return;
+  }
+  console.debug(`[overlay] ${message}`);
+}
+
 function floatTo16BitPCM(output: DataView, offset: number, input: Float32Array) {
   for (let i = 0; i < input.length; i += 1, offset += 2) {
     const sample = Math.max(-1, Math.min(1, input[i]));
@@ -125,6 +133,23 @@ export function App() {
   const [message, setMessage] = useState("Click to start listening");
   const [transcript, setTranscript] = useState("");
 
+  const insertTranscriptIntoFocusedField = useCallback(
+    async (text: string) => {
+      logOverlay("inserting transcript into focused field", { length: text.length });
+      await appWindow.hide();
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+
+      try {
+        await invoke("insert_text_into_focused_field", { text });
+        logOverlay("transcript inserted via accessibility helper");
+      } catch (error) {
+        console.warn("[overlay] accessibility insert failed, falling back to clipboard", error);
+        await navigator.clipboard.writeText(text);
+      }
+    },
+    [appWindow],
+  );
+
   const resetForNextCapture = useCallback(() => {
     setTranscript("");
     setMessage("Click to start listening");
@@ -163,7 +188,12 @@ export function App() {
 
         setTranscript(nextTranscript);
         setStatus("ready");
-        setMessage("Ready to listen again");
+        setMessage("Inserting text...");
+        await insertTranscriptIntoFocusedField(nextTranscript);
+        if (sessionIdRef.current !== sessionId) {
+          return;
+        }
+        setMessage("Inserted into active field");
       } catch (error) {
         if (sessionIdRef.current !== sessionId) {
           return;
@@ -175,7 +205,7 @@ export function App() {
         setMessage(error instanceof Error ? error.message : "Transcription failed");
       }
     },
-    [],
+    [insertTranscriptIntoFocusedField],
   );
 
   const stopRecording = useCallback(() => {
@@ -234,9 +264,14 @@ export function App() {
           return;
         }
 
+        logOverlay("recording stopped, starting transcription", {
+          blobSize: blob.size,
+          mimeType,
+        });
         void transcribeBlob(blob, nextSessionId);
       };
 
+      logOverlay("recording started", { mimeType });
       recorder.start(100);
     } catch (error) {
       console.error("[overlay] getUserMedia failed", error);
@@ -248,10 +283,12 @@ export function App() {
 
   const handleMainButton = useCallback(() => {
     if (status === "listening") {
+      logOverlay("main button toggled to stop listening");
       stopRecording();
       return;
     }
 
+    logOverlay("main button toggled to start listening", { priorStatus: status });
     void startRecording();
   }, [startRecording, status, stopRecording]);
 
