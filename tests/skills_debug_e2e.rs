@@ -3,9 +3,9 @@
 //! Exercises the full skill lifecycle through the RuntimeEngine:
 //!   discover → start → list tools → call tool → setup flow → tick/sync → stop
 //!
-//! By default uses the bundled `example-skill` from the openhuman-skills repo.
+//! By default uses a preferred skill from the checked-out openhuman-skills repo.
 //! Override with env vars:
-//!   SKILL_DEBUG_ID        — skill ID to test (default: "example-skill")
+//!   SKILL_DEBUG_ID        — skill ID to test
 //!   SKILL_DEBUG_DIR       — path to skills directory containing skill folders
 //!   SKILL_DEBUG_TOOL      — specific tool name to call (default: first tool found)
 //!   SKILL_DEBUG_TOOL_ARGS — JSON args for the tool call (default: "{}")
@@ -35,6 +35,46 @@ fn is_verbose() -> bool {
     std::env::var("SKILL_DEBUG_VERBOSE")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false)
+}
+
+fn manifests_in_dir(skills_dir: &Path) -> Vec<String> {
+    let mut ids = Vec::new();
+    let Ok(entries) = std::fs::read_dir(skills_dir) else {
+        return ids;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || !path.join("manifest.json").exists() {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            ids.push(name.to_string());
+        }
+    }
+
+    ids.sort();
+    ids
+}
+
+fn select_skill_id(skills_dir: &Path, env_key: &str, preferred: &[&str]) -> String {
+    if let Ok(skill_id) = std::env::var(env_key) {
+        if !skill_id.trim().is_empty() {
+            return skill_id;
+        }
+    }
+
+    let available = manifests_in_dir(skills_dir);
+    for candidate in preferred {
+        if available.iter().any(|id| id == candidate) {
+            return (*candidate).to_string();
+        }
+    }
+
+    available
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "example-skill".to_string())
 }
 
 fn banner(label: &str) {
@@ -104,7 +144,7 @@ fn try_find_skills_dir() -> Option<PathBuf> {
     if let Some(parent) = cwd.parent() {
         for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
             let candidate = entry.path().join("skills/skills");
-            if candidate.exists() && candidate.join("example-skill/manifest.json").exists() {
+            if candidate.exists() && candidate.read_dir().is_ok() {
                 return Some(candidate.canonicalize().unwrap());
             }
         }
@@ -155,8 +195,8 @@ async fn skill_full_lifecycle() {
         .is_test(true)
         .try_init();
 
-    let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
     let skills_dir = require_skills_dir!();
+    let skill_id = select_skill_id(&skills_dir, "SKILL_DEBUG_ID", &["server-ping", "gmail", "notion"]);
     let tmp = tempdir().expect("tempdir");
     let data_dir = tmp.path().join("skills_data");
     std::fs::create_dir_all(&data_dir).expect("create data_dir");
@@ -570,8 +610,8 @@ async fn skill_rapid_start_stop() {
         .is_test(true)
         .try_init();
 
-    let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
     let skills_dir = require_skills_dir!();
+    let skill_id = select_skill_id(&skills_dir, "SKILL_DEBUG_ID", &["server-ping", "gmail", "notion"]);
     let tmp = tempdir().expect("tempdir");
     let data_dir = tmp.path().join("skills_data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -611,8 +651,8 @@ async fn skill_disconnect_flow() {
         .is_test(true)
         .try_init();
 
-    let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
     let skills_dir = require_skills_dir!();
+    let skill_id = select_skill_id(&skills_dir, "SKILL_DEBUG_ID", &["gmail", "notion"]);
     let tmp = tempdir().expect("tempdir");
     let data_dir = tmp.path().join("skills_data");
     std::fs::create_dir_all(&data_dir).unwrap();
