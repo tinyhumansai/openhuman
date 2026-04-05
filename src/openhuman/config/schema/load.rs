@@ -682,6 +682,15 @@ impl Config {
             }
         }
 
+        if let Ok(flag) = std::env::var("OPENHUMAN_OVERLAY_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.overlay_enabled = true,
+                "0" | "false" | "no" | "off" => self.overlay_enabled = false,
+                _ => {}
+            }
+        }
+
         if self.proxy.enabled && self.proxy.scope == ProxyScope::Environment {
             self.proxy.apply_to_process_env();
         }

@@ -8,6 +8,7 @@ mod autocomplete;
 mod autonomy;
 mod channels;
 mod defaults;
+pub(crate) use defaults::default_true;
 mod hardware;
 mod heartbeat_cron;
 mod identity_cost;
