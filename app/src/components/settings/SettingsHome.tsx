@@ -239,9 +239,8 @@ const SettingsHome = () => {
 
             <div className="mb-6">
               <p className="text-stone-700 text-sm leading-relaxed">
-                This will sign you out and permanently delete local app data including: • App
-                settings and conversations • Email data from Gmail • Chat history from Telegram •
-                Cached files from Notion • All other skills data
+                This will sign you out and permanently delete local app data including: App settings
+                and conversations, All other skills data, Workspace data, and all other local data.
                 <br />
                 <br />
                 This action cannot be undone and may take a few moments to complete.
