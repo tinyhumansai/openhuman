@@ -188,6 +188,7 @@ impl BackendOAuthClient {
         bearer_jwt: &str,
         skill_id: Option<&str>,
         response_type: Option<&str>,
+        encryption_mode: Option<&str>,
     ) -> Result<ConnectResponse> {
         let p = provider.trim().trim_matches('/');
         anyhow::ensure!(!p.is_empty(), "provider is required");
@@ -200,6 +201,9 @@ impl BackendOAuthClient {
         }
         if let Some(r) = response_type.filter(|r| !r.is_empty()) {
             url.query_pairs_mut().append_pair("responseType", r);
+        }
+        if let Some(e) = encryption_mode.filter(|e| !e.is_empty()) {
+            url.query_pairs_mut().append_pair("encryptionMode", e);
         }
 
         let resp = self
@@ -435,6 +439,53 @@ impl BackendOAuthClient {
         }
         let plaintext = decrypt_handoff_blob(&env.data.encrypted, encryption_key.trim())?;
         serde_json::from_str(&plaintext).context("parse decrypted token JSON")
+    }
+
+    /// `POST /auth/integrations/:id/client-key` — one-time handoff of client key share (deleted from Redis after retrieval).
+    pub async fn fetch_client_key(
+        &self,
+        integration_id: &str,
+        bearer_jwt: &str,
+    ) -> Result<String> {
+        let id = integration_id.trim();
+        anyhow::ensure!(
+            !id.is_empty() && id.len() == 24,
+            "integrationId must be a 24-char hex id"
+        );
+        let url = self
+            .base
+            .join(&format!("auth/integrations/{id}/client-key"))
+            .context("build client-key URL")?;
+        let resp = self
+            .client
+            .post(url)
+            .header(AUTHORIZATION, bearer_authorization_value(bearer_jwt))
+            .send()
+            .await
+            .context("fetch client key")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            anyhow::bail!("fetch client key failed ({status}): {text}");
+        }
+        let v: Value = serde_json::from_str(&text)
+            .with_context(|| format!("parse client-key JSON: {text}"))?;
+        let obj = v.as_object().context("expected JSON object")?;
+        let success = obj.get("success").and_then(|s| s.as_bool()).unwrap_or(false);
+        if !success {
+            let msg = obj
+                .get("error")
+                .and_then(|e| e.as_str())
+                .unwrap_or("client key retrieval unsuccessful");
+            anyhow::bail!("fetch client key failed: {msg}");
+        }
+        let client_key = obj
+            .get("data")
+            .and_then(|d| d.get("clientKey"))
+            .and_then(|k| k.as_str())
+            .context("missing data.clientKey in response")?;
+        Ok(client_key.to_string())
     }
 
     /// `DELETE /auth/integrations/:id`

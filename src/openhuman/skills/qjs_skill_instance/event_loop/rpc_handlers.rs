@@ -24,6 +24,23 @@ pub(crate) async fn handle_oauth_complete(
     data_dir: &std::path::Path,
 ) -> Result<serde_json::Value, String> {
     let cred_json = serde_json::to_string(&params).unwrap_or_else(|_| "null".to_string());
+
+    // Extract client key share if present (from encrypted OAuth flow)
+    let client_key = params
+        .get("clientKeyShare")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Inject client key into JS runtime if provided
+    let client_key_js = if !client_key.is_empty() {
+        format!(
+            r#"globalThis.__oauthClientKey = "{key}";"#,
+            key = client_key
+        )
+    } else {
+        String::new()
+    };
+
     let code = format!(
         r#"(function() {{
             if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{
@@ -32,8 +49,10 @@ pub(crate) async fn handle_oauth_complete(
             if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
                 globalThis.state.set('__oauth_credential', {cred});
             }}
+            {client_key_js}
         }})()"#,
-        cred = cred_json
+        cred = cred_json,
+        client_key_js = client_key_js,
     );
     ctx.with(|js_ctx| {
         let _ = js_ctx.eval::<rquickjs::Value, _>(code.as_bytes());
@@ -53,6 +72,25 @@ pub(crate) async fn handle_oauth_complete(
             cred_path.display()
         );
     }
+
+    // Persist client key share to disk if provided
+    if !client_key.is_empty() {
+        let key_path = data_dir.join("client_key.json");
+        let key_json = serde_json::json!({ "clientKey": client_key }).to_string();
+        if let Err(e) = std::fs::write(&key_path, &key_json) {
+            log::error!(
+                "[skill:{}] Failed to persist client key share: {e}",
+                skill_id
+            );
+        } else {
+            log::info!(
+                "[skill:{}] Client key share persisted to {}",
+                skill_id,
+                key_path.display()
+            );
+        }
+    }
+
     let params_str = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
     handle_js_call(rt, ctx, "onOAuthComplete", &params_str).await
 }
@@ -73,6 +111,7 @@ pub(crate) async fn handle_oauth_revoked(
         if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {
             globalThis.state.set('__oauth_credential', '');
         }
+        globalThis.__oauthClientKey = null;
     })()"#;
     ctx.with(|js_ctx| {
         let _ = js_ctx.eval::<rquickjs::Value, _>(clear_code.as_bytes());
@@ -81,8 +120,10 @@ pub(crate) async fn handle_oauth_revoked(
 
     let cred_path = data_dir.join("oauth_credential.json");
     let _ = std::fs::remove_file(&cred_path);
+    let key_path = data_dir.join("client_key.json");
+    let _ = std::fs::remove_file(&key_path);
     log::info!(
-        "[skill:{}] OAuth credential cleared from store and disk",
+        "[skill:{}] OAuth credential and client key cleared from store and disk",
         skill_id
     );
 
@@ -277,6 +318,7 @@ pub(crate) async fn handle_auth_revoked(
             if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {{
                 globalThis.state.set('__auth_credential', '');
             }}
+            globalThis.__oauthClientKey = null;
             {managed_clear}
         }})()"#,
         managed_clear = managed_clear
@@ -289,12 +331,14 @@ pub(crate) async fn handle_auth_revoked(
     // Remove persisted credential files
     let cred_path = data_dir.join("auth_credential.json");
     let _ = std::fs::remove_file(&cred_path);
+    let key_path = data_dir.join("client_key.json");
+    let _ = std::fs::remove_file(&key_path);
     if is_managed {
         let oauth_path = data_dir.join("oauth_credential.json");
         let _ = std::fs::remove_file(&oauth_path);
     }
     log::info!(
-        "[skill:{}] Auth credential cleared from store and disk",
+        "[skill:{}] Auth credential and client key cleared from store and disk",
         skill_id
     );
 

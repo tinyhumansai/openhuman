@@ -6,7 +6,7 @@ use crate::openhuman::webhooks::WebhookResponseData;
 
 use crate::openhuman::skills::qjs_skill_instance::js_handlers::handle_js_call;
 use crate::openhuman::skills::qjs_skill_instance::js_helpers::{
-    restore_auth_credential, restore_oauth_credential,
+    restore_auth_credential, restore_client_key, restore_oauth_credential,
 };
 
 /// Handle an incoming webhook request: restore credentials, call onWebhookRequest,
@@ -36,6 +36,7 @@ pub(crate) async fn handle_webhook_request(
     // Restore credentials in case the handler needs authenticated API calls
     restore_oauth_credential(ctx, skill_id, data_dir).await;
     restore_auth_credential(ctx, skill_id, data_dir).await;
+    restore_client_key(ctx, skill_id, data_dir).await;
 
     let args = serde_json::json!({
         "correlationId": correlation_id,

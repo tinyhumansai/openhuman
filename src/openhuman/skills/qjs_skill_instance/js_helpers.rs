@@ -121,6 +121,57 @@ pub(crate) async fn restore_oauth_credential(
     }
 }
 
+/// Load a persisted client key share from the skill's data directory and inject
+/// it into the JS context so `oauth.fetch()` can include it in encrypted proxy
+/// requests via the `X-Encryption-Key` header.
+///
+/// Reads `{data_dir}/client_key.json` which is written by the
+/// `oauth/complete` handler and deleted by `oauth/revoked`.
+pub(crate) async fn restore_client_key(
+    ctx: &rquickjs::AsyncContext,
+    skill_id: &str,
+    data_dir: &std::path::Path,
+) {
+    let key_path = data_dir.join("client_key.json");
+    let key_json = match std::fs::read_to_string(&key_path) {
+        Ok(s) if !s.is_empty() => s,
+        _ => return,
+    };
+
+    // Parse the stored JSON to extract the base64 key string
+    let key_str = match serde_json::from_str::<serde_json::Value>(&key_json) {
+        Ok(v) => v
+            .get("clientKey")
+            .and_then(|k| k.as_str())
+            .unwrap_or("")
+            .to_string(),
+        Err(_) => return,
+    };
+    if key_str.is_empty() {
+        return;
+    }
+
+    let code = format!(
+        r#"(function() {{
+            globalThis.__oauthClientKey = "{key}";
+            return true;
+        }})()"#,
+        key = key_str
+    );
+
+    let restored = ctx
+        .with(|js_ctx| js_ctx.eval::<bool, _>(code.as_bytes()).unwrap_or(false))
+        .await;
+
+    if restored {
+        log::info!(
+            "[skill:{}] Restored client key share from {}",
+            skill_id,
+            key_path.display()
+        );
+    }
+}
+
 /// Load a persisted auth credential from the skill's data directory and inject
 /// it into the JS context so tools have access to the credential.
 ///

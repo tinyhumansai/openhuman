@@ -26,7 +26,9 @@ use super::js_handlers::{
     call_lifecycle, handle_cron_trigger, handle_js_call, handle_js_void_call,
     read_pending_tool_result, start_async_tool_call,
 };
-use super::js_helpers::{drive_jobs, restore_auth_credential, restore_oauth_credential};
+use super::js_helpers::{
+    drive_jobs, restore_auth_credential, restore_client_key, restore_oauth_credential,
+};
 use super::types::SkillState;
 
 /// Payload queued for the background memory-write worker.
@@ -498,6 +500,7 @@ async fn handle_message(
 
             restore_oauth_credential(ctx, skill_id, data_dir).await;
             restore_auth_credential(ctx, skill_id, data_dir).await;
+            restore_client_key(ctx, skill_id, data_dir).await;
             log::debug!(
                 "[skill:{}] event_loop: credentials restored for tool '{}'",
                 skill_id,

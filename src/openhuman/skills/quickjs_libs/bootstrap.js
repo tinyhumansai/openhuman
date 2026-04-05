@@ -833,6 +833,11 @@ globalThis.data = {
     /**
      * Make an authenticated API request proxied through the backend.
      * Path is relative to manifest's apiBaseUrl.
+     *
+     * When a client key share is available (`__oauthClientKey`), uses the
+     * encrypted proxy endpoint (`/proxy/encrypted/:id/`) with the
+     * `X-Encryption-Key` header so the backend can reconstruct the full
+     * encryption key and decrypt OAuth tokens server-side.
      */
     fetch: async function (path, options) {
       if (!globalThis.__oauthCredential) {
@@ -845,12 +850,24 @@ globalThis.data = {
       var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
       var jwtToken = __ops.get_session_token() || '';
       var cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
-      var proxyUrl =
-        backendUrl + '/proxy/by-id/' + globalThis.__oauthCredential.credentialId + '/' + cleanPath;
+      var credentialId = globalThis.__oauthCredential.credentialId;
+      var clientKey = globalThis.__oauthClientKey || null;
+
+      // Use encrypted proxy when client key share is available
+      var proxyUrl;
+      if (clientKey) {
+        proxyUrl = backendUrl + '/proxy/encrypted/' + credentialId + '/' + cleanPath;
+      } else {
+        proxyUrl = backendUrl + '/proxy/by-id/' + credentialId + '/' + cleanPath;
+      }
+
       var method = (options && options.method) || 'GET';
       var headers = { 'Content-Type': 'application/json' };
       if (jwtToken) {
         headers['Authorization'] = 'Bearer ' + jwtToken;
+      }
+      if (clientKey) {
+        headers['X-Encryption-Key'] = clientKey;
       }
       if (options && options.headers) {
         for (var k in options.headers) {
@@ -864,7 +881,7 @@ globalThis.data = {
         timeout: options ? options.timeout : undefined,
       };
 
-      console.log('[oauth.fetch] ' + method + ' ' + proxyUrl + ' (credentialId=' + globalThis.__oauthCredential.credentialId + ')');
+      console.log('[oauth.fetch] ' + method + ' ' + proxyUrl + ' (credentialId=' + credentialId + ', encrypted=' + !!clientKey + ')');
       var result = await net.fetch(proxyUrl, fetchOpts);
       console.log('[oauth.fetch] response status=' + result.status + ' body_len=' + (result.body ? result.body.length : 0));
 

@@ -98,7 +98,7 @@ export default function SkillSetupWizard({
       try {
         const shouldShowJson = IS_DEV ? 'responseType=json&' : '';
         const data = await apiClient.get<{ oauthUrl?: string }>(
-          `/auth/${mode.provider}/connect?${shouldShowJson}skillId=${skillId}`,
+          `/auth/${mode.provider}/connect?${shouldShowJson}skillId=${skillId}&encryptionMode=encrypted`,
         );
         if (!data.oauthUrl) {
           setState({ phase: "error", message: "Failed to get OAuth URL from backend." });

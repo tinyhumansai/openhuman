@@ -291,12 +291,14 @@ class SkillManager {
    * Notify a skill that OAuth completed successfully.
    * Called by the deep link handler after backend OAuth callback.
    * For Gmail, pass extraCredential.accessToken so the skill uses the token directly.
+   * When the encrypted OAuth flow is used, pass extraCredential.clientKeyShare
+   * so the skill runtime can persist and use it for encrypted proxy requests.
    */
   async notifyOAuthComplete(
     skillId: string,
     integrationId: string,
     provider?: string,
-    extraCredential?: { accessToken?: string },
+    extraCredential?: { accessToken?: string; clientKeyShare?: string },
   ): Promise<void> {
     // Persist setup completion via RPC (always, regardless of runtime)
     await rpcSetSetupComplete(skillId, true).catch(() => {});

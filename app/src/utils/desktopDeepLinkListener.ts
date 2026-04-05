@@ -7,6 +7,7 @@ import { skillManager } from '../lib/skills/manager';
 import { emitSkillStateChange } from '../lib/skills/skillEvents';
 import { startSkill } from '../lib/skills/skillsApi';
 import { consumeLoginToken } from '../services/api/authApi';
+import { callCoreRpc } from '../services/coreRpcClient';
 import { storeSession } from './tauriCommands';
 
 const focusMainWindow = async () => {
@@ -122,7 +123,22 @@ const handleOAuthDeepLink = async (parsed: URL) => {
 
     console.log(`[DeepLink] OAuth success for skill=${skillId} integration=${integrationId}`);
 
-    // 1. Start the skill in the core QuickJS runtime (if not already running).
+    // 1. Fetch the client key share for encrypted OAuth (one-time handoff, 5-min TTL).
+    let clientKeyShare: string | undefined;
+    try {
+      const result = await callCoreRpc<{ result: { clientKey: string } }>({
+        method: 'openhuman.auth.oauth_fetch_client_key',
+        params: { integrationId },
+      });
+      clientKeyShare = result?.result?.clientKey;
+      if (clientKeyShare) {
+        console.log(`[DeepLink] Client key share retrieved for integration=${integrationId}`);
+      }
+    } catch (keyErr) {
+      console.warn('[DeepLink] Could not fetch client key share (may be plaintext OAuth):', keyErr);
+    }
+
+    // 2. Start the skill in the core QuickJS runtime (if not already running).
     //    This also sets enabled=true via the preferences store.
     try {
       await startSkill(skillId);
@@ -131,10 +147,12 @@ const handleOAuthDeepLink = async (parsed: URL) => {
       console.warn(`[DeepLink] Could not start skill '${skillId}' in runtime:`, startErr);
     }
 
-    // 2. Notify the running skill of the OAuth credential, mark setup_complete,
+    // 3. Notify the running skill of the OAuth credential, mark setup_complete,
     //    and activate (list tools, sync to backend).
     try {
-      await skillManager.notifyOAuthComplete(skillId, integrationId);
+      await skillManager.notifyOAuthComplete(skillId, integrationId, undefined, {
+        clientKeyShare,
+      });
       console.log(`[DeepLink] OAuth complete sent to skill '${skillId}'`);
     } catch (runtimeErr) {
       console.warn('[DeepLink] Runtime notify failed:', runtimeErr);
