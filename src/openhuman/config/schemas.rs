@@ -91,6 +91,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("update_analytics_settings"),
         schemas("get_analytics_settings"),
         schemas("agent_server_status"),
+        schemas("reset_local_data"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
     ]
@@ -153,6 +154,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("agent_server_status"),
             handler: handle_agent_server_status,
+        },
+        RegisteredController {
+            schema: schemas("reset_local_data"),
+            handler: handle_reset_local_data,
         },
         RegisteredController {
             schema: schemas("get_onboarding_completed"),
@@ -383,6 +388,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![],
             outputs: vec![json_output("status", "Agent server status payload.")],
         },
+        "reset_local_data" => ControllerSchema {
+            namespace: "config",
+            function: "reset_local_data",
+            description:
+                "Delete local OpenHuman data for the active config/workspace so the next restart boots clean.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "Reset result with removed paths.")],
+        },
         "get_onboarding_completed" => ControllerSchema {
             namespace: "config",
             function: "get_onboarding_completed",
@@ -563,6 +576,10 @@ fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFutur
 
 fn handle_agent_server_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::agent_server_status()) })
+}
+
+fn handle_reset_local_data(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::reset_local_data().await?) })
 }
 
 fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {

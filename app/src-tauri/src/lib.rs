@@ -143,10 +143,7 @@ async fn restart_core_process(
 /// Register (or re-register) the global dictation toggle hotkey.
 /// Emits `dictation://toggle` to all webviews when the shortcut is pressed.
 #[tauri::command]
-async fn register_dictation_hotkey(
-    app: AppHandle,
-    shortcut: String,
-) -> Result<(), String> {
+async fn register_dictation_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
     log::info!("[dictation] register_dictation_hotkey: shortcut={shortcut}");
 
     let old_shortcuts = {
@@ -189,7 +186,9 @@ async fn register_dictation_hotkey(
                     );
                 }
             }
-            return Err(format!("Failed to unregister previous shortcut '{old}': {e}"));
+            return Err(format!(
+                "Failed to unregister previous shortcut '{old}': {e}"
+            ));
         }
         unregistered_old.push(old.clone());
     }

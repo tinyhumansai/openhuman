@@ -200,6 +200,18 @@ export async function restartCoreProcess(): Promise<void> {
   console.debug('[core] restartCoreProcess: done');
 }
 
+export async function resetOpenHumanDataAndRestartCore(): Promise<void> {
+  if (!isTauri()) {
+    console.debug('[core] resetOpenHumanDataAndRestartCore: skipped — not running in Tauri');
+    return;
+  }
+  console.debug('[core] resetOpenHumanDataAndRestartCore: invoking openhuman.config_reset_local_data');
+  await callCoreRpc({ method: 'openhuman.config_reset_local_data' });
+  console.debug('[core] resetOpenHumanDataAndRestartCore: local data reset complete, restarting core');
+  await restartCoreProcess();
+  console.debug('[core] resetOpenHumanDataAndRestartCore: done');
+}
+
 // --- Memory Commands ---
 
 /**

@@ -1,6 +1,6 @@
 //! JSON-RPC / CLI controller surface for persisted config and runtime flags.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::json;
@@ -37,6 +37,86 @@ fn fallback_workspace_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".openhuman")
         .join("workspace")
+}
+
+fn default_openhuman_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openhuman")
+}
+
+fn active_workspace_marker_path(default_openhuman_dir: &Path) -> PathBuf {
+    default_openhuman_dir.join("active_workspace.toml")
+}
+
+fn config_openhuman_dir(config: &Config) -> PathBuf {
+    config
+        .config_path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
+}
+
+async fn reset_local_data_for_paths(
+    current_openhuman_dir: &Path,
+    default_openhuman_dir: &Path,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let active_workspace_marker = active_workspace_marker_path(default_openhuman_dir);
+    tracing::debug!(
+        current_dir = %current_openhuman_dir.display(),
+        default_dir = %default_openhuman_dir.display(),
+        marker = %active_workspace_marker.display(),
+        "[config] reset_local_data: starting"
+    );
+
+    let mut removed_paths = Vec::new();
+
+    if active_workspace_marker.exists() {
+        tokio::fs::remove_file(&active_workspace_marker)
+            .await
+            .map_err(|e| format!("Failed to remove active workspace marker: {e}"))?;
+        tracing::debug!(
+            marker = %active_workspace_marker.display(),
+            "[config] reset_local_data: removed active workspace marker"
+        );
+        removed_paths.push(active_workspace_marker.display().to_string());
+    }
+
+    for target_dir in [current_openhuman_dir, default_openhuman_dir] {
+        if !target_dir.exists() {
+            tracing::debug!(
+                dir = %target_dir.display(),
+                "[config] reset_local_data: directory already absent"
+            );
+            continue;
+        }
+
+        tokio::fs::remove_dir_all(target_dir)
+            .await
+            .map_err(|e| format!("Failed to remove {}: {e}", target_dir.display()))?;
+        tracing::debug!(
+            dir = %target_dir.display(),
+            "[config] reset_local_data: removed directory"
+        );
+        removed_paths.push(target_dir.display().to_string());
+    }
+
+    Ok(RpcOutcome::new(
+        json!({
+            "removed_paths": removed_paths,
+            "current_openhuman_dir": current_openhuman_dir.display().to_string(),
+            "default_openhuman_dir": default_openhuman_dir.display().to_string(),
+        }),
+        vec![
+            format!(
+                "reset local data for active config dir {}",
+                current_openhuman_dir.display()
+            ),
+            format!(
+                "removed default data dir {} if present",
+                default_openhuman_dir.display()
+            ),
+        ],
+    ))
 }
 
 pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
@@ -458,4 +538,47 @@ pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
         "url": core_rpc_url_from_env(),
     });
     RpcOutcome::single_log(payload, "agent server status checked")
+}
+
+pub async fn reset_local_data() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let current_openhuman_dir = config_openhuman_dir(&config);
+    let default_openhuman_dir = default_openhuman_dir();
+    reset_local_data_for_paths(&current_openhuman_dir, &default_openhuman_dir).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn reset_local_data_removes_current_dir_default_dir_and_marker() {
+        let temp = tempdir().unwrap();
+        let default_openhuman_dir = temp.path().join("default-openhuman");
+        let current_openhuman_dir = temp.path().join("custom-openhuman");
+        let marker = active_workspace_marker_path(&default_openhuman_dir);
+
+        tokio::fs::create_dir_all(default_openhuman_dir.join("workspace"))
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(current_openhuman_dir.join("workspace"))
+            .await
+            .unwrap();
+        tokio::fs::write(&marker, "config_dir = '/tmp/custom-openhuman'\n")
+            .await
+            .unwrap();
+
+        let outcome = reset_local_data_for_paths(&current_openhuman_dir, &default_openhuman_dir)
+            .await
+            .unwrap();
+
+        assert!(!current_openhuman_dir.exists());
+        assert!(!default_openhuman_dir.exists());
+        assert!(outcome
+            .data
+            .get("removed_paths")
+            .and_then(|value| value.as_array())
+            .is_some_and(|paths| !paths.is_empty()));
+    }
 }

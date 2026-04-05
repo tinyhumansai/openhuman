@@ -1,4 +1,4 @@
-import { isTauri } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, type Mock, test, vi } from 'vitest';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
@@ -8,8 +8,10 @@ vi.mock('../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
 
 describe('tauriCommands', () => {
   const mockIsTauri = isTauri as Mock;
+  const mockInvoke = invoke as Mock;
   const mockCallCoreRpc = callCoreRpc as Mock;
   let getAuthState: typeof import('../tauriCommands').getAuthState;
+  let resetOpenHumanDataAndRestartCore: typeof import('../tauriCommands').resetOpenHumanDataAndRestartCore;
   let storeSession: typeof import('../tauriCommands').storeSession;
   let openhumanLocalAiStatus: typeof import('../tauriCommands').openhumanLocalAiStatus;
   let openhumanServiceStatus: typeof import('../tauriCommands').openhumanServiceStatus;
@@ -19,6 +21,7 @@ describe('tauriCommands', () => {
     mockIsTauri.mockReturnValue(true);
     const actual = await vi.importActual<typeof import('../tauriCommands')>('../tauriCommands');
     getAuthState = actual.getAuthState;
+    resetOpenHumanDataAndRestartCore = actual.resetOpenHumanDataAndRestartCore;
     storeSession = actual.storeSession;
     openhumanLocalAiStatus = actual.openhumanLocalAiStatus;
     openhumanServiceStatus = actual.openhumanServiceStatus;
@@ -42,6 +45,13 @@ describe('tauriCommands', () => {
       method: 'openhuman.auth.store_session',
       params: { token: 'jwt-token', user: { id: 'u1' } },
     });
+  });
+
+  test('resetOpenHumanDataAndRestartCore invokes the destructive Tauri command', async () => {
+    await resetOpenHumanDataAndRestartCore();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.config_reset_local_data' });
+    expect(mockInvoke).toHaveBeenCalledWith('restart_core_process');
   });
 
   test('openhumanLocalAiStatus returns upgrade hint on unknown method', async () => {

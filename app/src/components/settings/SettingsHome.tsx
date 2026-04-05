@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { skillManager } from '../../lib/skills/manager';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { persistor } from '../../store';
+import { resetOpenHumanDataAndRestartCore } from '../../utils/tauriCommands';
 import SettingsHeader from './components/SettingsHeader';
 import SettingsMenuItem from './components/SettingsMenuItem';
 import { useSettingsNavigation } from './hooks/useSettingsNavigation';
@@ -30,27 +31,29 @@ const SettingsHome = () => {
 
   const clearAllAppData = async () => {
     try {
-      await setOnboardingCompletedFlag(false);
-    } catch (err) {
-      console.warn('[Settings] Failed to clear onboarding_completed in config:', err);
-    }
-    try {
       await clearSession();
     } catch (err) {
       console.warn('[Settings] Rust logout failed during clearAllAppData:', err);
     }
 
-    await persistor.purge();
-    window.localStorage.clear();
-    window.sessionStorage.clear();
+    try {
+      await resetOpenHumanDataAndRestartCore();
+    } catch (err) {
+      console.warn('[Settings] Failed to reset OpenHuman data dir and restart core:', err);
+      throw err;
+    }
 
-    // NEW: Clear skills databases (emails, chats, cached files)
+    // Best-effort cleanup for in-memory and browser-side caches that live outside the Rust core.
     try {
       await skillManager.clearAllSkillsData();
     } catch (error) {
       console.warn('Failed to clear skills data:', error);
-      // Continue with logout even if skills clearing fails
+      // Continue even if skill cleanup fails because the backend reset already completed.
     }
+
+    await persistor.purge();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
 
     // Complete reset - redirect to login for fresh start
     window.location.hash = '/';

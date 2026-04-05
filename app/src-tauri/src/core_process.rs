@@ -208,7 +208,10 @@ impl CoreProcessHandle {
         );
 
         self.shutdown().await;
-        log::debug!("[core] restart: shutdown complete, checking port {}", self.port);
+        log::debug!(
+            "[core] restart: shutdown complete, checking port {}",
+            self.port
+        );
 
         // If we never spawned the sidecar (something else was already listening), we cannot free
         // the port — fail fast with a clear message instead of polling for 8s.
@@ -265,12 +268,7 @@ impl CoreProcessHandle {
             }
             // Wait for the process to exit so the RPC listen socket is released before restart
             // checks the port (otherwise we can spuriously hit "port still in use").
-            match timeout(
-                Duration::from_secs(12),
-                child.wait(),
-            )
-            .await
-            {
+            match timeout(Duration::from_secs(12), child.wait()).await {
                 Ok(Ok(status)) => {
                     log::debug!("[core] child core process reaped after kill: {status}");
                 }
