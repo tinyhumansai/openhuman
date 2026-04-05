@@ -231,10 +231,10 @@ const TeamPanel = () => {
   };
 
   return (
-    <div className="overflow-hidden flex flex-col h-full">
+    <div>
       <SettingsHeader title="Team" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         <div className="max-w-md mx-auto p-4 space-y-4">
           {/* Error banner */}
           {error && (

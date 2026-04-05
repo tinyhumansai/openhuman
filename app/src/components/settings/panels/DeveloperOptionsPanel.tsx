@@ -89,25 +89,21 @@ const DeveloperOptionsPanel = () => {
   const { navigateToSettings, navigateBack } = useSettingsNavigation();
 
   return (
-    <div className="overflow-hidden h-full flex flex-col z-10 relative">
+    <div className="z-10 relative">
       <SettingsHeader title="Developer Options" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto max-w-md mx-auto">
-        <div className="p-4">
-          <div>
-            {developerItems.map((item, index) => (
-              <SettingsMenuItem
-                key={item.id}
-                icon={item.icon}
-                title={item.title}
-                description={item.description}
-                onClick={() => navigateToSettings(item.route)}
-                isFirst={index === 0}
-                isLast={index === developerItems.length - 1}
-              />
-            ))}
-          </div>
-        </div>
+      <div>
+        {developerItems.map((item, index) => (
+          <SettingsMenuItem
+            key={item.id}
+            icon={item.icon}
+            title={item.title}
+            description={item.description}
+            onClick={() => navigateToSettings(item.route)}
+            isFirst={index === 0}
+            isLast={index === developerItems.length - 1}
+          />
+        ))}
       </div>
     </div>
   );

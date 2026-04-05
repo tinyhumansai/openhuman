@@ -68,10 +68,10 @@ const SkillsPanel = () => {
   }, [integrations]);
 
   return (
-    <div className="h-full flex flex-col">
+    <div>
       <SettingsHeader title="Skills" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto px-6 pb-10 space-y-6">
+      <div className="p-4 space-y-4">
         <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
           <div>
             <h3 className="text-lg font-semibold text-stone-900">Browser Access</h3>

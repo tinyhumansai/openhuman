@@ -172,10 +172,10 @@ const MemoryDebugPanel = () => {
   }, [clearNamespaceInput, refreshAll]);
 
   return (
-    <div className="overflow-hidden h-full flex flex-col">
+    <div>
       <SettingsHeader title="Memory Debug" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="p-4 space-y-4">
         <SectionCard
           title="Documents"
           priority="tools"

@@ -188,11 +188,11 @@ const ConnectionsPanel = () => {
   };
 
   return (
-    <div className="overflow-hidden h-full flex flex-col">
+    <div>
       <SettingsHeader title="Connections" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-6">
+      <div>
+        <div className="p-4 space-y-4">
           {/* Connection Options */}
           <div>
             {connectOptions.map((option, index) => (
