@@ -691,6 +691,7 @@ async fn handle_message(
             params,
             reply,
         } => {
+            let trigger_sync_after = matches!(method.as_str(), "oauth/complete" | "auth/complete");
             let result = match method.as_str() {
                 "oauth/complete" => {
                     rpc_handlers::handle_oauth_complete(rt, ctx, skill_id, params, data_dir).await
@@ -737,6 +738,39 @@ async fn handle_message(
                     handle_js_call(rt, ctx, "onRpc", &args.to_string()).await
                 }
             };
+
+            // Automatically trigger initial sync after successful auth/OAuth completion.
+            // This runs the skill's onSync() hook so data is fetched immediately rather
+            // than waiting for the next cron-scheduled sync cycle.
+            if trigger_sync_after {
+                let auth_succeeded = match &result {
+                    Ok(val) => val.get("status").and_then(|s| s.as_str()) != Some("error"),
+                    Err(_) => false,
+                };
+                if auth_succeeded {
+                    log::info!(
+                        "[skill:{}] Auth succeeded via {}, triggering initial sync",
+                        skill_id,
+                        method
+                    );
+                    if let Err(e) = rpc_handlers::handle_sync(
+                        rt,
+                        ctx,
+                        skill_id,
+                        ops_state,
+                        memory_client,
+                        memory_write_tx,
+                    )
+                    .await
+                    {
+                        log::warn!(
+                            "[skill:{}] Post-auth sync failed (non-fatal): {e}",
+                            skill_id
+                        );
+                    }
+                }
+            }
+
             let _ = reply.send(result);
         }
     }

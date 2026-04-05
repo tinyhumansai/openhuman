@@ -138,18 +138,12 @@ const handleOAuthDeepLink = async (parsed: URL) => {
 
     // 3. Notify the running skill of the OAuth credential, mark setup_complete,
     //    and activate (list tools, sync to backend).
+    //    The Rust runtime automatically triggers an initial sync after auth succeeds.
     try {
       await skillManager.notifyOAuthComplete(skillId, integrationId, undefined, { clientKeyShare });
       console.log(`[DeepLink] OAuth complete sent to skill '${skillId}'`);
     } catch (runtimeErr) {
       console.warn('[DeepLink] Runtime notify failed:', runtimeErr);
-    }
-
-    // 4. Trigger initial data sync
-    try {
-      await skillManager.triggerSync(skillId);
-    } catch {
-      // Non-critical
     }
 
     emitSkillStateChange(skillId);
