@@ -6,13 +6,16 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::openhuman::memory::ingestion::{MemoryIngestionConfig, MemoryIngestionRequest};
+use crate::openhuman::memory::ingestion::MemoryIngestionConfig;
 use crate::openhuman::memory::store::{NamespaceDocumentInput, UnifiedMemory};
 
 /// A job submitted to the ingestion worker.
 #[derive(Debug, Clone)]
 pub struct IngestionJob {
+    /// The document that was already stored via `upsert_document`.
     pub document: NamespaceDocumentInput,
+    /// The document ID returned by `upsert_document`.
+    pub document_id: String,
     pub config: MemoryIngestionConfig,
 }
 
@@ -23,15 +26,20 @@ pub struct IngestionQueue {
 }
 
 impl IngestionQueue {
-    /// Submit a document for background ingestion. Returns immediately.
+    /// Submit a document for background graph extraction. Returns immediately.
     ///
-    /// If the worker has been shut down the job is silently dropped (logged).
-    pub fn submit(&self, job: IngestionJob) {
-        if let Err(e) = self.tx.send(job) {
-            log::warn!(
-                "[memory:ingestion_queue] failed to enqueue job (worker gone?): {}",
-                e.0.document.title,
-            );
+    /// Returns `true` if the job was enqueued, `false` if the worker has shut
+    /// down and the job was dropped.
+    pub fn submit(&self, job: IngestionJob) -> bool {
+        match self.tx.send(job) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!(
+                    "[memory:ingestion_queue] failed to enqueue job (worker gone?): {}",
+                    e.0.document.title,
+                );
+                false
+            }
         }
     }
 }
@@ -60,20 +68,21 @@ async fn ingestion_worker(
     while let Some(job) = rx.recv().await {
         let title = job.document.title.clone();
         let namespace = job.document.namespace.clone();
+        let document_id = job.document_id.clone();
 
         log::debug!(
-            "[memory:ingestion_queue] processing job: namespace={namespace}, title={title}",
+            "[memory:ingestion_queue] processing job: namespace={namespace}, \
+             doc_id={document_id}, title={title}",
         );
 
-        let request = MemoryIngestionRequest {
-            document: job.document,
-            config: job.config,
-        };
-
-        match memory.ingest_document(request).await {
+        match memory
+            .extract_graph(&document_id, &job.document, &job.config)
+            .await
+        {
             Ok(result) => {
                 log::info!(
-                    "[memory:ingestion_queue] ingested namespace={namespace} title={title} \
+                    "[memory:ingestion_queue] extracted namespace={namespace} \
+                     doc_id={document_id} title={title} \
                      — entities={}, relations={}, chunks={}",
                     result.entity_count,
                     result.relation_count,
@@ -82,8 +91,8 @@ async fn ingestion_worker(
             }
             Err(e) => {
                 log::error!(
-                    "[memory:ingestion_queue] ingestion failed namespace={namespace} \
-                     title={title}: {e}",
+                    "[memory:ingestion_queue] extraction failed namespace={namespace} \
+                     doc_id={document_id} title={title}: {e}",
                 );
             }
         }

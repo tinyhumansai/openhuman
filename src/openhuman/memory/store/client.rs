@@ -52,13 +52,12 @@ impl MemoryClient {
     pub async fn put_doc(&self, input: NamespaceDocumentInput) -> Result<String, String> {
         let document_id = self.inner.upsert_document(input.clone()).await?;
 
-        // Enqueue background ingestion so entities/relations are extracted
-        // into the graph without blocking the caller.
+        // Enqueue background graph extraction so entities/relations are
+        // extracted without blocking the caller. The document is already
+        // persisted — extract_graph will not upsert again.
         self.ingestion_queue.submit(IngestionJob {
-            document: NamespaceDocumentInput {
-                document_id: Some(document_id.clone()),
-                ..input
-            },
+            document_id: document_id.clone(),
+            document: input,
             config: MemoryIngestionConfig::default(),
         });
 
@@ -103,12 +102,10 @@ impl MemoryClient {
 
         let doc_id = self.inner.upsert_document(input.clone()).await?;
 
-        // Enqueue background ingestion for graph extraction.
+        // Enqueue background graph extraction.
         self.ingestion_queue.submit(IngestionJob {
-            document: NamespaceDocumentInput {
-                document_id: Some(doc_id),
-                ..input
-            },
+            document_id: doc_id,
+            document: input,
             config: MemoryIngestionConfig::default(),
         });
 
