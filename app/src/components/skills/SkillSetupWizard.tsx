@@ -441,6 +441,8 @@ export default function SkillSetupWizard({
           onLogin={() => handleManagedAuth(state.mode)}
           onCancel={handleCancel}
           waiting={true}
+          skillId={skillId}
+          onManualComplete={transitionToSetup}
         />
       );
 
@@ -650,6 +652,10 @@ interface OAuthLoginViewProps {
   onLogin: () => void;
   onCancel: () => void;
   waiting: boolean;
+  /** Skill ID — needed for dev-mode manual integration ID entry. */
+  skillId?: string;
+  /** Called after manual dev-mode completion to advance the wizard. */
+  onManualComplete?: () => void;
 }
 
 function OAuthLoginView({
@@ -657,8 +663,48 @@ function OAuthLoginView({
   onLogin,
   onCancel,
   waiting,
+  skillId,
+  onManualComplete,
 }: OAuthLoginViewProps) {
   const providerName = formatProviderName(provider);
+  const [devIntegrationId, setDevIntegrationId] = useState("");
+  const [devSubmitting, setDevSubmitting] = useState(false);
+  const [devError, setDevError] = useState("");
+
+  const handleDevManualComplete = useCallback(async () => {
+    const id = devIntegrationId.trim();
+    if (!id || !skillId) return;
+    setDevSubmitting(true);
+    setDevError("");
+    try {
+      // 1. Fetch client key share (one-time handoff)
+      let clientKeyShare: string | undefined;
+      try {
+        const result = await callCoreRpc<{ result: { clientKey: string } }>({
+          method: "openhuman.auth.oauth_fetch_client_key",
+          params: { integrationId: id },
+        });
+        clientKeyShare = result?.result?.clientKey;
+      } catch {
+        // May be plaintext OAuth — continue without key
+      }
+
+      // 2. Start skill runtime
+      try { await startSkill(skillId); } catch { /* may already be running */ }
+
+      // 3. Notify skill of OAuth completion
+      await skillManager.notifyOAuthComplete(skillId, id, provider, {
+        clientKeyShare,
+      });
+
+      // 4. Advance wizard
+      onManualComplete?.();
+    } catch (err) {
+      setDevError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDevSubmitting(false);
+    }
+  }, [devIntegrationId, skillId, provider, onManualComplete]);
 
   return (
     <div className="py-6">
@@ -716,6 +762,33 @@ function OAuthLoginView({
           >
             Open login page again
           </button>
+
+          {/* Dev-mode: manual integration ID entry */}
+          {IS_DEV && skillId && (
+            <div className="mt-4 pt-4 border-t border-stone-700/50">
+              <p className="text-[10px] text-stone-500 uppercase tracking-wider mb-2">Dev mode</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Integration ID (24-char hex)"
+                  value={devIntegrationId}
+                  onChange={(e) => setDevIntegrationId(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleDevManualComplete(); }}
+                  className="flex-1 px-3 py-1.5 text-xs bg-stone-800 border border-stone-700 rounded-lg text-white placeholder:text-stone-500 focus:outline-none focus:border-primary-500"
+                />
+                <button
+                  onClick={handleDevManualComplete}
+                  disabled={devSubmitting || !devIntegrationId.trim()}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-500 disabled:opacity-40 transition-colors"
+                >
+                  {devSubmitting ? "..." : "Go"}
+                </button>
+              </div>
+              {devError && (
+                <p className="mt-1.5 text-[11px] text-coral-400">{devError}</p>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <button
