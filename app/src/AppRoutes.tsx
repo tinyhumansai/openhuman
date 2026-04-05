@@ -9,6 +9,7 @@ import Conversations from './pages/Conversations';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
+import Rewards from './pages/Rewards';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import Webhooks from './pages/Webhooks';
@@ -86,6 +87,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Invites />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/rewards"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Rewards />
           </ProtectedRoute>
         }
       />

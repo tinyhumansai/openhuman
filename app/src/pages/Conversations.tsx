@@ -6,7 +6,6 @@ import { useNavigate } from 'react-router-dom';
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { useLocalModelStatus } from '../hooks/useLocalModelStatus';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
-import { inferenceApi, type ModelInfo } from '../services/api/inferenceApi';
 import {
   chatCancel,
   chatSend,
@@ -44,6 +43,7 @@ import {
 
 const DEFAULT_THREAD_ID = 'default-thread';
 const DEFAULT_THREAD_TITLE = 'Conversation';
+const AGENTIC_MODEL_ID = 'agentic-v1';
 type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
 type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
@@ -134,9 +134,6 @@ const Conversations = () => {
   const [isPlayingReply, setIsPlayingReply] = useState(false);
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
 
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
-  const [selectedModel, setSelectedModel] = useState('agentic-v1');
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const socketStatus = useAppSelector(selectSocketStatus);
@@ -209,23 +206,6 @@ const Conversations = () => {
     dispatch(setSelectedThread(DEFAULT_THREAD_ID));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
-
-  useEffect(() => {
-    setIsLoadingModels(true);
-    inferenceApi
-      .listModels()
-      .then(data => {
-        if (data.data.length > 0) {
-          setAvailableModels(data.data);
-          const preferred = data.data.find(m => m.id === 'agentic-v1');
-          setSelectedModel(preferred ? preferred.id : data.data[0].id);
-        }
-      })
-      .catch(() => {
-        // Keep default model on failure
-      })
-      .finally(() => setIsLoadingModels(false));
-  }, []);
 
   useEffect(() => {
     setIsLoadingBudget(true);
@@ -338,6 +318,14 @@ const Conversations = () => {
       mediaRecorderRef.current?.stop();
     }
   }, [inputMode, isRecording]);
+
+  useEffect(() => {
+    if (inputMode === 'voice') {
+      setReplyMode('voice');
+    } else if (replyMode === 'voice') {
+      setReplyMode('text');
+    }
+  }, [inputMode, replyMode]);
 
   // Proactively check voice binary availability when switching to voice mode
   useEffect(() => {
@@ -701,7 +689,7 @@ const Conversations = () => {
 
     // ── Cloud socket path (unchanged) ────────────────────────────────────────
     try {
-      await chatSend({ threadId: sendingThreadId, message: trimmed, model: selectedModel });
+      await chatSend({ threadId: sendingThreadId, message: trimmed, model: AGENTIC_MODEL_ID });
 
       // setIsSending(false) and setActiveThread(null) happen in the onDone/onError event handlers
     } catch (err) {
@@ -922,7 +910,6 @@ const Conversations = () => {
     }
   };
 
-  const selectedThread = threads.find(t => t.id === selectedThreadId);
   const selectedThreadToolTimeline = selectedThreadId
     ? (toolTimelineByThread[selectedThreadId] ?? [])
     : [];
@@ -931,26 +918,6 @@ const Conversations = () => {
   return (
     <div className="h-full relative z-10 flex justify-center overflow-hidden bg-[#F5F5F5] p-4 pt-6">
       <div className="flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-stone-200">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3">
-              <h3 className="text-xl font-bold text-stone-900 truncate">
-                {selectedThread?.title || DEFAULT_THREAD_TITLE}
-              </h3>
-              {selectedThread?.isActive && (
-                <span className="text-[11px] px-2.5 py-0.5 rounded-full border border-sage-300 bg-sage-50 text-sage-600 font-medium flex-shrink-0">
-                  Active
-                </span>
-              )}
-            </div>
-            {selectedThread?.createdAt && (
-              <p className="text-xs text-stone-400 mt-0.5">
-                Created {formatRelativeTime(selectedThread.createdAt)}
-              </p>
-            )}
-          </div>
-        </div>
-
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {isLoadingMessages ? (
             <div className="space-y-4">
@@ -1219,81 +1186,7 @@ const Conversations = () => {
               </div>
             )}
 
-          <div className="flex items-center gap-2 mb-2">
-            {isLoadingModels ? (
-              <span className="text-xs text-stone-600">Loading models…</span>
-            ) : (
-              <>
-                <span className="text-sm font-medium text-stone-700">Model</span>
-                <select
-                  value={selectedModel}
-                  onChange={e => setSelectedModel(e.target.value)}
-                  disabled={isSending}
-                  className="bg-stone-100 border-0 rounded-full px-3 py-1 text-xs text-stone-600 focus:outline-none focus:ring-1 focus:ring-primary-500/50 disabled:opacity-50 cursor-pointer">
-                  {availableModels.length > 0 ? (
-                    availableModels.map(m => (
-                      <option key={m.id} value={m.id} className="bg-white">
-                        {m.id}
-                      </option>
-                    ))
-                  ) : (
-                    <option value={selectedModel} className="bg-white">
-                      {selectedModel}
-                    </option>
-                  )}
-                </select>
-              </>
-            )}
-            <div className="flex-1" />
-            <div className="flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1">
-              <span className="text-[10px] text-stone-500 px-1">Input</span>
-              <button
-                type="button"
-                onClick={() => setInputMode('text')}
-                disabled={isRecording || isTranscribing}
-                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
-                  inputMode === 'text'
-                    ? 'bg-primary-600 text-white'
-                    : 'text-stone-500 hover:bg-stone-100'
-                }`}>
-                Text
-              </button>
-              <button
-                type="button"
-                onClick={() => setInputMode('voice')}
-                disabled={isRecording || isTranscribing || !rustChat || !canUseMicrophoneApi}
-                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
-                  inputMode === 'voice'
-                    ? 'bg-primary-600 text-white'
-                    : 'text-stone-500 hover:bg-stone-100'
-                }`}>
-                Voice
-              </button>
-            </div>
-            <div className="flex items-center gap-1 rounded-lg border border-stone-200 bg-stone-50 p-1">
-              <span className="text-[10px] text-stone-500 px-1">Reply</span>
-              <button
-                type="button"
-                onClick={() => setReplyMode('text')}
-                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
-                  replyMode === 'text'
-                    ? 'bg-primary-600 text-white'
-                    : 'text-stone-500 hover:bg-stone-100'
-                }`}>
-                Text
-              </button>
-              <button
-                type="button"
-                onClick={() => setReplyMode('voice')}
-                disabled={!rustChat}
-                className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
-                  replyMode === 'voice'
-                    ? 'bg-primary-600 text-white'
-                    : 'text-stone-500 hover:bg-stone-100'
-                }`}>
-                Voice
-              </button>
-            </div>
+          <div className="flex items-center justify-end gap-2 mb-2">
             {(isLoadingBudget || teamUsage) && (
               <div className="relative group">
                 {teamUsage ? (
@@ -1441,6 +1334,21 @@ const Conversations = () => {
             </div>
           ) : (
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setInputMode('text')}
+                disabled={isRecording || isTranscribing}
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 bg-white text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors disabled:opacity-40"
+                title="Switch to text input">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.8}
+                    d="M4 6h16M4 12h10m-10 6h16"
+                  />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={() => {
