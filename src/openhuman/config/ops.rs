@@ -576,7 +576,7 @@ mod tests {
         assert!(!current_openhuman_dir.exists());
         assert!(!default_openhuman_dir.exists());
         assert!(outcome
-            .data
+            .value
             .get("removed_paths")
             .and_then(|value| value.as_array())
             .is_some_and(|paths| !paths.is_empty()));
