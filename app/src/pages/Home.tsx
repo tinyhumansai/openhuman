@@ -163,7 +163,7 @@ const Home = () => {
   const etaText = formatEta(localAiStatus?.eta_seconds);
 
   return (
-    <div className="app-dotted-canvas min-h-full flex flex-col items-center justify-center p-4">
+    <div className="min-h-full flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full">
         {/* Main card */}
         <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">

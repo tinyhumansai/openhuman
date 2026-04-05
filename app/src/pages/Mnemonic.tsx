@@ -183,7 +183,7 @@ const Mnemonic = () => {
   const canContinue = mode === 'generate' ? confirmed : isImportComplete;
 
   return (
-    <div className="app-dotted-canvas min-h-full flex items-center justify-center p-4 pt-6">
+    <div className="min-h-full flex items-center justify-center p-4 pt-6">
       <div className="max-w-lg w-full">
         <div className="flex justify-center mb-6">
           <LottieAnimation src="/lottie/safe3.json" height={120} width={120} />

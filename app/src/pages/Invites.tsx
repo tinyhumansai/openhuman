@@ -94,7 +94,7 @@ const Invites = () => {
   };
 
   return (
-    <div className="app-dotted-canvas min-h-full flex items-center justify-center p-4 pt-6">
+    <div className="min-h-full flex items-center justify-center p-4 pt-6">
       <div className="max-w-md w-full space-y-4">
         <div>
           <div className="space-y-4">

@@ -376,7 +376,7 @@ export default function Skills() {
   ];
 
   return (
-    <div className="app-dotted-canvas min-h-full">
+    <div className="min-h-full">
       <div className="min-h-full flex flex-col">
         <div className="flex-1 flex items-start justify-center p-4 pt-6">
           <div className="max-w-lg w-full">

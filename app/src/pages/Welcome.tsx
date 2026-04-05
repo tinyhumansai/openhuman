@@ -4,7 +4,7 @@ import TypewriterGreeting from '../components/TypewriterGreeting';
 
 const Welcome = () => {
   return (
-    <div className="app-dotted-canvas min-h-full flex items-center justify-center p-4 pt-6">
+    <div className="min-h-full flex items-center justify-center p-4 pt-6">
       <div className="flex w-full max-w-md flex-col items-center gap-7 text-center animate-fade-up">
         <div className="h-36 w-36 md:h-44 md:w-44">
           <RotatingTetrahedronCanvas />

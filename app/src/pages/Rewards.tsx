@@ -84,7 +84,7 @@ const Rewards = () => {
   const unlockedCount = rewardRoles.filter(role => role.unlocked).length;
 
   return (
-    <div className="app-dotted-canvas min-h-full px-4 pt-6 pb-8">
+    <div className="min-h-full px-4 pt-6 pb-8">
       <div className="max-w-3xl mx-auto space-y-4">
         <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">

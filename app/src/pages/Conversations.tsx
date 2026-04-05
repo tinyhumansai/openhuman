@@ -916,7 +916,7 @@ const Conversations = () => {
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
 
   return (
-    <div className="app-dotted-canvas h-full relative z-10 flex justify-center overflow-hidden p-4 pt-6">
+    <div className="h-full relative z-10 flex justify-center overflow-hidden p-4 pt-6">
       <div className="flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
         <div className="flex-1 overflow-y-auto px-5 py-4 bg-stone-50">
           {isLoadingMessages ? (

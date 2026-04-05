@@ -1,6 +1,6 @@
 const Agents = () => {
   return (
-    <div className="app-dotted-canvas min-h-full flex items-center justify-center p-4 pt-6">
+    <div className="min-h-full flex items-center justify-center p-4 pt-6">
       <div className="max-w-md w-full">
         <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-8 animate-fade-up text-center">
           <div className="flex justify-center mb-4">
