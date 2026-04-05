@@ -25,12 +25,74 @@ interface GlobeHotkeyPollResult {
   events: string[];
 }
 
+interface AppContextInfo {
+  app_name: string | null;
+  window_title: string | null;
+}
+
+interface AccessibilitySessionStatus {
+  active: boolean;
+  capture_count: number;
+  frames_in_memory: number;
+  last_capture_at_ms: number | null;
+  last_context: string | null;
+  last_window_title: string | null;
+  vision_enabled: boolean;
+  vision_state: string;
+  vision_queue_depth: number;
+}
+
+interface AccessibilityStatus {
+  is_context_blocked: boolean;
+  foreground_context: AppContextInfo | null;
+  session: AccessibilitySessionStatus;
+}
+
+interface AutocompleteSuggestion {
+  value: string;
+  confidence: number;
+}
+
+interface AutocompleteStatus {
+  platform_supported: boolean;
+  enabled: boolean;
+  running: boolean;
+  phase: string;
+  app_name: string | null;
+  last_error: string | null;
+  updated_at_ms: number | null;
+  suggestion: AutocompleteSuggestion | null;
+}
+
+interface OverlayDebugSnapshot {
+  screen: AccessibilityStatus | null;
+  autocomplete: AutocompleteStatus | null;
+  updatedAt: number | null;
+  error: string | null;
+}
+
 function logOverlay(message: string, details?: unknown) {
   if (details) {
     console.debug(`[overlay] ${message}`, details);
     return;
   }
   console.debug(`[overlay] ${message}`);
+}
+
+function formatTimestamp(timestampMs: number | null): string {
+  if (!timestampMs) {
+    return "none";
+  }
+
+  try {
+    return new Date(timestampMs).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return String(timestampMs);
+  }
 }
 
 function floatTo16BitPCM(output: DataView, offset: number, input: Float32Array) {
@@ -146,6 +208,12 @@ export function App() {
   const [status, setStatus] = useState<OverlayStatus>("idle");
   const [message, setMessage] = useState("Click to start listening");
   const [transcript, setTranscript] = useState("");
+  const [debugSnapshot, setDebugSnapshot] = useState<OverlayDebugSnapshot>({
+    screen: null,
+    autocomplete: null,
+    updatedAt: null,
+    error: null,
+  });
 
   useEffect(() => {
     let disposed = false;
@@ -235,6 +303,74 @@ export function App() {
       }).catch(() => {});
     };
   }, [appWindow]);
+
+  useEffect(() => {
+    let disposed = false;
+    let pollInFlight = false;
+
+    const pollDebugState = async () => {
+      if (disposed || pollInFlight) {
+        return;
+      }
+      pollInFlight = true;
+
+      try {
+        const [screen, autocomplete] = await Promise.all([
+          invoke<AccessibilityStatus>("core_rpc", {
+            method: "openhuman.accessibility_status",
+            params: {},
+          }),
+          invoke<AutocompleteStatus>("core_rpc", {
+            method: "openhuman.autocomplete_status",
+            params: {},
+          }),
+        ]);
+
+        if (disposed) {
+          return;
+        }
+
+        logOverlay("debug snapshot refreshed", {
+          screenActive: screen.session.active,
+          captureCount: screen.session.capture_count,
+          autocompletePhase: autocomplete.phase,
+          hasSuggestion: Boolean(autocomplete.suggestion?.value),
+        });
+
+        setDebugSnapshot({
+          screen,
+          autocomplete,
+          updatedAt: Date.now(),
+          error: null,
+        });
+      } catch (error) {
+        if (disposed) {
+          return;
+        }
+
+        const nextError =
+          error instanceof Error ? error.message : "Failed to refresh overlay debug state";
+        console.warn("[overlay] debug snapshot poll failed", error);
+        setDebugSnapshot((previous) => ({
+          ...previous,
+          updatedAt: Date.now(),
+          error: nextError,
+        }));
+      } finally {
+        pollInFlight = false;
+      }
+    };
+
+    void pollDebugState();
+    const intervalId = window.setInterval(() => {
+      void pollDebugState();
+    }, 900);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const insertTranscriptIntoFocusedField = useCallback(
     async (text: string) => {
@@ -411,6 +547,19 @@ export function App() {
     return "from-slate-900/92 via-slate-800/92 to-slate-700/92 text-white shadow-[0_0_48px_rgba(15,23,42,0.42)]";
   }, [status]);
 
+  const activeScreenApp =
+    debugSnapshot.screen?.foreground_context?.app_name ??
+    debugSnapshot.screen?.session.last_context ??
+    "Unknown app";
+  const activeScreenWindow =
+    debugSnapshot.screen?.foreground_context?.window_title ??
+    debugSnapshot.screen?.session.last_window_title ??
+    "No active window title";
+  const autocompleteSuggestion = debugSnapshot.autocomplete?.suggestion?.value?.trim() ?? "";
+  const autocompletePhase = debugSnapshot.autocomplete?.phase ?? "unknown";
+  const autocompleteRunning =
+    debugSnapshot.autocomplete?.running && debugSnapshot.autocomplete?.enabled;
+
   return (
     <div className="flex h-screen w-screen items-start justify-start bg-transparent p-3">
       <div className="relative select-none">
@@ -422,7 +571,7 @@ export function App() {
         ) : null}
 
         <div
-          className={`relative w-[148px] rounded-[40px] border border-white/15 bg-gradient-to-br p-3 backdrop-blur-xl transition-all duration-200 ${shellClassName}`}
+          className={`relative w-[348px] rounded-[32px] border border-white/15 bg-gradient-to-br p-3 backdrop-blur-xl transition-all duration-200 ${shellClassName}`}
           onMouseDown={(event) => {
             if (event.target instanceof HTMLElement && event.target.closest("button")) {
               return;
@@ -444,40 +593,118 @@ export function App() {
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={handleMainButton}
-            className={`group relative flex h-[108px] w-full items-center justify-center rounded-full border border-white/20 bg-black/20 transition duration-200 hover:bg-black/28 ${
-              status === "listening" ? "scale-[1.02]" : ""
-            }`}
-            aria-label={status === "listening" ? "Stop listening" : "Start listening"}
-          >
-            <span className="absolute inset-3 rounded-full border border-white/12" />
-            <MicrophoneIcon active={status === "listening"} />
-          </button>
-
-          <div className="mt-3 text-center">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-80">
-              {status}
-            </p>
-            <p className="mt-1 text-xs leading-4 opacity-90">{message}</p>
-          </div>
-
-          {transcript ? (
-            <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-[11px] leading-4 opacity-95">
-              {transcript}
-            </div>
-          ) : null}
-
-          {(status === "ready" || status === "error") && !transcript ? (
+          <div className="flex items-start gap-3">
             <button
               type="button"
-              className="mt-3 w-full rounded-full border border-white/12 bg-black/15 px-3 py-2 text-[11px] font-medium transition hover:bg-black/25"
-              onClick={resetForNextCapture}
+              onClick={handleMainButton}
+              className={`group relative flex h-[108px] w-[108px] shrink-0 items-center justify-center rounded-full border border-white/20 bg-black/20 transition duration-200 hover:bg-black/28 ${
+                status === "listening" ? "scale-[1.02]" : ""
+              }`}
+              aria-label={status === "listening" ? "Stop listening" : "Start listening"}
             >
-              Reset
+              <span className="absolute inset-3 rounded-full border border-white/12" />
+              <MicrophoneIcon active={status === "listening"} />
             </button>
-          ) : null}
+
+            <div className="min-w-0 flex-1 pt-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-80">
+                {status}
+              </p>
+              <p className="mt-1 text-xs leading-4 opacity-90">{message}</p>
+
+              {transcript ? (
+                <div className="mt-3 rounded-2xl border border-white/10 bg-black/15 px-3 py-2 text-[11px] leading-4 opacity-95">
+                  {transcript}
+                </div>
+              ) : null}
+
+              {(status === "ready" || status === "error") && !transcript ? (
+                <button
+                  type="button"
+                  className="mt-3 w-full rounded-full border border-white/12 bg-black/15 px-3 py-2 text-[11px] font-medium transition hover:bg-black/25"
+                  onClick={resetForNextCapture}
+                >
+                  Reset
+                </button>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-3 rounded-[24px] border border-white/10 bg-black/15 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.22em] opacity-75">
+                Debug
+              </span>
+              <span className="text-[10px] opacity-65">
+                {debugSnapshot.updatedAt ? formatTimestamp(debugSnapshot.updatedAt) : "waiting"}
+              </span>
+            </div>
+
+            {debugSnapshot.error ? (
+              <div className="mt-3 rounded-2xl border border-red-300/20 bg-red-950/20 px-3 py-2 text-[11px] leading-4 text-red-100">
+                {debugSnapshot.error}
+              </div>
+            ) : null}
+
+            <div className="mt-3 grid gap-3">
+              <section className="rounded-2xl border border-white/8 bg-black/10 px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">
+                  Screen Intelligence
+                </div>
+                <div className="mt-2 space-y-1 text-[11px] leading-4 opacity-90">
+                  <p>Active screen: {activeScreenApp}</p>
+                  <p className="truncate">Window: {activeScreenWindow}</p>
+                  <p>
+                    Screenshots: {debugSnapshot.screen?.session.capture_count ?? 0} total,{" "}
+                    {debugSnapshot.screen?.session.frames_in_memory ?? 0} in memory
+                  </p>
+                  <p>
+                    Session: {debugSnapshot.screen?.session.active ? "active" : "idle"} | Vision:{" "}
+                    {debugSnapshot.screen?.session.vision_enabled ? "on" : "off"} /{" "}
+                    {debugSnapshot.screen?.session.vision_state ?? "idle"}
+                  </p>
+                  <p>
+                    Queue: {debugSnapshot.screen?.session.vision_queue_depth ?? 0} | Blocked:{" "}
+                    {debugSnapshot.screen?.is_context_blocked ? "yes" : "no"}
+                  </p>
+                  <p>
+                    Last capture:{" "}
+                    {formatTimestamp(debugSnapshot.screen?.session.last_capture_at_ms ?? null)}
+                  </p>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-white/8 bg-black/10 px-3 py-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] opacity-70">
+                  Autocomplete
+                </div>
+                <div className="mt-2 space-y-1 text-[11px] leading-4 opacity-90">
+                  <p>
+                    Status: {autocompleteRunning ? "active" : "idle"} | Phase: {autocompletePhase}
+                  </p>
+                  <p>App: {debugSnapshot.autocomplete?.app_name ?? activeScreenApp}</p>
+                  <p>
+                    Processing:{" "}
+                    {autocompletePhase === "refreshing" || autocompletePhase === "processing"
+                      ? "yes"
+                      : "no"}
+                  </p>
+                  <p>
+                    Suggestions:{" "}
+                    {autocompleteSuggestion ? "1 ready" : "none"}
+                  </p>
+                  <div className="rounded-xl border border-white/8 bg-black/10 px-2 py-2 text-[11px] leading-4">
+                    {autocompleteSuggestion || "No autocomplete suggestion available."}
+                  </div>
+                  {debugSnapshot.autocomplete?.last_error ? (
+                    <p className="text-red-100">
+                      Error: {debugSnapshot.autocomplete.last_error}
+                    </p>
+                  ) : null}
+                </div>
+              </section>
+            </div>
+          </div>
         </div>
       </div>
     </div>

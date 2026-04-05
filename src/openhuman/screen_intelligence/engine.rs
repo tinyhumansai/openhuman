@@ -36,6 +36,7 @@ struct SessionRuntime {
     panic_hotkey: String,
     stop_reason: Option<String>,
     last_capture_at_ms: Option<i64>,
+    capture_count: u64,
     frames: VecDeque<CaptureFrame>,
     last_context: Option<AppContext>,
     task: Option<JoinHandle<()>>,
@@ -143,6 +144,7 @@ impl AccessibilityEngine {
                     panic_hotkey: state.config.panic_stop_hotkey.clone(),
                     stop_reason: None,
                     last_capture_at_ms: None,
+                    capture_count: 0,
                     frames: VecDeque::new(),
                     last_context: None,
                     task: None,
@@ -198,6 +200,14 @@ impl AccessibilityEngine {
         state.permissions = detect_permissions();
 
         let context = foreground_context();
+        let foreground_context = context.as_ref().map(|ctx| AppContextInfo {
+            app_name: ctx.app_name.clone(),
+            window_title: ctx.window_title.clone(),
+            bounds_x: ctx.bounds.map(|b| b.x),
+            bounds_y: ctx.bounds.map(|b| b.y),
+            bounds_width: ctx.bounds.map(|b| b.width),
+            bounds_height: ctx.bounds.map(|b| b.height),
+        });
         let blocked = context
             .as_ref()
             .map(|ctx| !self.should_capture_context(ctx, &state.config))
@@ -214,12 +224,17 @@ impl AccessibilityEngine {
                     ttl_secs: session.ttl_secs,
                     panic_hotkey: session.panic_hotkey.clone(),
                     stop_reason: session.stop_reason.clone(),
+                    capture_count: session.capture_count,
                     frames_in_memory: session.frames.len(),
                     last_capture_at_ms: session.last_capture_at_ms,
                     last_context: session
                         .last_context
                         .as_ref()
                         .and_then(|c| c.app_name.clone()),
+                    last_window_title: session
+                        .last_context
+                        .as_ref()
+                        .and_then(|c| c.window_title.clone()),
                     vision_enabled: session.vision_enabled,
                     vision_state: session.vision_state.clone(),
                     vision_queue_depth: session.vision_queue_depth,
@@ -234,9 +249,11 @@ impl AccessibilityEngine {
                     ttl_secs: state.config.session_ttl_secs,
                     panic_hotkey: state.config.panic_stop_hotkey.clone(),
                     stop_reason: None,
+                    capture_count: 0,
                     frames_in_memory: 0,
                     last_capture_at_ms: None,
                     last_context: None,
+                    last_window_title: None,
                     vision_enabled: state.config.vision_enabled,
                     vision_state: "idle".to_string(),
                     vision_queue_depth: 0,
@@ -259,6 +276,7 @@ impl AccessibilityEngine {
             permissions,
             features,
             session,
+            foreground_context,
             config,
             denylist,
             is_context_blocked: blocked,
@@ -371,6 +389,7 @@ impl AccessibilityEngine {
                 panic_hotkey: state.config.panic_stop_hotkey.clone(),
                 stop_reason: None,
                 last_capture_at_ms: None,
+                capture_count: 0,
                 frames: VecDeque::new(),
                 last_context: None,
                 task: None,
@@ -434,6 +453,7 @@ impl AccessibilityEngine {
         };
 
         push_ephemeral_frame(&mut session.frames, frame.clone());
+        session.capture_count = session.capture_count.saturating_add(1);
         session.last_capture_at_ms = Some(frame.captured_at_ms);
         session.last_context = context;
         if frame.image_ref.is_some() && session.vision_enabled {
@@ -797,6 +817,7 @@ impl AccessibilityEngine {
                     image_ref: capture_result.ok(),
                 };
                 push_ephemeral_frame(&mut session.frames, frame.clone());
+                session.capture_count = session.capture_count.saturating_add(1);
                 session.last_capture_at_ms = Some(now);
                 session.last_context = context;
                 if frame.image_ref.is_some() && session.vision_enabled {
@@ -970,6 +991,7 @@ mod tests {
                 panic_hotkey: state.config.panic_stop_hotkey.clone(),
                 stop_reason: None,
                 last_capture_at_ms: None,
+                capture_count: 0,
                 frames: VecDeque::new(),
                 last_context: None,
                 task: None,
