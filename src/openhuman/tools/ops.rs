@@ -194,6 +194,45 @@ pub fn all_tools_with_runtime(
         )));
     }
 
+    // ── Agent integration tools (backend-proxied) ─────────────────
+    if let Some(client) = crate::openhuman::integrations::build_client(&root_config.integrations) {
+        tracing::debug!("[integrations] client built successfully");
+        if root_config.integrations.google_places.enabled {
+            tools.push(Box::new(
+                crate::openhuman::integrations::GooglePlacesSearchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::GooglePlacesDetailsTool::new(Arc::clone(&client)),
+            ));
+            tracing::debug!("[integrations] registered google_places tools");
+        } else {
+            tracing::debug!("[integrations] google_places disabled — skipping");
+        }
+        if root_config.integrations.parallel.enabled {
+            tools.push(Box::new(
+                crate::openhuman::integrations::ParallelSearchTool::new(Arc::clone(&client)),
+            ));
+            tools.push(Box::new(
+                crate::openhuman::integrations::ParallelExtractTool::new(Arc::clone(&client)),
+            ));
+            tracing::debug!("[integrations] registered parallel tools");
+        } else {
+            tracing::debug!("[integrations] parallel disabled — skipping");
+        }
+        if root_config.integrations.twilio.enabled {
+            tools.push(Box::new(
+                crate::openhuman::integrations::TwilioCallTool::new(Arc::clone(&client)),
+            ));
+            tracing::debug!("[integrations] registered twilio tools");
+        } else {
+            tracing::debug!("[integrations] twilio disabled — skipping");
+        }
+    } else {
+        tracing::debug!(
+            "[integrations] build_client returned None — integration tools not registered"
+        );
+    }
+
     tools
 }
 

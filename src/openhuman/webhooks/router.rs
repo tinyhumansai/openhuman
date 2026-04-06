@@ -4,6 +4,7 @@ use super::types::{
     TunnelRegistration, WebhookDebugEvent, WebhookDebugLogEntry, WebhookRequest,
     WebhookResponseData,
 };
+use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,7 @@ impl WebhookRouter {
             tunnel_uuid, target_kind, skill_id
         );
 
+        let tunnel_name_clone = tunnel_name.clone();
         routes.insert(
             tunnel_uuid.to_string(),
             TunnelRegistration {
@@ -154,6 +156,13 @@ impl WebhookRouter {
         drop(routes);
         self.publish_event("registration_changed", None, Some(tunnel_uuid.to_string()));
         self.persist();
+
+        publish_global(DomainEvent::WebhookRegistered {
+            tunnel_id: tunnel_uuid.to_string(),
+            skill_id: skill_id.to_string(),
+            tunnel_name: tunnel_name_clone,
+        });
+
         Ok(())
     }
 
@@ -183,6 +192,12 @@ impl WebhookRouter {
         drop(routes);
         self.publish_event("registration_changed", None, Some(tunnel_uuid.to_string()));
         self.persist();
+
+        publish_global(DomainEvent::WebhookUnregistered {
+            tunnel_id: tunnel_uuid.to_string(),
+            skill_id: skill_id.to_string(),
+        });
+
         Ok(())
     }
 
@@ -196,18 +211,30 @@ impl WebhookRouter {
             }
         };
 
-        let before = routes.len();
-        routes.retain(|_, reg| reg.skill_id != skill_id);
-        let removed = before - routes.len();
+        let removed_tunnels: Vec<String> = routes
+            .iter()
+            .filter(|(_, reg)| reg.skill_id == skill_id)
+            .map(|(uuid, _)| uuid.clone())
+            .collect();
 
-        if removed > 0 {
+        routes.retain(|_, reg| reg.skill_id != skill_id);
+
+        if !removed_tunnels.is_empty() {
             debug!(
                 "[webhooks] Unregistered {} tunnel(s) for skill '{}'",
-                removed, skill_id
+                removed_tunnels.len(),
+                skill_id
             );
             drop(routes);
             self.publish_event("registration_changed", None, None);
             self.persist();
+
+            for tunnel_id in removed_tunnels {
+                publish_global(DomainEvent::WebhookUnregistered {
+                    tunnel_id,
+                    skill_id: skill_id.to_string(),
+                });
+            }
         }
     }
 

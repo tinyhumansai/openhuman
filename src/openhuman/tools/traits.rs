@@ -4,6 +4,18 @@ use serde::{Deserialize, Serialize};
 // Re-export the unified ToolResult from the skills module so all tools use one type.
 pub use crate::openhuman::skills::types::{ToolContent, ToolResult};
 
+/// Controls where a tool is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolScope {
+    /// Available in agent loop, CLI, and RPC.
+    All,
+    /// Only available in the autonomous agent loop.
+    #[allow(dead_code)]
+    AgentOnly,
+    /// Only available via explicit CLI/RPC invocation (not autonomous agent).
+    CliRpcOnly,
+}
+
 /// Permission level required to execute a tool.
 ///
 /// Channels can set a maximum permission level to restrict which tools
@@ -65,6 +77,12 @@ pub trait Tool: Send + Sync {
     /// Default: `ReadOnly`. Override for write/execute/dangerous tools.
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::ReadOnly
+    }
+
+    /// Where this tool may be executed. Default: `All`.
+    /// Override to restrict (e.g. `CliRpcOnly` for phone calls).
+    fn scope(&self) -> ToolScope {
+        ToolScope::All
     }
 
     /// Get the full spec for LLM registration

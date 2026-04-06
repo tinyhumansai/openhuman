@@ -236,3 +236,66 @@ impl Default for SecretsConfig {
         }
     }
 }
+
+// ── Agent integration tools (backend-proxied) ───────────────────────
+
+/// Per-integration on/off toggle.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IntegrationToggle {
+    #[serde(default = "defaults::default_true")]
+    pub enabled: bool,
+}
+
+impl Default for IntegrationToggle {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::default_true(),
+        }
+    }
+}
+
+/// Agent integration tools that proxy through the backend API.
+///
+/// When enabled, the agent gains access to tools like web search (Parallel),
+/// location search (Google Places), and phone calls (Twilio). The backend
+/// handles external API calls, billing, and rate limiting; the client only
+/// forwards requests and displays results.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct IntegrationsConfig {
+    /// Master switch — set to `true` to register integration tools.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Backend API base URL (e.g. "https://api.openhuman.ai").
+    #[serde(default)]
+    pub backend_url: Option<String>,
+
+    /// JWT Bearer token for authenticating with the backend.
+    #[serde(default)]
+    pub auth_token: Option<String>,
+
+    /// Twilio phone-call integration.
+    #[serde(default)]
+    pub twilio: IntegrationToggle,
+
+    /// Google Places location search integration.
+    #[serde(default)]
+    pub google_places: IntegrationToggle,
+
+    /// Parallel web search & content extraction integration.
+    #[serde(default)]
+    pub parallel: IntegrationToggle,
+}
+
+impl Default for IntegrationsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend_url: None,
+            auth_token: None,
+            twilio: IntegrationToggle::default(),
+            google_places: IntegrationToggle::default(),
+            parallel: IntegrationToggle::default(),
+        }
+    }
+}

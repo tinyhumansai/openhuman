@@ -82,7 +82,7 @@ pub use screenshot::ScreenshotTool;
 pub use shell::ShellTool;
 pub use spawn_subagent::SpawnSubagentTool;
 pub use tool_stats::ToolStatsTool;
-pub use traits::{PermissionLevel, Tool, ToolContent, ToolResult, ToolSpec};
+pub use traits::{PermissionLevel, Tool, ToolContent, ToolResult, ToolScope, ToolSpec};
 pub use update_memory_md::UpdateMemoryMdTool;
 pub use web_search_tool::WebSearchTool;
 pub use workspace_state::WorkspaceStateTool;

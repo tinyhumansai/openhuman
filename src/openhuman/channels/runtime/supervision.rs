@@ -5,6 +5,7 @@ use super::super::context::{
 };
 use super::super::traits;
 use super::super::Channel;
+use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +22,9 @@ pub(crate) fn spawn_supervised_listener(
 
         loop {
             crate::openhuman::health::mark_component_ok(&component);
+            publish_global(DomainEvent::ChannelConnected {
+                channel: ch.name().to_string(),
+            });
             let result = ch.listen(tx.clone()).await;
 
             if tx.is_closed() {
@@ -34,12 +38,20 @@ pub(crate) fn spawn_supervised_listener(
                         &component,
                         "listener exited unexpectedly",
                     );
+                    publish_global(DomainEvent::ChannelDisconnected {
+                        channel: ch.name().to_string(),
+                        reason: "exited unexpectedly".to_string(),
+                    });
                     // Clean exit — reset backoff since the listener ran successfully
                     backoff = initial_backoff_secs.max(1);
                 }
                 Err(e) => {
                     tracing::error!("Channel {} error: {e}; restarting", ch.name());
                     crate::openhuman::health::mark_component_error(&component, e.to_string());
+                    publish_global(DomainEvent::ChannelDisconnected {
+                        channel: ch.name().to_string(),
+                        reason: e.to_string(),
+                    });
                 }
             }
 

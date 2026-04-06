@@ -311,6 +311,14 @@ A typed pub/sub event bus for **decoupled cross-module communication**. The bus 
 | `event_bus::subscribe_global(handler)` | Subscribe from anywhere (returns `None` if not yet initialized) |
 | `event_bus::global()` | Get `Option<&'static EventBus>` for advanced use |
 
+**Domains:** `agent`, `memory`, `channel`, `cron`, `skill`, `tool`, `webhook`, `system`. See `events.rs` for the full variant list — events carry rich payloads so subscribers have everything they need.
+
+**Domain subscriber files** — each domain owns its `bus.rs` with `EventHandler` impls:
+- `cron/bus.rs` — `CronDeliverySubscriber` (delivers job output to channels)
+- `webhooks/bus.rs` — `WebhookRequestSubscriber` (routes incoming requests to skills, emits responses via socket)
+- `channels/bus.rs` — `ChannelInboundSubscriber` (runs agent loop for inbound socket messages)
+- `skills/bus.rs` — stub for future subscribers
+
 **Adding events for a new domain:**
 
 1. Add variants to `DomainEvent` in `events.rs` (prefix with domain name, e.g. `BillingInvoiceCreated { ... }`).

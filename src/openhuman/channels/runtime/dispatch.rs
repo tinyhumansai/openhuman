@@ -11,6 +11,7 @@ use crate::openhuman::channels::routes::{
 };
 use crate::openhuman::channels::traits;
 use crate::openhuman::channels::{Channel, SendMessage};
+use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::providers::{self, ChatMessage};
 use crate::openhuman::util::truncate_with_ellipsis;
 use std::sync::Arc;
@@ -72,6 +73,13 @@ pub(crate) async fn process_channel_message(
         msg.sender,
         truncate_with_ellipsis(&msg.content, 80)
     );
+
+    publish_global(DomainEvent::ChannelMessageReceived {
+        channel: msg.channel.clone(),
+        sender: msg.sender.clone(),
+        content: msg.content.clone(),
+        thread_ts: msg.thread_ts.clone(),
+    });
 
     let target_channel = ctx.channels_by_name.get(&msg.channel).cloned();
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
@@ -243,7 +251,7 @@ pub(crate) async fn process_channel_message(
         log_worker_join_result(handle.await);
     }
 
-    match llm_result {
+    let (success, response_text) = match llm_result {
         Ok(Ok(response)) => {
             // Save user + assistant turn to per-sender history
             {
@@ -280,7 +288,7 @@ pub(crate) async fn process_channel_message(
                     }
                 } else if let Err(e) = channel
                     .send(
-                        &SendMessage::new(response, &msg.reply_target)
+                        &SendMessage::new(&response, &msg.reply_target)
                             .in_thread(msg.thread_ts.clone()),
                     )
                     .await
@@ -288,6 +296,7 @@ pub(crate) async fn process_channel_message(
                     eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
                 }
             }
+            (true, response)
         }
         Ok(Err(e)) => {
             if is_context_window_overflow_error(&e) {
@@ -316,9 +325,19 @@ pub(crate) async fn process_channel_message(
                             .await;
                     }
                 }
+
+                publish_global(DomainEvent::ChannelMessageProcessed {
+                    channel: msg.channel.clone(),
+                    sender: msg.sender.clone(),
+                    content: msg.content.clone(),
+                    response: error_text.to_string(),
+                    elapsed_ms: started_at.elapsed().as_millis() as u64,
+                    success: false,
+                });
                 return;
             }
 
+            let error_response = format!("⚠️ Error: {e}");
             eprintln!(
                 "  ❌ LLM error after {}ms: {e}",
                 started_at.elapsed().as_millis()
@@ -326,17 +345,18 @@ pub(crate) async fn process_channel_message(
             if let Some(channel) = target_channel.as_ref() {
                 if let Some(ref draft_id) = draft_message_id {
                     let _ = channel
-                        .finalize_draft(&msg.reply_target, draft_id, &format!("⚠️ Error: {e}"))
+                        .finalize_draft(&msg.reply_target, draft_id, &error_response)
                         .await;
                 } else {
                     let _ = channel
                         .send(
-                            &SendMessage::new(format!("⚠️ Error: {e}"), &msg.reply_target)
+                            &SendMessage::new(&error_response, &msg.reply_target)
                                 .in_thread(msg.thread_ts.clone()),
                         )
                         .await;
                 }
             }
+            (false, error_response)
         }
         Err(_) => {
             let timeout_msg = format!("LLM response timed out after {}s", ctx.message_timeout_secs);
@@ -345,24 +365,34 @@ pub(crate) async fn process_channel_message(
                 timeout_msg,
                 started_at.elapsed().as_millis()
             );
+            let error_text =
+                "⚠️ Request timed out while waiting for the model. Please try again.".to_string();
             if let Some(channel) = target_channel.as_ref() {
-                let error_text =
-                    "⚠️ Request timed out while waiting for the model. Please try again.";
                 if let Some(ref draft_id) = draft_message_id {
                     let _ = channel
-                        .finalize_draft(&msg.reply_target, draft_id, error_text)
+                        .finalize_draft(&msg.reply_target, draft_id, &error_text)
                         .await;
                 } else {
                     let _ = channel
                         .send(
-                            &SendMessage::new(error_text, &msg.reply_target)
+                            &SendMessage::new(&error_text, &msg.reply_target)
                                 .in_thread(msg.thread_ts.clone()),
                         )
                         .await;
                 }
             }
+            (false, error_text)
         }
-    }
+    };
+
+    publish_global(DomainEvent::ChannelMessageProcessed {
+        channel: msg.channel.clone(),
+        sender: msg.sender.clone(),
+        content: msg.content.clone(),
+        response: response_text,
+        elapsed_ms: started_at.elapsed().as_millis() as u64,
+        success,
+    });
 }
 
 pub(crate) async fn run_message_dispatch_loop(

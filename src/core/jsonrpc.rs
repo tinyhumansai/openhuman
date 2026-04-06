@@ -711,6 +711,22 @@ pub async fn bootstrap_skill_runtime() {
     let _ = std::fs::create_dir_all(&workspace_dir);
     engine.set_workspace_dir(workspace_dir);
 
+    // --- Event bus bootstrap ---
+    // Ensure the global event bus is initialized (no-op if already done by start_channels).
+    let bus =
+        crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    // Register domain subscribers for cross-module event handling.
+    // Leak the handles so the background tasks live for the entire process —
+    // SubscriptionHandle::drop aborts the task, and bootstrap_skill_runtime()
+    // returns immediately after setup.
+    std::mem::forget(bus.subscribe(Arc::new(
+        crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
+    )));
+    std::mem::forget(bus.subscribe(Arc::new(
+        crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
+    )));
+    log::info!("[event_bus] webhook and channel subscribers registered");
+
     // --- Socket manager bootstrap ---
     let socket_mgr = Arc::new(SocketManager::new());
     set_global_socket_manager(socket_mgr.clone());

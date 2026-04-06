@@ -4,6 +4,7 @@
 //! appropriate skill. The backend manages tunnel provisioning (ngrok, cloudflare,
 //! etc.); this module handles the client-side routing and skill dispatch.
 
+pub mod bus;
 pub mod ops;
 pub mod router;
 mod schemas;

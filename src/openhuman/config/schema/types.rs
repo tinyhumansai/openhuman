@@ -116,6 +116,9 @@ pub struct Config {
     pub voice_server: VoiceServerConfig,
 
     #[serde(default)]
+    pub integrations: IntegrationsConfig,
+
+    #[serde(default)]
     pub learning: LearningConfig,
 
     #[serde(default)]
@@ -180,6 +183,7 @@ impl Default for Config {
             local_ai: LocalAiConfig::default(),
             voice_server: VoiceServerConfig::default(),
             query_classification: QueryClassificationConfig::default(),
+            integrations: IntegrationsConfig::default(),
             learning: LearningConfig::default(),
             orchestrator: OrchestratorConfig::default(),
             update: UpdateConfig::default(),

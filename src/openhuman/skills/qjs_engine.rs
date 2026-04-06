@@ -30,6 +30,7 @@ pub fn require_engine() -> Result<Arc<RuntimeEngine>, String> {
     global_engine().ok_or_else(|| "skill runtime not initialized".to_string())
 }
 
+use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::memory::{MemoryClient, MemoryClientRef};
 use crate::openhuman::skills::cron_scheduler::CronScheduler;
 use crate::openhuman::skills::manifest::SkillManifest;
@@ -399,6 +400,7 @@ impl RuntimeEngine {
             ));
         }
 
+        let runtime_name = manifest.runtime.clone();
         let config = manifest.to_config();
         let data_dir = self.skills_data_dir.join(skill_id);
 
@@ -452,7 +454,10 @@ impl RuntimeEngine {
             match current_status {
                 SkillStatus::Running => {
                     self.emit_status_change(&skill_id_owned);
-
+                    publish_global(DomainEvent::SkillLoaded {
+                        skill_id: skill_id_owned.clone(),
+                        runtime: runtime_name.clone(),
+                    });
                     return Ok(instance.snapshot());
                 }
                 SkillStatus::Error => {
@@ -464,6 +469,10 @@ impl RuntimeEngine {
                     // Don't unregister — keep the skill with Error status so the
                     // UI can see what happened and allow restart.
                     self.emit_status_change(&skill_id_owned);
+                    publish_global(DomainEvent::SkillStartFailed {
+                        skill_id: skill_id_owned.clone(),
+                        error: error_msg.clone(),
+                    });
                     return Err(format!(
                         "Skill '{}' failed to start: {}",
                         skill_id_owned, error_msg
@@ -507,6 +516,9 @@ impl RuntimeEngine {
         self.cron_scheduler.unregister_all_for_skill(skill_id);
         self.webhook_router.unregister_skill(skill_id);
         self.emit_status_change(skill_id);
+        publish_global(DomainEvent::SkillStopped {
+            skill_id: skill_id.to_string(),
+        });
         Ok(())
     }
 
@@ -549,9 +561,24 @@ impl RuntimeEngine {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<ToolResult, String> {
-        self.registry
-            .call_tool(skill_id, tool_name, arguments)
-            .await
+        let started_at = std::time::Instant::now();
+        let result = self
+            .registry
+            .call_tool(skill_id, tool_name, arguments.clone())
+            .await;
+        let result_text = match &result {
+            Ok(r) => Some(r.output()),
+            Err(e) => Some(e.clone()),
+        };
+        publish_global(DomainEvent::SkillExecuted {
+            skill_id: skill_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments,
+            result: result_text,
+            success: result.is_ok(),
+            elapsed_ms: started_at.elapsed().as_millis() as u64,
+        });
+        result
     }
 
     /// Call a tool from inside a running skill. Enforces self-only invocation.
@@ -565,16 +592,31 @@ impl RuntimeEngine {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<ToolResult, String> {
-        self.registry
+        let started_at = std::time::Instant::now();
+        let result = self
+            .registry
             .call_tool_scoped(
                 ToolCallOrigin::SkillSelf {
                     skill_id: caller_skill_id.to_string(),
                 },
                 target_skill_id,
                 tool_name,
-                arguments,
+                arguments.clone(),
             )
-            .await
+            .await;
+        let result_text = match &result {
+            Ok(r) => Some(r.output()),
+            Err(e) => Some(e.clone()),
+        };
+        publish_global(DomainEvent::SkillExecuted {
+            skill_id: target_skill_id.to_string(),
+            tool_name: tool_name.to_string(),
+            arguments,
+            result: result_text,
+            success: result.is_ok(),
+            elapsed_ms: started_at.elapsed().as_millis() as u64,
+        });
+        result
     }
 
     /// Broadcast a server event to all running skills.

@@ -1,5 +1,6 @@
 //! Channel implementations and runtime orchestration.
 
+pub mod bus;
 pub mod cli;
 pub mod controllers;
 pub mod providers;
