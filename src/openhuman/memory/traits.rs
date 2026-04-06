@@ -1,31 +1,45 @@
+//! Core traits and data structures for the OpenHuman memory system.
+//!
+//! This module defines the foundational `Memory` trait that all storage backends
+//! must implement, as well as the standard `MemoryEntry` and `MemoryCategory`
+//! types used for representing and organizing memories.
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-/// A single memory entry
+/// Represents a single stored memory entry with associated metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntry {
+    /// Unique identifier for the memory entry (usually a UUID).
     pub id: String,
+    /// The key or title associated with this memory.
     pub key: String,
+    /// The actual content or value of the memory.
     pub content: String,
+    /// Optional namespace for logical separation of memories.
     #[serde(default)]
     pub namespace: Option<String>,
+    /// The organizational category this memory belongs to.
     pub category: MemoryCategory,
+    /// ISO 8601 formatted timestamp of when the memory was created or last updated.
     pub timestamp: String,
+    /// Optional session ID if this memory is scoped to a specific interaction.
     pub session_id: Option<String>,
+    /// Optional relevance or confidence score, typically from 0.0 to 1.0.
     pub score: Option<f64>,
 }
 
-/// Memory categories for organization
+/// Categories used to organize and filter memories by their nature and lifecycle.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryCategory {
-    /// Long-term facts, preferences, decisions
+    /// Long-term foundational facts, user preferences, and permanent decisions.
     Core,
-    /// Daily session logs
+    /// Temporal logs reflecting daily activities or ephemeral state.
     Daily,
-    /// Conversation context
+    /// Contextual information derived from and relevant to active conversations.
     Conversation,
-    /// User-defined custom category
+    /// A user-defined or system-defined custom category.
     Custom(String),
 }
 
@@ -40,13 +54,22 @@ impl std::fmt::Display for MemoryCategory {
     }
 }
 
-/// Core memory trait — implement for any persistence backend
+/// The core trait for memory storage and retrieval.
+///
+/// Any persistence backend (SQLite, Postgres, Vector DB, etc.) should implement
+/// this trait to be used within the OpenHuman ecosystem.
 #[async_trait]
 pub trait Memory: Send + Sync {
-    /// Backend name
+    /// Returns the name of the memory backend (e.g., "sqlite", "vector").
     fn name(&self) -> &str;
 
-    /// Store a memory entry, optionally scoped to a session
+    /// Stores a new memory entry or updates an existing one.
+    ///
+    /// # Arguments
+    /// * `key` - The lookup key for the memory.
+    /// * `content` - The actual data to store.
+    /// * `category` - The organizational category.
+    /// * `session_id` - Optional session scope.
     async fn store(
         &self,
         key: &str,
@@ -55,7 +78,12 @@ pub trait Memory: Send + Sync {
         session_id: Option<&str>,
     ) -> anyhow::Result<()>;
 
-    /// Recall memories matching a query (keyword search), optionally scoped to a session
+    /// Recalls memories matching a query string using keyword or semantic search.
+    ///
+    /// # Arguments
+    /// * `query` - The search term or natural language query.
+    /// * `limit` - Maximum number of results to return.
+    /// * `session_id` - Optional filter to scope search to a specific session.
     async fn recall(
         &self,
         query: &str,
@@ -63,23 +91,25 @@ pub trait Memory: Send + Sync {
         session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>>;
 
-    /// Get a specific memory by key
+    /// Retrieves a specific memory entry by its exact key.
     async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>>;
 
-    /// List all memory keys, optionally filtered by category and/or session
+    /// Lists memory entries, optionally filtered by category and/or session.
     async fn list(
         &self,
         category: Option<&MemoryCategory>,
         session_id: Option<&str>,
     ) -> anyhow::Result<Vec<MemoryEntry>>;
 
-    /// Remove a memory by key
+    /// Deletes a memory entry associated with the given key.
+    ///
+    /// Returns `Ok(true)` if the entry was found and deleted, `Ok(false)` if not found.
     async fn forget(&self, key: &str) -> anyhow::Result<bool>;
 
-    /// Count total memories
+    /// Returns the total count of all memory entries in the backend.
     async fn count(&self) -> anyhow::Result<usize>;
 
-    /// Health check
+    /// Performs a health check on the underlying storage system.
     async fn health_check(&self) -> bool;
 }
 

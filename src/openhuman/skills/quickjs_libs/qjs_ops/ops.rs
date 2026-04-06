@@ -7,7 +7,10 @@ use std::sync::Arc;
 use super::types::SkillContext as SC;
 use crate::openhuman::skills::quickjs_libs::storage::IdbStorage;
 
-/// Register all ops on `globalThis.__ops`.
+/// Registers all native Rust operations onto the JavaScript `globalThis.__ops` object.
+///
+/// This function initializes all operation sub-categories (core, net, storage, state, webhook)
+/// and binds them to the provided QuickJS context.
 pub fn register_ops(
     ctx: &Ctx<'_>,
     storage: IdbStorage,

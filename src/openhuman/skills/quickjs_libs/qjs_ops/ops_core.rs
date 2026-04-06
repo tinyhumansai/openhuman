@@ -1,4 +1,4 @@
-//! Core ops: console, crypto, performance, platform, timers.
+//! Core native operations: console, crypto, performance, platform, and timers.
 
 use parking_lot::RwLock;
 use rquickjs::{Ctx, Function, Object};
@@ -7,15 +7,17 @@ use std::time::{Duration, Instant};
 
 use super::types::{TimerEntry, TimerState, ALLOWED_ENV_VARS};
 
-/// Read the session JWT from the on-disk credentials store.
+/// Reads the session JWT from the on-disk credentials store.
 ///
-/// Returns `None` on any failure so the caller can fall back to env vars.
+/// This checks the standard OpenHuman configuration directory and attempts
+/// to retrieve the active session token. Returns `None` on any failure.
 fn token_from_credentials_store() -> Option<String> {
     use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
 
     let home = directories::UserDirs::new()?.home_dir().to_path_buf();
     let default_dir = home.join(".openhuman");
 
+    // Resolve the workspace directory
     let state_dir = match std::env::var("OPENHUMAN_WORKSPACE") {
         Ok(ws) if !ws.is_empty() => {
             let ws_path = std::path::PathBuf::from(&ws);
@@ -37,13 +39,16 @@ fn token_from_credentials_store() -> Option<String> {
     profile.token.filter(|t| !t.trim().is_empty())
 }
 
+/// Registers core operations (console, crypto, performance, platform, timers)
+/// onto the provided JavaScript object.
 pub fn register<'js>(
     ctx: &Ctx<'js>,
     ops: &Object<'js>,
     timer_state: Arc<RwLock<TimerState>>,
 ) -> rquickjs::Result<()> {
     // ========================================================================
-    // Console (3)
+    // Console
+    // Binds JS `console.log`, `warn`, and `error` to the Rust `log` crate.
     // ========================================================================
 
     ops.set(
@@ -68,7 +73,8 @@ pub fn register<'js>(
     )?;
 
     // ========================================================================
-    // Crypto (3)
+    // Crypto
+    // Basic cryptographic utilities (random bytes, base64 encoding/decoding).
     // ========================================================================
 
     ops.set(
@@ -101,7 +107,7 @@ pub fn register<'js>(
     )?;
 
     // ========================================================================
-    // Performance (1)
+    // Performance
     // ========================================================================
 
     ops.set(
@@ -116,7 +122,8 @@ pub fn register<'js>(
     )?;
 
     // ========================================================================
-    // Platform (2)
+    // Platform
+    // Exposure of OS type and safe environment variables.
     // ========================================================================
 
     ops.set(
@@ -155,7 +162,8 @@ pub fn register<'js>(
     )?;
 
     // ========================================================================
-    // Timers (2)
+    // Timers
+    // Native implementations for setTimeout and setInterval.
     // ========================================================================
 
     {

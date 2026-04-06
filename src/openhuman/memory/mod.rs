@@ -1,3 +1,10 @@
+//! Memory system for OpenHuman.
+//!
+//! This module provides the core abstractions and implementations for the memory system,
+//! including semantic search, ingestion pipelines, document management, and knowledge graph
+//! operations. It integrates vector search, keyword search, and relational data to provide
+//! a unified memory interface for AI agents.
+
 pub mod chunker;
 pub mod embeddings;
 pub mod ingestion;

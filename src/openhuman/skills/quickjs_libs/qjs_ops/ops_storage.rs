@@ -1,10 +1,11 @@
-//! Storage ops: IndexedDB, DB bridge, Store bridge.
+//! Storage native operations: IndexedDB emulation and SQL database/key-value bridges.
 
 use rquickjs::{Ctx, Function, Object};
 
 use super::types::{js_err, SkillContext};
 use crate::openhuman::skills::quickjs_libs::storage::IdbStorage;
 
+/// Registers storage operations (IndexedDB, DB bridge, Store bridge) onto the provided JavaScript object.
 pub fn register<'js>(
     ctx: &Ctx<'js>,
     ops: &Object<'js>,
@@ -12,7 +13,8 @@ pub fn register<'js>(
     skill_context: SkillContext,
 ) -> rquickjs::Result<()> {
     // ========================================================================
-    // IndexedDB (11) - all sync
+    // IndexedDB
+    // Synchronous emulation of the browser's IndexedDB API.
     // ========================================================================
 
     {
@@ -202,7 +204,8 @@ pub fn register<'js>(
     }
 
     // ========================================================================
-    // DB Bridge (5)
+    // DB Bridge
+    // Direct SQL access to a skill-dedicated SQLite database.
     // ========================================================================
 
     {
@@ -303,7 +306,8 @@ pub fn register<'js>(
     }
 
     // ========================================================================
-    // Store Bridge (4)
+    // Store Bridge
+    // High-level key-value store for skills.
     // ========================================================================
 
     {

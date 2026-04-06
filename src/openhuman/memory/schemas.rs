@@ -1,3 +1,9 @@
+//! RPC schemas and controller registration for the memory system.
+//!
+//! This module defines the metadata (schemas) for all memory-related RPC functions
+//! and registers their corresponding handlers. It serves as the bridge between
+//! the RPC system and the underlying memory operations.
+
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -19,6 +25,7 @@ use crate::rpc::RpcOutcome;
 // Public entry points
 // ---------------------------------------------------------------------------
 
+/// Returns all controller schemas for the memory system.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("init"),
@@ -48,6 +55,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     ]
 }
 
+/// Returns all registered controllers for the memory system, mapping schemas to handlers.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
         RegisteredController {
@@ -153,6 +161,7 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 // Schema definitions
 // ---------------------------------------------------------------------------
 
+/// Defines the schema for a specific memory controller function.
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
         // ----- legacy envelope-style methods -----

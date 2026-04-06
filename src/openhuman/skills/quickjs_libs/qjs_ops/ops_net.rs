@@ -1,4 +1,4 @@
-//! Network ops: fetch, WebSocket, net bridge.
+//! Network native operations: fetch and WebSockets.
 
 use parking_lot::RwLock;
 use rquickjs::{function::Async, Ctx, Function, Object};
@@ -7,11 +7,13 @@ use std::sync::{Arc, OnceLock};
 
 use super::types::{js_err, WebSocketConnection, WebSocketState};
 
-/// Shared HTTP client — built once, reused across all fetch calls.
+/// Shared HTTP client — built once and reused across all fetch calls within the application.
+///
 /// Using a shared client enables connection pooling, persistent TLS sessions,
-/// and prevents per-request TLS handshake overhead that can cause hangs.
+/// and prevents per-request TLS handshake overhead that can cause hangs or performance degradation.
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+/// Returns a reference to the global shared HTTP client, initializing it if necessary.
 fn get_http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -24,13 +26,15 @@ fn get_http_client() -> &'static reqwest::Client {
     })
 }
 
+/// Registers network operations (fetch, WebSocket) onto the provided JavaScript object.
 pub fn register<'js>(
     ctx: &Ctx<'js>,
     ops: &Object<'js>,
     ws_state: Arc<RwLock<WebSocketState>>,
 ) -> rquickjs::Result<()> {
     // ========================================================================
-    // Fetch (1) - ASYNC
+    // Fetch
+    // Asynchronous implementation of the browser `fetch` API.
     // ========================================================================
 
     ops.set(
@@ -133,7 +137,8 @@ pub fn register<'js>(
     )?;
 
     // ========================================================================
-    // WebSocket (4) - placeholders
+    // WebSocket (Placeholders)
+    // Implementation of basic WebSocket management.
     // ========================================================================
 
     {

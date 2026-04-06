@@ -1,3 +1,10 @@
+//! RPC operations for the memory system.
+//!
+//! This module implements the handlers for memory-related RPC requests, including
+//! document management, semantic queries, key-value storage, and knowledge graph
+//! operations. It manages the active memory client and provides utility functions
+//! for formatting and filtering memory results.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -23,10 +30,12 @@ use serde_json::{json, Value};
 
 static MEMORY_CLIENT_STATE: OnceLock<Mutex<Option<MemoryClientRef>>> = OnceLock::new();
 
+/// Returns the static mutex for the active memory client state.
 fn memory_client_state() -> &'static Mutex<Option<MemoryClientRef>> {
     MEMORY_CLIENT_STATE.get_or_init(|| Mutex::new(None))
 }
 
+/// Locks the memory client state and returns the guard.
 fn lock_memory_client_state(
 ) -> Result<std::sync::MutexGuard<'static, Option<MemoryClientRef>>, String> {
     memory_client_state()
@@ -34,10 +43,12 @@ fn lock_memory_client_state(
         .map_err(|_| "memory client state lock poisoned".to_string())
 }
 
+/// Generates a unique request ID for memory operations.
 fn memory_request_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// Converts an iterator of memory counts into a BTreeMap.
 fn memory_counts(
     entries: impl IntoIterator<Item = (&'static str, usize)>,
 ) -> BTreeMap<String, usize> {
@@ -47,6 +58,7 @@ fn memory_counts(
         .collect()
 }
 
+/// Wraps data in an RPC API envelope.
 fn envelope<T: Serialize>(
     data: T,
     counts: Option<BTreeMap<String, usize>>,
@@ -68,6 +80,7 @@ fn envelope<T: Serialize>(
     )
 }
 
+/// Wraps an error in an RPC API envelope.
 fn error_envelope<T: Serialize>(code: &str, message: String) -> RpcOutcome<ApiEnvelope<T>> {
     RpcOutcome::new(
         ApiEnvelope {
@@ -89,6 +102,7 @@ fn error_envelope<T: Serialize>(code: &str, message: String) -> RpcOutcome<ApiEn
     )
 }
 
+/// Formats a floating-point timestamp as an RFC3339 string.
 fn timestamp_to_rfc3339(timestamp: f64) -> Option<String> {
     if !timestamp.is_finite() || timestamp < 0.0 {
         return None;
@@ -102,6 +116,7 @@ fn timestamp_to_rfc3339(timestamp: f64) -> Option<String> {
         .map(|value| value.to_rfc3339())
 }
 
+/// Maps a memory item kind to a human-readable label.
 fn memory_kind_label(kind: &MemoryItemKind) -> &'static str {
     match kind {
         MemoryItemKind::Document => "document",
@@ -111,6 +126,7 @@ fn memory_kind_label(kind: &MemoryItemKind) -> &'static str {
     }
 }
 
+/// Generates a unique string identity for a graph relation.
 fn relation_identity(relation: &GraphRelationRecord) -> String {
     format!(
         "{}|{}|{}|{}",
@@ -121,6 +137,7 @@ fn relation_identity(relation: &GraphRelationRecord) -> String {
     )
 }
 
+/// Formats relation metadata into a JSON Value.
 fn relation_metadata(relation: &GraphRelationRecord) -> Value {
     json!({
         "namespace": relation.namespace.clone(),
@@ -132,6 +149,7 @@ fn relation_metadata(relation: &GraphRelationRecord) -> Value {
     })
 }
 
+/// Formats chunk metadata into a JSON Value.
 fn chunk_metadata(hit: &NamespaceMemoryHit) -> Value {
     json!({
         "kind": memory_kind_label(&hit.kind),
@@ -151,6 +169,7 @@ fn chunk_metadata(hit: &NamespaceMemoryHit) -> Value {
     })
 }
 
+/// Extracts an entity type for a specific role (subject/object) from relation attributes.
 fn extract_entity_type(attrs: &Value, role: &str) -> Option<String> {
     attrs
         .get("entity_types")
@@ -160,25 +179,30 @@ fn extract_entity_type(attrs: &Value, role: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Transforms memory hits into a retrieval context with deduplicated entities and relations.
 pub(crate) fn build_retrieval_context(hits: &[NamespaceMemoryHit]) -> MemoryRetrievalContext {
     let mut entity_types: BTreeMap<String, Option<String>> = BTreeMap::new();
     let mut relations = BTreeMap::new();
     let chunks = hits
         .iter()
         .map(|hit| {
+            // Extract supporting relations from each hit to populate entities and relations
             for relation in &hit.supporting_relations {
                 if !relation.subject.trim().is_empty() {
                     let entry = entity_types.entry(relation.subject.clone()).or_insert(None);
+                    // Use the first non-empty entity type found for this subject
                     if entry.is_none() {
                         *entry = extract_entity_type(&relation.attrs, "subject");
                     }
                 }
                 if !relation.object.trim().is_empty() {
                     let entry = entity_types.entry(relation.object.clone()).or_insert(None);
+                    // Use the first non-empty entity type found for this object
                     if entry.is_none() {
                         *entry = extract_entity_type(&relation.attrs, "object");
                     }
                 }
+                // Deduplicate relations based on their unique identity
                 relations
                     .entry(relation_identity(relation))
                     .or_insert_with(|| MemoryRetrievalRelation {
@@ -219,6 +243,7 @@ pub(crate) fn build_retrieval_context(hits: &[NamespaceMemoryHit]) -> MemoryRetr
     }
 }
 
+/// Formats memory hits into a natural-language context message for LLM consumption.
 fn format_llm_context_message(query: Option<&str>, hits: &[NamespaceMemoryHit]) -> Option<String> {
     if hits.is_empty() {
         return None;
@@ -245,6 +270,7 @@ fn format_llm_context_message(query: Option<&str>, hits: &[NamespaceMemoryHit]) 
         };
         parts.push(summary);
 
+        // Include typed relations if present for better LLM reasoning
         if !hit.supporting_relations.is_empty() {
             let relations = hit
                 .supporting_relations
@@ -274,6 +300,7 @@ fn format_llm_context_message(query: Option<&str>, hits: &[NamespaceMemoryHit]) 
     Some(parts.join("\n\n"))
 }
 
+/// Filters memory hits to only include those matching specific document IDs.
 fn filter_hits_by_document_ids(
     hits: Vec<NamespaceMemoryHit>,
     document_ids: Option<&[String]>,
@@ -292,6 +319,7 @@ fn filter_hits_by_document_ids(
         .collect()
 }
 
+/// Returns the retrieval context if `include_references` is true and context is not empty.
 fn maybe_retrieval_context(
     include_references: bool,
     context: MemoryRetrievalContext,
@@ -305,6 +333,7 @@ fn maybe_retrieval_context(
     Some(context)
 }
 
+/// Returns the current workspace directory from configuration.
 async fn current_workspace_dir() -> Result<PathBuf, String> {
     Config::load_or_init()
         .await
@@ -312,6 +341,7 @@ async fn current_workspace_dir() -> Result<PathBuf, String> {
         .map_err(|e| format!("load config: {e}"))
 }
 
+/// Returns the active memory client, initializing it if necessary.
 async fn active_memory_client() -> Result<MemoryClientRef, String> {
     if let Some(client) = lock_memory_client_state()?.clone() {
         return Ok(client);
@@ -321,6 +351,7 @@ async fn active_memory_client() -> Result<MemoryClientRef, String> {
     Ok(Arc::new(MemoryClient::from_workspace_dir(workspace_dir)?))
 }
 
+/// Validates that a relative path does not escape the memory directory.
 fn validate_memory_relative_path(path: &str) -> Result<(), String> {
     let candidate = Path::new(path);
     if candidate.as_os_str().is_empty() {
@@ -329,6 +360,7 @@ fn validate_memory_relative_path(path: &str) -> Result<(), String> {
     if candidate.is_absolute() {
         return Err("absolute paths are not allowed".to_string());
     }
+    // Prevent traversal using .. components
     for component in candidate.components() {
         match component {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
@@ -340,6 +372,7 @@ fn validate_memory_relative_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Resolves the canonical path to the memory directory within the workspace.
 async fn resolve_memory_root() -> Result<PathBuf, String> {
     let workspace_dir = current_workspace_dir().await?;
     let memory_root = workspace_dir.join("memory");
@@ -350,6 +383,7 @@ async fn resolve_memory_root() -> Result<PathBuf, String> {
         .map_err(|e| format!("resolve memory dir {}: {e}", memory_root.display()))
 }
 
+/// Resolves and canonicalizes an existing memory path, ensuring it stays within the workspace.
 async fn resolve_existing_memory_path(relative_path: &str) -> Result<PathBuf, String> {
     validate_memory_relative_path(relative_path)?;
     let workspace_dir = current_workspace_dir().await?;
@@ -366,6 +400,7 @@ async fn resolve_existing_memory_path(relative_path: &str) -> Result<PathBuf, St
     Ok(resolved)
 }
 
+/// Resolves a path for writing, creating parent directories and ensuring it stays within the workspace.
 async fn resolve_writable_memory_path(relative_path: &str) -> Result<PathBuf, String> {
     validate_memory_relative_path(relative_path)?;
     let workspace_dir = current_workspace_dir().await?;
@@ -388,6 +423,7 @@ async fn resolve_writable_memory_path(relative_path: &str) -> Result<PathBuf, St
         .file_name()
         .ok_or_else(|| "memory path must include a file name".to_string())?;
     let resolved = resolved_parent.join(file_name);
+    // Security check: refuse to write through symlinks to prevent hijacking
     if let Ok(metadata) = std::fs::symlink_metadata(&resolved) {
         if metadata.file_type().is_symlink() {
             return Err(format!(
@@ -596,6 +632,7 @@ fn default_category() -> String {
     "core".to_string()
 }
 
+/// Lists all namespaces in the memory system.
 pub async fn namespace_list() -> Result<RpcOutcome<Vec<String>>, String> {
     let client = active_memory_client().await?;
     let namespaces = client.list_namespaces().await?;
@@ -605,6 +642,7 @@ pub async fn namespace_list() -> Result<RpcOutcome<Vec<String>>, String> {
     ))
 }
 
+/// Upserts a document into a namespace.
 pub async fn doc_put(params: PutDocParams) -> Result<RpcOutcome<PutDocResult>, String> {
     let client = active_memory_client().await?;
     let document_id = client
@@ -628,6 +666,7 @@ pub async fn doc_put(params: PutDocParams) -> Result<RpcOutcome<PutDocResult>, S
     ))
 }
 
+/// Ingests a document, performing chunking and embedding.
 pub async fn doc_ingest(
     params: IngestDocParams,
 ) -> Result<RpcOutcome<MemoryIngestionResult>, String> {
@@ -657,6 +696,7 @@ pub async fn doc_ingest(
     Ok(RpcOutcome::single_log(result, &msg))
 }
 
+/// Lists documents, optionally filtered by namespace.
 pub async fn doc_list(
     params: Option<NamespaceOnlyParams>,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -667,6 +707,7 @@ pub async fn doc_list(
     Ok(RpcOutcome::single_log(docs, "memory documents listed"))
 }
 
+/// Deletes a document from a namespace.
 pub async fn doc_delete(params: DeleteDocParams) -> Result<RpcOutcome<serde_json::Value>, String> {
     let client = active_memory_client().await?;
     let result = client
@@ -675,6 +716,7 @@ pub async fn doc_delete(params: DeleteDocParams) -> Result<RpcOutcome<serde_json
     Ok(RpcOutcome::single_log(result, "memory document deleted"))
 }
 
+/// Clears all data within a namespace.
 pub async fn clear_namespace(
     params: ClearNamespaceParams,
 ) -> Result<RpcOutcome<ClearNamespaceResult>, String> {
@@ -694,6 +736,7 @@ pub async fn clear_namespace(
     ))
 }
 
+/// Queries a namespace for contextual information based on a natural language string.
 pub async fn context_query(params: QueryNamespaceParams) -> Result<RpcOutcome<String>, String> {
     let client = active_memory_client().await?;
     let result = client
@@ -702,6 +745,7 @@ pub async fn context_query(params: QueryNamespaceParams) -> Result<RpcOutcome<St
     Ok(RpcOutcome::single_log(result, "memory context queried"))
 }
 
+/// Recalls contextual information from a namespace without a specific query.
 pub async fn context_recall(
     params: RecallNamespaceParams,
 ) -> Result<RpcOutcome<Option<String>>, String> {
@@ -712,6 +756,7 @@ pub async fn context_recall(
     Ok(RpcOutcome::single_log(result, "memory context recalled"))
 }
 
+/// Sets a key-value pair in the memory store.
 pub async fn kv_set(params: KvSetParams) -> Result<RpcOutcome<bool>, String> {
     let client = active_memory_client().await?;
     client
@@ -720,6 +765,7 @@ pub async fn kv_set(params: KvSetParams) -> Result<RpcOutcome<bool>, String> {
     Ok(RpcOutcome::single_log(true, "memory kv set"))
 }
 
+/// Retrieves a value by key from the memory store.
 pub async fn kv_get(
     params: KvGetDeleteParams,
 ) -> Result<RpcOutcome<Option<serde_json::Value>>, String> {
@@ -730,6 +776,7 @@ pub async fn kv_get(
     Ok(RpcOutcome::single_log(value, "memory kv get"))
 }
 
+/// Deletes a key-value pair from the memory store.
 pub async fn kv_delete(params: KvGetDeleteParams) -> Result<RpcOutcome<bool>, String> {
     let client = active_memory_client().await?;
     let deleted = client
@@ -738,6 +785,7 @@ pub async fn kv_delete(params: KvGetDeleteParams) -> Result<RpcOutcome<bool>, St
     Ok(RpcOutcome::single_log(deleted, "memory kv delete"))
 }
 
+/// Lists all key-value entries in a namespace.
 pub async fn kv_list_namespace(
     params: NamespaceOnlyParams,
 ) -> Result<RpcOutcome<Vec<serde_json::Value>>, String> {
@@ -746,6 +794,7 @@ pub async fn kv_list_namespace(
     Ok(RpcOutcome::single_log(rows, "memory namespace kv listed"))
 }
 
+/// Upserts a relation triple in the knowledge graph.
 pub async fn graph_upsert(params: GraphUpsertParams) -> Result<RpcOutcome<bool>, String> {
     let client = active_memory_client().await?;
     client
@@ -760,6 +809,7 @@ pub async fn graph_upsert(params: GraphUpsertParams) -> Result<RpcOutcome<bool>,
     Ok(RpcOutcome::single_log(true, "memory graph upserted"))
 }
 
+/// Queries relations from the knowledge graph.
 pub async fn graph_query(
     params: GraphQueryParams,
 ) -> Result<RpcOutcome<Vec<serde_json::Value>>, String> {
@@ -800,6 +850,7 @@ pub async fn memory_init(
     ))
 }
 
+/// Lists documents stored in memory, optionally filtered by namespace.
 pub async fn memory_list_documents(
     request: ListDocumentsRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ListDocumentsResponse>>, String> {
@@ -822,6 +873,7 @@ pub async fn memory_list_documents(
     ))
 }
 
+/// Lists all namespaces that contain memory documents.
 pub async fn memory_list_namespaces(
     _request: EmptyRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ListNamespacesResponse>>, String> {
@@ -835,6 +887,7 @@ pub async fn memory_list_namespaces(
     ))
 }
 
+/// Deletes a specific document from a namespace.
 pub async fn memory_delete_document(
     request: DeleteDocumentRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<DeleteDocumentResponse>>, String> {
@@ -860,6 +913,7 @@ pub async fn memory_delete_document(
     ))
 }
 
+/// Performs a semantic query against a namespace, returning a retrieval context.
 pub async fn memory_query_namespace(
     request: QueryNamespaceRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<QueryNamespaceResponse>>, String> {
@@ -898,6 +952,7 @@ pub async fn memory_query_namespace(
     }
 }
 
+/// Recalls contextual data from a namespace without a specific query.
 pub async fn memory_recall_context(
     request: RecallContextRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<RecallContextResponse>>, String> {
@@ -932,6 +987,7 @@ pub async fn memory_recall_context(
     }
 }
 
+/// Recalls memory items from a namespace with optional retention filtering.
 pub async fn memory_recall_memories(
     request: RecallMemoriesRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<RecallMemoriesResponse>>, String> {
@@ -969,6 +1025,7 @@ pub async fn memory_recall_memories(
     }
 }
 
+/// Lists files in a memory directory.
 pub async fn ai_list_memory_files(
     request: ListMemoryFilesRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ListMemoryFilesResponse>>, String> {
@@ -1004,6 +1061,7 @@ pub async fn ai_list_memory_files(
     ))
 }
 
+/// Reads the contents of a memory file.
 pub async fn ai_read_memory_file(
     request: ReadMemoryFileRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<ReadMemoryFileResponse>>, String> {
@@ -1020,6 +1078,7 @@ pub async fn ai_read_memory_file(
     ))
 }
 
+/// Writes content to a memory file.
 pub async fn ai_write_memory_file(
     request: WriteMemoryFileRequest,
 ) -> Result<RpcOutcome<ApiEnvelope<WriteMemoryFileResponse>>, String> {

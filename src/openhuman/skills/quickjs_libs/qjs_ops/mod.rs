@@ -1,11 +1,13 @@
-//! QuickJS native ops registered on `globalThis.__ops`.
+//! QuickJS native operations registered on `globalThis.__ops`.
 //!
-//! Split by category for readability:
-//! - `types`       — shared state structs, constants, helpers
-//! - `ops_core`    — console, crypto, performance, platform, timers
-//! - `ops_net`     — fetch, WebSocket, net bridge
-//! - `ops_storage` — IndexedDB, DB bridge, Store bridge
-//! - `ops_state`   — published state, filesystem data
+//! This module acts as the hub for all native Rust functions exposed to the
+//! JavaScript environment. Operations are categorized into submodules:
+//! - `types`       — shared state structs, constants, and error helpers.
+//! - `ops_core`    — fundamental APIs like console, crypto, and timers.
+//! - `ops_net`     — networking APIs like fetch and WebSockets.
+//! - `ops_storage` — persistence APIs like IndexedDB and SQL bridges.
+//! - `ops_state`   — skill-specific state and memory bridge.
+//! - `ops_webhook` — webhook registration and management.
 
 pub mod ops;
 mod ops_core;

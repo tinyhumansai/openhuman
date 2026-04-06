@@ -1,18 +1,23 @@
-//! Webhook ops: register/unregister/list tunnel-to-skill mappings.
+//! Webhook native operations: register, unregister, and list tunnel-to-skill mappings.
 //!
 //! All operations are scoped to the calling skill — the `skill_id` is baked
-//! into the closure context at startup and cannot be overridden from JS.
+//! into the closure context at startup and cannot be overridden from JavaScript.
 
 use rquickjs::{Ctx, Function, Object};
 
 use super::types::{js_err, SkillContext};
 
+/// Registers webhook operations onto the provided JavaScript object.
 pub fn register<'js>(
     ctx: &Ctx<'js>,
     ops: &Object<'js>,
     skill_context: SkillContext,
 ) -> rquickjs::Result<()> {
-    // webhook_register(tunnel_uuid, tunnel_name?, backend_tunnel_id?)
+    // ========================================================================
+    // Webhook Registration
+    // Registers a tunnel UUID to be routed to this skill.
+    // ========================================================================
+
     {
         let sc = skill_context.clone();
         ops.set(
@@ -41,7 +46,11 @@ pub fn register<'js>(
         )?;
     }
 
-    // webhook_unregister(tunnel_uuid)
+    // ========================================================================
+    // Webhook Unregistration
+    // Removes a tunnel registration for this skill.
+    // ========================================================================
+
     {
         let sc = skill_context.clone();
         ops.set(
@@ -62,7 +71,11 @@ pub fn register<'js>(
         )?;
     }
 
-    // webhook_list() -> JSON array of this skill's tunnel registrations
+    // ========================================================================
+    // Webhook Listing
+    // Returns a JSON array of all tunnel registrations for this skill.
+    // ========================================================================
+
     {
         let sc = skill_context;
         ops.set(

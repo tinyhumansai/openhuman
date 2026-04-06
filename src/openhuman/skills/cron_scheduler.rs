@@ -1,12 +1,12 @@
-//! CronScheduler — global Tokio-based cron scheduler.
+//! `CronScheduler` — global Tokio-based cron scheduler.
 //!
-//! Manages cron schedules registered by skills. Runs a background tick loop
-//! (every 30 seconds) that checks which schedules should fire and sends
-//! `CronTrigger` messages to the appropriate skills via the `SkillRegistry`.
+//! Manages scheduled tasks (cron jobs) registered by skills. It runs a background
+//! tick loop that evaluates all active schedules and triggers the corresponding
+//! skills when their schedules are due.
 //!
 //! Cron expressions use 6 fields (seconds included):
-//!   sec min hour day-of-month month day-of-week
-//! Example: "0 */5 * * * *" = every 5 minutes at second 0
+//! `sec min hour day-of-month month day-of-week`
+//! Example: `"0 */5 * * * *"` triggers every 5 minutes at second 0.
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -19,25 +19,30 @@ use tokio::sync::watch;
 
 use crate::openhuman::skills::skill_registry::SkillRegistry;
 
-/// Internal entry for a registered cron schedule.
+/// Represents a single registered cron schedule.
 struct CronEntry {
+    /// The parsed cron schedule.
     schedule: Schedule,
+    /// The unique identifier of the skill that owns this schedule.
     skill_id: String,
+    /// A skill-specific identifier for the schedule.
     schedule_id: String,
+    /// The timestamp when this schedule last fired.
     last_fired: Option<chrono::DateTime<Utc>>,
 }
 
-/// Global cron scheduler that ticks on a Tokio task.
+/// A global scheduler for managing and triggering cron-based skill events.
 pub struct CronScheduler {
-    /// All registered schedules, keyed by "skill_id:schedule_id".
+    /// Active cron schedules, keyed by a composite of skill ID and schedule ID.
     entries: Arc<RwLock<HashMap<String, CronEntry>>>,
-    /// Reference to the skill registry for sending cron triggers.
+    /// A reference to the global skill registry, used to dispatch triggers.
     registry: Arc<RwLock<Option<Arc<SkillRegistry>>>>,
-    /// Watch channel to signal the tick loop to stop.
+    /// A channel used to signal the background tick loop to terminate.
     stop_tx: watch::Sender<bool>,
 }
 
 impl CronScheduler {
+    /// Creates a new `CronScheduler` instance.
     pub fn new() -> Self {
         let (stop_tx, _) = watch::channel(false);
         Self {
@@ -47,12 +52,17 @@ impl CronScheduler {
         }
     }
 
-    /// Set the skill registry (called after engine initialization).
+    /// Sets the skill registry reference for the scheduler.
+    ///
+    /// This is typically called during system initialization after the registry has been created.
     pub fn set_registry(&self, registry: Arc<SkillRegistry>) {
         *self.registry.write() = Some(registry);
     }
 
-    /// Register a cron schedule for a skill.
+    /// Registers a new cron schedule for a specific skill.
+    ///
+    /// # Errors
+    /// Returns an error if the provided `cron_expr` is not a valid cron expression.
     #[allow(dead_code)]
     pub fn register(
         &self,
@@ -83,7 +93,7 @@ impl CronScheduler {
         Ok(())
     }
 
-    /// Unregister a specific schedule.
+    /// Unregisters a specific cron schedule for a skill.
     #[allow(dead_code)]
     pub fn unregister(&self, skill_id: &str, schedule_id: &str) {
         let key = format!("{}:{}", skill_id, schedule_id);
@@ -95,15 +105,19 @@ impl CronScheduler {
         );
     }
 
-    /// Unregister all schedules for a skill (called when skill stops).
+    /// Unregisters all cron schedules associated with a specific skill.
+    ///
+    /// This is typically called when a skill is stopped or uninstalled.
     pub fn unregister_all_for_skill(&self, skill_id: &str) {
         let prefix = format!("{}:", skill_id);
         self.entries.write().retain(|k, _| !k.starts_with(&prefix));
         log::info!("[cron] Unregistered all schedules for skill '{}'", skill_id);
     }
 
-    /// List all registered schedules for a skill.
-    /// Returns pairs of (schedule_id, next_fire_time_rfc3339).
+    /// Lists all registered schedules for a specific skill.
+    ///
+    /// Returns a vector of tuples containing the schedule ID and the next expected fire time
+    /// formatted as an RFC3339 string.
     #[allow(dead_code)]
     pub fn list_schedules(&self, skill_id: &str) -> Vec<(String, String)> {
         let entries = self.entries.read();
@@ -123,10 +137,10 @@ impl CronScheduler {
             .collect()
     }
 
-    /// Start the background tick loop. Returns the Tokio task handle.
+    /// Starts the background tick loop as a Tokio task.
     ///
-    /// Must be called from within a Tokio runtime context (e.g. inside
-    /// `tauri::async_runtime::spawn`).
+    /// The loop ticks every 5 seconds, evaluating all schedules and firing those that are due.
+    /// Returns the handle to the spawned task.
     pub fn start(&self) -> tokio::task::JoinHandle<()> {
         let entries = self.entries.clone();
         let registry = self.registry.clone();
@@ -150,13 +164,16 @@ impl CronScheduler {
         })
     }
 
-    /// Stop the scheduler's tick loop.
+    /// Signals the background tick loop to stop.
     #[allow(dead_code)]
     pub fn stop(&self) {
         let _ = self.stop_tx.send(true);
     }
 
-    /// Check all registered schedules and fire any that are due.
+    /// Internal tick logic: evaluates all registered schedules against the current time.
+    ///
+    /// If a schedule is due, it adds it to a list of triggers and dispatches them
+    /// via the skill registry.
     async fn tick(
         entries: &Arc<RwLock<HashMap<String, CronEntry>>>,
         registry: &Option<Arc<SkillRegistry>>,
@@ -167,6 +184,8 @@ impl CronScheduler {
         {
             let mut entries = entries.write();
             for entry in entries.values_mut() {
+                // Determine if the schedule should fire based on the last fire time
+                // or a lookback window for new schedules.
                 let should_fire = if let Some(last) = entry.last_fired {
                     // Check if there's a fire time between last_fired and now
                     entry
@@ -176,7 +195,7 @@ impl CronScheduler {
                         .map(|next| next <= now)
                         .unwrap_or(false)
                 } else {
-                    // First tick: check if there's a fire time in the last 30s window
+                    // First tick for this entry: check if there's a fire time in the last 30s window
                     let window_start = now - chrono::Duration::seconds(30);
                     entry
                         .schedule
@@ -193,6 +212,7 @@ impl CronScheduler {
             }
         }
 
+        // Dispatch triggers to the registry
         if let Some(registry) = registry {
             for (skill_id, schedule_id) in to_fire {
                 log::info!("[cron] Firing '{}' for skill '{}'", schedule_id, skill_id);

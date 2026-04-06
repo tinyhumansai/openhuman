@@ -1,16 +1,23 @@
 //! Runtime safety utilities.
 //!
-//! Provides safe ways to execute async code in different runtime contexts,
-//! preventing the "Cannot start a runtime from within a runtime" panic.
+//! This module provides a collection of safe execution wrappers designed to
+//! prevent common asynchronous pitfalls in Rust, such as attempting to start
+//! multiple Tokio runtimes on the same thread or causing deadlocks when
+//! bridgeing between synchronous and asynchronous code.
 
 use std::future::Future;
 use tokio::runtime::{Handle, Runtime};
 
-/// Safely execute async code, trying to use existing runtime first.
+/// Safely executes an asynchronous future, automatically detecting the current context.
 ///
-/// This function attempts to use the current async runtime handle if available,
-/// otherwise creates a new single-threaded runtime. This prevents the common
-/// panic "Cannot start a runtime from within a runtime".
+/// If an existing Tokio runtime handle is available in the current thread, the future
+/// is spawned onto it, and the result is awaited via a synchronous channel.
+/// If no runtime is active, a new single-threaded runtime is created to execute the future.
+///
+/// This is essential for bridge functions that may be called from both sync and async contexts.
+///
+/// # Errors
+/// Returns an error string if a new runtime cannot be created or if result communication fails.
 pub fn safe_async_execute<F, R>(future: F) -> Result<R, String>
 where
     F: Future<Output = R> + Send + 'static,
@@ -29,7 +36,7 @@ where
         rx.recv()
             .map_err(|e| format!("Failed to receive async result: {}", e))
     } else {
-        // No runtime available, create a new one
+        // No runtime available, create a new one for this specific task
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -38,10 +45,15 @@ where
     }
 }
 
-/// Safely execute async code on a separate thread to avoid deadlocks.
+/// Safely executes an asynchronous future on a dedicated background thread.
 ///
-/// This is useful when calling async functions from within V8 isolates or
-/// other contexts where blocking the current thread would cause deadlocks.
+/// This is particularly useful for avoiding deadlocks when executing async logic
+/// from within contexts that block the current thread, such as certain V8 isolate
+/// operations or synchronous bridge calls.
+///
+/// # Errors
+/// Returns an error string if a runtime cannot be initialized on the new thread
+/// or if the operation exceeds the 60-second timeout.
 pub fn safe_async_execute_threaded<F, R>(future: F) -> Result<R, String>
 where
     F: Future<Output = R> + Send + 'static,
@@ -50,14 +62,14 @@ where
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
 
     std::thread::spawn(move || {
-        // Try using existing runtime first
+        // Detect if a runtime was somehow inherited or initialized on this new thread
         if let Ok(handle) = Handle::try_current() {
             let result = handle.block_on(future);
             let _ = tx.send(Ok(result));
             return;
         }
 
-        // Create new single-threaded runtime if no runtime exists
+        // Create a dedicated single-threaded runtime for this background operation
         let runtime_result = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -76,14 +88,16 @@ where
         .map_err(|e| format!("Threaded async execution timed out: {}", e))?
 }
 
-/// Check if we're currently in an async runtime context.
+/// Checks if the current thread is already executing within an active Tokio runtime.
 pub fn is_in_runtime() -> bool {
     Handle::try_current().is_ok()
 }
 
-/// Create a new single-threaded runtime safely.
+/// Attempts to create a new single-threaded Tokio runtime.
 ///
-/// Returns an error if a runtime is already active in the current thread.
+/// # Errors
+/// Returns an error if the current thread already has an active runtime,
+/// as Tokio does not support nested runtimes on the same thread.
 pub fn create_runtime() -> Result<Runtime, String> {
     if is_in_runtime() {
         return Err("Cannot create runtime: already in async context".to_string());
@@ -95,9 +109,10 @@ pub fn create_runtime() -> Result<Runtime, String> {
         .map_err(|e| format!("Failed to create runtime: {}", e))
 }
 
-/// Execute a blocking operation safely within an async context.
+/// Executes a potentially blocking synchronous operation within an asynchronous context.
 ///
-/// Uses spawn_blocking to avoid blocking the async executor.
+/// This offloads the operation to a thread pool managed by Tokio (`spawn_blocking`),
+/// preventing it from stalling the async executor.
 pub async fn safe_blocking<F, R>(f: F) -> Result<R, String>
 where
     F: FnOnce() -> R + Send + 'static,

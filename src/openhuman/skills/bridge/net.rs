@@ -1,40 +1,46 @@
 //! HTTP networking bridge for skills.
 //!
-//! Provides `http_fetch` — a synchronous HTTP client that runs on a
-//! separate OS thread to avoid conflicts with the Tokio runtime and
-//! the V8 runtime.
+//! Provides a synchronous HTTP client bridge designed for environments
+//! where the standard asynchronous `fetch` API may not be suitable,
+//! such as within certain V8 isolates or when strict synchronous
+//! execution is required.
 
 use std::collections::HashMap;
-
 use serde::Deserialize;
 
-/// Options for an HTTP fetch request (deserialized from JSON).
+/// Options for an HTTP fetch request, typically deserialized from a JSON string
+/// provided by the JavaScript runtime.
 #[derive(Default, Deserialize)]
 pub struct FetchOptions {
-    /// HTTP method (GET, POST, PUT, DELETE, PATCH, HEAD). Defaults to GET.
+    /// The HTTP method to use (e.g., "GET", "POST"). Defaults to "GET".
     pub method: Option<String>,
-    /// Request headers as key-value pairs.
+    /// A map of HTTP headers to include in the request.
     pub headers: Option<HashMap<String, String>>,
-    /// Request body string.
+    /// The raw string body of the request.
     pub body: Option<String>,
-    /// Timeout in seconds. Defaults to 30.
+    /// The request timeout in seconds. Defaults to 30.
     pub timeout: Option<u64>,
 }
 
-/// Perform a synchronous HTTP fetch on a separate OS thread.
+/// Performs a synchronous HTTP fetch operation.
 ///
-/// This spawns a new OS thread to run `reqwest::blocking` (which cannot
-/// run inside a Tokio runtime) and blocks the calling thread on a sync
-/// channel until the result is ready.
+/// This function spawns a dedicated OS thread to execute the request using `reqwest::blocking`,
+/// which ensures it doesn't block the main Tokio executor or the JavaScript event loop.
+/// It uses a synchronous channel to wait for the result from the background thread.
 ///
-/// Returns the response as a JSON string:
-/// `{"status": u16, "headers": {...}, "body": "..."}`
+/// Returns a JSON-formatted string containing the status code, headers, and body.
+///
+/// # Errors
+/// Returns an error string if the request fails, the background thread panics,
+/// or the operation times out (120 seconds hard limit).
 pub fn http_fetch(url: &str, options_json: &str) -> Result<String, String> {
     let url = url.to_string();
     let options_json = options_json.to_string();
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<Result<String, String>>(1);
 
+    // Spawn a thread because reqwest::blocking can conflict with the Tokio runtime
+    // if called directly from an async context.
     std::thread::spawn(move || {
         let result = do_fetch(&url, &options_json);
         let _ = tx.send(result);
@@ -45,7 +51,7 @@ pub fn http_fetch(url: &str, options_json: &str) -> Result<String, String> {
         .map_err(|e| format!("HTTP fetch failed: {e}"))?
 }
 
-/// Internal: perform the HTTP request using reqwest::blocking.
+/// Internal implementation of the HTTP request using the `reqwest::blocking` client.
 fn do_fetch(url: &str, options_json: &str) -> Result<String, String> {
     let options: FetchOptions = serde_json::from_str(options_json).unwrap_or_default();
 
@@ -76,8 +82,7 @@ fn do_fetch(url: &str, options_json: &str) -> Result<String, String> {
     }
 
     let resp = req.send().map_err(|e| {
-        // Walk the full error chain so the caller sees the root cause
-        // (TLS, DNS, timeout, etc.) not just "error sending request for url".
+        // Walk the full error chain to provide detailed diagnostics for TLS, DNS, or network issues.
         let mut msg = format!("HTTP request failed: {e}");
         let mut source = std::error::Error::source(&e);
         while let Some(cause) = source {
