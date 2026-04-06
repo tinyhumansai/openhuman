@@ -642,6 +642,12 @@ fn handle_sio_event(
                 handle_webhook_request(&shared, data, &tx).await;
             });
         }
+        // Inbound channel message (Telegram, Discord, etc.) — run agent and reply
+        "channel:message" => {
+            tokio::spawn(async move {
+                handle_channel_inbound_message(data).await;
+            });
+        }
         _ => {
             // Forward to skills (desktop only) and frontend
             {
@@ -1009,6 +1015,174 @@ async fn handle_webhook_request(
         "[socket-mgr] webhook:response emitted (status={})",
         response.status_code,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Channel inbound message → agent loop → reply
+// ---------------------------------------------------------------------------
+
+/// Handle an inbound message from a channel (Telegram, Discord, etc.).
+///
+/// Runs the agent inference loop via `web::start_chat` and sends the response
+/// back to the originating channel via the REST API.
+async fn handle_channel_inbound_message(data: serde_json::Value) {
+    let channel = match data.get("channel").and_then(|v| v.as_str()) {
+        Some(c) => c.to_string(),
+        None => {
+            log::warn!("[channel-inbound] channel:message missing 'channel' field");
+            return;
+        }
+    };
+    let message = match data.get("message").and_then(|v| v.as_str()) {
+        Some(m) if !m.trim().is_empty() => m.trim().to_string(),
+        _ => {
+            log::debug!("[channel-inbound] channel:message empty or missing 'message'");
+            return;
+        }
+    };
+
+    log::info!(
+        "[channel-inbound] received message from channel='{}' len={}",
+        channel,
+        message.len()
+    );
+
+    let thread_id = format!("channel:{}", channel);
+    let client_id = "inbound".to_string();
+
+    // Subscribe to web channel events BEFORE starting the chat so we don't
+    // miss the response.
+    let mut event_rx = crate::openhuman::channels::providers::web::subscribe_web_channel_events();
+
+    // Start the agent inference loop (same mechanism as the web chat).
+    let request_id = match crate::openhuman::channels::providers::web::start_chat(
+        &client_id, &thread_id, &message, None, None,
+    )
+    .await
+    {
+        Ok(rid) => {
+            log::debug!(
+                "[channel-inbound] agent started request_id={} thread={}",
+                rid,
+                thread_id
+            );
+            rid
+        }
+        Err(err) => {
+            log::error!("[channel-inbound] start_chat failed: {}", err);
+            send_channel_reply(
+                &channel,
+                &format!("Sorry, I couldn't process your message: {err}"),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Wait for the agent to finish (chat_done or chat_error matching our request_id).
+    let timeout = tokio::time::Duration::from_secs(180);
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        tokio::select! {
+            event = event_rx.recv() => {
+                match event {
+                    Ok(ev) if ev.request_id == request_id => {
+                        if ev.event == "chat_done" || ev.event == "chat:done" {
+                            let reply = ev.full_response.unwrap_or_default();
+                            if reply.trim().is_empty() {
+                                log::warn!("[channel-inbound] agent returned empty response");
+                                return;
+                            }
+                            log::info!(
+                                "[channel-inbound] agent done, replying to channel='{}' len={}",
+                                channel,
+                                reply.len()
+                            );
+                            send_channel_reply(&channel, &reply).await;
+                            return;
+                        }
+                        if ev.event == "chat_error" || ev.event == "chat:error" {
+                            let err_msg = ev.message.unwrap_or_else(|| "unknown error".to_string());
+                            log::error!("[channel-inbound] agent error: {}", err_msg);
+                            send_channel_reply(
+                                &channel,
+                                &format!("Sorry, I encountered an error: {err_msg}"),
+                            )
+                            .await;
+                            return;
+                        }
+                        // Other events (tool_call, tool_result) — continue waiting
+                    }
+                    Ok(_) => {
+                        // Event for a different request — skip
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        log::warn!("[channel-inbound] event bus lagged, skipped {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        log::error!("[channel-inbound] event bus closed unexpectedly");
+                        return;
+                    }
+                }
+            }
+            _ = tokio::time::sleep_until(deadline) => {
+                log::error!("[channel-inbound] agent timed out after {}s", timeout.as_secs());
+                send_channel_reply(&channel, "Sorry, the request timed out.").await;
+                return;
+            }
+        }
+    }
+}
+
+/// Send a text reply back to a channel via the backend REST API.
+async fn send_channel_reply(channel: &str, text: &str) {
+    let config = match crate::openhuman::config::rpc::load_config_with_timeout().await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[channel-inbound] failed to load config: {}", e);
+            return;
+        }
+    };
+
+    let api_url = crate::api::config::effective_api_url(&config.api_url);
+    let jwt = match crate::api::jwt::get_session_token(&config) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            log::error!("[channel-inbound] no session JWT — cannot reply");
+            return;
+        }
+        Err(e) => {
+            log::error!("[channel-inbound] failed to get session token: {}", e);
+            return;
+        }
+    };
+
+    let client = match crate::api::rest::BackendOAuthClient::new(&api_url) {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[channel-inbound] failed to create API client: {}", e);
+            return;
+        }
+    };
+
+    let body = json!({ "text": text });
+    match client.send_channel_message(channel, &jwt, body).await {
+        Ok(resp) => {
+            log::info!(
+                "[channel-inbound] reply sent to channel='{}' response={:?}",
+                channel,
+                resp
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "[channel-inbound] failed to send reply to channel='{}': {}",
+                channel,
+                e
+            );
+        }
+    }
 }
 
 /// Base64-encode a string (for webhook response bodies).
