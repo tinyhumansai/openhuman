@@ -23,15 +23,20 @@ use once_cell::sync::Lazy;
 #[cfg(target_os = "macos")]
 use std::io::{BufRead, BufReader, Write};
 #[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
 use std::sync::{mpsc, Mutex as StdMutex};
 #[cfg(target_os = "macos")]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 #[cfg(target_os = "macos")]
 use std::{
     fs,
     path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio},
 };
+
+#[cfg(target_os = "macos")]
+use serde_json::Value;
 
 /// Process handle + stdin writer.  Held only briefly for writes.
 #[cfg(target_os = "macos")]
@@ -56,6 +61,14 @@ static RESPONSE_RX: Lazy<StdMutex<Option<mpsc::Receiver<String>>>> =
 #[cfg(target_os = "macos")]
 static RECV_SERIALISER: Lazy<StdMutex<()>> = Lazy::new(|| StdMutex::new(()));
 
+/// Prevents concurrent Swift compiles from `ensure_helper_binary` vs background precompile.
+#[cfg(target_os = "macos")]
+static HELPER_COMPILE_LOCK: Lazy<StdMutex<()>> = Lazy::new(|| StdMutex::new(()));
+
+/// Monotonic ids for `helper_send_receive` so a late line cannot be consumed as the wrong reply.
+#[cfg(target_os = "macos")]
+static HELPER_REQ_ID: AtomicU64 = AtomicU64::new(1);
+
 /// Timeout for a single request/response round-trip with the Swift helper.
 #[cfg(target_os = "macos")]
 const HELPER_RECV_TIMEOUT: Duration = Duration::from_secs(8);
@@ -77,6 +90,15 @@ pub(super) fn helper_send_receive(
 
     ensure_helper_running()?;
 
+    let id_num = HELPER_REQ_ID.fetch_add(1, Ordering::Relaxed);
+    let id_str = id_num.to_string();
+
+    let mut req = request.clone();
+    let req_obj = req
+        .as_object_mut()
+        .ok_or_else(|| "helper request must be a JSON object".to_string())?;
+    req_obj.insert("id".to_string(), Value::String(id_str.clone()));
+
     // Write the request, holding UNIFIED_HELPER only for this brief write.
     {
         let mut guard = UNIFIED_HELPER
@@ -85,7 +107,7 @@ pub(super) fn helper_send_receive(
         let helper = guard
             .as_mut()
             .ok_or_else(|| "unified helper unavailable".to_string())?;
-        let line = request.to_string();
+        let line = req.to_string();
         helper
             .stdin
             .write_all(line.as_bytes())
@@ -94,24 +116,49 @@ pub(super) fn helper_send_receive(
             .map_err(|e| format!("failed to write to helper stdin: {e}"))?;
     } // UNIFIED_HELPER released here — fire-and-forget callers can proceed
 
-    // Read the response via the channel (bounded timeout, no mutex held on UNIFIED_HELPER).
-    let response_line = {
-        let rx_guard = RESPONSE_RX
-            .lock()
-            .map_err(|_| "response rx lock poisoned".to_string())?;
-        let rx = rx_guard
-            .as_ref()
-            .ok_or_else(|| "response channel unavailable".to_string())?;
-        rx.recv_timeout(HELPER_RECV_TIMEOUT)
-            .map_err(|e| format!("helper response timed out or channel closed: {e}"))?
-    };
+    // Read until the line matches `id` (discards stale lines after a timeout or reordering).
+    let deadline = Instant::now() + HELPER_RECV_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "helper response timed out waiting for id {id_str} (stale lines may follow)"
+            ));
+        }
+        let chunk = remaining.min(Duration::from_millis(500));
+        let response_line = {
+            let rx_guard = RESPONSE_RX
+                .lock()
+                .map_err(|_| "response rx lock poisoned".to_string())?;
+            let rx = rx_guard
+                .as_ref()
+                .ok_or_else(|| "response channel unavailable".to_string())?;
+            rx.recv_timeout(chunk)
+                .map_err(|e| format!("helper response timed out or channel closed: {e}"))?
+        };
 
-    if response_line.trim().is_empty() {
-        return Err("helper returned empty response".to_string());
+        if response_line.trim().is_empty() {
+            log::debug!(
+                "[accessibility] helper skipped empty stdout line while waiting for id {id_str}"
+            );
+            continue;
+        }
+
+        let value: Value = serde_json::from_str(response_line.trim())
+            .map_err(|e| format!("failed to parse helper response: {e}"))?;
+
+        let matches = value
+            .get("id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|rid| rid == id_str.as_str());
+        if matches {
+            return Ok(value);
+        }
+        log::debug!(
+            "[accessibility] discarding helper response with mismatched or missing id (want id={})",
+            id_str
+        );
     }
-
-    serde_json::from_str(response_line.trim())
-        .map_err(|e| format!("failed to parse helper response: {e}"))
 }
 
 /// Send a JSON request without waiting for a response.
@@ -261,6 +308,10 @@ pub fn precompile_helper_background() {}
 
 #[cfg(target_os = "macos")]
 fn ensure_helper_binary() -> Result<PathBuf, String> {
+    let _compile_guard = HELPER_COMPILE_LOCK
+        .lock()
+        .map_err(|_| "helper compile lock poisoned".to_string())?;
+
     let cache_dir = std::env::temp_dir().join("openhuman-accessibility-helper");
     fs::create_dir_all(&cache_dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
     let source_path = cache_dir.join("unified_helper.swift");
@@ -593,7 +644,8 @@ final class OverlayController {
     private var hintField: NSTextField?
     private var hideWorkItem: DispatchWorkItem?
 
-    func show(x: CGFloat, yTop: CGFloat, width: CGFloat, height: CGFloat, text: String, ttlMs: Int) {
+    func show(x: CGFloat, yTop: CGFloat, width: CGFloat, height: CGFloat, text: String, ttlMs: Int, tabHint: String) {
+        let showTabHint = !tabHint.isEmpty
         // Detect current system appearance for contrast-appropriate colors.
         let isDark: Bool = {
             if #available(macOS 10.14, *) {
@@ -613,7 +665,8 @@ final class OverlayController {
         let font = NSFont.systemFont(ofSize: 13)
         let attrs: [NSAttributedString.Key: Any] = [.font: font]
         let measured = (text as NSString).size(withAttributes: attrs)
-        let panelWidth = min(480, max(140, ceil(measured.width) + 80))  // 80: left pad + hint zone
+        let hintPad: CGFloat = showTabHint ? 80 : 16
+        let panelWidth = min(480, max(140, ceil(measured.width) + hintPad))
         let panelHeight: CGFloat = 28
 
         // Multi-monitor: find the screen containing the target or mouse cursor.
@@ -672,18 +725,18 @@ final class OverlayController {
             p.contentView = content
 
             let label = NSTextField(labelWithString: text)
-            label.frame = NSRect(x: 8, y: 5, width: panelWidth - 62, height: 18)
+            label.frame = NSRect(x: 8, y: 5, width: panelWidth - (showTabHint ? 62 : 16), height: 18)
             label.textColor = textColor
             label.font = font
             label.lineBreakMode = .byTruncatingTail
             content.addSubview(label)
 
-            // Keyboard hint: "Tab ↵" at the right edge.
-            let hint = NSTextField(labelWithString: "Tab ↵")
+            let hint = NSTextField(labelWithString: tabHint.isEmpty ? "Tab ↵" : tabHint)
             hint.frame = NSRect(x: panelWidth - 54, y: 5, width: 48, height: 18)
             hint.textColor = NSColor(white: isDark ? 0.35 : 0.65, alpha: 1.0)
             hint.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
             hint.alignment = .right
+            hint.isHidden = !showTabHint
             content.addSubview(hint)
 
             panel = p
@@ -695,10 +748,14 @@ final class OverlayController {
         panel?.contentView?.layer?.backgroundColor = bgColor.cgColor
         textField?.textColor = textColor
         hintField?.textColor = NSColor(white: isDark ? 0.35 : 0.65, alpha: 1.0)
+        hintField?.isHidden = !showTabHint
+        if showTabHint {
+            hintField?.stringValue = tabHint
+        }
 
         panel?.setFrame(NSRect(x: originX, y: originYCocoa, width: panelWidth, height: panelHeight), display: true)
         panel?.contentView?.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
-        textField?.frame = NSRect(x: 8, y: 5, width: panelWidth - 62, height: 18)
+        textField?.frame = NSRect(x: 8, y: 5, width: panelWidth - (showTabHint ? 62 : 16), height: 18)
         hintField?.frame = NSRect(x: panelWidth - 54, y: 5, width: 48, height: 18)
         textField?.stringValue = text
         panel?.orderFrontRegardless()
@@ -748,8 +805,12 @@ DispatchQueue.global(qos: .userInitiated).async {
             let h = CGFloat((payload["h"] as? NSNumber)?.doubleValue ?? 0)
             let text = (payload["text"] as? String) ?? ""
             let ttl = (payload["ttl_ms"] as? NSNumber)?.intValue ?? 900
+            let tabHint: String = {
+                if let s = payload["tab_hint"] as? String { return s }
+                return "Tab ↵"
+            }()
             DispatchQueue.main.async {
-                controller.show(x: x, yTop: y, width: w, height: h, text: text, ttlMs: ttl)
+                controller.show(x: x, yTop: y, width: w, height: h, text: text, ttlMs: ttl, tabHint: tabHint)
             }
 
         case "hide":

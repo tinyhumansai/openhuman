@@ -24,6 +24,8 @@ pub(super) fn show_overflow_badge(
     app_name: Option<&str>,
     anchor_bounds: Option<&ElementBounds>,
     ttl_ms: u32,
+    // When `kind == "ready"`, show the Tab hint in the overlay only if true.
+    show_tab_hint: bool,
 ) {
     #[cfg(target_os = "macos")]
     {
@@ -36,11 +38,11 @@ pub(super) fn show_overflow_badge(
             error.unwrap_or_default()
         );
 
-        // Deduplicate exact-same events; different signatures always pass through
-        // immediately so genuinely new suggestions are never throttled away.
+        // Deduplicate rapid duplicate events only (same payload within a short window).
+        const DEDUP_MS: i64 = 400;
         if let Ok(mut guard) = LAST_OVERFLOW_BADGE.lock() {
-            if let Some((last_signature, _)) = guard.as_ref() {
-                if *last_signature == signature {
+            if let Some((last_signature, last_ms)) = guard.as_ref() {
+                if *last_signature == signature && now_ms - *last_ms < DEDUP_MS {
                     return;
                 }
             }
@@ -66,7 +68,8 @@ pub(super) fn show_overflow_badge(
                     );
                     &fallback_bounds
                 };
-                if accessibility::show_overlay(bounds, suggestion_text, ttl_ms).is_ok() {
+                let tab_hint = if show_tab_hint { "Tab ↵" } else { "" };
+                if accessibility::show_overlay(bounds, suggestion_text, ttl_ms, tab_hint).is_ok() {
                     return;
                 }
             }
@@ -232,24 +235,41 @@ mod tests {
             Some("TestApp"),
             Some(&bounds),
             900,
+            true,
         );
     }
 
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn show_overflow_badge_non_macos_does_not_panic_error() {
-        show_overflow_badge("error", None, Some("something failed"), None, None, 500);
+        show_overflow_badge(
+            "error",
+            None,
+            Some("something failed"),
+            None,
+            None,
+            500,
+            false,
+        );
     }
 
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn show_overflow_badge_non_macos_does_not_panic_accepted() {
-        show_overflow_badge("accepted", Some("accepted text"), None, None, None, 0);
+        show_overflow_badge(
+            "accepted",
+            Some("accepted text"),
+            None,
+            None,
+            None,
+            0,
+            false,
+        );
     }
 
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn show_overflow_badge_non_macos_does_not_panic_rejected() {
-        show_overflow_badge("rejected", None, None, None, None, 200);
+        show_overflow_badge("rejected", None, None, None, None, 200, false);
     }
 }

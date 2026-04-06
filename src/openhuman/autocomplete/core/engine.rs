@@ -188,6 +188,7 @@ impl AutocompleteEngine {
                                         None,
                                         None,
                                         700,
+                                        false,
                                     );
                                 }
                             }
@@ -354,7 +355,7 @@ impl AutocompleteEngine {
             state.last_overlay_signature = None;
         }
         if should_apply {
-            show_overflow_badge("accepted", Some(&cleaned), None, None, None, 700);
+            show_overflow_badge("accepted", Some(&cleaned), None, None, None, 700, false);
         }
 
         // Persist acceptance for personalisation (fire-and-forget).
@@ -631,8 +632,8 @@ impl AutocompleteEngine {
         }
         state.suggestion = Some(AutocompleteSuggestion {
             value: suggestion.clone(),
-            // TODO: surface real confidence when local_ai::inline_complete returns it.
-            confidence: 0.0,
+            // Placeholder until `local_ai::inline_complete` surfaces a real score (avoid 0.0 so UI/thresholds keep signal).
+            confidence: 0.75,
         });
         state.phase = "ready".to_string();
         state.last_error = None;
@@ -652,6 +653,7 @@ impl AutocompleteEngine {
                 app_name.as_deref(),
                 focused.bounds.as_ref(),
                 overlay_ttl_ms,
+                config.autocomplete.accept_with_tab,
             );
             return Ok(());
         }
@@ -737,7 +739,15 @@ impl AutocompleteEngine {
                         .unwrap_or_default()
                         .to_lowercase();
                     if !app_lower.contains("openhuman") {
-                        show_overflow_badge("accepted", Some(&cleaned), None, None, None, 700);
+                        show_overflow_badge(
+                            "accepted",
+                            Some(&cleaned),
+                            None,
+                            None,
+                            None,
+                            700,
+                            false,
+                        );
                     }
                 }
 
@@ -797,7 +807,7 @@ impl AutocompleteEngine {
                 .unwrap_or_default()
                 .to_lowercase();
             if !app_lower.contains("openhuman") {
-                show_overflow_badge("rejected", Some(&value), None, None, None, 700);
+                show_overflow_badge("rejected", Some(&value), None, None, None, 700, false);
             }
         }
         Ok(())

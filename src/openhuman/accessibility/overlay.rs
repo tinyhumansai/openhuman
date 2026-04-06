@@ -4,8 +4,16 @@ use super::text_util::truncate_tail;
 use super::types::ElementBounds;
 
 /// Show an overlay badge near the given element bounds.
+///
+/// When `tab_hint` is empty, the Swift helper hides the Tab keyboard hint (used when
+/// `accept_with_tab` is disabled in config).
 #[cfg(target_os = "macos")]
-pub fn show_overlay(bounds: &ElementBounds, text: &str, ttl_ms: u32) -> Result<(), String> {
+pub fn show_overlay(
+    bounds: &ElementBounds,
+    text: &str,
+    ttl_ms: u32,
+    tab_hint: &str,
+) -> Result<(), String> {
     let message = serde_json::json!({
         "type": "show",
         "x": bounds.x,
@@ -13,7 +21,8 @@ pub fn show_overlay(bounds: &ElementBounds, text: &str, ttl_ms: u32) -> Result<(
         "w": bounds.width,
         "h": bounds.height,
         "text": truncate_tail(text, 96),
-        "ttl_ms": ttl_ms
+        "ttl_ms": ttl_ms,
+        "tab_hint": tab_hint,
     });
     super::helper::helper_send_fire_and_forget(&message)
 }
@@ -32,7 +41,12 @@ pub fn quit_overlay() -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn show_overlay(_bounds: &ElementBounds, _text: &str, _ttl_ms: u32) -> Result<(), String> {
+pub fn show_overlay(
+    _bounds: &ElementBounds,
+    _text: &str,
+    _ttl_ms: u32,
+    _tab_hint: &str,
+) -> Result<(), String> {
     Ok(())
 }
 
@@ -62,7 +76,7 @@ mod tests {
             width: 100,
             height: 50,
         };
-        assert!(show_overlay(&bounds, "suggestion text", 900).is_ok());
+        assert!(show_overlay(&bounds, "suggestion text", 900, "Tab ↵").is_ok());
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -74,7 +88,7 @@ mod tests {
             width: 0,
             height: 0,
         };
-        assert!(show_overlay(&bounds, "", 500).is_ok());
+        assert!(show_overlay(&bounds, "", 500, "").is_ok());
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -86,7 +100,7 @@ mod tests {
             width: 200,
             height: 30,
         };
-        assert!(show_overlay(&bounds, "hello", 0).is_ok());
+        assert!(show_overlay(&bounds, "hello", 0, "Tab ↵").is_ok());
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -98,7 +112,7 @@ mod tests {
             width: 300,
             height: 60,
         };
-        assert!(show_overlay(&bounds, "test", u32::MAX).is_ok());
+        assert!(show_overlay(&bounds, "test", u32::MAX, "Tab ↵").is_ok());
     }
 
     #[cfg(not(target_os = "macos"))]
