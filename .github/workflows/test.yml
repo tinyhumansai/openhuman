@@ -85,8 +85,8 @@ jobs:
             app/src-tauri -> target
           cache-on-failure: true
 
-      - name: Install cmake (for whisper-rs)
-        run: apt-get update && apt-get install -y --no-install-recommends cmake && rm -rf /var/lib/apt/lists/*
+      - name: Install system dependencies (cmake, ALSA, X11)
+        run: apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
 
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
@@ -136,7 +136,8 @@ jobs:
             libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
             librsvg2-dev patchelf \
             xvfb at-spi2-core dbus-x11 \
-            webkit2gtk-driver
+            webkit2gtk-driver \
+            libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev
 
       - name: Cargo.lock fingerprint (deps only)
         id: cargo-lock-fingerprint

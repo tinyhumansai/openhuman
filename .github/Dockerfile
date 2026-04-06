@@ -35,6 +35,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && npm install -g yarn \
     && rm -rf /var/lib/apt/lists/*
 
+# Install system dependencies (cmake, ALSA, X11)
+RUN apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*
+
 # sccache (pre-installed so the action only needs to configure it)
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v0.10.0/sccache-v0.10.0-x86_64-unknown-linux-musl.tar.gz \
     | tar xz -C /usr/local/bin --strip-components=1 sccache-v0.10.0-x86_64-unknown-linux-musl/sccache \
