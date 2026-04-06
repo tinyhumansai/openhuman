@@ -168,9 +168,10 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
       setGraphRelationsLoading(true);
       try {
-        const relations = await memoryGraphQuery();
+        const relations = await memoryGraphQuery(selectedNamespace || undefined);
         setGraphRelations(relations);
-      } catch {
+      } catch (err) {
+        console.error('[MemoryWorkspace] memoryGraphQuery failed:', err);
         setGraphRelations([]);
       } finally {
         setGraphRelationsLoading(false);

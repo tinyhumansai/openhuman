@@ -934,6 +934,13 @@ async fn parse_document(
     let chunks = UnifiedMemory::chunk_document_content(content, DEFAULT_CHUNK_TOKENS);
     let relex_runtime = relex::runtime(&config.model_name).await;
     let model_enabled = relex_runtime.is_some();
+    log::debug!(
+        "[memory:ingestion] parse_document title={title:?} model={} relex_available={model_enabled} \
+         content_len={} chunk_count={}",
+        config.model_name,
+        content.len(),
+        chunks.len(),
+    );
     let mut accumulator = ExtractionAccumulator {
         document_title: Some(sanitize_entity_name(title)),
         primary_subject: detect_primary_subject(title),
@@ -1584,6 +1591,15 @@ async fn parse_document(
             })
         }).collect::<Vec<_>>(),
     });
+
+    log::debug!(
+        "[memory:ingestion] parse_document complete title={title:?} \
+         entities={} relations={} preferences={} decisions={}",
+        entities.len(),
+        relations.len(),
+        accumulator.preferences.len(),
+        accumulator.decisions.len(),
+    );
 
     ParsedIngestion {
         tags,

@@ -129,6 +129,30 @@ impl UnifiedMemory {
             .collect::<Vec<_>>())
     }
 
+    /// Query all graph relations across every namespace AND global, with
+    /// optional subject/predicate filters.  Used when the caller passes no
+    /// namespace so that ingested (namespace-scoped) data is still surfaced.
+    pub async fn graph_query_all(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let mut rows = self
+            .graph_relations_all_namespaces(subject, predicate)
+            .await?;
+        rows.extend(self.graph_relations_global(subject, predicate).await?);
+        rows.sort_by(|a, b| {
+            b.updated_at
+                .partial_cmp(&a.updated_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        rows.truncate(300);
+        Ok(rows
+            .into_iter()
+            .map(Self::graph_relation_to_json)
+            .collect::<Vec<_>>())
+    }
+
     pub async fn graph_query_namespace(
         &self,
         namespace: &str,
@@ -236,6 +260,48 @@ impl UnifiedMemory {
                 row.get(2).map_err(|e| e.to_string())?,
                 &attrs_raw,
                 row.get(4).map_err(|e| e.to_string())?,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Query relations from `graph_namespace` across ALL namespaces, with
+    /// optional subject/predicate filters.
+    pub(crate) async fn graph_relations_all_namespaces(
+        &self,
+        subject: Option<&str>,
+        predicate: Option<&str>,
+    ) -> Result<Vec<GraphRelationRecord>, String> {
+        let conn = self.conn.lock();
+        let subject = subject.map(Self::normalize_graph_entity);
+        let predicate = predicate.map(Self::normalize_graph_predicate);
+        let mut stmt = conn
+            .prepare(
+                "SELECT namespace, subject, predicate, object, attrs_json, updated_at
+                 FROM graph_namespace
+                 WHERE (?1 IS NULL OR subject = ?1)
+                   AND (?2 IS NULL OR predicate = ?2)
+                 ORDER BY updated_at DESC
+                 LIMIT 300",
+            )
+            .map_err(|e| format!("graph_relations_all_namespaces prepare: {e}"))?;
+        let mut rows = stmt
+            .query(params![subject, predicate])
+            .map_err(|e| format!("graph_relations_all_namespaces query: {e}"))?;
+        let mut out = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| format!("graph_relations_all_namespaces row: {e}"))?
+        {
+            let namespace: String = row.get(0).map_err(|e| e.to_string())?;
+            let attrs_raw: String = row.get(4).map_err(|e| e.to_string())?;
+            out.push(Self::graph_relation_from_parts(
+                Some(namespace),
+                row.get(1).map_err(|e| e.to_string())?,
+                row.get(2).map_err(|e| e.to_string())?,
+                row.get(3).map_err(|e| e.to_string())?,
+                &attrs_raw,
+                row.get(5).map_err(|e| e.to_string())?,
             ));
         }
         Ok(out)

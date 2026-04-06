@@ -341,6 +341,9 @@ impl MemoryClient {
     }
 
     /// Query relationships in the knowledge graph using optional filters.
+    ///
+    /// When `namespace` is `None`, returns relations from **all** namespaces
+    /// plus the global graph, so ingested data is always surfaced in the UI.
     pub async fn graph_query(
         &self,
         namespace: Option<&str>,
@@ -353,7 +356,7 @@ impl MemoryClient {
                     .graph_query_namespace(ns, subject, predicate)
                     .await
             }
-            None => self.inner.graph_query_global(subject, predicate).await,
+            None => self.inner.graph_query_all(subject, predicate).await,
         }
     }
 }

@@ -520,6 +520,10 @@ export async function memoryGraphQuery(
   if (Array.isArray(raw)) return raw;
   if (raw && typeof raw === 'object' && 'result' in raw && Array.isArray(raw.result))
     return raw.result;
+  console.debug(
+    '[memoryGraphQuery] unexpected response shape, returning empty array. Raw response:',
+    raw
+  );
   return [];
 }
 
