@@ -117,6 +117,23 @@ struct LocalAiShouldReactParams {
     channel_type: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct LocalAiAnalyzeSentimentParams {
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiShouldSendGifParams {
+    message: String,
+    channel_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalAiTenorSearchParams {
+    query: String,
+    limit: Option<u32>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("agent_chat"),
@@ -145,6 +162,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("local_ai_diagnostics"),
         schemas("local_ai_chat"),
         schemas("local_ai_should_react"),
+        schemas("local_ai_analyze_sentiment"),
+        schemas("local_ai_should_send_gif"),
+        schemas("local_ai_tenor_search"),
     ]
 }
 
@@ -253,6 +273,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("local_ai_should_react"),
             handler: handle_local_ai_should_react,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_analyze_sentiment"),
+            handler: handle_local_ai_analyze_sentiment,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_should_send_gif"),
+            handler: handle_local_ai_should_send_gif,
+        },
+        RegisteredController {
+            schema: schemas("local_ai_tenor_search"),
+            handler: handle_local_ai_tenor_search,
         },
     ]
 }
@@ -508,6 +540,35 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required_string("channel_type", "Channel type: web, telegram, discord, slack, etc."),
             ],
             outputs: vec![json_output("decision", "Reaction decision: {should_react, emoji}.")],
+        },
+        "local_ai_analyze_sentiment" => ControllerSchema {
+            namespace: "local_ai",
+            function: "analyze_sentiment",
+            description: "Classify the emotion and sentiment of a user message. Returns emotion label, valence, and confidence.",
+            inputs: vec![
+                required_string("message", "User message content to analyze."),
+            ],
+            outputs: vec![json_output("sentiment", "Sentiment result: {emotion, valence, confidence}.")],
+        },
+        "local_ai_should_send_gif" => ControllerSchema {
+            namespace: "local_ai",
+            function: "should_send_gif",
+            description: "Ask the local model whether a GIF response is appropriate, and if so return a Tenor search query.",
+            inputs: vec![
+                required_string("message", "User message content to evaluate."),
+                required_string("channel_type", "Channel type: web, telegram, discord, slack, etc."),
+            ],
+            outputs: vec![json_output("decision", "GIF decision: {should_send_gif, search_query}.")],
+        },
+        "local_ai_tenor_search" => ControllerSchema {
+            namespace: "local_ai",
+            function: "tenor_search",
+            description: "Search for GIFs via the backend Tenor proxy. Requires a valid session.",
+            inputs: vec![
+                required_string("query", "Tenor search query."),
+                optional_u64("limit", "Max results to return (default 5, max 50)."),
+            ],
+            outputs: vec![json_output("result", "Tenor search result: {results, next}.")],
         },
         _ => ControllerSchema {
             namespace: "local_ai",
@@ -890,6 +951,50 @@ fn handle_local_ai_should_react(params: Map<String, Value>) -> ControllerFuture 
                 &config,
                 &p.message,
                 &p.channel_type,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_local_ai_analyze_sentiment(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiAnalyzeSentimentParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::local_ai::sentiment::local_ai_analyze_sentiment(
+                &config,
+                &p.message,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_local_ai_should_send_gif(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiShouldSendGifParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::local_ai::gif_decision::local_ai_should_send_gif(
+                &config,
+                &p.message,
+                &p.channel_type,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_local_ai_tenor_search(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<LocalAiTenorSearchParams>(params)?;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::local_ai::gif_decision::tenor_search(
+                &config,
+                &p.query,
+                p.limit,
             )
             .await?,
         )

@@ -2,9 +2,11 @@
 
 mod core;
 pub mod device;
+pub mod gif_decision;
 pub mod ops;
 pub mod presets;
 mod schemas;
+pub mod sentiment;
 
 mod install;
 pub(crate) mod model_ids;
@@ -16,9 +18,11 @@ mod types;
 
 pub use core::*;
 pub use device::DeviceProfile;
+pub use gif_decision::{GifDecision, TenorGifResult, TenorSearchResult};
 pub use ops as rpc;
 pub use ops::*;
 pub use presets::{ModelPreset, ModelTier};
+pub use sentiment::SentimentResult;
 pub use schemas::{
     all_controller_schemas as all_local_ai_controller_schemas,
     all_registered_controllers as all_local_ai_registered_controllers,

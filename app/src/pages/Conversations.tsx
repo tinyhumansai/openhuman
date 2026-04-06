@@ -35,7 +35,10 @@ import {
   openhumanAutocompleteAccept,
   openhumanAutocompleteCurrent,
   openhumanLocalAiChat,
+  openhumanLocalAiAnalyzeSentiment,
   openhumanLocalAiShouldReact,
+  openhumanLocalAiShouldSendGif,
+  openhumanLocalAiTenorSearch,
   openhumanVoiceStatus,
   openhumanVoiceTranscribeBytes,
   openhumanVoiceTts,
@@ -152,6 +155,13 @@ const Conversations = () => {
   const pendingReactionRef = useRef<
     Map<string, { msgId: string; content: string; threadId: string }>
   >(new Map());
+
+  /** Message counter for GIF cadence — check every ~7 messages. */
+  const gifCadenceCountRef = useRef(0);
+  const GIF_CADENCE_MESSAGES = 7;
+  /** Timestamp (ms) of last sentiment analysis — run roughly every hour. */
+  const lastSentimentAtRef = useRef(0);
+  const SENTIMENT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
   const selectedThreadIdRef = useRef(selectedThreadId);
   useEffect(() => {
@@ -429,6 +439,8 @@ const Conversations = () => {
         const pending = pendingReactionRef.current.get(event.thread_id);
         if (pending) {
           maybeAutoReact(pending.msgId, pending.content, pending.threadId);
+          maybeCheckGif(pending.content, pending.threadId);
+          maybeSentimentAnalysis(pending.content);
           pendingReactionRef.current.delete(event.thread_id);
         }
 
@@ -581,6 +593,78 @@ const Conversations = () => {
       });
   };
 
+  /**
+   * Fire-and-forget: periodically check if a GIF response is appropriate
+   * (every ~GIF_CADENCE_MESSAGES messages). If the model says yes, search
+   * Tenor and dispatch the top result as a gif-type message.
+   */
+  const maybeCheckGif = (messageContent: string, threadId: string) => {
+    if (!isTauri() || !isLocalModelActiveRef.current) return;
+
+    gifCadenceCountRef.current += 1;
+    if (gifCadenceCountRef.current < GIF_CADENCE_MESSAGES) return;
+    gifCadenceCountRef.current = 0;
+
+    console.debug('[conversations:gif] cadence reached, evaluating gif decision');
+
+    void openhumanLocalAiShouldSendGif(messageContent, defaultChannelType)
+      .then(async response => {
+        const decision = response.result;
+        if (!decision?.should_send_gif || !decision.search_query) return;
+
+        console.debug('[conversations:gif] searching tenor for:', decision.search_query);
+        const tenorResponse = await openhumanLocalAiTenorSearch(decision.search_query, 5);
+        const results = tenorResponse.result?.results;
+        if (!results || results.length === 0) return;
+
+        // Pick a random GIF from top results
+        const picked = results[Math.floor(Math.random() * Math.min(results.length, 3))];
+        const gifUrl =
+          picked.media?.mediumgif?.url || picked.media?.gif?.url || picked.media?.tinygif?.url;
+        if (!gifUrl) return;
+
+        console.debug('[conversations:gif] sending gif:', picked.title || picked.id);
+        dispatch(
+          addInferenceResponse({
+            content: gifUrl,
+            threadId,
+          })
+        );
+      })
+      .catch(err => {
+        console.debug('[conversations:gif] failed:', err);
+      });
+  };
+
+  /**
+   * Fire-and-forget: periodically analyze user sentiment (~every hour).
+   * Stores the result in debug logs for now.
+   */
+  const maybeSentimentAnalysis = (messageContent: string) => {
+    if (!isTauri() || !isLocalModelActiveRef.current) return;
+
+    const now = Date.now();
+    if (now - lastSentimentAtRef.current < SENTIMENT_INTERVAL_MS) return;
+    lastSentimentAtRef.current = now;
+
+    console.debug('[conversations:sentiment] interval reached, analyzing sentiment');
+
+    void openhumanLocalAiAnalyzeSentiment(messageContent)
+      .then(response => {
+        const sentiment = response.result;
+        if (!sentiment) return;
+        console.debug(
+          '[conversations:sentiment] result:',
+          sentiment.emotion,
+          sentiment.valence,
+          `(${sentiment.confidence})`
+        );
+      })
+      .catch(err => {
+        console.debug('[conversations:sentiment] failed:', err);
+      });
+  };
+
   const handleSendMessage = async (text?: string) => {
     const normalized = text ?? inputValue;
     const trimmed = normalized.trim();
@@ -670,6 +754,8 @@ const Conversations = () => {
         await deliverLocalResponse(reply, sendingThreadId);
         pendingReactionRef.current.delete(sendingThreadId);
         maybeAutoReact(userMessage.id, trimmed, sendingThreadId);
+        maybeCheckGif(trimmed, sendingThreadId);
+        maybeSentimentAnalysis(trimmed);
       } catch (err) {
         pendingReactionRef.current.delete(sendingThreadId);
         const msg = err instanceof Error ? err.message : String(err);

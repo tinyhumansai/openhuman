@@ -525,6 +525,28 @@ impl BackendOAuthClient {
         .await
     }
 
+    /// `POST /agent-integrations/tenor/search` — Search for GIFs via Tenor.
+    pub async fn search_tenor_gifs(
+        &self,
+        bearer_jwt: &str,
+        query: &str,
+        limit: Option<u32>,
+    ) -> Result<Value> {
+        anyhow::ensure!(!query.trim().is_empty(), "query is required");
+        let body = serde_json::json!({
+            "query": query.trim(),
+            "limit": limit.unwrap_or(5),
+            "contentFilter": "medium",
+        });
+        self.authed_json(
+            bearer_jwt,
+            Method::POST,
+            "agent-integrations/tenor/search",
+            Some(body),
+        )
+        .await
+    }
+
     /// `POST /channels/:channel/threads` — Create a thread in a channel.
     pub async fn create_channel_thread(
         &self,

@@ -1613,6 +1613,89 @@ export async function openhumanLocalAiShouldReact(
   });
 }
 
+// --- Sentiment analysis (local model) ---
+
+export interface SentimentResult {
+  emotion: string;
+  valence: string;
+  confidence: number;
+}
+
+/**
+ * Classify the emotion and sentiment of a user message via the local model.
+ * Designed to be called periodically (~every hour), not on every message.
+ */
+export async function openhumanLocalAiAnalyzeSentiment(
+  message: string
+): Promise<CommandResponse<SentimentResult>> {
+  return await callCoreRpc<CommandResponse<SentimentResult>>({
+    method: 'openhuman.local_ai_analyze_sentiment',
+    params: { message },
+  });
+}
+
+// --- GIF decision (local model) + Tenor search ---
+
+export interface GifDecision {
+  should_send_gif: boolean;
+  search_query: string | null;
+}
+
+export interface TenorMediaFormat {
+  url: string;
+  dims: [number, number];
+  size: number;
+  duration?: number;
+}
+
+export interface TenorGifResult {
+  id: string;
+  title: string;
+  contentDescription: string;
+  url: string;
+  media: {
+    gif?: TenorMediaFormat;
+    tinygif?: TenorMediaFormat;
+    mediumgif?: TenorMediaFormat;
+    mp4?: TenorMediaFormat;
+    tinymp4?: TenorMediaFormat;
+  };
+  created: number;
+}
+
+export interface TenorSearchResult {
+  results: TenorGifResult[];
+  next: string;
+}
+
+/**
+ * Ask the local model whether a GIF response is appropriate for this message.
+ * Designed to be called every ~5-10 messages, not on every message.
+ */
+export async function openhumanLocalAiShouldSendGif(
+  message: string,
+  channelType: string
+): Promise<CommandResponse<GifDecision>> {
+  return await callCoreRpc<CommandResponse<GifDecision>>({
+    method: 'openhuman.local_ai_should_send_gif',
+    params: { message, channel_type: channelType },
+  });
+}
+
+/**
+ * Search for GIFs via the backend Tenor proxy.
+ * Requires a valid session (charges against user budget).
+ */
+export async function openhumanLocalAiTenorSearch(
+  query: string,
+  limit?: number
+): Promise<CommandResponse<TenorSearchResult>> {
+  return await callCoreRpc<CommandResponse<TenorSearchResult>>({
+    method: 'openhuman.local_ai_tenor_search',
+    params: { query, limit },
+  });
+}
+
 export async function openhumanLocalAiAssetsStatus(): Promise<
   CommandResponse<LocalAiAssetsStatus>
 > {
