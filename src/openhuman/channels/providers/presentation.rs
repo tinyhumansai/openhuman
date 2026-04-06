@@ -30,11 +30,16 @@ pub async fn deliver_response(
     full_response: &str,
     user_message: &str,
 ) {
-    // Fire-and-forget reaction decision (runs in parallel).
-    let reaction_emoji = try_reaction(user_message).await;
+    // Spawn reaction decision in parallel — it runs on the local model and
+    // shouldn't block segmentation or delivery.
+    let user_msg_owned = user_message.to_string();
+    let reaction_handle = tokio::spawn(async move { try_reaction(&user_msg_owned).await });
 
-    // Attempt segmentation.
+    // Segmentation is pure CPU work, runs immediately.
     let segments = segment_for_delivery(full_response);
+
+    // Await the reaction result (should already be done or nearly done).
+    let reaction_emoji = reaction_handle.await.unwrap_or(None);
 
     if segments.len() <= 1 {
         // Single bubble — emit chat_done directly.
@@ -196,14 +201,27 @@ fn is_structured_content(text: &str) -> bool {
                 || trimmed.starts_with("# ")
                 || trimmed.starts_with("## ")
                 || trimmed.starts_with("### ")
-                || trimmed.chars().next().map_or(false, |c| c.is_ascii_digit())
-                    && trimmed.contains(". ")
+                || is_numbered_list_item(trimmed)
         })
         .count();
 
     // If more than 40% of non-empty lines are structured, don't split.
     let non_empty = lines.iter().filter(|l| !l.trim().is_empty()).count();
     non_empty > 0 && (structured_count * 100 / non_empty) > 40
+}
+
+/// Check if a line starts with a numbered list prefix like "1. " or "12. ".
+/// Rejects dates ("2024. ") and decimals by requiring the digits+dot+space
+/// to appear at the very start and be followed by text.
+fn is_numbered_list_item(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    // Consume one or more leading ASCII digits.
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    // Must have consumed at least one digit, followed by ". ".
+    i > 0 && i <= 3 && bytes.get(i) == Some(&b'.') && bytes.get(i + 1) == Some(&b' ')
 }
 
 /// Merge adjacent segments shorter than MIN_SEGMENT_CHARS.
@@ -368,6 +386,15 @@ mod tests {
         assert_eq!(segment_delay(""), 500);
         assert_eq!(segment_delay(&"x".repeat(1000)), 1400);
         assert!(segment_delay("Hello world") > 500);
+    }
+
+    #[test]
+    fn numbered_list_detection() {
+        assert!(is_numbered_list_item("1. First item"));
+        assert!(is_numbered_list_item("12. Twelfth item"));
+        assert!(!is_numbered_list_item("2024. Was a good year")); // too many digits
+        assert!(!is_numbered_list_item("hello 1. world")); // digits not at start
+        assert!(!is_numbered_list_item("1.5 seconds")); // no space after dot
     }
 
     #[test]

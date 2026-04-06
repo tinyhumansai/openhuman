@@ -11,6 +11,7 @@ import {
   chatSend,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
+  segmentText,
   subscribeChatEvents,
   useRustChat,
 } from '../services/chatService';
@@ -398,7 +399,7 @@ const Conversations = () => {
             pendingReactionRef.current.delete(event.thread_id);
           }
         }
-        dispatch(addInferenceResponse({ content: event.full_response, threadId: event.thread_id }));
+        dispatch(addInferenceResponse({ content: segmentText(event), threadId: event.thread_id }));
       },
       onDone: event => {
         // Update tool timeline
@@ -500,7 +501,12 @@ const Conversations = () => {
 
     if (!trimmed || !selectedThreadId || isSending) return;
     if (socketStatus !== 'connected') {
-      setSendError(chatSendError('socket_disconnected', 'Realtime socket is not connected.'));
+      setSendError(
+        chatSendError(
+          'socket_disconnected',
+          'Realtime socket is not connected — responses cannot be delivered without a client ID.'
+        )
+      );
       return;
     }
 

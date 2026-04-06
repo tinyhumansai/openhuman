@@ -41,11 +41,21 @@ export interface ChatDoneEvent {
 /** A single segment of a multi-bubble response, emitted before `chat_done`. */
 export interface ChatSegmentEvent {
   thread_id: string;
-  full_response: string; // The segment text (not the full response)
+  /**
+   * Wire name is `full_response` for compatibility with {@link WebChannelEvent},
+   * but this field contains only the **segment text**, not the full response.
+   * Use {@link segmentText} for clarity in consuming code.
+   */
+  full_response: string;
   request_id: string;
   segment_index: number;
   segment_total: number;
   reaction_emoji?: string | null;
+}
+
+/** Return the segment text from a {@link ChatSegmentEvent} (avoids the misleading wire name). */
+export function segmentText(event: ChatSegmentEvent): string {
+  return event.full_response;
 }
 
 export interface ChatErrorEvent {
