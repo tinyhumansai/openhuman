@@ -19,6 +19,10 @@ pub struct ScreenIntelligenceConfig {
     pub panic_stop_hotkey: String,
     #[serde(default = "default_autocomplete_enabled")]
     pub autocomplete_enabled: bool,
+    /// When `true`, captured screenshots are saved to `{workspace_dir}/screenshots/`
+    /// instead of being discarded after vision processing. Default: `false`.
+    #[serde(default)]
+    pub keep_screenshots: bool,
     #[serde(default)]
     pub allowlist: Vec<String>,
     #[serde(default)]
@@ -68,6 +72,7 @@ impl Default for ScreenIntelligenceConfig {
             session_ttl_secs: default_session_ttl_secs(),
             panic_stop_hotkey: default_panic_stop_hotkey(),
             autocomplete_enabled: default_autocomplete_enabled(),
+            keep_screenshots: false,
             allowlist: vec![],
             denylist: vec![
                 "1password".to_string(),

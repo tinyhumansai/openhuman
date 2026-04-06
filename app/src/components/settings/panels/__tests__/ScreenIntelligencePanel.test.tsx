@@ -78,6 +78,7 @@ const baseStatus: AccessibilityStatus = {
     session_ttl_secs: 300,
     panic_stop_hotkey: 'Cmd+Shift+.',
     autocomplete_enabled: true,
+    keep_screenshots: false,
     allowlist: ['Code'],
     denylist: ['1Password'],
   },
@@ -188,6 +189,7 @@ describe('ScreenIntelligencePanel', () => {
       enabled: true,
       policy_mode: 'all_except_blacklist',
       baseline_fps: 1,
+      keep_screenshots: false,
       allowlist: ['Code'],
       denylist: ['1Password'],
     });

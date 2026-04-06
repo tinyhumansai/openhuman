@@ -45,6 +45,7 @@ const sampleStatus: AccessibilityStatus = {
     session_ttl_secs: 300,
     panic_stop_hotkey: 'Cmd+Shift+.',
     autocomplete_enabled: true,
+    keep_screenshots: false,
     allowlist: [],
     denylist: ['wallet'],
   },

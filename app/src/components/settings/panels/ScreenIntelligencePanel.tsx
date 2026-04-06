@@ -71,6 +71,7 @@ const ScreenIntelligencePanel = () => {
     'all_except_blacklist'
   );
   const [baselineFps, setBaselineFps] = useState<string>('1');
+  const [keepScreenshots, setKeepScreenshots] = useState<boolean>(false);
   const [allowlistText, setAllowlistText] = useState('');
   const [denylistText, setDenylistText] = useState('');
   const [isSavingConfig, setIsSavingConfig] = useState(false);
@@ -104,6 +105,7 @@ const ScreenIntelligencePanel = () => {
       status.config.policy_mode === 'whitelist_only' ? 'whitelist_only' : 'all_except_blacklist'
     );
     setBaselineFps(String(status.config.baseline_fps ?? 1));
+    setKeepScreenshots(status.config.keep_screenshots ?? false);
     setAllowlistText((status.config.allowlist ?? []).join('\n'));
     setDenylistText((status.config.denylist ?? []).join('\n'));
   }, [status?.config]);
@@ -143,6 +145,7 @@ const ScreenIntelligencePanel = () => {
         enabled,
         policy_mode: policyMode,
         baseline_fps: Number.isFinite(fps) && fps > 0 ? fps : 1,
+        keep_screenshots: keepScreenshots,
         allowlist: allowlistText
           .split('\n')
           .map(v => v.trim())
@@ -276,6 +279,18 @@ const ScreenIntelligencePanel = () => {
               value={baselineFps}
               onChange={event => setBaselineFps(event.target.value)}
               className="w-24 rounded border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700"
+            />
+          </label>
+
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <div>
+              <span className="text-sm text-stone-700">Keep Screenshots</span>
+              <p className="text-xs text-stone-400">Save captured screenshots to the workspace instead of deleting after processing</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={keepScreenshots}
+              onChange={event => setKeepScreenshots(event.target.checked)}
             />
           </label>
 

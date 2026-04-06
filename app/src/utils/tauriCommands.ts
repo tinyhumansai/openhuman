@@ -793,6 +793,7 @@ export interface AccessibilityConfig {
   session_ttl_secs: number;
   panic_stop_hotkey: string;
   autocomplete_enabled: boolean;
+  keep_screenshots: boolean;
   allowlist: string[];
   denylist: string[];
 }
@@ -1039,6 +1040,7 @@ export interface ScreenIntelligenceSettingsUpdate {
   baseline_fps?: number | null;
   vision_enabled?: boolean | null;
   autocomplete_enabled?: boolean | null;
+  keep_screenshots?: boolean | null;
   allowlist?: string[] | null;
   denylist?: string[] | null;
 }

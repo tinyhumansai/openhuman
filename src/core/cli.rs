@@ -55,6 +55,9 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         "call" => run_call_command(&args[1..]),
         "repl" | "shell" => crate::core::repl::run_repl(&args[1..]),
         "skills" => crate::core::skills_cli::run_skills_command(&args[1..]),
+        "screen-intelligence" => {
+            crate::core::screen_intelligence_cli::run_screen_intelligence_command(&args[1..])
+        }
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
 }

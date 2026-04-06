@@ -2,6 +2,7 @@ use crate::openhuman::config::{Config, ScreenIntelligenceConfig};
 use crate::openhuman::local_ai;
 use once_cell::sync::Lazy;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -832,6 +833,54 @@ impl AccessibilityEngine {
         }
     }
 
+    /// Save a screenshot PNG to `{workspace_dir}/screenshots/{timestamp}_{app}.png`.
+    /// Returns the file path on success.
+    pub fn save_screenshot_to_disk(
+        workspace_dir: &std::path::Path,
+        frame: &CaptureFrame,
+    ) -> Result<PathBuf, String> {
+        use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+        let image_ref = frame
+            .image_ref
+            .as_deref()
+            .ok_or_else(|| "frame has no image payload".to_string())?;
+
+        let b64_payload = if let Some(pos) = image_ref.find(";base64,") {
+            &image_ref[pos + 8..]
+        } else {
+            image_ref
+        };
+
+        let raw_bytes = B64
+            .decode(b64_payload)
+            .map_err(|e| format!("base64 decode for screenshot save failed: {e}"))?;
+
+        let screenshots_dir = workspace_dir.join("screenshots");
+        std::fs::create_dir_all(&screenshots_dir)
+            .map_err(|e| format!("failed to create screenshots dir: {e}"))?;
+
+        let app_slug = frame
+            .app_name
+            .as_deref()
+            .unwrap_or("unknown")
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+            .collect::<String>();
+        let filename = format!("{}_{}.png", frame.captured_at_ms, app_slug);
+        let file_path = screenshots_dir.join(&filename);
+
+        std::fs::write(&file_path, &raw_bytes)
+            .map_err(|e| format!("failed to write screenshot {filename}: {e}"))?;
+
+        tracing::debug!(
+            "[screen_intelligence] screenshot saved: {} ({} bytes)",
+            file_path.display(),
+            raw_bytes.len()
+        );
+        Ok(file_path)
+    }
+
     async fn run_vision_worker(
         self: Arc<Self>,
         mut rx: tokio::sync::mpsc::UnboundedReceiver<CaptureFrame>,
@@ -844,6 +893,32 @@ impl AccessibilityEngine {
                 frame.app_name,
                 frame.reason
             );
+
+            // Read config for keep_screenshots and workspace_dir.
+            let (keep_screenshots, workspace_dir) = match Config::load_or_init().await {
+                Ok(cfg) => (
+                    cfg.screen_intelligence.keep_screenshots,
+                    cfg.workspace_dir.clone(),
+                ),
+                Err(_) => (false, PathBuf::from(".")),
+            };
+
+            // Save screenshot to disk (always — we need it on disk for the workspace).
+            // If keep_screenshots is false, we delete after vision processing.
+            let saved_path = if frame.image_ref.is_some() {
+                match Self::save_screenshot_to_disk(&workspace_dir, &frame) {
+                    Ok(path) => Some(path),
+                    Err(err) => {
+                        tracing::debug!(
+                            "[screen_intelligence] screenshot save failed (non-fatal): {err}"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
             {
                 let mut state = self.inner.lock().await;
                 if let Some(session) = state.session.as_mut() {
@@ -855,6 +930,18 @@ impl AccessibilityEngine {
             }
 
             let result = self.analyze_frame_with_vision(frame).await;
+
+            // Clean up screenshot file if keep_screenshots is false.
+            if !keep_screenshots {
+                if let Some(path) = saved_path {
+                    if let Err(err) = std::fs::remove_file(&path) {
+                        tracing::trace!(
+                            "[screen_intelligence] failed to remove temp screenshot {}: {err}",
+                            path.display()
+                        );
+                    }
+                }
+            }
 
             let mut state = self.inner.lock().await;
             let Some(session) = state.session.as_mut() else {

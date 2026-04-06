@@ -45,6 +45,7 @@ struct ScreenIntelligenceSettingsUpdate {
     baseline_fps: Option<f32>,
     vision_enabled: Option<bool>,
     autocomplete_enabled: Option<bool>,
+    keep_screenshots: Option<bool>,
     allowlist: Option<Vec<String>>,
     denylist: Option<Vec<String>>,
 }
@@ -240,6 +241,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
                 optional_bool("vision_enabled", "Enable vision analysis."),
                 optional_bool("autocomplete_enabled", "Enable autocomplete integration."),
+                optional_bool("keep_screenshots", "Keep screenshots on disk after vision processing."),
                 FieldSchema {
                     name: "allowlist",
                     ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
@@ -481,6 +483,7 @@ fn handle_update_screen_intelligence_settings(params: Map<String, Value>) -> Con
             baseline_fps: update.baseline_fps,
             vision_enabled: update.vision_enabled,
             autocomplete_enabled: update.autocomplete_enabled,
+            keep_screenshots: update.keep_screenshots,
             allowlist: update.allowlist,
             denylist: update.denylist,
         };
