@@ -86,6 +86,15 @@ struct DictationSettingsUpdate {
     streaming_interval_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct VoiceServerSettingsUpdate {
+    auto_start: Option<bool>,
+    hotkey: Option<String>,
+    activation_mode: Option<String>,
+    skip_cleanup: Option<bool>,
+    min_duration_secs: Option<f32>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -107,6 +116,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("set_onboarding_completed"),
         schemas("get_dictation_settings"),
         schemas("update_dictation_settings"),
+        schemas("get_voice_server_settings"),
+        schemas("update_voice_server_settings"),
     ]
 }
 
@@ -187,6 +198,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_dictation_settings"),
             handler: handle_update_dictation_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_voice_server_settings"),
+            handler: handle_get_voice_server_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_voice_server_settings"),
+            handler: handle_update_voice_server_settings,
         },
     ]
 }
@@ -456,6 +475,31 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
+        "get_voice_server_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_voice_server_settings",
+            description: "Read current voice server settings.",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Voice server settings payload.")],
+        },
+        "update_voice_server_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_voice_server_settings",
+            description: "Update voice server settings.",
+            inputs: vec![
+                optional_bool("auto_start", "Start the voice server automatically with the core."),
+                optional_string("hotkey", "Voice server hotkey string (e.g. Fn)."),
+                optional_string("activation_mode", "Activation mode: tap or push."),
+                optional_bool("skip_cleanup", "Skip LLM cleanup and keep dictation verbatim."),
+                FieldSchema {
+                    name: "min_duration_secs",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
+                    comment: "Minimum recording duration in seconds.",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
         "set_onboarding_completed" => ControllerSchema {
             namespace: "config",
             function: "set_onboarding_completed",
@@ -651,6 +695,24 @@ fn handle_update_dictation_settings(params: Map<String, Value>) -> ControllerFut
             streaming_interval_ms: update.streaming_interval_ms,
         };
         to_json(config_rpc::load_and_apply_dictation_settings(patch).await?)
+    })
+}
+
+fn handle_get_voice_server_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::get_voice_server_settings().await?) })
+}
+
+fn handle_update_voice_server_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<VoiceServerSettingsUpdate>(params)?;
+        let patch = config_rpc::VoiceServerSettingsPatch {
+            auto_start: update.auto_start,
+            hotkey: update.hotkey,
+            activation_mode: update.activation_mode,
+            skip_cleanup: update.skip_cleanup,
+            min_duration_secs: update.min_duration_secs,
+        };
+        to_json(config_rpc::load_and_apply_voice_server_settings(patch).await?)
     })
 }
 

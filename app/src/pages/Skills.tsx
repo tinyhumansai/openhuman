@@ -475,10 +475,9 @@ export default function Skills() {
     },
     {
       id: 'voice-stt',
-      title: 'Voice Speech To Text',
-      description:
-        'Use the microphone for dictation and voice-driven chat with local speech recognition.',
-      route: '/settings/local-model',
+      title: 'Voice Intelligence',
+      description: 'Use the microphone for dictation and voice-driven chat with your AI.',
+      route: '/settings/voice',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path

@@ -22,6 +22,7 @@ import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
+import VoicePanel from '../components/settings/panels/VoicePanel';
 import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
 import SettingsHome from '../components/settings/SettingsHome';
 import SettingsSectionPage from '../components/settings/SettingsSectionPage';
@@ -178,6 +179,22 @@ const automationSettingsItems = [
 
 const aiSettingsItems = [
   {
+    id: 'voice',
+    title: 'Voice Dictation',
+    description: 'Manage dictation startup, hotkeys, writing style, and runtime controls',
+    route: 'voice',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zm-7 9a7 7 0 0014 0m-7 7v2m-4 0h8"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'local-model',
     title: 'Local AI Model',
     description: 'Choose model tier by device capability and manage downloads',
@@ -275,6 +292,7 @@ const Settings = () => {
           <Route path="ai" element={<AIPanel />} />
           <Route path="accessibility" element={<AccessibilityPanel />} />
           <Route path="local-model" element={<LocalModelPanel />} />
+          <Route path="voice" element={<VoicePanel />} />
           <Route path="billing" element={<BillingPanel />} />
           <Route path="skills" element={<SkillsPanel />} />
           <Route path="team" element={<TeamPanel />} />

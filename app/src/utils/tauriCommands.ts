@@ -2456,8 +2456,71 @@ export interface VoiceStatus {
   llm_cleanup_enabled: boolean;
 }
 
+export interface VoiceServerStatus {
+  state: 'stopped' | 'idle' | 'recording' | 'transcribing';
+  hotkey: string;
+  activation_mode: 'tap' | 'push';
+  transcription_count: number;
+  last_error: string | null;
+}
+
+export interface VoiceServerSettings {
+  auto_start: boolean;
+  hotkey: string;
+  activation_mode: 'tap' | 'push';
+  skip_cleanup: boolean;
+  min_duration_secs: number;
+}
+
 export async function openhumanVoiceStatus(): Promise<VoiceStatus> {
   return await callCoreRpc<VoiceStatus>({ method: 'openhuman.voice_status', params: {} });
+}
+
+export async function openhumanVoiceServerStatus(): Promise<CommandResponse<VoiceServerStatus>> {
+  return await callCoreRpc<CommandResponse<VoiceServerStatus>>({
+    method: 'openhuman.voice_server_status',
+    params: {},
+  });
+}
+
+export async function openhumanVoiceServerStart(params?: {
+  hotkey?: string;
+  activation_mode?: 'tap' | 'push';
+  skip_cleanup?: boolean;
+}): Promise<CommandResponse<VoiceServerStatus>> {
+  return await callCoreRpc<CommandResponse<VoiceServerStatus>>({
+    method: 'openhuman.voice_server_start',
+    params: params ?? {},
+  });
+}
+
+export async function openhumanVoiceServerStop(): Promise<CommandResponse<VoiceServerStatus>> {
+  return await callCoreRpc<CommandResponse<VoiceServerStatus>>({
+    method: 'openhuman.voice_server_stop',
+    params: {},
+  });
+}
+
+export async function openhumanGetVoiceServerSettings(): Promise<
+  CommandResponse<VoiceServerSettings>
+> {
+  return await callCoreRpc<CommandResponse<VoiceServerSettings>>({
+    method: 'openhuman.config_get_voice_server_settings',
+    params: {},
+  });
+}
+
+export async function openhumanUpdateVoiceServerSettings(update: {
+  auto_start?: boolean;
+  hotkey?: string;
+  activation_mode?: 'tap' | 'push';
+  skip_cleanup?: boolean;
+  min_duration_secs?: number;
+}): Promise<CommandResponse<ConfigSnapshot>> {
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: 'openhuman.config_update_voice_server_settings',
+    params: update,
+  });
 }
 
 export async function openhumanVoiceTranscribe(
