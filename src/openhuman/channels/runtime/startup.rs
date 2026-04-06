@@ -30,7 +30,7 @@ use crate::openhuman::channels::whatsapp::WhatsAppChannel;
 use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
-use crate::openhuman::event_bus::{self, DomainEvent, EventBus, TracingSubscriber};
+use crate::openhuman::event_bus::{self, DomainEvent, TracingSubscriber};
 use crate::openhuman::memory::{self, Memory};
 use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::security::SecurityPolicy;
@@ -40,11 +40,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub async fn start_channels(config: Config) -> Result<()> {
-    // Initialize the global event bus and register the tracing subscriber
-    // for debug logging of all domain events.
-    let event_bus = event_bus::init_global(256);
-    let _tracing_handle = event_bus.subscribe(Arc::new(TracingSubscriber));
-    tracing::debug!("[event_bus] global bus initialized in start_channels");
+    // Initialize the global event bus singleton and register the tracing
+    // subscriber for debug logging of all domain events.
+    let bus = event_bus::init_global(256);
+    let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
+    tracing::debug!("[event_bus] global singleton initialized in start_channels");
 
     let provider_runtime_options = providers::ProviderRuntimeOptions {
         auth_profile_override: None,
@@ -384,7 +384,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     println!();
 
     crate::openhuman::health::mark_component_ok("channels");
-    event_bus.publish(DomainEvent::SystemStartup {
+    event_bus::publish_global(DomainEvent::SystemStartup {
         component: "channels".into(),
     });
 
@@ -420,7 +420,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     );
     // Register the cron delivery subscriber so cron jobs can deliver output
     // to channels via events instead of directly constructing channel instances.
-    let _cron_delivery_handle = event_bus.subscribe(Arc::new(
+    let _cron_delivery_handle = bus.subscribe(Arc::new(
         crate::openhuman::cron::bus::CronDeliverySubscriber::new(Arc::clone(&channels_by_name)),
     ));
 
@@ -456,7 +456,6 @@ pub async fn start_channels(config: Config) -> Result<()> {
         workspace_dir: Arc::new(config.workspace_dir.clone()),
         message_timeout_secs,
         multimodal: config.multimodal.clone(),
-        event_bus: event_bus.clone(),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;

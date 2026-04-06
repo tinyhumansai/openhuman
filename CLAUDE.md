@@ -288,7 +288,7 @@ Skills runtime uses **QuickJS** (`rquickjs`) in **`src/openhuman/skills/`** (e.g
 
 ### Event bus (`src/openhuman/event_bus/`)
 
-A typed pub/sub event bus for **decoupled cross-module communication**. Modules publish `DomainEvent` variants instead of calling each other directly; subscribers react without importing the publisher's internals.
+A typed pub/sub event bus for **decoupled cross-module communication**. The bus is a **singleton** — one instance handles all events for the entire application. Do **not** construct `EventBus` directly; use the module-level functions.
 
 **When to use the event bus:** Use events when a module needs to _notify_ other modules of something that happened (fire-and-forget). Do **not** use events for request/response flows where the caller needs a return value — use direct function calls or RPC for those.
 
@@ -297,20 +297,27 @@ A typed pub/sub event bus for **decoupled cross-module communication**. Modules 
 | Type | File | Purpose |
 |------|------|---------|
 | `DomainEvent` | `events.rs` | `#[non_exhaustive]` enum — all cross-module events live here, grouped by domain |
-| `EventBus` | `bus.rs` | Cloneable handle backed by `tokio::sync::broadcast`. `publish()`, `subscribe()`, `on()` |
+| `EventBus` | `bus.rs` | Singleton backed by `tokio::sync::broadcast`. Construction is `pub(crate)` — tests only |
 | `EventHandler` | `subscriber.rs` | Async trait with optional `domains()` filter for selective subscription |
 | `SubscriptionHandle` | `subscriber.rs` | RAII handle — subscriber task is cancelled on drop |
 | `TracingSubscriber` | `tracing.rs` | Built-in debug logger for all events (registered at startup) |
 
-**Global access:** `event_bus::init_global(capacity)` initializes a global singleton (called once at startup). Modules that cannot receive the bus via parameters use `event_bus::publish_global(event)` to publish and `event_bus::global()` to subscribe.
+**Singleton API** (all modules use these — never hold or pass `EventBus` instances):
+
+| Function | Purpose |
+|----------|---------|
+| `event_bus::init_global(capacity)` | Initialize the singleton at startup (once) |
+| `event_bus::publish_global(event)` | Publish from anywhere (no-op if not yet initialized) |
+| `event_bus::subscribe_global(handler)` | Subscribe from anywhere (returns `None` if not yet initialized) |
+| `event_bus::global()` | Get `Option<&'static EventBus>` for advanced use |
 
 **Adding events for a new domain:**
 
 1. Add variants to `DomainEvent` in `events.rs` (prefix with domain name, e.g. `BillingInvoiceCreated { ... }`).
 2. Add the domain string to the `domain()` match arm.
 3. Create a `bus.rs` file **inside your domain module** (e.g. `src/openhuman/billing/bus.rs`) for subscriber implementations — each domain owns its handlers.
-4. Register subscribers in startup (e.g. `channels/runtime/startup.rs`) or wherever the bus is initialized.
-5. Publish events with `event_bus::publish_global(DomainEvent::YourEvent { ... })` or via a held `EventBus` instance.
+4. Register subscribers in startup (e.g. `channels/runtime/startup.rs`) via the singleton.
+5. Publish events with `event_bus::publish_global(DomainEvent::YourEvent { ... })`.
 
 **Example — publishing:**
 ```rust

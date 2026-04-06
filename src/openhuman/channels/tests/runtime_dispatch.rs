@@ -40,7 +40,6 @@ async fn message_dispatch_processes_messages_in_parallel() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
@@ -114,7 +113,6 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(

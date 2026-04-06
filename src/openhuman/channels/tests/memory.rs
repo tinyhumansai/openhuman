@@ -144,7 +144,6 @@ async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(

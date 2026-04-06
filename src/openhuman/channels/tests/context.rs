@@ -83,7 +83,6 @@ fn compact_sender_history_keeps_recent_truncated_messages() {
         provider_runtime_options: crate::openhuman::providers::ProviderRuntimeOptions::default(),
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     };
 
     assert!(compact_sender_history(&ctx, &sender));

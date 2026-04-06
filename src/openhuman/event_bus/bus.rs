@@ -1,9 +1,8 @@
 //! Core event bus built on `tokio::sync::broadcast`.
 //!
-//! The [`EventBus`] is the central hub for domain event communication.
-//! It is cheap to clone (all clones share the same underlying channel)
-//! and can be threaded through the application via function parameters
-//! or struct fields.
+//! The [`EventBus`] is a **singleton** — one instance handles all events for
+//! the entire application. Call [`init_global`] once at startup, then use
+//! [`publish_global`], [`subscribe_global`], and [`global`] from anywhere.
 
 use super::events::DomainEvent;
 use super::subscriber::{EventHandler, FnSubscriber, SubscriptionHandle};
@@ -13,26 +12,30 @@ use tokio::sync::broadcast;
 /// Global event bus instance, initialized once at startup.
 static GLOBAL_BUS: OnceLock<EventBus> = OnceLock::new();
 
-/// Initialize the global event bus. Must be called once during startup.
-/// Returns the bus instance. Subsequent calls return the already-initialized bus.
-pub fn init_global(capacity: usize) -> EventBus {
-    GLOBAL_BUS
-        .get_or_init(|| {
-            tracing::debug!(capacity, "[event_bus] initializing global EventBus");
-            EventBus::new(capacity)
-        })
-        .clone()
+/// Default broadcast channel capacity.
+const DEFAULT_CAPACITY: usize = 256;
+
+// ── Global singleton API ────────────────────────────────────────────────
+
+/// Initialize the global event bus. Must be called **once** during startup.
+///
+/// Subsequent calls return the already-initialized bus without changing
+/// the capacity. Panics are impossible — `OnceLock` guarantees single init.
+pub fn init_global(capacity: usize) -> &'static EventBus {
+    GLOBAL_BUS.get_or_init(|| {
+        tracing::debug!(capacity, "[event_bus] initializing global singleton");
+        EventBus::create(capacity)
+    })
 }
 
-/// Get a reference to the global event bus.
-///
-/// Returns `None` if [`init_global`] has not been called yet.
+/// Get the global event bus, or `None` if [`init_global`] has not been called.
 pub fn global() -> Option<&'static EventBus> {
     GLOBAL_BUS.get()
 }
 
-/// Convenience: publish an event on the global bus if it has been initialized.
-/// Silently does nothing if the global bus is not yet available.
+/// Publish an event on the global bus.
+///
+/// Silently does nothing if the global bus is not yet initialized.
 pub fn publish_global(event: DomainEvent) {
     if let Some(bus) = GLOBAL_BUS.get() {
         bus.publish(event);
@@ -41,36 +44,31 @@ pub fn publish_global(event: DomainEvent) {
     }
 }
 
-/// Default broadcast channel capacity.
-const DEFAULT_CAPACITY: usize = 256;
+/// Subscribe a handler on the global bus.
+///
+/// Silently does nothing and returns `None` if the bus is not yet initialized.
+pub fn subscribe_global(handler: Arc<dyn EventHandler>) -> Option<SubscriptionHandle> {
+    GLOBAL_BUS.get().map(|bus| bus.subscribe(handler))
+}
 
-/// The central event bus for cross-module communication.
+// ── EventBus struct ─────────────────────────────────────────────────────
+
+/// The event bus. There is exactly **one** instance at runtime, accessed
+/// through the module-level functions ([`init_global`], [`publish_global`],
+/// [`subscribe_global`], [`global`]).
 ///
-/// Built on `tokio::sync::broadcast`, which provides multi-producer,
-/// multi-consumer semantics. Events are delivered to all active subscribers.
-///
-/// Cloning an `EventBus` is cheap — all clones share the same channel.
+/// Direct construction is restricted to `pub(crate)` for test isolation.
 #[derive(Clone, Debug)]
 pub struct EventBus {
     tx: broadcast::Sender<DomainEvent>,
 }
 
 impl EventBus {
-    /// Create a new event bus with the given channel capacity.
-    ///
-    /// Capacity is clamped to at least 1 to avoid a broadcast channel panic.
-    pub fn new(capacity: usize) -> Self {
+    /// Create a new event bus. **Only** exposed within the crate for testing;
+    /// production code must use [`init_global`].
+    pub(crate) fn create(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity.max(1));
-        tracing::debug!(
-            capacity = capacity.max(1),
-            "[event_bus] created new EventBus"
-        );
         Self { tx }
-    }
-
-    /// Create a new event bus with the default capacity (256).
-    pub fn with_default_capacity() -> Self {
-        Self::new(DEFAULT_CAPACITY)
     }
 
     /// Publish an event to all subscribers.
@@ -145,9 +143,8 @@ impl EventBus {
 
     /// Subscribe with an async closure for simple, one-off handlers.
     ///
-    /// The closure receives each event and returns a future. Domain filtering
-    /// is not supported with this shorthand — use [`subscribe`] with an
-    /// [`EventHandler`] implementation for domain-filtered subscriptions.
+    /// Domain filtering is not supported with this shorthand — use
+    /// [`subscribe`] with an [`EventHandler`] for domain-filtered subscriptions.
     pub fn on<F>(&self, name: &str, handler: F) -> SubscriptionHandle
     where
         F: Fn(&DomainEvent) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>
@@ -168,21 +165,18 @@ impl EventBus {
     }
 }
 
-impl Default for EventBus {
-    fn default() -> Self {
-        Self::with_default_capacity()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::{sleep, Duration};
 
+    /// Tests use `EventBus::create()` for isolation — each test gets its own
+    /// bus so they don't interfere with each other or the global singleton.
+
     #[tokio::test]
     async fn publish_without_subscribers_does_not_panic() {
-        let bus = EventBus::new(16);
+        let bus = EventBus::create(16);
         bus.publish(DomainEvent::SystemStartup {
             component: "test".into(),
         });
@@ -190,7 +184,7 @@ mod tests {
 
     #[tokio::test]
     async fn single_subscriber_receives_event() {
-        let bus = EventBus::new(16);
+        let bus = EventBus::create(16);
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
 
@@ -211,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_subscribers_receive_same_event() {
-        let bus = EventBus::new(16);
+        let bus = EventBus::create(16);
         let counter = Arc::new(AtomicUsize::new(0));
 
         let c1 = Arc::clone(&counter);
@@ -259,7 +253,7 @@ mod tests {
             }
         }
 
-        let bus = EventBus::new(16);
+        let bus = EventBus::create(16);
         let counter = Arc::new(AtomicUsize::new(0));
 
         let _handle = bus.subscribe(Arc::new(CronOnlyHandler {
@@ -283,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_drop_cancels_subscriber() {
-        let bus = EventBus::new(16);
+        let bus = EventBus::create(16);
         let counter = Arc::new(AtomicUsize::new(0));
         let c = Arc::clone(&counter);
 
@@ -302,7 +296,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscriber_count_tracks_correctly() {
-        let bus = EventBus::new(16);
+        let bus = EventBus::create(16);
         assert_eq!(bus.subscriber_count(), 0);
 
         let h1 = bus.on("s1", |_| Box::pin(async {}));

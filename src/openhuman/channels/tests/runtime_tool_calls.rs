@@ -41,7 +41,6 @@ async fn process_channel_message_executes_tool_calls_instead_of_sending_raw_json
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(
@@ -96,7 +95,6 @@ async fn process_channel_message_executes_tool_calls_with_alias_tags() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(
@@ -160,7 +158,6 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(
@@ -245,7 +242,6 @@ async fn process_channel_message_uses_route_override_provider_and_model() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(
@@ -306,7 +302,6 @@ async fn process_channel_message_respects_configured_max_tool_iterations_above_d
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(
@@ -362,7 +357,6 @@ async fn process_channel_message_reports_configured_max_tool_iterations_limit() 
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
-        event_bus: crate::openhuman::event_bus::EventBus::with_default_capacity(),
     });
 
     process_channel_message(

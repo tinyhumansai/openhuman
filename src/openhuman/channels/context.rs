@@ -1,6 +1,5 @@
 //! Shared channel runtime state and memory helpers.
 
-use crate::openhuman::event_bus::EventBus;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::Tool;
@@ -66,7 +65,6 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) workspace_dir: Arc<PathBuf>,
     pub(crate) message_timeout_secs: u64,
     pub(crate) multimodal: crate::openhuman::config::MultimodalConfig,
-    pub(crate) event_bus: EventBus,
 }
 
 pub(crate) fn conversation_memory_key(msg: &super::traits::ChannelMessage) -> String {
