@@ -61,6 +61,19 @@ struct TelegramLoginCheckParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct DiscordListChannelsParams {
+    guild_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscordCheckPermissionsParams {
+    guild_id: String,
+    channel_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SendMessageParams {
     channel: String,
     message: serde_json::Value,
@@ -110,6 +123,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("test"),
         schemas("telegram_login_start"),
         schemas("telegram_login_check"),
+        schemas("discord_list_guilds"),
+        schemas("discord_list_channels"),
+        schemas("discord_check_permissions"),
         schemas("send_message"),
         schemas("send_reaction"),
         schemas("create_thread"),
@@ -151,6 +167,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("telegram_login_check"),
             handler: handle_telegram_login_check,
+        },
+        RegisteredController {
+            schema: schemas("discord_list_guilds"),
+            handler: handle_discord_list_guilds,
+        },
+        RegisteredController {
+            schema: schemas("discord_list_channels"),
+            handler: handle_discord_list_channels,
+        },
+        RegisteredController {
+            schema: schemas("discord_check_permissions"),
+            handler: handle_discord_check_permissions,
         },
         RegisteredController {
             schema: schemas("send_message"),
@@ -275,6 +303,30 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "result",
                 "Object with linked (bool) and optional details.",
             )],
+        },
+        "discord_list_guilds" => ControllerSchema {
+            namespace: "channels",
+            function: "discord_list_guilds",
+            description: "List Discord servers (guilds) the connected bot is a member of.",
+            inputs: vec![],
+            outputs: vec![json_output("guilds", "Array of guild objects with id, name, and icon.")],
+        },
+        "discord_list_channels" => ControllerSchema {
+            namespace: "channels",
+            function: "discord_list_channels",
+            description: "List text channels in a Discord guild.",
+            inputs: vec![required_string("guildId", "The Discord guild (server) ID.")],
+            outputs: vec![json_output("channels", "Array of text channel objects with id, name, position, and parentId.")],
+        },
+        "discord_check_permissions" => ControllerSchema {
+            namespace: "channels",
+            function: "discord_check_permissions",
+            description: "Check bot permissions in a Discord channel.",
+            inputs: vec![
+                required_string("guildId", "The Discord guild (server) ID."),
+                required_string("channelId", "The Discord channel ID to check."),
+            ],
+            outputs: vec![json_output("permissions", "Permission check result with flags and missing permissions.")],
         },
         "send_message" => ControllerSchema {
             namespace: "channels",
@@ -434,6 +486,29 @@ fn handle_telegram_login_check(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<TelegramLoginCheckParams>(params)?;
         to_json(ops::telegram_login_check(&config, p.link_token.trim()).await?)
+    })
+}
+
+fn handle_discord_list_guilds(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(ops::discord_list_guilds(&config).await?)
+    })
+}
+
+fn handle_discord_list_channels(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<DiscordListChannelsParams>(params)?;
+        to_json(ops::discord_list_channels(&config, p.guild_id.trim()).await?)
+    })
+}
+
+fn handle_discord_check_permissions(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<DiscordCheckPermissionsParams>(params)?;
+        to_json(ops::discord_check_permissions(&config, p.guild_id.trim(), p.channel_id.trim()).await?)
     })
 }
 
