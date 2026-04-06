@@ -199,9 +199,7 @@ const AutoRechargeSection = ({
 
           {/* Trigger threshold */}
           <div>
-            <p className="text-[11px] text-stone-400 mb-1.5">
-              Recharge when balance drops below
-            </p>
+            <p className="text-[11px] text-stone-400 mb-1.5">Recharge when balance drops below</p>
             <div className="flex gap-1.5 flex-wrap">
               {THRESHOLD_OPTIONS.map(v => (
                 <button

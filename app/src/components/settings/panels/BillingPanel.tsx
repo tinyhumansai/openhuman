@@ -14,11 +14,11 @@ import type { CurrentPlanData, PlanTier } from '../../../types/api';
 import { openUrl } from '../../../utils/openUrl';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import { buildPlanId, formatStorageLimit, formatUsdAmount, getPlanMeta } from './billingHelpers';
 import AutoRechargeSection from './billing/AutoRechargeSection';
 import InferenceBudget from './billing/InferenceBudget';
 import PayAsYouGoCard from './billing/PayAsYouGoCard';
 import SubscriptionPlans from './billing/SubscriptionPlans';
+import { buildPlanId, formatStorageLimit, formatUsdAmount, getPlanMeta } from './billingHelpers';
 
 const log = createDebug('openhuman:billing-panel');
 

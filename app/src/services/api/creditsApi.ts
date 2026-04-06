@@ -114,10 +114,7 @@ export interface UpdateCardPayload {
 
 export interface CouponRedeemResult {
   success: boolean;
-  data: {
-    code: string;
-    amountUsd: number;
-  };
+  data: { code: string; amountUsd: number };
 }
 
 export interface RedeemedCoupon {

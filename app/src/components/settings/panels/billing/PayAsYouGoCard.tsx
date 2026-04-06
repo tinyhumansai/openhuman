@@ -39,7 +39,9 @@ const PayAsYouGoCard = ({
       const result = await creditsApi.redeemCoupon(code);
       const amount = result?.data?.amountUsd;
       setCouponSuccess(
-        amount != null ? `Coupon redeemed! $${amount.toFixed(2)} added to your credits.` : 'Coupon redeemed successfully!'
+        amount != null
+          ? `Coupon redeemed! $${amount.toFixed(2)} added to your credits.`
+          : 'Coupon redeemed successfully!'
       );
       setCouponCode('');
       onBalanceRefresh();
@@ -73,13 +75,12 @@ const PayAsYouGoCard = ({
               <span className="text-xs text-stone-400">Top-up credits</span>
               <span className="text-xs font-medium text-stone-900">
                 ${creditBalance.topUpBalanceUsd.toFixed(2)}
-                {creditBalance.topUpBaselineUsd != null &&
-                  creditBalance.topUpBaselineUsd > 0 && (
-                    <span className="text-stone-500 font-normal">
-                      {' '}
-                      / ${creditBalance.topUpBaselineUsd.toFixed(2)}
-                    </span>
-                  )}
+                {creditBalance.topUpBaselineUsd != null && creditBalance.topUpBaselineUsd > 0 && (
+                  <span className="text-stone-500 font-normal">
+                    {' '}
+                    / ${creditBalance.topUpBaselineUsd.toFixed(2)}
+                  </span>
+                )}
               </span>
             </div>
             {creditBalance.topUpBaselineUsd != null && creditBalance.topUpBaselineUsd > 0 && (
