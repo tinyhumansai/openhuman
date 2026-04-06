@@ -233,6 +233,13 @@ fn discord_definition() -> ChannelDefinition {
                         required: false,
                         placeholder: "Optional: restrict to a specific server",
                     },
+                    FieldRequirement {
+                        key: "channel_id",
+                        label: "Channel ID",
+                        field_type: "string",
+                        required: false,
+                        placeholder: "Optional: default channel for outbound messages",
+                    },
                 ],
                 auth_action: None,
             },

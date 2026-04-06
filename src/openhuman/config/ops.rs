@@ -534,6 +534,80 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
     ))
 }
 
+// ── Dictation settings ───────────────────────────────────────────────
+
+pub struct DictationSettingsPatch {
+    pub enabled: Option<bool>,
+    pub hotkey: Option<String>,
+    pub activation_mode: Option<String>,
+    pub llm_refinement: Option<bool>,
+    pub streaming: Option<bool>,
+    pub streaming_interval_ms: Option<u64>,
+}
+
+pub async fn get_dictation_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let result = json!({
+        "enabled": config.dictation.enabled,
+        "hotkey": config.dictation.hotkey,
+        "activation_mode": config.dictation.activation_mode,
+        "llm_refinement": config.dictation.llm_refinement,
+        "streaming": config.dictation.streaming,
+        "streaming_interval_ms": config.dictation.streaming_interval_ms,
+    });
+    Ok(RpcOutcome::new(
+        result,
+        vec!["dictation settings read".to_string()],
+    ))
+}
+
+pub async fn load_and_apply_dictation_settings(
+    update: DictationSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    if let Some(enabled) = update.enabled {
+        config.dictation.enabled = enabled;
+    }
+    if let Some(hotkey) = update.hotkey {
+        config.dictation.hotkey = hotkey;
+    }
+    if let Some(mode) = update.activation_mode {
+        match mode.as_str() {
+            "toggle" => {
+                config.dictation.activation_mode =
+                    crate::openhuman::config::DictationActivationMode::Toggle;
+            }
+            "push" => {
+                config.dictation.activation_mode =
+                    crate::openhuman::config::DictationActivationMode::Push;
+            }
+            _ => {
+                return Err(format!(
+                    "invalid activation_mode: {mode} (valid: toggle, push)"
+                ))
+            }
+        }
+    }
+    if let Some(llm_refinement) = update.llm_refinement {
+        config.dictation.llm_refinement = llm_refinement;
+    }
+    if let Some(streaming) = update.streaming {
+        config.dictation.streaming = streaming;
+    }
+    if let Some(interval) = update.streaming_interval_ms {
+        config.dictation.streaming_interval_ms = interval;
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(&config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "dictation settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
 pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
     let running = crate::openhuman::service::mock::mock_agent_running().unwrap_or(true);
     log::info!("[config] agent_server_status requested: running={running}");

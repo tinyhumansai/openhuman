@@ -37,7 +37,6 @@ use crate::openhuman::skills::ping_scheduler::PingScheduler;
 use crate::openhuman::skills::preferences::PreferencesStore;
 use crate::openhuman::skills::qjs_skill_instance::{BridgeDeps, QjsSkillInstance};
 use crate::openhuman::skills::skill_registry::SkillRegistry;
-use crate::openhuman::skills::socket_manager::SocketManager;
 use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin, ToolResult};
 use crate::openhuman::webhooks::WebhookRouter;
 
@@ -62,8 +61,6 @@ pub struct RuntimeEngine {
     resource_dir: RwLock<Option<PathBuf>>,
     /// Memory client for skill data persistence.
     memory_client: RwLock<Option<MemoryClientRef>>,
-    /// Socket manager for emitting tool:sync events to the UI.
-    socket_manager: RwLock<Option<Arc<SocketManager>>>,
     /// Webhook router for tunnel-to-skill routing.
     webhook_router: Arc<WebhookRouter>,
     /// Workspace directory for user-installed skills from registry.
@@ -110,7 +107,6 @@ impl RuntimeEngine {
             skills_source_dir: RwLock::new(None),
             resource_dir: RwLock::new(None),
             memory_client: RwLock::new(memory_client),
-            socket_manager: RwLock::new(None),
             webhook_router,
             workspace_dir: RwLock::new(None),
         })
@@ -148,13 +144,6 @@ impl RuntimeEngine {
         *self.resource_dir.write() = Some(dir);
     }
 
-    /// Set the socket manager for emitting `tool:sync` events.
-    pub fn set_socket_manager(&self, mgr: Arc<SocketManager>) {
-        // Also wire the webhook router into the socket manager
-        mgr.set_webhook_router(Arc::clone(&self.webhook_router));
-        *self.socket_manager.write() = Some(mgr);
-    }
-
     /// Get a clone of the webhook router Arc.
     pub fn webhook_router(&self) -> Arc<WebhookRouter> {
         Arc::clone(&self.webhook_router)
@@ -164,14 +153,6 @@ impl RuntimeEngine {
     pub fn set_workspace_dir(&self, dir: PathBuf) {
         log::info!("[runtime] Workspace directory set to: {:?}", dir);
         *self.workspace_dir.write() = Some(dir);
-    }
-
-    /// Notify the backend of the current tool state via `tool:sync`.
-    async fn sync_tools(&self) {
-        let mgr = { self.socket_manager.read().clone() };
-        if let Some(mgr) = mgr {
-            mgr.sync_tools().await;
-        }
     }
 
     /// Resolve the directory where skills should be loaded from.
@@ -471,7 +452,7 @@ impl RuntimeEngine {
             match current_status {
                 SkillStatus::Running => {
                     self.emit_status_change(&skill_id_owned);
-                    self.sync_tools().await;
+
                     return Ok(instance.snapshot());
                 }
                 SkillStatus::Error => {
@@ -526,7 +507,6 @@ impl RuntimeEngine {
         self.cron_scheduler.unregister_all_for_skill(skill_id);
         self.webhook_router.unregister_skill(skill_id);
         self.emit_status_change(skill_id);
-        self.sync_tools().await;
         Ok(())
     }
 
@@ -647,8 +627,6 @@ impl RuntimeEngine {
                 log::warn!("[runtime] Failed to discover skills for auto-start: {e}");
             }
         }
-        // Sync all tool state to backend after auto-start completes
-        self.sync_tools().await;
     }
 
     /// Enable a skill and start it.

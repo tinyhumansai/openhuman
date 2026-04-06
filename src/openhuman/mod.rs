@@ -41,6 +41,7 @@ pub mod screen_intelligence;
 pub mod security;
 pub mod service;
 pub mod skills;
+pub mod socket;
 pub mod subconscious;
 pub mod team;
 pub mod tool_timeout;

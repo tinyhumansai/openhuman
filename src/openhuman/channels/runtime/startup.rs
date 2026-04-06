@@ -201,6 +201,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
         channels.push(Arc::new(DiscordChannel::new(
             dc.bot_token.clone(),
             dc.guild_id.clone(),
+            dc.channel_id.clone(),
             dc.allowed_users.clone(),
             dc.listen_to_bots,
             dc.mention_only,

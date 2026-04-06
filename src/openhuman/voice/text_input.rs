@@ -19,7 +19,10 @@ pub fn insert_text(text: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    info!("{LOG_PREFIX} inserting {} chars into active field", text.len());
+    info!(
+        "{LOG_PREFIX} inserting {} chars into active field",
+        text.len()
+    );
 
     let mut enigo = Enigo::new(&Settings::default())
         .map_err(|e| format!("failed to create enigo instance: {e}"))?;

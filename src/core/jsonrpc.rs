@@ -6,7 +6,9 @@
 //! - SSE (Server-Sent Events) for real-time event streaming.
 //! - Helper routes for health checks, schema discovery, and Telegram authentication.
 
-use axum::extract::{Query, State};
+use std::sync::Arc;
+
+use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::http::{header, HeaderValue, Method, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -326,6 +328,21 @@ async fn telegram_auth_handler(Query(query): Query<TelegramAuthQuery>) -> impl I
     html_response(StatusCode::OK, success_html())
 }
 
+/// WebSocket upgrade handler for streaming voice dictation.
+async fn dictation_ws_handler(ws: WebSocketUpgrade) -> Response {
+    log::info!("[ws] dictation WebSocket upgrade requested");
+    ws.on_upgrade(|socket| async move {
+        let config = match crate::openhuman::config::rpc::load_config_with_timeout().await {
+            Ok(c) => Arc::new(c),
+            Err(e) => {
+                log::error!("[ws] failed to load config for dictation: {e}");
+                return;
+            }
+        };
+        crate::openhuman::voice::streaming::handle_dictation_ws(socket, config).await;
+    })
+}
+
 /// Builds the main Axum router for the core HTTP server.
 ///
 /// Includes routes for health, schema, SSE events, JSON-RPC, and Telegram auth.
@@ -338,6 +355,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/events", get(events_handler))
         .route("/events/webhooks", get(webhook_events_handler))
         .route("/rpc", post(rpc_handler))
+        .route("/ws/dictation", get(dictation_ws_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
         .fallback(not_found_handler)
         .layer(middleware::from_fn(http_request_log_middleware))
@@ -639,10 +657,12 @@ pub async fn run_server(
     Ok(())
 }
 
-/// Initializes the QuickJS skill runtime and register it globally so RPC
-/// handlers (`openhuman.skills_*`) can reach it.
+/// Initializes the QuickJS skill runtime, socket manager, and registers them
+/// globally so RPC handlers (`openhuman.skills_*`, `openhuman.socket_*`) can
+/// reach them.
 pub async fn bootstrap_skill_runtime() {
     use crate::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
+    use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
 
     // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
@@ -675,7 +695,12 @@ pub async fn bootstrap_skill_runtime() {
     let _ = std::fs::create_dir_all(&workspace_dir);
     engine.set_workspace_dir(workspace_dir);
 
-    // Register globally so RPC handlers can access it.
+    // --- Socket manager bootstrap ---
+    let socket_mgr = Arc::new(SocketManager::new());
+    set_global_socket_manager(socket_mgr.clone());
+    log::info!("[socket] SocketManager initialized and registered globally");
+
+    // Register engine globally so RPC handlers can access it.
     set_global_engine(engine.clone());
 
     // Start the ping scheduler (background health checks).
@@ -687,8 +712,43 @@ pub async fn bootstrap_skill_runtime() {
     log::info!("[runtime] Skill runtime initialized");
 
     // Auto-start skills in the background so it doesn't block server startup.
+    let engine_for_skills = engine.clone();
     tokio::spawn(async move {
-        engine.auto_start_skills().await;
+        engine_for_skills.auto_start_skills().await;
+    });
+
+    // Auto-connect socket to backend if a session token is already stored.
+    // This runs in the background so it doesn't block server startup.
+    tokio::spawn(async move {
+        log::info!("[socket] Checking for stored session to auto-connect...");
+        let config = match crate::openhuman::config::Config::load_or_init().await {
+            Ok(c) => c,
+            Err(e) => {
+                log::debug!("[socket] Config not available for auto-connect: {e}");
+                return;
+            }
+        };
+        let api_url = crate::api::config::effective_api_url(&config.api_url);
+        let token = match crate::api::jwt::get_session_token(&config) {
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                log::info!("[socket] No session token stored — skipping auto-connect (will connect after login)");
+                return;
+            }
+            Err(e) => {
+                log::warn!("[socket] Failed to read session token: {e}");
+                return;
+            }
+        };
+        log::info!(
+            "[socket] Session token found — auto-connecting to {}",
+            api_url
+        );
+        if let Err(e) = socket_mgr.connect(&api_url, &token).await {
+            log::error!("[socket] Auto-connect failed: {e}");
+        } else {
+            log::info!("[socket] Auto-connect initiated successfully");
+        }
     });
 }
 

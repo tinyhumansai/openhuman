@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{self, Duration};
 
-use super::engine::{global_engine, AccessibilityEngine, EngineState};
+use super::engine::{AccessibilityEngine, EngineState};
 use super::helpers::{
     generate_suggestions, parse_vision_summary_output, truncate_tail, validate_input_action,
 };
@@ -429,7 +429,13 @@ async fn panic_stop_behavior_stops_session() {
         return;
     }
 
-    let engine = global_engine();
+    let engine = Arc::new(AccessibilityEngine {
+        inner: Mutex::new(EngineState::new(ScreenIntelligenceConfig {
+            baseline_fps: 6.0,
+            session_ttl_secs: 60,
+            ..Default::default()
+        })),
+    });
 
     let started = engine
         .start_session(StartSessionParams {

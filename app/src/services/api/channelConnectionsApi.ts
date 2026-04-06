@@ -1,9 +1,12 @@
 import type {
+  BotPermissionCheck,
   ChannelAuthMode,
   ChannelConnectionResult,
   ChannelDefinition,
   ChannelStatusEntry,
   ChannelType,
+  DiscordGuild,
+  DiscordTextChannel,
 } from '../../types/channels';
 import { callCoreRpc } from '../coreRpcClient';
 
@@ -90,6 +93,33 @@ export const channelConnectionsApi = {
       params: { linkToken },
     });
     return result;
+  },
+
+  /** List Discord servers (guilds) the connected bot is a member of. */
+  listDiscordGuilds: async (): Promise<DiscordGuild[]> => {
+    return callCoreRpc<DiscordGuild[]>({
+      method: 'openhuman.channels_discord_list_guilds',
+      params: {},
+    });
+  },
+
+  /** List text channels in a Discord server. */
+  listDiscordChannels: async (guildId: string): Promise<DiscordTextChannel[]> => {
+    return callCoreRpc<DiscordTextChannel[]>({
+      method: 'openhuman.channels_discord_list_channels',
+      params: { guildId },
+    });
+  },
+
+  /** Check bot permissions in a Discord channel. */
+  checkDiscordPermissions: async (
+    guildId: string,
+    channelId: string
+  ): Promise<BotPermissionCheck> => {
+    return callCoreRpc<BotPermissionCheck>({
+      method: 'openhuman.channels_discord_check_permissions',
+      params: { guildId, channelId },
+    });
   },
 
   /** Placeholder for default channel preference sync. */

@@ -1,8 +1,8 @@
 //! JSON-RPC schemas and handlers for the OpenHuman Skills system.
 //!
 //! This module defines the interface between the frontend/RPC clients and the
-//! skills registry and runtime. It includes schemas for socket management,
-//! skill installation, and runtime control (start, stop, tool calls, etc.).
+//! skills registry and runtime: skill installation, and runtime control
+//! (start, stop, tool calls, etc.).
 
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -14,18 +14,9 @@ use crate::openhuman::config::rpc as config_rpc;
 use super::qjs_engine::require_engine;
 use super::registry_ops;
 
-const SOCKET_UNAVAILABLE_MSG: &str =
-    "native skill runtime and socket manager are not available in this build";
-
 /// Returns all controller schemas defined in this module.
-///
-/// These schemas describe the expected inputs and outputs for each JSON-RPC function.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
-        socket_schema("connect"),
-        socket_schema("disconnect"),
-        socket_schema("state"),
-        socket_schema("emit"),
         skills_schema("registry_fetch"),
         skills_schema("search"),
         skills_schema("install"),
@@ -58,24 +49,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
 /// Returns all registered controllers (schema + handler) for the skills system.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
-        // Socket stubs (unchanged)
-        RegisteredController {
-            schema: socket_schema("connect"),
-            handler: handle_socket_unavailable,
-        },
-        RegisteredController {
-            schema: socket_schema("disconnect"),
-            handler: handle_socket_unavailable,
-        },
-        RegisteredController {
-            schema: socket_schema("state"),
-            handler: handle_socket_unavailable,
-        },
-        RegisteredController {
-            schema: socket_schema("emit"),
-            handler: handle_socket_unavailable,
-        },
-        // Skills registry controllers
         RegisteredController {
             schema: skills_schema("registry_fetch"),
             handler: handle_skills_registry_fetch,
@@ -178,53 +151,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_skills_get_all_snapshots,
         },
     ]
-}
-
-// --- Socket schemas (unchanged) ---
-
-/// Helper to create a schema for socket-related functions.
-fn socket_schema(function: &str) -> ControllerSchema {
-    match function {
-        "connect" | "disconnect" | "state" | "emit" => ControllerSchema {
-            namespace: "socket",
-            function: match function {
-                "connect" => "connect",
-                "disconnect" => "disconnect",
-                "state" => "state",
-                _ => "emit",
-            },
-            description: "Skill runtime socket manager bridge.",
-            inputs: vec![FieldSchema {
-                name: "payload",
-                ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                comment: "Socket request payload.",
-                required: false,
-            }],
-            outputs: vec![FieldSchema {
-                name: "result",
-                ty: TypeSchema::Json,
-                comment: "Socket response payload.",
-                required: true,
-            }],
-        },
-        _ => ControllerSchema {
-            namespace: "socket",
-            function: "unknown",
-            description: "Unknown socket controller function.",
-            inputs: vec![],
-            outputs: vec![FieldSchema {
-                name: "error",
-                ty: TypeSchema::String,
-                comment: "Lookup error details.",
-                required: true,
-            }],
-        },
-    }
-}
-
-/// Fallback handler for socket functions when the native runtime is unavailable.
-fn handle_socket_unavailable(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async { Err(SOCKET_UNAVAILABLE_MSG.to_string()) })
 }
 
 // --- Skills registry schemas ---

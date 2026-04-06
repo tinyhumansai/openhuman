@@ -82,3 +82,26 @@ export interface ChannelConnectionResult {
   auth_action?: string;
   message?: string;
 }
+
+// --- Discord guild/channel discovery types ---
+
+export interface DiscordGuild {
+  id: string;
+  name: string;
+  icon: string | null;
+}
+
+export interface DiscordTextChannel {
+  id: string;
+  name: string;
+  type: number;
+  position: number;
+  parent_id: string | null;
+}
+
+export interface BotPermissionCheck {
+  can_view_channel: boolean;
+  can_send_messages: boolean;
+  can_read_message_history: boolean;
+  missing_permissions: string[];
+}

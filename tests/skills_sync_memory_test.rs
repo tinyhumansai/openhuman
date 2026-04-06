@@ -78,6 +78,33 @@ macro_rules! require_skills_dir {
     };
 }
 
+/// Pick a skill that actually exists in the skills directory.
+fn select_skill_id(skills_dir: &Path) -> String {
+    if let Ok(id) = std::env::var("SKILL_DEBUG_ID") {
+        if !id.trim().is_empty() {
+            return id;
+        }
+    }
+    // Preferred order: simple skills first.
+    for candidate in &["server-ping", "example-skill", "gmail", "notion"] {
+        if skills_dir.join(candidate).join("manifest.json").exists() {
+            return (*candidate).to_string();
+        }
+    }
+    // Fallback: first directory with a manifest.json.
+    if let Ok(entries) = std::fs::read_dir(skills_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() && p.join("manifest.json").exists() {
+                if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                    return name.to_string();
+                }
+            }
+        }
+    }
+    "example-skill".to_string()
+}
+
 async fn create_engine_with_memory(
     skills_dir: &Path,
     data_dir: &Path,
@@ -120,9 +147,10 @@ async fn sync_rpc_persists_to_memory() {
     std::fs::create_dir_all(&data_dir).unwrap();
     std::fs::create_dir_all(&workspace_dir).unwrap();
 
-    let skill_id = "example-skill";
+    let skill_id = &select_skill_id(&skills_dir);
 
     eprintln!("\n=== sync_rpc_persists_to_memory ===");
+    eprintln!("  Skill ID:      {skill_id}");
     eprintln!("  Skills dir:    {}", skills_dir.display());
     eprintln!("  Data dir:      {}", data_dir.display());
     eprintln!("  Workspace dir: {}", workspace_dir.display());
@@ -248,9 +276,10 @@ async fn tick_persists_to_memory() {
     std::fs::create_dir_all(&data_dir).unwrap();
     std::fs::create_dir_all(&workspace_dir).unwrap();
 
-    let skill_id = "example-skill";
+    let skill_id = &select_skill_id(&skills_dir);
 
     eprintln!("\n=== tick_persists_to_memory ===");
+    eprintln!("  Skill ID: {skill_id}");
 
     let (engine, memory_client) =
         create_engine_with_memory(&skills_dir, &data_dir, &workspace_dir).await;
@@ -325,9 +354,10 @@ async fn skills_sync_rpc_calls_on_sync_not_on_tick() {
     std::fs::create_dir_all(&data_dir).unwrap();
     std::fs::create_dir_all(&workspace_dir).unwrap();
 
-    let skill_id = "example-skill";
+    let skill_id = &select_skill_id(&skills_dir);
 
     eprintln!("\n=== skills_sync_rpc_calls_on_sync_not_on_tick ===");
+    eprintln!("  Skill ID: {skill_id}");
 
     let (engine, memory_client) =
         create_engine_with_memory(&skills_dir, &data_dir, &workspace_dir).await;

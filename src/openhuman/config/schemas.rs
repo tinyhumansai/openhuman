@@ -76,6 +76,16 @@ struct OnboardingCompletedSetParams {
     value: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct DictationSettingsUpdate {
+    enabled: Option<bool>,
+    hotkey: Option<String>,
+    activation_mode: Option<String>,
+    llm_refinement: Option<bool>,
+    streaming: Option<bool>,
+    streaming_interval_ms: Option<u64>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -95,6 +105,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("reset_local_data"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
+        schemas("get_dictation_settings"),
+        schemas("update_dictation_settings"),
     ]
 }
 
@@ -167,6 +179,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_onboarding_completed"),
             handler: handle_set_onboarding_completed,
+        },
+        RegisteredController {
+            schema: schemas("get_dictation_settings"),
+            handler: handle_get_dictation_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_dictation_settings"),
+            handler: handle_update_dictation_settings,
         },
     ]
 }
@@ -410,6 +430,32 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "get_dictation_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_dictation_settings",
+            description: "Read current voice dictation settings.",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Dictation settings payload.")],
+        },
+        "update_dictation_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_dictation_settings",
+            description: "Update voice dictation settings.",
+            inputs: vec![
+                optional_bool("enabled", "Enable voice dictation."),
+                optional_string("hotkey", "Global hotkey string (e.g. CmdOrCtrl+Shift+D)."),
+                optional_string("activation_mode", "Activation mode: toggle or push."),
+                optional_bool("llm_refinement", "Enable LLM post-processing of transcription."),
+                optional_bool("streaming", "Enable WebSocket streaming transcription."),
+                FieldSchema {
+                    name: "streaming_interval_ms",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Interval between streaming inference passes (ms).",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
         "set_onboarding_completed" => ControllerSchema {
             namespace: "config",
             function: "set_onboarding_completed",
@@ -587,6 +633,25 @@ fn handle_reset_local_data(_params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::get_onboarding_completed().await?) })
+}
+
+fn handle_get_dictation_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::get_dictation_settings().await?) })
+}
+
+fn handle_update_dictation_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<DictationSettingsUpdate>(params)?;
+        let patch = config_rpc::DictationSettingsPatch {
+            enabled: update.enabled,
+            hotkey: update.hotkey,
+            activation_mode: update.activation_mode,
+            llm_refinement: update.llm_refinement,
+            streaming: update.streaming,
+            streaming_interval_ms: update.streaming_interval_ms,
+        };
+        to_json(config_rpc::load_and_apply_dictation_settings(patch).await?)
+    })
 }
 
 fn handle_set_onboarding_completed(params: Map<String, Value>) -> ControllerFuture {

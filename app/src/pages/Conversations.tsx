@@ -333,9 +333,8 @@ const Conversations = () => {
     let cancelled = false;
     void (async () => {
       try {
-        const resp = await openhumanVoiceStatus();
+        const status = await openhumanVoiceStatus();
         if (cancelled) return;
-        const status = resp.result;
         if (!status.stt_available) {
           setVoiceStatus(
             'Speech-to-text unavailable: whisper-cli binary or STT model not found. Check Settings > Local Models.'
@@ -733,7 +732,7 @@ const Conversations = () => {
           : undefined;
 
       const result = await openhumanVoiceTranscribeBytes(audioBytes, extension, context);
-      const transcript = result.result.text.trim();
+      const transcript = result.text.trim();
 
       if (!transcript) {
         setVoiceStatus('No speech detected. Try again.');
@@ -835,7 +834,7 @@ const Conversations = () => {
         const ttsResult = await openhumanVoiceTts(latestAgentMessage.content);
         if (cancelled) return;
 
-        const audioSrc = convertFileSrc(ttsResult.result.output_path);
+        const audioSrc = convertFileSrc(ttsResult.output_path);
         const audio = new window.Audio(audioSrc);
         replyAudioRef.current?.pause();
         replyAudioRef.current = audio;

@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.51.6",
+  "version": "0.51.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -37,8 +37,11 @@
     "test:e2e:all:flows": "bash ./scripts/e2e-run-all-flows.sh",
     "test:e2e:all": "yarn test:e2e:build && yarn test:e2e:all:flows",
     "test:all": "yarn test:coverage && yarn test:rust && yarn test:e2e",
-    "format": "prettier --write . && cargo fmt --manifest-path ../Cargo.toml --all",
-    "format:check": "prettier --check . && cargo fmt --manifest-path ../Cargo.toml --all --check",
+    "rust:check": "cargo check --manifest-path ../Cargo.toml && cargo check --manifest-path src-tauri/Cargo.toml",
+    "rust:format": "cargo fmt --manifest-path ../Cargo.toml --all && cargo fmt --manifest-path src-tauri/Cargo.toml --all",
+    "rust:format:check": "cargo fmt --manifest-path ../Cargo.toml --all --check && cargo fmt --manifest-path src-tauri/Cargo.toml --all --check",
+    "format": "prettier --write . && yarn rust:format",
+    "format:check": "prettier --check . && yarn rust:format:check",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix"
   },

@@ -682,6 +682,62 @@ impl Config {
             }
         }
 
+        // Dictation overrides
+        if let Ok(flag) = std::env::var("OPENHUMAN_DICTATION_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.dictation.enabled = true,
+                "0" | "false" | "no" | "off" => self.dictation.enabled = false,
+                _ => {}
+            }
+        }
+        if let Ok(hotkey) = std::env::var("OPENHUMAN_DICTATION_HOTKEY") {
+            let hotkey = hotkey.trim();
+            if !hotkey.is_empty() {
+                self.dictation.hotkey = hotkey.to_string();
+            }
+        }
+        if let Ok(mode) = std::env::var("OPENHUMAN_DICTATION_ACTIVATION_MODE") {
+            let normalized = mode.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "toggle" => {
+                    self.dictation.activation_mode =
+                        crate::openhuman::config::DictationActivationMode::Toggle
+                }
+                "push" => {
+                    self.dictation.activation_mode =
+                        crate::openhuman::config::DictationActivationMode::Push
+                }
+                _ => {
+                    tracing::warn!(
+                        mode = %mode,
+                        "ignoring invalid OPENHUMAN_DICTATION_ACTIVATION_MODE (valid: toggle, push)"
+                    );
+                }
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_DICTATION_LLM_REFINEMENT") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.dictation.llm_refinement = true,
+                "0" | "false" | "no" | "off" => self.dictation.llm_refinement = false,
+                _ => {}
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_DICTATION_STREAMING") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.dictation.streaming = true,
+                "0" | "false" | "no" | "off" => self.dictation.streaming = false,
+                _ => {}
+            }
+        }
+        if let Ok(val) = std::env::var("OPENHUMAN_DICTATION_STREAMING_INTERVAL_MS") {
+            if let Ok(ms) = val.trim().parse::<u64>() {
+                self.dictation.streaming_interval_ms = ms;
+            }
+        }
+
         if let Ok(flag) = std::env::var("OPENHUMAN_OVERLAY_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {

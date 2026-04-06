@@ -9,6 +9,7 @@ mod autonomy;
 mod channels;
 mod defaults;
 pub(crate) use defaults::default_true;
+mod dictation;
 mod hardware;
 mod heartbeat_cron;
 mod identity_cost;
@@ -33,6 +34,7 @@ pub use channels::{
     SandboxBackend, SandboxConfig, SecurityConfig, SignalConfig, SlackConfig, StreamMode,
     TelegramConfig, WebhookConfig, WhatsAppConfig,
 };
+pub use dictation::{DictationActivationMode, DictationConfig};
 pub use hardware::{HardwareConfig, HardwareTransport};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{

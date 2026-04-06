@@ -4,7 +4,6 @@
 //! - A QuickJS-based engine for executing skill code (`qjs_engine.rs`)
 //! - A registry for managing installed and active skills (`skill_registry.rs`)
 //! - Manifest parsing and validation for skill metadata (`manifest.rs`)
-//! - Socket management for skill communication (`socket_manager.rs`)
 //! - Various operations for skill lifecycle management (`ops.rs`, `registry_ops.rs`)
 
 pub mod bridge;
@@ -21,7 +20,6 @@ pub mod registry_ops;
 pub mod registry_types;
 mod schemas;
 pub mod skill_registry;
-pub mod socket_manager;
 pub mod types;
 pub mod utils;
 

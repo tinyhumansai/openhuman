@@ -10,6 +10,7 @@ mod ops;
 mod postprocess;
 mod schemas;
 pub mod server;
+pub mod streaming;
 pub mod text_input;
 mod types;
 

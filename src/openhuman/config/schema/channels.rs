@@ -82,6 +82,7 @@ pub struct TelegramConfig {
 pub struct DiscordConfig {
     pub bot_token: String,
     pub guild_id: Option<String>,
+    pub channel_id: Option<String>,
     #[serde(default)]
     pub allowed_users: Vec<String>,
     #[serde(default)]
@@ -371,4 +372,52 @@ pub struct QQConfig {
     pub app_secret: String,
     #[serde(default)]
     pub allowed_users: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discord_config_deserializes_with_channel_id() {
+        let toml = r#"
+            bot_token = "test-token"
+            guild_id = "123"
+            channel_id = "456"
+        "#;
+        let config: DiscordConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.bot_token, "test-token");
+        assert_eq!(config.guild_id.as_deref(), Some("123"));
+        assert_eq!(config.channel_id.as_deref(), Some("456"));
+    }
+
+    #[test]
+    fn discord_config_deserializes_without_channel_id() {
+        let toml = r#"
+            bot_token = "test-token"
+        "#;
+        let config: DiscordConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.bot_token, "test-token");
+        assert!(config.guild_id.is_none());
+        assert!(config.channel_id.is_none());
+        assert!(config.allowed_users.is_empty());
+        assert!(!config.listen_to_bots);
+        assert!(!config.mention_only);
+    }
+
+    #[test]
+    fn discord_config_roundtrip_json() {
+        let config = DiscordConfig {
+            bot_token: "tok".into(),
+            guild_id: Some("g1".into()),
+            channel_id: Some("c1".into()),
+            allowed_users: vec!["user1".into()],
+            listen_to_bots: true,
+            mention_only: false,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let restored: DiscordConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.channel_id.as_deref(), Some("c1"));
+        assert_eq!(restored.allowed_users, vec!["user1"]);
+    }
 }
