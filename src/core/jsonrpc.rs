@@ -639,10 +639,12 @@ pub async fn run_server(
     Ok(())
 }
 
-/// Initializes the QuickJS skill runtime and register it globally so RPC
-/// handlers (`openhuman.skills_*`) can reach it.
+/// Initializes the QuickJS skill runtime, socket manager, and registers them
+/// globally so RPC handlers (`openhuman.skills_*`, `openhuman.socket_*`) can
+/// reach them.
 pub async fn bootstrap_skill_runtime() {
     use crate::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
+    use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
 
     // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
@@ -675,7 +677,14 @@ pub async fn bootstrap_skill_runtime() {
     let _ = std::fs::create_dir_all(&workspace_dir);
     engine.set_workspace_dir(workspace_dir);
 
-    // Register globally so RPC handlers can access it.
+    // --- Socket manager bootstrap ---
+    let socket_mgr = Arc::new(SocketManager::new());
+    socket_mgr.set_registry(engine.registry());
+    engine.set_socket_manager(socket_mgr.clone());
+    set_global_socket_manager(socket_mgr);
+    log::info!("[socket] SocketManager initialized and registered globally");
+
+    // Register engine globally so RPC handlers can access it.
     set_global_engine(engine.clone());
 
     // Start the ping scheduler (background health checks).

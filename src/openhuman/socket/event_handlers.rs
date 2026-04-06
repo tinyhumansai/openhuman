@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::api::models::socket::ConnectionStatus;
 use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin};
-use crate::openhuman::webhooks::{WebhookRequest, WebhookRouter};
+use crate::openhuman::webhooks::WebhookRequest;
 
 use super::manager::{emit_server_event, emit_state_change, SharedState};
 
