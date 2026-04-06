@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
-import { MemoryWorkspace } from '../../intelligence/MemoryWorkspace';
 import type { ToastNotification } from '../../../types/intelligence';
+import { MemoryWorkspace } from '../../intelligence/MemoryWorkspace';
 import { ToastContainer } from '../../intelligence/Toast';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
