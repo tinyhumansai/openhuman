@@ -367,13 +367,13 @@ const LocalModelPanel = () => {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div>
       <SettingsHeader title="Local Model" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto px-6 pb-10 space-y-6">
+      <div className="p-4 space-y-4">
         {/* --- Model Tier Selection --- */}
         <section className="space-y-3">
-          <h3 className="text-lg font-semibold text-stone-900">Model Tier</h3>
+          <h3 className="text-sm font-semibold text-stone-900">Model Tier</h3>
 
           {/* Loading / error states */}
           {presetsLoading && !presetsData && (
@@ -497,7 +497,7 @@ const LocalModelPanel = () => {
           <>
             <section className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-stone-900">Runtime Status</h3>
+                <h3 className="text-sm font-semibold text-stone-900">Runtime Status</h3>
                 <button
                   onClick={() => void loadStatus()}
                   className="text-sm text-primary-500 hover:text-primary-600 transition-colors">
@@ -688,7 +688,7 @@ const LocalModelPanel = () => {
 
             <section className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-stone-900">Ollama Diagnostics</h3>
+                <h3 className="text-sm font-semibold text-stone-900">Ollama Diagnostics</h3>
                 <button
                   onClick={async () => {
                     setIsDiagnosticsLoading(true);
@@ -848,7 +848,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Capability Assets</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Capability Assets</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <div className="text-xs text-stone-500">
                   Quantization preference: {assets?.quantization ?? 'q4'}
@@ -883,7 +883,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Test Summarization</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Test Summarization</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <textarea
                   value={summaryInput}
@@ -911,7 +911,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Test Suggested Prompts</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Test Suggested Prompts</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <textarea
                   value={suggestInput}
@@ -949,7 +949,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Test Custom Prompt</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Test Custom Prompt</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <textarea
                   value={promptInput}
@@ -994,7 +994,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Test Vision Prompt</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Test Vision Prompt</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <textarea
                   value={visionPromptInput}
@@ -1025,7 +1025,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Test Embeddings</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Test Embeddings</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <textarea
                   value={embeddingInput}
@@ -1050,7 +1050,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Test Voice Input (STT)</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Test Voice Input (STT)</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <input
                   value={audioPathInput}
@@ -1077,7 +1077,7 @@ const LocalModelPanel = () => {
             </section>
 
             <section className="space-y-3">
-              <h3 className="text-lg font-semibold text-stone-900">Test Voice Output (TTS)</h3>
+              <h3 className="text-sm font-semibold text-stone-900">Test Voice Output (TTS)</h3>
               <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 space-y-3">
                 <textarea
                   value={ttsInput}

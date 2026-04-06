@@ -164,11 +164,11 @@ const ScreenIntelligencePanel = () => {
   };
 
   return (
-    <div className="overflow-hidden h-full flex flex-col z-10 relative">
+    <div className="z-10 relative">
       <SettingsHeader title="Screen Intelligence" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full p-4 space-y-4">
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+      <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
+        <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Permissions</h3>
           <PermissionBadge
             label="Screen Recording"
@@ -240,7 +240,7 @@ const ScreenIntelligencePanel = () => {
           )}
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Screen Intelligence Policy</h3>
 
           <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
@@ -366,7 +366,7 @@ const ScreenIntelligencePanel = () => {
           </label>
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Session</h3>
           <div className="text-sm text-stone-600 space-y-1">
             <div>Status: {status?.session.active ? 'Active' : 'Stopped'}</div>
@@ -418,7 +418,7 @@ const ScreenIntelligencePanel = () => {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+        <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-stone-900">Vision Summaries</h3>
             <button
@@ -472,7 +472,7 @@ const DebugSection = () => {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
+    <section className="space-y-3">
       <button
         type="button"
         onClick={() => setIsOpen(prev => !prev)}

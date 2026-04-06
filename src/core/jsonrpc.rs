@@ -522,13 +522,21 @@ pub async fn run_server(
 
     tokio::spawn(async {
         match crate::openhuman::config::Config::load_or_init().await {
-            Ok(config) if config.local_ai.enabled => {
-                let service = crate::openhuman::local_ai::global(&config);
-                service.bootstrap(&config).await;
+            Ok(config) => {
+                if config.local_ai.enabled {
+                    let service = crate::openhuman::local_ai::global(&config);
+                    service.bootstrap(&config).await;
+                }
+
+                // Launch the overlay Tauri app (transparent debug/voice panel) as a child process.
+                if config.overlay_enabled {
+                    crate::openhuman::overlay::spawn_overlay();
+                } else {
+                    log::info!("[overlay] overlay disabled by config (overlay_enabled = false)");
+                }
             }
-            Ok(_) => {}
             Err(err) => {
-                log::warn!("[core] local-ai bootstrap skipped: {err}");
+                log::warn!("[core] config load failed, skipping local-ai and overlay: {err}");
             }
         }
     });
@@ -545,8 +553,10 @@ pub async fn bootstrap_skill_runtime() {
 
     // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
     let base_dir = std::env::var("OPENHUMAN_WORKSPACE")
+        .ok()
+        .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
+        .unwrap_or_else(|| {
             dirs::home_dir()
                 .unwrap_or_else(|| std::path::PathBuf::from("."))
                 .join(".openhuman")

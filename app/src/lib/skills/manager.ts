@@ -12,8 +12,10 @@ import { emitSkillStateChange } from "./skillEvents";
 import {
   getSkillSnapshot,
   setSetupComplete as rpcSetSetupComplete,
+  stopSkill as rpcStopSkill,
   revokeOAuth as rpcRevokeOAuth,
   removePersistedOAuthCredential,
+  removePersistedClientKey,
   revokeAuth as rpcRevokeAuth,
   removePersistedAuthCredential,
 } from "./skillsApi";
@@ -429,7 +431,20 @@ class SkillManager {
     }
 
     try {
+      // Stop the frontend-side runtime (if any)
       await this.stopSkill(skillId);
+      // Stop the core sidecar skill process
+      try {
+        await rpcStopSkill(skillId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("not found") || msg.includes("not registered")) {
+          console.debug("[SkillManager] core skills_stop: already stopped");
+        } else {
+          console.error("[SkillManager] core skills_stop failed:", err);
+          throw err;
+        }
+      }
     } finally {
       // Host-side fallback cleanup if RPC revoke failed
       if (!oauthRevokeSucceeded) {
@@ -448,6 +463,13 @@ class SkillManager {
           );
         });
       }
+      // Always clear the client-side encryption key
+      await removePersistedClientKey(skillId).catch((err) => {
+        console.debug(
+          "[SkillManager] host-side client key cleanup failed:",
+          err,
+        );
+      });
     }
 
     await rpcSetSetupComplete(skillId, false).catch(() => {});

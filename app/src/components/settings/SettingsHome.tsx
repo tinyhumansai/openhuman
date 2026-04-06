@@ -180,10 +180,10 @@ const SettingsHome = () => {
   ];
 
   return (
-    <div className="overflow-hidden h-full flex flex-col z-10 relative">
+    <div className="z-10 relative">
       <SettingsHeader />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         {/* Grouped Settings */}
         {groupedMenuItems.map((item, index) => (
           <SettingsMenuItem
@@ -238,14 +238,16 @@ const SettingsHome = () => {
             </div>
 
             <div className="mb-6">
-              <p className="text-stone-700 text-sm leading-relaxed">
-                This will sign you out and permanently delete local app data including: • App
-                settings and conversations • Email data from Gmail • Chat history from Telegram •
-                Cached files from Notion • All other skills data
-                <br />
-                <br />
-                This action cannot be undone and may take a few moments to complete.
-              </p>
+              <div className="text-stone-700 text-sm leading-relaxed">
+                <p>This will sign you out and permanently delete local app data including:</p>
+                <ul className="list-disc pl-5 mt-2 space-y-1">
+                  <li>App settings and conversations</li>
+                  <li>All skills data</li>
+                  <li>Workspace data</li>
+                  <li>All other local data</li>
+                </ul>
+                <p className="mt-3">This action cannot be undone.</p>
+              </div>
 
               {error && (
                 <div className="mt-3 p-3 rounded-lg bg-coral-100 border border-coral-500/20">

@@ -22,26 +22,24 @@ const SettingsSectionPage = ({ title, description, items }: SettingsSectionPageP
   const { navigateBack, navigateToSettings } = useSettingsNavigation();
 
   return (
-    <div className="overflow-hidden h-full flex flex-col z-10 relative">
+    <div className="z-10 relative">
       <SettingsHeader title={title} showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-4">
-          {description && <p className="text-sm text-stone-500 px-1">{description}</p>}
+      <div>
+        {description && <p className="mt-1 text-xs text-stone-500 px-5 pb-3">{description}</p>}
 
-          <div>
-            {items.map((item, index) => (
-              <SettingsMenuItem
-                key={item.id}
-                icon={item.icon}
-                title={item.title}
-                description={item.description}
-                onClick={() => navigateToSettings(item.route)}
-                isFirst={index === 0}
-                isLast={index === items.length - 1}
-              />
-            ))}
-          </div>
+        <div>
+          {items.map((item, index) => (
+            <SettingsMenuItem
+              key={item.id}
+              icon={item.icon}
+              title={item.title}
+              description={item.description}
+              onClick={() => navigateToSettings(item.route)}
+              isFirst={index === 0}
+              isLast={index === items.length - 1}
+            />
+          ))}
         </div>
       </div>
     </div>

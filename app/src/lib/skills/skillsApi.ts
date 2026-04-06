@@ -178,6 +178,14 @@ export async function removePersistedAuthCredential(skillId: string): Promise<vo
   });
 }
 
+/** Host-side fallback: clear client_key.json from the skill's data dir. */
+export async function removePersistedClientKey(skillId: string): Promise<void> {
+  await callCoreRpc({
+    method: 'openhuman.skills_data_write',
+    params: { skill_id: skillId, filename: 'client_key.json', content: '' },
+  });
+}
+
 export async function disableSkill(skillId: string): Promise<void> {
   await callCoreRpc({
     method: 'openhuman.skills_disable',

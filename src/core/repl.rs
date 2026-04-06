@@ -239,8 +239,10 @@ fn run_interactive(rt: &tokio::runtime::Runtime, verbose: bool) -> anyhow::Resul
 
 fn history_file_path() -> PathBuf {
     let base = std::env::var("OPENHUMAN_WORKSPACE")
+        .ok()
+        .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|_| {
+        .unwrap_or_else(|| {
             dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".openhuman")
@@ -622,13 +624,16 @@ fn print_schema(namespace: Option<&str>) {
 }
 
 fn print_env() {
-    let workspace = std::env::var("OPENHUMAN_WORKSPACE").unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".openhuman")
-            .to_string_lossy()
-            .to_string()
-    });
+    let workspace = std::env::var("OPENHUMAN_WORKSPACE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".openhuman")
+                .to_string_lossy()
+                .to_string()
+        });
     let cwd = std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "(unknown)".to_string());

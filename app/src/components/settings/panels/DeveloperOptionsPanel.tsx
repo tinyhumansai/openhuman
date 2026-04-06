@@ -36,22 +36,6 @@ const developerItems = [
     ),
   },
   {
-    id: 'tauri-commands',
-    title: 'Tauri Command Console',
-    description: 'Run OpenHuman Tauri commands for quick testing',
-    route: 'tauri-commands',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M9 12h6m2 8H7a2 2 0 01-2-2V6a2 2 0 012-2h6l6 6v8a2 2 0 01-2 2z"
-        />
-      </svg>
-    ),
-  },
-  {
     id: 'webhooks-debug',
     title: 'Webhooks',
     description: 'Inspect runtime webhook registrations and captured request logs',
@@ -89,25 +73,21 @@ const DeveloperOptionsPanel = () => {
   const { navigateToSettings, navigateBack } = useSettingsNavigation();
 
   return (
-    <div className="overflow-hidden h-full flex flex-col z-10 relative">
+    <div className="z-10 relative">
       <SettingsHeader title="Developer Options" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto max-w-md mx-auto">
-        <div className="p-4">
-          <div>
-            {developerItems.map((item, index) => (
-              <SettingsMenuItem
-                key={item.id}
-                icon={item.icon}
-                title={item.title}
-                description={item.description}
-                onClick={() => navigateToSettings(item.route)}
-                isFirst={index === 0}
-                isLast={index === developerItems.length - 1}
-              />
-            ))}
-          </div>
-        </div>
+      <div>
+        {developerItems.map((item, index) => (
+          <SettingsMenuItem
+            key={item.id}
+            icon={item.icon}
+            title={item.title}
+            description={item.description}
+            onClick={() => navigateToSettings(item.route)}
+            isFirst={index === 0}
+            isLast={index === developerItems.length - 1}
+          />
+        ))}
       </div>
     </div>
   );

@@ -118,6 +118,11 @@ pub struct Config {
     #[serde(default)]
     pub orchestrator: OrchestratorConfig,
 
+    /// Whether to launch the overlay Tauri app (floating debug/voice panel)
+    /// when the core RPC server starts. Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub overlay_enabled: bool,
+
     /// Whether the user has completed the onboarding flow.
     #[serde(default)]
     pub onboarding_completed: bool,
@@ -167,6 +172,7 @@ impl Default for Config {
             query_classification: QueryClassificationConfig::default(),
             learning: LearningConfig::default(),
             orchestrator: OrchestratorConfig::default(),
+            overlay_enabled: true,
             onboarding_completed: false,
         }
     }

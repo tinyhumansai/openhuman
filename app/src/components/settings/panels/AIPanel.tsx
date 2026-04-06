@@ -74,12 +74,12 @@ const AIPanel = () => {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div>
       <SettingsHeader title="AI Configuration" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto px-6 pb-10 space-y-6">
+      <div className="p-4 space-y-4">
         <section className="space-y-4">
-          <h3 className="text-lg font-semibold text-stone-900">AI System Overview</h3>
+          <h3 className="text-sm font-semibold text-stone-900">AI System Overview</h3>
           <p className="text-sm text-stone-500">
             Prompt and markdown orchestration is handled in Rust runtime.
           </p>
@@ -110,7 +110,7 @@ const AIPanel = () => {
 
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-stone-900">Local Model Runtime</h3>
+            <h3 className="text-sm font-semibold text-stone-900">Local Model Runtime</h3>
             <div className="flex items-center gap-4">
               <button
                 onClick={() => navigateToSettings('local-model')}
@@ -153,7 +153,7 @@ const AIPanel = () => {
 
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-stone-900">SOUL Persona Configuration</h3>
+            <h3 className="text-sm font-semibold text-stone-900">SOUL Persona Configuration</h3>
             <button
               onClick={() => refreshConfig('soul')}
               className="text-sm text-primary-500 hover:text-primary-600 transition-colors disabled:opacity-50"
@@ -218,7 +218,7 @@ const AIPanel = () => {
 
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-stone-900">TOOLS Configuration</h3>
+            <h3 className="text-sm font-semibold text-stone-900">TOOLS Configuration</h3>
             <button
               onClick={() => refreshConfig('tools')}
               className="text-sm text-primary-500 hover:text-primary-600 transition-colors disabled:opacity-50"

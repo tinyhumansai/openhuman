@@ -13,8 +13,6 @@ import {
 } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import { PrimaryButton } from './components/ActionPanel';
-import SectionCard from './components/SectionCard';
 
 const LOG_LIMIT = 100;
 
@@ -141,215 +139,135 @@ const WebhooksDebugPanel = () => {
   }, [loadData]);
 
   return (
-    <div className="overflow-hidden h-full flex flex-col">
+    <div>
       <SettingsHeader title="Webhooks Debug" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <SectionCard
-          title="Overview"
-          priority="development"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M8 9l4-4 4 4m0 6l-4 4-4-4M3 12h18"
-              />
-            </svg>
-          }>
-          <div className="flex flex-wrap items-center gap-3">
-            <PrimaryButton onClick={() => void loadData()} loading={loading} variant="secondary">
-              Refresh
-            </PrimaryButton>
-            <PrimaryButton
-              onClick={() => void handleClearLogs()}
-              loading={clearing}
-              disabled={logs.length === 0}
-              variant="outline">
-              Clear Logs
-            </PrimaryButton>
-            <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700">
-              Registered:{' '}
-              <span className="font-semibold text-stone-900">{registrations.length}</span>
-            </div>
-            <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700">
-              Captured: <span className="font-semibold text-stone-900">{logs.length}</span>
-            </div>
-            <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-700">
-              Live:{' '}
-              <span
-                className={isLive ? 'font-semibold text-sage-700' : 'font-semibold text-stone-500'}>
-                {isLive ? 'connected' : 'disconnected'}
-              </span>
-            </div>
+      <div className="p-4 space-y-5">
+        {/* Status bar */}
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => void loadData()}
+            disabled={loading}
+            className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50">
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleClearLogs()}
+            disabled={clearing || logs.length === 0}
+            className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 font-medium text-stone-700 hover:bg-stone-100 disabled:opacity-50">
+            {clearing ? 'Clearing...' : 'Clear Logs'}
+          </button>
+          <span className="text-stone-500">
+            {registrations.length} registered &middot; {logs.length} captured &middot;{' '}
+            <span className={isLive ? 'text-sage-600' : 'text-stone-400'}>
+              {isLive ? 'live' : 'disconnected'}
+            </span>
+          </span>
+        </div>
+
+        {error && (
+          <div className="rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
+            {error}
           </div>
+        )}
 
-          {lastEvent && (
-            <div className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600">
-              Last event: <span className="font-medium text-stone-900">{lastEvent.event_type}</span>{' '}
-              at {formatDateTime(lastEvent.timestamp)}
-            </div>
-          )}
+        {lastEvent && (
+          <div className="text-xs text-stone-500">
+            Last event: <span className="font-medium text-stone-700">{lastEvent.event_type}</span>{' '}
+            at {formatDateTime(lastEvent.timestamp)}
+          </div>
+        )}
 
-          {error && (
-            <div className="rounded-lg border border-coral-500/40 bg-coral-50 px-3 py-2 text-sm text-coral-700">
-              {error}
-            </div>
-          )}
-        </SectionCard>
-
-        <SectionCard
-          title="Registered Webhooks"
-          priority="tools"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m5-5a4 4 0 015.656 5.656l-1 1m-5 5l5-5"
-              />
-            </svg>
-          }>
+        {/* Registrations */}
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-stone-900">Registered Webhooks</h3>
           {registrations.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-stone-300 bg-white px-4 py-6 text-sm text-stone-500">
-              No webhook registrations are active in the runtime.
-            </div>
+            <p className="text-xs text-stone-400">No active registrations.</p>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-2">
               {registrations.map(registration => (
                 <div
                   key={registration.tunnel_uuid}
-                  className="rounded-xl border border-stone-200 bg-white p-4">
+                  className="rounded-xl border border-stone-200 bg-stone-50 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-semibold text-stone-900">
-                        {registration.tunnel_name || registration.tunnel_uuid}
-                      </div>
-                      <div className="text-xs text-stone-500">{registration.tunnel_uuid}</div>
-                    </div>
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      <span className="rounded-full bg-stone-100 px-3 py-1 font-medium text-stone-700">
+                    <span className="text-xs font-semibold text-stone-900">
+                      {registration.tunnel_name || registration.tunnel_uuid}
+                    </span>
+                    <div className="flex gap-1 text-[10px]">
+                      <span className="rounded-full bg-stone-200 px-2 py-0.5 text-stone-600">
                         {registration.target_kind}
                       </span>
-                      <span className="rounded-full bg-stone-100 px-3 py-1 font-medium text-stone-700">
+                      <span className="rounded-full bg-stone-200 px-2 py-0.5 text-stone-600">
                         {registration.skill_id}
                       </span>
                     </div>
                   </div>
-                  <div className="mt-3 grid gap-2 text-xs text-stone-600">
-                    <div>
-                      Target URL:{' '}
-                      <span className="font-mono text-stone-900">
-                        {tunnelsApi.ingressUrl(fallbackBackendUrl, registration.tunnel_uuid)}
-                      </span>
-                    </div>
-                    {registration.backend_tunnel_id && (
-                      <div>
-                        Backend tunnel ID:{' '}
-                        <span className="font-mono text-stone-900">
-                          {registration.backend_tunnel_id}
-                        </span>
-                      </div>
-                    )}
+                  <div className="mt-1 text-[11px] text-stone-500 font-mono break-all">
+                    {tunnelsApi.ingressUrl(fallbackBackendUrl, registration.tunnel_uuid)}
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </SectionCard>
+        </section>
 
-        <SectionCard
-          title="Captured Requests"
-          priority="development"
-          icon={
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-              />
-            </svg>
-          }>
+        {/* Captured Requests */}
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-stone-900">Captured Requests</h3>
           {logs.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-stone-300 bg-white px-4 py-6 text-sm text-stone-500">
-              No webhook requests captured yet.
-            </div>
+            <p className="text-xs text-stone-400">No webhook requests captured yet.</p>
           ) : (
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
-              <div className="space-y-2">
-                {logs.map(entry => (
-                  <button
-                    key={entry.correlation_id}
-                    type="button"
-                    onClick={() => setSelectedCorrelationId(entry.correlation_id)}
-                    className={`w-full rounded-xl border p-3 text-left transition-colors ${
-                      selectedLog?.correlation_id === entry.correlation_id
-                        ? 'border-primary-300 bg-primary-50'
-                        : 'border-stone-200 bg-white hover:bg-stone-50'
-                    }`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-semibold text-stone-900">
-                        {entry.method} {entry.path}
-                      </div>
-                      <div className="text-xs font-medium text-stone-500">
-                        {entry.status_code ?? '...'}
-                      </div>
-                    </div>
-                    <div className="mt-1 text-xs text-stone-500">
-                      {entry.tunnel_name} {entry.skill_id ? `• ${entry.skill_id}` : '• unrouted'}
-                    </div>
-                    <div className="mt-1 text-xs text-stone-500">
-                      {formatDateTime(entry.updated_at)}
-                    </div>
-                  </button>
-                ))}
-              </div>
+            <div className="space-y-2">
+              {logs.map(entry => (
+                <button
+                  key={entry.correlation_id}
+                  type="button"
+                  onClick={() => setSelectedCorrelationId(entry.correlation_id)}
+                  className={`w-full rounded-xl border p-3 text-left transition-colors ${
+                    selectedLog?.correlation_id === entry.correlation_id
+                      ? 'border-primary-300 bg-primary-50'
+                      : 'border-stone-200 bg-stone-50 hover:bg-stone-100'
+                  }`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-stone-900">
+                      {entry.method} {entry.path}
+                    </span>
+                    <span className="text-[10px] text-stone-500">{entry.status_code ?? '...'}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-stone-500">
+                    {entry.tunnel_name} {entry.skill_id ? `· ${entry.skill_id}` : '· unrouted'} ·{' '}
+                    {formatDateTime(entry.updated_at)}
+                  </div>
+                </button>
+              ))}
 
               {selectedLog && (
-                <div className="rounded-xl border border-stone-200 bg-white p-4 space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="text-lg font-semibold text-stone-900">
-                        {selectedLog.method} {selectedLog.path}
-                      </div>
-                      <div className="text-xs text-stone-500">{selectedLog.correlation_id}</div>
+                <div className="rounded-xl border border-stone-200 bg-stone-50 p-3 space-y-3">
+                  <div>
+                    <div className="text-xs font-semibold text-stone-900">
+                      {selectedLog.method} {selectedLog.path}
                     </div>
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      <span className="rounded-full bg-stone-100 px-3 py-1 font-medium text-stone-700">
-                        stage: {selectedLog.stage}
-                      </span>
-                      <span className="rounded-full bg-stone-100 px-3 py-1 font-medium text-stone-700">
-                        status: {selectedLog.status_code ?? 'pending'}
-                      </span>
+                    <div className="text-[10px] text-stone-400 font-mono">
+                      {selectedLog.correlation_id}
                     </div>
                   </div>
 
-                  <div className="grid gap-2 text-sm text-stone-700">
-                    <div>
-                      Tunnel:{' '}
-                      <span className="font-medium text-stone-900">{selectedLog.tunnel_name}</span>
-                    </div>
-                    <div>
-                      Tunnel UUID:{' '}
-                      <span className="font-mono text-xs text-stone-900">
-                        {selectedLog.tunnel_uuid}
-                      </span>
-                    </div>
-                    <div>
-                      Skill:{' '}
-                      <span className="font-medium text-stone-900">
-                        {selectedLog.skill_id || 'unrouted'}
-                      </span>
-                    </div>
-                    <div>Received: {formatDateTime(selectedLog.timestamp)}</div>
-                    <div>Updated: {formatDateTime(selectedLog.updated_at)}</div>
+                  <div className="flex flex-wrap gap-1 text-[10px]">
+                    <span className="rounded-full bg-stone-200 px-2 py-0.5 text-stone-600">
+                      {selectedLog.stage}
+                    </span>
+                    <span className="rounded-full bg-stone-200 px-2 py-0.5 text-stone-600">
+                      {selectedLog.status_code ?? 'pending'}
+                    </span>
+                    <span className="rounded-full bg-stone-200 px-2 py-0.5 text-stone-600">
+                      {selectedLog.skill_id || 'unrouted'}
+                    </span>
                   </div>
 
                   {selectedLog.error_message && (
-                    <div className="rounded-lg border border-coral-500/40 bg-coral-50 px-3 py-2 text-sm text-coral-700">
+                    <div className="rounded-lg border border-coral-200 bg-coral-50 px-3 py-2 text-xs text-coral-700">
                       {selectedLog.error_message}
                     </div>
                   )}
@@ -381,7 +299,7 @@ const WebhooksDebugPanel = () => {
               )}
             </div>
           )}
-        </SectionCard>
+        </section>
       </div>
     </div>
   );
@@ -389,14 +307,14 @@ const WebhooksDebugPanel = () => {
 
 function PayloadBlock({ title, value }: { title: string; value: string }) {
   return (
-    <div>
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-stone-500">
+    <details className="text-xs">
+      <summary className="cursor-pointer font-semibold text-stone-500 uppercase tracking-wide text-[10px]">
         {title}
-      </div>
-      <pre className="max-h-56 overflow-auto rounded-lg border border-stone-200 bg-stone-950 p-3 text-xs text-stone-100 whitespace-pre-wrap break-words">
+      </summary>
+      <pre className="mt-1 max-h-40 overflow-auto rounded-lg border border-stone-200 bg-stone-950 p-2 text-[11px] text-stone-100 whitespace-pre-wrap break-words">
         {value}
       </pre>
-    </div>
+    </details>
   );
 }
 

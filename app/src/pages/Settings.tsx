@@ -17,7 +17,6 @@ import ProfilePanel from '../components/settings/panels/ProfilePanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SkillsPanel from '../components/settings/panels/SkillsPanel';
-import TauriCommandsPanel from '../components/settings/panels/TauriCommandsPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -229,10 +228,8 @@ const aiSettingsItems = [
 
 const Settings = () => {
   return (
-    <div className="h-full overflow-y-auto p-4 pt-6">
-      <div
-        className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden flex flex-col min-h-0"
-        style={{ maxHeight: 'calc(100vh - 7rem)' }}>
+    <div className="p-4 pt-6">
+      <div className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
         <Routes>
           <Route index element={<SettingsHome />} />
           <Route
@@ -286,7 +283,6 @@ const Settings = () => {
           <Route path="team/members" element={<TeamMembersPanel />} />
           <Route path="team/invites" element={<TeamInvitesPanel />} />
           <Route path="developer-options" element={<DeveloperOptionsPanel />} />
-          <Route path="tauri-commands" element={<TauriCommandsPanel />} />
           <Route path="webhooks-debug" element={<WebhooksDebugPanel />} />
           <Route path="memory-debug" element={<MemoryDebugPanel />} />
           <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />

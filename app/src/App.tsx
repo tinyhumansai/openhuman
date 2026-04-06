@@ -8,6 +8,7 @@ import BottomTabBar from './components/BottomTabBar';
 import ServiceBlockingGate from './components/daemon/ServiceBlockingGate';
 import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
+import MeshGradient from './components/MeshGradient';
 import OnboardingOverlay from './components/OnboardingOverlay';
 import CoreStateProvider from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
@@ -29,11 +30,14 @@ function App() {
             <SocketProvider>
               <Router>
                 <ServiceBlockingGate>
-                  <div className="app-dotted-canvas relative h-screen flex flex-col overflow-hidden">
-                    <div className="flex-1 overflow-y-auto pb-16">
-                      <AppRoutes />
+                  <div className="relative h-screen flex flex-col overflow-hidden">
+                    <MeshGradient />
+                    <div className="app-dotted-canvas relative z-10 flex-1 flex flex-col overflow-hidden">
+                      <div className="flex-1 overflow-y-auto pb-16">
+                        <AppRoutes />
+                      </div>
+                      <BottomTabBar />
                     </div>
-                    <BottomTabBar />
                   </div>
                   <OnboardingOverlay />
                   <LocalAIDownloadSnackbar />

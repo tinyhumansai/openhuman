@@ -323,10 +323,10 @@ const AutocompletePanel = () => {
   }, []);
 
   return (
-    <div className="overflow-hidden h-full flex flex-col z-10 relative">
+    <div className="z-10 relative">
       <SettingsHeader title="Inline Autocomplete" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto max-w-2xl mx-auto w-full p-4 space-y-4">
+      <div className="max-w-2xl mx-auto w-full p-4 space-y-4">
         <section className="rounded-2xl border border-stone-200 bg-white p-4 space-y-3">
           <h3 className="text-sm font-semibold text-stone-900">Runtime</h3>
           <div className="text-sm text-stone-700 space-y-1">
