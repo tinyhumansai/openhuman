@@ -45,28 +45,35 @@ pub mod events {
 // Shared state
 // ---------------------------------------------------------------------------
 
+/// State shared between the `SocketManager` handle and the background connection loop.
 struct SharedState {
+    /// Registry for looking up skills and calling tools (MCP).
     registry: RwLock<Option<Arc<SkillRegistry>>>,
+    /// Router for delivering incoming webhooks to skills.
     webhook_router: RwLock<Option<Arc<WebhookRouter>>>,
+    /// Current connection status.
     status: RwLock<ConnectionStatus>,
+    /// Socket ID assigned by the server.
     socket_id: RwLock<Option<String>>,
 }
 
 // ---------------------------------------------------------------------------
 // WebSocket stream type alias (desktop)
 // ---------------------------------------------------------------------------
+/// Type alias for the underlying WebSocket stream.
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 // ---------------------------------------------------------------------------
 // Connection outcome (desktop)
 // ---------------------------------------------------------------------------
+/// Result of a single connection attempt in the `ws_loop`.
 enum ConnectionOutcome {
-    /// Clean shutdown requested.
+    /// Clean shutdown requested by the user.
     Shutdown,
-    /// Was connected then lost (reset backoff on reconnect).
+    /// Connection was established then lost (triggers reset of backoff).
     Lost(String),
-    /// Failed during handshake (keep growing backoff).
+    /// Connection failed during handshake (triggers increment of backoff).
     Failed(String),
 }
 
@@ -74,14 +81,24 @@ enum ConnectionOutcome {
 // SocketManager
 // ---------------------------------------------------------------------------
 
+/// Manages a persistent Socket.IO connection to the backend.
+/// 
+/// It handles protocol-level handshakes (Engine.IO/Socket.IO),heartbeats,
+/// and automatic reconnection, while providing a high-level API for emitting
+/// events and syncing tool state.
 pub struct SocketManager {
+    /// Shared state accessible from both the manager and the background loop.
     shared: Arc<SharedState>,
+    /// Channel for sending outgoing messages to the background loop.
     emit_tx: tokio::sync::Mutex<Option<mpsc::UnboundedSender<String>>>,
+    /// Channel for signaling the background loop to shut down.
     shutdown_tx: tokio::sync::Mutex<Option<watch::Sender<bool>>>,
+    /// Join handle for the background connection loop.
     loop_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl SocketManager {
+    /// Create a new, disconnected SocketManager.
     pub fn new() -> Self {
         Self {
             shared: Arc::new(SharedState {
@@ -106,7 +123,7 @@ impl SocketManager {
         *self.shared.webhook_router.write() = Some(router);
     }
 
-    /// Get current socket state.
+    /// Get the current socket state (status, ID, error).
     pub fn get_state(&self) -> SocketState {
         SocketState {
             status: *self.shared.status.read(),
@@ -115,7 +132,7 @@ impl SocketManager {
         }
     }
 
-    /// Check if connected.
+    /// Check if the socket is currently connected.
     #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         *self.shared.status.read() == ConnectionStatus::Connected
@@ -124,6 +141,10 @@ impl SocketManager {
     // -----------------------------------------------------------------------
     // Connection lifecycle (desktop)
     // -----------------------------------------------------------------------
+    
+    /// Connect to the specified URL using the provided authentication token.
+    /// 
+    /// This spawns a background `ws_loop` that manages the connection.
     pub async fn connect(&self, url: &str, token: &str) -> Result<(), String> {
         self.disconnect().await?;
 
@@ -150,6 +171,8 @@ impl SocketManager {
         *self.loop_handle.lock().await = Some(handle);
         Ok(())
     }
+
+    /// Disconnect from the server and shut down the background loop.
     pub async fn disconnect(&self) -> Result<(), String> {
         if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(true);
@@ -163,6 +186,8 @@ impl SocketManager {
         Self::emit_state_change(&self.shared);
         Ok(())
     }
+
+    /// Emit a Socket.IO event to the server.
     pub async fn emit(&self, event: &str, data: serde_json::Value) -> Result<(), String> {
         if let Some(ref tx) = *self.emit_tx.lock().await {
             let payload =
@@ -179,7 +204,9 @@ impl SocketManager {
     // -----------------------------------------------------------------------
 
     /// Emit `tool:sync` with the current skill/tool state.
-    /// Called on socket reconnect and after skill lifecycle changes.
+    /// 
+    /// This is called automatically on reconnect and should be called
+    /// manually after any skill lifecycle changes (start/stop).
     pub async fn sync_tools(&self) {
         let payload = build_tool_sync_payload(&self.shared);
         if let Some(payload) = payload {
@@ -188,10 +215,12 @@ impl SocketManager {
             }
         }
     }
+
     // -----------------------------------------------------------------------
     // Tauri event helpers
     // -----------------------------------------------------------------------
 
+    /// Log a state change (actual emission to frontend is handled by the caller).
     fn emit_state_change(shared: &SharedState) {
         let status = *shared.status.read();
         let socket_id = shared.socket_id.read().clone();
@@ -202,12 +231,14 @@ impl SocketManager {
         );
     }
 
+    /// Log a server event.
     fn emit_server_event(_shared: &SharedState, event_name: &str, _data: serde_json::Value) {
         log::debug!("[socket-mgr] Server event: {}", event_name);
     }
 }
 
 impl Default for SocketManager {
+    /// Create a default, disconnected SocketManager.
     fn default() -> Self {
         Self::new()
     }
@@ -216,6 +247,8 @@ impl Default for SocketManager {
 // ===========================================================================
 // WebSocket Engine.IO/Socket.IO implementation (desktop)
 // ===========================================================================
+
+/// Background loop that manages the WebSocket connection and reconnection logic.
 async fn ws_loop(
     url: String,
     token: String,
@@ -294,12 +327,11 @@ async fn run_connection(
     shutdown_rx: &mut watch::Receiver<bool>,
     internal_tx: &mpsc::UnboundedSender<String>,
 ) -> ConnectionOutcome {
-    // 1. Build WebSocket URL
+    // 1. Build WebSocket URL (appends /socket.io/?EIO=4&transport=websocket)
     let ws_url = crate::api::socket::websocket_url(url);
     log::info!("[socket-mgr] WS URL: {}", ws_url);
 
     // 2. Connect via WebSocket (uses rustls TLS for wss://)
-    // Auth is passed in the Socket.IO CONNECT packet, not HTTP headers.
     let (ws_stream, _response) = match connect_async(&ws_url).await {
         Ok(r) => r,
         Err(e) => return ConnectionOutcome::Failed(format!("WebSocket connect: {e}")),
@@ -308,7 +340,7 @@ async fn run_connection(
     log::info!("[socket-mgr] WebSocket connected, starting handshake");
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
-    // 4. Read Engine.IO OPEN packet
+    // 4. Read Engine.IO OPEN packet (type 0)
     let open_data =
         match tokio::time::timeout(Duration::from_secs(10), read_eio_open(&mut ws_read)).await {
             Ok(Ok(data)) => data,
@@ -332,14 +364,14 @@ async fn run_connection(
         ping_timeout_ms
     );
 
-    // 5. Send Socket.IO CONNECT with auth
+    // 5. Send Socket.IO CONNECT with auth token
     let connect_payload = json!({"token": token});
     let connect_msg = format!("40{}", serde_json::to_string(&connect_payload).unwrap());
     if let Err(e) = ws_write.send(WsMessage::Text(connect_msg)).await {
         return ConnectionOutcome::Failed(format!("Send SIO CONNECT: {e}"));
     }
 
-    // 6. Read Socket.IO CONNECT ACK
+    // 6. Read Socket.IO CONNECT ACK (type 40)
     let ack_data =
         match tokio::time::timeout(Duration::from_secs(10), read_sio_connect_ack(&mut ws_read))
             .await
@@ -357,12 +389,12 @@ async fn run_connection(
         .map(String::from);
     log::info!("[socket-mgr] SIO CONNECT ACK: sid={:?}", sio_sid);
 
-    // 7. Update state: Connected
+    // 7. Update state to Connected
     *shared.status.write() = ConnectionStatus::Connected;
     *shared.socket_id.write() = sio_sid;
     SocketManager::emit_state_change(shared);
 
-    // 8. Main event loop
+    // 8. Main event loop for this specific connection
     let timeout_duration = Duration::from_millis(ping_interval + ping_timeout_ms + 5000);
     let mut deadline = Instant::now() + timeout_duration;
 
@@ -371,6 +403,7 @@ async fn run_connection(
             msg = ws_read.next() => {
                 match msg {
                     Some(Ok(WsMessage::Text(text))) => {
+                        // Reset ping timeout deadline upon receiving any text message
                         deadline = Instant::now() + timeout_duration;
                         handle_eio_message(&text, internal_tx, shared);
                     }
@@ -390,7 +423,7 @@ async fn run_connection(
                     _ => {} // Binary, Pong, Frame
                 }
             }
-            // Outgoing events from SocketManager::emit() or MCP handlers
+            // Outgoing events from SocketManager::emit() or internal handlers
             outgoing = emit_rx.recv() => {
                 match outgoing {
                     Some(msg) => {
@@ -405,12 +438,12 @@ async fn run_connection(
                     }
                 }
             }
-            // Ping timeout — server stopped sending pings
+            // Ping timeout — server stopped sending pings/packets
             _ = tokio::time::sleep_until(deadline) => {
                 log::warn!("[socket-mgr] Ping timeout ({}ms)", ping_interval + ping_timeout_ms + 5000);
                 return ConnectionOutcome::Lost("Ping timeout".into());
             }
-            // Shutdown signal
+            // Global shutdown signal
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
                     log::info!("[socket-mgr] Shutdown signal received");
@@ -427,6 +460,7 @@ async fn run_connection(
 // ---------------------------------------------------------------------------
 
 /// Read the Engine.IO OPEN packet (type 0) from the WebSocket.
+/// 
 /// Format: `0{"sid":"...","upgrades":[],"pingInterval":25000,"pingTimeout":20000}`
 async fn read_eio_open(
     ws_read: &mut futures_util::stream::SplitStream<WsStream>,
@@ -452,6 +486,7 @@ async fn read_eio_open(
 }
 
 /// Read the Socket.IO CONNECT ACK (type 40) from the WebSocket.
+/// 
 /// Format: `40{"sid":"..."}` or `44{"message":"error"}` for connect error.
 async fn read_sio_connect_ack(
     ws_read: &mut futures_util::stream::SplitStream<WsStream>,
@@ -499,7 +534,7 @@ async fn read_sio_connect_ack(
 // Message handling
 // ---------------------------------------------------------------------------
 
-/// Handle an incoming Engine.IO text message.
+/// Handle an incoming Engine.IO text message by its type prefix.
 fn handle_eio_message(
     text: &str,
     emit_tx: &mpsc::UnboundedSender<String>,
@@ -562,7 +597,7 @@ fn handle_sio_packet(
             }
         }
         b'0' => {
-            // Socket.IO CONNECT (re-ack during reconnection) — update state
+            // Socket.IO CONNECT (re-ack during reconnection) — update sid
             log::debug!("[socket-mgr] SIO CONNECT re-ack");
             if text.len() > 1 {
                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text[1..]) {
@@ -598,7 +633,7 @@ fn handle_sio_packet(
     }
 }
 
-/// Handle a Socket.IO event by name.
+/// Route a Socket.IO event to the appropriate handler based on its name.
 fn handle_sio_event(
     event_name: &str,
     data: serde_json::Value,
@@ -643,7 +678,7 @@ fn handle_sio_event(
             });
         }
         _ => {
-            // Forward to skills (desktop only) and frontend
+            // Forward to skills and frontend
             {
                 let shared_clone = Arc::clone(shared);
                 let event_owned = event_name.to_string();
@@ -664,6 +699,8 @@ fn handle_sio_event(
 // ---------------------------------------------------------------------------
 // MCP protocol handlers (desktop only)
 // ---------------------------------------------------------------------------
+
+/// Handle the `mcp:listTools` request by returning all tools from all skills.
 async fn handle_mcp_list_tools(
     shared: &SharedState,
     data: serde_json::Value,
@@ -704,6 +741,8 @@ async fn handle_mcp_list_tools(
         json!({ "requestId": request_id, "tools": tools }),
     );
 }
+
+/// Handle the `mcp:toolCall` request by dispatching to the owning skill.
 async fn handle_mcp_tool_call(
     shared: &SharedState,
     data: serde_json::Value,
@@ -858,7 +897,7 @@ async fn handle_webhook_request(
         correlation_id,
     );
 
-    // Look up the owning target via the webhook router
+    // Look up the owning target (skill or echo) via the webhook router
     let router = shared.webhook_router.read().clone();
     let registration = router.as_ref().and_then(|r| r.registration(&tunnel_uuid));
     let skill_id = registration.as_ref().and_then(|registration| {
@@ -983,7 +1022,7 @@ async fn handle_webhook_request(
         );
     }
 
-    // Emit webhook:response back to the backend
+    // Emit `webhook:response` back to the backend
     emit_via_channel(
         emit_tx,
         "webhook:response",
@@ -995,7 +1034,6 @@ async fn handle_webhook_request(
         }),
     );
 
-    // Log activity for debugging (frontend polls activity via core RPC)
     log::info!(
         "[socket-mgr] webhook activity: {} {} → status={}, skill={:?}, tunnel={}",
         method,
@@ -1004,14 +1042,10 @@ async fn handle_webhook_request(
         resolved_skill_id,
         tunnel_name,
     );
-
-    log::debug!(
-        "[socket-mgr] webhook:response emitted (status={})",
-        response.status_code,
-    );
 }
 
-/// Base64-encode a string (for webhook response bodies).
+/// Base64-encode a string for transmission in webhook response bodies.
+/// 
 /// Uses the `STANDARD` alphabet (A-Z, a-z, 0-9, +, /) with `=` padding.
 fn base64_encode(input: &str) -> String {
     use base64::Engine;
@@ -1022,8 +1056,9 @@ fn base64_encode(input: &str) -> String {
 // Utility functions
 // ---------------------------------------------------------------------------
 
-/// Send a Socket.IO event through the emit channel.
-/// Formats: `42["eventName", data]`
+/// Send a Socket.IO event through the emit channel with the proper prefix.
+/// 
+/// Format: `42["eventName", data]`
 fn emit_via_channel(tx: &mpsc::UnboundedSender<String>, event: &str, data: serde_json::Value) {
     let payload = serde_json::to_string(&json!([event, data])).unwrap_or_default();
     let msg = format!("42{}", payload);
@@ -1036,8 +1071,10 @@ fn emit_via_channel(tx: &mpsc::UnboundedSender<String>, event: &str, data: serde
 // Tool sync helpers (desktop only — requires SkillRegistry)
 // ---------------------------------------------------------------------------
 
-/// Derive a unified connection status string from a Rust-side SkillSnapshot.
-/// Mirrors the frontend's `deriveConnectionStatus()` logic in `src/lib/skills/hooks.ts`.
+/// Derive a unified connection status string from a skill snapshot.
+/// 
+/// This logic mirrors the frontend's `deriveConnectionStatus()` to ensure
+/// consistent display of skill health.
 fn derive_connection_status(snap: &SkillSnapshot) -> &'static str {
     match snap.status {
         SkillStatus::Error => "error",
@@ -1062,7 +1099,7 @@ fn derive_connection_status(snap: &SkillSnapshot) -> &'static str {
     }
 }
 
-/// Build the `tool:sync` payload from the current registry state.
+/// Build the `tool:sync` payload by aggregating tools and status from all skills.
 fn build_tool_sync_payload(shared: &SharedState) -> Option<serde_json::Value> {
     let registry = shared.registry.read().clone()?;
     let skills = registry.list_skills();
@@ -1082,7 +1119,7 @@ fn build_tool_sync_payload(shared: &SharedState) -> Option<serde_json::Value> {
     Some(json!({ "tools": tools }))
 }
 
-/// Emit `tool:sync` synchronously via the emit channel (for use from event handlers).
+/// Emit `tool:sync` synchronously via the provided emit channel.
 fn sync_tools_via_channel(emit_tx: &mpsc::UnboundedSender<String>, shared: &SharedState) {
     if let Some(payload) = build_tool_sync_payload(shared) {
         emit_via_channel(emit_tx, "tool:sync", payload);
@@ -1093,7 +1130,9 @@ fn sync_tools_via_channel(emit_tx: &mpsc::UnboundedSender<String>, shared: &Shar
 // SIO event parsing
 // ---------------------------------------------------------------------------
 
-/// Parse a Socket.IO EVENT payload: `["eventName", data]` or `<ackId>["eventName", data]`.
+/// Parse a Socket.IO EVENT payload into an event name and JSON data.
+/// 
+/// Format: `["eventName", data]` or `<ackId>["eventName", data]`.
 fn parse_sio_event(text: &str) -> Option<(String, serde_json::Value)> {
     // Find the start of the JSON array (skip optional ACK id digits)
     let json_start = text.find('[')?;

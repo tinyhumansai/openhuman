@@ -1,44 +1,56 @@
-//! Skill manifest parsing.
+//! Skill manifest parsing and validation.
 //!
-//! Each skill directory contains a `manifest.json` describing the skill.
-//! This module parses it and produces a `SkillConfig` for the runtime engine.
+//! Each skill directory must contain a `manifest.json` file that describes the skill's
+//! metadata, runtime requirements, authentication modes, and setup configuration.
+//! This module parses these files and produces a `SkillConfig` for the runtime engine.
 
 use crate::openhuman::skills::types::SkillConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Setup configuration from manifest.json.
+/// Setup configuration defined in `manifest.json`.
+/// 
+/// This describes whether a skill requires manual setup and what authentication
+/// or configuration fields should be presented to the user in the UI.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SkillSetup {
+    /// Whether the skill requires setup before it can be used.
     #[serde(default)]
     pub required: bool,
+    /// human-readable label for the setup process.
     pub label: Option<String>,
     /// OAuth configuration (provider, scopes, apiBaseUrl).
-    /// Legacy — prefer `auth` for new skills.
+    /// 
+    /// NOTE: This is considered legacy — prefer `auth` for new skills.
     pub oauth: Option<serde_json::Value>,
-    /// Advanced auth configuration with multiple auth modes.
-    /// When present, the UI shows a mode selector (managed / self_hosted / text).
+    /// Advanced authentication configuration with support for multiple modes.
+    /// 
+    /// When present, the UI shows a mode selector (e.g., managed vs. self-hosted).
     #[serde(default)]
     pub auth: Option<SkillAuthConfig>,
 }
 
-/// Auth mode type: managed, self_hosted, or text.
+/// Supported authentication mode types.
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillAuthType {
+    /// Authentication managed by the OpenHuman platform.
     Managed,
+    /// User-provided credentials for a self-hosted instance.
     SelfHosted,
+    /// Raw text input (e.g., for API keys or service account JSON).
     Text,
 }
 
-/// Advanced auth configuration declaring available authentication modes.
+/// Advanced authentication configuration declaring available modes.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SkillAuthConfig {
-    /// Available auth modes. At least one required.
+    /// List of available authentication modes. At least one mode is required.
     #[serde(deserialize_with = "deserialize_non_empty_modes")]
     pub modes: Vec<SkillAuthMode>,
 }
 
+/// Custom deserializer to ensure that `auth.modes` contains at least one entry.
 fn deserialize_non_empty_modes<'de, D>(deserializer: D) -> Result<Vec<SkillAuthMode>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -53,72 +65,75 @@ where
 }
 
 /// A single authentication mode that a skill supports.
+/// 
+/// The fields in this struct are used selectively based on the `mode_type`.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SkillAuthMode {
-    /// Mode type: managed, self_hosted, or text.
+    /// The type of authentication mode (managed, self_hosted, or text).
     #[serde(rename = "type")]
     pub mode_type: SkillAuthType,
-    /// Display label for this mode in the UI.
+    /// human-readable label for this mode in the UI.
     pub label: Option<String>,
-    /// Short description shown below the label.
+    /// Short description of the mode shown below the label.
     pub description: Option<String>,
+    
     // --- Managed mode fields ---
-    /// OAuth provider name (e.g. "google", "github", "notion").
+    /// OAuth provider name (e.g., "google", "github", "notion").
     pub provider: Option<String>,
-    /// OAuth scopes to request.
+    /// List of OAuth scopes to request from the provider.
     pub scopes: Option<Vec<String>>,
-    /// Base URL for API requests proxied through backend.
+    /// Base URL for API requests that are proxied through the OpenHuman backend.
     #[serde(rename = "apiBaseUrl")]
     pub api_base_url: Option<String>,
+    
     // --- Self-hosted mode fields ---
-    /// Form fields for credential input (SetupField-compatible JSON objects).
+    /// Dynamic form fields for credential input, represented as JSON objects.
     #[serde(default)]
     pub fields: Vec<serde_json::Value>,
+    
     // --- Text mode fields ---
-    /// Hint text shown above the textarea (e.g. "Paste your service account JSON").
+    /// Hint text shown above the textarea input.
     #[serde(rename = "textDescription")]
     pub text_description: Option<String>,
-    /// Placeholder text for the textarea.
+    /// Placeholder text displayed inside the textarea.
     #[serde(rename = "textPlaceholder")]
     pub text_placeholder: Option<String>,
 }
 
-/// Raw manifest as it appears on disk.
+/// The raw manifest structure as it appears in `manifest.json`.
 #[derive(Debug, Deserialize, serde::Serialize)]
 pub struct SkillManifest {
-    /// Unique skill identifier (e.g., "price-tracker").
+    /// Unique identifier for the skill (e.g., "price-tracker").
     pub id: String,
-    /// Human-readable name.
+    /// Human-readable name of the skill.
     pub name: String,
-    /// Runtime type. Supported values: "v8", "javascript".
+    /// The runtime environment required by the skill. Defaults to "v8".
     #[serde(default = "default_runtime")]
     pub runtime: String,
-    /// Entry point JS file relative to the skill directory.
+    /// The main entry point script file, relative to the skill directory.
     #[serde(default = "default_entry_point")]
     pub entry: String,
-    /// Memory limit in MB (optional, default 64).
+    /// Optional memory limit for the skill in megabytes. Defaults to 64 MB.
     pub memory_limit_mb: Option<usize>,
-    /// Whether to auto-start on app launch.
+    /// Whether the skill should automatically start when the application launches.
     #[serde(default)]
     pub auto_start: bool,
-    /// Version string (informational).
+    /// Informational version string.
     pub version: Option<String>,
-    /// Whether to ignore in production (JSON key `ignoreInProduction`).
+    /// If true, the skill will be ignored in production builds.
     #[serde(default, rename = "ignoreInProduction")]
     pub ignore_in_production: bool,
-    /// Description (informational).
+    /// human-readable description of the skill's purpose.
     pub description: Option<String>,
-    /// Setup configuration (optional).
+    /// Optional setup configuration for the skill.
     #[serde(default)]
     pub setup: Option<SkillSetup>,
-    /// Platform filter. When present, only these platforms will load the skill.
-    /// Valid values: "windows", "macos", "linux".
-    /// When absent or empty, the skill is available on all platforms.
+    /// Optional list of platforms where this skill is supported (e.g., ["macos", "windows"]).
+    /// If absent or empty, the skill is assumed to support all platforms.
     #[serde(default)]
     pub platforms: Option<Vec<String>>,
-    /// Skill type for the unified registry dispatch.
-    /// "openhuman" → executed via QuickJS runtime (default).
-    /// "openclaw"   → loaded and executed from SKILL.md/SKILL.toml.
+    /// The type of skill, used for unified registry dispatch.
+    /// "openhuman" indicates a standard QuickJS skill.
     #[serde(default = "default_skill_type")]
     pub skill_type: String,
 }
@@ -135,7 +150,7 @@ fn default_entry_point() -> String {
     "index.js".to_string()
 }
 
-/// Returns the current platform as a manifest-compatible string.
+/// Returns the current operating system as a string compatible with manifest platform filters.
 fn current_platform() -> &'static str {
     match std::env::consts::OS {
         "windows" => "windows",
@@ -146,12 +161,12 @@ fn current_platform() -> &'static str {
 }
 
 impl SkillManifest {
-    /// Parse a manifest from a JSON string.
+    /// Parse a `SkillManifest` from a JSON string.
     pub fn from_json(json: &str) -> Result<Self, String> {
         serde_json::from_str(json).map_err(|e| format!("Failed to parse manifest: {e}"))
     }
 
-    /// Read and parse a manifest from disk.
+    /// Read and parse a `SkillManifest` from a file path asynchronously.
     pub async fn from_path(path: &Path) -> Result<Self, String> {
         let content = tokio::fs::read_to_string(path)
             .await
@@ -159,14 +174,17 @@ impl SkillManifest {
         Self::from_json(&content)
     }
 
-    /// Whether this manifest declares a JavaScript runtime (QuickJS).
-    /// Accepts "v8", "javascript", "quickjs" for compatibility.
+    /// Check if the manifest specifies a JavaScript-compatible runtime.
+    /// 
+    /// Currently accepts "v8", "javascript", and "quickjs".
     pub fn is_javascript(&self) -> bool {
         matches!(self.runtime.as_str(), "v8" | "javascript" | "quickjs")
     }
 
-    /// Whether the skill is available on the current platform.
-    /// Returns true when `platforms` is absent or empty (available everywhere).
+    /// Check if the skill is supported on the current execution platform.
+    /// 
+    /// Returns true if `platforms` is not specified or if the current platform
+    /// is explicitly included in the list.
     pub fn supports_current_platform(&self) -> bool {
         let platforms = match &self.platforms {
             Some(p) if !p.is_empty() => p,
@@ -176,7 +194,9 @@ impl SkillManifest {
         platforms.iter().any(|p| p == current)
     }
 
-    /// Convert to a SkillConfig for the runtime engine.
+    /// Convert the manifest into a `SkillConfig` for use by the `RuntimeEngine`.
+    /// 
+    /// This resolves default values and converts megabytes to bytes.
     pub fn to_config(&self) -> SkillConfig {
         SkillConfig {
             skill_id: self.id.clone(),
