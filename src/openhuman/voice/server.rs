@@ -281,6 +281,53 @@ pub fn try_global_server() -> Option<Arc<VoiceServer>> {
     VOICE_SERVER.get().cloned()
 }
 
+/// Start the embedded global voice server when config enables auto-start.
+///
+/// This is intended for core process startup. The server runs in the background
+/// and reuses the process-global singleton so RPC status/stop calls continue to
+/// operate on the same instance.
+pub async fn start_if_enabled(app_config: &Config) {
+    if !app_config.voice_server.auto_start {
+        info!("{LOG_PREFIX} auto-start disabled in config, skipping embedded voice server");
+        return;
+    }
+
+    let server_config = VoiceServerConfig {
+        hotkey: app_config.voice_server.hotkey.clone(),
+        activation_mode: match app_config.voice_server.activation_mode {
+            crate::openhuman::config::VoiceActivationMode::Tap => ActivationMode::Tap,
+            crate::openhuman::config::VoiceActivationMode::Push => ActivationMode::Push,
+        },
+        skip_cleanup: app_config.voice_server.skip_cleanup,
+        context: None,
+        min_duration_secs: app_config.voice_server.min_duration_secs,
+    };
+
+    if let Some(existing) = try_global_server() {
+        let status = existing.status().await;
+        if status.state != ServerState::Stopped {
+            info!(
+                "{LOG_PREFIX} embedded voice server already running: hotkey={} mode={:?}",
+                status.hotkey, status.activation_mode
+            );
+            return;
+        }
+    }
+
+    info!(
+        "{LOG_PREFIX} auto-start enabled, launching embedded voice server: hotkey={} mode={:?}",
+        server_config.hotkey, server_config.activation_mode
+    );
+
+    let server = global_server(server_config);
+    let config_for_run = app_config.clone();
+    tokio::spawn(async move {
+        if let Err(e) = server.run(&config_for_run).await {
+            error!("{LOG_PREFIX} embedded voice server exited with error: {e}");
+        }
+    });
+}
+
 /// Run the voice server standalone (blocking). Intended for CLI usage.
 ///
 /// Creates a fresh `VoiceServer` that is **not** registered in the global

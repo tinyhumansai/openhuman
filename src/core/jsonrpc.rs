@@ -648,7 +648,7 @@ pub async fn run_server(
                 }
 
                 // Start the global dictation hotkey listener (rdev-based, core-side).
-
+                crate::openhuman::voice::server::start_if_enabled(&config).await;
                 crate::openhuman::voice::dictation_listener::start_if_enabled(&config).await;
             }
             Err(err) => {
