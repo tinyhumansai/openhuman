@@ -49,24 +49,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
 /// Returns all registered controllers (schema + handler) for the skills system.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
-        // Socket stubs (unchanged)
-        RegisteredController {
-            schema: socket_schema("connect"),
-            handler: handle_socket_unavailable,
-        },
-        RegisteredController {
-            schema: socket_schema("disconnect"),
-            handler: handle_socket_unavailable,
-        },
-        RegisteredController {
-            schema: socket_schema("state"),
-            handler: handle_socket_unavailable,
-        },
-        RegisteredController {
-            schema: socket_schema("emit"),
-            handler: handle_socket_unavailable,
-        },
-        // Skills registry controllers
         RegisteredController {
             schema: skills_schema("registry_fetch"),
             handler: handle_skills_registry_fetch,
@@ -169,53 +151,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_skills_get_all_snapshots,
         },
     ]
-}
-
-// --- Socket schemas (unchanged) ---
-
-/// Helper to create a schema for socket-related functions.
-fn socket_schema(function: &str) -> ControllerSchema {
-    match function {
-        "connect" | "disconnect" | "state" | "emit" => ControllerSchema {
-            namespace: "socket",
-            function: match function {
-                "connect" => "connect",
-                "disconnect" => "disconnect",
-                "state" => "state",
-                _ => "emit",
-            },
-            description: "Skill runtime socket manager bridge.",
-            inputs: vec![FieldSchema {
-                name: "payload",
-                ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
-                comment: "Socket request payload.",
-                required: false,
-            }],
-            outputs: vec![FieldSchema {
-                name: "result",
-                ty: TypeSchema::Json,
-                comment: "Socket response payload.",
-                required: true,
-            }],
-        },
-        _ => ControllerSchema {
-            namespace: "socket",
-            function: "unknown",
-            description: "Unknown socket controller function.",
-            inputs: vec![],
-            outputs: vec![FieldSchema {
-                name: "error",
-                ty: TypeSchema::String,
-                comment: "Lookup error details.",
-                required: true,
-            }],
-        },
-    }
-}
-
-/// Fallback handler for socket functions when the native runtime is unavailable.
-fn handle_socket_unavailable(_params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async { Err(SOCKET_UNAVAILABLE_MSG.to_string()) })
 }
 
 // --- Skills registry schemas ---
