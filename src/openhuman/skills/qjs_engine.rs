@@ -40,11 +40,13 @@ use crate::openhuman::skills::skill_registry::SkillRegistry;
 use crate::openhuman::skills::socket_manager::SocketManager;
 use crate::openhuman::skills::types::{SkillSnapshot, SkillStatus, ToolCallOrigin, ToolResult};
 use crate::openhuman::webhooks::WebhookRouter;
-// IdbStorage removed during runtime cleanup
 
 /// The central runtime engine using QuickJS.
+/// 
+/// This struct orchestrates the lifecycle of all JavaScript-based skills,
+/// managing their discovery, startup, shutdown, and communication.
 pub struct RuntimeEngine {
-    /// Registry of all skills.
+    /// Registry of all skills currently known to the runtime.
     registry: Arc<SkillRegistry>,
     /// Global cron scheduler for timed skill triggers.
     cron_scheduler: Arc<CronScheduler>,
@@ -54,13 +56,13 @@ pub struct RuntimeEngine {
     preferences: Arc<PreferencesStore>,
     /// Base data directory for skills (platform-aware).
     skills_data_dir: PathBuf,
-    /// Directory containing skill source files.
+    /// Directory containing skill source files (overridable).
     skills_source_dir: RwLock<Option<PathBuf>>,
     /// Resource directory (bundled skills in production).
     resource_dir: RwLock<Option<PathBuf>>,
     /// Memory client for skill data persistence.
     memory_client: RwLock<Option<MemoryClientRef>>,
-    /// Socket manager for emitting tool:sync events.
+    /// Socket manager for emitting tool:sync events to the UI.
     socket_manager: RwLock<Option<Arc<SocketManager>>>,
     /// Webhook router for tunnel-to-skill routing.
     webhook_router: Arc<WebhookRouter>,
@@ -69,7 +71,10 @@ pub struct RuntimeEngine {
 }
 
 impl RuntimeEngine {
-    /// Create a new RuntimeEngine.
+    /// Create a new RuntimeEngine with the specified data directory.
+    /// 
+    /// This initializes all core components including the registry, schedulers,
+    /// and preference store.
     pub fn new(skills_data_dir: PathBuf) -> Result<Self, String> {
         let registry = Arc::new(SkillRegistry::new());
         let cron_scheduler = Arc::new(CronScheduler::new());
@@ -169,7 +174,14 @@ impl RuntimeEngine {
         }
     }
 
-    /// Get the skills source directory.
+    /// Resolve the directory where skills should be loaded from.
+    /// 
+    /// The resolution follows this priority:
+    /// 1. `SKILLS_LOCAL_DIR` environment variable (for development)
+    /// 2. Programmatically set source directory
+    /// 3. Standard development paths (`openhuman-skills/skills` in CWD or parent)
+    /// 4. Bundled resource directory (production)
+    /// 5. App data directory (fallback)
     fn get_skills_source_dir(&self) -> Result<PathBuf, String> {
         // 0. SKILLS_LOCAL_DIR env var (highest priority — explicit local dev override)
         if let Ok(local_dir) = std::env::var("SKILLS_LOCAL_DIR") {
@@ -254,6 +266,8 @@ impl RuntimeEngine {
     }
 
     /// Discover all JavaScript skills from the skills source directory and workspace.
+    /// 
+    /// Returns a list of `SkillManifest` for all valid skills found.
     pub async fn discover_skills(&self) -> Result<Vec<SkillManifest>, String> {
         let mut manifests = Vec::new();
         let mut seen_ids = std::collections::HashSet::new();
@@ -342,6 +356,10 @@ impl RuntimeEngine {
     }
 
     /// Start a specific skill by its ID.
+    /// 
+    /// This resolves the skill directory, creates a `QjsSkillInstance`, 
+    /// spawns its execution task, and registers it in the registry.
+    /// It then waits for the skill to reach the `Running` state or fail.
     pub async fn start_skill(&self, skill_id: &str) -> Result<SkillSnapshot, String> {
         // Check if already running
         if self.registry.has_skill(skill_id) {
@@ -409,10 +427,10 @@ impl RuntimeEngine {
             data_dir: data_dir.clone(),
         };
 
-        // Spawn the skill's execution loop
+        // Spawn the skill's execution loop in a background task
         let task_handle = instance.spawn(rx, deps);
 
-        // Register in the registry
+        // Register in the registry so other components can find it
         self.registry.register(
             skill_id,
             config,
@@ -423,7 +441,7 @@ impl RuntimeEngine {
 
         self.emit_status_change(skill_id);
 
-        // Wait for initialization to complete
+        // Wait for initialization to complete by polling the skill state
         let state = instance.state.clone();
         let skill_id_owned = skill_id.to_string();
         let max_wait = std::time::Duration::from_secs(10);
@@ -483,6 +501,9 @@ impl RuntimeEngine {
     }
 
     /// Stop a running skill.
+    /// 
+    /// This sends a stop signal to the skill, unregisters it from schedulers 
+    /// and the webhook router, and updates its status.
     pub async fn stop_skill(&self, skill_id: &str) -> Result<(), String> {
         self.registry.stop_skill(skill_id).await?;
         self.cron_scheduler.unregister_all_for_skill(skill_id);
@@ -524,7 +545,7 @@ impl RuntimeEngine {
         &self.preferences
     }
 
-    /// Call a tool on a skill.
+    /// Call a tool on a skill by its name and arguments.
     pub async fn call_tool(
         &self,
         skill_id: &str,
@@ -537,6 +558,9 @@ impl RuntimeEngine {
     }
 
     /// Call a tool from inside a running skill. Enforces self-only invocation.
+    /// 
+    /// This is used when a skill wants to call its own tools or when inter-skill
+    /// communication is permitted.
     pub async fn call_tool_as_skill(
         &self,
         caller_skill_id: &str,
@@ -566,7 +590,7 @@ impl RuntimeEngine {
         self.registry.all_tools()
     }
 
-    /// Log a skill status change (event emission moved to Socket.IO layer).
+    /// Log a skill status change (event emission is handled by the Socket manager).
     fn emit_status_change(&self, skill_id: &str) {
         if let Some(snap) = self.registry.get_skill(skill_id) {
             log::debug!(
@@ -577,8 +601,9 @@ impl RuntimeEngine {
         }
     }
 
-    /// Auto-start skills based on user preferences.
-    /// No stagger delay needed for QuickJS (lightweight contexts).
+    /// Auto-start skills based on user preferences and manifest defaults.
+    /// 
+    /// No stagger delay is needed for QuickJS as instances are lightweight.
     pub async fn auto_start_skills(&self) {
         match self.discover_skills().await {
             Ok(manifests) => {
@@ -609,14 +634,14 @@ impl RuntimeEngine {
         self.sync_tools().await;
     }
 
-    /// Enable a skill.
+    /// Enable a skill and start it.
     pub async fn enable_skill(&self, skill_id: &str) -> Result<(), String> {
         self.preferences.set_enabled(skill_id, true);
         self.start_skill(skill_id).await?;
         Ok(())
     }
 
-    /// Disable a skill.
+    /// Disable a skill and stop it if it's running.
     pub async fn disable_skill(&self, skill_id: &str) -> Result<(), String> {
         self.preferences.set_enabled(skill_id, false);
         if self.registry.has_skill(skill_id) {
@@ -625,12 +650,12 @@ impl RuntimeEngine {
         Ok(())
     }
 
-    /// Check whether a skill is enabled.
+    /// Check whether a skill is enabled in user preferences.
     pub fn is_skill_enabled(&self, skill_id: &str) -> bool {
         self.preferences.is_enabled(skill_id).unwrap_or(false)
     }
 
-    /// Get all stored preferences.
+    /// Get all stored skill preferences.
     pub fn get_preferences(
         &self,
     ) -> std::collections::HashMap<String, crate::openhuman::skills::preferences::SkillPreference>
@@ -639,13 +664,15 @@ impl RuntimeEngine {
     }
 
     /// Read a KV value from a skill's database.
-    /// TODO: Removed during runtime cleanup - reimplement if needed
+    /// 
+    /// NOTE: This was removed during runtime cleanup and currently returns an error.
     pub fn kv_get(&self, _skill_id: &str, _key: &str) -> Result<serde_json::Value, String> {
         Err("KV storage removed during runtime cleanup".to_string())
     }
 
     /// Write a KV value into a skill's database.
-    /// TODO: Removed during runtime cleanup - reimplement if needed
+    /// 
+    /// NOTE: This was removed during runtime cleanup and currently returns an error.
     pub fn kv_set(
         &self,
         _skill_id: &str,
@@ -655,7 +682,10 @@ impl RuntimeEngine {
         Err("KV storage removed during runtime cleanup".to_string())
     }
 
-    /// Route a JSON-RPC method call.
+    /// Route a JSON-RPC method call to a specific skill.
+    /// 
+    /// This handles built-in skill methods (setup, tools, session) and 
+    /// routes others to the skill's custom RPC handler.
     pub async fn rpc(
         &self,
         skill_id: &str,
@@ -875,12 +905,12 @@ impl RuntimeEngine {
             .map_err(|e| format!("Failed to write data file '{}': {e}", filename))
     }
 
-    /// Get the data directory path for a skill.
+    /// Get the data directory path for a specific skill.
     pub fn skill_data_dir(&self, skill_id: &str) -> PathBuf {
         self.skills_data_dir.join(skill_id)
     }
 
-    /// Total file count and byte size under the skill's data directory (recursive).
+    /// Calculate total file count and byte size under the skill's data directory (recursive).
     pub fn skill_data_directory_stats(&self, skill_id: &str) -> SkillDataDirectoryStats {
         let path = self.skill_data_dir(skill_id);
         let exists = path.exists();
@@ -905,15 +935,22 @@ impl RuntimeEngine {
     }
 }
 
-/// Disk usage for a skill's persisted data folder (exposed to the UI for sync summary).
+/// Disk usage statistics for a skill's persisted data folder.
+/// 
+/// This is exposed to the UI for display in sync summaries.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SkillDataDirectoryStats {
+    /// Whether the directory exists on disk.
     pub exists: bool,
+    /// Absolute path to the data directory.
     pub path: String,
+    /// Total size in bytes of all files in the directory.
     pub total_bytes: u64,
+    /// Total number of files in the directory.
     pub file_count: u64,
 }
 
+/// Recursively calculate the total byte size and file count of a directory.
 fn directory_byte_and_file_count(path: &std::path::Path) -> std::io::Result<(u64, u64)> {
     use std::fs;
     if !path.exists() {
@@ -921,6 +958,8 @@ fn directory_byte_and_file_count(path: &std::path::Path) -> std::io::Result<(u64
     }
     let mut total_bytes = 0u64;
     let mut file_count = 0u64;
+    
+    /// Internal recursive function to walk the directory tree.
     fn walk(
         path: &std::path::Path,
         total_bytes: &mut u64,

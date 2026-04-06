@@ -1,4 +1,8 @@
 //! SkillRegistry — tracks all registered/running skills and routes messages.
+//! 
+//! The registry is the central source of truth for which skills are currently
+//! active in the runtime. It manages the communication channels (senders) to 
+//! each skill's event loop and provides methods for interacting with them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,25 +16,30 @@ use crate::openhuman::skills::types::{
     ToolResult,
 };
 
-/// Entry in the registry for a single skill.
+/// Internal entry in the registry representing a single skill instance.
 struct RegistryEntry {
-    /// Sender to the skill's message loop.
+    /// Sender to the skill's message loop for asynchronous communication.
     sender: mpsc::Sender<SkillMessage>,
-    /// Shared state readable without going through the message loop.
+    /// Shared state of the skill, readable without going through the message loop.
     state: Arc<RwLock<SkillState>>,
-    /// Config from the manifest.
+    /// Configuration of the skill, derived from its manifest.
     config: SkillConfig,
-    /// Handle to the spawned Tokio task.
+    /// Handle to the spawned Tokio task running the skill's event loop.
     #[allow(dead_code)]
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Central registry of all skills known to the runtime.
+/// 
+/// This struct provides thread-safe access to all active skills and mediates
+/// message routing, tool calls, and event broadcasting.
 pub struct SkillRegistry {
+    /// Map of skill IDs to their registry entries, protected by a read-write lock.
     skills: RwLock<HashMap<String, RegistryEntry>>,
 }
 
 impl SkillRegistry {
+    /// Create a new, empty SkillRegistry.
     pub fn new() -> Self {
         Self {
             skills: RwLock::new(HashMap::new()),
@@ -38,6 +47,8 @@ impl SkillRegistry {
     }
 
     /// Register a skill instance after it has been created and spawned.
+    /// 
+    /// This makes the skill available for discovery and interaction through the registry.
     pub fn register(
         &self,
         skill_id: &str,
@@ -58,12 +69,16 @@ impl SkillRegistry {
         );
     }
 
-    /// Unregister a skill (after it has stopped).
+    /// Unregister a skill from the registry.
+    /// 
+    /// This is typically called after a skill has successfully stopped.
     pub fn unregister(&self, skill_id: &str) {
         self.skills.write().remove(skill_id);
     }
 
-    /// Get a snapshot of all registered skills.
+    /// Get a snapshot of all currently registered skills.
+    /// 
+    /// Returns a list of `SkillSnapshot` containing the latest state of each skill.
     pub fn list_skills(&self) -> Vec<SkillSnapshot> {
         self.skills
             .read()
@@ -75,7 +90,9 @@ impl SkillRegistry {
             .collect()
     }
 
-    /// Get a snapshot of a single skill.
+    /// Get a snapshot of a single skill by its ID.
+    /// 
+    /// Returns `None` if the skill is not found in the registry.
     pub fn get_skill(&self, skill_id: &str) -> Option<SkillSnapshot> {
         let skills = self.skills.read();
         skills.get(skill_id).map(|entry| {
@@ -84,6 +101,7 @@ impl SkillRegistry {
         })
     }
 
+    /// Helper function to build a `SkillSnapshot` from a `RegistryEntry` and its current `SkillState`.
     fn build_snapshot(skill_id: &str, entry: &RegistryEntry, state: &SkillState) -> SkillSnapshot {
         use crate::openhuman::skills::types::derive_connection_status;
 
@@ -104,7 +122,7 @@ impl SkillRegistry {
         }
     }
 
-    /// Get the status of a skill.
+    /// Get the current status of a specific skill.
     #[allow(dead_code)]
     pub fn get_status(&self, skill_id: &str) -> Option<SkillStatus> {
         self.skills
@@ -113,7 +131,7 @@ impl SkillRegistry {
             .map(|e| e.state.read().status)
     }
 
-    /// Call a tool on a specific skill from external host surfaces.
+    /// Call a tool on a specific skill from an external host surface (e.g., UI, CLI).
     pub async fn call_tool(
         &self,
         skill_id: &str,
@@ -124,7 +142,9 @@ impl SkillRegistry {
             .await
     }
 
-    /// Call a tool with an explicit origin so runtime policy can enforce boundaries.
+    /// Call a tool with an explicit origin so runtime policy can enforce security boundaries.
+    /// 
+    /// Currently, cross-skill tool calls are forbidden to ensure isolation.
     pub async fn call_tool_scoped(
         &self,
         origin: ToolCallOrigin,
@@ -132,6 +152,7 @@ impl SkillRegistry {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<ToolResult, String> {
+        // Enforce isolation: A skill cannot call tools belonging to another skill.
         if let ToolCallOrigin::SkillSelf {
             skill_id: caller_skill_id,
         } = &origin
@@ -149,6 +170,8 @@ impl SkillRegistry {
             skill_id,
             tool_name
         );
+
+        // Retrieve the sender for the target skill's event loop.
         let sender = {
             let skills = self.skills.read();
             let entry = skills
@@ -170,6 +193,7 @@ impl SkillRegistry {
             entry.sender.clone()
         };
 
+        // Create a one-shot channel to receive the tool result from the skill's event loop.
         let (reply_tx, reply_rx) = oneshot::channel();
         sender
             .send(SkillMessage::CallTool {
@@ -193,6 +217,7 @@ impl SkillRegistry {
             tool_name
         );
 
+        // Wait for the skill to process the tool call and return a result.
         match reply_rx.await {
             Ok(result) => {
                 log::info!(
@@ -217,7 +242,7 @@ impl SkillRegistry {
         }
     }
 
-    /// Send a server event to all running skills.
+    /// Send a server event to all skills that are currently in the `Running` state.
     pub async fn broadcast_event(&self, event: &str, data: serde_json::Value) {
         let senders: Vec<mpsc::Sender<SkillMessage>> = {
             self.skills
@@ -238,7 +263,7 @@ impl SkillRegistry {
         }
     }
 
-    /// Send a cron trigger to a specific skill.
+    /// Send a cron trigger message to a specific skill.
     #[allow(dead_code)]
     pub async fn trigger_cron(&self, skill_id: &str, schedule_id: &str) -> Result<(), String> {
         let sender = {
@@ -257,7 +282,9 @@ impl SkillRegistry {
             .map_err(|_| format!("Skill '{}' message channel closed", skill_id))
     }
 
-    /// Stop a specific skill gracefully.
+    /// Stop a specific skill gracefully by sending a `Stop` message.
+    /// 
+    /// It waits up to 5 seconds for the skill to acknowledge the stop request.
     pub async fn stop_skill(&self, skill_id: &str) -> Result<(), String> {
         let sender = {
             let skills = self.skills.read();
@@ -265,7 +292,7 @@ impl SkillRegistry {
                 .get(skill_id)
                 .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
 
-            // Update status
+            // Transition the skill state to `Stopping`.
             entry.state.write().status = SkillStatus::Stopping;
             entry.sender.clone()
         };
@@ -276,16 +303,17 @@ impl SkillRegistry {
             .await
             .map_err(|_| format!("Skill '{}' message channel closed", skill_id))?;
 
-        // Wait for the skill to acknowledge stopping
+        // Wait for the skill to acknowledge stopping, with a 5-second timeout.
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), reply_rx).await;
 
-        // Don't unregister — the skill stays in the registry with Stopped status
-        // so the UI can still query it and allow restart without full rediscovery.
+        // Note: The skill is NOT unregistered here. It remains in the registry
+        // with `Stopped` status, allowing it to be restarted without full discovery.
         Ok(())
     }
 
     /// Get all tool definitions across all running skills.
-    /// Returns tuples of (skill_id, tool_definition).
+    /// 
+    /// Returns a list of tuples containing the skill ID and the tool definition.
     pub fn all_tools(&self) -> Vec<(String, ToolDefinition)> {
         self.skills
             .read()
@@ -302,12 +330,14 @@ impl SkillRegistry {
             .collect()
     }
 
-    /// Check if a skill is registered.
+    /// Check if a skill with the given ID is present in the registry.
     pub fn has_skill(&self, skill_id: &str) -> bool {
         self.skills.read().contains_key(skill_id)
     }
 
-    /// Merge `patch` into a running skill's `published_state` (e.g. ping scheduler health).
+    /// Merge a patch into a running skill's published state and broadcast the change.
+    /// 
+    /// This is used by components like the ping scheduler to update health information.
     pub async fn merge_published_state(
         &self,
         skill_id: &str,
@@ -329,6 +359,7 @@ impl SkillRegistry {
                 state.published_state.insert(k, v);
             }
         }
+        // Notify the rest of the system that the skill's state has changed.
         self.broadcast_event(
             types::events::SKILL_STATE_CHANGED,
             serde_json::json!({ "skill_id": skill_id }),
@@ -337,8 +368,10 @@ impl SkillRegistry {
         Ok(())
     }
 
-    /// Send a message to a specific skill's message loop.
-    /// Returns an error if the skill is not registered or the channel is full.
+    /// Send a raw `SkillMessage` to a specific skill's message loop.
+    /// 
+    /// This is a non-blocking operation that returns an error if the skill
+    /// is not running or the message channel is full/closed.
     pub fn send_message(&self, skill_id: &str, msg: SkillMessage) -> Result<(), String> {
         log::info!("[runtime] sending message to '{}': {:?}", skill_id, msg);
         let sender = {
@@ -372,10 +405,12 @@ impl SkillRegistry {
         }
     }
 
-    /// Send an incoming webhook request to a specific skill and wait for the response.
+    /// Send an incoming webhook request to a specific skill and wait for its response.
     ///
-    /// Returns the skill's response (status code, headers, body) or an error.
-    /// Times out after 25 seconds (under the backend's 30-second timeout).
+    /// This routes a request from an external tunnel to the skill's internal 
+    /// webhook handler. It returns the response (status, headers, body) or an error.
+    /// 
+    /// The request will time out after 25 seconds if no response is received.
     pub async fn send_webhook_request(
         &self,
         skill_id: &str,
@@ -420,6 +455,7 @@ impl SkillRegistry {
             .await
             .map_err(|_| format!("Skill '{}' message channel closed", skill_id))?;
 
+        // Wait for the skill to respond, with a 25-second timeout.
         match tokio::time::timeout(std::time::Duration::from_secs(25), reply_rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err(format!(
@@ -435,6 +471,7 @@ impl SkillRegistry {
 }
 
 impl Default for SkillRegistry {
+    /// Create a default, empty SkillRegistry.
     fn default() -> Self {
         Self::new()
     }
