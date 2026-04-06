@@ -1,12 +1,14 @@
-//! QjsSkillInstance — manages one QuickJS context per skill.
+//! QuickJS Skill Instance management.
 //!
-//! Key differences from V8 version:
-//! - QuickJS contexts are Send+Sync with `parallel` feature, so we use regular tokio::spawn (not spawn_blocking)
-//! - No V8 creation lock needed (QuickJS contexts are lightweight ~1-2MB)
-//! - No stagger delay needed between skill starts
-//! - Direct memory limits via `rt.set_memory_limit()`
-//! - Uses `ctx.eval::<T, _>(code)` instead of `runtime.execute_script()`
-//! - Simplified error handling with rquickjs::Error
+//! This module provides the infrastructure to run OpenHuman skills within an isolated
+//! QuickJS JavaScript environment. Each skill runs in its own dedicated context,
+//! with restricted access to system resources via a set of native "ops" (bridges).
+//!
+//! Key characteristics of the QuickJS runtime:
+//! - Contexts are `Send + Sync`, allowing for efficient use of `tokio::spawn`.
+//! - Lightweight memory footprint per instance (~1-2MB).
+//! - Direct memory and stack limits can be applied per instance.
+//! - Asynchronous execution model integrated with the Rust event loop.
 
 mod event_loop;
 mod instance;

@@ -1,3 +1,9 @@
+//! Core operations for the OpenHuman Skills registry.
+//!
+//! This module handles fetching the skill registry (from remote or local sources),
+//! searching available skills, and performing installation/uninstallation of
+//! skill bundles into the workspace.
+
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
@@ -31,7 +37,10 @@ pub async fn registry_fetch(
             .map_err(|e| format!("registry file is not valid UTF-8: {e}"))?;
         let mut registry: RemoteSkillRegistry = serde_json::from_str(&body)
             .map_err(|e| format!("failed to parse local registry JSON: {e}"))?;
+        
+        // Ensure category flags are set correctly based on the registry structure
         tag_categories(&mut registry);
+        
         log::info!(
             "[registry] loaded {} core + {} third-party skills from local file",
             registry.skills.core.len(),
@@ -91,6 +100,8 @@ pub async fn registry_fetch(
 }
 
 /// Search the registry by query string, optionally filtering by category.
+///
+/// Matches against the skill ID, name, and description.
 pub async fn registry_search(
     workspace_dir: &Path,
     query: &str,
@@ -99,6 +110,7 @@ pub async fn registry_search(
     let registry = registry_fetch(workspace_dir, false).await?;
     let query_lower = query.to_lowercase();
 
+    // Closure to check if a skill entry matches the search query
     let matches_query = |entry: &RegistrySkillEntry| -> bool {
         entry.id.to_lowercase().contains(&query_lower)
             || entry.name.to_lowercase().contains(&query_lower)
@@ -166,6 +178,8 @@ async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
 /// This also works when registry entry URLs are local file paths.
 pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), String> {
     // --- Fast path: SKILLS_LOCAL_DIR copies directly from local dev directory ---
+    // This allows developers to work on skills locally and see changes reflected instantly
+    // in the app without having to publish to a registry.
     if let Some(local_dir) = local_skills_dir() {
         let local_skill = local_dir.join(skill_id);
         if local_skill.exists() {
@@ -213,12 +227,13 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
     );
     let js_bytes = fetch_url_bytes(&entry.download_url).await?;
 
-    // Verify checksum if present
+    // Verify checksum if present to ensure integrity of the downloaded bundle
     if let Some(expected) = &entry.checksum_sha256 {
         let mut hasher = Sha256::new();
         hasher.update(&js_bytes);
         let actual = format!("{:x}", hasher.finalize());
         if actual != *expected {
+            // Clean up the directory if verification fails
             let _ = std::fs::remove_dir_all(&skill_dir);
             return Err(format!(
                 "checksum mismatch for '{skill_id}': expected {expected}, got {actual}"
@@ -227,7 +242,7 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
         log::debug!("[registry] checksum verified for '{skill_id}'");
     }
 
-    // Write files
+    // Write the fetched files to the local skill directory
     std::fs::write(skill_dir.join("manifest.json"), &manifest_bytes)
         .map_err(|e| format!("failed to write manifest: {e}"))?;
     std::fs::write(skill_dir.join(&entry.entry), &js_bytes)
@@ -238,6 +253,8 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
 }
 
 /// Recursively copy a directory tree from `src` to `dst`.
+///
+/// Used primarily for local skill development to sync files from a source directory.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dst)
         .map_err(|e| format!("failed to create dir {}: {e}", dst.display()))?;
@@ -281,6 +298,8 @@ pub async fn skill_uninstall(workspace_dir: &Path, skill_id: &str) -> Result<(),
 }
 
 /// List all installed skills by scanning the workspace skills directory.
+///
+/// Parses the `manifest.json` in each subdirectory to gather skill information.
 pub async fn skills_list_installed(
     workspace_dir: &Path,
 ) -> Result<Vec<InstalledSkillInfo>, String> {
@@ -298,6 +317,7 @@ pub async fn skills_list_installed(
         }
 
         let dir_name = entry.file_name().to_string_lossy().to_string();
+        // Skip hidden directories
         if dir_name.starts_with('.') {
             continue;
         }
@@ -347,6 +367,9 @@ pub async fn skills_list_installed(
 }
 
 /// List all available skills from the registry, enriched with installed status.
+///
+/// Compares the remote registry with the locally installed skills to determine
+/// if a skill is installed and if updates are available.
 pub async fn skills_list_available(
     workspace_dir: &Path,
 ) -> Result<Vec<AvailableSkillEntry>, String> {

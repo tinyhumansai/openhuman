@@ -1,3 +1,10 @@
+//! Implementation of the QuickJS skill instance.
+//!
+//! This module contains the main logic for initializing and spawning the execution
+//! loop of a QuickJS-based skill. It handles setting up the runtime, context,
+//! registering native bridges, loading the skill bundle, and transitioning through
+//! lifecycle stages (init, start, running).
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -17,6 +24,8 @@ use super::types::{BridgeDeps, QjsSkillInstance, SkillState};
 
 impl QjsSkillInstance {
     /// Create a new QuickJS skill instance.
+    ///
+    /// Returns the instance and a channel to receive messages from the system.
     pub fn new(
         config: SkillConfig,
         skill_dir: PathBuf,
@@ -34,8 +43,9 @@ impl QjsSkillInstance {
     }
 
     /// Take a snapshot of the current skill state.
+    ///
     /// Note: `setup_complete` and `connection_status` are populated later
-    /// by RuntimeEngine::enrich_snapshot() which has access to PreferencesStore.
+    /// by `RuntimeEngine::enrich_snapshot()` which has access to `PreferencesStore`.
     pub fn snapshot(&self) -> SkillSnapshot {
         let state = self.state.read();
         SkillSnapshot {
@@ -51,7 +61,11 @@ impl QjsSkillInstance {
     }
 
     /// Spawn the skill's execution loop as a tokio task.
-    /// Unlike V8 (which needed spawn_blocking), QuickJS contexts are Send.
+    ///
+    /// This function sets up the entire QuickJS environment, including memory limits,
+    /// native bridge registration (ops), bootstrap code, and the skill's own bundle.
+    /// It then transitions through the `init()` and `start()` lifecycles before
+    /// entering the main event loop.
     pub fn spawn(
         &self,
         mut rx: mpsc::Receiver<SkillMessage>,
@@ -63,10 +77,10 @@ impl QjsSkillInstance {
         let data_dir = self.data_dir.clone();
 
         tokio::spawn(async move {
-            // Update status
+            // Update status to Initializing as we begin setup
             state.write().status = SkillStatus::Initializing;
 
-            // Create storage
+            // Create persistent storage (IndexedDB-like) in the skill's data directory
             let storage: IdbStorage = match IdbStorage::new(&data_dir) {
                 Ok(s) => s,
                 Err(e) => {
@@ -78,7 +92,7 @@ impl QjsSkillInstance {
                 }
             };
 
-            // Read the entry point JS file
+            // Read the entry point JS file from the skill bundle directory
             let entry_path = skill_dir.join(&config.entry_point);
             let js_source = match tokio::fs::read_to_string(&entry_path).await {
                 Ok(src) => src,
@@ -94,7 +108,7 @@ impl QjsSkillInstance {
                 }
             };
 
-            // Create QuickJS runtime with memory limits
+            // Create a fresh QuickJS runtime. QuickJS allows multiple runtimes in one process.
             let rt = match rquickjs::AsyncRuntime::new() {
                 Ok(rt) => rt,
                 Err(e) => {
@@ -109,11 +123,11 @@ impl QjsSkillInstance {
                 }
             };
 
-            // Set memory limit (config.memory_limit is in bytes)
+            // Apply resource constraints to the runtime
             rt.set_memory_limit(config.memory_limit).await;
-            rt.set_max_stack_size(512 * 1024).await; // 512KB stack
+            rt.set_max_stack_size(512 * 1024).await; // 512KB stack is usually plenty for skills
 
-            // Create context with full standard library
+            // Create context with the full standard library (Date, Math, JSON, etc.)
             let ctx = match rquickjs::AsyncContext::full(&rt).await {
                 Ok(ctx) => ctx,
                 Err(e) => {
@@ -125,20 +139,16 @@ impl QjsSkillInstance {
                 }
             };
 
-            // Create shared timer state
+            // Prepare internal state containers for JS features
             let timer_state = Arc::new(RwLock::new(qjs_ops::TimerState::default()));
-
-            // Create WebSocket state
             let ws_state = Arc::new(RwLock::new(qjs_ops::WebSocketState::default()));
-
-            // Create published skill state (different from SkillState above)
             let published_state = Arc::new(RwLock::new(qjs_ops::SkillState::default()));
 
-            // Register ops and run bootstrap + skill code
+            // Register native bridges (ops) and perform bootstrap
             let skill_id = config.skill_id.clone();
             let init_result = ctx
                 .with(|js_ctx| {
-                    // Register native ops as __ops global
+                    // SkillContext contains dependencies required by native bridges
                     let skill_context = qjs_ops::SkillContext {
                         skill_id: skill_id.clone(),
                         data_dir: data_dir.clone(),
@@ -146,6 +156,7 @@ impl QjsSkillInstance {
                         webhook_router: deps.webhook_router.clone(),
                     };
 
+                    // Register functions on the global scope via the __ops bridge
                     if let Err(e) = qjs_ops::register_ops(
                         &js_ctx,
                         storage.clone(),
@@ -157,14 +168,14 @@ impl QjsSkillInstance {
                         return Err(format!("Failed to register ops: {e}"));
                     }
 
-                    // Load bootstrap
+                    // Load bootstrap code to set up high-level JS APIs (Fetch, Timers, etc.)
                     let bootstrap_code = include_str!("../quickjs_libs/bootstrap.js");
                     if let Err(e) = js_ctx.eval::<rquickjs::Value, _>(bootstrap_code) {
                         let detail = format_js_exception(&js_ctx, &e);
                         return Err(format!("Bootstrap failed: {detail}"));
                     }
 
-                    // Set skill ID
+                    // Inject the skill ID into the global scope for internal JS use
                     let bridge_code = format!(
                         r#"globalThis.__skillId = "{}";"#,
                         skill_id.replace('"', r#"\""#)
@@ -174,13 +185,13 @@ impl QjsSkillInstance {
                         return Err(format!("Skill init failed: {detail}"));
                     }
 
-                    // Execute the skill's entry point
+                    // Evaluate the actual skill bundle code
                     if let Err(e) = js_ctx.eval::<rquickjs::Value, _>(js_source.as_bytes()) {
                         let detail = format_js_exception(&js_ctx, &e);
                         return Err(format!("Skill load failed: {detail}"));
                     }
 
-                    // Extract tool definitions
+                    // Inspect the global scope to extract tool definitions (tools_list)
                     extract_tools(&js_ctx, &state);
 
                     Ok(())
@@ -195,11 +206,12 @@ impl QjsSkillInstance {
                 return;
             }
 
+            // Restore previously saved authentication state from the data directory
             restore_oauth_credential(&ctx, &config.skill_id, &data_dir).await;
             restore_auth_credential(&ctx, &config.skill_id, &data_dir).await;
             restore_client_key(&ctx, &config.skill_id, &data_dir).await;
 
-            // Call init() lifecycle
+            // Trigger the `init()` lifecycle callback in the JS skill
             if let Err(e) = call_lifecycle(&rt, &ctx, "init").await {
                 let mut s = state.write();
                 s.status = SkillStatus::Error;
@@ -208,10 +220,10 @@ impl QjsSkillInstance {
                 return;
             }
 
-            // Execute pending jobs after init (process promises)
+            // Execute any microtasks or pending promises scheduled during init()
             drive_jobs(&rt).await;
 
-            // Call start() lifecycle
+            // Trigger the `start()` lifecycle callback
             if let Err(e) = call_lifecycle(&rt, &ctx, "start").await {
                 let mut s = state.write();
                 s.status = SkillStatus::Error;
@@ -220,14 +232,14 @@ impl QjsSkillInstance {
                 return;
             }
 
-            // Execute pending jobs after start
+            // Execute any microtasks or pending promises scheduled during start()
             drive_jobs(&rt).await;
 
-            // Mark as running
+            // Mark the skill as officially running
             state.write().status = SkillStatus::Running;
             log::info!("[skill:{}] Running (QuickJS)", config.skill_id);
 
-            // Immediate ping to verify the connection is healthy
+            // Execute an initial `onPing` call to verify the JS -> Bridge connection is healthy
             match handle_js_call(&rt, &ctx, "onPing", "{}").await {
                 Ok(value) => {
                     log::info!("[skill:{}] Initial ping result: {}", config.skill_id, value);
@@ -238,9 +250,7 @@ impl QjsSkillInstance {
             }
             drive_jobs(&rt).await;
 
-            // Run the event loop
-            // Sync is triggered by cron schedules or manually from the frontend,
-            // not automatically at startup or after auth.
+            // Hand over control to the main event loop which waits for system/RPC messages
             run_event_loop(
                 &rt,
                 &ctx,

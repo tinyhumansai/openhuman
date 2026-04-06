@@ -1,3 +1,10 @@
+//! Handlers for invoking JavaScript functions from the Rust host.
+//!
+//! This module provides a set of high-level functions to call into a skill's
+//! JavaScript environment. It handles the complexity of bridging between
+//! Rust's async model and QuickJS's execution model, including support for
+//! Promise-returning JS functions via a polling-based mechanism.
+
 use std::time::Duration;
 
 use crate::openhuman::skills::types::{ToolContent, ToolResult};
@@ -5,15 +12,22 @@ use crate::openhuman::skills::types::{ToolContent, ToolResult};
 use super::js_helpers::{drive_jobs, format_js_exception};
 
 /// Call a lifecycle function on the skill object.
-/// Handles async (Promise-returning) lifecycle methods (init, start, stop).
+///
+/// Handles both synchronous and asynchronous (Promise-returning) lifecycle
+/// methods like `init`, `start`, and `stop`. If the JS function returns a Promise,
+/// this handler will poll for completion for up to 30 seconds.
 pub(crate) async fn call_lifecycle(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
     name: &str,
 ) -> Result<(), String> {
     let name = name.to_string();
+    
+    // First, try to initiate the call in the JS context
     let is_promise = ctx
         .with(|js_ctx| {
+            // JS wrapper to find and call the lifecycle function, handling both
+            // ESM-style exports and global definitions.
             let code = format!(
                 r#"(function() {{
                 var skill = globalThis.__skill && globalThis.__skill.default
@@ -23,6 +37,7 @@ pub(crate) async fn call_lifecycle(
                 if (typeof fn === 'function') {{
                     var result = fn.call(skill);
                     if (result && typeof result.then === 'function') {{
+                        // Function returned a Promise, set up global tracking flags
                         globalThis.__pendingLifecycleDone = false;
                         globalThis.__pendingLifecycleError = undefined;
                         result.then(
@@ -48,10 +63,12 @@ pub(crate) async fn call_lifecycle(
         })
         .await?;
 
+    // If it was a Promise, poll the global flags until they indicate completion
     if is_promise {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
 
         loop {
+            // Must drive the QuickJS job queue to allow Promises to resolve
             drive_jobs(rt).await;
 
             let done = ctx
@@ -77,6 +94,7 @@ pub(crate) async fn call_lifecycle(
                         } else {
                             None
                         };
+                        // Clean up tracking flags
                         let _ = js_ctx.eval::<rquickjs::Value, _>(
                             b"delete globalThis.__pendingLifecycleDone; delete globalThis.__pendingLifecycleError;",
                         );
@@ -100,6 +118,7 @@ pub(crate) async fn call_lifecycle(
                 return Err(format!("{name}() timed out after 30s"));
             }
 
+            // Yield control back to the executor before next poll
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
@@ -107,14 +126,14 @@ pub(crate) async fn call_lifecycle(
     Ok(())
 }
 
-/// Start an async tool call.
+/// Start an asynchronous tool call.
 ///
-/// Calls the tool's `execute()` and checks if it returns a Promise.
-/// - If sync: returns `Ok(Some(ToolResult))` with the immediate result.
-/// - If async (Promise): attaches `.then`/`.catch` handlers that store the
-///   resolved value in `globalThis.__pendingTool*` globals, and returns
-///   `Ok(None)`. The caller should let the event loop drive the QuickJS
-///   runtime and poll `__pendingToolDone` for completion.
+/// This function invokes the `execute()` method of a tool defined in JavaScript.
+///
+/// - If the tool is synchronous: returns `Ok(Some(ToolResult))` immediately.
+/// - If the tool is asynchronous: returns `Ok(None)`. The caller is responsible
+///   for polling `globalThis.__pendingToolDone` and eventually calling
+///   `read_pending_tool_result`.
 pub(crate) async fn start_async_tool_call(
     ctx: &rquickjs::AsyncContext,
     tool_name: &str,
@@ -132,6 +151,7 @@ pub(crate) async fn start_async_tool_call(
 
     let eval_result = ctx
         .with(|js_ctx| {
+            // JS wrapper to find the tool by name and execute it with provided arguments.
             let code = format!(
                 r#"(function() {{
                 var skill = globalThis.__skill && globalThis.__skill.default
@@ -143,6 +163,7 @@ pub(crate) async fn start_async_tool_call(
                         var args = {};
                         var result = tools[i].execute(args);
                         if (result && typeof result.then === 'function') {{
+                            // Async tool: set up Promise tracking
                             globalThis.__pendingToolResult = undefined;
                             globalThis.__pendingToolError = undefined;
                             globalThis.__pendingToolDone = false;
@@ -158,6 +179,7 @@ pub(crate) async fn start_async_tool_call(
                             );
                             return "__PROMISE__";
                         }}
+                        // Sync tool: return serialized result
                         if (result && typeof result === 'object') {{
                             return JSON.stringify(result);
                         }}
@@ -212,12 +234,14 @@ pub(crate) async fn start_async_tool_call(
 }
 
 /// Read the result of a completed async tool call from JS globals.
-/// Call this only after `globalThis.__pendingToolDone === true`.
+///
+/// This should only be called after verifying that `globalThis.__pendingToolDone` is true.
 pub(crate) async fn read_pending_tool_result(
     ctx: &rquickjs::AsyncContext,
 ) -> Result<ToolResult, String> {
     let result_text = ctx
         .with(|js_ctx| {
+            // JS wrapper to extract the resolved value or error from tracking globals
             let code = r#"(function() {
                 var err = globalThis.__pendingToolError;
                 globalThis.__pendingToolError = undefined;
@@ -252,8 +276,9 @@ pub(crate) async fn read_pending_tool_result(
     })
 }
 
-/// Handle a server event.
-/// Handles async (Promise-returning) onServerEvent handlers.
+/// Handle a server-sent event targeted at the skill.
+///
+/// Invokes the `onServerEvent` handler in JS. Supports async handlers.
 pub(crate) async fn handle_server_event(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -358,8 +383,9 @@ pub(crate) async fn handle_server_event(
     Ok(())
 }
 
-/// Handle a cron trigger.
-/// Handles async (Promise-returning) onCronTrigger handlers.
+/// Handle a scheduled cron trigger.
+///
+/// Invokes the `onCronTrigger` handler in JS. Supports async handlers.
 pub(crate) async fn handle_cron_trigger(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -461,7 +487,8 @@ pub(crate) async fn handle_cron_trigger(
 }
 
 /// Call a JS function on the skill object that returns a JSON value.
-/// Handles both sync and async (Promise-returning) functions.
+///
+/// Used for generic RPC methods. Supports both synchronous and asynchronous functions.
 pub(crate) async fn handle_js_call(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -583,7 +610,8 @@ pub(crate) async fn handle_js_call(
 }
 
 /// Call a JS function on the skill object that returns void.
-/// Handles both sync and async (Promise-returning) functions.
+///
+/// Used for generic RPC notifications. Supports both synchronous and asynchronous functions.
 pub(crate) async fn handle_js_void_call(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,

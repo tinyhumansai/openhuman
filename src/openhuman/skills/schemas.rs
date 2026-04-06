@@ -1,3 +1,9 @@
+//! JSON-RPC schemas and handlers for the OpenHuman Skills system.
+//!
+//! This module defines the interface between the frontend/RPC clients and the
+//! skills registry and runtime. It includes schemas for socket management,
+//! skill installation, and runtime control (start, stop, tool calls, etc.).
+
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -11,6 +17,9 @@ use super::registry_ops;
 const SOCKET_UNAVAILABLE_MSG: &str =
     "native skill runtime and socket manager are not available in this build";
 
+/// Returns all controller schemas defined in this module.
+///
+/// These schemas describe the expected inputs and outputs for each JSON-RPC function.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         socket_schema("connect"),
@@ -46,6 +55,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     ]
 }
 
+/// Returns all registered controllers (schema + handler) for the skills system.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
         // Socket stubs (unchanged)
@@ -172,6 +182,7 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 
 // --- Socket schemas (unchanged) ---
 
+/// Helper to create a schema for socket-related functions.
 fn socket_schema(function: &str) -> ControllerSchema {
     match function {
         "connect" | "disconnect" | "state" | "emit" => ControllerSchema {
@@ -211,12 +222,14 @@ fn socket_schema(function: &str) -> ControllerSchema {
     }
 }
 
+/// Fallback handler for socket functions when the native runtime is unavailable.
 fn handle_socket_unavailable(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { Err(SOCKET_UNAVAILABLE_MSG.to_string()) })
 }
 
 // --- Skills registry schemas ---
 
+/// Helper to create a schema for skills-related functions.
 fn skills_schema(function: &str) -> ControllerSchema {
     match function {
         "registry_fetch" => ControllerSchema {
@@ -626,6 +639,7 @@ fn skills_schema(function: &str) -> ControllerSchema {
     }
 }
 
+/// Helper to create a standard `skill_id` input field schema.
 fn skill_id_input(comment: &'static str) -> FieldSchema {
     FieldSchema {
         name: "skill_id",
@@ -637,23 +651,31 @@ fn skill_id_input(comment: &'static str) -> FieldSchema {
 
 // --- Skills registry handlers ---
 
+/// Parameters for the `skills.registry_fetch` RPC method.
 #[derive(Deserialize)]
 struct RegistryFetchParams {
+    /// If true, bypasses the disk cache and fetches a fresh copy from the remote registry.
     #[serde(default)]
     force: Option<bool>,
 }
 
+/// Parameters for the `skills.search` RPC method.
 #[derive(Deserialize)]
 struct SearchParams {
+    /// The search query string (matches ID, name, or description).
     query: String,
+    /// Optional category filter: "core" or "third_party".
     category: Option<String>,
 }
 
+/// Common parameters for RPC methods that take a `skill_id`.
 #[derive(Deserialize)]
 struct SkillIdParams {
+    /// The unique identifier of the skill.
     skill_id: String,
 }
 
+/// RPC handler to fetch the remote skill registry.
 fn handle_skills_registry_fetch(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: RegistryFetchParams =
@@ -665,6 +687,7 @@ fn handle_skills_registry_fetch(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
+/// RPC handler to search for available skills in the registry.
 fn handle_skills_search(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SearchParams =
@@ -677,6 +700,7 @@ fn handle_skills_search(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to install a skill by ID.
 fn handle_skills_install(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -690,6 +714,7 @@ fn handle_skills_install(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to uninstall a skill by ID.
 fn handle_skills_uninstall(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -703,6 +728,7 @@ fn handle_skills_uninstall(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to list all locally installed skills.
 fn handle_skills_list_installed(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -711,6 +737,7 @@ fn handle_skills_list_installed(_params: Map<String, Value>) -> ControllerFuture
     })
 }
 
+/// RPC handler to list all available skills, enriched with installation status.
 fn handle_skills_list_available(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -721,14 +748,19 @@ fn handle_skills_list_available(_params: Map<String, Value>) -> ControllerFuture
 
 // --- Runtime handlers ---
 
+/// Parameters for the `skills.call_tool` RPC method.
 #[derive(Deserialize)]
 struct CallToolParams {
+    /// The ID of the skill that owns the tool.
     skill_id: String,
+    /// The name of the tool to invoke.
     tool_name: String,
+    /// Arguments to pass to the tool.
     #[serde(default)]
     arguments: Option<serde_json::Value>,
 }
 
+/// RPC handler to start (load and initialize) a skill.
 fn handle_skills_start(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -739,6 +771,7 @@ fn handle_skills_start(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to stop a running skill.
 fn handle_skills_stop(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -752,6 +785,7 @@ fn handle_skills_stop(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to get the current status and state of a skill.
 fn handle_skills_status(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -764,6 +798,7 @@ fn handle_skills_status(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to initiate the setup flow for a skill.
 fn handle_skills_setup_start(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -775,6 +810,7 @@ fn handle_skills_setup_start(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to list all tools exposed by a skill.
 fn handle_skills_list_tools(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -786,6 +822,7 @@ fn handle_skills_list_tools(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to trigger a sync (tick) for a skill.
 fn handle_skills_sync(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -802,6 +839,7 @@ fn handle_skills_sync(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to call a specific tool on a running skill.
 fn handle_skills_call_tool(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: CallToolParams =
@@ -818,14 +856,19 @@ fn handle_skills_call_tool(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Parameters for the arbitrary `skills.rpc` method.
 #[derive(Deserialize)]
 struct SkillRpcParams {
+    /// The target skill ID.
     skill_id: String,
+    /// The internal RPC method name to call on the skill.
     method: String,
+    /// Parameters for the internal RPC method.
     #[serde(default)]
     params: Option<serde_json::Value>,
 }
 
+/// RPC handler to send an arbitrary RPC method to a running skill.
 fn handle_skills_rpc(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillRpcParams =
@@ -841,6 +884,7 @@ fn handle_skills_rpc(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to discover available skill manifests from the filesystem.
 fn handle_skills_discover(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let engine = require_engine()?;
@@ -849,6 +893,7 @@ fn handle_skills_discover(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to list all currently registered skill snapshots.
 fn handle_skills_list(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let engine = require_engine()?;
@@ -857,6 +902,7 @@ fn handle_skills_list(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to read a file from a skill's isolated data directory.
 fn handle_skills_data_read(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let skill_id = params
@@ -875,6 +921,7 @@ fn handle_skills_data_read(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to write a file to a skill's isolated data directory.
 fn handle_skills_data_write(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let skill_id = params
@@ -898,6 +945,7 @@ fn handle_skills_data_write(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to get the absolute path to a skill's data directory.
 fn handle_skills_data_dir(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -908,6 +956,7 @@ fn handle_skills_data_dir(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to get storage statistics for a skill's data directory.
 fn handle_skills_data_stats(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -918,6 +967,7 @@ fn handle_skills_data_stats(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to enable a skill in user preferences and start it.
 fn handle_skills_enable(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -928,6 +978,7 @@ fn handle_skills_enable(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to disable a skill in user preferences and stop it.
 fn handle_skills_disable(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -938,6 +989,7 @@ fn handle_skills_disable(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// RPC handler to check if a skill is currently enabled in user preferences.
 fn handle_skills_is_enabled(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
@@ -948,12 +1000,16 @@ fn handle_skills_is_enabled(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+/// Parameters for the `skills.set_setup_complete` RPC method.
 #[derive(Deserialize)]
 struct SetSetupCompleteParams {
+    /// The skill ID.
     skill_id: String,
+    /// Whether the setup flow is considered complete.
     complete: bool,
 }
 
+/// RPC handler to persist the setup completion flag for a skill.
 fn handle_skills_set_setup_complete(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SetSetupCompleteParams =
@@ -970,6 +1026,7 @@ fn handle_skills_set_setup_complete(params: Map<String, Value>) -> ControllerFut
     })
 }
 
+/// RPC handler to get all skill snapshots enriched with UI-specific metadata.
 fn handle_skills_get_all_snapshots(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let engine = require_engine()?;

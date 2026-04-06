@@ -1,7 +1,8 @@
 //! RPC message handlers for the skill event loop.
 //!
-//! Each function handles one RPC method (oauth/complete, auth/complete, etc.)
-//! and returns the result as a `Result<serde_json::Value, String>`.
+//! This module implements handlers for various JSON-RPC methods targeted at
+//! a running skill instance, including authentication flows (OAuth, Auth),
+//! synchronization, and revocation events.
 
 use std::sync::Arc;
 
@@ -15,7 +16,12 @@ use crate::openhuman::skills::qjs_skill_instance::js_handlers::{
     handle_js_call, handle_js_void_call,
 };
 
-/// Handle `oauth/complete` RPC: inject credential into JS, persist to disk, call onOAuthComplete.
+/// Handle `oauth/complete` RPC.
+///
+/// 1. Injects the new OAuth credential into the JS runtime.
+/// 2. Persists the credential to `{data_dir}/oauth_credential.json`.
+/// 3. Injects and persists the `clientKeyShare` if present.
+/// 4. Invokes the `onOAuthComplete` lifecycle handler in JS.
 pub(crate) async fn handle_oauth_complete(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -25,13 +31,12 @@ pub(crate) async fn handle_oauth_complete(
 ) -> Result<serde_json::Value, String> {
     let cred_json = serde_json::to_string(&params).unwrap_or_else(|_| "null".to_string());
 
-    // Extract client key share if present (from encrypted OAuth flow)
+    // Extract client key share (required for encrypted OAuth proxy requests)
     let client_key = params
         .get("clientKeyShare")
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // Inject client key into JS runtime if provided
     let client_key_js = if !client_key.is_empty() {
         format!(
             r#"globalThis.__oauthClientKey = "{key}";"#,
@@ -41,6 +46,7 @@ pub(crate) async fn handle_oauth_complete(
         String::new()
     };
 
+    // Inject credentials into both the bridge-level `oauth` object and the general `state` object
     let code = format!(
         r#"(function() {{
             if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {{
@@ -59,6 +65,7 @@ pub(crate) async fn handle_oauth_complete(
     })
     .await;
 
+    // Persist to disk for restoration after skill/app restart
     let cred_path = data_dir.join("oauth_credential.json");
     if let Err(e) = std::fs::write(&cred_path, &cred_json) {
         log::error!(
@@ -73,7 +80,6 @@ pub(crate) async fn handle_oauth_complete(
         );
     }
 
-    // Persist client key share to disk if provided
     if !client_key.is_empty() {
         let key_path = data_dir.join("client_key.json");
         let key_json = serde_json::json!({ "clientKey": client_key }).to_string();
@@ -95,7 +101,12 @@ pub(crate) async fn handle_oauth_complete(
     handle_js_call(rt, ctx, "onOAuthComplete", &params_str).await
 }
 
-/// Handle `oauth/revoked` RPC: clear credential from JS/disk/memory, call onOAuthRevoked.
+/// Handle `oauth/revoked` RPC.
+///
+/// 1. Clears credentials and client keys from the JS runtime.
+/// 2. Deletes credential files from disk.
+/// 3. Spawns a background task to clear the skill's memory store.
+/// 4. Invokes the `onOAuthRevoked` lifecycle handler in JS.
 pub(crate) async fn handle_oauth_revoked(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -127,7 +138,7 @@ pub(crate) async fn handle_oauth_revoked(
         skill_id
     );
 
-    // Fire-and-forget: delete memory for this integration
+    // Trigger memory cleanup for this skill/integration
     if let Some(client) = memory_client.clone() {
         let skill = skill_id.to_string();
         let integration_id = params
@@ -150,8 +161,12 @@ pub(crate) async fn handle_oauth_revoked(
         .map(|()| serde_json::json!({ "ok": true }))
 }
 
-/// Handle `auth/complete` RPC: validate via onAuthComplete first, then inject
-/// credentials and persist to disk only on success.
+/// Handle `auth/complete` RPC.
+///
+/// Performs a 2-step process:
+/// 1. Temporarily injects credentials and calls `onAuthComplete` for validation.
+/// 2. If validation succeeds (status != "error"), persists credentials to disk
+///    and permanently injects them into the runtime.
 pub(crate) async fn handle_auth_complete(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -166,8 +181,7 @@ pub(crate) async fn handle_auth_complete(
         .map(|m| m == "managed")
         .unwrap_or(false);
 
-    // Temporarily inject credentials so onAuthComplete can use them for validation
-    // (e.g. making test API calls). We'll clear them if validation fails.
+    // Step 1: Temporary injection for validation
     let temp_code = format!(
         r#"(function() {{
             if (typeof globalThis.auth !== 'undefined' && globalThis.auth.__setCredential) {{
@@ -181,18 +195,17 @@ pub(crate) async fn handle_auth_complete(
     })
     .await;
 
-    // Call skill's onAuthComplete lifecycle hook for validation
     let params_str = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
     let result = handle_js_call(rt, ctx, "onAuthComplete", &params_str).await;
 
-    // Check if validation failed (error return or {status:"error"} response)
+    // Evaluate validation result
     let validation_failed = match &result {
         Err(_) => true,
         Ok(val) => val.get("status").and_then(|s| s.as_str()) == Some("error"),
     };
 
     if validation_failed {
-        // Clear the temporary credential injection
+        // Rollback temporary injection
         let clear_code = r#"(function() {
             if (typeof globalThis.auth !== 'undefined' && globalThis.auth.__setCredential) {
                 globalThis.auth.__setCredential(null);
@@ -209,9 +222,7 @@ pub(crate) async fn handle_auth_complete(
         return result;
     }
 
-    // Validation succeeded — now persist credentials into state and disk
-
-    // Build managed-mode bridge code (inject into oauth globals too)
+    // Step 2: Permanent injection and persistence
     let managed_bridge = if is_managed {
         let creds_json = serde_json::to_string(
             params
@@ -248,7 +259,6 @@ pub(crate) async fn handle_auth_complete(
     })
     .await;
 
-    // Persist auth credential to disk
     let cred_path = data_dir.join("auth_credential.json");
     if let Err(e) = std::fs::write(&cred_path, &cred_json) {
         log::error!(
@@ -263,7 +273,7 @@ pub(crate) async fn handle_auth_complete(
         );
     }
 
-    // For managed mode, also persist as oauth_credential.json for backward compat
+    // Back-compatibility for managed mode
     if is_managed {
         let oauth_cred_json = serde_json::to_string(
             params
@@ -272,18 +282,16 @@ pub(crate) async fn handle_auth_complete(
         )
         .unwrap_or_else(|_| "null".to_string());
         let oauth_path = data_dir.join("oauth_credential.json");
-        if let Err(e) = std::fs::write(&oauth_path, &oauth_cred_json) {
-            log::error!(
-                "[skill:{}] Failed to persist managed OAuth credential: {e}",
-                skill_id
-            );
-        }
+        let _ = std::fs::write(&oauth_path, &oauth_cred_json);
     }
 
     result
 }
 
-/// Handle `auth/revoked` RPC: clear auth credential from JS/disk/memory, call onAuthRevoked.
+/// Handle `auth/revoked` RPC.
+///
+/// Clears Auth credentials (and managed OAuth credentials if applicable) from
+/// the runtime and disk. Also triggers a background memory cleanup.
 pub(crate) async fn handle_auth_revoked(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -328,7 +336,6 @@ pub(crate) async fn handle_auth_revoked(
     })
     .await;
 
-    // Remove persisted credential files
     let cred_path = data_dir.join("auth_credential.json");
     let _ = std::fs::remove_file(&cred_path);
     let key_path = data_dir.join("client_key.json");
@@ -342,7 +349,6 @@ pub(crate) async fn handle_auth_revoked(
         skill_id
     );
 
-    // Fire-and-forget: delete memory for this integration
     if let Some(client) = memory_client.clone() {
         let skill = skill_id.to_string();
         let integration_id = params
@@ -365,7 +371,10 @@ pub(crate) async fn handle_auth_revoked(
         .map(|()| serde_json::json!({ "ok": true }))
 }
 
-/// Handle `skill/sync` RPC: call onSync, persist state to memory on success.
+/// Handle `skill/sync` RPC.
+///
+/// Invokes the `onSync` handler in JS and triggers a state snapshot persistence
+/// to the OpenHuman memory system on success.
 pub(crate) async fn handle_sync(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -376,6 +385,7 @@ pub(crate) async fn handle_sync(
 ) -> Result<serde_json::Value, String> {
     let result = handle_js_call(rt, ctx, "onSync", "{}").await;
     if result.is_ok() {
+        // Only persist to memory if the JS sync was successful
         persist_state_to_memory(
             skill_id,
             "periodic sync",

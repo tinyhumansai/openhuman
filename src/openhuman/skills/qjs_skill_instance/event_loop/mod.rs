@@ -1,5 +1,9 @@
-//! Skill event loop — drives the QuickJS runtime, routes incoming messages,
-//! and persists state to memory.
+//! Main event loop and message routing for QuickJS skill instances.
+//!
+//! This module implements the central execution loop that drives a skill's
+//! JavaScript environment. It handles timer callbacks, routes incoming system
+//! messages (RPCs, tool calls, events), manages asynchronous tool execution,
+//! and persists skill state to the OpenHuman memory system.
 
 mod rpc_handlers;
 mod webhook_handler;
@@ -33,9 +37,13 @@ use super::types::SkillState;
 
 /// Payload queued for the background memory-write worker.
 pub(crate) struct MemoryWriteJob {
+    /// Reference to the memory client for storage and ingestion.
     client: MemoryClientRef,
+    /// ID of the skill that produced the data.
     skill: String,
+    /// Title for the persisted document.
     title: String,
+    /// Stringified JSON content of the skill's published state.
     content: String,
 }
 
@@ -43,17 +51,14 @@ pub(crate) struct MemoryWriteJob {
 /// causes `persist_state_to_memory` to drop new writes.
 const MEMORY_WRITE_CHANNEL_CAPACITY: usize = 16;
 
-/// Spawn a bounded background worker that consumes `MemoryWriteJob` items,
-/// calls `store_skill_sync` to persist the raw document, then runs
-/// `ingest_doc` to extract entities and relations into the memory graph.
+/// Spawn a bounded background worker that consumes `MemoryWriteJob` items.
 ///
-/// When the sync content contains embedded pages (e.g. Notion sync with a
-/// `pages` array), each page with `content_text` is stored and ingested as
-/// its own document keyed by page ID.  This gives per-page entity extraction,
-/// proper dedup on re-sync, and search that returns relevant page chunks
-/// rather than the entire sync blob.
+/// This worker performs two main tasks for each job:
+/// 1. Stores the raw state snapshot in the memory store using `store_skill_sync`.
+/// 2. Ingests the content into the memory graph (vector store) using `ingest_doc`.
 ///
-/// Returns the sender half; dropping it shuts down the worker.
+/// Specialized logic exists for certain skills (like Notion) to ingest content
+/// at a more granular level (e.g., per-page).
 fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
     let (tx, mut rx) = mpsc::channel::<MemoryWriteJob>(MEMORY_WRITE_CHANNEL_CAPACITY);
     tokio::spawn(async move {
@@ -64,6 +69,8 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
                 job.title,
                 job.content.len(),
             );
+            
+            // Persist the full state blob to the skill's sync history
             if let Err(e) = job
                 .client
                 .store_skill_sync(
@@ -88,11 +95,10 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
             let namespace = format!("skill-{}", job.skill.trim());
             let skill = job.skill.trim().to_lowercase();
 
-            // Skill-specific ingestion: each skill type has its own extraction
-            // strategy so page/email content is ingested individually rather
-            // than as one giant blob.
+            // Perform category-specific ingestion logic
             match skill.as_str() {
                 "notion" => {
+                    // For Notion, we extract individual pages and ingest them as separate documents
                     let pages = extract_pages_from_sync(&job.content);
                     if pages.is_empty() {
                         log::debug!(
@@ -106,6 +112,7 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
                         );
                         for page in &pages {
                             let page_key = format!("page-{}", page.id);
+                            // Store the individual page as a sub-sync
                             if let Err(e) = job
                                 .client
                                 .store_skill_sync(
@@ -131,6 +138,7 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
                                 );
                                 continue;
                             }
+                            // Ingest the page into the vector graph
                             ingest_single_doc(
                                 &job.client,
                                 &namespace,
@@ -142,9 +150,8 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
                         }
                     }
                 }
-                // Other skills: ingest the full content as a single document,
-                // stripping sensitive fields (OAuth credentials) first.
                 _ => {
+                    // Standard skill: ingest the full content as a single document after stripping secrets
                     let safe_content = strip_credentials(&job.content);
                     ingest_single_doc(
                         &job.client,
@@ -170,9 +177,7 @@ struct SyncPage {
     content: String,
 }
 
-/// Parse the sync content as JSON and extract individual pages that have
-/// `content_text`.  Returns an empty vec if the content isn't JSON or has
-/// no pages with content.
+/// Parse the sync content as JSON and extract individual pages that have `content_text`.
 fn extract_pages_from_sync(content: &str) -> Vec<SyncPage> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
         return Vec::new();
@@ -205,7 +210,7 @@ fn extract_pages_from_sync(content: &str) -> Vec<SyncPage> {
         .collect()
 }
 
-/// Remove sensitive fields from a JSON sync blob before ingestion.
+/// Remove sensitive fields (like OAuth credentials) from a JSON sync blob before ingestion.
 fn strip_credentials(content: &str) -> String {
     let Ok(mut value) = serde_json::from_str::<serde_json::Value>(content) else {
         return content.to_string();
@@ -260,11 +265,7 @@ async fn ingest_single_doc(
     }
 }
 
-/// Snapshot the skill's published ops state and queue it for memory persistence.
-///
-/// Called after sync, cron, and tick handlers so that data published via
-/// `state.set()` / `state.setPartial()` during the JS handler is written to the
-/// local memory store (SQLite + vector embeddings).
+/// Snapshot the skill's published state and queue it for background memory persistence.
 pub(crate) fn persist_state_to_memory(
     skill_id: &str,
     title_suffix: &str,
@@ -305,13 +306,24 @@ pub(crate) fn persist_state_to_memory(
     }
 }
 
-/// Pending async tool call that is being driven by the event loop.
+/// State for a pending asynchronous tool call being tracked by the event loop.
 struct PendingToolCall {
+    /// Channel to send the result back to the system.
     reply: tokio::sync::oneshot::Sender<Result<ToolResult, String>>,
+    /// Instant when the call is considered timed out.
     deadline: tokio::time::Instant,
 }
 
 /// The main event loop that drives the QuickJS runtime.
+///
+/// This loop runs indefinitely until the skill is stopped or the channel disconnects.
+/// It performs the following steps in each iteration:
+/// 1. Polls and fires ready timers.
+/// 2. Handles incoming messages from the system channel.
+/// 3. Drives the QuickJS job queue (promises, microtasks).
+/// 4. Checks status of pending asynchronous tool calls.
+/// 5. Synchronizes published state between the bridge and the host.
+/// 6. Calculates and executes an appropriate sleep duration.
 pub(crate) async fn run_event_loop(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -331,13 +343,13 @@ pub(crate) async fn run_event_loop(
     let mut pending_tool: Option<PendingToolCall> = None;
 
     loop {
-        // 1. Poll and fire ready timers
+        // 1. Poll and fire ready timers (setTimeout / setInterval)
         let (ready_timers, _) = qjs_ops::poll_timers(timer_state);
         for timer_id in ready_timers {
             fire_timer_callback(ctx, timer_id).await;
         }
 
-        // 2. Check for incoming messages (non-blocking)
+        // 2. Check for incoming messages (non-blocking try_recv)
         match rx.try_recv() {
             Ok(msg) => {
                 let should_stop = handle_message(
@@ -367,10 +379,10 @@ pub(crate) async fn run_event_loop(
             }
         }
 
-        // 3. Drive QuickJS job queue (process pending promises)
+        // 3. Drive QuickJS job queue (process pending promises and microtasks)
         drive_jobs(rt).await;
 
-        // 4. Check if pending async tool call has completed
+        // 4. Check if a pending async tool call has completed in the JS environment
         if pending_tool.is_some() {
             let done = ctx
                 .with(|js_ctx| {
@@ -392,35 +404,13 @@ pub(crate) async fn run_event_loop(
                     let _ = ptc.reply.send(result);
                 }
             } else if let Some(ref ptc) = pending_tool {
-                let remaining = ptc
-                    .deadline
-                    .saturating_duration_since(tokio::time::Instant::now());
-                if remaining.as_secs() % 10 == 0 && remaining.as_millis() % 10000 < 100 {
-                    log::debug!(
-                        "[skill:{}] Still waiting for async tool result ({:.0}s remaining)",
-                        skill_id,
-                        remaining.as_secs_f32()
-                    );
-                }
-                if tokio::time::Instant::now() >= ptc.deadline {
+                // Check for timeout
+                let now = tokio::time::Instant::now();
+                if now >= ptc.deadline {
                     log::error!(
                         "[skill:{}] Async tool call timed out after {}s",
                         skill_id,
                         tool_execution_timeout_secs()
-                    );
-                    let error_info = ctx
-                        .with(|js_ctx| {
-                            js_ctx
-                                .eval::<String, _>(
-                                    b"JSON.stringify({ done: globalThis.__pendingToolDone, result: typeof globalThis.__pendingToolResult, error: globalThis.__pendingToolError ? String(globalThis.__pendingToolError) : null })",
-                                )
-                                .unwrap_or_else(|_| "eval failed".to_string())
-                        })
-                        .await;
-                    log::error!(
-                        "[skill:{}] Tool timeout debug state: {}",
-                        skill_id,
-                        error_info
                     );
                     if let Some(ptc) = pending_tool.take() {
                         let _ = ptc
@@ -431,7 +421,7 @@ pub(crate) async fn run_event_loop(
             }
         }
 
-        // 5. Sync ops-level published state -> instance published_state
+        // 5. Sync bridge-level published state to the instance's SkillState
         {
             let mut ops = ops_state.write();
             if ops.dirty {
@@ -445,8 +435,9 @@ pub(crate) async fn run_event_loop(
             }
         }
 
-        // 6. Calculate sleep duration
+        // 6. Calculate sleep duration to save CPU cycles when idle
         let sleep_duration = if pending_tool.is_some() {
+            // Poll more frequently when waiting for an async tool result
             TOOL_POLL_SLEEP
         } else {
             let (_, next_timer) = qjs_ops::poll_timers(timer_state);
@@ -462,7 +453,7 @@ pub(crate) async fn run_event_loop(
     }
 }
 
-/// Fire a timer callback in JavaScript.
+/// Fire a timer callback in the JavaScript environment.
 async fn fire_timer_callback(ctx: &rquickjs::AsyncContext, timer_id: u32) {
     let code = format!("globalThis.__handleTimer({});", timer_id);
     ctx.with(|js_ctx| {
@@ -473,7 +464,9 @@ async fn fire_timer_callback(ctx: &rquickjs::AsyncContext, timer_id: u32) {
     .await;
 }
 
-/// Handle a single message from the channel. Returns true if the skill should stop.
+/// Process a single message received from the host system.
+///
+/// Returns `true` if the message indicates that the event loop should terminate (e.g., Stop).
 async fn handle_message(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -498,43 +491,24 @@ async fn handle_message(
                 tool_name
             );
 
+            // Always restore credentials before a tool call to ensure JS has latest tokens
             restore_oauth_credential(ctx, skill_id, data_dir).await;
             restore_auth_credential(ctx, skill_id, data_dir).await;
             restore_client_key(ctx, skill_id, data_dir).await;
-            log::debug!(
-                "[skill:{}] event_loop: credentials restored for tool '{}'",
-                skill_id,
-                tool_name
-            );
 
             match start_async_tool_call(ctx, &tool_name, arguments).await {
                 Ok(Some(sync_result)) => {
-                    log::info!(
-                        "[skill:{}] event_loop: tool '{}' completed synchronously (blocks={})",
-                        skill_id,
-                        tool_name,
-                        sync_result.content.len()
-                    );
+                    // Tool returned a result immediately (synchronous)
                     let _ = reply.send(Ok(sync_result));
                 }
                 Ok(None) => {
-                    log::info!(
-                        "[skill:{}] event_loop: tool '{}' returned Promise, waiting async",
-                        skill_id,
-                        tool_name
-                    );
+                    // Tool returned a Promise, set up tracking for the event loop
                     *pending_tool = Some(PendingToolCall {
                         reply,
                         deadline: tokio::time::Instant::now() + tool_execution_timeout_duration(),
                     });
                 }
                 Err(e) => {
-                    log::error!(
-                        "[skill:{}] event_loop: tool '{}' failed: {}",
-                        skill_id,
-                        tool_name,
-                        e
-                    );
                     let _ = reply.send(Err(e));
                 }
             }
@@ -543,6 +517,7 @@ async fn handle_message(
             let _ = handle_server_event(rt, ctx, &event, data).await;
         }
         SkillMessage::CronTrigger { schedule_id } => {
+            // Trigger the cron handler and persist any updated state to memory
             match handle_cron_trigger(rt, ctx, &schedule_id).await {
                 Ok(_) => {
                     persist_state_to_memory(
@@ -555,7 +530,7 @@ async fn handle_message(
                 }
                 Err(e) => {
                     log::warn!(
-                        "[skill:{}] cron trigger '{}' failed, skipping memory persistence: {e}",
+                        "[skill:{}] cron trigger '{}' failed: {e}",
                         skill_id,
                         schedule_id,
                     );
@@ -563,6 +538,7 @@ async fn handle_message(
             }
         }
         SkillMessage::Stop { reply } => {
+            // Clean up lifecycle and clear credentials from the runtime
             let _ = call_lifecycle(rt, ctx, "stop").await;
 
             let clear_code = r#"(function() {
@@ -578,7 +554,7 @@ async fn handle_message(
             })
             .await;
             state.write().status = SkillStatus::Stopped;
-            log::info!("[skill:{}] Stopped (OAuth credential cleared)", skill_id);
+            log::info!("[skill:{}] Stopped", skill_id);
             let _ = reply.send(());
 
             return true;
@@ -743,8 +719,6 @@ async fn handle_message(
     }
     false
 }
-
-use super::js_handlers::handle_server_event;
 
 #[cfg(test)]
 mod tests {
