@@ -8,6 +8,7 @@
 //! type (MCP content blocks), so no result conversion is needed.
 
 use async_trait::async_trait;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::openhuman::skills::qjs_engine::RuntimeEngine;
@@ -110,7 +111,9 @@ impl Tool for SkillToolBridge {
                     self.tool_name,
                     err
                 );
-                Ok(ToolResult::error(err))
+                Ok(ToolResult::error(format!(
+                    "Skill tool execution failed: {}__{}", self.skill_id, self.tool_name
+                )))
             }
         }
     }
@@ -135,19 +138,34 @@ pub fn collect_skill_tools() -> Vec<Box<dyn Tool>> {
         all.len()
     );
 
+    let mut seen = HashSet::new();
     all.into_iter()
-        .map(|(skill_id, tool_def)| {
+        .filter_map(|(skill_id, tool_def)| {
+            if skill_id.contains("__") || tool_def.name.contains("__") {
+                log::error!(
+                    "[skill-bridge] Skipping tool with reserved delimiter in name: {} / {}",
+                    skill_id, tool_def.name
+                );
+                return None;
+            }
+            let namespaced = format!("{}__{}", skill_id, tool_def.name);
+            if !seen.insert(namespaced.clone()) {
+                log::error!(
+                    "[skill-bridge] Skipping duplicate namespaced tool: {}",
+                    namespaced
+                );
+                return None;
+            }
             log::debug!(
-                "[skill-bridge]   + {}__{} — {}",
-                skill_id,
-                tool_def.name,
+                "[skill-bridge]   + {} — {}",
+                namespaced,
                 tool_def.description.chars().take(60).collect::<String>()
             );
-            Box::new(SkillToolBridge::new(
+            Some(Box::new(SkillToolBridge::new(
                 skill_id,
                 &tool_def,
                 Arc::clone(&engine),
-            )) as Box<dyn Tool>
+            )) as Box<dyn Tool>)
         })
         .collect()
 }

@@ -154,8 +154,9 @@ impl Tool for RunTestsTool {
             Ok(ToolResult::success(truncated))
         } else {
             Ok(ToolResult::error(format!(
-                "Tests exited with code {:?}",
-                output.status.code()
+                "Tests exited with code {:?}\n\n{}",
+                output.status.code(),
+                truncated
             )))
         }
     }

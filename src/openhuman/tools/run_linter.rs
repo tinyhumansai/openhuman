@@ -115,8 +115,9 @@ impl Tool for RunLinterTool {
             Ok(ToolResult::success(combined))
         } else {
             Ok(ToolResult::error(format!(
-                "Linter exited with code {:?}",
-                output.status.code()
+                "Linter exited with code {:?}\n{}",
+                output.status.code(),
+                combined
             )))
         }
     }

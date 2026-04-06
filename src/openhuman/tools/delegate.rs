@@ -254,7 +254,7 @@ impl Tool for DelegateTool {
                 }
 
                 Ok(ToolResult::success(format!(
-                    "[Agent '{agent_name}' ({}/{}])\n{rendered}",
+                    "[Agent '{agent_name}' ({}/{})]\n{rendered}",
                     providers::INFERENCE_BACKEND_ID,
                     agent_config.model
                 )))

@@ -83,7 +83,7 @@ impl Tool for CronRunTool {
         if success {
             Ok(ToolResult::success(result_output))
         } else {
-            Ok(ToolResult::error("cron job execution failed".to_string()))
+            Ok(ToolResult::error(result_output))
         }
     }
 }
