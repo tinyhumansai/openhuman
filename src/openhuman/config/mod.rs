@@ -37,6 +37,10 @@ pub use schema::{
     TelegramConfig, WebSearchConfig, WebhookConfig, DEFAULT_MODEL, MODEL_AGENTIC_V1,
     MODEL_CODING_V1, MODEL_REASONING_V1,
 };
+pub use schema::{
+    clear_active_user, default_root_openhuman_dir, read_active_user_id, user_openhuman_dir,
+    write_active_user_id,
+};
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,
     all_registered_controllers as all_config_registered_controllers,

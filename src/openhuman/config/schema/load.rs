@@ -27,6 +27,13 @@ struct ActiveWorkspaceState {
 }
 
 fn default_config_dir() -> Result<PathBuf> {
+    Ok(default_root_openhuman_dir()?)
+}
+
+/// Returns the root openhuman directory (`~/.openhuman`), independent of any
+/// per-user scoping.  Used to locate `active_user.toml` and the shared
+/// `users/` tree.
+pub fn default_root_openhuman_dir() -> Result<PathBuf> {
     let home = UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .context("Could not find home directory")?;
@@ -174,6 +181,7 @@ fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf, PathBuf) 
 enum ConfigResolutionSource {
     EnvWorkspace,
     ActiveWorkspaceMarker,
+    ActiveUser,
     DefaultConfigDir,
 }
 
@@ -182,6 +190,7 @@ impl ConfigResolutionSource {
         match self {
             Self::EnvWorkspace => "OPENHUMAN_WORKSPACE",
             Self::ActiveWorkspaceMarker => "active_workspace.toml",
+            Self::ActiveUser => "active_user.toml",
             Self::DefaultConfigDir => "default",
         }
     }
@@ -191,6 +200,7 @@ async fn resolve_runtime_config_dirs(
     default_openhuman_dir: &Path,
     default_workspace_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
+    // 1. Explicit env override always wins.
     if let Ok(custom_workspace) = std::env::var("OPENHUMAN_WORKSPACE") {
         if !custom_workspace.is_empty() {
             let (openhuman_dir, workspace_dir) =
@@ -203,6 +213,20 @@ async fn resolve_runtime_config_dirs(
         }
     }
 
+    // 2. Active user — scopes the entire openhuman dir to a per-user directory
+    //    so that config, auth, encryption, and workspace are all user-isolated.
+    if let Some(user_id) = read_active_user_id(default_openhuman_dir) {
+        let user_dir = user_openhuman_dir(default_openhuman_dir, &user_id);
+        let user_workspace = user_dir.join("workspace");
+        tracing::debug!(
+            user_id = %user_id,
+            user_dir = %user_dir.display(),
+            "Config dirs resolved via active_user.toml"
+        );
+        return Ok((user_dir, user_workspace, ConfigResolutionSource::ActiveUser));
+    }
+
+    // 3. Active workspace marker (legacy / multi-workspace).
     if let Some((openhuman_dir, workspace_dir)) =
         load_persisted_workspace_dirs(default_openhuman_dir).await?
     {
@@ -213,6 +237,7 @@ async fn resolve_runtime_config_dirs(
         ));
     }
 
+    // 4. Default.
     Ok((
         default_openhuman_dir.to_path_buf(),
         default_workspace_dir.to_path_buf(),
@@ -254,83 +279,61 @@ fn encrypt_optional_secret(
     Ok(())
 }
 
-/// Reads the authenticated user's ID directly from `auth-profiles.json` without
-/// pulling in the full credentials module.  This avoids a dependency cycle from
-/// config → credentials and keeps the read lightweight (single file, no locks
-/// needed for a read-only snapshot).
-///
-/// Returns `Some(user_id)` when the active `app-session` profile carries a
-/// non-empty `user_id` in its metadata map.
-fn read_authenticated_user_id(openhuman_dir: &Path) -> Option<String> {
-    let profiles_path = openhuman_dir.join("auth-profiles.json");
-    let bytes = match std::fs::read(&profiles_path) {
-        Ok(b) if !b.is_empty() => b,
-        _ => return None,
-    };
+const ACTIVE_USER_STATE_FILE: &str = "active_user.toml";
 
-    let parsed: serde_json::Value = match serde_json::from_slice(&bytes) {
-        Ok(v) => v,
-        Err(_) => return None,
-    };
-
-    // Resolve the active profile id for the "app-session" provider.
-    let active_profile_id = parsed
-        .get("active_profiles")
-        .and_then(|ap| ap.get("app-session"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("app-session:default");
-
-    // Look up the profile entry and extract `metadata.user_id`.
-    parsed
-        .get("profiles")
-        .and_then(|profiles| profiles.get(active_profile_id))
-        .and_then(|profile| {
-            // Only consider profiles that carry a non-empty token (i.e. actually
-            // authenticated).
-            let has_token = profile
-                .get("token")
-                .and_then(|v| v.as_str())
-                .is_some_and(|t| !t.trim().is_empty());
-            if !has_token {
-                return None;
-            }
-            profile.get("metadata")
-        })
-        .and_then(|meta| meta.get("user_id"))
-        .and_then(|v| v.as_str())
-        .filter(|id| !id.trim().is_empty())
-        .map(|id| id.trim().to_string())
+#[derive(Debug, Serialize, Deserialize)]
+struct ActiveUserState {
+    user_id: String,
 }
 
-/// If an authenticated user is detected, scopes `workspace_dir` under
-/// `{openhuman_dir}/users/{user_id}/workspace` so that each user gets
-/// isolated workspace data.  Shared resources (models, binaries) live
-/// outside `workspace_dir` and remain unaffected.
-async fn maybe_scope_workspace_to_user(
-    config: &mut Config,
-    openhuman_dir: &Path,
-) -> Result<()> {
-    if let Some(user_id) = read_authenticated_user_id(openhuman_dir) {
-        let user_workspace = openhuman_dir
-            .join("users")
-            .join(&user_id)
-            .join("workspace");
-        fs::create_dir_all(&user_workspace)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to create user workspace directory: {}",
-                    user_workspace.display()
-                )
-            })?;
-        tracing::debug!(
-            user_id = %user_id,
-            workspace = %user_workspace.display(),
-            "Workspace scoped to authenticated user"
-        );
-        config.workspace_dir = user_workspace;
+/// Reads the active user id from `{default_openhuman_dir}/active_user.toml`.
+/// Returns `None` when the file does not exist, is empty, or cannot be parsed.
+pub fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
+    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let state: ActiveUserState = toml::from_str(&contents).ok()?;
+    let id = state.user_id.trim().to_string();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
+}
+
+/// Writes the active user id to `{default_openhuman_dir}/active_user.toml`.
+pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Result<()> {
+    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
+    let state = ActiveUserState {
+        user_id: user_id.to_string(),
+    };
+    let toml_str = toml::to_string_pretty(&state).context("serialize active_user.toml")?;
+    std::fs::write(&path, toml_str).with_context(|| {
+        format!(
+            "Failed to write active user state: {}",
+            path.display()
+        )
+    })?;
+    tracing::debug!(user_id = %user_id, path = %path.display(), "active user written");
+    Ok(())
+}
+
+/// Removes the active user marker.  After this, the next config load will
+/// use the default (unauthenticated) openhuman directory.
+pub fn clear_active_user(default_openhuman_dir: &Path) -> Result<()> {
+    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
+    if path.exists() {
+        std::fs::remove_file(&path).with_context(|| {
+            format!("Failed to remove active user state: {}", path.display())
+        })?;
+        tracing::debug!(path = %path.display(), "active user cleared");
     }
     Ok(())
+}
+
+/// Returns the user-scoped openhuman directory for the given user id:
+/// `{default_openhuman_dir}/users/{user_id}`.
+pub fn user_openhuman_dir(default_openhuman_dir: &Path, user_id: &str) -> PathBuf {
+    default_openhuman_dir.join("users").join(user_id)
 }
 
 fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
@@ -443,7 +446,7 @@ impl Config {
             }
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             config.apply_env_overrides();
-            maybe_scope_workspace_to_user(&mut config, &openhuman_dir).await?;
+
             tracing::info!(
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
@@ -465,7 +468,7 @@ impl Config {
             }
 
             config.apply_env_overrides();
-            maybe_scope_workspace_to_user(&mut config, &openhuman_dir).await?;
+
             tracing::info!(
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
