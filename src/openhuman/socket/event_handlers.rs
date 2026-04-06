@@ -94,10 +94,8 @@ pub(super) fn handle_sio_event(
 
                     // Emit error response directly via socket manager
                     if let Some(mgr) = crate::openhuman::socket::global_socket_manager() {
-                        let body = base64_encode(&format!(
-                            "{{\"error\":\"Bad request: {}\"}}",
-                            e.to_string().replace('"', "\\\"")
-                        ));
+                        let err_json = json!({ "error": format!("Bad request: {e}") });
+                        let body = base64_encode(&err_json.to_string());
                         let response_data = json!({
                             "correlationId": cid,
                             "statusCode": 400,

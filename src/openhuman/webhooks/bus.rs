@@ -129,9 +129,8 @@ impl EventHandler for WebhookRequestSubscriber {
                                         correlation_id: correlation_id.clone(),
                                         status_code: 500,
                                         headers: std::collections::HashMap::new(),
-                                        body: base64_encode(&format!(
-                                            "{{\"error\":\"Skill handler error: {}\"}}",
-                                            e.replace('"', "\\\"")
+                                        body: error_body(&format!(
+                                            "Skill handler error: {}", e
                                         )),
                                     },
                                     Some(sid),
@@ -147,7 +146,7 @@ impl EventHandler for WebhookRequestSubscriber {
                                 correlation_id: correlation_id.clone(),
                                 status_code: 503,
                                 headers: std::collections::HashMap::new(),
-                                body: base64_encode("{\"error\":\"Runtime not ready\"}"),
+                                body: error_body("Runtime not ready"),
                             },
                             None,
                             Some("runtime not ready".to_string()),
@@ -160,9 +159,8 @@ impl EventHandler for WebhookRequestSubscriber {
                     correlation_id: correlation_id.clone(),
                     status_code: 400,
                     headers: std::collections::HashMap::new(),
-                    body: base64_encode(&format!(
-                        "{{\"error\":\"unknown webhook target kind '{}'\"}}",
-                        reg.target_kind.replace('"', "\\\"")
+                    body: error_body(&format!(
+                        "unknown webhook target kind '{}'", reg.target_kind
                     )),
                 },
                 Some(reg.skill_id.clone()),
@@ -178,7 +176,7 @@ impl EventHandler for WebhookRequestSubscriber {
                         correlation_id: correlation_id.clone(),
                         status_code: 404,
                         headers: std::collections::HashMap::new(),
-                        body: base64_encode("{\"error\":\"No handler registered for this tunnel\"}"),
+                        body: error_body("No handler registered for this tunnel"),
                     },
                     None,
                     Some("no handler registered for this tunnel".to_string()),
