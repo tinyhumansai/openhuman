@@ -1,3 +1,16 @@
+//! Document ingestion and knowledge extraction for the OpenHuman memory system.
+//!
+//! This module provides the pipeline for taking raw unstructured text and
+//! transforming it into structured memory. The process includes:
+//! 1. **Chunking**: Splitting the document into manageable pieces.
+//! 2. **Heuristic Extraction**: Using regex-based rules to identify known patterns
+//!    (e.g., email headers, specific project labels).
+//! 3. **Semantic Extraction**: Using the GLiNER RelEx model to identify entities
+//!    and their relationships.
+//! 4. **Aggregation**: Resolving aliases, merging duplicates, and normalizing names.
+//! 5. **Persistence**: Upserting the document, text chunks, and graph relations into
+//!    the memory store.
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::OnceLock;
 
@@ -9,19 +22,25 @@ use super::relex;
 use crate::openhuman::memory::store::types::NamespaceDocumentInput;
 use crate::openhuman::memory::UnifiedMemory;
 
+/// The default GLiNER model used for relation extraction.
 pub const DEFAULT_GLINER_RELEX_MODEL: &str = "knowledgator/gliner-relex-large-v0.5";
+/// Default number of tokens per text chunk during ingestion.
 const DEFAULT_CHUNK_TOKENS: usize = 225;
 
+/// Granularity of extraction for the semantic model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum ExtractionMode {
+    /// Extract from each individual sentence (higher precision).
     #[default]
     Sentence,
+    /// Extract from the entire chunk at once (faster, better for context).
     Chunk,
 }
 
 impl ExtractionMode {
+    /// Returns the string representation of the extraction mode.
     fn as_str(self) -> &'static str {
         match self {
             Self::Sentence => "sentence",
@@ -30,18 +49,25 @@ impl ExtractionMode {
     }
 }
 
+/// Configuration for the memory ingestion process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryIngestionConfig {
+    /// The name of the RelEx model to use.
     pub model_name: String,
+    /// The granularity of semantic extraction.
     #[serde(default)]
     pub extraction_mode: ExtractionMode,
+    /// Minimum confidence threshold for entity extraction (0.0 to 1.0).
     #[serde(default = "default_entity_threshold")]
     pub entity_threshold: f32,
+    /// Minimum confidence threshold for relation extraction (0.0 to 1.0).
     #[serde(default = "default_relation_threshold")]
     pub relation_threshold: f32,
+    /// Threshold for adjacency-based heuristics.
     #[serde(default = "default_adjacency_threshold")]
     pub adjacency_threshold: f32,
+    /// Number of units to process in a single model batch.
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
 }
@@ -75,58 +101,90 @@ impl Default for MemoryIngestionConfig {
     }
 }
 
+/// A request to ingest a single document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryIngestionRequest {
+    /// The document input to process.
     pub document: NamespaceDocumentInput,
+    /// Ingestion configuration.
     #[serde(default)]
     pub config: MemoryIngestionConfig,
 }
 
+/// An entity identified during the ingestion process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractedEntity {
+    /// Normalized name of the entity (all-caps).
     pub name: String,
+    /// Classification (e.g., PERSON, ORGANIZATION).
     pub entity_type: String,
+    /// Known aliases for this entity.
     #[serde(default)]
     pub aliases: Vec<String>,
 }
 
+/// A relation identified during the ingestion process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractedRelation {
+    /// Name of the subject entity.
     pub subject: String,
+    /// Classification of the subject.
     pub subject_type: String,
+    /// Relationship type (e.g., OWNS, WORKS_ON).
     pub predicate: String,
+    /// Name of the object entity.
     pub object: String,
+    /// Classification of the object.
     pub object_type: String,
+    /// Extraction confidence (0.0 to 1.0).
     pub confidence: f32,
+    /// Number of distinct occurrences of this relation.
     pub evidence_count: u32,
+    /// IDs of the chunks where this relation was found.
     pub chunk_ids: Vec<String>,
+    /// Sequential order index for reconstruction.
     pub order_index: Option<i64>,
+    /// Additional metadata about the extraction.
     pub metadata: Value,
 }
 
+/// The comprehensive result of an ingestion operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoryIngestionResult {
+    /// ID of the document that was ingested.
     pub document_id: String,
+    /// Namespace containing the document.
     pub namespace: String,
+    /// Model used for RelEx.
     pub model_name: String,
+    /// Mode used for extraction.
     pub extraction_mode: String,
+    /// Total number of chunks processed.
     pub chunk_count: usize,
+    /// Total number of distinct entities found.
     pub entity_count: usize,
+    /// Total number of distinct relations found.
     pub relation_count: usize,
+    /// Number of identified user preferences.
     pub preference_count: usize,
+    /// Number of identified decisions.
     pub decision_count: usize,
+    /// Auto-generated tags for the document.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Complete list of identified entities.
     #[serde(default)]
     pub entities: Vec<ExtractedEntity>,
+    /// Complete list of identified relations.
     #[serde(default)]
     pub relations: Vec<ExtractedRelation>,
 }
 
+/// Intermediate representation of an entity before normalization and alias resolution.
 #[derive(Debug, Clone)]
 struct RawEntity {
     name: String,
@@ -134,6 +192,7 @@ struct RawEntity {
     confidence: f32,
 }
 
+/// Intermediate representation of a relationship before aggregation.
 #[derive(Debug, Clone)]
 struct RawRelation {
     subject: String,
@@ -142,11 +201,15 @@ struct RawRelation {
     object: String,
     object_type: String,
     confidence: f32,
+    /// Indices of the chunks where this relation was found.
     chunk_indexes: BTreeSet<usize>,
+    /// Global sequential index for ordering within the document.
     order_index: i64,
+    /// JSON metadata for the relation.
     metadata: Map<String, Value>,
 }
 
+/// A single unit of text (sentence or chunk) passed to the extractor.
 #[derive(Debug, Clone)]
 struct ExtractionUnit {
     text: String,
@@ -154,21 +217,37 @@ struct ExtractionUnit {
     order_index: i64,
 }
 
+/// Accumulates extraction results across multiple chunks or units.
+/// 
+/// Handles entity and relation deduplication, alias tracking, and 
+/// basic document understanding (e.g., identifying the primary subject).
 #[derive(Debug, Default)]
 struct ExtractionAccumulator {
+    /// Mapping of normalized entity name to its highest-confidence raw extraction.
     entities: HashMap<String, RawEntity>,
+    /// Collected relations before final canonicalization.
     relations: Vec<RawRelation>,
+    /// Tags identified during processing.
     tags: BTreeSet<String>,
+    /// Decisions identified during processing.
     decisions: BTreeSet<String>,
+    /// User preferences identified during processing.
     preferences: BTreeSet<String>,
+    /// Inferred document kind (e.g., "profile").
     doc_kind: Option<String>,
+    /// The document's inferred primary subject.
     primary_subject: Option<String>,
+    /// Sanitized document title.
     document_title: Option<String>,
+    /// The subject of the current markdown section.
     current_subject: Option<String>,
+    /// Current sender if processing a message/thread.
     current_sender: Option<String>,
+    /// Mapping of names to their canonicalized full name.
     known_people: HashMap<String, String>,
 }
 
+/// The result of the parsing stage of ingestion.
 #[derive(Debug)]
 struct ParsedIngestion {
     tags: Vec<String>,
@@ -180,10 +259,14 @@ struct ParsedIngestion {
     decision_count: usize,
 }
 
+/// A validation rule for semantic relationships.
 #[derive(Debug)]
 struct RelationRule {
+    /// Canonical predicate name (uppercase snake_case).
     canonical: &'static str,
+    /// Allowed classifications for the subject.
     allowed_head: &'static [&'static str],
+    /// Allowed classifications for the object.
     allowed_tail: &'static [&'static str],
 }
 
@@ -199,6 +282,7 @@ const ORG_TYPES: &[&str] = &[
 const PLACE_TYPES: &[&str] = &["PLACE", "LOCATION", "ROOM"];
 const DATE_TYPES: &[&str] = &["DATE"];
 
+/// Returns the semantic validation rule for a given predicate name.
 fn relation_rule(predicate: &str) -> Option<RelationRule> {
     let normalized = UnifiedMemory::normalize_graph_predicate(predicate);
     let rule = match normalized.as_str() {
@@ -272,16 +356,19 @@ fn relation_rule(predicate: &str) -> Option<RelationRule> {
     Some(rule)
 }
 
+/// Helper to check if a classification is allowed by a rule.
 fn type_allowed(actual: &str, allowed: &[&str]) -> bool {
     allowed.is_empty() || allowed.iter().any(|candidate| candidate == &actual)
 }
 
+/// Resolves a person's name using the known alias map.
 fn resolve_person_alias(name: &str, known_people: &HashMap<String, String>) -> String {
     let upper = name.to_uppercase();
     known_people.get(&upper).cloned().unwrap_or(upper)
 }
 
 impl ExtractionAccumulator {
+    /// Ingests a full name and its components (e.g., first name) into the alias map.
     fn remember_person_aliases(&mut self, canonical_name: &str) {
         let parts = canonical_name.split_whitespace().collect::<Vec<_>>();
         if let Some(first_name) = parts.first() {
@@ -291,6 +378,7 @@ impl ExtractionAccumulator {
         }
     }
 
+    /// Records a new entity, updating confidence if already known.
     fn add_entity(&mut self, name: &str, entity_type: &str, confidence: f32) -> Option<String> {
         let cleaned = sanitize_entity_name(name);
         if cleaned.is_empty() {
@@ -318,6 +406,7 @@ impl ExtractionAccumulator {
         Some(resolved_name)
     }
 
+    /// Records a new relationship, applying semantic validation rules.
     fn add_relation(
         &mut self,
         subject: &str,
@@ -374,12 +463,14 @@ impl ExtractionAccumulator {
     }
 }
 
+/// Regex for identifying standard email headers (From, To, Cc).
 fn email_header_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX
         .get_or_init(|| Regex::new(r"^(From|To|Cc):\s*(?P<value>.+)$").expect("email header regex"))
 }
 
+/// Regex for identifying named email addresses (e.g., "John Doe <john@example.com>").
 fn named_email_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -387,6 +478,7 @@ fn named_email_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying explicit graph facts (e.g., "Alice works_on Project-X").
 fn graph_fact_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -397,6 +489,7 @@ fn graph_fact_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying ownership patterns (e.g., "Bob owns the repository").
 fn explicit_owner_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -405,6 +498,7 @@ fn explicit_owner_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying preference patterns (e.g., "Carol prefers light mode").
 fn explicit_preference_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -413,6 +507,7 @@ fn explicit_preference_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying action items or assignments (e.g., "Dave: finish the API").
 fn action_item_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -421,6 +516,7 @@ fn action_item_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying review assignments.
 fn will_review_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -429,6 +525,7 @@ fn will_review_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying complex giving/receiving interactions.
 fn recipient_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -439,6 +536,7 @@ fn recipient_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying spatial relationships (e.g., "Kitchen is north of the Garden").
 fn spatial_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -449,6 +547,7 @@ fn spatial_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying dates in "Month DD, YYYY" format.
 fn month_date_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| {
@@ -457,17 +556,20 @@ fn month_date_regex() -> &'static Regex {
     })
 }
 
+/// Regex for identifying ISO-8601 dates (YYYY-MM-DD).
 fn iso_date_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX.get_or_init(|| Regex::new(r"\b\d{4}-\d{2}-\d{2}\b").expect("iso date regex"))
 }
 
+/// Regex for identifying potential person names (Title Case).
 fn person_name_regex() -> &'static Regex {
     static REGEX: OnceLock<Regex> = OnceLock::new();
     REGEX
         .get_or_init(|| Regex::new(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)+\b").expect("person name regex"))
 }
 
+/// Normalizes an entity name by trimming punctuation, collapsing whitespace, and converting to uppercase.
 fn sanitize_entity_name(name: &str) -> String {
     let trimmed = name.trim().trim_matches(|ch: char| {
         matches!(ch, '-' | ':' | ';' | ',' | '.' | '"' | '\'' | '(' | ')')
@@ -478,6 +580,7 @@ fn sanitize_entity_name(name: &str) -> String {
     UnifiedMemory::collapse_whitespace(trimmed).to_uppercase()
 }
 
+/// Normalizes text content by trimming and collapsing whitespace.
 fn sanitize_fact_text(text: &str) -> String {
     let trimmed = text
         .trim()
@@ -487,6 +590,7 @@ fn sanitize_fact_text(text: &str) -> String {
     UnifiedMemory::collapse_whitespace(trimmed)
 }
 
+/// Heuristically classifies an entity based on its name and known person map.
 fn classify_entity(name: &str, known_people: &HashMap<String, String>) -> &'static str {
     let upper = sanitize_entity_name(name);
     if upper.is_empty() {
@@ -540,6 +644,7 @@ fn classify_entity(name: &str, known_people: &HashMap<String, String>) -> &'stat
     "TOPIC"
 }
 
+/// Splits a document into individual sentences based on punctuation and line breaks.
 fn split_sentences(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
@@ -574,6 +679,7 @@ fn split_sentences(text: &str) -> Vec<String> {
     merged
 }
 
+/// Groups chunks into extraction units based on the configured mode.
 fn build_units(chunks: &[String], mode: ExtractionMode) -> Vec<ExtractionUnit> {
     let mut units = Vec::new();
     let mut order_index = 0_i64;
@@ -609,6 +715,7 @@ fn build_units(chunks: &[String], mode: ExtractionMode) -> Vec<ExtractionUnit> {
     units
 }
 
+/// Searches for the chunk index that most likely contains the given excerpt.
 fn find_chunk_index(chunks: &[String], excerpt: &str, hint: usize) -> usize {
     if chunks.is_empty() {
         return 0;

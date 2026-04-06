@@ -1,3 +1,12 @@
+//! # Memory Client
+//!
+//! High-level client interface for interacting with the OpenHuman memory system.
+//!
+//! The `MemoryClient` provides a simplified API for storing and retrieving
+//! information from the memory store, handling background tasks like graph
+//! extraction and embedding generation. It primarily acts as a wrapper around
+//! `UnifiedMemory`.
+
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,8 +20,14 @@ use crate::openhuman::memory::store::types::{
     NamespaceDocumentInput, NamespaceMemoryHit, NamespaceRetrievalContext,
 };
 use crate::openhuman::memory::store::unified::UnifiedMemory;
+
+/// Reference-counted handle to a `MemoryClient`.
 pub type MemoryClientRef = Arc<MemoryClient>;
 
+/// Thread-safe container for an optional `MemoryClientRef`.
+///
+/// Used for global state management where the memory client may or may not
+/// be initialized.
 pub struct MemoryState(pub std::sync::Mutex<Option<MemoryClientRef>>);
 
 /// Local-only memory client backed by SQLite in the user's workspace directory.
@@ -22,11 +37,19 @@ pub struct MemoryState(pub std::sync::Mutex<Option<MemoryClientRef>>);
 /// subsystem operates entirely locally via [`UnifiedMemory`].
 #[derive(Clone)]
 pub struct MemoryClient {
+    /// The underlying memory implementation.
     inner: Arc<UnifiedMemory>,
+    /// Queue for background ingestion tasks (e.g., entity extraction).
     ingestion_queue: IngestionQueue,
 }
 
 impl MemoryClient {
+    /// Create a new local memory client using the default `.openhuman` directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the home directory cannot be resolved or if
+    /// initialization fails.
     pub fn new_local() -> Result<Self, String> {
         let workspace_dir = dirs::home_dir()
             .ok_or_else(|| "Failed to resolve home directory".to_string())?
@@ -35,20 +58,50 @@ impl MemoryClient {
         Self::from_workspace_dir(workspace_dir)
     }
 
+    /// Create a new memory client from a specific workspace directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `workspace_dir` - The path where memory databases and assets are stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the directory cannot be created or if the
+    /// `UnifiedMemory` or `IngestionQueue` fails to start.
     pub fn from_workspace_dir(workspace_dir: PathBuf) -> Result<Self, String> {
         std::fs::create_dir_all(&workspace_dir)
             .map_err(|e| format!("Create workspace dir {}: {e}", workspace_dir.display()))?;
+
+        // Initialize the default local embedding provider (e.g., FastEmbed).
         let embedder: Arc<dyn EmbeddingProvider> = embeddings::default_local_embedding_provider();
+
+        // Create the underlying UnifiedMemory instance.
         let memory =
             UnifiedMemory::new(&workspace_dir, embedder, None).map_err(|e| format!("{e}"))?;
         let inner = Arc::new(memory);
+
+        // Start the background worker for document ingestion and graph extraction.
         let ingestion_queue = ingestion_queue::start_worker(Arc::clone(&inner));
+
         Ok(Self {
             inner,
             ingestion_queue,
         })
     }
 
+    /// Store a document in a specific namespace.
+    ///
+    /// This method performs an "upsert" (update or insert). It immediately
+    /// persists the document and then enqueues a background job for graph
+    /// extraction (entities and relations).
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The document content and metadata.
+    ///
+    /// # Returns
+    ///
+    /// The unique ID of the stored document.
     pub async fn put_doc(&self, input: NamespaceDocumentInput) -> Result<String, String> {
         let document_id = self.inner.upsert_document(input.clone()).await?;
 
@@ -64,6 +117,9 @@ impl MemoryClient {
         Ok(document_id)
     }
 
+    /// Perform a full ingestion (chunking, embedding, extraction) synchronously.
+    ///
+    /// Unlike `put_doc`, this waits for the entire process to complete.
     pub async fn ingest_doc(
         &self,
         request: MemoryIngestionRequest,
@@ -71,6 +127,9 @@ impl MemoryClient {
         self.inner.ingest_document(request).await
     }
 
+    /// Specialized method for syncing skill data into memory.
+    ///
+    /// Maps generic skill/integration fields into the `NamespaceDocumentInput` structure.
     #[allow(clippy::too_many_arguments)]
     pub async fn store_skill_sync(
         &self,
@@ -112,6 +171,7 @@ impl MemoryClient {
         Ok(())
     }
 
+    /// List documents in a namespace (or all namespaces if `None`).
     pub async fn list_documents(
         &self,
         namespace: Option<&str>,
@@ -119,10 +179,12 @@ impl MemoryClient {
         self.inner.list_documents(namespace).await
     }
 
+    /// List all unique namespaces in the memory store.
     pub async fn list_namespaces(&self) -> Result<Vec<String>, String> {
         self.inner.list_namespaces().await
     }
 
+    /// Delete a specific document by its ID and namespace.
     pub async fn delete_document(
         &self,
         namespace: &str,
@@ -131,10 +193,12 @@ impl MemoryClient {
         self.inner.delete_document(namespace, document_id).await
     }
 
+    /// Clear all documents and data within a specific namespace.
     pub async fn clear_namespace(&self, namespace: &str) -> Result<(), String> {
         self.inner.clear_namespace(namespace).await
     }
 
+    /// Clear memory associated with a specific skill.
     pub async fn clear_skill_memory(
         &self,
         skill_id: &str,
@@ -155,6 +219,9 @@ impl MemoryClient {
         Ok(())
     }
 
+    /// Query a namespace for context using natural language.
+    ///
+    /// Returns a formatted string containing relevant text chunks and context.
     pub async fn query_namespace(
         &self,
         namespace: &str,
@@ -166,6 +233,7 @@ impl MemoryClient {
             .await
     }
 
+    /// Query a namespace and return raw context data (hits, relations, etc.).
     pub async fn query_namespace_context_data(
         &self,
         namespace: &str,
@@ -177,6 +245,7 @@ impl MemoryClient {
             .await
     }
 
+    /// Recall recent context from a namespace without a specific query.
     pub async fn recall_namespace(
         &self,
         namespace: &str,
@@ -187,6 +256,7 @@ impl MemoryClient {
             .await
     }
 
+    /// Recall raw context data from a namespace without a specific query.
     pub async fn recall_namespace_context_data(
         &self,
         namespace: &str,
@@ -197,6 +267,7 @@ impl MemoryClient {
             .await
     }
 
+    /// Recall a specific number of recent memories (hits) from a namespace.
     pub async fn recall_namespace_memories(
         &self,
         namespace: &str,
@@ -205,6 +276,7 @@ impl MemoryClient {
         self.inner.recall_namespace_memories(namespace, limit).await
     }
 
+    /// Store a key-value pair in a namespace (or global if `None`).
     pub async fn kv_set(
         &self,
         namespace: Option<&str>,
@@ -217,6 +289,7 @@ impl MemoryClient {
         }
     }
 
+    /// Retrieve a key-value pair.
     pub async fn kv_get(
         &self,
         namespace: Option<&str>,
@@ -228,6 +301,7 @@ impl MemoryClient {
         }
     }
 
+    /// Delete a key-value pair.
     pub async fn kv_delete(&self, namespace: Option<&str>, key: &str) -> Result<bool, String> {
         match namespace {
             Some(ns) => self.inner.kv_delete_namespace(ns, key).await,
@@ -235,6 +309,7 @@ impl MemoryClient {
         }
     }
 
+    /// List all key-value pairs in a namespace.
     pub async fn kv_list_namespace(
         &self,
         namespace: &str,
@@ -242,6 +317,7 @@ impl MemoryClient {
         self.inner.kv_list_namespace(namespace).await
     }
 
+    /// Upsert a relationship in the knowledge graph.
     pub async fn graph_upsert(
         &self,
         namespace: Option<&str>,
@@ -264,6 +340,7 @@ impl MemoryClient {
         }
     }
 
+    /// Query relationships in the knowledge graph using optional filters.
     pub async fn graph_query(
         &self,
         namespace: Option<&str>,
