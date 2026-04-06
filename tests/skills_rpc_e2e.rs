@@ -12,7 +12,7 @@
 //!   cargo test --test skills_rpc_e2e -- --nocapture
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,8 +25,44 @@ use openhuman_core::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEn
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
+fn manifests_in_dir(skills_dir: &Path) -> Vec<String> {
+    let mut ids = Vec::new();
+    let Ok(entries) = std::fs::read_dir(skills_dir) else {
+        return ids;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || !path.join("manifest.json").exists() {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            ids.push(name.to_string());
+        }
+    }
+
+    ids.sort();
+    ids
+}
+
+fn select_skill_id(skills_dir: &Path, env_key: &str, preferred: &[&str]) -> String {
+    if let Ok(skill_id) = std::env::var(env_key) {
+        if !skill_id.trim().is_empty() {
+            return skill_id;
+        }
+    }
+
+    let available = manifests_in_dir(skills_dir);
+    for candidate in preferred {
+        if available.iter().any(|id| id == candidate) {
+            return (*candidate).to_string();
+        }
+    }
+
+    available
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "example-skill".to_string())
 }
 
 fn try_find_skills_dir() -> Option<PathBuf> {
@@ -54,7 +90,7 @@ fn try_find_skills_dir() -> Option<PathBuf> {
     if let Some(parent) = cwd.parent() {
         for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
             let c = entry.path().join("skills/skills");
-            if c.join("example-skill/manifest.json").exists() {
+            if c.exists() && c.read_dir().is_ok() {
                 return Some(c.canonicalize().unwrap());
             }
         }
@@ -135,8 +171,12 @@ async fn skills_over_http_rpc() {
         .is_test(true)
         .try_init();
 
-    let skill_id = env_or("SKILL_DEBUG_ID", "example-skill");
     let skills_dir = require_skills_dir!();
+    let skill_id = select_skill_id(
+        &skills_dir,
+        "SKILL_DEBUG_ID",
+        &["server-ping", "gmail", "notion"],
+    );
     let tmp = tempdir().expect("tempdir");
     let home = tmp.path();
     let data_dir = home.join("skills_data");
@@ -239,7 +279,18 @@ encrypt = false
 
     // 5. openhuman.skills_call_tool
     eprintln!("\n--- openhuman.skills_call_tool ---");
-    let tool_name = env_or("SKILL_DEBUG_TOOL", "get-status");
+    let tool_name = std::env::var("SKILL_DEBUG_TOOL").ok().filter(|s| !s.trim().is_empty()).or_else(
+        || {
+            tool_list.and_then(|tools| {
+                tools
+                    .first()
+                    .and_then(|tool| tool.get("name"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+        },
+    )
+    .unwrap_or_else(|| "get-status".to_string());
     let tool_args: Value = std::env::var("SKILL_DEBUG_TOOL_ARGS")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
