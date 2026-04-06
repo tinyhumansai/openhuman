@@ -13,6 +13,15 @@ mod tests {
     use crate::openhuman::subconscious::situation_report::build_situation_report;
     use crate::openhuman::subconscious::types::Decision;
 
+    /// Find the largest byte index ≤ `max_bytes` that is a valid char boundary.
+    fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> usize {
+        let mut end = s.len().min(max_bytes);
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        end
+    }
+
     fn fixture(path: &str) -> String {
         let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         std::fs::read_to_string(
@@ -113,7 +122,7 @@ mod tests {
         .await;
 
         println!("=== TICK 1 REPORT ===");
-        println!("{}", &report1[..report1.len().min(2000)]);
+        println!("{}", &report1[..truncate_at_char_boundary(&report1, 2000)]);
         println!("=====================\n");
 
         // Verify tick 1 report contains ingested data
@@ -184,7 +193,7 @@ mod tests {
         .await;
 
         println!("=== TICK 2 REPORT ===");
-        println!("{}", &report2[..report2.len().min(2000)]);
+        println!("{}", &report2[..truncate_at_char_boundary(&report2, 2000)]);
         println!("=====================\n");
 
         // Verify tick 2 report contains NEW data
@@ -240,7 +249,7 @@ mod tests {
         .await;
 
         println!("=== TICK 3 REPORT ===");
-        println!("{}", &report3[..report3.len().min(2000)]);
+        println!("{}", &report3[..truncate_at_char_boundary(&report3, 2000)]);
         println!("=====================\n");
 
         // Tick 3 should show no changes
