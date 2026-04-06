@@ -388,7 +388,7 @@ const BillingPanel = () => {
 
   // ── JSX ─────────────────────────────────────────────────────────────
   return (
-    <div className="overflow-hidden flex flex-col">
+    <div>
       <SettingsHeader
         title={teamName ? `Billing — ${teamName}` : 'Billing & Subscription'}
         showBackButton={true}

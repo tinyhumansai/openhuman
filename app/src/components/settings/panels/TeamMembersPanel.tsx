@@ -113,10 +113,10 @@ const TeamMembersPanel = () => {
   };
 
   return (
-    <div className="overflow-hidden flex flex-col h-full">
+    <div>
       <SettingsHeader title="Members" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         <div className="max-w-md mx-auto p-4 space-y-3">
           {error && (
             <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
@@ -257,7 +257,7 @@ const TeamMembersPanel = () => {
           {memberToRemove && (
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-lg font-semibold text-stone-900 mb-4">Remove Team Member</h3>
+                <h3 className="text-sm font-semibold text-stone-900 mb-4">Remove Team Member</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -300,7 +300,7 @@ const TeamMembersPanel = () => {
           {roleChangeConfirmation && (
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-lg font-semibold text-stone-900 mb-4">Change Member Role</h3>
+                <h3 className="text-sm font-semibold text-stone-900 mb-4">Change Member Role</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">

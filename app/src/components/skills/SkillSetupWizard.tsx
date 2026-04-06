@@ -15,7 +15,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSkillSnapshot } from "../../lib/skills/hooks.ts";
 import { skillManager } from "../../lib/skills/manager.ts";
-import { getSkillSnapshot, listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
+import { getSkillSnapshot, installSkill, listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
 import { callCoreRpc } from "../../services/coreRpcClient.ts";
 import { apiClient } from "../../services/apiClient.ts";
 import { openUrl } from "../../utils/openUrl.ts";
@@ -664,32 +664,32 @@ function OAuthLoginView({
   onCancel,
   waiting,
   skillId,
-  onManualComplete,
+  onManualComplete: _onManualComplete,
 }: OAuthLoginViewProps) {
   const providerName = formatProviderName(provider);
   const [devIntegrationId, setDevIntegrationId] = useState("");
+  const [devEncryptionKey, setDevEncryptionKey] = useState("");
   const [devSubmitting, setDevSubmitting] = useState(false);
   const [devError, setDevError] = useState("");
 
   const handleDevManualComplete = useCallback(async () => {
     const id = devIntegrationId.trim();
+    const encKey = devEncryptionKey.trim();
     if (!id || !skillId) return;
+    if (!encKey) { setDevError("Encryption key is required"); return; }
+    if (/["\\]/.test(encKey) || encKey !== encKey.replace(/[^\x20-\x7e]/g, "")) { setDevError("Encryption key contains invalid characters"); return; }
     setDevSubmitting(true);
     setDevError("");
     try {
-      // 1. Fetch client key share (one-time handoff)
-      let clientKeyShare: string | undefined;
-      try {
-        const result = await callCoreRpc<{ result: { clientKey: string } }>({
-          method: "openhuman.auth.oauth_fetch_client_key",
-          params: { integrationId: id },
-        });
-        clientKeyShare = result?.result?.clientKey;
-      } catch {
-        // May be plaintext OAuth — continue without key
-      }
+      // 1. Use the manually-provided client-side encryption key
+      const clientKeyShare: string | undefined = encKey || undefined;
 
-      // 2. Start skill runtime
+      // 2. Ensure skill is installed, then start the runtime
+      try {
+        await installSkill(skillId);
+      } catch {
+        // May already be installed
+      }
       try {
         await startSkill(skillId);
       } catch (startErr) {
@@ -710,19 +710,17 @@ function OAuthLoginView({
       }
       if (!running) throw new Error("Skill did not reach running state within timeout");
 
-      // 4. Notify skill of OAuth completion
+      // 4. Notify skill of OAuth completion — the snapshot effect will
+      //    detect the connected state and transition to setup automatically.
       await skillManager.notifyOAuthComplete(skillId, id, provider, {
         clientKeyShare,
       });
-
-      // 5. Advance wizard
-      onManualComplete?.();
     } catch (err) {
       setDevError(err instanceof Error ? err.message : String(err));
     } finally {
       setDevSubmitting(false);
     }
-  }, [devIntegrationId, skillId, provider, onManualComplete]);
+  }, [devIntegrationId, devEncryptionKey, skillId, provider]);
 
   return (
     <div className="py-6">
@@ -781,26 +779,35 @@ function OAuthLoginView({
             Open login page again
           </button>
 
-          {/* Dev-mode: manual integration ID entry */}
+          {/* Dev-mode: manual integration ID + encryption key entry */}
           {IS_DEV && skillId && (
             <div className="mt-4 pt-4 border-t border-stone-700/50">
               <p className="text-[10px] text-stone-500 uppercase tracking-wider mb-2">Dev mode</p>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2">
                 <input
                   type="text"
                   placeholder="Integration ID (24-char hex)"
                   value={devIntegrationId}
                   onChange={(e) => setDevIntegrationId(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleDevManualComplete(); }}
-                  className="flex-1 px-3 py-1.5 text-xs bg-stone-800 border border-stone-700 rounded-lg text-white placeholder:text-stone-500 focus:outline-none focus:border-primary-500"
+                  className="w-full px-3 py-1.5 text-xs bg-stone-800 border border-stone-700 rounded-lg text-white placeholder:text-stone-500 focus:outline-none focus:border-primary-500"
                 />
-                <button
-                  onClick={handleDevManualComplete}
-                  disabled={devSubmitting || !devIntegrationId.trim()}
-                  className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-500 disabled:opacity-40 transition-colors"
-                >
-                  {devSubmitting ? "..." : "Go"}
-                </button>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    placeholder="Client-side encryption key"
+                    value={devEncryptionKey}
+                    onChange={(e) => setDevEncryptionKey(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleDevManualComplete(); }}
+                    className="flex-1 px-3 py-1.5 text-xs bg-stone-800 border border-stone-700 rounded-lg text-white placeholder:text-stone-500 focus:outline-none focus:border-primary-500"
+                  />
+                  <button
+                    onClick={handleDevManualComplete}
+                    disabled={devSubmitting || !devIntegrationId.trim() || !devEncryptionKey.trim()}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-500 disabled:opacity-40 transition-colors"
+                  >
+                    {devSubmitting ? "..." : "Go"}
+                  </button>
+                </div>
               </div>
               {devError && (
                 <p className="mt-1.5 text-[11px] text-coral-400">{devError}</p>

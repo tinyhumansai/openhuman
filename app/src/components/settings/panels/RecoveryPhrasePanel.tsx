@@ -200,10 +200,10 @@ const RecoveryPhrasePanel = () => {
   const canSave = mode === 'generate' ? confirmed : isImportComplete;
 
   return (
-    <div className="overflow-hidden h-full flex flex-col">
+    <div>
       <SettingsHeader title="Recovery Phrase" showBackButton onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         <div className="p-4 max-w-md mx-auto">
           {success ? (
             <div className="flex flex-col items-center justify-center gap-3 py-12">

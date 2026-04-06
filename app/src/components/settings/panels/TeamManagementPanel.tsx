@@ -88,7 +88,7 @@ const TeamManagementPanel = () => {
 
   if (!teamEntry) {
     return (
-      <div className="overflow-hidden flex flex-col h-full">
+      <div className="">
         <SettingsHeader title="Team Management" showBackButton={true} onBack={navigateBack} />
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-stone-500">Team not found</p>
@@ -99,7 +99,7 @@ const TeamManagementPanel = () => {
 
   if (!isAdmin) {
     return (
-      <div className="overflow-hidden flex flex-col h-full">
+      <div className="">
         <SettingsHeader title="Team Management" showBackButton={true} onBack={navigateBack} />
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-stone-500">Access denied</p>
@@ -111,10 +111,10 @@ const TeamManagementPanel = () => {
   const { team } = teamEntry;
 
   return (
-    <div className="overflow-hidden flex flex-col h-full">
+    <div className="">
       <SettingsHeader title={`Manage ${team.name}`} showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
+      <div>
         <div className="max-w-md mx-auto p-4 space-y-4">
           {/* Team Info */}
           <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
@@ -125,7 +125,7 @@ const TeamManagementPanel = () => {
                 </span>
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-stone-900">{team.name}</h3>
+                <h3 className="text-sm font-semibold text-stone-900">{team.name}</h3>
                 <p className="text-xs text-stone-500">
                   {team.subscription.plan} Plan • Created{' '}
                   {new Date(team.createdAt).toLocaleDateString()}
@@ -291,7 +291,7 @@ const TeamManagementPanel = () => {
           {isEditModalOpen && (
             <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-lg font-semibold text-stone-900 mb-4">Edit Team Settings</h3>
+                <h3 className="text-sm font-semibold text-stone-900 mb-4">Edit Team Settings</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">
@@ -337,7 +337,7 @@ const TeamManagementPanel = () => {
           {isDeleteModalOpen && (
             <div className="fixed inset-0 bg-stone-900/40 flex items-center justify-center z-50 p-4">
               <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-stone-200">
-                <h3 className="text-lg font-semibold text-stone-900 mb-4">Delete Team</h3>
+                <h3 className="text-sm font-semibold text-stone-900 mb-4">Delete Team</h3>
 
                 {error && (
                   <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3 mb-4">

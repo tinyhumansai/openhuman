@@ -538,10 +538,10 @@ const TauriCommandsPanel = () => {
   // };
 
   return (
-    <div className="h-full flex flex-col">
+    <div>
       <SettingsHeader title="Tauri Command Console" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto px-6 pb-12 space-y-10">
+      <div className="p-4 space-y-4">
         {!tauriAvailable && (
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
             Tauri runtime not detected. Commands will fail in browser mode.

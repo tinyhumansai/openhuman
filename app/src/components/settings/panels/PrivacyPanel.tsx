@@ -17,11 +17,11 @@ const PrivacyPanel = () => {
   };
 
   return (
-    <div className="overflow-hidden h-full flex flex-col">
+    <div>
       <SettingsHeader title="Privacy & Security" showBackButton={true} onBack={navigateBack} />
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-6">
+      <div>
+        <div className="p-4 space-y-4">
           {/* Analytics Section */}
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-stone-400 mb-3 px-1">
