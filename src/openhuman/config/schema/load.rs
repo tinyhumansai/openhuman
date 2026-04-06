@@ -307,12 +307,8 @@ pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Resu
         user_id: user_id.to_string(),
     };
     let toml_str = toml::to_string_pretty(&state).context("serialize active_user.toml")?;
-    std::fs::write(&path, toml_str).with_context(|| {
-        format!(
-            "Failed to write active user state: {}",
-            path.display()
-        )
-    })?;
+    std::fs::write(&path, toml_str)
+        .with_context(|| format!("Failed to write active user state: {}", path.display()))?;
     tracing::debug!(user_id = %user_id, path = %path.display(), "active user written");
     Ok(())
 }
@@ -322,9 +318,8 @@ pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Resu
 pub fn clear_active_user(default_openhuman_dir: &Path) -> Result<()> {
     let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
     if path.exists() {
-        std::fs::remove_file(&path).with_context(|| {
-            format!("Failed to remove active user state: {}", path.display())
-        })?;
+        std::fs::remove_file(&path)
+            .with_context(|| format!("Failed to remove active user state: {}", path.display()))?;
         tracing::debug!(path = %path.display(), "active user cleared");
     }
     Ok(())
@@ -949,20 +944,18 @@ mod tests {
         let default_workspace = root.join("workspace");
 
         // No active user → uses default.
-        let (oh_dir, ws_dir, source) =
-            resolve_runtime_config_dirs(root, &default_workspace)
-                .await
-                .unwrap();
+        let (oh_dir, ws_dir, source) = resolve_runtime_config_dirs(root, &default_workspace)
+            .await
+            .unwrap();
         assert_eq!(oh_dir, root);
         assert_eq!(ws_dir, default_workspace);
         assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
 
         // With active user → scopes to user dir.
         write_active_user_id(root, "u-test").unwrap();
-        let (oh_dir, ws_dir, source) =
-            resolve_runtime_config_dirs(root, &default_workspace)
-                .await
-                .unwrap();
+        let (oh_dir, ws_dir, source) = resolve_runtime_config_dirs(root, &default_workspace)
+            .await
+            .unwrap();
         let expected_user_dir = root.join("users").join("u-test");
         assert_eq!(oh_dir, expected_user_dir);
         assert_eq!(ws_dir, expected_user_dir.join("workspace"));

@@ -109,15 +109,14 @@ pub fn get_data_dir() -> Result<PathBuf, String> {
     std::fs::create_dir_all(&root_dir)
         .map_err(|e| format!("Failed to create data directory: {e}"))?;
 
-    let data_dir =
-        if let Some(user_id) = crate::openhuman::config::read_active_user_id(&root_dir) {
-            let user_dir = crate::openhuman::config::user_openhuman_dir(&root_dir, &user_id);
-            std::fs::create_dir_all(&user_dir)
-                .map_err(|e| format!("Failed to create user data directory: {e}"))?;
-            user_dir
-        } else {
-            root_dir
-        };
+    let data_dir = if let Some(user_id) = crate::openhuman::config::read_active_user_id(&root_dir) {
+        let user_dir = crate::openhuman::config::user_openhuman_dir(&root_dir, &user_id);
+        std::fs::create_dir_all(&user_dir)
+            .map_err(|e| format!("Failed to create user data directory: {e}"))?;
+        user_dir
+    } else {
+        root_dir
+    };
 
     Ok(data_dir)
 }

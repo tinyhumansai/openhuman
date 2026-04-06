@@ -15,14 +15,13 @@ pub fn global(config: &Config) -> Arc<LocalAiService> {
 }
 
 pub fn model_artifact_path(config: &Config) -> PathBuf {
-    let root = crate::openhuman::config::default_root_openhuman_dir()
-        .unwrap_or_else(|_| {
-            config
-                .config_path
-                .parent()
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| config.workspace_dir.clone())
-        });
+    let root = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
+        config
+            .config_path
+            .parent()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| config.workspace_dir.clone())
+    });
     root.join("models")
         .join("local-ai")
         .join(effective_chat_model_id(config).replace(':', "-") + ".ollama")

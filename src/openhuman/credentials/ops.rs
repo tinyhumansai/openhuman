@@ -135,10 +135,7 @@ pub async fn store_session(
         .map_err(|e| e.to_string())?;
 
     logs.push("session stored".to_string());
-    Ok(RpcOutcome::new(
-        summarize_auth_profile(&profile),
-        logs,
-    ))
+    Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
 }
 
 pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
