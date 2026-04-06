@@ -5,8 +5,8 @@
 //! **Endpoint**: `POST /agent-integrations/twilio/call`
 //!
 //! **Pricing** (fetched from backend):
-//!   - Outbound calls: ~$0.03/min (base $0.015 + markup)
-//!   - Inbound calls:  ~$0.017/min (base $0.0085 + markup)
+//!   - Outbound calls: ~$0.03/min
+//!   - Inbound calls:  ~$0.017/min
 //!
 //! The backend handles Twilio API credentials, billing, and rate limiting.
 

@@ -7,8 +7,8 @@
 //!   - `POST /agent-integrations/parallel/extract`
 //!
 //! **Pricing** (fetched from backend):
-//!   - Search:  ~$0.01/request (base $0.005 + markup)
-//!   - Extract: ~$0.002/URL    (base $0.001 + markup)
+//!   - Search:  ~$0.01/request
+//!   - Extract: ~$0.002/URL
 //!
 //! The backend handles Parallel API keys, billing, and rate limiting.
 

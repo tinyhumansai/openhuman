@@ -46,7 +46,7 @@ pub struct IntegrationPricingEntry {
     pub pricing: serde_json::Value,
 }
 
-// ── Backend response envelope ───────────────��───────────────────────
+// ── Backend response envelope ───────────────────────────────────────
 
 /// Standard `{ success, data, error }` envelope from the backend.
 #[derive(Debug, Deserialize)]
@@ -59,7 +59,7 @@ pub struct BackendResponse<T> {
     pub error: Option<String>,
 }
 
-// ── Shared HTTP client ─────────────────────────────────��────────────
+// ── Shared HTTP client ─────────────────────────────────────────────
 
 /// Shared client for all integration tools. Holds backend URL, auth token,
 /// a reusable `reqwest::Client`, and a lazily-fetched pricing cache.

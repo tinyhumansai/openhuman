@@ -7,8 +7,8 @@
 //!   - `POST /agent-integrations/google-places/details`
 //!
 //! **Pricing** (fetched from backend):
-//!   - Search: ~$0.01/request  (base $0.005 + markup)
-//!   - Details: ~$0.01/request (base $0.005 + markup)
+//!   - Search: ~$0.01/request
+//!   - Details: ~$0.01/request
 //!
 //! The backend handles Google API keys, billing, and rate limiting.
 
