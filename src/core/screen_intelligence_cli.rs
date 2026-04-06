@@ -164,9 +164,7 @@ fn run_server(args: &[String]) -> Result<()> {
         let bind_addr = format!("127.0.0.1:{}", opts.port);
         let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
 
-        log::info!(
-            "[screen-intelligence-cli] ready — http://{bind_addr}/rpc (JSON-RPC 2.0)"
-        );
+        log::info!("[screen-intelligence-cli] ready — http://{bind_addr}/rpc (JSON-RPC 2.0)");
 
         eprintln!();
         eprintln!("  Screen intelligence dev server listening on http://{bind_addr}");
@@ -354,7 +352,10 @@ fn run_start_session(args: &[String]) -> Result<()> {
                     if !status.session.active {
                         eprintln!(
                             "\n  Session ended: {}",
-                            status.session.stop_reason.unwrap_or_else(|| "unknown".into())
+                            status
+                                .session
+                                .stop_reason
+                                .unwrap_or_else(|| "unknown".into())
                         );
                         break;
                     }

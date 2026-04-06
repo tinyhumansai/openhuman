@@ -4,8 +4,8 @@
 //! automatic reconnection, MCP tool dispatch, webhook routing, and channel
 //! inbound message handling.
 
-pub mod manager;
 mod event_handlers;
+pub mod manager;
 mod schemas;
 pub mod types;
 pub(crate) mod ws_loop;

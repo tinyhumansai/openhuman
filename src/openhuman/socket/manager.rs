@@ -172,7 +172,6 @@ impl SocketManager {
             Err("Not connected".to_string())
         }
     }
-
 }
 
 impl Default for SocketManager {

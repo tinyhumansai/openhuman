@@ -722,7 +722,10 @@ pub async fn bootstrap_skill_runtime() {
                 return;
             }
         };
-        log::info!("[socket] Session token found — auto-connecting to {}", api_url);
+        log::info!(
+            "[socket] Session token found — auto-connecting to {}",
+            api_url
+        );
         if let Err(e) = socket_mgr.connect(&api_url, &token).await {
             log::error!("[socket] Auto-connect failed: {e}");
         } else {

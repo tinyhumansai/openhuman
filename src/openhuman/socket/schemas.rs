@@ -206,10 +206,7 @@ fn handle_emit(params: Map<String, Value>) -> ControllerFuture {
             .get("event")
             .and_then(|v| v.as_str())
             .ok_or("missing required param 'event'")?;
-        let data = params
-            .get("data")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let data = params.get("data").cloned().unwrap_or(Value::Null);
 
         log::debug!("[socket:rpc] emit event={}", event);
         mgr.emit(event, data).await?;

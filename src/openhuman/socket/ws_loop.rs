@@ -130,10 +130,7 @@ async fn run_connection(
         .get("pingTimeout")
         .and_then(|v| v.as_u64())
         .unwrap_or(20000);
-    let eio_sid = open_data
-        .get("sid")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?");
+    let eio_sid = open_data.get("sid").and_then(|v| v.as_str()).unwrap_or("?");
     log::info!(
         "[socket] EIO OPEN: sid={}, ping={}ms, timeout={}ms",
         eio_sid,
@@ -391,7 +388,11 @@ fn handle_sio_packet(
         }
         b'4' => {
             // Socket.IO CONNECT_ERROR
-            let error_str = if text.len() > 1 { &text[1..] } else { "unknown" };
+            let error_str = if text.len() > 1 {
+                &text[1..]
+            } else {
+                "unknown"
+            };
             log::error!("[socket] SIO CONNECT_ERROR: {}", error_str);
         }
         _ => {

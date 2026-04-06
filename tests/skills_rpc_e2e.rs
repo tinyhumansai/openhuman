@@ -279,8 +279,10 @@ encrypt = false
 
     // 5. openhuman.skills_call_tool
     eprintln!("\n--- openhuman.skills_call_tool ---");
-    let tool_name = std::env::var("SKILL_DEBUG_TOOL").ok().filter(|s| !s.trim().is_empty()).or_else(
-        || {
+    let tool_name = std::env::var("SKILL_DEBUG_TOOL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
             tool_list.and_then(|tools| {
                 tools
                     .first()
@@ -288,9 +290,8 @@ encrypt = false
                     .and_then(Value::as_str)
                     .map(ToString::to_string)
             })
-        },
-    )
-    .unwrap_or_else(|| "get-status".to_string());
+        })
+        .unwrap_or_else(|| "get-status".to_string());
     let tool_args: Value = std::env::var("SKILL_DEBUG_TOOL_ARGS")
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
