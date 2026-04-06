@@ -10,6 +10,7 @@ pub mod linq;
 #[cfg(feature = "channel-matrix")]
 pub mod matrix;
 pub mod mattermost;
+mod presentation;
 pub mod qq;
 pub mod signal;
 pub mod slack;

@@ -29,6 +29,15 @@ pub struct WebChannelEvent {
     pub success: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub round: Option<u32>,
+    /// Emoji reaction the assistant wants to add to the user's message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reaction_emoji: Option<String>,
+    /// 0-based index when a response is delivered as multiple segments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment_index: Option<u32>,
+    /// Total number of segments in a segmented delivery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment_total: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

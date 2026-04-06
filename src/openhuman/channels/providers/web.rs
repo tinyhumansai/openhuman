@@ -14,6 +14,8 @@ use crate::openhuman::config::Config;
 use crate::openhuman::providers::ConversationMessage;
 use crate::rpc::RpcOutcome;
 
+use super::presentation;
+
 static EVENT_BUS: Lazy<broadcast::Sender<WebChannelEvent>> = Lazy::new(|| {
     let (tx, _rx) = broadcast::channel(512);
     tx
@@ -91,6 +93,9 @@ pub async fn start_chat(
                 output: None,
                 success: None,
                 round: None,
+                reaction_emoji: None,
+                segment_index: None,
+                segment_total: None,
             });
         }
     }
@@ -100,12 +105,13 @@ pub async fn start_chat(
     let request_id_task = request_id.clone();
     let map_key_task = map_key.clone();
 
+    let user_message = message.clone();
     let handle = tokio::spawn(async move {
         let result = run_chat_task(
             &client_id_task,
             &thread_id_task,
             &request_id_task,
-            &message,
+            &user_message,
             model_override,
             temperature,
         )
@@ -113,21 +119,18 @@ pub async fn start_chat(
 
         match result {
             Ok(full_response) => {
-                publish_web_channel_event(WebChannelEvent {
-                    event: "chat_done".to_string(),
-                    client_id: client_id_task.clone(),
-                    thread_id: thread_id_task.clone(),
-                    request_id: request_id_task.clone(),
-                    full_response: Some(full_response),
-                    message: None,
-                    error_type: None,
-                    tool_name: None,
-                    skill_id: None,
-                    args: None,
-                    output: None,
-                    success: None,
-                    round: None,
-                });
+                // ── Presentation layer (local model, fire-and-forget) ─────
+                // Segment the response into human-readable bubbles and
+                // decide whether to react — both run via local Ollama if
+                // available, zero cloud cost.
+                presentation::deliver_response(
+                    &client_id_task,
+                    &thread_id_task,
+                    &request_id_task,
+                    &full_response,
+                    &user_message,
+                )
+                .await;
             }
             Err(err) => {
                 publish_web_channel_event(WebChannelEvent {
@@ -144,6 +147,9 @@ pub async fn start_chat(
                     output: None,
                     success: None,
                     round: None,
+                    reaction_emoji: None,
+                    segment_index: None,
+                    segment_total: None,
                 });
             }
         }
@@ -207,6 +213,9 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             output: None,
             success: None,
             round: None,
+            reaction_emoji: None,
+            segment_index: None,
+            segment_total: None,
         });
     }
 
@@ -300,6 +309,9 @@ fn publish_tool_events_from_history(
                         output: None,
                         success: None,
                         round: Some(round),
+                        reaction_emoji: None,
+                        segment_index: None,
+                        segment_total: None,
                     });
                 }
             }
@@ -335,6 +347,9 @@ fn publish_tool_events_from_history(
                         output: Some(result.content.clone()),
                         success: Some(success),
                         round: Some(round.max(1)),
+                        reaction_emoji: None,
+                        segment_index: None,
+                        segment_total: None,
                     });
                 }
             }
