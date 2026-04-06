@@ -303,8 +303,7 @@ async fn try_reaction(user_message: &str) -> Option<String> {
         return None;
     }
 
-    match crate::openhuman::local_ai::ops::local_ai_should_react(&config, user_message, "web")
-        .await
+    match crate::openhuman::local_ai::ops::local_ai_should_react(&config, user_message, "web").await
     {
         Ok(outcome) => {
             let decision = outcome.value;
@@ -357,7 +356,11 @@ mod tests {
     fn sentence_splitting_works() {
         let text = "This is the first sentence and it has some length. This is the second sentence that continues the thought. And here is a third sentence to round things out.";
         let result = segment_for_delivery(text);
-        assert!(result.len() >= 2, "expected >= 2 segments, got {}", result.len());
+        assert!(
+            result.len() >= 2,
+            "expected >= 2 segments, got {}",
+            result.len()
+        );
     }
 
     #[test]
@@ -370,7 +373,12 @@ mod tests {
     #[test]
     fn max_segments_respected() {
         let paras: Vec<String> = (0..10)
-            .map(|i| format!("Paragraph number {} has enough content to stand on its own.", i))
+            .map(|i| {
+                format!(
+                    "Paragraph number {} has enough content to stand on its own.",
+                    i
+                )
+            })
             .collect();
         let text = paras.join("\n\n");
         let result = segment_for_delivery(&text);

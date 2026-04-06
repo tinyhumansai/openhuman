@@ -7,8 +7,8 @@ import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import {
   chatCancel,
-  chatSend,
   type ChatSegmentEvent,
+  chatSend,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
   subscribeChatEvents,
@@ -398,9 +398,7 @@ const Conversations = () => {
             pendingReactionRef.current.delete(event.thread_id);
           }
         }
-        dispatch(
-          addInferenceResponse({ content: event.full_response, threadId: event.thread_id })
-        );
+        dispatch(addInferenceResponse({ content: event.full_response, threadId: event.thread_id }));
       },
       onDone: event => {
         // Update tool timeline

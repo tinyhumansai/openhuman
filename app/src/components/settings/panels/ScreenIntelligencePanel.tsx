@@ -285,7 +285,9 @@ const ScreenIntelligencePanel = () => {
           <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
             <div>
               <span className="text-sm text-stone-700">Keep Screenshots</span>
-              <p className="text-xs text-stone-400">Save captured screenshots to the workspace instead of deleting after processing</p>
+              <p className="text-xs text-stone-400">
+                Save captured screenshots to the workspace instead of deleting after processing
+              </p>
             </div>
             <input
               type="checkbox"

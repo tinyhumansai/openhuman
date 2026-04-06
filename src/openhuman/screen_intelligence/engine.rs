@@ -865,7 +865,13 @@ impl AccessibilityEngine {
             .as_deref()
             .unwrap_or("unknown")
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect::<String>();
         let filename = format!("{}_{}.png", frame.captured_at_ms, app_slug);
         let file_path = screenshots_dir.join(&filename);

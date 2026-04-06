@@ -10,11 +10,11 @@ pub mod linq;
 #[cfg(feature = "channel-matrix")]
 pub mod matrix;
 pub mod mattermost;
+mod presentation;
 pub mod qq;
 pub mod signal;
 pub mod slack;
 pub mod telegram;
-mod presentation;
 pub mod web;
 pub mod whatsapp;
 #[cfg(feature = "whatsapp-web")]

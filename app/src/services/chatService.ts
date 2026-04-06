@@ -153,10 +153,7 @@ export async function chatCancel(threadId: string): Promise<boolean> {
   try {
     await callCoreRpc({
       method: 'openhuman.channel_web_cancel',
-      params: {
-        client_id: clientId,
-        thread_id: threadId,
-      },
+      params: { client_id: clientId, thread_id: threadId },
     });
     return true;
   } catch {
