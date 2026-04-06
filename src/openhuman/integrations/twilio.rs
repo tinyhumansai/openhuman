@@ -142,10 +142,7 @@ mod tests {
 
     #[test]
     fn tool_metadata() {
-        let client = Arc::new(IntegrationClient::new(
-            "http://test".into(),
-            "tok".into(),
-        ));
+        let client = Arc::new(IntegrationClient::new("http://test".into(), "tok".into()));
         let tool = TwilioCallTool::new(client);
         assert_eq!(tool.name(), "twilio_call");
         assert_eq!(tool.permission_level(), PermissionLevel::Execute);
@@ -155,10 +152,7 @@ mod tests {
 
     #[test]
     fn schema_has_required_to() {
-        let client = Arc::new(IntegrationClient::new(
-            "http://test".into(),
-            "tok".into(),
-        ));
+        let client = Arc::new(IntegrationClient::new("http://test".into(), "tok".into()));
         let tool = TwilioCallTool::new(client);
         let schema = tool.parameters_schema();
         assert_eq!(schema["type"], "object");
@@ -169,10 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rejects_missing_to() {
-        let client = Arc::new(IntegrationClient::new(
-            "http://test".into(),
-            "tok".into(),
-        ));
+        let client = Arc::new(IntegrationClient::new("http://test".into(), "tok".into()));
         let tool = TwilioCallTool::new(client);
         let result = tool.execute(json!({})).await;
         assert!(result.is_err());
@@ -180,10 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rejects_empty_to() {
-        let client = Arc::new(IntegrationClient::new(
-            "http://test".into(),
-            "tok".into(),
-        ));
+        let client = Arc::new(IntegrationClient::new("http://test".into(), "tok".into()));
         let tool = TwilioCallTool::new(client);
         let result = tool.execute(json!({"to": ""})).await.unwrap();
         assert!(result.is_error);
@@ -192,15 +180,9 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rejects_no_content() {
-        let client = Arc::new(IntegrationClient::new(
-            "http://test".into(),
-            "tok".into(),
-        ));
+        let client = Arc::new(IntegrationClient::new("http://test".into(), "tok".into()));
         let tool = TwilioCallTool::new(client);
-        let result = tool
-            .execute(json!({"to": "+14155551234"}))
-            .await
-            .unwrap();
+        let result = tool.execute(json!({"to": "+14155551234"})).await.unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("message"));
     }

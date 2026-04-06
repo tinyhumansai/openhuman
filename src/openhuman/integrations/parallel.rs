@@ -168,10 +168,7 @@ impl Tool for ParallelSearchTool {
             ));
         }
 
-        let queries: Vec<&str> = search_queries
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
+        let queries: Vec<&str> = search_queries.iter().filter_map(|v| v.as_str()).collect();
 
         if queries.is_empty() {
             return Ok(ToolResult::error(
@@ -179,10 +176,7 @@ impl Tool for ParallelSearchTool {
             ));
         }
 
-        let mode = args
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("fast");
+        let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("fast");
 
         let mut body = json!({
             "objective": objective,
@@ -207,7 +201,11 @@ impl Tool for ParallelSearchTool {
             body["excerpts"] = excerpts;
         }
 
-        tracing::info!("[parallel_search] objective={:?} queries={}", objective, queries.len());
+        tracing::info!(
+            "[parallel_search] objective={:?} queries={}",
+            objective,
+            queries.len()
+        );
 
         match self
             .client
@@ -222,10 +220,7 @@ impl Tool for ParallelSearchTool {
                     )));
                 }
 
-                let mut lines = vec![format!(
-                    "Search results ({} found):",
-                    resp.results.len()
-                )];
+                let mut lines = vec![format!("Search results ({} found):", resp.results.len())];
 
                 for (i, item) in resp.results.iter().enumerate() {
                     lines.push(format!("\n{}. {}", i + 1, item.title));
@@ -364,10 +359,7 @@ impl Tool for ParallelExtractTool {
                 let mut lines = Vec::new();
 
                 for (i, item) in resp.results.iter().enumerate() {
-                    let title = item
-                        .title
-                        .as_deref()
-                        .unwrap_or("(no title)");
+                    let title = item.title.as_deref().unwrap_or("(no title)");
                     lines.push(format!("\n{}. {} — {}", i + 1, title, item.url));
 
                     for excerpt in &item.excerpts {
@@ -416,9 +408,7 @@ impl Tool for ParallelExtractTool {
                     Ok(ToolResult::success(lines.join("\n")))
                 }
             }
-            Err(e) => Ok(ToolResult::error(format!(
-                "Parallel extract failed: {e}"
-            ))),
+            Err(e) => Ok(ToolResult::error(format!("Parallel extract failed: {e}"))),
         }
     }
 }
@@ -428,10 +418,7 @@ mod tests {
     use super::*;
 
     fn test_client() -> Arc<IntegrationClient> {
-        Arc::new(IntegrationClient::new(
-            "http://test".into(),
-            "tok".into(),
-        ))
+        Arc::new(IntegrationClient::new("http://test".into(), "tok".into()))
     }
 
     // ── ParallelSearchTool ──────────────────────────────────────────

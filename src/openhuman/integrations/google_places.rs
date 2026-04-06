@@ -284,10 +284,7 @@ impl Tool for GooglePlacesDetailsTool {
 
                 if let Some(ref hours) = p.regular_opening_hours {
                     if let Some(open_now) = hours.open_now {
-                        lines.push(format!(
-                            "Open now: {}",
-                            if open_now { "Yes" } else { "No" }
-                        ));
+                        lines.push(format!("Open now: {}", if open_now { "Yes" } else { "No" }));
                     }
                     if !hours.weekday_descriptions.is_empty() {
                         lines.push("Hours:".to_string());
@@ -317,10 +314,7 @@ mod tests {
     use super::*;
 
     fn test_client() -> Arc<IntegrationClient> {
-        Arc::new(IntegrationClient::new(
-            "http://test".into(),
-            "tok".into(),
-        ))
+        Arc::new(IntegrationClient::new("http://test".into(), "tok".into()))
     }
 
     // ── GooglePlacesSearchTool ──────────────────────────────────────

@@ -55,8 +55,8 @@ pub use storage_memory::{
     MemoryConfig, StorageConfig, StorageProviderConfig, StorageProviderSection,
 };
 pub use tools::{
-    BrowserComputerUseConfig, BrowserConfig, ComposioConfig, HttpRequestConfig,
-    IntegrationToggle, IntegrationsConfig, MultimodalConfig, SecretsConfig, WebSearchConfig,
+    BrowserComputerUseConfig, BrowserConfig, ComposioConfig, HttpRequestConfig, IntegrationToggle,
+    IntegrationsConfig, MultimodalConfig, SecretsConfig, WebSearchConfig,
 };
 mod types;
 pub use types::*;

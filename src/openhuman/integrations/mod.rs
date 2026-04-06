@@ -181,12 +181,9 @@ pub fn build_client(
         return None;
     }
     match (config.backend_url.as_deref(), config.auth_token.as_deref()) {
-        (Some(url), Some(token)) if !url.is_empty() && !token.is_empty() => {
-            Some(Arc::new(IntegrationClient::new(
-                url.to_owned(),
-                token.to_owned(),
-            )))
-        }
+        (Some(url), Some(token)) if !url.is_empty() && !token.is_empty() => Some(Arc::new(
+            IntegrationClient::new(url.to_owned(), token.to_owned()),
+        )),
         _ => {
             tracing::warn!(
                 "[integrations] enabled but backend_url or auth_token missing — skipping"
