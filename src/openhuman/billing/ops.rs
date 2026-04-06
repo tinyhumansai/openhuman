@@ -285,6 +285,34 @@ pub async fn create_coinbase_charge(
     ))
 }
 
+// ── Coupon operations ──────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct RedeemCouponBody<'a> {
+    code: &'a str,
+}
+
+/// Redeem a coupon code to add credits to the user's account.
+/// Maps to `POST /coupons/redeem`.
+pub async fn redeem_coupon(config: &Config, code: &str) -> Result<RpcOutcome<Value>, String> {
+    let code = code.trim();
+    if code.is_empty() {
+        return Err("code is required".to_string());
+    }
+
+    let body = json!(RedeemCouponBody { code });
+    let data = get_authed_value(config, Method::POST, "/coupons/redeem", Some(body)).await?;
+
+    Ok(RpcOutcome::single_log(data, "coupon redeemed"))
+}
+
+/// List coupons redeemed by the current user.
+/// Maps to `GET /coupons/me`.
+pub async fn get_user_coupons(config: &Config) -> Result<RpcOutcome<Value>, String> {
+    let data = get_authed_value(config, Method::GET, "/coupons/me", None).await?;
+    Ok(RpcOutcome::single_log(data, "user coupons fetched"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

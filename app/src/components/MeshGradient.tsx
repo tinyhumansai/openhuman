@@ -5,23 +5,31 @@ import { Gradient } from '../lib/meshGradient';
 /**
  * Animated WebGL mesh gradient background (Stripe-style).
  * Renders behind the dotted-canvas overlay so dots remain visible on top.
+ * Catches WebGL errors gracefully so the app still works when the GPU context
+ * is unavailable or lost (e.g. Tauri WebView on some platforms).
  */
 export default function MeshGradient() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    const gradient = new Gradient();
-    gradient.initGradient('#mesh-gradient');
+    let gradient: InstanceType<typeof Gradient> | null = null;
+
+    try {
+      gradient = new Gradient();
+      gradient.initGradient('#mesh-gradient');
+    } catch (err) {
+      console.warn('[MeshGradient] WebGL init failed, gradient disabled:', err);
+      gradient = null;
+    }
 
     return () => {
-      gradient.disconnect();
-      gradient.pause();
-      if (canvas) {
-        const gl = canvas.getContext('webgl') || canvas.getContext('webgl2');
-        if (gl) {
-          gl.getExtension('WEBGL_lose_context')?.loseContext();
+      try {
+        if (gradient) {
+          gradient.disconnect();
+          gradient.pause();
         }
+      } catch {
+        // Cleanup is best-effort.
       }
     };
   }, []);

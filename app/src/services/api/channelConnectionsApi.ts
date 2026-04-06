@@ -12,6 +12,17 @@ interface ConnectChannelPayload {
   credentials?: Record<string, string>;
 }
 
+export interface TelegramLoginStartResult {
+  linkToken: string;
+  telegramUrl: string;
+  botUsername: string;
+}
+
+export interface TelegramLoginCheckResult {
+  linked: boolean;
+  details?: Record<string, unknown> | null;
+}
+
 export const channelConnectionsApi = {
   /** Fetch all available channel definitions from the backend. */
   listDefinitions: async (): Promise<ChannelDefinition[]> => {
@@ -59,6 +70,24 @@ export const channelConnectionsApi = {
     const result = await callCoreRpc<{ success: boolean; message: string }>({
       method: 'openhuman.channels_test',
       params: { channel, authMode, credentials },
+    });
+    return result;
+  },
+
+  /** Initiate managed Telegram DM login — creates a link token and returns a deep link URL. */
+  telegramLoginStart: async (): Promise<TelegramLoginStartResult> => {
+    const result = await callCoreRpc<TelegramLoginStartResult>({
+      method: 'openhuman.channels_telegram_login_start',
+      params: {},
+    });
+    return result;
+  },
+
+  /** Check whether the Telegram managed DM link has been completed. */
+  telegramLoginCheck: async (linkToken: string): Promise<TelegramLoginCheckResult> => {
+    const result = await callCoreRpc<TelegramLoginCheckResult>({
+      method: 'openhuman.channels_telegram_login_check',
+      params: { linkToken },
     });
     return result;
   },

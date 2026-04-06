@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import ChannelSetupModal from '../components/channels/ChannelSetupModal';
 import {
   DefaultIcon,
   SKILL_ICONS,
@@ -10,6 +11,7 @@ import {
 } from '../components/skills/shared';
 import SkillDebugModal from '../components/skills/SkillDebugModal';
 import SkillSetupModal from '../components/skills/SkillSetupModal';
+import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import {
   useAvailableSkills,
   useSkillConnectionStatus,
@@ -19,6 +21,8 @@ import {
 import { skillManager } from '../lib/skills/manager';
 import { installSkill } from '../lib/skills/skillsApi';
 import type { SkillConnectionStatus, SkillHostConnectionState } from '../lib/skills/types';
+import { useAppSelector } from '../store/hooks';
+import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
 import {
   deriveSkillSyncSummaryText,
@@ -38,6 +42,93 @@ function statusDotClass(status: SkillConnectionStatus): string {
     default:
       return 'bg-stone-400';
   }
+}
+
+// ─── Channel icons for the integration cards ────────────────────────────────
+
+const CHANNEL_ICONS: Record<string, string> = {
+  telegram: '\u2708\uFE0F',
+  discord: '\uD83C\uDFAE',
+  web: '\uD83C\uDF10',
+};
+
+function channelStatusDot(status: ChannelConnectionStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'bg-sage-500';
+    case 'connecting':
+      return 'bg-amber-500 animate-pulse';
+    case 'error':
+      return 'bg-coral-500';
+    default:
+      return 'bg-stone-300';
+  }
+}
+
+function channelStatusLabel(status: ChannelConnectionStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'Connected';
+    case 'connecting':
+      return 'Connecting';
+    case 'error':
+      return 'Error';
+    default:
+      return 'Not configured';
+  }
+}
+
+function channelStatusColor(status: ChannelConnectionStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'text-sage-600';
+    case 'connecting':
+      return 'text-amber-600';
+    case 'error':
+      return 'text-coral-600';
+    default:
+      return 'text-stone-400';
+  }
+}
+
+// ─── Channel Integration Card ────────────────────────────────────────────────
+
+interface ChannelIntegrationCardProps {
+  definition: ChannelDefinition;
+  bestStatus: ChannelConnectionStatus;
+  onClick: () => void;
+}
+
+function ChannelIntegrationCard({ definition, bestStatus, onClick }: ChannelIntegrationCardProps) {
+  const icon = CHANNEL_ICONS[definition.icon] ?? '';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full rounded-xl border border-stone-200 bg-stone-50 p-4 text-left transition-colors hover:bg-white hover:border-stone-300">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white text-lg shadow-sm border border-stone-200">
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-stone-900">{definition.display_name}</h2>
+            <div
+              className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${channelStatusDot(bestStatus)}`}
+            />
+            <span className={`text-xs flex-shrink-0 ${channelStatusColor(bestStatus)}`}>
+              {channelStatusLabel(bestStatus)}
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-stone-500">{definition.description}</p>
+        </div>
+        <span className="rounded-lg border border-primary-200 bg-primary-50 px-2.5 py-1 text-[11px] font-medium text-primary-700 flex-shrink-0">
+          Configure
+        </span>
+      </div>
+    </button>
+  );
 }
 
 // ─── Skill Card (used in the skills list) ───────────────────────────────────
@@ -274,13 +365,36 @@ export default function Skills() {
   const navigate = useNavigate();
   // Skills from registry via RPC
   const { skills: availableSkills, loading: skillsLoading } = useAvailableSkills();
+  // Channel definitions
+  const { definitions: channelDefs } = useChannelDefinitions();
+  const channelConnections = useAppSelector(state => state.channelConnections);
 
-  // Modal state
+  // Modal state — skills
   const [setupModalOpen, setSetupModalOpen] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [activeSkillName, setActiveSkillName] = useState('');
   const [activeSkillDescription, setActiveSkillDescription] = useState('');
   const [activeSkillHasSetup, setActiveSkillHasSetup] = useState(false);
+
+  // Modal state — channels
+  const [channelModalDef, setChannelModalDef] = useState<ChannelDefinition | null>(null);
+
+  /** Resolve the best connection status across all auth modes for a channel. */
+  const bestChannelStatus = (channelId: ChannelType): ChannelConnectionStatus => {
+    const conns = channelConnections.connections[channelId];
+    if (!conns) return 'disconnected';
+    const statuses = Object.values(conns).map(c => c?.status ?? 'disconnected');
+    if (statuses.includes('connected')) return 'connected';
+    if (statuses.includes('connecting')) return 'connecting';
+    if (statuses.includes('error')) return 'error';
+    return 'disconnected';
+  };
+
+  // Only show configurable channels (telegram, discord — not web)
+  const configurableChannels = useMemo(
+    () => channelDefs.filter(d => d.id !== 'web'),
+    [channelDefs]
+  );
 
   // Transform registry entries to SkillListEntry
   const skillsList: SkillListEntry[] = useMemo(() => {
@@ -403,6 +517,28 @@ export default function Skills() {
               </div>
             </div>
 
+            {/* Channel Integrations */}
+            {configurableChannels.length > 0 && (
+              <div className="mb-4 rounded-2xl border border-stone-200 bg-white p-3 shadow-soft animate-fade-up">
+                <div className="px-1 pb-3 pt-1">
+                  <h2 className="text-sm font-semibold text-stone-900">Channel Integrations</h2>
+                  <p className="mt-1 text-xs text-stone-500">
+                    Connect messaging platforms to send and receive messages.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  {configurableChannels.map(def => (
+                    <ChannelIntegrationCard
+                      key={def.id}
+                      definition={def}
+                      bestStatus={bestChannelStatus(def.id as ChannelType)}
+                      onClick={() => setChannelModalDef(def)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Main card */}
             <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6 animate-fade-up">
               {/* Header */}
@@ -444,7 +580,7 @@ export default function Skills() {
         </div>
       </div>
 
-      {/* Setup modal */}
+      {/* Skill setup modal */}
       {setupModalOpen && activeSkillId && (
         <SkillSetupModal
           skillId={activeSkillId}
@@ -456,6 +592,11 @@ export default function Skills() {
             setActiveSkillId(null);
           }}
         />
+      )}
+
+      {/* Channel setup modal */}
+      {channelModalDef && (
+        <ChannelSetupModal definition={channelModalDef} onClose={() => setChannelModalDef(null)} />
       )}
     </div>
   );

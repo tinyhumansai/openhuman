@@ -1,7 +1,7 @@
 'use client';
 
 import * as THREE from 'three';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 
 /** Start from a regular tetrahedron and lightly truncate each corner to create small blunted edges. */
@@ -27,17 +27,44 @@ function bluntedTetrahedronPoints(scale: number, bluntness = 0.12): THREE.Vector
 
 export default function RotatingTetrahedronCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [webglFailed, setWebglFailed] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: true,
-      powerPreference: 'high-performance',
-    });
+    // Verify a WebGL context can be obtained before handing the canvas to
+    // Three.js.  `THREE.WebGLRenderer` internally calls `gl.createShader()`
+    // which throws if the context is null (e.g. when another canvas already
+    // consumed the platform's WebGL context limit).
+    const testCtx =
+      canvas.getContext('webgl2', { antialias: true }) ||
+      canvas.getContext('webgl', { antialias: true });
+    if (!testCtx) {
+      console.warn('[RotatingTetrahedronCanvas] WebGL context unavailable — skipping');
+      setWebglFailed(true);
+      return;
+    }
+
+    // Lose the test context so Three.js can create its own on the same canvas.
+    // getContext returns the same context when called with the same type, so
+    // Three.js will reuse it.  We just needed the null-check above.
+
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        context: testCtx as WebGLRenderingContext,
+        antialias: true,
+        alpha: true,
+        powerPreference: 'high-performance',
+      });
+    } catch (err) {
+      console.warn('[RotatingTetrahedronCanvas] WebGLRenderer init failed:', err);
+      setWebglFailed(true);
+      return;
+    }
+
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.NoToneMapping;
@@ -48,16 +75,16 @@ export default function RotatingTetrahedronCanvas() {
 
     const geometry = new ConvexGeometry(bluntedTetrahedronPoints(0.98, 0.11));
     const fillMaterial = new THREE.MeshLambertMaterial({
-      color: '#b8e986',
+      color: '#8e86e9',
       transparent: true,
-      opacity: 0.4,
+      opacity: 0.2,
       emissive: '#0c1208',
-      emissiveIntensity: 0.08,
+      emissiveIntensity: 1,
     });
     const fillMesh = new THREE.Mesh(geometry, fillMaterial);
 
     const edgeGeometry = new THREE.EdgesGeometry(geometry);
-    const edgeMaterial = new THREE.LineBasicMaterial({ color: '#b8e986' });
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: '#868ee9' });
 
     const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
     fillMesh.rotation.x = 0.35;
@@ -91,11 +118,12 @@ export default function RotatingTetrahedronCanvas() {
     if (canvas.parentElement) observer.observe(canvas.parentElement);
     resize();
 
+    const speed = 2;
     const animate = () => {
-      fillMesh.rotation.y += 0.0038;
-      fillMesh.rotation.x += 0.0002;
-      edges.rotation.y += 0.0038;
-      edges.rotation.x += 0.0002;
+      fillMesh.rotation.y += 0.0038 * speed;
+      fillMesh.rotation.x += 0.0002 * speed;
+      edges.rotation.y += 0.0038 * speed;
+      edges.rotation.x += 0.0002 * speed;
 
       renderer.render(scene, camera);
       animationFrame = window.requestAnimationFrame(animate);
@@ -113,6 +141,10 @@ export default function RotatingTetrahedronCanvas() {
       renderer.dispose();
     };
   }, []);
+
+  if (webglFailed) {
+    return null;
+  }
 
   return (
     <canvas

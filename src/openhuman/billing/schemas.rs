@@ -57,6 +57,12 @@ struct UpdateCardParams {
     payload: Value,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RedeemCouponParams {
+    code: String,
+}
+
 pub fn all_billing_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         billing_schemas("billing_get_current_plan"),
@@ -72,6 +78,8 @@ pub fn all_billing_controller_schemas() -> Vec<ControllerSchema> {
         billing_schemas("billing_create_setup_intent"),
         billing_schemas("billing_update_card"),
         billing_schemas("billing_delete_card"),
+        billing_schemas("billing_redeem_coupon"),
+        billing_schemas("billing_get_coupons"),
     ]
 }
 
@@ -128,6 +136,14 @@ pub fn all_billing_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: billing_schemas("billing_delete_card"),
             handler: handle_billing_delete_card,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_redeem_coupon"),
+            handler: handle_billing_redeem_coupon,
+        },
+        RegisteredController {
+            schema: billing_schemas("billing_get_coupons"),
+            handler: handle_billing_get_coupons,
         },
     ]
 }
@@ -327,6 +343,26 @@ pub fn billing_schemas(function: &str) -> ControllerSchema {
             )],
             outputs: vec![json_output("cards", "Updated saved cards payload.")],
         },
+        "billing_redeem_coupon" => ControllerSchema {
+            namespace: "billing",
+            function: "redeem_coupon",
+            description: "Redeem a coupon code to add credits to the account.",
+            inputs: vec![required_string("code", "Coupon code to redeem.")],
+            outputs: vec![json_output(
+                "result",
+                "Coupon redemption result from /coupons/redeem.",
+            )],
+        },
+        "billing_get_coupons" => ControllerSchema {
+            namespace: "billing",
+            function: "get_coupons",
+            description: "List coupons redeemed by the current user.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "coupons",
+                "User's redeemed coupons from /coupons/me.",
+            )],
+        },
         _ => ControllerSchema {
             namespace: "billing",
             function: "unknown",
@@ -464,6 +500,21 @@ fn handle_billing_delete_card(params: Map<String, Value>) -> ControllerFuture {
             crate::openhuman::billing::delete_card(&config, payload.payment_method_id.trim())
                 .await?,
         )
+    })
+}
+
+fn handle_billing_redeem_coupon(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<RedeemCouponParams>(params)?;
+        to_json(crate::openhuman::billing::redeem_coupon(&config, payload.code.trim()).await?)
+    })
+}
+
+fn handle_billing_get_coupons(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::billing::get_user_coupons(&config).await?)
     })
 }
 

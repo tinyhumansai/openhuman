@@ -487,6 +487,113 @@ impl BackendOAuthClient {
         Ok(client_key.to_string())
     }
 
+    /// `POST /channels/:channel/messages` — Send a rich message to a channel.
+    pub async fn send_channel_message(
+        &self,
+        channel: &str,
+        bearer_jwt: &str,
+        message_body: Value,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        let encoded = urlencoding::encode(channel);
+        self.authed_json(
+            bearer_jwt,
+            Method::POST,
+            &format!("channels/{encoded}/messages"),
+            Some(message_body),
+        )
+        .await
+    }
+
+    /// `POST /channels/:channel/reactions` — React to a message in a channel.
+    pub async fn send_channel_reaction(
+        &self,
+        channel: &str,
+        bearer_jwt: &str,
+        reaction_body: Value,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        let encoded = urlencoding::encode(channel);
+        self.authed_json(
+            bearer_jwt,
+            Method::POST,
+            &format!("channels/{encoded}/reactions"),
+            Some(reaction_body),
+        )
+        .await
+    }
+
+    /// `POST /channels/:channel/threads` — Create a thread in a channel.
+    pub async fn create_channel_thread(
+        &self,
+        channel: &str,
+        bearer_jwt: &str,
+        title: &str,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        anyhow::ensure!(!title.trim().is_empty(), "title is required");
+        let encoded = urlencoding::encode(channel);
+        let body = serde_json::json!({ "title": title.trim() });
+        self.authed_json(
+            bearer_jwt,
+            Method::POST,
+            &format!("channels/{encoded}/threads"),
+            Some(body),
+        )
+        .await
+    }
+
+    /// `PATCH /channels/:channel/threads/:thread_id` — Close or reopen a thread.
+    pub async fn update_channel_thread(
+        &self,
+        channel: &str,
+        bearer_jwt: &str,
+        thread_id: &str,
+        action: &str,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        anyhow::ensure!(!thread_id.trim().is_empty(), "threadId is required");
+        anyhow::ensure!(
+            action == "close" || action == "reopen",
+            "action must be 'close' or 'reopen'"
+        );
+        let encoded_channel = urlencoding::encode(channel);
+        let encoded_thread = urlencoding::encode(thread_id.trim());
+        let body = serde_json::json!({ "action": action });
+        self.authed_json(
+            bearer_jwt,
+            Method::PATCH,
+            &format!("channels/{encoded_channel}/threads/{encoded_thread}"),
+            Some(body),
+        )
+        .await
+    }
+
+    /// `GET /channels/:channel/threads` — List threads, optionally filtered by active status.
+    pub async fn list_channel_threads(
+        &self,
+        channel: &str,
+        bearer_jwt: &str,
+        active_filter: Option<bool>,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        let encoded = urlencoding::encode(channel);
+        let mut path = format!("channels/{encoded}/threads");
+        if let Some(active) = active_filter {
+            path.push_str(if active {
+                "?active=true"
+            } else {
+                "?active=false"
+            });
+        }
+        self.authed_json(bearer_jwt, Method::GET, &path, None).await
+    }
+
     /// `DELETE /auth/integrations/:id`
     pub async fn revoke_integration(&self, integration_id: &str, bearer_jwt: &str) -> Result<()> {
         let id = integration_id.trim();

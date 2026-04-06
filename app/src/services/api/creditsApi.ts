@@ -110,6 +110,21 @@ export interface UpdateCardPayload {
   billingDetails?: CardBillingDetails;
 }
 
+// ── Coupon types ────────────────────────────────────────────────────────────
+
+export interface CouponRedeemResult {
+  success: boolean;
+  data: { code: string; amountUsd: number };
+}
+
+export interface RedeemedCoupon {
+  code: string;
+  amountUsd: number;
+  redeemedAt: string;
+  activationType: string;
+  fulfilled: boolean;
+}
+
 /**
  * Credits API endpoints
  */
@@ -206,5 +221,23 @@ export const creditsApi = {
    */
   deleteCard: async (paymentMethodId: string): Promise<CardsData> => {
     return await callCoreCommand<CardsData>('openhuman.billing_delete_card', { paymentMethodId });
+  },
+
+  // ── Coupons ──────────────────────────────────────────────────────────────
+
+  /**
+   * Redeem a coupon code to add credits.
+   * POST /coupons/redeem
+   */
+  redeemCoupon: async (code: string): Promise<CouponRedeemResult> => {
+    return await callCoreCommand<CouponRedeemResult>('openhuman.billing_redeem_coupon', { code });
+  },
+
+  /**
+   * List coupons redeemed by the current user.
+   * GET /coupons/me
+   */
+  getUserCoupons: async (): Promise<RedeemedCoupon[]> => {
+    return await callCoreCommand<RedeemedCoupon[]>('openhuman.billing_get_coupons');
   },
 };

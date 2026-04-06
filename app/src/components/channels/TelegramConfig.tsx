@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
-import { managedDmApi } from '../../services/api/managedDmApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
 import {
   disconnectChannelConnection,
@@ -73,36 +72,50 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
   }, []);
 
   const startManagedDmPolling = useCallback(
-    (key: string, token: string) => {
+    (key: string, linkToken: string) => {
       stopManagedDmPolling(key);
       const controller = new AbortController();
       managedDmPollControllers.current[key] = controller;
 
+      const POLL_INTERVAL_MS = 3_000;
+      const POLL_TIMEOUT_MS = 5 * 60 * 1_000;
+
       void (async () => {
-        log('polling managed dm status', { key, tokenLength: token.length });
+        log('polling telegram link status via core RPC', { key, tokenLength: linkToken.length });
+        const startedAt = Date.now();
+
         try {
-          const status = await managedDmApi.pollManagedDmStatusUntilVerified(token, {
-            signal: controller.signal,
-          });
+          while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+            if (controller.signal.aborted) return;
 
-          if (controller.signal.aborted) {
-            return;
-          }
+            try {
+              const check = await channelConnectionsApi.telegramLoginCheck(linkToken);
+              if (check.linked) {
+                log('telegram managed dm linked via core RPC', { key, details: check.details });
+                dispatch(
+                  upsertChannelConnection({
+                    channel: 'telegram',
+                    authMode: 'managed_dm',
+                    patch: { status: 'connected', lastError: undefined, capabilities: ['dm'] },
+                  })
+                );
+                return;
+              }
+            } catch {
+              // Best-effort polling: keep trying until timeout or cancellation.
+            }
 
-          if (status?.verified) {
-            log('managed dm verified via polling', {
-              key,
-              telegramUsername: status.telegramUsername,
+            await new Promise<void>(resolve => {
+              const timer = window.setTimeout(resolve, POLL_INTERVAL_MS);
+              const onAbort = () => {
+                window.clearTimeout(timer);
+                resolve();
+              };
+              controller.signal.addEventListener('abort', onAbort, { once: true });
             });
-            dispatch(
-              upsertChannelConnection({
-                channel: 'telegram',
-                authMode: 'managed_dm',
-                patch: { status: 'connected', lastError: undefined, capabilities: ['dm'] },
-              })
-            );
-            return;
           }
+
+          if (controller.signal.aborted) return;
 
           dispatch(
             upsertChannelConnection({
@@ -113,9 +126,7 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
           );
           setError(MANAGED_DM_TIMEOUT_MESSAGE);
         } catch (pollError) {
-          if (controller.signal.aborted) {
-            return;
-          }
+          if (controller.signal.aborted) return;
 
           const msg = pollError instanceof Error ? pollError.message : String(pollError);
           log('managed dm polling failed', { key, error: msg });
@@ -177,13 +188,13 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         if (result.status === 'pending_auth' && result.auth_action) {
           if (result.auth_action === 'telegram_managed_dm') {
             try {
-              const initiated = await managedDmApi.initiateManagedDm();
-              log('managed dm initiate success', {
+              const loginStart = await channelConnectionsApi.telegramLoginStart();
+              log('telegram login start success', {
                 key,
-                tokenLength: initiated.token.length,
-                expiresAt: initiated.expiresAt,
+                tokenLength: loginStart.linkToken.length,
+                botUsername: loginStart.botUsername,
               });
-              await openUrl(initiated.deepLink);
+              await openUrl(loginStart.telegramUrl);
               dispatch(
                 upsertChannelConnection({
                   channel: 'telegram',
@@ -191,11 +202,13 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
                   patch: { status: 'connecting', lastError: MANAGED_DM_CONNECTING_MESSAGE },
                 })
               );
-              startManagedDmPolling(key, initiated.token);
-            } catch (managedDmError) {
+              startManagedDmPolling(key, loginStart.linkToken);
+            } catch (loginStartError) {
               const msg =
-                managedDmError instanceof Error ? managedDmError.message : String(managedDmError);
-              log('managed dm initiate failed', { key, error: msg });
+                loginStartError instanceof Error
+                  ? loginStartError.message
+                  : String(loginStartError);
+              log('telegram login start failed', { key, error: msg });
               dispatch(
                 upsertChannelConnection({
                   channel: 'telegram',
@@ -259,74 +272,67 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
   );
 
   return (
-    <section className="rounded-xl border border-stone-800/60 bg-black/40 p-4 space-y-4">
-      <div>
-        <h3 className="text-base font-semibold text-white">{definition.display_name}</h3>
-        <p className="text-xs text-stone-400 mt-1">{definition.description}</p>
-      </div>
-
+    <div className="space-y-3">
       {error && (
-        <div className="rounded-lg border border-coral-500/40 bg-coral-500/10 px-4 py-3 text-sm text-coral-100">
+        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700">
           {error}
         </div>
       )}
 
-      <div className="space-y-3">
-        {definition.auth_modes.map(spec => {
-          const compositeKey = `telegram:${spec.mode}`;
-          const connection = channelConnections.connections.telegram?.[spec.mode];
-          const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
+      {definition.auth_modes.map(spec => {
+        const compositeKey = `telegram:${spec.mode}`;
+        const connection = channelConnections.connections.telegram?.[spec.mode];
+        const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
 
-          return (
-            <div key={spec.mode} className="rounded-lg border border-stone-800 bg-stone-900/20 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-white">
-                    {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
-                  </p>
-                  <p className="text-xs text-stone-400 mt-1">{spec.description}</p>
-                  {connection?.lastError && (
-                    <p className="text-xs text-coral-300 mt-1">{connection.lastError}</p>
-                  )}
-                </div>
-                <ChannelStatusBadge status={status} />
+        return (
+          <div key={spec.mode} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-stone-900">
+                  {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
+                </p>
+                <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
+                {connection?.lastError && (
+                  <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
+                )}
               </div>
-
-              {spec.fields.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  {spec.fields.map(field => (
-                    <ChannelFieldInput
-                      key={field.key}
-                      field={field}
-                      value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                      onChange={val => updateField(compositeKey, field.key, val)}
-                      disabled={busyKeys[compositeKey]}
-                    />
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  disabled={busyKeys[compositeKey]}
-                  onClick={() => handleConnect(spec)}
-                  className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                  {status === 'connected' ? 'Reconnect' : 'Connect'}
-                </button>
-                <button
-                  type="button"
-                  disabled={busyKeys[compositeKey] || status === 'disconnected'}
-                  onClick={() => handleDisconnect(spec.mode)}
-                  className="rounded-lg border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-300 hover:border-stone-500 disabled:opacity-50">
-                  Disconnect
-                </button>
-              </div>
+              <ChannelStatusBadge status={status} />
             </div>
-          );
-        })}
-      </div>
-    </section>
+
+            {spec.fields.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {spec.fields.map(field => (
+                  <ChannelFieldInput
+                    key={field.key}
+                    field={field}
+                    value={fieldValues[compositeKey]?.[field.key] ?? ''}
+                    onChange={val => updateField(compositeKey, field.key, val)}
+                    disabled={busyKeys[compositeKey]}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                disabled={busyKeys[compositeKey]}
+                onClick={() => handleConnect(spec)}
+                className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
+                {status === 'connected' ? 'Reconnect' : 'Connect'}
+              </button>
+              <button
+                type="button"
+                disabled={busyKeys[compositeKey] || status === 'disconnected'}
+                onClick={() => handleDisconnect(spec.mode)}
+                className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
+                Disconnect
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 };
 

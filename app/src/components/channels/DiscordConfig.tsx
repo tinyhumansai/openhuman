@@ -149,74 +149,67 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
   );
 
   return (
-    <section className="rounded-xl border border-stone-800/60 bg-black/40 p-4 space-y-4">
-      <div>
-        <h3 className="text-base font-semibold text-white">{definition.display_name}</h3>
-        <p className="text-xs text-stone-400 mt-1">{definition.description}</p>
-      </div>
-
+    <div className="space-y-3">
       {error && (
-        <div className="rounded-lg border border-coral-500/40 bg-coral-500/10 px-4 py-3 text-sm text-coral-100">
+        <div className="rounded-lg border border-coral-200 bg-coral-50 px-4 py-3 text-sm text-coral-700">
           {error}
         </div>
       )}
 
-      <div className="space-y-3">
-        {definition.auth_modes.map(spec => {
-          const compositeKey = `discord:${spec.mode}`;
-          const connection = channelConnections.connections.discord?.[spec.mode];
-          const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
+      {definition.auth_modes.map(spec => {
+        const compositeKey = `discord:${spec.mode}`;
+        const connection = channelConnections.connections.discord?.[spec.mode];
+        const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
 
-          return (
-            <div key={spec.mode} className="rounded-lg border border-stone-800 bg-stone-900/20 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-white">
-                    {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
-                  </p>
-                  <p className="text-xs text-stone-400 mt-1">{spec.description}</p>
-                  {connection?.lastError && (
-                    <p className="text-xs text-coral-300 mt-1">{connection.lastError}</p>
-                  )}
-                </div>
-                <ChannelStatusBadge status={status} />
+        return (
+          <div key={spec.mode} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-stone-900">
+                  {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
+                </p>
+                <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
+                {connection?.lastError && (
+                  <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
+                )}
               </div>
-
-              {spec.fields.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  {spec.fields.map(field => (
-                    <ChannelFieldInput
-                      key={field.key}
-                      field={field}
-                      value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                      onChange={val => updateField(compositeKey, field.key, val)}
-                      disabled={busyKeys[compositeKey]}
-                    />
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  disabled={busyKeys[compositeKey]}
-                  onClick={() => handleConnect(spec)}
-                  className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                  {status === 'connected' ? 'Reconnect' : 'Connect'}
-                </button>
-                <button
-                  type="button"
-                  disabled={busyKeys[compositeKey] || status === 'disconnected'}
-                  onClick={() => handleDisconnect(spec.mode)}
-                  className="rounded-lg border border-stone-700 px-3 py-1.5 text-xs font-medium text-stone-300 hover:border-stone-500 disabled:opacity-50">
-                  Disconnect
-                </button>
-              </div>
+              <ChannelStatusBadge status={status} />
             </div>
-          );
-        })}
-      </div>
-    </section>
+
+            {spec.fields.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {spec.fields.map(field => (
+                  <ChannelFieldInput
+                    key={field.key}
+                    field={field}
+                    value={fieldValues[compositeKey]?.[field.key] ?? ''}
+                    onChange={val => updateField(compositeKey, field.key, val)}
+                    disabled={busyKeys[compositeKey]}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                disabled={busyKeys[compositeKey]}
+                onClick={() => handleConnect(spec)}
+                className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
+                {status === 'connected' ? 'Reconnect' : 'Connect'}
+              </button>
+              <button
+                type="button"
+                disabled={busyKeys[compositeKey] || status === 'disconnected'}
+                onClick={() => handleDisconnect(spec.mode)}
+                className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
+                Disconnect
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 };
 

@@ -64,6 +64,7 @@ todo
 
 - memory skill
   [] should index properly all the things (sanil)
+  [] should properly register user interactions
 
 --- e2e tests to write up
 

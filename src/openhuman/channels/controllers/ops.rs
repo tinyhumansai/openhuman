@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::api::config::effective_api_url;
+use crate::api::jwt::get_session_token;
+use crate::api::rest::BackendOAuthClient;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials;
 use crate::rpc::RpcOutcome;
@@ -234,6 +237,327 @@ pub async fn test_channel(
         },
         vec![],
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Managed Telegram login flow
+// ---------------------------------------------------------------------------
+
+/// Default bot username when not configured via env var.
+const DEFAULT_TELEGRAM_BOT_USERNAME: &str = "alphahumantest_bot";
+
+/// Resolve the managed Telegram bot username from env or default.
+fn telegram_bot_username() -> String {
+    std::env::var("OPENHUMAN_TELEGRAM_BOT_USERNAME")
+        .or_else(|_| std::env::var("VITE_TELEGRAM_BOT_USERNAME"))
+        .unwrap_or_else(|_| DEFAULT_TELEGRAM_BOT_USERNAME.to_string())
+}
+
+/// Result from `telegram_login_start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramLoginStartResult {
+    /// The short-lived link token created by the backend.
+    pub link_token: String,
+    /// Full Telegram deep link URL the user should open.
+    pub telegram_url: String,
+    /// Bot username used.
+    pub bot_username: String,
+}
+
+/// Result from `telegram_login_check`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramLoginCheckResult {
+    /// Whether the Telegram user has been linked to the app user.
+    pub linked: bool,
+    /// Backend-provided status payload (may include telegramUserId, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+/// Step 1: Create a channel link token for Telegram and return the deep link URL.
+///
+/// Requires an active session JWT.
+pub async fn telegram_login_start(
+    config: &Config,
+) -> Result<RpcOutcome<TelegramLoginStartResult>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?
+        .ok_or_else(|| "session JWT required; complete login first".to_string())?;
+
+    log::debug!(
+        "[telegram-login] creating channel link token via {}",
+        api_url
+    );
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let payload = client
+        .create_channel_link_token("telegram", &jwt)
+        .await
+        .map_err(|e| format!("failed to create Telegram link token: {e}"))?;
+
+    // Extract the link token from the backend response.
+    // Expected shape: { "linkToken": "..." } or { "token": "..." }
+    let link_token = payload
+        .get("linkToken")
+        .or_else(|| payload.get("token"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!(
+                "backend response missing linkToken field: {}",
+                serde_json::to_string(&payload).unwrap_or_default()
+            )
+        })?
+        .trim()
+        .to_string();
+
+    if link_token.is_empty() {
+        return Err("backend returned empty link token".to_string());
+    }
+
+    let bot_username = telegram_bot_username();
+    let telegram_url = format!("https://t.me/{}?start={}", bot_username, link_token);
+
+    log::debug!(
+        "[telegram-login] link token created, deep link: {}",
+        telegram_url
+    );
+
+    Ok(RpcOutcome::new(
+        TelegramLoginStartResult {
+            link_token,
+            telegram_url,
+            bot_username,
+        },
+        vec![],
+    ))
+}
+
+/// Step 2: Check whether the user has completed the Telegram link (clicked /start).
+///
+/// Polls `GET /auth/me` and checks whether the user profile now has a `telegramId`.
+/// The frontend should poll this until `linked` becomes `true`.
+/// On success, stores a `channel:telegram:managed_dm` credential marker locally.
+pub async fn telegram_login_check(
+    config: &Config,
+    _link_token: &str,
+) -> Result<RpcOutcome<TelegramLoginCheckResult>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
+
+    log::debug!("[telegram-login] checking if user profile has telegramId via GET /auth/me");
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let user_payload = client
+        .fetch_current_user(&jwt)
+        .await
+        .map_err(|e| format!("failed to fetch user profile: {e}"))?;
+
+    // Check if the user now has a telegramId set.
+    let telegram_id = user_payload
+        .get("telegramId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            user_payload
+                .get("telegram_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        });
+
+    let linked = telegram_id.is_some();
+
+    log::debug!(
+        "[telegram-login] user profile telegramId: {:?}, linked={}",
+        telegram_id,
+        linked
+    );
+
+    if linked {
+        // Store a credential marker so `channel_status` reports connected.
+        let provider_key = credential_provider("telegram", ChannelAuthMode::ManagedDm);
+
+        let telegram_user_id = telegram_id.unwrap_or("").to_string();
+
+        let mut fields_map = serde_json::Map::new();
+        fields_map.insert("linked".to_string(), Value::Bool(true));
+        if !telegram_user_id.is_empty() {
+            fields_map.insert(
+                "telegram_user_id".to_string(),
+                Value::String(telegram_user_id),
+            );
+        }
+
+        // Store using a placeholder token (managed mode has no user-visible token).
+        credentials::ops::store_provider_credentials(
+            config,
+            &provider_key,
+            None,
+            Some("managed".to_string()),
+            Some(Value::Object(fields_map)),
+            Some(true),
+        )
+        .await
+        .map_err(|e| format!("failed to store managed channel credentials: {e}"))?;
+
+        log::info!(
+            "[telegram-login] Telegram managed DM linked; credentials stored as {}",
+            provider_key
+        );
+    }
+
+    Ok(RpcOutcome::new(
+        TelegramLoginCheckResult {
+            linked,
+            details: if linked { Some(user_payload) } else { None },
+        },
+        vec![],
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Channel messaging, reactions, and thread management
+// ---------------------------------------------------------------------------
+
+/// Send a rich message to a channel via the backend API.
+pub async fn channel_send_message(
+    config: &Config,
+    channel: &str,
+    message: Value,
+) -> Result<RpcOutcome<Value>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?
+        .ok_or_else(|| "session JWT required; complete login first".to_string())?;
+
+    log::debug!(
+        "[channels] sending message to channel '{}' via {}",
+        channel,
+        api_url
+    );
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let result = client
+        .send_channel_message(channel, &jwt, message)
+        .await
+        .map_err(|e| format!("failed to send channel message: {e}"))?;
+
+    log::debug!("[channels] send_message response: {:?}", result);
+
+    Ok(RpcOutcome::new(result, vec![]))
+}
+
+/// Send a reaction to a message in a channel via the backend API.
+pub async fn channel_send_reaction(
+    config: &Config,
+    channel: &str,
+    reaction: Value,
+) -> Result<RpcOutcome<Value>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?
+        .ok_or_else(|| "session JWT required; complete login first".to_string())?;
+
+    log::debug!(
+        "[channels] sending reaction to channel '{}' via {}",
+        channel,
+        api_url
+    );
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let result = client
+        .send_channel_reaction(channel, &jwt, reaction)
+        .await
+        .map_err(|e| format!("failed to send channel reaction: {e}"))?;
+
+    log::debug!("[channels] send_reaction response: {:?}", result);
+
+    Ok(RpcOutcome::new(result, vec![]))
+}
+
+/// Create a thread in a channel via the backend API.
+pub async fn channel_create_thread(
+    config: &Config,
+    channel: &str,
+    title: &str,
+) -> Result<RpcOutcome<Value>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?
+        .ok_or_else(|| "session JWT required; complete login first".to_string())?;
+
+    log::debug!(
+        "[channels] creating thread in channel '{}' title='{}' via {}",
+        channel,
+        title,
+        api_url
+    );
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let result = client
+        .create_channel_thread(channel, &jwt, title)
+        .await
+        .map_err(|e| format!("failed to create channel thread: {e}"))?;
+
+    log::debug!("[channels] create_thread response: {:?}", result);
+
+    Ok(RpcOutcome::new(result, vec![]))
+}
+
+/// Close or reopen a thread in a channel via the backend API.
+pub async fn channel_update_thread(
+    config: &Config,
+    channel: &str,
+    thread_id: &str,
+    action: &str,
+) -> Result<RpcOutcome<Value>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?
+        .ok_or_else(|| "session JWT required; complete login first".to_string())?;
+
+    log::debug!(
+        "[channels] updating thread '{}' in channel '{}' action='{}' via {}",
+        thread_id,
+        channel,
+        action,
+        api_url
+    );
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let result = client
+        .update_channel_thread(channel, &jwt, thread_id, action)
+        .await
+        .map_err(|e| format!("failed to update channel thread: {e}"))?;
+
+    log::debug!("[channels] update_thread response: {:?}", result);
+
+    Ok(RpcOutcome::new(result, vec![]))
+}
+
+/// List threads in a channel via the backend API.
+pub async fn channel_list_threads(
+    config: &Config,
+    channel: &str,
+    active: Option<bool>,
+) -> Result<RpcOutcome<Value>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?
+        .ok_or_else(|| "session JWT required; complete login first".to_string())?;
+
+    log::debug!(
+        "[channels] listing threads in channel '{}' active={:?} via {}",
+        channel,
+        active,
+        api_url
+    );
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let result = client
+        .list_channel_threads(channel, &jwt, active)
+        .await
+        .map_err(|e| format!("failed to list channel threads: {e}"))?;
+
+    log::debug!("[channels] list_threads response: {:?}", result);
+
+    Ok(RpcOutcome::new(result, vec![]))
 }
 
 #[cfg(test)]

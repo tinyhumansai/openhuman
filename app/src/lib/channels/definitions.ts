@@ -3,24 +3,24 @@ import type { ChannelConnectionStatus, ChannelDefinition } from '../../types/cha
 /** Status badge styles for channel connection states. */
 export const STATUS_STYLES: Record<ChannelConnectionStatus, { label: string; className: string }> =
   {
-    connected: { label: 'Connected', className: 'bg-sage-500/20 text-sage-300 border-sage-500/30' },
+    connected: { label: 'Connected', className: 'bg-sage-500/10 text-sage-700 border-sage-500/30' },
     connecting: {
       label: 'Connecting',
-      className: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+      className: 'bg-amber-500/10 text-amber-700 border-amber-500/30',
     },
     disconnected: {
       label: 'Disconnected',
-      className: 'bg-stone-500/20 text-stone-300 border-stone-500/30',
+      className: 'bg-stone-100 text-stone-500 border-stone-200',
     },
-    error: { label: 'Error', className: 'bg-coral-500/20 text-coral-300 border-coral-500/30' },
+    error: { label: 'Error', className: 'bg-coral-500/10 text-coral-700 border-coral-500/30' },
   };
 
 /** Human-readable labels for auth modes. */
 export const AUTH_MODE_LABELS: Record<string, string> = {
-  managed_dm: 'Managed DM',
+  managed_dm: 'Login with OpenHuman',
   oauth: 'OAuth Sign-in',
-  bot_token: 'Bot Token',
-  api_key: 'API Key',
+  bot_token: 'Use your own Bot Token',
+  api_key: 'Use your own API Key',
 };
 
 /** Fallback definitions used when the core sidecar is unreachable. */
@@ -31,6 +31,12 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
     description: 'Send and receive messages via Telegram.',
     icon: 'telegram',
     auth_modes: [
+      {
+        mode: 'managed_dm',
+        description: 'Message the OpenHuman Telegram bot directly.',
+        fields: [],
+        auth_action: 'telegram_managed_dm',
+      },
       {
         mode: 'bot_token',
         description: 'Provide your own Telegram Bot token from @BotFather.',
@@ -51,12 +57,6 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
           },
         ],
         auth_action: undefined,
-      },
-      {
-        mode: 'managed_dm',
-        description: 'Message the OpenHuman Telegram bot directly.',
-        fields: [],
-        auth_action: 'telegram_managed_dm',
       },
     ],
     capabilities: ['send_text', 'receive_text', 'typing', 'draft_updates'],

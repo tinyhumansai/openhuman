@@ -154,7 +154,7 @@
 
   .app-dotted-canvas {
     background-color: transparent;
-    background-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.2) 1px, transparent 1px);
+    background-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.5) 1px, transparent 1px);
     background-size: 18px 18px;
     background-position: 0 0;
   }

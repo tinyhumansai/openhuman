@@ -31,11 +31,11 @@ const ChannelSelector = ({
   }, [channelConnections]);
 
   return (
-    <section className="rounded-xl border border-stone-800/60 bg-black/40 backdrop-blur-md p-4 space-y-4">
+    <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-white">Channels</h2>
+        <h2 className="text-sm font-semibold text-stone-900">Channels</h2>
         <p className="text-xs text-stone-400">
-          Active route: <span className="text-primary-300">{activeRoute}</span>
+          Active route: <span className="text-primary-600">{activeRoute}</span>
         </p>
       </div>
 
@@ -59,8 +59,8 @@ const ChannelSelector = ({
               onClick={() => onSelectChannel(channelId)}
               className={`flex-1 flex items-center justify-between gap-2 rounded-lg border px-4 py-3 text-sm transition-colors ${
                 isSelected
-                  ? 'border-primary-500/60 bg-primary-500/20 text-primary-200'
-                  : 'border-stone-700 bg-stone-900/30 text-stone-300 hover:border-stone-500'
+                  ? 'border-primary-500/60 bg-primary-50 text-primary-600'
+                  : 'border-stone-200 bg-stone-50 text-stone-600 hover:border-stone-300'
               }`}>
               <span className="flex items-center gap-2">
                 <span className="text-base">{CHANNEL_ICONS[def.icon] ?? ''}</span>

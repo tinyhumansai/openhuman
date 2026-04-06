@@ -8,9 +8,9 @@ import DiscordConfig from '../DiscordConfig';
 const discordDef = FALLBACK_DEFINITIONS.find(d => d.id === 'discord')!;
 
 describe('DiscordConfig', () => {
-  it('renders the Discord header', () => {
+  it('renders auth mode labels', () => {
     renderWithProviders(<DiscordConfig definition={discordDef} />);
-    expect(screen.getByText('Discord')).toBeInTheDocument();
+    expect(screen.getByText('OAuth Sign-in')).toBeInTheDocument();
   });
 
   it('renders both auth modes', () => {

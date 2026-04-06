@@ -26,6 +26,6 @@ describe('Channels page', () => {
   it('renders the Telegram config panel by default', async () => {
     renderWithProviders(<Channels />);
 
-    expect(await screen.findByText('Managed DM')).toBeInTheDocument();
+    expect(await screen.findByText('Login with OpenHuman')).toBeInTheDocument();
   });
 });

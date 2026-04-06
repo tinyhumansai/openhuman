@@ -63,6 +63,38 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 /// * `method` - The name of the method to invoke.
 /// * `params` - The JSON parameters for the method.
 pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Result<Value, String> {
+    let result = invoke_method_inner(state, method, params).await;
+
+    // If the RPC call failed due to an expired/invalid session token (401 from
+    // the backend), automatically clear the stored session so the frontend
+    // detects the logged-out state and redirects to login.
+    if let Err(ref msg) = result {
+        if is_session_expired_error(msg) {
+            log::warn!(
+                "[jsonrpc] backend returned 401 for method '{}' — clearing stored session",
+                method
+            );
+            if let Ok(config) = crate::openhuman::config::rpc::load_config_with_timeout().await {
+                let _ = crate::openhuman::credentials::rpc::clear_session(&config).await;
+            }
+        }
+    }
+
+    result
+}
+
+fn is_session_expired_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    (lower.contains("401") && lower.contains("unauthorized"))
+        || lower.contains("invalid token")
+        || msg.contains("SESSION_EXPIRED")
+}
+
+async fn invoke_method_inner(
+    state: AppState,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
     if let Some(schema) = all::schema_for_rpc_method(method) {
         let params_obj = params_to_object(params)?;
         all::validate_params(&schema, &params_obj)?;

@@ -1,71 +1,62 @@
 import { useCallback, useMemo, useState } from 'react';
 
 import { useChannelDefinitions } from '../../../hooks/useChannelDefinitions';
-import { AUTH_MODE_LABELS } from '../../../lib/channels/definitions';
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
-import { createChannelLinkToken } from '../../../services/api/authApi';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
-import { callCoreRpc } from '../../../services/coreRpcClient';
-import {
-  disconnectChannelConnection,
-  setChannelConnectionStatus,
-  setDefaultMessagingChannel,
-  upsertChannelConnection,
-} from '../../../store/channelConnectionsSlice';
+import { setDefaultMessagingChannel } from '../../../store/channelConnectionsSlice';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import type {
-  AuthModeSpec,
-  ChannelAuthMode,
   ChannelConnectionStatus,
+  ChannelDefinition,
   ChannelType,
 } from '../../../types/channels';
-import { BACKEND_URL, TELEGRAM_BOT_USERNAME } from '../../../utils/config';
-import { openUrl } from '../../../utils/openUrl';
-import ChannelFieldInput from '../../channels/ChannelFieldInput';
-import ChannelStatusBadge from '../../channels/ChannelStatusBadge';
+import ChannelSetupModal from '../../channels/ChannelSetupModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-function normalizeBaseUrl(baseUrl?: string): string {
-  return (baseUrl || 'https://api.tinyhumans.ai').trim().replace(/\/+$/, '');
+const CHANNEL_ICONS: Record<string, string> = {
+  telegram: '\u2708\uFE0F',
+  discord: '\uD83C\uDFAE',
+  web: '\uD83C\uDF10',
+};
+
+function statusDot(status: ChannelConnectionStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'bg-sage-500';
+    case 'connecting':
+      return 'bg-amber-500 animate-pulse';
+    case 'error':
+      return 'bg-coral-500';
+    default:
+      return 'bg-stone-300';
+  }
 }
 
-function buildManagedChannelLaunchUrl(
-  channel: ChannelType,
-  token: string,
-  launchUrl?: string
-): string | undefined {
-  if (launchUrl) return launchUrl;
-
-  if (channel === 'telegram') {
-    return `https://t.me/${encodeURIComponent(TELEGRAM_BOT_USERNAME)}?start=${encodeURIComponent(token)}`;
+function statusLabel(status: ChannelConnectionStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'Connected';
+    case 'connecting':
+      return 'Connecting';
+    case 'error':
+      return 'Error';
+    default:
+      return 'Not configured';
   }
-
-  if (channel === 'discord') {
-    return `${normalizeBaseUrl(BACKEND_URL)}/auth/discord/connect?linkToken=${encodeURIComponent(token)}`;
-  }
-
-  return undefined;
 }
 
-function buildManagedChannelInstruction(
-  channel: ChannelType,
-  token: string,
-  launchUrl?: string
-): string {
-  if (channel === 'telegram') {
-    return launchUrl
-      ? 'Continue in Telegram to finish linking your account.'
-      : `Open Telegram and message @${TELEGRAM_BOT_USERNAME} with this link token: ${token}`;
+function statusColor(status: ChannelConnectionStatus): string {
+  switch (status) {
+    case 'connected':
+      return 'text-sage-600';
+    case 'connecting':
+      return 'text-amber-600';
+    case 'error':
+      return 'text-coral-600';
+    default:
+      return 'text-stone-400';
   }
-
-  if (channel === 'discord') {
-    return launchUrl
-      ? 'Continue in Discord to finish linking your account.'
-      : `Use this Discord link token to continue linking your account: ${token}`;
-  }
-
-  return `Use this link token to continue: ${token}`;
 }
 
 const MessagingPanel = () => {
@@ -74,10 +65,13 @@ const MessagingPanel = () => {
   const channelConnections = useAppSelector(state => state.channelConnections);
   const { definitions, loading, error: loadError } = useChannelDefinitions();
 
-  const [error, setError] = useState<string | null>(null);
-  const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
-  const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
-  const [pendingInstruction, setPendingInstruction] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [channelModalDef, setChannelModalDef] = useState<ChannelDefinition | null>(null);
+
+  const configurableChannels = useMemo(
+    () => definitions.filter(d => d.id !== 'web'),
+    [definitions]
+  );
 
   const recommendedRoute = useMemo(() => {
     const channel = channelConnections.defaultMessagingChannel;
@@ -85,176 +79,30 @@ const MessagingPanel = () => {
     return authMode ? `${channel} via ${authMode}` : 'No active route';
   }, [channelConnections]);
 
-  const runBusy = useCallback(async (key: string, task: () => Promise<void>) => {
-    setBusyKeys(prev => ({ ...prev, [key]: true }));
-    setError(null);
-    try {
-      await task();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-    } finally {
-      setBusyKeys(prev => ({ ...prev, [key]: false }));
-    }
-  }, []);
+  const bestStatus = useCallback(
+    (channelId: ChannelType): ChannelConnectionStatus => {
+      const conns = channelConnections.connections[channelId];
+      if (!conns) return 'disconnected';
+      const statuses = Object.values(conns).map(c => c?.status ?? 'disconnected');
+      if (statuses.includes('connected')) return 'connected';
+      if (statuses.includes('connecting')) return 'connecting';
+      if (statuses.includes('error')) return 'error';
+      return 'disconnected';
+    },
+    [channelConnections]
+  );
 
   const handleSetDefaultChannel = useCallback(
     (channel: ChannelType) => {
       const key = `default:${channel}`;
-      void runBusy(key, async () => {
-        dispatch(setDefaultMessagingChannel(channel));
-        await channelConnectionsApi.updatePreferences(channel);
+      setBusy(prev => ({ ...prev, [key]: true }));
+      dispatch(setDefaultMessagingChannel(channel));
+      void channelConnectionsApi.updatePreferences(channel).finally(() => {
+        setBusy(prev => ({ ...prev, [key]: false }));
       });
     },
-    [dispatch, runBusy]
+    [dispatch]
   );
-
-  const updateField = useCallback((compositeKey: string, fieldKey: string, value: string) => {
-    setFieldValues(prev => ({
-      ...prev,
-      [compositeKey]: { ...(prev[compositeKey] ?? {}), [fieldKey]: value },
-    }));
-  }, []);
-
-  const handleConnect = useCallback(
-    (channel: ChannelType, spec: AuthModeSpec) => {
-      const key = `${channel}:${spec.mode}`;
-      void runBusy(key, async () => {
-        dispatch(
-          setChannelConnectionStatus({ channel, authMode: spec.mode, status: 'connecting' })
-        );
-
-        const credentials: Record<string, string> = {};
-        for (const field of spec.fields) {
-          const val = fieldValues[key]?.[field.key]?.trim() ?? '';
-          if (field.required && !val) {
-            dispatch(
-              setChannelConnectionStatus({
-                channel,
-                authMode: spec.mode,
-                status: 'error',
-                lastError: `${field.label} is required`,
-              })
-            );
-            return;
-          }
-          if (val) credentials[field.key] = val;
-        }
-
-        const isManagedLinkFlow =
-          (channel === 'telegram' && spec.mode === 'managed_dm') ||
-          (channel === 'discord' && spec.mode === 'oauth');
-
-        if (isManagedLinkFlow) {
-          try {
-            const link = await createChannelLinkToken(channel);
-            const launchUrl = buildManagedChannelLaunchUrl(channel, link.token, link.launchUrl);
-            const instruction = buildManagedChannelInstruction(channel, link.token, launchUrl);
-
-            dispatch(
-              upsertChannelConnection({
-                channel,
-                authMode: spec.mode,
-                patch: { status: 'connecting' },
-              })
-            );
-
-            setPendingInstruction(prev => ({ ...prev, [key]: instruction }));
-
-            if (launchUrl) {
-              try {
-                await openUrl(launchUrl);
-              } catch {
-                // Opening the URL failed — include the URL so the user can copy it manually.
-                setPendingInstruction(prev => ({
-                  ...prev,
-                  [key]: `${instruction} (URL: ${launchUrl})`,
-                }));
-              }
-            }
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            dispatch(
-              setChannelConnectionStatus({
-                channel,
-                authMode: spec.mode,
-                status: 'error',
-                lastError: msg,
-              })
-            );
-            throw e;
-          }
-          return;
-        }
-
-        const result = await channelConnectionsApi.connectChannel(channel, {
-          authMode: spec.mode,
-          credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
-        });
-
-        if (result.status === 'pending_auth' && result.auth_action) {
-          const instruction = result.message ?? `Initiate ${result.auth_action} flow`;
-
-          dispatch(
-            upsertChannelConnection({
-              channel,
-              authMode: spec.mode,
-              patch: { status: 'connecting' },
-            })
-          );
-
-          setPendingInstruction(prev => ({ ...prev, [key]: instruction }));
-
-          if (result.auth_action.includes('oauth')) {
-            try {
-              const oauthResponse = await callCoreRpc<{ result: { oauthUrl?: string } }>({
-                method: 'openhuman.auth.oauth_connect',
-                params: { provider: channel, skillId: channel },
-              });
-              if (oauthResponse.result?.oauthUrl) {
-                await openUrl(oauthResponse.result.oauthUrl);
-              }
-            } catch {
-              // OAuth URL fetch is best-effort.
-            }
-          }
-          return;
-        }
-
-        setPendingInstruction(prev => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        });
-
-        dispatch(
-          upsertChannelConnection({
-            channel,
-            authMode: spec.mode,
-            patch: { status: 'connected', lastError: undefined, capabilities: ['read', 'write'] },
-          })
-        );
-
-        if (result.restart_required) {
-          setError(result.message ?? 'Restart the service to activate the channel.');
-        }
-      });
-    },
-    [dispatch, fieldValues, runBusy]
-  );
-
-  const handleDisconnect = useCallback(
-    (channel: ChannelType, authMode: ChannelAuthMode) => {
-      const key = `${channel}:${authMode}`;
-      void runBusy(key, async () => {
-        await channelConnectionsApi.disconnectChannel(channel, authMode);
-        dispatch(disconnectChannelConnection({ channel, authMode }));
-      });
-    },
-    [dispatch, runBusy]
-  );
-
-  const displayError = error || loadError;
 
   return (
     <div>
@@ -274,7 +122,7 @@ const MessagingPanel = () => {
                   key={channelId}
                   type="button"
                   onClick={() => handleSetDefaultChannel(channelId)}
-                  disabled={busyKeys[busyKey]}
+                  disabled={busy[busyKey]}
                   className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                     selected
                       ? 'border-primary-500/60 bg-primary-50 text-primary-600'
@@ -290,9 +138,9 @@ const MessagingPanel = () => {
           </p>
         </section>
 
-        {displayError && (
+        {loadError && (
           <div className="rounded-lg border border-coral-500/40 bg-coral-500/10 px-4 py-3 text-sm text-coral-100">
-            {displayError}
+            {loadError}
           </div>
         )}
 
@@ -302,94 +150,66 @@ const MessagingPanel = () => {
           </div>
         )}
 
-        {!loading &&
-          definitions.map(def => {
-            const channelId = def.id as ChannelType;
-            return (
-              <section key={channelId} className="rounded-xl border border-stone-200 bg-white p-4">
-                <div className="mb-4">
-                  <h3 className="text-base font-semibold text-stone-900">{def.display_name}</h3>
-                  <p className="text-xs text-stone-400">{def.description}</p>
-                  {def.capabilities.length > 0 && (
-                    <div className="flex gap-1.5 mt-2">
-                      {def.capabilities.map(cap => (
-                        <span
-                          key={cap}
-                          className="px-1.5 py-0.5 text-[10px] rounded bg-stone-100 text-stone-500 border border-stone-200">
-                          {cap.replace(/_/g, ' ')}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
+        {/* Channel cards — click to open the shared ChannelSetupModal */}
+        {!loading && (
+          <section className="rounded-xl border border-stone-200 bg-white p-4 space-y-3">
+            <h3 className="text-sm font-semibold text-stone-900">Channel Integrations</h3>
+            <p className="text-xs text-stone-400">
+              Configure auth modes for each messaging channel.
+            </p>
+            <div className="space-y-2">
+              {configurableChannels.map(def => {
+                const channelId = def.id as ChannelType;
+                const status = bestStatus(channelId);
+                const icon = CHANNEL_ICONS[def.icon] ?? '';
 
-                <div className="space-y-3">
-                  {def.auth_modes.map(spec => {
-                    const compositeKey = `${channelId}:${spec.mode}`;
-                    const connection = channelConnections.connections[channelId]?.[spec.mode];
-                    const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
-
-                    const instruction = pendingInstruction[compositeKey];
-
-                    return (
-                      <div
-                        key={spec.mode}
-                        className="rounded-lg border border-stone-200 bg-stone-50 p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-stone-900">
-                              {AUTH_MODE_LABELS[spec.mode] ?? spec.mode}
-                            </p>
-                            <p className="text-xs text-stone-500 mt-1">{spec.description}</p>
-                            {connection?.lastError && (
-                              <p className="text-xs text-coral-300 mt-1">{connection.lastError}</p>
-                            )}
-                            {instruction && (
-                              <p className="text-xs text-primary-500 mt-1">{instruction}</p>
-                            )}
-                          </div>
-                          <ChannelStatusBadge status={status} />
+                return (
+                  <button
+                    key={channelId}
+                    type="button"
+                    onClick={() => setChannelModalDef(def)}
+                    className="w-full rounded-lg border border-stone-200 bg-stone-50 p-3 text-left transition-colors hover:bg-white hover:border-stone-300">
+                    <div className="flex items-center gap-3">
+                      <span className="text-lg flex-shrink-0">{icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-stone-900">
+                            {def.display_name}
+                          </span>
+                          <div
+                            className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot(status)}`}
+                          />
+                          <span className={`text-xs ${statusColor(status)}`}>
+                            {statusLabel(status)}
+                          </span>
                         </div>
-
-                        {spec.fields.length > 0 && (
-                          <div className="mt-3 space-y-2">
-                            {spec.fields.map(field => (
-                              <ChannelFieldInput
-                                key={field.key}
-                                field={field}
-                                value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                                onChange={value => updateField(compositeKey, field.key, value)}
-                                // placeholder={field.placeholder || field.label}
-                                // className="w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none focus:border-primary-500/60"
-                              />
-                            ))}
-                          </div>
-                        )}
-
-                        <div className="mt-3 flex gap-2">
-                          <button
-                            type="button"
-                            disabled={busyKeys[compositeKey]}
-                            onClick={() => handleConnect(channelId, spec)}
-                            className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                            {status === 'connected' ? 'Reconnect' : 'Connect'}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busyKeys[compositeKey] || status === 'disconnected'}
-                            onClick={() => handleDisconnect(channelId, spec.mode)}
-                            className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
-                            Disconnect
-                          </button>
-                        </div>
+                        <p className="text-xs text-stone-500 mt-0.5">{def.description}</p>
                       </div>
-                    );
-                  })}
-                </div>
-              </section>
-            );
-          })}
+                      <svg
+                        className="w-4 h-4 text-stone-400 flex-shrink-0"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 5l7 7-7 7"
+                        />
+                      </svg>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
+
+      {/* Shared channel config modal */}
+      {channelModalDef && (
+        <ChannelSetupModal definition={channelModalDef} onClose={() => setChannelModalDef(null)} />
+      )}
     </div>
   );
 };

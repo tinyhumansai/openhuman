@@ -53,6 +53,49 @@ struct TestParams {
     credentials: serde_json::Value,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramLoginCheckParams {
+    link_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendMessageParams {
+    channel: String,
+    message: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SendReactionParams {
+    channel: String,
+    reaction: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateThreadParams {
+    channel: String,
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateThreadParams {
+    channel: String,
+    thread_id: String,
+    action: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListThreadsParams {
+    channel: String,
+    #[serde(default)]
+    active: Option<bool>,
+}
+
 // ---------------------------------------------------------------------------
 // Public registry exports
 // ---------------------------------------------------------------------------
@@ -65,6 +108,13 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("disconnect"),
         schemas("status"),
         schemas("test"),
+        schemas("telegram_login_start"),
+        schemas("telegram_login_check"),
+        schemas("send_message"),
+        schemas("send_reaction"),
+        schemas("create_thread"),
+        schemas("update_thread"),
+        schemas("list_threads"),
     ]
 }
 
@@ -93,6 +143,34 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("test"),
             handler: handle_test,
+        },
+        RegisteredController {
+            schema: schemas("telegram_login_start"),
+            handler: handle_telegram_login_start,
+        },
+        RegisteredController {
+            schema: schemas("telegram_login_check"),
+            handler: handle_telegram_login_check,
+        },
+        RegisteredController {
+            schema: schemas("send_message"),
+            handler: handle_send_message,
+        },
+        RegisteredController {
+            schema: schemas("send_reaction"),
+            handler: handle_send_reaction,
+        },
+        RegisteredController {
+            schema: schemas("create_thread"),
+            handler: handle_create_thread,
+        },
+        RegisteredController {
+            schema: schemas("update_thread"),
+            handler: handle_update_thread,
+        },
+        RegisteredController {
+            schema: schemas("list_threads"),
+            handler: handle_list_threads,
         },
     ]
 }
@@ -173,6 +251,92 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "result",
                 "Test result with success flag and message.",
             )],
+        },
+        "telegram_login_start" => ControllerSchema {
+            namespace: "channels",
+            function: "telegram_login_start",
+            description:
+                "Create a Telegram link token and return the deep link URL for managed DM login.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "Object with linkToken, telegramUrl, and botUsername.",
+            )],
+        },
+        "telegram_login_check" => ControllerSchema {
+            namespace: "channels",
+            function: "telegram_login_check",
+            description: "Check whether the Telegram managed DM link has been completed.",
+            inputs: vec![required_string(
+                "linkToken",
+                "The link token returned by telegram_login_start.",
+            )],
+            outputs: vec![json_output(
+                "result",
+                "Object with linked (bool) and optional details.",
+            )],
+        },
+        "send_message" => ControllerSchema {
+            namespace: "channels",
+            function: "send_message",
+            description: "Send a rich message to a channel (text, photo, sticker, animation, buttons, reply).",
+            inputs: vec![
+                required_string("channel", "Channel identifier (e.g. telegram)."),
+                required_json(
+                    "message",
+                    "Message body with optional fields: text, parseMode, photoUrl, stickerFileId, animationUrl, buttons, replyToMessageId, threadId.",
+                ),
+            ],
+            outputs: vec![json_output("result", "Object with success flag and optional messageId.")],
+        },
+        "send_reaction" => ControllerSchema {
+            namespace: "channels",
+            function: "send_reaction",
+            description: "React to a message in a channel with an emoji.",
+            inputs: vec![
+                required_string("channel", "Channel identifier (e.g. telegram)."),
+                required_json(
+                    "reaction",
+                    "Reaction body: { messageId, emoji, chatId? }.",
+                ),
+            ],
+            outputs: vec![json_output("result", "Object with success flag.")],
+        },
+        "create_thread" => ControllerSchema {
+            namespace: "channels",
+            function: "create_thread",
+            description: "Create a new thread in a channel.",
+            inputs: vec![
+                required_string("channel", "Channel identifier (e.g. telegram)."),
+                required_string("title", "Thread title."),
+            ],
+            outputs: vec![json_output("result", "Object with success flag and optional threadId.")],
+        },
+        "update_thread" => ControllerSchema {
+            namespace: "channels",
+            function: "update_thread",
+            description: "Close or reopen a thread in a channel.",
+            inputs: vec![
+                required_string("channel", "Channel identifier (e.g. telegram)."),
+                required_string("threadId", "Thread identifier to update."),
+                required_string("action", "Action to perform: 'close' or 'reopen'."),
+            ],
+            outputs: vec![json_output("result", "Object with success flag.")],
+        },
+        "list_threads" => ControllerSchema {
+            namespace: "channels",
+            function: "list_threads",
+            description: "List threads in a channel, optionally filtered by active status.",
+            inputs: vec![
+                required_string("channel", "Channel identifier (e.g. telegram)."),
+                FieldSchema {
+                    name: "active",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "Optional filter: true for active threads, false for closed threads.",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("result", "Array of thread objects.")],
         },
         _ => ControllerSchema {
             namespace: "channels",
@@ -255,6 +419,69 @@ fn handle_test(params: Map<String, Value>) -> ControllerFuture {
             .parse()
             .map_err(|e: String| format!("invalid authMode: {e}"))?;
         to_json(ops::test_channel(&config, p.channel.trim(), mode, p.credentials).await?)
+    })
+}
+
+fn handle_telegram_login_start(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(ops::telegram_login_start(&config).await?)
+    })
+}
+
+fn handle_telegram_login_check(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<TelegramLoginCheckParams>(params)?;
+        to_json(ops::telegram_login_check(&config, p.link_token.trim()).await?)
+    })
+}
+
+fn handle_send_message(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<SendMessageParams>(params)?;
+        to_json(ops::channel_send_message(&config, p.channel.trim(), p.message).await?)
+    })
+}
+
+fn handle_send_reaction(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<SendReactionParams>(params)?;
+        to_json(ops::channel_send_reaction(&config, p.channel.trim(), p.reaction).await?)
+    })
+}
+
+fn handle_create_thread(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<CreateThreadParams>(params)?;
+        to_json(ops::channel_create_thread(&config, p.channel.trim(), p.title.trim()).await?)
+    })
+}
+
+fn handle_update_thread(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<UpdateThreadParams>(params)?;
+        to_json(
+            ops::channel_update_thread(
+                &config,
+                p.channel.trim(),
+                p.thread_id.trim(),
+                p.action.trim(),
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_list_threads(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<ListThreadsParams>(params)?;
+        to_json(ops::channel_list_threads(&config, p.channel.trim(), p.active).await?)
     })
 }
 

@@ -172,6 +172,12 @@ fn telegram_definition() -> ChannelDefinition {
         icon: "telegram",
         auth_modes: vec![
             AuthModeSpec {
+                mode: ChannelAuthMode::ManagedDm,
+                description: "Message the OpenHuman Telegram bot directly.",
+                fields: vec![],
+                auth_action: Some("telegram_managed_dm"),
+            },
+            AuthModeSpec {
                 mode: ChannelAuthMode::BotToken,
                 description: "Provide your own Telegram Bot token from @BotFather.",
                 fields: vec![
@@ -191,12 +197,6 @@ fn telegram_definition() -> ChannelDefinition {
                     },
                 ],
                 auth_action: None,
-            },
-            AuthModeSpec {
-                mode: ChannelAuthMode::ManagedDm,
-                description: "Message the OpenHuman Telegram bot directly.",
-                fields: vec![],
-                auth_action: Some("telegram_managed_dm"),
             },
         ],
         capabilities: vec![
