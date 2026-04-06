@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use crate::openhuman::config::Config;
 
 use super::audio_capture::{self, RecordingHandle};
-use super::hotkey::{self, ActivationMode, HotkeyEvent, HotkeyListenerHandle};
+use super::hotkey::{self, ActivationMode, HotkeyEvent};
 use super::text_input;
 
 const LOG_PREFIX: &str = "[voice_server]";
