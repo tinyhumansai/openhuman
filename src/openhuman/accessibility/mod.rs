@@ -27,6 +27,7 @@ pub use globe::{
     GlobeHotkeyStatus,
 };
 pub use keys::{is_escape_key_down, is_tab_key_down};
+pub use helper::precompile_helper_background;
 pub use overlay::{hide_overlay, quit_overlay, show_overlay};
 pub use paste::apply_text_to_focused_field;
 #[cfg(target_os = "macos")]

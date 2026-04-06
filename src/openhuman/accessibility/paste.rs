@@ -152,12 +152,16 @@ fn clipboard_save_osascript() -> Option<String> {
 }
 
 /// Fallback insertion: direct AXValue write via AppleScript.
+/// Reads `AXSelectedTextRange` to insert at the cursor position rather than
+/// always appending to the end of the field.
 #[cfg(target_os = "macos")]
 fn apply_text_via_axvalue(text: &str) -> Result<(), String> {
     let escaped = text
         .replace('\\', "\\\\")
         .replace('\"', "\\\"")
         .replace('\n', " ");
+    // AXSelectedTextRange.location is 0-based; AppleScript string indices are 1-based.
+    // "text 1 thru 0" evaluates to "" in AppleScript — correct for cursor-at-start.
     let script = format!(
         r##"
 tell application "System Events"
@@ -168,16 +172,29 @@ tell application "System Events"
     set currentValue to value of attribute "AXValue" of focusedElement as text
   end try
   if currentValue is "missing value" then set currentValue to ""
-  if currentValue is "" then
-    try
-      set currentValue to value of attribute "AXSelectedText" of focusedElement as text
-    end try
-    if currentValue is "missing value" then set currentValue to ""
+  -- Read cursor position from AXSelectedTextRange (0-based location).
+  set insertionOffset to -1
+  try
+    set selRange to value of attribute "AXSelectedTextRange" of focusedElement
+    set insertionOffset to location of selRange
+  end try
+  -- Insert at cursor when available, otherwise append.
+  if insertionOffset >= 0 and insertionOffset <= (length of currentValue) then
+    if insertionOffset = 0 then
+      set value of attribute "AXValue" of focusedElement to ("{}" & currentValue)
+    else if insertionOffset >= (length of currentValue) then
+      set value of attribute "AXValue" of focusedElement to (currentValue & "{}")
+    else
+      set beforeCursor to text 1 thru insertionOffset of currentValue
+      set afterCursor to text (insertionOffset + 1) thru -1 of currentValue
+      set value of attribute "AXValue" of focusedElement to (beforeCursor & "{}" & afterCursor)
+    end if
+  else
+    set value of attribute "AXValue" of focusedElement to (currentValue & "{}")
   end if
-  set value of attribute "AXValue" of focusedElement to (currentValue & "{}")
 end tell
 "##,
-        escaped
+        escaped, escaped, escaped, escaped
     );
     let output = std::process::Command::new("osascript")
         .arg("-e")

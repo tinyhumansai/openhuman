@@ -2,60 +2,109 @@
 //!
 //! Replaces the separate osascript subprocess spawns and standalone overlay binary
 //! with a single persistent Swift process communicating via stdin/stdout JSON.
+//!
+//! ## Mutex architecture
+//!
+//! Three globals prevent deadlock between fire-and-forget (show/hide) and
+//! request-response (focus/paste) callers:
+//!
+//! - `UNIFIED_HELPER`: guards the process handle + stdin writer.
+//!   Held only for the brief duration of a stdin write (~μs).
+//! - `RESPONSE_RX`: guards the mpsc receiver that the background reader
+//!   thread populates.  Held only for the duration of `recv_timeout`.
+//! - `RECV_SERIALISER`: held for the entire send+receive round-trip so that
+//!   two callers cannot interleave their reads.
+//!
+//! Fire-and-forget callers never touch `RESPONSE_RX` or `RECV_SERIALISER`,
+//! so `show`/`hide` can proceed while a `focus` query is in-flight.
 
 #[cfg(target_os = "macos")]
 use once_cell::sync::Lazy;
 #[cfg(target_os = "macos")]
 use std::io::{BufRead, BufReader, Write};
 #[cfg(target_os = "macos")]
-use std::sync::Mutex as StdMutex;
+use std::sync::{mpsc, Mutex as StdMutex};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 #[cfg(target_os = "macos")]
 use std::{
     fs,
     path::PathBuf,
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
 };
 
+/// Process handle + stdin writer.  Held only briefly for writes.
 #[cfg(target_os = "macos")]
 struct UnifiedHelperProcess {
     child: Child,
     stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
 }
 
+/// Guards the process handle and stdin.
 #[cfg(target_os = "macos")]
 static UNIFIED_HELPER: Lazy<StdMutex<Option<UnifiedHelperProcess>>> =
     Lazy::new(|| StdMutex::new(None));
 
+/// Channel receiver fed by the background stdout-reader thread.
+/// Separate from UNIFIED_HELPER so fire-and-forget callers never contend here.
+#[cfg(target_os = "macos")]
+static RESPONSE_RX: Lazy<StdMutex<Option<mpsc::Receiver<String>>>> =
+    Lazy::new(|| StdMutex::new(None));
+
+/// Serialises request/response pairs so two callers cannot interleave reads.
+/// Fire-and-forget callers never acquire this lock.
+#[cfg(target_os = "macos")]
+static RECV_SERIALISER: Lazy<StdMutex<()>> = Lazy::new(|| StdMutex::new(()));
+
+/// Timeout for a single request/response round-trip with the Swift helper.
+#[cfg(target_os = "macos")]
+const HELPER_RECV_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// Send a JSON request and read a JSON response (one line each).
 /// Used for `focus` and `paste` commands that produce a response.
+///
+/// Holds `RECV_SERIALISER` for the full round-trip, but releases
+/// `UNIFIED_HELPER` before blocking on the channel recv, so fire-and-forget
+/// callers (`show`/`hide`) are never blocked by an in-flight focus query.
 #[cfg(target_os = "macos")]
 pub(super) fn helper_send_receive(
     request: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    ensure_helper_running()?;
-    let mut guard = UNIFIED_HELPER
+    // Serialise request/response pairs — prevents interleaved reads.
+    let _rr_guard = RECV_SERIALISER
         .lock()
-        .map_err(|_| "unified helper lock poisoned".to_string())?;
-    let helper = guard
-        .as_mut()
-        .ok_or_else(|| "unified helper unavailable".to_string())?;
+        .map_err(|_| "recv serialiser lock poisoned".to_string())?;
 
-    // Write request
-    let line = request.to_string();
-    helper
-        .stdin
-        .write_all(line.as_bytes())
-        .and_then(|_| helper.stdin.write_all(b"\n"))
-        .and_then(|_| helper.stdin.flush())
-        .map_err(|e| format!("failed to write to helper stdin: {e}"))?;
+    ensure_helper_running()?;
 
-    // Read response (one line)
-    let mut response_line = String::new();
-    helper
-        .stdout
-        .read_line(&mut response_line)
-        .map_err(|e| format!("failed to read helper stdout: {e}"))?;
+    // Write the request, holding UNIFIED_HELPER only for this brief write.
+    {
+        let mut guard = UNIFIED_HELPER
+            .lock()
+            .map_err(|_| "unified helper lock poisoned".to_string())?;
+        let helper = guard
+            .as_mut()
+            .ok_or_else(|| "unified helper unavailable".to_string())?;
+        let line = request.to_string();
+        helper
+            .stdin
+            .write_all(line.as_bytes())
+            .and_then(|_| helper.stdin.write_all(b"\n"))
+            .and_then(|_| helper.stdin.flush())
+            .map_err(|e| format!("failed to write to helper stdin: {e}"))?;
+    } // UNIFIED_HELPER released here — fire-and-forget callers can proceed
+
+    // Read the response via the channel (bounded timeout, no mutex held on UNIFIED_HELPER).
+    let response_line = {
+        let rx_guard = RESPONSE_RX
+            .lock()
+            .map_err(|_| "response rx lock poisoned".to_string())?;
+        let rx = rx_guard
+            .as_ref()
+            .ok_or_else(|| "response channel unavailable".to_string())?;
+        rx.recv_timeout(HELPER_RECV_TIMEOUT)
+            .map_err(|e| format!("helper response timed out or channel closed: {e}"))?
+    };
 
     if response_line.trim().is_empty() {
         return Err("helper returned empty response".to_string());
@@ -67,6 +116,7 @@ pub(super) fn helper_send_receive(
 
 /// Send a JSON request without waiting for a response.
 /// Used for `show`, `hide`, and `quit` commands.
+/// Only acquires UNIFIED_HELPER (for the stdin write) — never blocks on I/O.
 #[cfg(target_os = "macos")]
 pub(super) fn helper_send_fire_and_forget(request: &serde_json::Value) -> Result<(), String> {
     ensure_helper_running()?;
@@ -90,6 +140,13 @@ pub(super) fn helper_send_fire_and_forget(request: &serde_json::Value) -> Result
 /// Quit and clean up the helper process.
 #[cfg(target_os = "macos")]
 pub(super) fn helper_quit() -> Result<(), String> {
+    // Drop the response channel first so the reader thread exits cleanly.
+    {
+        let mut rx_guard = RESPONSE_RX
+            .lock()
+            .map_err(|_| "response rx lock poisoned".to_string())?;
+        rx_guard.take();
+    }
     let mut guard = UNIFIED_HELPER
         .lock()
         .map_err(|_| "unified helper lock poisoned".to_string())?;
@@ -103,6 +160,8 @@ pub(super) fn helper_quit() -> Result<(), String> {
     Ok(())
 }
 
+/// Ensure the helper process is running.  Spawns it (and the stdout reader
+/// thread) if not yet started or if it has exited unexpectedly.
 #[cfg(target_os = "macos")]
 fn ensure_helper_running() -> Result<(), String> {
     let mut guard = UNIFIED_HELPER
@@ -120,6 +179,10 @@ fn ensure_helper_running() -> Result<(), String> {
         }
         log::debug!("[accessibility] unified helper exited, restarting");
         *guard = None;
+        // Also drop the stale receiver so a new one will be created below.
+        if let Ok(mut rx_guard) = RESPONSE_RX.lock() {
+            rx_guard.take();
+        }
     }
 
     let binary_path = ensure_helper_binary()?;
@@ -139,14 +202,65 @@ fn ensure_helper_running() -> Result<(), String> {
         .take()
         .ok_or_else(|| "failed to capture helper stdout".to_string())?;
 
-    *guard = Some(UnifiedHelperProcess {
-        child,
-        stdin,
-        stdout: BufReader::new(stdout),
+    // Spawn a background thread that continuously reads lines from the helper's
+    // stdout and forwards them into the channel.  The thread exits when the
+    // sender is dropped (i.e. when helper_quit drops RESPONSE_RX) or when the
+    // process closes its stdout.
+    let (tx, rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // EOF — helper exited
+                Ok(_) => {
+                    let trimmed = line.trim().to_string();
+                    if !trimmed.is_empty() && tx.send(trimmed).is_err() {
+                        break; // Receiver dropped — time to exit
+                    }
+                }
+                Err(e) => {
+                    log::debug!("[accessibility] helper stdout reader error: {e}");
+                    break;
+                }
+            }
+        }
+        log::debug!("[accessibility] helper stdout reader thread exiting");
     });
+
+    // Store the new receiver.
+    if let Ok(mut rx_guard) = RESPONSE_RX.lock() {
+        *rx_guard = Some(rx);
+    }
+
+    *guard = Some(UnifiedHelperProcess { child, stdin });
     log::debug!("[accessibility] unified helper started");
     Ok(())
 }
+
+/// Compile the Swift helper binary in the background so the first overlay
+/// request does not incur the compile latency.  Safe to call multiple times;
+/// subsequent calls are no-ops (the binary is cached by `ensure_helper_binary`).
+#[cfg(target_os = "macos")]
+pub fn precompile_helper_background() {
+    std::thread::spawn(|| {
+        log::debug!("[accessibility] precompile_helper_background: starting");
+        match ensure_helper_binary() {
+            Ok(path) => log::debug!(
+                "[accessibility] helper binary ready: {}",
+                path.display()
+            ),
+            Err(e) => log::warn!(
+                "[accessibility] helper precompile failed (will retry on first use): {e}"
+            ),
+        }
+    });
+}
+
+/// No-op on non-macOS platforms.
+#[cfg(not(target_os = "macos"))]
+pub fn precompile_helper_background() {}
 
 #[cfg(target_os = "macos")]
 fn ensure_helper_binary() -> Result<PathBuf, String> {
@@ -479,11 +593,31 @@ func pasteText(id: String?, text: String) -> [String: Any] {
 final class OverlayController {
     private var panel: NSPanel?
     private var textField: NSTextField?
+    private var hintField: NSTextField?
     private var hideWorkItem: DispatchWorkItem?
 
     func show(x: CGFloat, yTop: CGFloat, width: CGFloat, height: CGFloat, text: String, ttlMs: Int) {
-        let panelWidth = min(420, max(140, CGFloat(text.count) * 7 + 26))
-        let panelHeight: CGFloat = 26
+        // Detect current system appearance for contrast-appropriate colors.
+        let isDark: Bool = {
+            if #available(macOS 10.14, *) {
+                return NSApp.effectiveAppearance
+                    .bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            }
+            return false
+        }()
+        let bgColor = isDark
+            ? NSColor(white: 0.92, alpha: 0.82)   // light badge on dark background
+            : NSColor(white: 0.10, alpha: 0.82)   // dark badge on light background
+        let textColor = isDark
+            ? NSColor(white: 0.08, alpha: 0.95)
+            : NSColor(white: 1.0, alpha: 0.95)
+
+        // Measure badge width from actual text metrics instead of char-count estimate.
+        let font = NSFont.systemFont(ofSize: 13)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let measured = (text as NSString).size(withAttributes: attrs)
+        let panelWidth = min(480, max(140, ceil(measured.width) + 80))  // 80: left pad + hint zone
+        let panelHeight: CGFloat = 28
 
         // Multi-monitor: find the screen containing the target or mouse cursor.
         let screen: NSScreen? = {
@@ -537,23 +671,38 @@ final class OverlayController {
             let content = NSView(frame: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight))
             content.wantsLayer = true
             content.layer?.cornerRadius = 6
-            content.layer?.backgroundColor = NSColor(white: 0.08, alpha: 0.35).cgColor
+            content.layer?.backgroundColor = bgColor.cgColor
             p.contentView = content
 
             let label = NSTextField(labelWithString: text)
-            label.frame = NSRect(x: 8, y: 4, width: panelWidth - 12, height: 18)
-            label.textColor = NSColor(white: 1.0, alpha: 0.46)
-            label.font = NSFont.systemFont(ofSize: 13)
+            label.frame = NSRect(x: 8, y: 5, width: panelWidth - 62, height: 18)
+            label.textColor = textColor
+            label.font = font
             label.lineBreakMode = .byTruncatingTail
             content.addSubview(label)
 
+            // Keyboard hint: "Tab ↵" at the right edge.
+            let hint = NSTextField(labelWithString: "Tab ↵")
+            hint.frame = NSRect(x: panelWidth - 54, y: 5, width: 48, height: 18)
+            hint.textColor = NSColor(white: isDark ? 0.35 : 0.65, alpha: 1.0)
+            hint.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+            hint.alignment = .right
+            content.addSubview(hint)
+
             panel = p
             textField = label
+            hintField = hint
         }
+
+        // Re-apply colors on every show so runtime appearance changes are reflected.
+        panel?.contentView?.layer?.backgroundColor = bgColor.cgColor
+        textField?.textColor = textColor
+        hintField?.textColor = NSColor(white: isDark ? 0.35 : 0.65, alpha: 1.0)
 
         panel?.setFrame(NSRect(x: originX, y: originYCocoa, width: panelWidth, height: panelHeight), display: true)
         panel?.contentView?.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
-        textField?.frame = NSRect(x: 8, y: 4, width: panelWidth - 12, height: 18)
+        textField?.frame = NSRect(x: 8, y: 5, width: panelWidth - 62, height: 18)
+        hintField?.frame = NSRect(x: panelWidth - 54, y: 5, width: 48, height: 18)
         textField?.stringValue = text
         panel?.orderFrontRegardless()
 

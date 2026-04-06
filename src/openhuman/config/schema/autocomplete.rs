@@ -19,6 +19,8 @@ pub struct AutocompleteConfig {
     pub disabled_apps: Vec<String>,
     #[serde(default = "default_accept_with_tab")]
     pub accept_with_tab: bool,
+    #[serde(default = "default_overlay_ttl_ms")]
+    pub overlay_ttl_ms: u32,
 }
 
 fn default_enabled() -> bool {
@@ -41,6 +43,10 @@ fn default_accept_with_tab() -> bool {
     true
 }
 
+fn default_overlay_ttl_ms() -> u32 {
+    1100
+}
+
 impl Default for AutocompleteConfig {
     fn default() -> Self {
         Self {
@@ -52,6 +58,7 @@ impl Default for AutocompleteConfig {
             style_examples: Vec::new(),
             disabled_apps: vec![],
             accept_with_tab: default_accept_with_tab(),
+            overlay_ttl_ms: default_overlay_ttl_ms(),
         }
     }
 }

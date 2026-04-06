@@ -81,6 +81,7 @@ describe('AutocompletePanel', () => {
         style_examples: [],
         disabled_apps: [],
         accept_with_tab: true,
+        overlay_ttl_ms: 1100,
       },
     };
 

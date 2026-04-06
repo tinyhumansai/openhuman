@@ -947,6 +947,7 @@ export interface AutocompleteSetStyleParams {
   style_examples?: string[];
   disabled_apps?: string[];
   accept_with_tab?: boolean;
+  overlay_ttl_ms?: number;
 }
 
 export interface AutocompleteConfig {
@@ -958,6 +959,7 @@ export interface AutocompleteConfig {
   style_examples: string[];
   disabled_apps: string[];
   accept_with_tab: boolean;
+  overlay_ttl_ms: number;
 }
 
 export interface AutocompleteSetStyleResult {

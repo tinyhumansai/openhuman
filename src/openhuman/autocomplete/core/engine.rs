@@ -2,7 +2,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::local_ai;
 use chrono::Utc;
 use once_cell::sync::Lazy;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{self, Duration, Instant};
@@ -107,6 +107,13 @@ impl AutocompleteEngine {
             return Err("autocomplete is only supported on macOS".to_string());
         }
 
+        // Kick off Swift helper compilation in the background so the first
+        // suggestion request does not stall waiting for `swiftc`.
+        static PRECOMPILE_ONCE: Once = Once::new();
+        PRECOMPILE_ONCE.call_once(|| {
+            crate::openhuman::accessibility::precompile_helper_background();
+        });
+
         let config = Config::load_or_init()
             .await
             .map_err(|e| format!("failed to load config: {e}"))?;
@@ -180,6 +187,7 @@ impl AutocompleteEngine {
                                         Some(&error_message),
                                         None,
                                         None,
+                                        700,
                                     );
                                 }
                             }
@@ -346,7 +354,7 @@ impl AutocompleteEngine {
             state.last_overlay_signature = None;
         }
         if should_apply {
-            show_overflow_badge("accepted", Some(&cleaned), None, None, None);
+            show_overflow_badge("accepted", Some(&cleaned), None, None, None, 700);
         }
 
         // Persist acceptance for personalisation (fire-and-forget).
@@ -424,6 +432,9 @@ impl AutocompleteEngine {
         }
         if let Some(accept_with_tab) = params.accept_with_tab {
             config.autocomplete.accept_with_tab = accept_with_tab;
+        }
+        if let Some(overlay_ttl_ms) = params.overlay_ttl_ms {
+            config.autocomplete.overlay_ttl_ms = overlay_ttl_ms.clamp(300, 10_000);
         }
         config.save().await.map_err(|e| e.to_string())?;
 
@@ -620,7 +631,8 @@ impl AutocompleteEngine {
         }
         state.suggestion = Some(AutocompleteSuggestion {
             value: suggestion.clone(),
-            confidence: 0.72,
+            // TODO: surface real confidence when local_ai::inline_complete returns it.
+            confidence: 0.0,
         });
         state.phase = "ready".to_string();
         state.last_error = None;
@@ -631,6 +643,7 @@ impl AutocompleteEngine {
         );
         if !is_in_app && state.last_overlay_signature.as_deref() != Some(ready_signature.as_str()) {
             state.last_overlay_signature = Some(ready_signature);
+            let overlay_ttl_ms = config.autocomplete.overlay_ttl_ms;
             drop(state);
             show_overflow_badge(
                 "ready",
@@ -638,6 +651,7 @@ impl AutocompleteEngine {
                 None,
                 app_name.as_deref(),
                 focused.bounds.as_ref(),
+                overlay_ttl_ms,
             );
             return Ok(());
         }
@@ -723,7 +737,7 @@ impl AutocompleteEngine {
                         .unwrap_or_default()
                         .to_lowercase();
                     if !app_lower.contains("openhuman") {
-                        show_overflow_badge("accepted", Some(&cleaned), None, None, None);
+                        show_overflow_badge("accepted", Some(&cleaned), None, None, None, 700);
                     }
                 }
 
@@ -783,7 +797,7 @@ impl AutocompleteEngine {
                 .unwrap_or_default()
                 .to_lowercase();
             if !app_lower.contains("openhuman") {
-                show_overflow_badge("rejected", Some(&value), None, None, None);
+                show_overflow_badge("rejected", Some(&value), None, None, None, 700);
             }
         }
         Ok(())

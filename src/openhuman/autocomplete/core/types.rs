@@ -92,6 +92,7 @@ pub struct AutocompleteSetStyleParams {
     pub style_examples: Option<Vec<String>>,
     pub disabled_apps: Option<Vec<String>>,
     pub accept_with_tab: Option<bool>,
+    pub overlay_ttl_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

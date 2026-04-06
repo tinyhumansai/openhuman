@@ -28,6 +28,7 @@ const DEFAULT_CONFIG: AutocompleteConfig = {
   style_examples: [],
   disabled_apps: [],
   accept_with_tab: true,
+  overlay_ttl_ms: 1100,
 };
 
 const MAX_LOG_ENTRIES = 200;
@@ -56,6 +57,10 @@ const parseAutocompleteConfig = (raw: unknown): AutocompleteConfig => {
       typeof value.accept_with_tab === 'boolean'
         ? value.accept_with_tab
         : DEFAULT_CONFIG.accept_with_tab,
+    overlay_ttl_ms:
+      typeof value.overlay_ttl_ms === 'number'
+        ? value.overlay_ttl_ms
+        : DEFAULT_CONFIG.overlay_ttl_ms,
   };
 };
 
@@ -77,6 +82,7 @@ const AutocompletePanel = () => {
     DEFAULT_CONFIG.disabled_apps.join('\n')
   );
   const [acceptWithTab, setAcceptWithTab] = useState<boolean>(DEFAULT_CONFIG.accept_with_tab);
+  const [overlayTtlMs, setOverlayTtlMs] = useState<string>(String(DEFAULT_CONFIG.overlay_ttl_ms));
   const [contextOverride, setContextOverride] = useState<string>('');
   const [focusDebug, setFocusDebug] = useState<string>('');
   const [logs, setLogs] = useState<string[]>([]);
@@ -153,6 +159,7 @@ const AutocompletePanel = () => {
       setStyleExamplesText(config.style_examples.join('\n'));
       setDisabledAppsText(config.disabled_apps.join('\n'));
       setAcceptWithTab(config.accept_with_tab);
+      setOverlayTtlMs(String(config.overlay_ttl_ms));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load autocomplete settings');
     } finally {
@@ -253,6 +260,7 @@ const AutocompletePanel = () => {
       appendUiLog('saving autocomplete settings');
       const debounce = Number(debounceMs);
       const max = Number(maxChars);
+      const ttl = Number(overlayTtlMs);
       const response = await openhumanAutocompleteSetStyle({
         enabled,
         debounce_ms: Number.isFinite(debounce) ? Math.min(Math.max(debounce, 50), 2000) : 120,
@@ -268,6 +276,7 @@ const AutocompletePanel = () => {
           .map(entry => entry.trim())
           .filter(Boolean),
         accept_with_tab: acceptWithTab,
+        overlay_ttl_ms: Number.isFinite(ttl) ? Math.min(Math.max(ttl, 300), 10000) : 1100,
       });
 
       setEnabled(response.result.config.enabled);
@@ -278,6 +287,7 @@ const AutocompletePanel = () => {
       setStyleExamplesText(response.result.config.style_examples.join('\n'));
       setDisabledAppsText(response.result.config.disabled_apps.join('\n'));
       setAcceptWithTab(response.result.config.accept_with_tab);
+      setOverlayTtlMs(String(response.result.config.overlay_ttl_ms));
       appendLogs(response.logs);
       setMessage('Autocomplete settings saved.');
       await refreshStatus();
@@ -504,6 +514,18 @@ const AutocompletePanel = () => {
               step={8}
               value={maxChars}
               onChange={event => setMaxChars(event.target.value)}
+              className="w-28 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700"
+            />
+          </label>
+          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
+            <span className="text-sm text-stone-700">Overlay TTL (ms)</span>
+            <input
+              type="number"
+              min={300}
+              max={10000}
+              step={100}
+              value={overlayTtlMs}
+              onChange={event => setOverlayTtlMs(event.target.value)}
               className="w-28 rounded border border-stone-300 bg-white px-2 py-1 text-xs text-stone-700"
             />
           </label>
