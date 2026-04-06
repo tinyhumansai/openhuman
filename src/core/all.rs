@@ -68,6 +68,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
     controllers.extend(crate::openhuman::billing::all_billing_registered_controllers());
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
+    controllers
+        .extend(crate::openhuman::text_input::all_text_input_registered_controllers());
     controllers.extend(crate::openhuman::voice::all_voice_registered_controllers());
     controllers.extend(crate::openhuman::subconscious::all_subconscious_registered_controllers());
     controllers.extend(crate::openhuman::webhooks::all_webhooks_registered_controllers());
@@ -104,6 +106,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
     schemas.extend(crate::openhuman::team::all_team_controller_schemas());
+    schemas.extend(crate::openhuman::text_input::all_text_input_controller_schemas());
     schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
     schemas.extend(crate::openhuman::subconscious::all_subconscious_controller_schemas());
     schemas.extend(crate::openhuman::webhooks::all_webhooks_controller_schemas());
@@ -147,6 +150,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "team" => Some("Team member management, invites, and role changes via the backend."),
         "voice" => Some("Speech-to-text and text-to-speech using local models."),
         "subconscious" => Some("Periodic local-model background awareness loop."),
+        "text_input" => {
+            Some("Read, insert, and preview text in the OS-focused input field.")
+        }
         "webhooks" => {
             Some("Webhook tunnel registrations and captured request/response debug logs.")
         }

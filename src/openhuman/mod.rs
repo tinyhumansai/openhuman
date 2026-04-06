@@ -44,6 +44,7 @@ pub mod skills;
 pub mod socket;
 pub mod subconscious;
 pub mod team;
+pub mod text_input;
 pub mod tool_timeout;
 pub mod tools;
 pub mod util;
