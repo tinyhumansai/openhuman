@@ -254,6 +254,85 @@ fn encrypt_optional_secret(
     Ok(())
 }
 
+/// Reads the authenticated user's ID directly from `auth-profiles.json` without
+/// pulling in the full credentials module.  This avoids a dependency cycle from
+/// config → credentials and keeps the read lightweight (single file, no locks
+/// needed for a read-only snapshot).
+///
+/// Returns `Some(user_id)` when the active `app-session` profile carries a
+/// non-empty `user_id` in its metadata map.
+fn read_authenticated_user_id(openhuman_dir: &Path) -> Option<String> {
+    let profiles_path = openhuman_dir.join("auth-profiles.json");
+    let bytes = match std::fs::read(&profiles_path) {
+        Ok(b) if !b.is_empty() => b,
+        _ => return None,
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+
+    // Resolve the active profile id for the "app-session" provider.
+    let active_profile_id = parsed
+        .get("active_profiles")
+        .and_then(|ap| ap.get("app-session"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("app-session:default");
+
+    // Look up the profile entry and extract `metadata.user_id`.
+    parsed
+        .get("profiles")
+        .and_then(|profiles| profiles.get(active_profile_id))
+        .and_then(|profile| {
+            // Only consider profiles that carry a non-empty token (i.e. actually
+            // authenticated).
+            let has_token = profile
+                .get("token")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.trim().is_empty());
+            if !has_token {
+                return None;
+            }
+            profile.get("metadata")
+        })
+        .and_then(|meta| meta.get("user_id"))
+        .and_then(|v| v.as_str())
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| id.trim().to_string())
+}
+
+/// If an authenticated user is detected, scopes `workspace_dir` under
+/// `{openhuman_dir}/users/{user_id}/workspace` so that each user gets
+/// isolated workspace data.  Shared resources (models, binaries) live
+/// outside `workspace_dir` and remain unaffected.
+async fn maybe_scope_workspace_to_user(
+    config: &mut Config,
+    openhuman_dir: &Path,
+) -> Result<()> {
+    if let Some(user_id) = read_authenticated_user_id(openhuman_dir) {
+        let user_workspace = openhuman_dir
+            .join("users")
+            .join(&user_id)
+            .join("workspace");
+        fs::create_dir_all(&user_workspace)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create user workspace directory: {}",
+                    user_workspace.display()
+                )
+            })?;
+        tracing::debug!(
+            user_id = %user_id,
+            workspace = %user_workspace.display(),
+            "Workspace scoped to authenticated user"
+        );
+        config.workspace_dir = user_workspace;
+    }
+    Ok(())
+}
+
 fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
     // Legacy defaults blocked both terminal and code, which prevented Codex/CLI usage.
     // Migrate only the exact legacy default so custom user preferences remain untouched.
@@ -364,6 +443,7 @@ impl Config {
             }
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             config.apply_env_overrides();
+            maybe_scope_workspace_to_user(&mut config, &openhuman_dir).await?;
             tracing::info!(
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
@@ -385,6 +465,7 @@ impl Config {
             }
 
             config.apply_env_overrides();
+            maybe_scope_workspace_to_user(&mut config, &openhuman_dir).await?;
             tracing::info!(
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
@@ -810,5 +891,106 @@ impl Config {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: write a minimal auth-profiles.json with an app-session profile.
+    fn write_auth_profiles(dir: &Path, user_id: Option<&str>, has_token: bool) {
+        let token_value = if has_token { "\"jwt-abc\"" } else { "null" };
+        let metadata = match user_id {
+            Some(id) => format!("{{ \"user_id\": \"{id}\" }}"),
+            None => "{}".to_string(),
+        };
+        let json = format!(
+            r#"{{
+  "schema_version": 1,
+  "updated_at": "2026-01-01T00:00:00Z",
+  "active_profiles": {{ "app-session": "app-session:default" }},
+  "profiles": {{
+    "app-session:default": {{
+      "provider": "app-session",
+      "profile_name": "default",
+      "kind": "token",
+      "token": {token_value},
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:00:00Z",
+      "metadata": {metadata}
+    }}
+  }}
+}}"#
+        );
+        std::fs::write(dir.join("auth-profiles.json"), json).unwrap();
+    }
+
+    #[test]
+    fn read_user_id_returns_none_when_no_profiles_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(read_authenticated_user_id(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn read_user_id_returns_none_when_no_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_auth_profiles(tmp.path(), Some("user-123"), false);
+        assert!(read_authenticated_user_id(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn read_user_id_returns_none_when_no_user_id_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_auth_profiles(tmp.path(), None, true);
+        assert!(read_authenticated_user_id(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn read_user_id_returns_id_when_authenticated() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_auth_profiles(tmp.path(), Some("user-456"), true);
+        assert_eq!(
+            read_authenticated_user_id(tmp.path()),
+            Some("user-456".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn scope_workspace_to_user_creates_user_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let openhuman_dir = tmp.path();
+        write_auth_profiles(openhuman_dir, Some("u-abc"), true);
+
+        let mut config = Config::default();
+        config.workspace_dir = openhuman_dir.join("workspace");
+
+        maybe_scope_workspace_to_user(&mut config, openhuman_dir)
+            .await
+            .unwrap();
+
+        let expected = openhuman_dir
+            .join("users")
+            .join("u-abc")
+            .join("workspace");
+        assert_eq!(config.workspace_dir, expected);
+        assert!(expected.exists());
+    }
+
+    #[tokio::test]
+    async fn scope_workspace_noop_when_unauthenticated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let openhuman_dir = tmp.path();
+        // No auth-profiles.json at all.
+
+        let mut config = Config::default();
+        let original = openhuman_dir.join("workspace");
+        config.workspace_dir = original.clone();
+
+        maybe_scope_workspace_to_user(&mut config, openhuman_dir)
+            .await
+            .unwrap();
+
+        assert_eq!(config.workspace_dir, original);
     }
 }
