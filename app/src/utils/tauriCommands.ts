@@ -522,7 +522,7 @@ export async function memoryGraphQuery(
     return raw.result;
   console.debug(
     '[memoryGraphQuery] unexpected response shape, returning empty array. Raw response:',
-    raw,
+    raw
   );
   return [];
 }
