@@ -119,6 +119,10 @@ impl SocketManager {
     /// Spawns a background `ws_loop` that manages the connection with automatic
     /// reconnection and exponential backoff.
     pub async fn connect(&self, url: &str, token: &str) -> Result<(), String> {
+        // Ensure the rustls crypto provider is installed (needed for wss:// TLS).
+        // This is a no-op if already installed.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         self.disconnect().await?;
 
         log::info!("[socket] Connecting to {}", url);
