@@ -112,7 +112,8 @@ impl Tool for SkillToolBridge {
                     err
                 );
                 Ok(ToolResult::error(format!(
-                    "Skill tool execution failed: {}__{}", self.skill_id, self.tool_name
+                    "Skill tool execution failed: {}__{}",
+                    self.skill_id, self.tool_name
                 )))
             }
         }
@@ -144,7 +145,8 @@ pub fn collect_skill_tools() -> Vec<Box<dyn Tool>> {
             if skill_id.contains("__") || tool_def.name.contains("__") {
                 log::error!(
                     "[skill-bridge] Skipping tool with reserved delimiter in name: {} / {}",
-                    skill_id, tool_def.name
+                    skill_id,
+                    tool_def.name
                 );
                 return None;
             }
