@@ -6,6 +6,8 @@
 
 use super::events::DomainEvent;
 use super::subscriber::{EventHandler, FnSubscriber, SubscriptionHandle};
+use futures::FutureExt;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::broadcast;
 
@@ -13,7 +15,7 @@ use tokio::sync::broadcast;
 static GLOBAL_BUS: OnceLock<EventBus> = OnceLock::new();
 
 /// Default broadcast channel capacity.
-const DEFAULT_CAPACITY: usize = 256;
+pub const DEFAULT_CAPACITY: usize = 256;
 
 // ── Global singleton API ────────────────────────────────────────────────
 
@@ -118,7 +120,22 @@ impl EventBus {
                             domain = event.domain(),
                             "[event_bus] dispatching to handler"
                         );
-                        handler.handle(&event).await;
+                        let result = AssertUnwindSafe(handler.handle(&event))
+                            .catch_unwind()
+                            .await;
+                        if let Err(panic) = result {
+                            let msg = panic
+                                .downcast_ref::<&str>()
+                                .copied()
+                                .or_else(|| panic.downcast_ref::<String>().map(|s| s.as_str()))
+                                .unwrap_or("unknown panic");
+                            tracing::error!(
+                                handler = name_for_task,
+                                domain = event.domain(),
+                                panic = msg,
+                                "[event_bus] handler panicked, continuing"
+                            );
+                        }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(

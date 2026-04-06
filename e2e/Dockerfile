@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
   bash curl build-essential pkg-config \
   libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
   librsvg2-dev patchelf libssl-dev \
+  libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev \
   xvfb at-spi2-core dbus-x11 webkit2gtk-driver \
   clang libclang-dev cmake \
   git ca-certificates \

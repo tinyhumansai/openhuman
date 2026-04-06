@@ -21,7 +21,7 @@ mod events;
 mod subscriber;
 mod tracing;
 
-pub use bus::{global, init_global, publish_global, subscribe_global, EventBus};
+pub use bus::{global, init_global, publish_global, subscribe_global, EventBus, DEFAULT_CAPACITY};
 pub use events::DomainEvent;
 pub use subscriber::{EventHandler, SubscriptionHandle};
 pub use tracing::TracingSubscriber;

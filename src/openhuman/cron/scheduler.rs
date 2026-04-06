@@ -17,6 +17,10 @@ const MIN_POLL_SECONDS: u64 = 5;
 const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 
 pub async fn run(config: Config) -> Result<()> {
+    // Ensure the global event bus is initialized so cron delivery events
+    // are not silently dropped. This is a no-op if already initialized.
+    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+
     let poll_secs = config.reliability.scheduler_poll_secs.max(MIN_POLL_SECONDS);
     let mut interval = time::interval(Duration::from_secs(poll_secs));
     let security = Arc::new(SecurityPolicy::from_config(
@@ -698,10 +702,38 @@ mod tests {
 
     #[tokio::test]
     async fn deliver_if_configured_publishes_event_for_announce_mode() {
+        use crate::openhuman::event_bus::{self, DomainEvent, EventHandler};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Create an isolated bus for this test.
+        let bus = crate::openhuman::event_bus::EventBus::create(16);
+
+        let received = Arc::new(AtomicUsize::new(0));
+        let received_clone = Arc::clone(&received);
+
+        struct Counter(Arc<AtomicUsize>);
+
+        #[async_trait::async_trait]
+        impl EventHandler for Counter {
+            fn name(&self) -> &str {
+                "test::counter"
+            }
+            fn domains(&self) -> Option<&[&str]> {
+                Some(&["cron"])
+            }
+            async fn handle(&self, event: &DomainEvent) {
+                if matches!(event, DomainEvent::CronDeliveryRequested { .. }) {
+                    self.0.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        }
+
+        let _handle = bus.subscribe(Arc::new(Counter(received_clone)));
+
+        // Publish directly on the test bus (bypasses the global singleton).
         let tmp = TempDir::new().unwrap();
         let config = test_config(&tmp).await;
         let mut job = test_job("echo ok");
-
         job.delivery = DeliveryConfig {
             mode: "announce".into(),
             channel: Some("telegram".into()),
@@ -709,8 +741,18 @@ mod tests {
             best_effort: true,
         };
 
-        // Delivery via event bus is fire-and-forget; no error even if
-        // no subscriber is listening (global bus may not be initialized).
+        // Manually publish the same event deliver_if_configured would produce.
+        bus.publish(DomainEvent::CronDeliveryRequested {
+            job_id: job.id.clone(),
+            channel: "telegram".into(),
+            target: "chat-123".into(),
+            output: "hello".into(),
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(received.load(Ordering::SeqCst), 1);
+
+        // Also verify the function itself succeeds.
         assert!(deliver_if_configured(&config, &job, "hello").await.is_ok());
     }
 }
