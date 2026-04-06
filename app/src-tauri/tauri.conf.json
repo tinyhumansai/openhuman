@@ -54,9 +54,6 @@
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.sidecar.plist",
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "OpenHuman needs microphone access for voice dictation and speech-to-text."
-      },
       "dmg": {
         "background": "./images/background-dmg.png"
       }
