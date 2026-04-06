@@ -6,6 +6,7 @@ use crate::openhuman::config::Config;
 
 use super::model_ids;
 
+/// Returns the per-user config directory (parent of config.toml).
 pub(crate) fn config_root_dir(config: &Config) -> PathBuf {
     config
         .config_path
@@ -14,8 +15,16 @@ pub(crate) fn config_root_dir(config: &Config) -> PathBuf {
         .unwrap_or_else(|| config.workspace_dir.clone())
 }
 
+/// Returns the shared root openhuman directory (`~/.openhuman/`), which is
+/// used for resources that should NOT be duplicated per user (model downloads,
+/// binaries, etc.).
+fn shared_root_dir(config: &Config) -> PathBuf {
+    crate::openhuman::config::default_root_openhuman_dir()
+        .unwrap_or_else(|_| config_root_dir(config))
+}
+
 pub(crate) fn workspace_ollama_dir(config: &Config) -> PathBuf {
-    config_root_dir(config).join("bin").join("ollama")
+    shared_root_dir(config).join("bin").join("ollama")
 }
 
 pub(crate) fn workspace_ollama_binary(config: &Config) -> PathBuf {
@@ -60,7 +69,7 @@ pub(crate) fn find_workspace_ollama_binary(config: &Config) -> Option<PathBuf> {
 }
 
 pub(crate) fn workspace_local_models_dir(config: &Config) -> PathBuf {
-    config_root_dir(config).join("models").join("local-ai")
+    shared_root_dir(config).join("models").join("local-ai")
 }
 
 pub(crate) fn resolve_whisper_binary() -> Option<PathBuf> {
@@ -233,7 +242,7 @@ mod tests {
     #[test]
     fn workspace_ollama_binary_matches_platform_layout() {
         let (_tmp, config) = temp_config();
-        let root = config_root_dir(&config).join("bin").join("ollama");
+        let root = workspace_ollama_dir(&config);
 
         if cfg!(target_os = "linux") {
             assert_eq!(
