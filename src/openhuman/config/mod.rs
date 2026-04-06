@@ -67,6 +67,7 @@ mod tests {
         let discord = DiscordConfig {
             bot_token: "token".into(),
             guild_id: Some("123".into()),
+            channel_id: None,
             allowed_users: vec![],
             listen_to_bots: false,
             mention_only: false,
