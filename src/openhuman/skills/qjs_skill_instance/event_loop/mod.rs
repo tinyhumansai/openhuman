@@ -28,6 +28,7 @@ use crate::openhuman::{
 
 use super::js_handlers::{
     call_lifecycle, handle_cron_trigger, handle_js_call, handle_js_void_call,
+    handle_server_event,
     read_pending_tool_result, start_async_tool_call,
 };
 use super::js_helpers::{
