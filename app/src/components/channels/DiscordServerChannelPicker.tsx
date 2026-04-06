@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import type { BotPermissionCheck, DiscordGuild, DiscordTextChannel } from '../../types/channels';
@@ -7,6 +7,8 @@ import type { BotPermissionCheck, DiscordGuild, DiscordTextChannel } from '../..
 const log = debug('channels:discord:picker');
 
 interface DiscordServerChannelPickerProps {
+  selectedGuildId?: string;
+  selectedChannelId?: string;
   onGuildSelected?: (guildId: string) => void;
   onChannelSelected?: (channelId: string) => void;
 }
@@ -22,16 +24,28 @@ type PickerState =
   | 'error';
 
 const DiscordServerChannelPicker = ({
+  selectedGuildId: selectedGuildIdProp,
+  selectedChannelId: selectedChannelIdProp,
   onGuildSelected,
   onChannelSelected,
 }: DiscordServerChannelPickerProps) => {
   const [state, setState] = useState<PickerState>('idle');
   const [guilds, setGuilds] = useState<DiscordGuild[]>([]);
   const [channels, setChannels] = useState<DiscordTextChannel[]>([]);
-  const [selectedGuildId, setSelectedGuildId] = useState<string>('');
-  const [selectedChannelId, setSelectedChannelId] = useState<string>('');
+  const [selectedGuildId, setSelectedGuildId] = useState<string>(selectedGuildIdProp ?? '');
+  const [selectedChannelId, setSelectedChannelId] = useState<string>(selectedChannelIdProp ?? '');
   const [permissions, setPermissions] = useState<BotPermissionCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const channelsRequestIdRef = useRef(0);
+  const permissionsRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    setSelectedGuildId(selectedGuildIdProp ?? '');
+  }, [selectedGuildIdProp]);
+
+  useEffect(() => {
+    setSelectedChannelId(selectedChannelIdProp ?? '');
+  }, [selectedChannelIdProp]);
 
   // Load guilds on mount
   useEffect(() => {
@@ -55,27 +69,36 @@ const DiscordServerChannelPicker = ({
 
   const handleGuildChange = useCallback(
     (guildId: string) => {
+      channelsRequestIdRef.current += 1;
+      permissionsRequestIdRef.current += 1;
       setSelectedGuildId(guildId);
       setSelectedChannelId('');
       setChannels([]);
       setPermissions(null);
+      onGuildSelected?.(guildId);
+      onChannelSelected?.('');
 
       if (!guildId) {
         setState('guilds_loaded');
         return;
       }
 
-      onGuildSelected?.(guildId);
-
       const loadChannels = async () => {
+        const requestId = channelsRequestIdRef.current;
         setState('loading_channels');
         setError(null);
         try {
           const result = await channelConnectionsApi.listDiscordChannels(guildId);
+          if (requestId !== channelsRequestIdRef.current) {
+            return;
+          }
           setChannels(result);
           setState('channels_loaded');
           log('loaded %d channels for guild %s', result.length, guildId);
         } catch (e) {
+          if (requestId !== channelsRequestIdRef.current) {
+            return;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           setError(msg);
           setState('error');
@@ -83,22 +106,23 @@ const DiscordServerChannelPicker = ({
       };
       void loadChannels();
     },
-    [onGuildSelected]
+    [onChannelSelected, onGuildSelected]
   );
 
   const handleChannelChange = useCallback(
     (channelId: string) => {
+      permissionsRequestIdRef.current += 1;
       setSelectedChannelId(channelId);
       setPermissions(null);
+      onChannelSelected?.(channelId);
 
       if (!channelId || !selectedGuildId) {
         setState('channels_loaded');
         return;
       }
 
-      onChannelSelected?.(channelId);
-
       const checkPerms = async () => {
+        const requestId = permissionsRequestIdRef.current;
         setState('checking_permissions');
         setError(null);
         try {
@@ -106,10 +130,16 @@ const DiscordServerChannelPicker = ({
             selectedGuildId,
             channelId
           );
+          if (requestId !== permissionsRequestIdRef.current) {
+            return;
+          }
           setPermissions(result);
           setState('ready');
           log('permissions for channel %s: %o', channelId, result);
         } catch (e) {
+          if (requestId !== permissionsRequestIdRef.current) {
+            return;
+          }
           const msg = e instanceof Error ? e.message : String(e);
           setError(msg);
           setState('error');

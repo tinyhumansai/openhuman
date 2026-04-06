@@ -48,9 +48,7 @@ describe('DiscordServerChannelPicker', () => {
   it('shows "Select a server" placeholder after guilds load', async () => {
     renderWithProviders(<DiscordServerChannelPicker />);
     await waitFor(() => {
-      expect(
-        screen.getByRole('combobox', { name: /server/i }) || screen.getByText('Select a server')
-      ).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /server/i })).toBeInTheDocument();
     });
   });
 });

@@ -409,7 +409,7 @@ impl Channel for DiscordChannel {
 
                     let channel_msg = ChannelMessage {
                         id: if message_id.is_empty() {
-                            Uuid::new_v4().to_string()
+                            format!("discord_{}", Uuid::new_v4())
                         } else {
                             format!("discord_{message_id}")
                         },

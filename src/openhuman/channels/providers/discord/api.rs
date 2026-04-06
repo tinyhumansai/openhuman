@@ -142,12 +142,12 @@ pub async fn check_channel_permissions(
         .header("Authorization", auth_header(token))
         .send()
         .await?;
-
-    let guild_roles: Vec<serde_json::Value> = if roles_resp.status().is_success() {
-        roles_resp.json().await.unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    if !roles_resp.status().is_success() {
+        let status = roles_resp.status();
+        let body = roles_resp.text().await.unwrap_or_default();
+        anyhow::bail!("Discord get guild roles failed ({status}): {body}");
+    }
+    let guild_roles: Vec<serde_json::Value> = roles_resp.json().await?;
 
     // Get the member's role IDs
     let member_role_ids: Vec<&str> = member
@@ -190,46 +190,70 @@ pub async fn check_channel_permissions(
         .header("Authorization", auth_header(token))
         .send()
         .await?;
+    if !ch_resp.status().is_success() {
+        let status = ch_resp.status();
+        let body = ch_resp.text().await.unwrap_or_default();
+        anyhow::bail!("Discord get channel failed ({status}): {body}");
+    }
+    let channel_data: serde_json::Value = ch_resp.json().await?;
+    if let Some(overwrites) = channel_data
+        .get("permission_overwrites")
+        .and_then(|o| o.as_array())
+    {
+        let bot_user_id = member
+            .get("user")
+            .and_then(|u| u.get("id"))
+            .and_then(|i| i.as_str())
+            .unwrap_or("");
 
-    if ch_resp.status().is_success() {
-        let channel_data: serde_json::Value = ch_resp.json().await?;
-        if let Some(overwrites) = channel_data
-            .get("permission_overwrites")
-            .and_then(|o| o.as_array())
-        {
-            let bot_user_id = member
-                .get("user")
-                .and_then(|u| u.get("id"))
-                .and_then(|i| i.as_str())
-                .unwrap_or("");
-            for overwrite in overwrites {
-                let ow_id = overwrite.get("id").and_then(|i| i.as_str()).unwrap_or("");
-                let ow_type = overwrite.get("type").and_then(|t| t.as_u64()).unwrap_or(0);
+        let mut everyone_allow = 0_u64;
+        let mut everyone_deny = 0_u64;
+        let mut role_allow = 0_u64;
+        let mut role_deny = 0_u64;
+        let mut member_allow = 0_u64;
+        let mut member_deny = 0_u64;
 
-                // type 0 = role, type 1 = member
-                let applies = match ow_type {
-                    0 => ow_id == guild_id || member_role_ids.contains(&ow_id),
-                    1 => ow_id == bot_user_id,
-                    _ => false,
-                };
+        for overwrite in overwrites {
+            let ow_id = overwrite.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            let ow_type = overwrite.get("type").and_then(|t| t.as_u64()).unwrap_or(0);
+            let allow = overwrite
+                .get("allow")
+                .and_then(|a| a.as_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let deny = overwrite
+                .get("deny")
+                .and_then(|d| d.as_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
 
-                if applies {
-                    let allow = overwrite
-                        .get("allow")
-                        .and_then(|a| a.as_str())
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .unwrap_or(0);
-                    let deny = overwrite
-                        .get("deny")
-                        .and_then(|d| d.as_str())
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .unwrap_or(0);
-
-                    permissions |= allow;
-                    permissions &= !deny;
+            match ow_type {
+                // @everyone overwrite (role id == guild id)
+                0 if ow_id == guild_id => {
+                    everyone_allow = allow;
+                    everyone_deny = deny;
                 }
+                // Aggregate all role overwrites
+                0 if member_role_ids.contains(&ow_id) => {
+                    role_allow |= allow;
+                    role_deny |= deny;
+                }
+                // Member-specific overwrite
+                1 if ow_id == bot_user_id => {
+                    member_allow = allow;
+                    member_deny = deny;
+                }
+                _ => {}
             }
         }
+
+        // Apply Discord overwrite precedence: everyone -> roles -> member.
+        permissions &= !everyone_deny;
+        permissions |= everyone_allow;
+        permissions &= !role_deny;
+        permissions |= role_allow;
+        permissions &= !member_deny;
+        permissions |= member_allow;
     }
 
     let can_view = permissions & VIEW_CHANNEL != 0;
