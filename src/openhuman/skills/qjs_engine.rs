@@ -452,7 +452,7 @@ impl RuntimeEngine {
             match current_status {
                 SkillStatus::Running => {
                     self.emit_status_change(&skill_id_owned);
-                    self.sync_tools().await;
+
                     return Ok(instance.snapshot());
                 }
                 SkillStatus::Error => {
@@ -507,7 +507,6 @@ impl RuntimeEngine {
         self.cron_scheduler.unregister_all_for_skill(skill_id);
         self.webhook_router.unregister_skill(skill_id);
         self.emit_status_change(skill_id);
-        self.sync_tools().await;
         Ok(())
     }
 
@@ -628,8 +627,6 @@ impl RuntimeEngine {
                 log::warn!("[runtime] Failed to discover skills for auto-start: {e}");
             }
         }
-        // Sync all tool state to backend after auto-start completes
-        self.sync_tools().await;
     }
 
     /// Enable a skill and start it.
