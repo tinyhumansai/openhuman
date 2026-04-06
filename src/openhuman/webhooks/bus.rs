@@ -17,6 +17,12 @@ fn base64_encode(input: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(input.as_bytes())
 }
 
+/// Build a base64-encoded JSON error body using proper serialization.
+fn error_body(message: &str) -> String {
+    let obj = serde_json::json!({ "error": message });
+    base64_encode(&obj.to_string())
+}
+
 /// Subscribes to `WebhookIncomingRequest` events and handles the full routing
 /// flow: lookup tunnel → dispatch to skill/echo → emit response via socket.
 pub struct WebhookRequestSubscriber;
@@ -84,9 +90,9 @@ impl EventHandler for WebhookRequestSubscriber {
                     correlation_id: correlation_id.clone(),
                     status_code: 501,
                     headers: std::collections::HashMap::new(),
-                    body: base64_encode(&format!(
-                        "{{\"error\":\"channel webhook target '{}' is not implemented in this runtime yet\"}}",
-                        reg.skill_id.replace('"', "\\\"")
+                    body: error_body(&format!(
+                        "channel webhook target '{}' is not implemented in this runtime yet",
+                        reg.skill_id
                     )),
                 },
                 Some(reg.skill_id.clone()),
