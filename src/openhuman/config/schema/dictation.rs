@@ -15,7 +15,7 @@ pub enum DictationActivationMode {
 
 impl Default for DictationActivationMode {
     fn default() -> Self {
-        Self::Toggle
+        Self::Push
     }
 }
 

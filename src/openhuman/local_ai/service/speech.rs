@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Instant;
 
 use log::{debug, warn};
 
@@ -21,6 +22,7 @@ impl LocalAiService {
         config: &Config,
         audio_path: &str,
     ) -> Result<LocalAiSpeechResult, String> {
+        let started = Instant::now();
         if !config.local_ai.enabled {
             return Err("local ai is disabled".to_string());
         }
@@ -28,6 +30,7 @@ impl LocalAiService {
         // Lazily load in-process whisper engine when enabled. Serialize load attempts
         // so concurrent requests do not spawn duplicate heavy contexts.
         if config.local_ai.whisper_in_process && !whisper_engine::is_loaded(&self.whisper) {
+            let lazy_load_started = Instant::now();
             let _load_guard = self.whisper_load_lock.lock().await;
             if !whisper_engine::is_loaded(&self.whisper) {
                 if let Ok(model_path) = resolve_stt_model_path(config) {
@@ -43,6 +46,11 @@ impl LocalAiService {
                     .map_err(|e| format!("whisper load task join error: {e}"))?;
                     if let Err(e) = load_result {
                         warn!("{LOG_PREFIX} lazy in-process whisper load failed: {e}");
+                    } else {
+                        debug!(
+                            "{LOG_PREFIX} lazy in-process whisper load complete (elapsed_ms={})",
+                            lazy_load_started.elapsed().as_millis()
+                        );
                     }
                 } else {
                     debug!(
@@ -57,6 +65,7 @@ impl LocalAiService {
             debug!("{LOG_PREFIX} using in-process whisper engine for {audio_path}");
             let handle = self.whisper.clone();
             let path = audio_path.to_string();
+            let in_process_started = Instant::now();
             let result = tokio::task::spawn_blocking(move || {
                 Self::transcribe_in_process_inner(&handle, &path)
             })
@@ -64,6 +73,11 @@ impl LocalAiService {
             .map_err(|e| format!("whisper task join error: {e}"))?;
             match result {
                 Ok(text) => {
+                    debug!(
+                        "{LOG_PREFIX} in-process transcription complete (elapsed_ms={}, total_elapsed_ms={})",
+                        in_process_started.elapsed().as_millis(),
+                        started.elapsed().as_millis()
+                    );
                     self.status.lock().stt_state = "ready".to_string();
                     return Ok(LocalAiSpeechResult {
                         text,
@@ -78,7 +92,14 @@ impl LocalAiService {
 
         // Fallback: subprocess per call (original behavior).
         debug!("{LOG_PREFIX} using whisper-cli subprocess for {audio_path}");
-        self.transcribe_subprocess(config, audio_path).await
+        let subprocess_started = Instant::now();
+        let result = self.transcribe_subprocess(config, audio_path).await;
+        debug!(
+            "{LOG_PREFIX} subprocess transcription finished (elapsed_ms={}, total_elapsed_ms={})",
+            subprocess_started.elapsed().as_millis(),
+            started.elapsed().as_millis()
+        );
+        result
     }
 
     /// Transcribe using the in-process whisper-rs engine. Runs on a blocking

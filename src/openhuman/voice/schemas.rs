@@ -160,10 +160,10 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             description:
                 "Start the voice dictation server (hotkey → record → transcribe → insert text).",
             inputs: vec![
-                optional_string("hotkey", "Hotkey combination (default: ctrl+shift+space)."),
+                optional_string("hotkey", "Hotkey combination (default: Fn)."),
                 optional_string(
                     "activation_mode",
-                    "Activation mode: tap or push (default: tap).",
+                    "Activation mode: tap or push (default: push).",
                 ),
                 optional_bool("skip_cleanup", "Skip LLM post-processing."),
             ],
@@ -270,10 +270,10 @@ fn handle_voice_server_start(params: Map<String, Value>) -> ControllerFuture {
             Some("tap") => ActivationMode::Tap,
             Some(other) => {
                 log::warn!(
-                    "[voice_server] unrecognized activation_mode '{}', defaulting to Tap",
+                    "[voice_server] unrecognized activation_mode '{}', defaulting to Push",
                     other
                 );
-                ActivationMode::Tap
+                ActivationMode::Push
             }
             None => match config.voice_server.activation_mode {
                 crate::openhuman::config::VoiceActivationMode::Push => ActivationMode::Push,
@@ -346,7 +346,7 @@ fn handle_voice_server_stop(_params: Map<String, Value>) -> ControllerFuture {
             let status = crate::openhuman::voice::server::VoiceServerStatus {
                 state: crate::openhuman::voice::server::ServerState::Stopped,
                 hotkey: String::new(),
-                activation_mode: crate::openhuman::voice::hotkey::ActivationMode::Tap,
+                activation_mode: crate::openhuman::voice::hotkey::ActivationMode::Push,
                 transcription_count: 0,
                 last_error: None,
             };
@@ -364,7 +364,7 @@ fn handle_voice_server_status(_params: Map<String, Value>) -> ControllerFuture {
             let status = crate::openhuman::voice::server::VoiceServerStatus {
                 state: crate::openhuman::voice::server::ServerState::Stopped,
                 hotkey: String::new(),
-                activation_mode: crate::openhuman::voice::hotkey::ActivationMode::Tap,
+                activation_mode: crate::openhuman::voice::hotkey::ActivationMode::Push,
                 transcription_count: 0,
                 last_error: None,
             };

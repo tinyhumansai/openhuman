@@ -15,7 +15,7 @@ pub enum VoiceActivationMode {
 
 impl Default for VoiceActivationMode {
     fn default() -> Self {
-        Self::Tap
+        Self::Push
     }
 }
 
@@ -26,7 +26,7 @@ pub struct VoiceServerConfig {
     #[serde(default)]
     pub auto_start: bool,
 
-    /// Hotkey combination to trigger recording (e.g. "ctrl+shift+space").
+    /// Hotkey combination to trigger recording (e.g. "Fn").
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
 
@@ -45,7 +45,7 @@ pub struct VoiceServerConfig {
 }
 
 fn default_hotkey() -> String {
-    "ctrl+shift+space".to_string()
+    "Fn".to_string()
 }
 
 fn default_min_duration() -> f32 {

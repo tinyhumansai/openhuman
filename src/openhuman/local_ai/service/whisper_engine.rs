@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use log::{debug, info};
 use parking_lot::Mutex;
@@ -117,9 +118,11 @@ pub fn transcribe_pcm_f32(
         .unwrap_or(2);
     params.set_n_threads(n_threads);
 
+    let infer_started = Instant::now();
     state
         .full(params, audio_f32)
         .map_err(|e| format!("whisper inference failed: {e}"))?;
+    let infer_elapsed = infer_started.elapsed();
 
     let mut text = String::new();
     let mut segment_count = 0;
@@ -135,9 +138,11 @@ pub fn transcribe_pcm_f32(
 
     let trimmed = text.trim().to_string();
     debug!(
-        "{LOG_PREFIX} transcription complete: {} chars, {} segments",
+        "{LOG_PREFIX} transcription complete: {} chars, {} segments, n_threads={}, infer_elapsed_ms={}",
         trimmed.len(),
-        segment_count
+        segment_count,
+        n_threads,
+        infer_elapsed.as_millis()
     );
 
     Ok(trimmed)

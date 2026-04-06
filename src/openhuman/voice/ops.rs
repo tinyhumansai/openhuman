@@ -5,6 +5,7 @@
 
 use chrono::Utc;
 use log::{debug, warn};
+use std::time::Instant;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai;
@@ -71,25 +72,36 @@ pub async fn voice_transcribe(
     context: Option<&str>,
     skip_cleanup: bool,
 ) -> Result<RpcOutcome<VoiceSpeechResult>, String> {
+    let started = Instant::now();
     debug!("{LOG_PREFIX} transcribing audio_path={audio_path}");
 
     let service = local_ai::global(config);
+    let transcribe_started = Instant::now();
     let output = service
         .transcribe(config, audio_path.trim())
         .await
         .map_err(|e| e.to_string())?;
+    let transcribe_elapsed = transcribe_started.elapsed();
 
     let raw_text = output.text.clone();
     debug!(
-        "{LOG_PREFIX} transcription completed, text length={}",
-        raw_text.len()
+        "{LOG_PREFIX} transcription completed, text length={}, stt_elapsed_ms={}",
+        raw_text.len(),
+        transcribe_elapsed.as_millis()
     );
 
+    let cleanup_started = Instant::now();
     let text = if skip_cleanup {
         raw_text.clone()
     } else {
         postprocess::cleanup_transcription(config, &raw_text, context).await
     };
+    let cleanup_elapsed = cleanup_started.elapsed();
+    debug!(
+        "{LOG_PREFIX} voice_transcribe complete (cleanup_elapsed_ms={}, total_elapsed_ms={})",
+        cleanup_elapsed.as_millis(),
+        started.elapsed().as_millis()
+    );
 
     Ok(RpcOutcome::single_log(
         VoiceSpeechResult {
@@ -112,6 +124,7 @@ pub async fn voice_transcribe_bytes(
     context: Option<&str>,
     skip_cleanup: bool,
 ) -> Result<RpcOutcome<VoiceSpeechResult>, String> {
+    let started = Instant::now();
     let ext = normalize_extension(extension)?;
     debug!(
         "{LOG_PREFIX} transcribe_bytes size={} ext={ext}",
@@ -132,13 +145,17 @@ pub async fn voice_transcribe_bytes(
         ext
     );
     let file_path = voice_dir.join(filename);
+    let write_started = Instant::now();
     tokio::fs::write(&file_path, audio_bytes)
         .await
         .map_err(|e| format!("failed to write audio file: {e}"))?;
+    let write_elapsed = write_started.elapsed();
 
+    let transcribe_started = Instant::now();
     let output = service
         .transcribe(config, file_path.to_string_lossy().as_ref())
         .await;
+    let transcribe_elapsed = transcribe_started.elapsed();
     if let Err(e) = tokio::fs::remove_file(&file_path).await {
         warn!(
             "{LOG_PREFIX} failed to clean up temp audio file {}: {e}",
@@ -150,15 +167,24 @@ pub async fn voice_transcribe_bytes(
     let raw_text = output.text.clone();
 
     debug!(
-        "{LOG_PREFIX} transcribe_bytes completed, text length={}",
-        raw_text.len()
+        "{LOG_PREFIX} transcribe_bytes completed, text length={}, write_elapsed_ms={}, stt_elapsed_ms={}",
+        raw_text.len(),
+        write_elapsed.as_millis(),
+        transcribe_elapsed.as_millis()
     );
 
+    let cleanup_started = Instant::now();
     let text = if skip_cleanup {
         raw_text.clone()
     } else {
         postprocess::cleanup_transcription(config, &raw_text, context).await
     };
+    let cleanup_elapsed = cleanup_started.elapsed();
+    debug!(
+        "{LOG_PREFIX} transcribe_bytes pipeline complete (cleanup_elapsed_ms={}, total_elapsed_ms={})",
+        cleanup_elapsed.as_millis(),
+        started.elapsed().as_millis()
+    );
 
     Ok(RpcOutcome::single_log(
         VoiceSpeechResult {

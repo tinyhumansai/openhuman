@@ -5,6 +5,7 @@
 //! context to disambiguate unclear words (names, technical terms).
 
 use log::{debug, warn};
+use std::time::Instant;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai;
@@ -34,6 +35,7 @@ pub async fn cleanup_transcription(
     raw_text: &str,
     conversation_context: Option<&str>,
 ) -> String {
+    let started = Instant::now();
     if raw_text.trim().is_empty() {
         return raw_text.to_string();
     }
@@ -85,15 +87,19 @@ pub async fn cleanup_transcription(
                 raw_text.to_string()
             } else {
                 debug!(
-                    "{LOG_PREFIX} cleanup complete: {} chars -> {} chars",
+                    "{LOG_PREFIX} cleanup complete: {} chars -> {} chars (elapsed_ms={})",
                     raw_text.len(),
-                    cleaned.len()
+                    cleaned.len(),
+                    started.elapsed().as_millis()
                 );
                 cleaned
             }
         }
         Err(e) => {
-            warn!("{LOG_PREFIX} LLM cleanup failed, using raw text: {e}");
+            warn!(
+                "{LOG_PREFIX} LLM cleanup failed after {} ms, using raw text: {e}",
+                started.elapsed().as_millis()
+            );
             raw_text.to_string()
         }
     }

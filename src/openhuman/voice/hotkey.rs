@@ -30,7 +30,7 @@ pub enum ActivationMode {
 
 impl Default for ActivationMode {
     fn default() -> Self {
-        Self::Tap
+        Self::Push
     }
 }
 
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn activation_mode_default_is_tap() {
-        assert_eq!(ActivationMode::default(), ActivationMode::Tap);
+    fn activation_mode_default_is_push() {
+        assert_eq!(ActivationMode::default(), ActivationMode::Push);
     }
 }

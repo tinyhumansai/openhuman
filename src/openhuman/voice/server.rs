@@ -7,6 +7,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 
 use log::{debug, error, info, warn};
 use tokio::sync::Mutex;
@@ -60,8 +61,8 @@ pub struct VoiceServerConfig {
 impl Default for VoiceServerConfig {
     fn default() -> Self {
         Self {
-            hotkey: "ctrl+shift+space".to_string(),
-            activation_mode: ActivationMode::Tap,
+            hotkey: "Fn".to_string(),
+            activation_mode: ActivationMode::Push,
             skip_cleanup: false,
             context: None,
             min_duration_secs: 0.3,
@@ -184,14 +185,18 @@ impl VoiceServer {
 
     /// Process a completed recording: transcribe and insert text.
     async fn process_recording(&self, handle: RecordingHandle, config: &Config) {
+        let pipeline_started = Instant::now();
         *self.state.lock().await = ServerState::Transcribing;
 
+        let stop_started = Instant::now();
         match handle.stop().await {
             Ok(result) => {
+                let stop_elapsed = stop_started.elapsed();
                 info!(
-                    "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes",
+                    "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes (stop_elapsed_ms={})",
                     result.duration_secs,
-                    result.wav_bytes.len()
+                    result.wav_bytes.len(),
+                    stop_elapsed.as_millis()
                 );
 
                 if result.duration_secs < self.config.min_duration_secs {
@@ -203,6 +208,7 @@ impl VoiceServer {
                     return;
                 }
 
+                let transcribe_started = Instant::now();
                 match crate::openhuman::voice::voice_transcribe_bytes(
                     config,
                     &result.wav_bytes,
@@ -213,20 +219,28 @@ impl VoiceServer {
                 .await
                 {
                     Ok(outcome) => {
+                        let transcribe_elapsed = transcribe_started.elapsed();
                         let text = &outcome.value.text;
                         info!(
-                            "{LOG_PREFIX} transcription: '{}' ({} chars)",
+                            "{LOG_PREFIX} transcription: '{}' ({} chars, transcribe_elapsed_ms={})",
                             truncate_for_log(text, 80),
-                            text.len()
+                            text.len(),
+                            transcribe_elapsed.as_millis()
                         );
 
                         if !text.trim().is_empty() {
+                            let insert_started = Instant::now();
                             if let Err(e) = text_input::insert_text(text) {
                                 error!("{LOG_PREFIX} failed to insert text: {e}");
                                 *self.last_error.lock().await = Some(e);
                             } else {
+                                let insert_elapsed = insert_started.elapsed();
                                 self.transcription_count.fetch_add(1, Ordering::Relaxed);
-                                info!("{LOG_PREFIX} text inserted into active field");
+                                info!(
+                                    "{LOG_PREFIX} text inserted into active field (insert_elapsed_ms={}, total_pipeline_ms={})",
+                                    insert_elapsed.as_millis(),
+                                    pipeline_started.elapsed().as_millis()
+                                );
                             }
                         } else {
                             debug!("{LOG_PREFIX} transcription was empty, nothing to insert");
@@ -244,6 +258,10 @@ impl VoiceServer {
             }
         }
 
+        debug!(
+            "{LOG_PREFIX} process_recording finished (total_pipeline_ms={})",
+            pipeline_started.elapsed().as_millis()
+        );
         *self.state.lock().await = ServerState::Idle;
     }
 }
@@ -311,8 +329,8 @@ mod tests {
     #[test]
     fn default_server_config() {
         let cfg = VoiceServerConfig::default();
-        assert_eq!(cfg.hotkey, "ctrl+shift+space");
-        assert_eq!(cfg.activation_mode, ActivationMode::Tap);
+        assert_eq!(cfg.hotkey, "Fn");
+        assert_eq!(cfg.activation_mode, ActivationMode::Push);
         assert!(!cfg.skip_cleanup);
         assert!(cfg.context.is_none());
     }
@@ -336,8 +354,8 @@ mod tests {
     fn voice_server_status_serializes() {
         let status = VoiceServerStatus {
             state: ServerState::Idle,
-            hotkey: "ctrl+shift+space".into(),
-            activation_mode: ActivationMode::Tap,
+            hotkey: "Fn".into(),
+            activation_mode: ActivationMode::Push,
             transcription_count: 5,
             last_error: None,
         };
