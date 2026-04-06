@@ -84,9 +84,7 @@ describe('TelegramConfig', () => {
       expect(channelConnectionsApi.telegramLoginStart).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(openUrl).toHaveBeenCalledWith(
-        'https://t.me/openhuman_bot?start=link-token-abc'
-      );
+      expect(openUrl).toHaveBeenCalledWith('https://t.me/openhuman_bot?start=link-token-abc');
     });
     await waitFor(() => {
       expect(channelConnectionsApi.telegramLoginCheck).toHaveBeenCalledWith('link-token-abc');

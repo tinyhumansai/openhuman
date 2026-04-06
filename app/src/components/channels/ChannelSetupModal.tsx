@@ -2,7 +2,6 @@
  * Reusable modal for configuring a channel integration (Telegram, Discord, etc.).
  * Uses createPortal like SkillSetupModal. Can be opened from the Skills page or Settings.
  */
-
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 

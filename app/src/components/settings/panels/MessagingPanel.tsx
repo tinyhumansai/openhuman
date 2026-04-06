@@ -1,6 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
 
-import ChannelSetupModal from '../../channels/ChannelSetupModal';
 import { useChannelDefinitions } from '../../../hooks/useChannelDefinitions';
 import { resolvePreferredAuthModeForChannel } from '../../../lib/channels/routing';
 import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
@@ -11,6 +10,7 @@ import type {
   ChannelDefinition,
   ChannelType,
 } from '../../../types/channels';
+import ChannelSetupModal from '../../channels/ChannelSetupModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -208,10 +208,7 @@ const MessagingPanel = () => {
 
       {/* Shared channel config modal */}
       {channelModalDef && (
-        <ChannelSetupModal
-          definition={channelModalDef}
-          onClose={() => setChannelModalDef(null)}
-        />
+        <ChannelSetupModal definition={channelModalDef} onClose={() => setChannelModalDef(null)} />
       )}
     </div>
   );

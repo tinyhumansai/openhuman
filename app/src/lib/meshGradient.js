@@ -53,7 +53,9 @@ class MiniGl {
               function getShaderByType(type, source) {
                 const shader = context.createShader(type);
                 if (!shader) {
-                  console.warn('[MeshGradient] createShader returned null — WebGL context may be lost');
+                  console.warn(
+                    '[MeshGradient] createShader returned null — WebGL context may be lost'
+                  );
                   return null;
                 }
                 return (
@@ -84,7 +86,9 @@ class MiniGl {
                   material.Source
                 )));
               if (!material.vertexShader || !material.fragmentShader) {
-                throw new Error('[MeshGradient] Shader compilation failed — WebGL context may be lost');
+                throw new Error(
+                  '[MeshGradient] Shader compilation failed — WebGL context may be lost'
+                );
               }
               ((material.program = context.createProgram()),
                 context.attachShader(material.program, material.vertexShader),

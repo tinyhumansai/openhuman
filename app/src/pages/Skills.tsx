@@ -596,10 +596,7 @@ export default function Skills() {
 
       {/* Channel setup modal */}
       {channelModalDef && (
-        <ChannelSetupModal
-          definition={channelModalDef}
-          onClose={() => setChannelModalDef(null)}
-        />
+        <ChannelSetupModal definition={channelModalDef} onClose={() => setChannelModalDef(null)} />
       )}
     </div>
   );
