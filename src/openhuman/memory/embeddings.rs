@@ -1,3 +1,11 @@
+//! Embedding providers for the OpenHuman memory system.
+//!
+//! This module provides a unified interface for converting text into vector
+//! embeddings. It supports multiple providers:
+//! - **Fastembed**: Local, high-performance embeddings using ONNX runtime.
+//! - **OpenAI**: Cloud-based embeddings via the OpenAI API or compatible endpoints.
+//! - **Noop**: A fallback provider for keyword-only search.
+
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use std::env;
@@ -5,23 +13,26 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+/// Default model name for Fastembed.
 pub const DEFAULT_FASTEMBED_MODEL: &str = "BGESmallENV15";
+/// Default dimensions for the BGESmallENV15 model.
 pub const DEFAULT_FASTEMBED_DIMENSIONS: usize = 384;
+/// Internal path for managed model storage.
 const DEFAULT_MANAGED_RELEX_DIR: &str = ".openhuman/models/gliner-relex-large-v0.5-onnx";
 
-/// Trait for embedding providers — convert text to vectors
+/// Interface for embedding providers that convert text into numerical vectors.
 #[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
-    /// Provider name
+    /// Returns the name of the provider (e.g., "fastembed", "openai").
     fn name(&self) -> &str;
 
-    /// Embedding dimensions
+    /// Returns the number of dimensions in the generated embeddings.
     fn dimensions(&self) -> usize;
 
-    /// Embed a batch of texts into vectors
+    /// Generates embeddings for a batch of strings.
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>>;
 
-    /// Embed a single text
+    /// Generates an embedding for a single string.
     async fn embed_one(&self, text: &str) -> anyhow::Result<Vec<f32>> {
         let mut results = self.embed(&[text]).await?;
         results
@@ -32,6 +43,8 @@ pub trait EmbeddingProvider: Send + Sync {
 
 // ── Noop provider (keyword-only fallback) ────────────────────
 
+/// A "no-op" embedding provider used when semantic search is disabled.
+/// Returns empty vectors.
 pub struct NoopEmbedding;
 
 #[async_trait]
@@ -49,12 +62,18 @@ impl EmbeddingProvider for NoopEmbedding {
     }
 }
 
+/// Represents the initialization state of the local Fastembed model.
 enum FastembedState {
+    /// Initial state before the model is loaded.
     Uninitialized,
+    /// Model is loaded into memory and ready for inference.
     Ready(fastembed::TextEmbedding),
+    /// An error occurred during model loading.
     Failed(String),
 }
 
+/// Local embedding provider using the `fastembed-rs` library.
+/// Executes in a dedicated blocking thread to avoid stalling the async runtime.
 pub struct FastembedEmbedding {
     model: String,
     dims: usize,
@@ -62,6 +81,7 @@ pub struct FastembedEmbedding {
 }
 
 impl FastembedEmbedding {
+    /// Creates a new Fastembed provider with the specified model and dimensions.
     pub fn new(model: &str, dims: usize) -> Self {
         Self {
             model: if model.trim().is_empty() {
@@ -78,11 +98,13 @@ impl FastembedEmbedding {
         }
     }
 
+    /// Maps a string model name to a `fastembed::EmbeddingModel` enum.
     fn resolve_model(&self) -> fastembed::EmbeddingModel {
         fastembed::EmbeddingModel::from_str(&self.model)
             .unwrap_or(fastembed::EmbeddingModel::BGESmallENV15)
     }
 
+    /// Internal helper to initialize the model on first use.
     fn init_model(&self) -> anyhow::Result<fastembed::TextEmbedding> {
         ensure_fastembed_ort_dylib_path();
         fastembed::TextEmbedding::try_new(
@@ -92,11 +114,21 @@ impl FastembedEmbedding {
     }
 }
 
+/// Configures the search path for the ONNX Runtime dynamic library.
+/// 
+/// This is critical for Fastembed to function across different platforms and
+/// installation methods (e.g., local dev, bundled app). It checks several
+/// locations in order of priority:
+/// 1. `ORT_DYLIB_PATH` environment variable.
+/// 2. `ORT_LIB_LOCATION` environment variable.
+/// 3. OpenHuman-specific cache directories.
+/// 4. Standard system library paths (Linux only).
 fn ensure_fastembed_ort_dylib_path() {
     if env::var_os("ORT_DYLIB_PATH").is_some() {
         return;
     }
 
+    // Check for explicit library location override.
     if let Some(lib_path) = env::var_os("ORT_LIB_LOCATION") {
         let candidate = PathBuf::from(lib_path);
         if candidate.is_file() {
@@ -117,6 +149,7 @@ fn ensure_fastembed_ort_dylib_path() {
         }
     }
 
+    // Check custom cache directory.
     if let Ok(path) = env::var("OPENHUMAN_GLINER_RELEX_CACHE_DIR") {
         #[cfg(target_os = "windows")]
         let bundled = PathBuf::from(path).join("onnxruntime.dll");
@@ -131,6 +164,7 @@ fn ensure_fastembed_ort_dylib_path() {
         }
     }
 
+    // Check managed model directory in user's home.
     if let Some(user_dirs) = directories::UserDirs::new() {
         #[cfg(target_os = "windows")]
         let bundled = user_dirs
@@ -153,6 +187,7 @@ fn ensure_fastembed_ort_dylib_path() {
         }
     }
 
+    // Fallback to system-wide paths on Linux.
     #[cfg(target_os = "linux")]
     {
         for candidate in [
@@ -179,6 +214,7 @@ impl EmbeddingProvider for FastembedEmbedding {
         self.dims
     }
 
+    /// Performs embedding using a blocking task to prevent executor starvation.
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -190,9 +226,12 @@ impl EmbeddingProvider for FastembedEmbedding {
             .collect::<Vec<_>>();
         let state = Arc::clone(&self.state);
         let provider = self.model.clone();
+        
         let join_result = tokio::task::spawn_blocking(move || {
             ensure_fastembed_ort_dylib_path();
             let mut guard = state.lock();
+            
+            // Lazy initialization of the model on the first request.
             if matches!(*guard, FastembedState::Uninitialized) {
                 match fastembed::TextEmbedding::try_new(
                     fastembed::InitOptions::new(
@@ -227,6 +266,7 @@ impl EmbeddingProvider for FastembedEmbedding {
 
 // ── OpenAI-compatible embedding provider ─────────────────────
 
+/// Embedding provider for OpenAI and compatible APIs (e.g., LocalAI, Ollama).
 pub struct OpenAiEmbedding {
     base_url: String,
     api_key: String,
@@ -235,6 +275,7 @@ pub struct OpenAiEmbedding {
 }
 
 impl OpenAiEmbedding {
+    /// Creates a new OpenAI-style provider.
     pub fn new(base_url: &str, api_key: &str, model: &str, dims: usize) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -244,10 +285,12 @@ impl OpenAiEmbedding {
         }
     }
 
+    /// Internal helper to build an HTTP client with proxy support.
     fn http_client(&self) -> reqwest::Client {
         crate::openhuman::config::build_runtime_proxy_client("memory.embeddings")
     }
 
+    /// Checks if the base URL includes a specific path (e.g., /api/v1).
     fn has_explicit_api_path(&self) -> bool {
         let Ok(url) = reqwest::Url::parse(&self.base_url) else {
             return false;
@@ -257,6 +300,7 @@ impl OpenAiEmbedding {
         !path.is_empty() && path != "/"
     }
 
+    /// Checks if the URL already ends with /embeddings.
     fn has_embeddings_endpoint(&self) -> bool {
         let Ok(url) = reqwest::Url::parse(&self.base_url) else {
             return false;
@@ -265,6 +309,7 @@ impl OpenAiEmbedding {
         url.path().trim_end_matches('/').ends_with("/embeddings")
     }
 
+    /// Constructs the final URL for the embeddings endpoint.
     fn embeddings_url(&self) -> String {
         if self.has_embeddings_endpoint() {
             return self.base_url.clone();
@@ -288,6 +333,7 @@ impl EmbeddingProvider for OpenAiEmbedding {
         self.dims
     }
 
+    /// Sends a POST request to the embedding API.
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
@@ -341,6 +387,9 @@ impl EmbeddingProvider for OpenAiEmbedding {
 
 // ── Factory ──────────────────────────────────────────────────
 
+/// Creates an embedding provider based on the specified name and configuration.
+/// 
+/// Supports "fastembed", "openai", and "custom:<url>".
 pub fn create_embedding_provider(
     provider: &str,
     api_key: Option<&str>,
@@ -367,6 +416,7 @@ pub fn create_embedding_provider(
     }
 }
 
+/// Returns the default local embedding provider (Fastembed).
 pub fn default_local_embedding_provider() -> Arc<dyn EmbeddingProvider> {
     Arc::new(FastembedEmbedding::new(
         DEFAULT_FASTEMBED_MODEL,

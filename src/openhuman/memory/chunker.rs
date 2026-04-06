@@ -1,37 +1,55 @@
-// Line-based markdown chunker — splits documents into semantic chunks.
-//
-// Splits on markdown headings and paragraph boundaries, respecting
-// a max token limit per chunk. Preserves heading context.
+//! Semantic markdown chunking for the OpenHuman memory system.
+//!
+//! This module provides the logic for splitting large markdown documents into
+//! smaller, semantically meaningful chunks that fit within the context window
+//! of an LLM or an embedding model. It prioritizes splitting on headings and
+//! paragraph boundaries while preserving context by carrying over headings
+//! to subsequent chunks.
 
 use std::rc::Rc;
 
-/// A single chunk of text with metadata.
+/// A single chunk of text extracted from a larger document.
 #[derive(Debug, Clone)]
 pub struct Chunk {
+    /// The zero-based index of this chunk within the original document.
     pub index: usize,
+    /// The actual text content of the chunk.
     pub content: String,
+    /// The most recent markdown heading that applies to this chunk's content.
+    /// Uses `Rc<str>` for efficient sharing of the same heading across multiple chunks.
     pub heading: Option<Rc<str>>,
 }
 
-/// Split markdown text into chunks, each under `max_tokens` approximate tokens.
+/// Splits markdown text into a sequence of [`Chunk`] objects.
 ///
-/// Strategy:
-/// 1. Split on `## ` and `# ` headings (keeps heading with its content)
-/// 2. If a section exceeds `max_tokens`, split on blank lines (paragraphs)
-/// 3. If a paragraph still exceeds, split on line boundaries
+/// Each chunk is designed to be approximately under the `max_tokens` limit.
+/// The chunker uses a hierarchical splitting strategy:
+/// 1. **Heading Boundaries**: Splits on `#`, `##`, and `###` headings.
+/// 2. **Paragraph Boundaries**: If a heading section is too large, it splits on blank lines.
+/// 3. **Line Boundaries**: If a paragraph is still too large, it splits on individual lines.
 ///
-/// Token estimation: ~4 chars per token (rough English average).
+/// # Arguments
+/// * `text` - The raw markdown text to chunk.
+/// * `max_tokens` - The approximate maximum number of tokens per chunk (estimated at 4 chars/token).
+///
+/// # Returns
+/// A vector of [`Chunk`] structs representing the document.
 pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
     if text.trim().is_empty() {
         return Vec::new();
     }
 
+    // Rough estimation: 4 characters per token for English text.
     let max_chars = max_tokens * 4;
+    
+    // Step 1: Divide the document into top-level sections based on headings.
     let sections = split_on_headings(text);
     let mut chunks = Vec::with_capacity(sections.len());
 
     for (heading, body) in sections {
         let heading: Option<Rc<str>> = heading.map(Rc::from);
+        
+        // Combine heading and body to check initial size.
         let full = if let Some(ref h) = heading {
             format!("{h}\n{body}")
         } else {
@@ -39,32 +57,35 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
         };
 
         if full.len() <= max_chars {
+            // Section fits entirely in one chunk.
             chunks.push(Chunk {
                 index: chunks.len(),
                 content: full.trim().to_string(),
                 heading: heading.clone(),
             });
         } else {
-            // Split on paragraphs (blank lines)
+            // Step 2: Section is too large; split into paragraphs.
             let paragraphs = split_on_blank_lines(&body);
             let mut current = heading
                 .as_deref()
                 .map_or_else(String::new, |h| format!("{h}\n"));
 
             for para in paragraphs {
+                // If adding this paragraph exceeds the limit, emit the current chunk.
                 if current.len() + para.len() > max_chars && !current.trim().is_empty() {
                     chunks.push(Chunk {
                         index: chunks.len(),
                         content: current.trim().to_string(),
                         heading: heading.clone(),
                     });
+                    // Reset with the heading for context preservation.
                     current = heading
                         .as_deref()
                         .map_or_else(String::new, |h| format!("{h}\n"));
                 }
 
                 if para.len() > max_chars {
-                    // Paragraph too big — split on lines
+                    // Step 3: Paragraph is still too large; split it line-by-line.
                     if !current.trim().is_empty() {
                         chunks.push(Chunk {
                             index: chunks.len(),
@@ -88,6 +109,7 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
                 }
             }
 
+            // Emit any remaining content as a final chunk for this section.
             if !current.trim().is_empty() {
                 chunks.push(Chunk {
                     index: chunks.len(),
@@ -98,10 +120,9 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
         }
     }
 
-    // Filter out empty chunks
+    // Clean up empty chunks and normalize indices.
     chunks.retain(|c| !c.content.is_empty());
 
-    // Re-index
     for (i, chunk) in chunks.iter_mut().enumerate() {
         chunk.index = i;
     }
@@ -109,7 +130,9 @@ pub fn chunk_markdown(text: &str, max_tokens: usize) -> Vec<Chunk> {
     chunks
 }
 
-/// Split text into `(heading, body)` sections.
+/// Identifies top-level markdown headings and groups their following text.
+///
+/// Recognizes `#`, `##`, and `###` as section boundaries.
 fn split_on_headings(text: &str) -> Vec<(Option<String>, String)> {
     let mut sections = Vec::new();
     let mut current_heading: Option<String> = None;
@@ -134,7 +157,7 @@ fn split_on_headings(text: &str) -> Vec<(Option<String>, String)> {
     sections
 }
 
-/// Split text on blank lines (paragraph boundaries)
+/// Splits text into strings based on blank line (paragraph) boundaries.
 fn split_on_blank_lines(text: &str) -> Vec<String> {
     let mut paragraphs = Vec::new();
     let mut current = String::new();
@@ -157,12 +180,14 @@ fn split_on_blank_lines(text: &str) -> Vec<String> {
     paragraphs
 }
 
-/// Split text on line boundaries to fit within `max_chars`
+/// Splits text into chunks based on line boundaries to ensure size constraints.
 fn split_on_lines(text: &str, max_chars: usize) -> Vec<String> {
     let mut chunks = Vec::with_capacity(text.len() / max_chars.max(1) + 1);
     let mut current = String::new();
 
     for line in text.lines() {
+        // If the current line itself is larger than max_chars, it will be added anyway.
+        // We don't currently split *within* a single line.
         if current.len() + line.len() + 1 > max_chars && !current.is_empty() {
             chunks.push(std::mem::take(&mut current));
         }

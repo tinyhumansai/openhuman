@@ -1,3 +1,14 @@
+//! Relation Extraction (RelEx) using GLiNER on ONNX for the OpenHuman memory system.
+//!
+//! This module implements entity and relation extraction from unstructured text.
+//! It uses a specialized GLiNER model (General Language Model for Information 
+//! Extraction) exported to ONNX format. The extraction process identifies:
+//! 1. **Entities**: Named people, organizations, projects, etc.
+//! 2. **Relations**: Semantic links between entities (e.g., "Person A works on Project B").
+//!
+//! The module handles model asset management (downloading, checksumming),
+//! ONNX Runtime initialization, and the complex tensor-based inference logic.
+
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,6 +32,7 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::openhuman::memory::DEFAULT_GLINER_RELEX_MODEL;
 
+// Constants for model paths and asset management.
 const DEFAULT_EXPORTED_RELEX_DIR: &str =
     "_tmp/gliner-export/artifacts/gliner-relex-large-v0.5-onnx";
 const DEFAULT_MANAGED_RELEX_DIR: &str = ".openhuman/models/gliner-relex-large-v0.5-onnx";
@@ -31,6 +43,7 @@ const FALLBACK_MODEL_FILE_NAME: &str = "model.onnx";
 const TOKENIZER_FILE_NAME: &str = "tokenizer.json";
 const TOKENIZER_CONFIG_FILE_NAME: &str = "tokenizer_config.json";
 const GLINER_CONFIG_FILE_NAME: &str = "gliner_config.json";
+
 #[cfg(target_os = "windows")]
 const ORT_DYLIB_FILE_NAME: &str = "onnxruntime.dll";
 #[cfg(target_os = "macos")]
@@ -40,12 +53,14 @@ const ORT_DYLIB_FILE_NAME: &str = "libonnxruntime.so";
 #[cfg(target_os = "linux")]
 const ORT_SHARED_PROVIDER_FILE_NAME: &str = "libonnxruntime_providers_shared.so";
 
+/// Metadata for a single model asset used during download and verification.
 struct BundleAsset {
     remote_name: &'static str,
     local_name: &'static str,
     sha256: &'static str,
 }
 
+/// Core assets required by all platforms.
 const CORE_BUNDLE_ASSETS: &[BundleAsset] = &[
     BundleAsset {
         remote_name: MODEL_FILE_NAME,
@@ -69,6 +84,7 @@ const CORE_BUNDLE_ASSETS: &[BundleAsset] = &[
     },
 ];
 
+/// Platform-specific dynamic libraries for ONNX Runtime.
 #[cfg(target_os = "windows")]
 const PLATFORM_BUNDLE_ASSETS: &[BundleAsset] = &[BundleAsset {
     remote_name: ORT_DYLIB_FILE_NAME,
@@ -97,6 +113,7 @@ const PLATFORM_BUNDLE_ASSETS: &[BundleAsset] = &[
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 const PLATFORM_BUNDLE_ASSETS: &[BundleAsset] = &[];
 
+/// Predefined entity types the model is trained to recognize.
 const ENTITY_LABELS: &[&str] = &[
     "person",
     "organization",
@@ -111,6 +128,7 @@ const ENTITY_LABELS: &[&str] = &[
     "date",
 ];
 
+/// Predefined relation types the model is trained to recognize.
 const RELATION_LABELS: &[&str] = &[
     "owns",
     "uses",
@@ -131,6 +149,7 @@ const RELATION_LABELS: &[&str] = &[
     "avoids",
 ];
 
+/// An entity identified by the RelEx system.
 #[derive(Debug, Clone)]
 pub(crate) struct RelexEntity {
     pub name: String,
@@ -138,6 +157,7 @@ pub(crate) struct RelexEntity {
     pub confidence: f32,
 }
 
+/// A relationship identified between two entities.
 #[derive(Debug, Clone)]
 pub(crate) struct RelexRelation {
     pub subject: String,
@@ -148,12 +168,14 @@ pub(crate) struct RelexRelation {
     pub confidence: f32,
 }
 
+/// The result of a RelEx extraction pass.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RelexExtraction {
     pub entities: Vec<RelexEntity>,
     pub relations: Vec<RelexRelation>,
 }
 
+/// The initialized Relex engine, holding the tokenizer and the ONNX session.
 #[derive(Debug)]
 pub(crate) struct RelexRuntime {
     tokenizer: Tokenizer,
@@ -161,6 +183,7 @@ pub(crate) struct RelexRuntime {
     config: RelexBundleConfig,
 }
 
+/// Configuration parameters loaded from the model bundle.
 #[derive(Debug, Clone, Deserialize)]
 struct RelexBundleConfig {
     #[serde(default = "default_ent_token")]
@@ -173,6 +196,7 @@ struct RelexBundleConfig {
     max_width: usize,
 }
 
+/// A batch of input data ready for ONNX inference.
 #[derive(Debug, Clone)]
 struct PromptBatch {
     input_ids: Array2<i64>,
@@ -182,6 +206,7 @@ struct PromptBatch {
     num_words: usize,
 }
 
+/// A slice of a string representing a single word or token.
 #[derive(Debug, Clone)]
 struct TokenSlice {
     start: usize,
@@ -189,6 +214,7 @@ struct TokenSlice {
     text: String,
 }
 
+/// A decoded entity span with its associated class and probability.
 #[derive(Debug, Clone)]
 struct DecodedSpan {
     start: usize,
@@ -198,22 +224,12 @@ struct DecodedSpan {
     probability: f32,
 }
 
-fn default_ent_token() -> String {
-    "<<ENT>>".to_string()
-}
+fn default_ent_token() -> String { "<<ENT>>".to_string() }
+fn default_rel_token() -> String { "<<REL>>".to_string() }
+fn default_sep_token() -> String { "<<SEP>>".to_string() }
+fn default_max_width() -> usize { 12 }
 
-fn default_rel_token() -> String {
-    "<<REL>>".to_string()
-}
-
-fn default_sep_token() -> String {
-    "<<SEP>>".to_string()
-}
-
-fn default_max_width() -> usize {
-    12
-}
-
+/// Obtains a singleton or cached instance of the RelexRuntime.
 pub(crate) async fn runtime(model_name: &str) -> Option<Arc<RelexRuntime>> {
     if !uses_default_bundle(model_name) {
         return load_runtime_for_model(model_name).await.ok();
@@ -241,11 +257,21 @@ pub(crate) async fn runtime(model_name: &str) -> Option<Arc<RelexRuntime>> {
     Some(runtime)
 }
 
+/// Pre-warms the default Relex bundle to ensure it's downloaded and ready.
 pub(crate) async fn warm_default_bundle() -> Option<Arc<RelexRuntime>> {
     runtime(DEFAULT_GLINER_RELEX_MODEL).await
 }
 
 impl RelexRuntime {
+    /// Extracts entities and relations from the given text.
+    ///
+    /// This method performs the following steps:
+    /// 1. Tokenizes the input text into whitespace-delimited words.
+    /// 2. Encodes the text along with the entity and relation labels into a model-specific prompt.
+    /// 3. Constructs span and relation tensors for the model.
+    /// 4. Runs the ONNX inference session.
+    /// 5. Decodes the output logits into entities (using greedy filtering for overlapping spans).
+    /// 6. Decodes relation logits into semantic links between the identified entities.
     pub(crate) fn extract(
         &self,
         text: &str,
@@ -257,6 +283,7 @@ impl RelexRuntime {
             return Ok(RelexExtraction::default());
         }
 
+        // Prepare the model input (PromptBatch).
         let prompt = encode_prompt(
             &self.tokenizer,
             &self.config,
@@ -264,6 +291,8 @@ impl RelexRuntime {
             ENTITY_LABELS,
             RELATION_LABELS,
         )?;
+        
+        // Create span tensors. GLiNER uses these to evaluate every possible word span (up to max_width).
         let (span_idx, span_mask) = make_spans_tensors(prompt.num_words, self.config.max_width);
 
         let inputs = ort::inputs! {
@@ -275,10 +304,14 @@ impl RelexRuntime {
             "span_mask" => Tensor::from_array(span_mask.clone())?,
         };
 
+        // Execute inference.
         let mut session = self.session.lock();
         let outputs = session.run(inputs)?;
+        
+        // Extract 4D logits for entity spans.
         let logits = extract_f32_4d(outputs.get("logits").context("missing logits output")?)?;
 
+        // Decode entities.
         let spans = decode_entity_spans(
             &logits,
             text,
@@ -296,12 +329,14 @@ impl RelexRuntime {
             })
             .collect::<Vec<_>>();
 
+        // Decode relations.
         let mut relations = Vec::new();
         let rel_idx = outputs.get("rel_idx").map(extract_i64_3d).transpose()?;
         let rel_logits = outputs.get("rel_logits").map(extract_f32_3d).transpose()?;
         let rel_mask = outputs.get("rel_mask").map(extract_bool_2d).transpose()?;
 
         if let (Some(rel_idx), Some(rel_logits), Some(rel_mask)) = (rel_idx, rel_logits, rel_mask) {
+            // Index into the first (and only) batch.
             let rel_pairs = rel_idx.index_axis(ndarray::Axis(0), 0);
             let rel_scores = rel_logits.index_axis(ndarray::Axis(0), 0);
             let rel_valid = rel_mask.index_axis(ndarray::Axis(0), 0);
@@ -326,6 +361,7 @@ impl RelexRuntime {
                 let tail = &spans[tail_idx];
                 let class_count = rel_scores.shape()[1].min(RELATION_LABELS.len());
                 for class_idx in 0..class_count {
+                    // Apply sigmoid to convert logit to probability.
                     let probability = sigmoid(rel_scores[[pair_idx, class_idx]]);
                     if probability < relation_threshold {
                         continue;
@@ -349,6 +385,7 @@ impl RelexRuntime {
     }
 }
 
+/// Checks if a model name refers to the default GLiNER bundle.
 fn uses_default_bundle(model_name: &str) -> bool {
     model_name.trim().is_empty()
         || model_name == DEFAULT_GLINER_RELEX_MODEL
@@ -356,6 +393,7 @@ fn uses_default_bundle(model_name: &str) -> bool {
         || model_name == default_managed_bundle_dir().to_string_lossy()
 }
 
+/// Loads the default RelEx runtime, resolving and potentially downloading the bundle.
 async fn load_default_runtime() -> Result<RelexRuntime> {
     let bundle_dir = resolve_bundle_dir(DEFAULT_GLINER_RELEX_MODEL)
         .await
@@ -363,6 +401,7 @@ async fn load_default_runtime() -> Result<RelexRuntime> {
     load_runtime_from_bundle_dir(&bundle_dir)
 }
 
+/// Loads a runtime for a specifically named model/bundle.
 async fn load_runtime_for_model(model_name: &str) -> Result<Arc<RelexRuntime>> {
     let bundle_dir = resolve_bundle_dir(model_name)
         .await
@@ -370,6 +409,7 @@ async fn load_runtime_for_model(model_name: &str) -> Result<Arc<RelexRuntime>> {
     load_runtime_from_bundle_dir(&bundle_dir).map(Arc::new)
 }
 
+/// Initializes the ONNX session and tokenizer from a local bundle directory.
 fn load_runtime_from_bundle_dir(bundle_dir: &Path) -> Result<RelexRuntime> {
     ensure_ort_dylib_path(bundle_dir);
 
@@ -402,7 +442,9 @@ fn load_runtime_from_bundle_dir(bundle_dir: &Path) -> Result<RelexRuntime> {
     })
 }
 
+/// Finds the local directory containing the model bundle, potentially downloading it.
 async fn resolve_bundle_dir(model_name: &str) -> Option<PathBuf> {
+    // 1. Check environment variable override.
     if let Ok(path) = env::var("OPENHUMAN_GLINER_RELEX_DIR") {
         let bundle_dir = PathBuf::from(path);
         if bundle_complete(&bundle_dir) {
@@ -410,6 +452,7 @@ async fn resolve_bundle_dir(model_name: &str) -> Option<PathBuf> {
         }
     }
 
+    // 2. Check if model_name is an absolute path or direct path.
     let requested = PathBuf::from(model_name);
     if requested.is_absolute() || model_name.contains('/') || model_name.contains('\\') {
         if requested.is_dir() && bundle_complete(&requested) {
@@ -424,16 +467,19 @@ async fn resolve_bundle_dir(model_name: &str) -> Option<PathBuf> {
         }
     }
 
+    // 3. Check managed bundle in user home directory.
     let managed_dir = default_managed_bundle_dir();
     if managed_bundle_complete(&managed_dir) {
         return Some(managed_dir);
     }
 
+    // 4. Check bundled artifacts in the project directory.
     let bundle_dir = default_bundle_dir();
     if bundle_complete(&bundle_dir) {
         return Some(bundle_dir);
     }
 
+    // 5. Download the default bundle if necessary.
     if uses_default_bundle(model_name)
         && ensure_managed_bundle(&managed_dir).await.is_ok()
         && bundle_complete(&managed_dir)
@@ -444,6 +490,7 @@ async fn resolve_bundle_dir(model_name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Returns the path to the artifacts directory within the project source.
 fn default_bundle_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -451,6 +498,7 @@ fn default_bundle_dir() -> PathBuf {
         .join(DEFAULT_EXPORTED_RELEX_DIR)
 }
 
+/// Returns the path to the managed model directory in the user's home or cache dir.
 fn default_managed_bundle_dir() -> PathBuf {
     if let Ok(path) = env::var("OPENHUMAN_GLINER_RELEX_CACHE_DIR") {
         return PathBuf::from(path);
@@ -461,12 +509,14 @@ fn default_managed_bundle_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_MANAGED_RELEX_DIR))
 }
 
+/// Checks if a bundle directory contains all core required files.
 fn bundle_complete(bundle_dir: &Path) -> bool {
     bundle_dir.join(TOKENIZER_FILE_NAME).exists()
         && bundle_dir.join(GLINER_CONFIG_FILE_NAME).exists()
         && model_file_path(bundle_dir).is_some()
 }
 
+/// Checks if a managed bundle contains core files AND platform-specific libraries.
 fn managed_bundle_complete(bundle_dir: &Path) -> bool {
     bundle_complete(bundle_dir)
         && PLATFORM_BUNDLE_ASSETS
@@ -474,6 +524,7 @@ fn managed_bundle_complete(bundle_dir: &Path) -> bool {
             .all(|asset| bundle_dir.join(asset.local_name).exists())
 }
 
+/// Returns the path to the ONNX model file within a bundle, checking for quantized first.
 fn model_file_path(bundle_dir: &Path) -> Option<PathBuf> {
     for file_name in [MODEL_FILE_NAME, FALLBACK_MODEL_FILE_NAME] {
         let candidate = bundle_dir.join(file_name);
@@ -484,12 +535,14 @@ fn model_file_path(bundle_dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Configures the ONNX runtime library path for the current process.
 #[allow(unused_variables)]
 fn ensure_ort_dylib_path(bundle_dir: &Path) {
     if env::var_os("ORT_DYLIB_PATH").is_some() {
         return;
     }
 
+    // Check the bundle directory first.
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
         let bundled = bundle_dir.join(ORT_DYLIB_FILE_NAME);
@@ -499,6 +552,7 @@ fn ensure_ort_dylib_path(bundle_dir: &Path) {
         }
     }
 
+    // Check ORT_LIB_LOCATION environment variable.
     if let Some(lib_path) = env::var_os("ORT_LIB_LOCATION") {
         let candidate = PathBuf::from(lib_path);
         if candidate.is_file() {
@@ -511,6 +565,7 @@ fn ensure_ort_dylib_path(bundle_dir: &Path) {
         }
     }
 
+    // Platform-specific fallback (Windows uv cache).
     #[cfg(target_os = "windows")]
     {
         let Some(user_profile) = env::var_os("USERPROFILE") else {
@@ -530,6 +585,7 @@ fn ensure_ort_dylib_path(bundle_dir: &Path) {
         }
     }
 
+    // Platform-specific fallback (Linux system paths).
     #[cfg(target_os = "linux")]
     {
         for candidate in [
@@ -546,6 +602,7 @@ fn ensure_ort_dylib_path(bundle_dir: &Path) {
     }
 }
 
+/// Downloads the default RelEx bundle and verifies its contents.
 async fn ensure_managed_bundle(bundle_dir: &Path) -> Result<()> {
     static MANAGED_BUNDLE_BOOTSTRAP: OnceLock<AsyncMutex<()>> = OnceLock::new();
     let _guard = MANAGED_BUNDLE_BOOTSTRAP
@@ -578,6 +635,7 @@ async fn ensure_managed_bundle(bundle_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Downloads a single asset if it's missing or if the checksum doesn't match.
 async fn download_asset_if_needed(
     client: &reqwest::Client,
     base_url: &str,
@@ -644,6 +702,7 @@ async fn download_asset_if_needed(
     Ok(())
 }
 
+/// Verifies that a file's SHA256 hash matches the expected value.
 async fn file_matches_sha256(path: &Path, expected: &str) -> Result<bool> {
     if expected.is_empty() {
         return Ok(path.exists());
@@ -658,6 +717,7 @@ async fn file_matches_sha256(path: &Path, expected: &str) -> Result<bool> {
     Ok(actual.eq_ignore_ascii_case(expected))
 }
 
+/// Simple whitespace-based tokenizer that preserves character offsets.
 fn split_whitespace_tokens(text: &str) -> Vec<TokenSlice> {
     let mut tokens = Vec::new();
     let mut current_start: Option<usize> = None;
@@ -687,6 +747,7 @@ fn split_whitespace_tokens(text: &str) -> Vec<TokenSlice> {
     tokens
 }
 
+/// Encodes the input text and labels into the format expected by the GLiNER model.
 fn encode_prompt(
     tokenizer: &Tokenizer,
     config: &RelexBundleConfig,
@@ -694,6 +755,7 @@ fn encode_prompt(
     entity_labels: &[&str],
     relation_labels: &[&str],
 ) -> Result<PromptBatch> {
+    // 1. Build the prompt prefix containing all possible entity and relation types.
     let mut prompt_words = Vec::new();
     for label in entity_labels {
         prompt_words.push(config.ent_token.clone());
@@ -706,11 +768,13 @@ fn encode_prompt(
     }
     prompt_words.push(config.sep_token.clone());
 
+    // 2. Combine labels with the actual document tokens.
     let mut words = prompt_words.clone();
     words.extend(tokens.iter().map(|token| token.text.clone()));
 
+    // 3. Tokenize each word into subtokens (Byte-Pair Encoding).
     let mut encoded_words = Vec::with_capacity(words.len());
-    let mut total_tokens = 2usize;
+    let mut total_tokens = 2usize; // [CLS] and [SEP]
     let mut prompt_subtokens = 0usize;
 
     for (index, word) in words.iter().enumerate() {
@@ -725,13 +789,14 @@ fn encode_prompt(
         encoded_words.push(ids);
     }
 
+    // 4. Construct the input tensors (input_ids, attention_mask, words_mask).
     let text_offset = prompt_subtokens + 1;
     let mut input_ids = vec![0_i64; total_tokens];
     let mut attention_mask = vec![0_i64; total_tokens];
     let mut words_mask = vec![0_i64; total_tokens];
 
     let mut cursor = 0usize;
-    input_ids[cursor] = 1;
+    input_ids[cursor] = 1; // [CLS]
     attention_mask[cursor] = 1;
     cursor += 1;
 
@@ -740,6 +805,7 @@ fn encode_prompt(
         for (token_index, token_id) in ids.iter().enumerate() {
             input_ids[cursor] = i64::from(*token_id);
             attention_mask[cursor] = 1;
+            // words_mask maps subtokens back to their original word index.
             if cursor >= text_offset && token_index == 0 {
                 words_mask[cursor] = word_id;
             }
@@ -750,7 +816,7 @@ fn encode_prompt(
         }
     }
 
-    input_ids[cursor] = 2;
+    input_ids[cursor] = 2; // [SEP]
     attention_mask[cursor] = 1;
 
     Ok(PromptBatch {
@@ -762,6 +828,7 @@ fn encode_prompt(
     })
 }
 
+/// Generates span index and mask tensors for the model.
 fn make_spans_tensors(num_words: usize, max_width: usize) -> (Array3<i64>, Array2<bool>) {
     let num_spans = num_words * max_width;
     let mut span_idx = Array3::<i64>::zeros((1, num_spans, 2));
@@ -780,6 +847,7 @@ fn make_spans_tensors(num_words: usize, max_width: usize) -> (Array3<i64>, Array
     (span_idx, span_mask)
 }
 
+/// Decodes the raw 4D logits from the model into human-readable entity spans.
 fn decode_entity_spans(
     logits: &Array4<f32>,
     text: &str,
@@ -821,9 +889,11 @@ fn decode_entity_spans(
     }
 
     spans.sort_unstable_by_key(|span| (span.start, span.end));
+    // Remove overlapping spans using a greedy approach, preferring higher confidence.
     greedy_filter(spans)
 }
 
+// Helper functions for extracting tensors from ONNX DynValue into ndarray.
 fn extract_f32_4d(value: &ort::value::DynValue) -> Result<Array4<f32>> {
     let (shape, data) = value.try_extract_tensor::<f32>()?;
     Ok(Array::from_shape_vec(shape.to_ixdyn(), data.to_vec())?.into_dimensionality::<Ix4>()?)
@@ -844,6 +914,7 @@ fn extract_bool_2d(value: &ort::value::DynValue) -> Result<Array2<bool>> {
     Ok(Array::from_shape_vec(shape.to_ixdyn(), data.to_vec())?.into_dimensionality::<Ix2>()?)
 }
 
+/// Filters a list of spans to remove overlaps, keeping the highest probability spans.
 fn greedy_filter(spans: Vec<DecodedSpan>) -> Vec<DecodedSpan> {
     if spans.is_empty() {
         return spans;
@@ -869,10 +940,12 @@ fn greedy_filter(spans: Vec<DecodedSpan>) -> Vec<DecodedSpan> {
     selected
 }
 
+/// Checks if two spans are logically disjoint (non-overlapping).
 fn disjoint(left: &DecodedSpan, right: &DecodedSpan) -> bool {
     right.start >= left.end || right.end <= left.start
 }
 
+/// Maps internal model entity labels to standardized uppercase names.
 fn normalize_entity_label(label: &str) -> &'static str {
     match label {
         "person" => "PERSON",
@@ -890,6 +963,7 @@ fn normalize_entity_label(label: &str) -> &'static str {
     }
 }
 
+/// Maps internal model relation labels to standardized snake_case names.
 fn normalize_relation_label(label: &str) -> String {
     match label {
         "owns" => "owns".to_string(),
@@ -913,6 +987,7 @@ fn normalize_relation_label(label: &str) -> String {
     }
 }
 
+/// Standard sigmoid activation function.
 fn sigmoid(value: f32) -> f32 {
     1.0 / (1.0 + (-value).exp())
 }
