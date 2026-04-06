@@ -694,12 +694,15 @@ pub async fn bootstrap_skill_runtime() {
     let bus =
         crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
     // Register domain subscribers for cross-module event handling.
-    let _webhook_request_handle = bus.subscribe(Arc::new(
+    // Leak the handles so the background tasks live for the entire process —
+    // SubscriptionHandle::drop aborts the task, and bootstrap_skill_runtime()
+    // returns immediately after setup.
+    std::mem::forget(bus.subscribe(Arc::new(
         crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
-    ));
-    let _channel_inbound_handle = bus.subscribe(Arc::new(
+    )));
+    std::mem::forget(bus.subscribe(Arc::new(
         crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
-    ));
+    )));
     log::info!("[event_bus] webhook and channel subscribers registered");
 
     // --- Socket manager bootstrap ---
