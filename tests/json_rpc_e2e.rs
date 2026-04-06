@@ -1046,7 +1046,8 @@ fn write_test_skill(workspace: &Path, skill_id: &str) {
     )
     .expect("write manifest");
 
-    // Minimal JS skill that exports one tool: "echo"
+    // Minimal JS skill that exports one tool: "echo" and a deterministic onSync
+    // payload so we can assert sync → working-memory extraction end to end.
     let js = r#"
         globalThis.__skill = {
             name: "E2E Runtime Skill",
@@ -1072,6 +1073,18 @@ fn write_test_skill(workspace: &Path, skill_id: &str) {
             if (globalThis.__ops && globalThis.__ops.log) {
                 globalThis.__ops.log("info", "e2e-runtime-skill initialized");
             }
+        }
+
+        async function onSync() {
+            if (globalThis.state && typeof globalThis.state.set === "function") {
+                globalThis.state.set("sync_payload", {
+                    preferences: { writing_style: "prefers concise updates", language: "English" },
+                    goals: ["Ship e2e integration"],
+                    constraints: ["No meetings after 3pm"],
+                    projects: [{ name: "Atlas" }]
+                });
+            }
+            return { status: "ok", synced: true };
         }
 
         init();
@@ -1229,9 +1242,44 @@ async fn json_rpc_skills_runtime_start_tools_call_stop() {
         json!({"skill_id": "e2e-runtime"}),
     )
     .await;
-    // skills_sync now routes through "skill/sync" → onSync().  The e2e skill
-    // does not export onSync, so handle_js_call returns null (no error).
     let _sync_result = assert_no_jsonrpc_error(&sync, "skills_sync");
+
+    // Wait for async memory worker to persist sync snapshots + working-memory docs.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // 5a. Verify working-memory docs were written into global namespace.
+    let docs = post_json_rpc(
+        &rpc_base,
+        241,
+        "openhuman.memory_list_documents",
+        json!({"namespace":"global"}),
+    )
+    .await;
+    let docs_result = assert_no_jsonrpc_error(&docs, "memory_list_documents");
+    let docs_arr = docs_result
+        .get("documents")
+        .or_else(|| docs_result.get("data").and_then(|d| d.get("documents")))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let wm_keys: Vec<String> = docs_arr
+        .iter()
+        .filter_map(|doc| doc.get("key").and_then(Value::as_str))
+        .filter(|key| key.starts_with("working.user.e2e-runtime."))
+        .map(ToString::to_string)
+        .collect();
+
+    assert!(
+        !wm_keys.is_empty(),
+        "Expected working memory docs after skills_sync, found none. docs={docs_result}"
+    );
+    assert!(
+        wm_keys
+            .iter()
+            .any(|key| key == "working.user.e2e-runtime.summary"),
+        "Expected summary working-memory key. keys={wm_keys:?}"
+    );
 
     // 6. Stop the skill
     let stop = post_json_rpc(

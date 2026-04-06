@@ -22,6 +22,7 @@ mod schemas;
 pub mod skill_registry;
 pub mod types;
 pub mod utils;
+pub mod working_memory;
 
 pub use ops::*;
 pub use qjs_engine::{global_engine, require_engine, set_global_engine};

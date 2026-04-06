@@ -22,6 +22,7 @@ use crate::openhuman::{
     skills::{
         quickjs_libs::qjs_ops,
         types::{SkillMessage, SkillStatus, ToolResult},
+        working_memory::{skills_working_memory_enabled, working_memory_documents_from_sync},
     },
     tool_timeout::{tool_execution_timeout_duration, tool_execution_timeout_secs},
 };
@@ -91,6 +92,51 @@ fn spawn_memory_write_worker() -> mpsc::Sender<MemoryWriteJob> {
                 continue;
             }
             log::debug!("[memory] store_skill_sync succeeded for '{}'", job.title);
+
+            if skills_working_memory_enabled() {
+                let working_memory = working_memory_documents_from_sync(&job.skill, &job.content);
+                let mut working_persisted = 0usize;
+                let mut working_failed = 0usize;
+                for doc in working_memory.documents {
+                    let key = doc.key.clone();
+                    match job.client.put_doc(doc).await {
+                        Ok(_) => {
+                            working_persisted += 1;
+                        }
+                        Err(e) => {
+                            working_failed += 1;
+                            log::warn!(
+                                "[skills-working-memory] put_doc failed for skill='{}' key='{}': {}",
+                                job.skill,
+                                key,
+                                e
+                            );
+                        }
+                    }
+                }
+                log::info!(
+                    "[skills-working-memory] sync_batch skill='{}' title='{}' scalar_fields={} \
+                     skipped_sensitive={} prefs={} goals={} constraints={} entities={} \
+                     generated_docs={} persisted_docs={} failed_docs={}",
+                    job.skill,
+                    job.title,
+                    working_memory.stats.scalar_fields_seen,
+                    working_memory.stats.sensitive_fields_skipped,
+                    working_memory.stats.preferences,
+                    working_memory.stats.goals,
+                    working_memory.stats.constraints,
+                    working_memory.stats.entities,
+                    working_memory.stats.documents_generated,
+                    working_persisted,
+                    working_failed,
+                );
+            } else {
+                log::debug!(
+                    "[skills-working-memory] disabled by OPENHUMAN_SKILLS_WORKING_MEMORY_ENABLED; skill='{}' title='{}'",
+                    job.skill,
+                    job.title
+                );
+            }
 
             let namespace = format!("skill-{}", job.skill.trim());
             let skill = job.skill.trim().to_lowercase();

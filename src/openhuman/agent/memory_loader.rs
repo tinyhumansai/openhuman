@@ -1,5 +1,9 @@
 use crate::openhuman::memory::Memory;
 use async_trait::async_trait;
+use std::collections::HashSet;
+
+const WORKING_MEMORY_KEY_PREFIX: &str = "working.user.";
+const WORKING_MEMORY_LIMIT: usize = 3;
 
 #[async_trait]
 pub trait MemoryLoader: Send + Sync {
@@ -47,18 +51,15 @@ impl MemoryLoader for DefaultMemoryLoader {
         user_message: &str,
     ) -> anyhow::Result<String> {
         let entries = memory.recall(user_message, self.limit, None).await?;
-        if entries.is_empty() {
-            return Ok(String::new());
-        }
-
-        let header = "[Memory context]\n";
-        let mut context = String::from(header);
+        let mut context = String::new();
         let budget = if self.max_context_chars > 0 {
             self.max_context_chars
         } else {
             usize::MAX
         };
+        let mut seen_keys = HashSet::new();
 
+        let header = "[Memory context]\n";
         for entry in entries {
             if let Some(score) = entry.score {
                 if score < self.min_relevance_score {
@@ -66,6 +67,12 @@ impl MemoryLoader for DefaultMemoryLoader {
                 }
             }
             let line = format!("- {}: {}\n", entry.key, entry.content);
+            if context.is_empty() {
+                if header.len() >= budget {
+                    return Ok(String::new());
+                }
+                context.push_str(header);
+            }
             if context.len() + line.len() > budget {
                 tracing::debug!(
                     budget,
@@ -75,14 +82,51 @@ impl MemoryLoader for DefaultMemoryLoader {
                 );
                 break;
             }
+            seen_keys.insert(entry.key);
             context.push_str(&line);
         }
 
-        // If all entries were below threshold, return empty
-        if context == header {
-            return Ok(String::new());
+        // Explicit bounded recall for sync-derived user working memory.
+        let working_query = format!("working.user {user_message}");
+        let working_entries = memory
+            .recall(&working_query, WORKING_MEMORY_LIMIT + 2, None)
+            .await
+            .unwrap_or_default();
+        let mut appended_working_header = false;
+        for entry in working_entries
+            .into_iter()
+            .filter(|entry| entry.key.starts_with(WORKING_MEMORY_KEY_PREFIX))
+            .filter(|entry| !seen_keys.contains(&entry.key))
+            .filter(|entry| match entry.score {
+                Some(score) => score >= self.min_relevance_score,
+                None => true,
+            })
+            .take(WORKING_MEMORY_LIMIT)
+        {
+            if !appended_working_header {
+                let section = "[User working memory]\n";
+                if context.len() + section.len() > budget {
+                    break;
+                }
+                context.push_str(section);
+                appended_working_header = true;
+            }
+            let line = format!("- {}: {}\n", entry.key, entry.content);
+            if context.len() + line.len() > budget {
+                tracing::debug!(
+                    budget,
+                    current_len = context.len(),
+                    skipped_line_len = line.len(),
+                    "[memory_loader] context budget reached while appending working memory"
+                );
+                break;
+            }
+            context.push_str(&line);
         }
 
+        if context.is_empty() {
+            return Ok(String::new());
+        }
         context.push('\n');
         Ok(context)
     }
@@ -109,12 +153,24 @@ mod tests {
 
         async fn recall(
             &self,
-            _query: &str,
+            query: &str,
             limit: usize,
             _session_id: Option<&str>,
         ) -> anyhow::Result<Vec<MemoryEntry>> {
             if limit == 0 {
                 return Ok(vec![]);
+            }
+            if query.contains("working.user") {
+                return Ok(vec![MemoryEntry {
+                    id: "2".into(),
+                    key: "working.user.gmail.summary".into(),
+                    content: "User prefers concise updates.".into(),
+                    namespace: Some("global".into()),
+                    category: MemoryCategory::Core,
+                    timestamp: "now".into(),
+                    session_id: None,
+                    score: Some(0.95),
+                }]);
             }
             Ok(vec![MemoryEntry {
                 id: "1".into(),
@@ -163,5 +219,7 @@ mod tests {
         let context = loader.load_context(&MockMemory, "hello").await.unwrap();
         assert!(context.contains("[Memory context]"));
         assert!(context.contains("- k: v"));
+        assert!(context.contains("[User working memory]"));
+        assert!(context.contains("working.user.gmail.summary"));
     }
 }
