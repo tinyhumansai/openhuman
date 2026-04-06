@@ -14,19 +14,21 @@
 #     yarn workspace openhuman-app test:e2e:build
 #
 # Notes:
+#   - Uses the same CI image from GHCR (built by .github/workflows/docker-ci-image.yml)
 #   - The repo is bind-mounted at /app so builds persist between runs
 #   - Rust target/ and node_modules/ are cached via named volumes
 #   - Xvfb provides a virtual display for webkit2gtk rendering
 #
 services:
   e2e:
-    build:
-      context: ..
-      dockerfile: e2e/Dockerfile
+    image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    entrypoint: ["/docker-entrypoint.sh"]
+    command: ["yarn", "workspace", "openhuman-app", "test:e2e:all"]
+    working_dir: /app
     volumes:
       - ..:/app
-      - e2e-cargo-registry:/root/.cargo/registry
-      - e2e-cargo-git:/root/.cargo/git
+      - e2e-cargo-registry:/usr/local/cargo/registry
+      - e2e-cargo-git:/usr/local/cargo/git
     environment:
       - DISPLAY=:99
       - CI=true

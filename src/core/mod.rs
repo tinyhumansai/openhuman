@@ -11,6 +11,7 @@ pub mod rpc_log;
 pub mod screen_intelligence_cli;
 pub mod skills_cli;
 pub mod socketio;
+pub mod text_input_cli;
 pub mod types;
 
 /// Canonical function contract for domain controllers.
