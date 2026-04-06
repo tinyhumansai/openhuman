@@ -6,12 +6,14 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Weekly drift scan — Sundays at 04:30 UTC
-    - cron: '30 4 * * 0'
+    # Weekly drift scan — Saturdays at 09:37 UTC
+    - cron: '37 9 * * 6'
 
 permissions:
   contents: read
   security-events: write
+  packages: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
@@ -25,26 +27,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript]
-        # Rust is not yet supported by CodeQL.
-        # Add more languages here when needed (e.g. python).
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: rust
+            build-mode: none
+          # Ruby excluded — only a single Homebrew formula file exists.
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          # Use the extended query suite for broader coverage including
-          # quality, maintainability, and additional security queries.
+          build-mode: ${{ matrix.build-mode }}
           queries: security-and-quality
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: '/language:${{ matrix.language }}'
