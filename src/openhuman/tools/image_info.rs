@@ -160,21 +160,13 @@ impl Tool for ImageInfoTool {
 
         // Restrict reads to workspace directory to prevent arbitrary file exfiltration
         if !self.security.is_path_allowed(path_str) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Path not allowed: {path_str} (must be within workspace)"
-                )),
-            });
+            return Ok(ToolResult::error(format!(
+                "Path not allowed: {path_str} (must be within workspace)"
+            )));
         }
 
         if !path.exists() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("File not found: {path_str}")),
-            });
+            return Ok(ToolResult::error(format!("File not found: {path_str}")));
         }
 
         let metadata = tokio::fs::metadata(path)
@@ -184,13 +176,9 @@ impl Tool for ImageInfoTool {
         let file_size = metadata.len();
 
         if file_size > MAX_IMAGE_BYTES {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Image too large: {file_size} bytes (max {MAX_IMAGE_BYTES} bytes)"
-                )),
-            });
+            return Ok(ToolResult::error(format!(
+                "Image too large: {file_size} bytes (max {MAX_IMAGE_BYTES} bytes)"
+            )));
         }
 
         let bytes = tokio::fs::read(path)
@@ -220,11 +208,7 @@ impl Tool for ImageInfoTool {
             let _ = write!(output, "\ndata:{mime};base64,{encoded}");
         }
 
-        Ok(ToolResult {
-            success: true,
-            output,
-            error: None,
-        })
+        Ok(ToolResult::success(output))
     }
 }
 
@@ -420,8 +404,8 @@ mod tests {
             .execute(json!({"path": "/tmp/nonexistent_image_xyz.png"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not found"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("not found"));
     }
 
     #[tokio::test]
@@ -455,10 +439,10 @@ mod tests {
             .execute(json!({"path": png_path.to_string_lossy()}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("Format: png"));
-        assert!(result.output.contains("Dimensions: 1x1"));
-        assert!(!result.output.contains("data:"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("Format: png"));
+        assert!(result.output().contains("Dimensions: 1x1"));
+        assert!(!result.output().contains("data:"));
 
         // Clean up
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -485,8 +469,8 @@ mod tests {
             .execute(json!({"path": png_path.to_string_lossy(), "include_base64": true}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("data:image/png;base64,"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("data:image/png;base64,"));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }

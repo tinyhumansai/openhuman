@@ -50,30 +50,22 @@ impl Tool for CronAddTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("cron is disabled by config (cron.enabled=false)".to_string()),
-            });
+            return Ok(ToolResult::error(
+                "cron is disabled by config (cron.enabled=false)".to_string(),
+            ));
         }
 
         let schedule = match args.get("schedule") {
             Some(v) => match serde_json::from_value::<Schedule>(v.clone()) {
                 Ok(schedule) => schedule,
                 Err(e) => {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Invalid schedule: {e}")),
-                    });
+                    return Ok(ToolResult::error(format!("Invalid schedule: {e}")));
                 }
             },
             None => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Missing 'schedule' parameter".to_string()),
-                });
+                return Ok(ToolResult::error(
+                    "Missing 'schedule' parameter".to_string(),
+                ));
             }
         };
 
@@ -86,11 +78,7 @@ impl Tool for CronAddTool {
             Some("agent") => JobType::Agent,
             Some("shell") => JobType::Shell,
             Some(other) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Invalid job_type: {other}")),
-                });
+                return Ok(ToolResult::error(format!("Invalid job_type: {other}")));
             }
             None => {
                 if args.get("prompt").is_some() {
@@ -112,20 +100,16 @@ impl Tool for CronAddTool {
                 let command = match args.get("command").and_then(serde_json::Value::as_str) {
                     Some(command) if !command.trim().is_empty() => command,
                     _ => {
-                        return Ok(ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some("Missing 'command' for shell job".to_string()),
-                        });
+                        return Ok(ToolResult::error(
+                            "Missing 'command' for shell job".to_string(),
+                        ));
                     }
                 };
 
                 if !self.security.is_command_allowed(command) {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Command blocked by security policy: {command}")),
-                    });
+                    return Ok(ToolResult::error(format!(
+                        "Command blocked by security policy: {command}"
+                    )));
                 }
 
                 cron::add_shell_job(&self.config, name, schedule, command)
@@ -134,11 +118,9 @@ impl Tool for CronAddTool {
                 let prompt = match args.get("prompt").and_then(serde_json::Value::as_str) {
                     Some(prompt) if !prompt.trim().is_empty() => prompt,
                     _ => {
-                        return Ok(ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some("Missing 'prompt' for agent job".to_string()),
-                        });
+                        return Ok(ToolResult::error(
+                            "Missing 'prompt' for agent job".to_string(),
+                        ));
                     }
                 };
 
@@ -146,11 +128,7 @@ impl Tool for CronAddTool {
                     Some(v) => match serde_json::from_value::<SessionTarget>(v.clone()) {
                         Ok(target) => target,
                         Err(e) => {
-                            return Ok(ToolResult {
-                                success: false,
-                                output: String::new(),
-                                error: Some(format!("Invalid session_target: {e}")),
-                            });
+                            return Ok(ToolResult::error(format!("Invalid session_target: {e}")));
                         }
                     },
                     None => SessionTarget::Isolated,
@@ -165,11 +143,7 @@ impl Tool for CronAddTool {
                     Some(v) => match serde_json::from_value::<DeliveryConfig>(v.clone()) {
                         Ok(cfg) => Some(cfg),
                         Err(e) => {
-                            return Ok(ToolResult {
-                                success: false,
-                                output: String::new(),
-                                error: Some(format!("Invalid delivery config: {e}")),
-                            });
+                            return Ok(ToolResult::error(format!("Invalid delivery config: {e}")));
                         }
                     },
                     None => None,
@@ -189,23 +163,15 @@ impl Tool for CronAddTool {
         };
 
         match result {
-            Ok(job) => Ok(ToolResult {
-                success: true,
-                output: serde_json::to_string_pretty(&json!({
-                    "id": job.id,
-                    "name": job.name,
-                    "job_type": job.job_type,
-                    "schedule": job.schedule,
-                    "next_run": job.next_run,
-                    "enabled": job.enabled
-                }))?,
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(e.to_string()),
-            }),
+            Ok(job) => Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+                "id": job.id,
+                "name": job.name,
+                "job_type": job.job_type,
+                "schedule": job.schedule,
+                "next_run": job.next_run,
+                "enabled": job.enabled
+            }))?)),
+            Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }
 }
@@ -250,8 +216,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.success, "{:?}", result.error);
-        assert!(result.output.contains("next_run"));
+        assert!(!result.is_error, "{:?}", result.output());
+        assert!(result.output().contains("next_run"));
     }
 
     #[tokio::test]
@@ -279,11 +245,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("blocked by security policy"));
+        assert!(result.is_error);
+        assert!(result.output().contains("blocked by security policy"));
     }
 
     #[tokio::test]
@@ -301,11 +264,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("every_ms must be > 0"));
+        assert!(result.is_error);
+        assert!(result.output().contains("every_ms must be > 0"));
     }
 
     #[tokio::test]
@@ -321,10 +281,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("Missing 'prompt'"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Missing 'prompt'"));
     }
 }

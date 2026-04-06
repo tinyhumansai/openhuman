@@ -113,19 +113,11 @@ impl Tool for PushoverTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.security.can_act() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: autonomy is read-only".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
         }
 
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: rate limit exceeded".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
         let message = args
@@ -141,13 +133,9 @@ impl Tool for PushoverTool {
         let priority = match args.get("priority").and_then(|v| v.as_i64()) {
             Some(value) if (-2..=2).contains(&value) => Some(value),
             Some(value) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!(
-                        "Invalid 'priority': {value}. Expected integer in range -2..=2"
-                    )),
-                })
+                return Ok(ToolResult::error(format!(
+                    "Invalid 'priority': {value}. Expected integer in range -2..=2"
+                )))
             }
             None => None,
         };
@@ -184,11 +172,10 @@ impl Tool for PushoverTool {
         let body = response.text().await.unwrap_or_default();
 
         if !status.is_success() {
-            return Ok(ToolResult {
-                success: false,
-                output: body,
-                error: Some(format!("Pushover API returned status {}", status)),
-            });
+            return Ok(ToolResult::error(format!(
+                "Pushover API returned status {}",
+                status
+            )));
         }
 
         let api_status = serde_json::from_str::<serde_json::Value>(&body)
@@ -196,20 +183,14 @@ impl Tool for PushoverTool {
             .and_then(|json| json.get("status").and_then(|value| value.as_i64()));
 
         if api_status == Some(1) {
-            Ok(ToolResult {
-                success: true,
-                output: format!(
-                    "Pushover notification sent successfully. Response: {}",
-                    body
-                ),
-                error: None,
-            })
+            Ok(ToolResult::success(format!(
+                "Pushover notification sent successfully. Response: {}",
+                body
+            )))
         } else {
-            Ok(ToolResult {
-                success: false,
-                output: body,
-                error: Some("Pushover API returned an application-level error".into()),
-            })
+            Ok(ToolResult::error(
+                "Pushover API returned an application-level error",
+            ))
         }
     }
 }
@@ -402,8 +383,8 @@ mod tests {
         );
 
         let result = tool.execute(json!({"message": "hello"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("read-only"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only"));
     }
 
     #[tokio::test]
@@ -411,8 +392,8 @@ mod tests {
         let tool = PushoverTool::new(test_security(AutonomyLevel::Full, 0), PathBuf::from("/tmp"));
 
         let result = tool.execute(json!({"message": "hello"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("rate limit"));
+        assert!(result.is_error);
+        assert!(result.output().contains("rate limit"));
     }
 
     #[tokio::test]
@@ -427,7 +408,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("-2..=2"));
+        assert!(result.is_error);
+        assert!(result.output().contains("-2..=2"));
     }
 }

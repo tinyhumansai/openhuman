@@ -83,43 +83,23 @@ impl Tool for BrowserOpenTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'url' parameter"))?;
 
         if !self.security.can_act() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: autonomy is read-only".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
         }
 
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: rate limit exceeded".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
         let url = match self.validate_url(url) {
             Ok(v) => v,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e.to_string()),
-                })
-            }
+            Err(e) => return Ok(ToolResult::error(e.to_string())),
         };
 
         match open_in_brave(&url).await {
-            Ok(()) => Ok(ToolResult {
-                success: true,
-                output: format!("Opened in Brave: {url}"),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to open Brave Browser: {e}")),
-            }),
+            Ok(()) => Ok(ToolResult::success(format!("Opened in Brave: {url}"))),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to open Brave Browser: {e}"
+            ))),
         }
     }
 }
@@ -436,8 +416,8 @@ mod tests {
             .execute(json!({"url": "https://example.com"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("read-only"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only"));
     }
 
     #[tokio::test]
@@ -451,7 +431,7 @@ mod tests {
             .execute(json!({"url": "https://example.com"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("rate limit"));
+        assert!(result.is_error);
+        assert!(result.output().contains("rate limit"));
     }
 }

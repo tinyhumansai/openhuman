@@ -96,14 +96,9 @@ impl Tool for HardwareBoardInfoTool {
         let board = board.as_deref().unwrap_or("unknown");
 
         if self.boards.is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(
-                    "No peripherals configured. Add boards to config.toml [peripherals.boards]."
-                        .into(),
-                ),
-            });
+            return Ok(ToolResult::error(
+                "No peripherals configured. Add boards to config.toml [peripherals.boards].",
+            ));
         }
 
         let mut output = String::new();
@@ -117,11 +112,7 @@ impl Tool for HardwareBoardInfoTool {
             };
             match probe_board_info(chip) {
                 Ok(info) => {
-                    return Ok(ToolResult {
-                        success: true,
-                        output: info,
-                        error: None,
-                    });
+                    return Ok(ToolResult::success(info));
                 }
                 Err(e) => {
                     use std::fmt::Write;
@@ -147,11 +138,7 @@ impl Tool for HardwareBoardInfoTool {
             );
         }
 
-        Ok(ToolResult {
-            success: true,
-            output,
-            error: None,
-        })
+        Ok(ToolResult::success(output))
     }
 }
 

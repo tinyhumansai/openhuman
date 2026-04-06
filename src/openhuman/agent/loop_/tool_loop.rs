@@ -78,6 +78,16 @@ pub(crate) async fn run_tool_call_loop(
         tools_registry.iter().map(|tool| tool.spec()).collect();
     let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
 
+    log::debug!(
+        "[tool-loop] Registry has {} tool(s): [{}]",
+        tools_registry.len(),
+        tools_registry
+            .iter()
+            .map(|t| t.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
     let mut context_guard = ContextGuard::new();
 
     for iteration in 0..max_iterations {
@@ -278,9 +288,11 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
 
+            let tool_found = find_tool(tools_registry, &call.name).is_some();
             tracing::debug!(
                 iteration,
                 tool = call.name.as_str(),
+                found = tool_found,
                 "[agent_loop] executing tool"
             );
 
@@ -292,22 +304,22 @@ pub(crate) async fn run_tool_call_loop(
                     .await
                 {
                     Ok(Ok(r)) => {
-                        if r.success {
+                        let output = r.output();
+                        if !r.is_error {
                             tracing::debug!(
                                 iteration,
                                 tool = call.name.as_str(),
-                                output_len = r.output.len(),
+                                output_len = output.len(),
                                 "[agent_loop] tool succeeded"
                             );
-                            scrub_credentials(&r.output)
+                            scrub_credentials(&output)
                         } else {
-                            let err_msg = r.error.unwrap_or(r.output);
                             tracing::warn!(
                                 iteration,
                                 tool = call.name.as_str(),
-                                "[agent_loop] tool returned error: {err_msg}"
+                                "[agent_loop] tool returned error: {output}"
                             );
-                            format!("Error: {err_msg}")
+                            format!("Error: {output}")
                         }
                     }
                     Ok(Err(e)) => {

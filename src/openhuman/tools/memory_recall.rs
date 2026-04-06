@@ -76,11 +76,9 @@ impl Tool for MemoryRecallTool {
         // `namespace` is still required by the tool contract; unified memory scopes recall to the
         // global document namespace until multi-namespace recall is wired through the `Memory` trait.
         match self.memory.recall(query, limit, None).await {
-            Ok(entries) if entries.is_empty() => Ok(ToolResult {
-                success: true,
-                output: "No memories found matching that query.".into(),
-                error: None,
-            }),
+            Ok(entries) if entries.is_empty() => Ok(ToolResult::success(
+                "No memories found matching that query.",
+            )),
             Ok(entries) => {
                 let mut output = format!("Found {} memories:\n", entries.len());
                 for entry in &entries {
@@ -93,17 +91,9 @@ impl Tool for MemoryRecallTool {
                         entry.category, entry.key, entry.content
                     );
                 }
-                Ok(ToolResult {
-                    success: true,
-                    output,
-                    error: None,
-                })
+                Ok(ToolResult::success(output))
             }
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Memory recall failed: {e}")),
-            }),
+            Err(e) => Ok(ToolResult::error(format!("Memory recall failed: {e}"))),
         }
     }
 }
@@ -128,8 +118,8 @@ mod tests {
             .execute(json!({"namespace": "global", "query": "anything"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("No memories found"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("No memories found"));
     }
 
     #[tokio::test]
@@ -152,9 +142,9 @@ mod tests {
             .execute(json!({"namespace": "global", "query": "Rust"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("Rust"));
-        assert!(result.output.contains("Found 1"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("Rust"));
+        assert!(result.output().contains("Found 1"));
     }
 
     #[tokio::test]
@@ -176,8 +166,8 @@ mod tests {
             .execute(json!({"namespace": "global", "query": "Rust", "limit": 3}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("Found 3"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("Found 3"));
     }
 
     #[tokio::test]

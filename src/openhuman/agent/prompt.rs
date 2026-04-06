@@ -334,11 +334,7 @@ mod tests {
             &self,
             _args: serde_json::Value,
         ) -> anyhow::Result<crate::openhuman::tools::ToolResult> {
-            Ok(crate::openhuman::tools::ToolResult {
-                success: true,
-                output: "ok".into(),
-                error: None,
-            })
+            Ok(crate::openhuman::tools::ToolResult::success("ok"))
         }
     }
 

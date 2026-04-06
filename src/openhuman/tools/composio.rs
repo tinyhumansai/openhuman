@@ -484,17 +484,9 @@ impl Tool for ComposioTool {
                                 String::new()
                             }
                         );
-                        Ok(ToolResult {
-                            success: true,
-                            output,
-                            error: None,
-                        })
+                        Ok(ToolResult::success(output))
                     }
-                    Err(e) => Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Failed to list actions: {e}")),
-                    }),
+                    Err(e) => Ok(ToolResult::error(format!("Failed to list actions: {e}"))),
                 }
             }
 
@@ -503,11 +495,7 @@ impl Tool for ComposioTool {
                     .security
                     .enforce_tool_operation(ToolOperation::Act, "composio.execute")
                 {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(error),
-                    });
+                    return Ok(ToolResult::error(error));
                 }
 
                 let action_name = args
@@ -528,17 +516,9 @@ impl Tool for ComposioTool {
                     Ok(result) => {
                         let output = serde_json::to_string_pretty(&result)
                             .unwrap_or_else(|_| format!("{result:?}"));
-                        Ok(ToolResult {
-                            success: true,
-                            output,
-                            error: None,
-                        })
+                        Ok(ToolResult::success(output))
                     }
-                    Err(e) => Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Action execution failed: {e}")),
-                    }),
+                    Err(e) => Ok(ToolResult::error(format!("Action execution failed: {e}"))),
                 }
             }
 
@@ -547,11 +527,7 @@ impl Tool for ComposioTool {
                     .security
                     .enforce_tool_operation(ToolOperation::Act, "composio.connect")
                 {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(error),
-                    });
+                    return Ok(ToolResult::error(error));
                 }
 
                 let app = args.get("app").and_then(|v| v.as_str());
@@ -568,27 +544,19 @@ impl Tool for ComposioTool {
                     Ok(url) => {
                         let target =
                             app.unwrap_or(auth_config_id.unwrap_or("provided auth config"));
-                        Ok(ToolResult {
-                            success: true,
-                            output: format!("Open this URL to connect {target}:\n{url}"),
-                            error: None,
-                        })
+                        Ok(ToolResult::success(format!(
+                            "Open this URL to connect {target}:\n{url}"
+                        )))
                     }
-                    Err(e) => Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Failed to get connection URL: {e}")),
-                    }),
+                    Err(e) => Ok(ToolResult::error(format!(
+                        "Failed to get connection URL: {e}"
+                    ))),
                 }
             }
 
-            _ => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Unknown action '{action}'. Use 'list', 'execute', or 'connect'."
-                )),
-            }),
+            _ => Ok(ToolResult::error(format!(
+                "Unknown action '{action}'. Use 'list', 'execute', or 'connect'."
+            ))),
         }
     }
 }
@@ -830,8 +798,8 @@ mod tests {
     async fn execute_unknown_action_returns_error() {
         let tool = ComposioTool::new("test-key", None, test_security());
         let result = tool.execute(json!({"action": "unknown"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("Unknown action"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("Unknown action"));
     }
 
     #[tokio::test]
@@ -862,12 +830,8 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("read-only mode"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only mode"));
     }
 
     #[tokio::test]
@@ -884,12 +848,8 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Rate limit exceeded"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Rate limit exceeded"));
     }
 
     // ── API response parsing ──────────────────────────────────

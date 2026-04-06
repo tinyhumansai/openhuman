@@ -46,13 +46,12 @@ impl SelfHealingInterceptor {
     /// Returns `Some(command_name)` if the error matches a known missing-command pattern
     /// and we haven't exceeded the retry limit.
     pub fn detect_missing_command(&mut self, result: &ToolResult) -> Option<String> {
-        if !self.enabled || result.success {
+        if !self.enabled || !result.is_error {
             return None;
         }
 
-        let error_text = result.error.as_deref().unwrap_or("").to_lowercase();
-        let output_text = result.output.to_lowercase();
-        let combined = format!("{error_text} {output_text}");
+        let output_text = result.output().to_lowercase();
+        let combined = output_text;
 
         // Check if the error matches any missing-command pattern.
         let is_missing = MISSING_CMD_PATTERNS
@@ -185,11 +184,7 @@ mod tests {
     use super::*;
 
     fn make_error_result(error: &str) -> ToolResult {
-        ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some(error.to_string()),
-        }
+        ToolResult::error(error)
     }
 
     #[test]
@@ -223,11 +218,7 @@ mod tests {
     #[test]
     fn ignores_successful_results() {
         let mut interceptor = SelfHealingInterceptor::new(Path::new("/tmp"), true);
-        let result = ToolResult {
-            success: true,
-            output: "command not found".into(), // misleading output
-            error: None,
-        };
+        let result = ToolResult::success("command not found"); // misleading output
         assert!(interceptor.detect_missing_command(&result).is_none());
     }
 

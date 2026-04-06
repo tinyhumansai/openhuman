@@ -40,67 +40,43 @@ impl Tool for CronUpdateTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("cron is disabled by config (cron.enabled=false)".to_string()),
-            });
+            return Ok(ToolResult::error(
+                "cron is disabled by config (cron.enabled=false)".to_string(),
+            ));
         }
 
         let job_id = match args.get("job_id").and_then(serde_json::Value::as_str) {
             Some(v) if !v.trim().is_empty() => v,
             _ => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Missing 'job_id' parameter".to_string()),
-                });
+                return Ok(ToolResult::error("Missing 'job_id' parameter".to_string()));
             }
         };
 
         let patch_val = match args.get("patch") {
             Some(v) => v.clone(),
             None => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Missing 'patch' parameter".to_string()),
-                });
+                return Ok(ToolResult::error("Missing 'patch' parameter".to_string()));
             }
         };
 
         let patch = match serde_json::from_value::<CronJobPatch>(patch_val) {
             Ok(patch) => patch,
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Invalid patch payload: {e}")),
-                });
+                return Ok(ToolResult::error(format!("Invalid patch payload: {e}")));
             }
         };
 
         if let Some(command) = &patch.command {
             if !self.security.is_command_allowed(command) {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Command blocked by security policy: {command}")),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Command blocked by security policy: {command}"
+                )));
             }
         }
 
         match cron::update_job(&self.config, job_id, patch) {
-            Ok(job) => Ok(ToolResult {
-                success: true,
-                output: serde_json::to_string_pretty(&job)?,
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(e.to_string()),
-            }),
+            Ok(job) => Ok(ToolResult::success(serde_json::to_string_pretty(&job)?)),
+            Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }
 }
@@ -145,8 +121,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.success, "{:?}", result.error);
-        assert!(result.output.contains("\"enabled\": false"));
+        assert!(!result.is_error, "{:?}", result.output());
+        assert!(result.output().contains("\"enabled\": false"));
     }
 
     #[tokio::test]
@@ -172,10 +148,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("blocked by security policy"));
+        assert!(result.is_error);
+        assert!(result.output().contains("blocked by security policy"));
     }
 }

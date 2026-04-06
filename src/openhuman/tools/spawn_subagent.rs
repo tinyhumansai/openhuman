@@ -66,11 +66,7 @@ impl Tool for SpawnSubagentTool {
         let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
 
         if prompt.is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("prompt is required".into()),
-            });
+            return Ok(ToolResult::error("prompt is required"));
         }
 
         // Parse archetype (validation).
@@ -85,15 +81,8 @@ impl Tool for SpawnSubagentTool {
             prompt.len()
         );
 
-        Ok(ToolResult {
-            success: false,
-            output: format!(
-                "[Sub-agent {archetype_str}] Task received. Prompt: {prompt}\n\
-                 Context length: {} chars\n\
-                 (Full sub-agent execution will be wired in next phase)",
-                context.len()
-            ),
-            error: Some("spawn_subagent not yet wired to sub-agent execution".into()),
-        })
+        Ok(ToolResult::error(
+            "spawn_subagent not yet wired to sub-agent execution",
+        ))
     }
 }

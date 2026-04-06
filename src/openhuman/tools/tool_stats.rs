@@ -64,11 +64,9 @@ impl Tool for ToolStatsTool {
 
         if entries.is_empty() {
             log::debug!("[tool_stats] no entries, returning early");
-            return Ok(ToolResult {
-                success: true,
-                output: "No tool effectiveness data recorded yet.".into(),
-                error: None,
-            });
+            return Ok(ToolResult::success(
+                "No tool effectiveness data recorded yet.",
+            ));
         }
 
         let mut output = String::from("## Tool Effectiveness Stats\n\n");
@@ -120,18 +118,12 @@ impl Tool for ToolStatsTool {
         if !found {
             if let Some(name) = filter {
                 log::debug!("[tool_stats] filter '{name}' matched no entries");
-                return Ok(ToolResult {
-                    success: true,
-                    output: format!("No effectiveness data recorded for tool '{name}'."),
-                    error: None,
-                });
+                return Ok(ToolResult::success(format!(
+                    "No effectiveness data recorded for tool '{name}'."
+                )));
             }
         }
 
-        Ok(ToolResult {
-            success: true,
-            output,
-            error: None,
-        })
+        Ok(ToolResult::success(output))
     }
 }

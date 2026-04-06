@@ -79,6 +79,16 @@ pub async fn run(
         tools_registry.extend(peripheral_tools);
     }
 
+    // Bridge skill tools from the QuickJS runtime into the tool registry
+    let skill_tools = tools::skill_bridge::collect_skill_tools();
+    if !skill_tools.is_empty() {
+        tracing::info!(
+            count = skill_tools.len(),
+            "[skill-bridge] Skill tools added to session"
+        );
+        tools_registry.extend(skill_tools);
+    }
+
     // ── Inference (OpenHuman backend only) ───────────────────────
     let provider_name = providers::INFERENCE_BACKEND_ID;
 
@@ -483,6 +493,16 @@ pub async fn process_message(config: Config, message: &str) -> Result<String> {
     let peripheral_tools: Vec<Box<dyn Tool>> =
         tools::create_peripheral_tools(&config.peripherals).await?;
     tools_registry.extend(peripheral_tools);
+
+    // Bridge skill tools from the QuickJS runtime
+    let skill_tools = tools::skill_bridge::collect_skill_tools();
+    if !skill_tools.is_empty() {
+        tracing::info!(
+            count = skill_tools.len(),
+            "[skill-bridge] Skill tools added to channel"
+        );
+        tools_registry.extend(skill_tools);
+    }
 
     let provider_name = providers::INFERENCE_BACKEND_ID;
     let model_name = config

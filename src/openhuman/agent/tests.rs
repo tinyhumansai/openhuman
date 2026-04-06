@@ -152,11 +152,7 @@ impl Tool for EchoTool {
             .and_then(|v| v.as_str())
             .unwrap_or("(empty)")
             .to_string();
-        Ok(ToolResult {
-            success: true,
-            output: msg,
-            error: None,
-        })
+        Ok(ToolResult::success(msg))
     }
 }
 
@@ -178,11 +174,7 @@ impl Tool for FailingTool {
     }
 
     async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
-        Ok(ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some("intentional failure".into()),
-        })
+        Ok(ToolResult::error("intentional failure"))
     }
 }
 
@@ -242,11 +234,7 @@ impl Tool for CountingTool {
     async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
         let mut c = self.count.lock().unwrap();
         *c += 1;
-        Ok(ToolResult {
-            success: true,
-            output: format!("call #{}", *c),
-            error: None,
-        })
+        Ok(ToolResult::success(format!("call #{}", *c)))
     }
 }
 

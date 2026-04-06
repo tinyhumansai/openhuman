@@ -34,6 +34,7 @@ pub mod schema;
 mod schemas;
 pub mod screenshot;
 pub mod shell;
+pub mod skill_bridge;
 pub mod spawn_subagent;
 pub mod tool_stats;
 pub mod traits;
@@ -81,9 +82,7 @@ pub use screenshot::ScreenshotTool;
 pub use shell::ShellTool;
 pub use spawn_subagent::SpawnSubagentTool;
 pub use tool_stats::ToolStatsTool;
-pub use traits::{PermissionLevel, Tool};
-#[allow(unused_imports)]
-pub use traits::{ToolResult, ToolSpec};
+pub use traits::{PermissionLevel, Tool, ToolContent, ToolResult, ToolSpec};
 pub use update_memory_md::UpdateMemoryMdTool;
 pub use web_search_tool::WebSearchTool;
 pub use workspace_state::WorkspaceStateTool;

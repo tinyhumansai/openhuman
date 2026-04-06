@@ -91,29 +91,17 @@ impl Tool for InsertSqlRecordTool {
 
         // ── Validation ──────────────────────────────────────────────────────
         if !VALID_ROLES.contains(&role) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Invalid role '{role}'. Must be one of: user, assistant, tool."
-                )),
-            });
+            return Ok(ToolResult::error(format!(
+                "Invalid role '{role}'. Must be one of: user, assistant, tool."
+            )));
         }
 
         if session_id.trim().is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("'session_id' must not be empty.".into()),
-            });
+            return Ok(ToolResult::error("'session_id' must not be empty."));
         }
 
         if content.trim().is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("'content' must not be empty.".into()),
-            });
+            return Ok(ToolResult::error("'content' must not be empty."));
         }
 
         // ── Structured trace log ────────────────────────────────────────────
@@ -145,11 +133,9 @@ impl Tool for InsertSqlRecordTool {
             lesson.map_or("none".to_string(), |l| format!("{} chars", l.len())),
         );
 
-        Ok(ToolResult {
-            success: false,
-            output: summary,
-            error: Some("episodic memory write not yet wired (FTS5/SQLite insert pending)".into()),
-        })
+        Ok(ToolResult::error(format!(
+            "episodic memory write not yet wired (FTS5/SQLite insert pending). {summary}"
+        )))
     }
 }
 
@@ -172,14 +158,10 @@ mod tests {
             .await
             .unwrap();
         // The tool is a stub: success is false until FTS5 write is wired.
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("not yet wired"));
-        assert!(result.output.contains("sess-001"));
-        assert!(result.output.contains("user"));
+        assert!(result.is_error);
+        assert!(result.output().contains("not yet wired"));
+        assert!(result.output().contains("sess-001"));
+        assert!(result.output().contains("user"));
     }
 
     #[tokio::test]
@@ -194,8 +176,8 @@ mod tests {
             .await
             .unwrap();
         // The tool is a stub: success is false until FTS5 write is wired.
-        assert!(!result.success);
-        assert!(result.output.contains("lesson="));
+        assert!(result.is_error);
+        assert!(result.output().contains("lesson="));
     }
 
     #[tokio::test]
@@ -208,12 +190,8 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Invalid role"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Invalid role"));
     }
 
     #[tokio::test]
@@ -226,8 +204,8 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("session_id"));
+        assert!(result.is_error);
+        assert!(result.output().contains("session_id"));
     }
 
     #[tokio::test]
@@ -240,8 +218,8 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("content"));
+        assert!(result.is_error);
+        assert!(result.output().contains("content"));
     }
 
     #[tokio::test]

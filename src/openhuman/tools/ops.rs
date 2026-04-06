@@ -360,29 +360,20 @@ mod tests {
 
     #[test]
     fn tool_result_serde() {
-        let result = ToolResult {
-            success: true,
-            output: "hello".into(),
-            error: None,
-        };
+        let result = ToolResult::success("hello");
         let json = serde_json::to_string(&result).unwrap();
         let parsed: ToolResult = serde_json::from_str(&json).unwrap();
-        assert!(parsed.success);
-        assert_eq!(parsed.output, "hello");
-        assert!(parsed.error.is_none());
+        assert!(!parsed.is_error);
+        assert_eq!(parsed.output(), "hello");
     }
 
     #[test]
     fn tool_result_with_error_serde() {
-        let result = ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some("boom".into()),
-        };
+        let result = ToolResult::error("boom");
         let json = serde_json::to_string(&result).unwrap();
         let parsed: ToolResult = serde_json::from_str(&json).unwrap();
-        assert!(!parsed.success);
-        assert_eq!(parsed.error.as_deref(), Some("boom"));
+        assert!(parsed.is_error);
+        assert_eq!(parsed.output(), "boom");
     }
 
     #[test]

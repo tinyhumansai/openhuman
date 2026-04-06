@@ -35,24 +35,14 @@ impl Tool for CronListTool {
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("cron is disabled by config (cron.enabled=false)".to_string()),
-            });
+            return Ok(ToolResult::error(
+                "cron is disabled by config (cron.enabled=false)".to_string(),
+            ));
         }
 
         match cron::list_jobs(&self.config) {
-            Ok(jobs) => Ok(ToolResult {
-                success: true,
-                output: serde_json::to_string_pretty(&jobs)?,
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(e.to_string()),
-            }),
+            Ok(jobs) => Ok(ToolResult::success(serde_json::to_string_pretty(&jobs)?)),
+            Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }
 }
@@ -82,8 +72,8 @@ mod tests {
         let tool = CronListTool::new(cfg);
 
         let result = tool.execute(json!({})).await.unwrap();
-        assert!(result.success);
-        assert_eq!(result.output.trim(), "[]");
+        assert!(!result.is_error);
+        assert_eq!(result.output().trim(), "[]");
     }
 
     #[tokio::test]
@@ -94,10 +84,7 @@ mod tests {
         let tool = CronListTool::new(Arc::new(cfg));
 
         let result = tool.execute(json!({})).await.unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("cron is disabled"));
+        assert!(result.is_error);
+        assert!(result.output().contains("cron is disabled"));
     }
 }

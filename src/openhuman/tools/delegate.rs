@@ -141,11 +141,7 @@ impl Tool for DelegateTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'agent' parameter"))?;
 
         if agent_name.is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("'agent' parameter must not be empty".into()),
-            });
+            return Ok(ToolResult::error("'agent' parameter must not be empty"));
         }
 
         let prompt = args
@@ -155,11 +151,7 @@ impl Tool for DelegateTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'prompt' parameter"))?;
 
         if prompt.is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("'prompt' parameter must not be empty".into()),
-            });
+            return Ok(ToolResult::error("'prompt' parameter must not be empty"));
         }
 
         let context = args
@@ -174,44 +166,32 @@ impl Tool for DelegateTool {
             None => {
                 let available: Vec<&str> =
                     self.agents.keys().map(|s: &String| s.as_str()).collect();
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!(
-                        "Unknown agent '{agent_name}'. Available agents: {}",
-                        if available.is_empty() {
-                            "(none configured)".to_string()
-                        } else {
-                            available.join(", ")
-                        }
-                    )),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Unknown agent '{agent_name}'. Available agents: {}",
+                    if available.is_empty() {
+                        "(none configured)".to_string()
+                    } else {
+                        available.join(", ")
+                    }
+                )));
             }
         };
 
         // Check recursion depth (immutable — set at construction, incremented for sub-agents)
         if self.depth >= agent_config.max_depth {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Delegation depth limit reached ({depth}/{max}). \
+            return Ok(ToolResult::error(format!(
+                "Delegation depth limit reached ({depth}/{max}). \
                      Cannot delegate further to prevent infinite loops.",
-                    depth = self.depth,
-                    max = agent_config.max_depth
-                )),
-            });
+                depth = self.depth,
+                max = agent_config.max_depth
+            )));
         }
 
         if let Err(error) = self
             .security
             .enforce_tool_operation(ToolOperation::Act, "delegate")
         {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(error),
-            });
+            return Ok(ToolResult::error(error));
         }
 
         // Create provider for this agent
@@ -229,13 +209,9 @@ impl Tool for DelegateTool {
         ) {
             Ok(p) => p,
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!(
-                        "Failed to create inference client for delegate agent '{agent_name}': {e}"
-                    )),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Failed to create inference client for delegate agent '{agent_name}': {e}"
+                )));
             }
         };
 
@@ -264,13 +240,9 @@ impl Tool for DelegateTool {
         let result = match result {
             Ok(inner) => inner,
             Err(_elapsed) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!(
-                        "Agent '{agent_name}' timed out after {delegate_timeout_secs}s"
-                    )),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Agent '{agent_name}' timed out after {delegate_timeout_secs}s"
+                )));
             }
         };
 
@@ -281,21 +253,15 @@ impl Tool for DelegateTool {
                     rendered = "[Empty response]".to_string();
                 }
 
-                Ok(ToolResult {
-                    success: true,
-                    output: format!(
-                        "[Agent '{agent_name}' ({}/{}])\n{rendered}",
-                        providers::INFERENCE_BACKEND_ID,
-                        agent_config.model
-                    ),
-                    error: None,
-                })
+                Ok(ToolResult::success(format!(
+                    "[Agent '{agent_name}' ({}/{}])\n{rendered}",
+                    providers::INFERENCE_BACKEND_ID,
+                    agent_config.model
+                )))
             }
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Agent '{agent_name}' failed: {e}",)),
-            }),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Agent '{agent_name}' failed: {e}",
+            ))),
         }
     }
 }
@@ -387,8 +353,8 @@ mod tests {
             .execute(json!({"agent": "nonexistent", "prompt": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("Unknown agent"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Unknown agent"));
     }
 
     #[tokio::test]
@@ -398,8 +364,8 @@ mod tests {
             .execute(json!({"agent": "researcher", "prompt": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("depth limit"));
+        assert!(result.is_error);
+        assert!(result.output().contains("depth limit"));
     }
 
     #[tokio::test]
@@ -410,8 +376,8 @@ mod tests {
             .execute(json!({"agent": "coder", "prompt": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("depth limit"));
+        assert!(result.is_error);
+        assert!(result.output().contains("depth limit"));
     }
 
     #[test]
@@ -431,8 +397,8 @@ mod tests {
             .execute(json!({"agent": "  ", "prompt": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("must not be empty"));
+        assert!(result.is_error);
+        assert!(result.output().contains("must not be empty"));
     }
 
     #[tokio::test]
@@ -442,8 +408,8 @@ mod tests {
             .execute(json!({"agent": "researcher", "prompt": "  \t  "}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("must not be empty"));
+        assert!(result.is_error);
+        assert!(result.output().contains("must not be empty"));
     }
 
     #[tokio::test]
@@ -456,14 +422,7 @@ mod tests {
             .unwrap();
         // Should find "researcher" after trim — will fail at provider level
         // since ollama isn't running, but must NOT get "Unknown agent".
-        assert!(
-            result.error.is_none()
-                || !result
-                    .error
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains("Unknown agent")
-        );
+        assert!(!result.output().contains("Unknown agent"));
     }
 
     #[tokio::test]
@@ -477,12 +436,8 @@ mod tests {
             .execute(json!({"agent": "researcher", "prompt": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("read-only mode"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only mode"));
     }
 
     #[tokio::test]
@@ -496,12 +451,8 @@ mod tests {
             .execute(json!({"agent": "researcher", "prompt": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Rate limit exceeded"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Rate limit exceeded"));
     }
 
     #[tokio::test]
@@ -527,14 +478,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
+        assert!(result.is_error);
         assert!(
-            result
-                .error
-                .as_deref()
-                .unwrap_or("")
-                .contains("Agent 'tester' failed")
-                || result.error.as_deref().unwrap_or("").contains("timed out")
+            result.output().contains("Agent 'tester' failed")
+                || result.output().contains("timed out")
         );
     }
 
@@ -561,14 +508,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
+        assert!(result.is_error);
         assert!(
-            result
-                .error
-                .as_deref()
-                .unwrap_or("")
-                .contains("Agent 'tester' failed")
-                || result.error.as_deref().unwrap_or("").contains("timed out")
+            result.output().contains("Agent 'tester' failed")
+                || result.output().contains("timed out")
         );
     }
 
@@ -585,7 +528,7 @@ mod tests {
             .execute(json!({"agent": "any", "prompt": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("none configured"));
+        assert!(result.is_error);
+        assert!(result.output().contains("none configured"));
     }
 }

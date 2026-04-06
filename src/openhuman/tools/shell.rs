@@ -67,30 +67,22 @@ impl Tool for ShellTool {
             .unwrap_or(false);
 
         if self.security.is_rate_limited() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Rate limit exceeded: too many actions in the last hour".into()),
-            });
+            return Ok(ToolResult::error(
+                "Rate limit exceeded: too many actions in the last hour",
+            ));
         }
 
         match self.security.validate_command_execution(command, approved) {
             Ok(_) => {}
             Err(reason) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(reason),
-                });
+                return Ok(ToolResult::error(reason));
             }
         }
 
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Rate limit exceeded: action budget exhausted".into()),
-            });
+            return Ok(ToolResult::error(
+                "Rate limit exceeded: action budget exhausted",
+            ));
         }
 
         // Execute with timeout to prevent hanging commands.
@@ -102,11 +94,9 @@ impl Tool for ShellTool {
         {
             Ok(cmd) => cmd,
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Failed to build runtime command: {e}")),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Failed to build runtime command: {e}"
+                )));
             }
         };
         cmd.env_clear();
@@ -135,28 +125,22 @@ impl Tool for ShellTool {
                     stderr.push_str("\n... [stderr truncated at 1MB]");
                 }
 
-                Ok(ToolResult {
-                    success: output.status.success(),
-                    output: stdout,
-                    error: if stderr.is_empty() {
-                        None
+                if output.status.success() {
+                    if stderr.is_empty() {
+                        Ok(ToolResult::success(stdout))
                     } else {
-                        Some(stderr)
-                    },
-                })
+                        // Successful exit but stderr present — attach stderr as output suffix
+                        Ok(ToolResult::success(format!("{stdout}\n[stderr]\n{stderr}")))
+                    }
+                } else {
+                    let err_msg = if stderr.is_empty() { stdout } else { stderr };
+                    Ok(ToolResult::error(err_msg))
+                }
             }
-            Ok(Err(e)) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to execute command: {e}")),
-            }),
-            Err(_) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Command timed out after {SHELL_TIMEOUT_SECS}s and was killed"
-                )),
-            }),
+            Ok(Err(e)) => Ok(ToolResult::error(format!("Failed to execute command: {e}"))),
+            Err(_) => Ok(ToolResult::error(format!(
+                "Command timed out after {SHELL_TIMEOUT_SECS}s and was killed"
+            ))),
         }
     }
 }
@@ -210,17 +194,17 @@ mod tests {
             .execute(json!({"command": "echo hello"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.trim().contains("hello"));
-        assert!(result.error.is_none());
+        assert!(!result.is_error);
+        assert!(result.output().trim().contains("hello"));
+        assert!(!result.is_error);
     }
 
     #[tokio::test]
     async fn shell_blocks_disallowed_command() {
         let tool = ShellTool::new(test_security(AutonomyLevel::Supervised), test_runtime());
         let result = tool.execute(json!({"command": "rm -rf /"})).await.unwrap();
-        assert!(!result.success);
-        let error = result.error.as_deref().unwrap_or("");
+        assert!(result.is_error);
+        let error = result.output();
         assert!(error.contains("not allowed") || error.contains("high-risk"));
     }
 
@@ -228,8 +212,8 @@ mod tests {
     async fn shell_blocks_readonly() {
         let tool = ShellTool::new(test_security(AutonomyLevel::ReadOnly), test_runtime());
         let result = tool.execute(json!({"command": "ls"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not allowed"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("not allowed"));
     }
 
     #[tokio::test]
@@ -254,7 +238,7 @@ mod tests {
             .execute(json!({"command": "ls /nonexistent_dir_xyz"}))
             .await
             .unwrap();
-        assert!(!result.success);
+        assert!(result.is_error);
     }
 
     fn test_security_with_env_cmd() -> Arc<SecurityPolicy> {
@@ -297,13 +281,13 @@ mod tests {
 
         let tool = ShellTool::new(test_security_with_env_cmd(), test_runtime());
         let result = tool.execute(json!({"command": "env"})).await.unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
         assert!(
-            !result.output.contains("sk-test-secret-12345"),
+            !result.output().contains("sk-test-secret-12345"),
             "API_KEY leaked to shell command output"
         );
         assert!(
-            !result.output.contains("sk-test-secret-67890"),
+            !result.output().contains("sk-test-secret-67890"),
             "OPENHUMAN_API_KEY leaked to shell command output"
         );
     }
@@ -316,9 +300,9 @@ mod tests {
             .execute(json!({"command": "echo $HOME"}))
             .await
             .unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
         assert!(
-            !result.output.trim().is_empty(),
+            !result.output().trim().is_empty(),
             "HOME should be available in shell"
         );
 
@@ -326,9 +310,9 @@ mod tests {
             .execute(json!({"command": "echo $PATH"}))
             .await
             .unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
         assert!(
-            !result.output.trim().is_empty(),
+            !result.output().trim().is_empty(),
             "PATH should be available in shell"
         );
     }
@@ -347,12 +331,8 @@ mod tests {
             .execute(json!({"command": "touch openhuman_shell_approval_test"}))
             .await
             .unwrap();
-        assert!(!denied.success);
-        assert!(denied
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("explicit approval"));
+        assert!(denied.is_error);
+        assert!(denied.output().contains("explicit approval"));
 
         let allowed = tool
             .execute(json!({
@@ -361,7 +341,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(allowed.success);
+        assert!(!allowed.is_error);
 
         let _ = tokio::fs::remove_file(std::env::temp_dir().join("openhuman_shell_approval_test"))
             .await;
@@ -421,7 +401,7 @@ mod tests {
         });
         let tool = ShellTool::new(security, test_runtime());
         let result = tool.execute(json!({"command": "echo test"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("Rate limit"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Rate limit"));
     }
 }

@@ -38,32 +38,22 @@ impl Tool for CronRunTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("cron is disabled by config (cron.enabled=false)".to_string()),
-            });
+            return Ok(ToolResult::error(
+                "cron is disabled by config (cron.enabled=false)".to_string(),
+            ));
         }
 
         let job_id = match args.get("job_id").and_then(serde_json::Value::as_str) {
             Some(v) if !v.trim().is_empty() => v,
             _ => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Missing 'job_id' parameter".to_string()),
-                });
+                return Ok(ToolResult::error("Missing 'job_id' parameter".to_string()));
             }
         };
 
         let job = match cron::get_job(&self.config, job_id) {
             Ok(job) => job,
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e.to_string()),
-                });
+                return Ok(ToolResult::error(e.to_string()));
             }
         };
 
@@ -84,20 +74,17 @@ impl Tool for CronRunTool {
         );
         let _ = cron::record_last_run(&self.config, &job.id, finished_at, success, &output);
 
-        Ok(ToolResult {
-            success,
-            output: serde_json::to_string_pretty(&json!({
-                "job_id": job.id,
-                "status": status,
-                "duration_ms": duration_ms,
-                "output": output
-            }))?,
-            error: if success {
-                None
-            } else {
-                Some("cron job execution failed".to_string())
-            },
-        })
+        let result_output = serde_json::to_string_pretty(&json!({
+            "job_id": job.id,
+            "status": status,
+            "duration_ms": duration_ms,
+            "output": output
+        }))?;
+        if success {
+            Ok(ToolResult::success(result_output))
+        } else {
+            Ok(ToolResult::error("cron job execution failed".to_string()))
+        }
     }
 }
 
@@ -127,7 +114,7 @@ mod tests {
         let tool = CronRunTool::new(cfg.clone());
 
         let result = tool.execute(json!({ "job_id": job.id })).await.unwrap();
-        assert!(result.success, "{:?}", result.error);
+        assert!(!result.is_error, "{:?}", result.output());
 
         let runs = cron::list_runs(&cfg, &job.id, 10).unwrap();
         assert_eq!(runs.len(), 1);
@@ -143,7 +130,7 @@ mod tests {
             .execute(json!({ "job_id": "missing-job-id" }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap_or_default().contains("not found"));
+        assert!(result.is_error);
+        assert!(result.output().contains("not found"));
     }
 }

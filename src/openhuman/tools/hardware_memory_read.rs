@@ -61,14 +61,9 @@ impl Tool for HardwareMemoryReadTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if self.boards.is_empty() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(
-                    "No peripherals configured. Add nucleo-f401re to config.toml [peripherals.boards]."
-                        .into(),
-                ),
-            });
+            return Ok(ToolResult::error(
+                "No peripherals configured. Add nucleo-f401re to config.toml [peripherals.boards].",
+            ));
         }
 
         let board = args
@@ -80,14 +75,10 @@ impl Tool for HardwareMemoryReadTool {
 
         let chip = Self::chip_for_board(&board);
         if chip.is_none() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Memory read only supports nucleo-f401re, nucleo-f411re. Got: {}",
-                    board
-                )),
-            });
+            return Ok(ToolResult::error(format!(
+                "Memory read only supports nucleo-f401re, nucleo-f411re. Got: {}",
+                board
+            )));
         }
 
         let address_str = args
@@ -105,35 +96,22 @@ impl Tool for HardwareMemoryReadTool {
         {
             match probe_read_memory(chip.unwrap(), _address, _length) {
                 Ok(output) => {
-                    return Ok(ToolResult {
-                        success: true,
-                        output,
-                        error: None,
-                    });
+                    return Ok(ToolResult::success(output));
                 }
                 Err(e) => {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!(
+                    return Ok(ToolResult::error(format!(
                             "probe-rs read failed: {}. Ensure Nucleo is connected via USB and built with --features probe.",
                             e
-                        )),
-                    });
+                        )));
                 }
             }
         }
 
         #[cfg(not(feature = "probe"))]
         {
-            Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(
-                    "Memory read requires probe feature. Build with: cargo build --features hardware,probe"
-                        .into(),
-                ),
-            })
+            Ok(ToolResult::error(
+                    "Memory read requires probe feature. Build with: cargo build --features hardware,probe",
+                ))
         }
     }
 }

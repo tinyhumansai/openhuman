@@ -70,7 +70,7 @@ pub async fn run_cli_screenshot(args: CliScreenshotArgs) -> Result<serde_json::V
     let mut logs = vec!["tools.screenshot executed".to_string()];
 
     if let Some(output_path) = args.output.as_ref() {
-        if let Some(saved_path) = extract_saved_path(&tool_result.output) {
+        if let Some(saved_path) = extract_saved_path(&tool_result.output()) {
             std::fs::copy(&saved_path, output_path).map_err(|e| {
                 format!(
                     "failed to copy screenshot from {} to {}: {e}",
@@ -79,7 +79,7 @@ pub async fn run_cli_screenshot(args: CliScreenshotArgs) -> Result<serde_json::V
                 )
             })?;
             logs.push(format!("copied screenshot to {}", output_path.display()));
-        } else if let Some(data_url) = extract_data_url(&tool_result.output) {
+        } else if let Some(data_url) = extract_data_url(&tool_result.output()) {
             let bytes = decode_data_url_bytes(&data_url)?;
             write_bytes_to_path(output_path, &bytes)?;
             logs.push(format!(
@@ -95,13 +95,13 @@ pub async fn run_cli_screenshot(args: CliScreenshotArgs) -> Result<serde_json::V
         }
     }
 
-    let data_url = extract_data_url(&tool_result.output);
+    let data_url = extract_data_url(&tool_result.output());
     Ok(json!({
         "result": {
-            "success": tool_result.success,
-            "error": tool_result.error,
+            "success": !tool_result.is_error,
+            "error": if tool_result.is_error { Some(tool_result.output()) } else { None::<String> },
             "output_path": args.output.as_ref().map(|p| p.display().to_string()),
-            "tool_output": tool_result.output,
+            "tool_output": tool_result.output(),
             "data_url": if args.print_data_url { data_url } else { None::<String> },
         },
         "logs": logs

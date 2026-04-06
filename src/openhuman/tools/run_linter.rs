@@ -61,11 +61,9 @@ impl Tool for RunLinterTool {
             } else if self.workspace_dir.join("package.json").exists() {
                 "eslint"
             } else {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Could not detect project type for linting.".into()),
-                });
+                return Ok(ToolResult::error(
+                    "Could not detect project type for linting.",
+                ));
             }
         } else {
             linter
@@ -88,15 +86,10 @@ impl Tool for RunLinterTool {
             "eslint" => {
                 let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
                 if path.starts_with('/') || path.contains("..") {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(
-                            "path must be a relative path within the workspace \
-                             (no absolute paths or '..')"
-                                .into(),
-                        ),
-                    });
+                    return Ok(ToolResult::error(
+                        "path must be a relative path within the workspace \
+                             (no absolute paths or '..')",
+                    ));
                 }
                 tokio::process::Command::new("npx")
                     .args(["eslint", "--format", "compact", path])
@@ -105,11 +98,7 @@ impl Tool for RunLinterTool {
                     .await?
             }
             other => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Unknown linter: {other}")),
-                });
+                return Ok(ToolResult::error(format!("Unknown linter: {other}")));
             }
         };
 
@@ -122,17 +111,13 @@ impl Tool for RunLinterTool {
             format!("{stdout}\n{stderr}")
         };
 
-        Ok(ToolResult {
-            success: output.status.success(),
-            output: combined,
-            error: if output.status.success() {
-                None
-            } else {
-                Some(format!(
-                    "Linter exited with code {:?}",
-                    output.status.code()
-                ))
-            },
-        })
+        if output.status.success() {
+            Ok(ToolResult::success(combined))
+        } else {
+            Ok(ToolResult::error(format!(
+                "Linter exited with code {:?}",
+                output.status.code()
+            )))
+        }
     }
 }

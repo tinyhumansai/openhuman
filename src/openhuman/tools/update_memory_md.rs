@@ -86,13 +86,9 @@ impl Tool for UpdateMemoryMdTool {
 
         // Guard: only allow MEMORY.md and SKILL.md.
         if !ALLOWED_FILES.contains(&file) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "File '{file}' is not allowed. Permitted files: MEMORY.md, SKILL.md"
-                )),
-            });
+            return Ok(ToolResult::error(format!(
+                "File '{file}' is not allowed. Permitted files: MEMORY.md, SKILL.md"
+            )));
         }
 
         let target_path = self.workspace_dir.join(file);
@@ -108,11 +104,9 @@ impl Tool for UpdateMemoryMdTool {
             .canonicalize()
             .unwrap_or_else(|_| parent.to_path_buf());
         if !parent_canon.starts_with(&workspace_canon) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("File path '{file}' resolves outside workspace")),
-            });
+            return Ok(ToolResult::error(format!(
+                "File path '{file}' resolves outside workspace"
+            )));
         }
 
         tracing::debug!("[update_memory_md] action={action} file={file} path={target_path:?}");
@@ -129,13 +123,9 @@ impl Tool for UpdateMemoryMdTool {
                 self.do_replace_section(&target_path, file, section_title, content)
                     .await
             }
-            other => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Unknown action '{other}'. Use 'append' or 'replace_section'."
-                )),
-            }),
+            other => Ok(ToolResult::error(format!(
+                "Unknown action '{other}'. Use 'append' or 'replace_section'."
+            ))),
         }
     }
 }
@@ -168,14 +158,10 @@ impl UpdateMemoryMdTool {
             content.len()
         );
 
-        Ok(ToolResult {
-            success: true,
-            output: format!(
-                "Appended {} bytes to {file} ({bytes} bytes total).",
-                content.len()
-            ),
-            error: None,
-        })
+        Ok(ToolResult::success(format!(
+            "Appended {} bytes to {file} ({bytes} bytes total).",
+            content.len()
+        )))
     }
 
     /// Replace the body of the section headed `## {section_title}` in `path`.
@@ -241,15 +227,11 @@ impl UpdateMemoryMdTool {
             new_file_content.len()
         );
 
-        Ok(ToolResult {
-            success: true,
-            output: format!(
-                "Section '{}' updated in {file} ({} bytes).",
-                section_title,
-                new_file_content.len()
-            ),
-            error: None,
-        })
+        Ok(ToolResult::success(format!(
+            "Section '{}' updated in {file} ({} bytes).",
+            section_title,
+            new_file_content.len()
+        )))
     }
 }
 
@@ -282,7 +264,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(result.success, "{:?}", result.error);
+        assert!(!result.is_error, "{:?}", result.output());
         let text = std::fs::read_to_string(dir.path().join("MEMORY.md")).unwrap();
         assert!(text.contains("first note"));
     }
@@ -360,11 +342,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("not allowed"));
+        assert!(result.is_error);
+        assert!(result.output().contains("not allowed"));
     }
 }

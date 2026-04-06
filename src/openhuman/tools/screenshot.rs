@@ -73,22 +73,18 @@ impl ScreenshotTool {
             '\'', '"', '`', '$', '\\', ';', '|', '&', '\n', '\0', '(', ')',
         ];
         if safe_name.contains(SHELL_UNSAFE) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Filename contains characters unsafe for shell execution".into()),
-            });
+            return Ok(ToolResult::error(
+                "Filename contains characters unsafe for shell execution",
+            ));
         }
 
         let output_path = self.security.workspace_dir.join(&safe_name);
         let output_str = output_path.to_string_lossy().to_string();
 
         let Some(mut cmd_args) = Self::screenshot_command(&output_str) else {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Screenshot not supported on this platform".into()),
-            });
+            return Ok(ToolResult::error(
+                "Screenshot not supported on this platform",
+            ));
         };
 
         // macOS region flags
@@ -116,36 +112,23 @@ impl ScreenshotTool {
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     if stderr.contains("NO_SCREENSHOT_TOOL") {
-                        return Ok(ToolResult {
-                            success: false,
-                            output: String::new(),
-                            error: Some(
-                                "No screenshot tool found. Install gnome-screenshot, scrot, or ImageMagick."
-                                    .into(),
-                            ),
-                        });
+                        return Ok(ToolResult::error(
+                                "No screenshot tool found. Install gnome-screenshot, scrot, or ImageMagick.",
+                            ));
                     }
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("Screenshot command failed: {stderr}")),
-                    });
+                    return Ok(ToolResult::error(format!(
+                        "Screenshot command failed: {stderr}"
+                    )));
                 }
 
                 Self::read_and_encode(&output_path).await
             }
-            Ok(Err(e)) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to execute screenshot command: {e}")),
-            }),
-            Err(_) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Screenshot timed out after {SCREENSHOT_TIMEOUT_SECS}s"
-                )),
-            }),
+            Ok(Err(e)) => Ok(ToolResult::error(format!(
+                "Failed to execute screenshot command: {e}"
+            ))),
+            Err(_) => Ok(ToolResult::error(format!(
+                "Screenshot timed out after {SCREENSHOT_TIMEOUT_SECS}s"
+            ))),
         }
     }
 
@@ -155,15 +138,11 @@ impl ScreenshotTool {
         const MAX_RAW_BYTES: u64 = 1_572_864; // ~1.5 MB (base64 expands ~33%)
         if let Ok(meta) = tokio::fs::metadata(output_path).await {
             if meta.len() > MAX_RAW_BYTES {
-                return Ok(ToolResult {
-                    success: true,
-                    output: format!(
-                        "Screenshot saved to: {}\nSize: {} bytes (too large to base64-encode inline)",
-                        output_path.display(),
-                        meta.len(),
-                    ),
-                    error: None,
-                });
+                return Ok(ToolResult::success(format!(
+                    "Screenshot saved to: {}\nSize: {} bytes (too large to base64-encode inline)",
+                    output_path.display(),
+                    meta.len(),
+                )));
             }
         }
 
@@ -196,17 +175,11 @@ impl ScreenshotTool {
                 };
                 let _ = write!(output_msg, "\ndata:{mime};base64,{encoded}");
 
-                Ok(ToolResult {
-                    success: true,
-                    output: output_msg,
-                    error: None,
-                })
+                Ok(ToolResult::success(output_msg))
             }
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: format!("Screenshot saved to: {}", output_path.display()),
-                error: Some(format!("Failed to read screenshot file: {e}")),
-            }),
+            Err(e) => Ok(ToolResult::error(format!(
+                "Failed to read screenshot file: {e}"
+            ))),
         }
     }
 }
@@ -239,11 +212,7 @@ impl Tool for ScreenshotTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.security.can_act() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: autonomy is read-only".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
         }
         self.capture(args).await
     }
@@ -309,8 +278,8 @@ mod tests {
             .execute(json!({"filename": "test'injection.png"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("unsafe for shell execution"));
+        assert!(result.is_error);
+        assert!(result.output().contains("unsafe for shell execution"));
     }
 
     #[test]

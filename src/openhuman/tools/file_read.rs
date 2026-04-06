@@ -47,31 +47,25 @@ impl Tool for FileReadTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'path' parameter"))?;
 
         if self.security.is_rate_limited() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Rate limit exceeded: too many actions in the last hour".into()),
-            });
+            return Ok(ToolResult::error(
+                "Rate limit exceeded: too many actions in the last hour",
+            ));
         }
 
         // Security check: validate path is within workspace
         if !self.security.is_path_allowed(path) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Path not allowed by security policy: {path}")),
-            });
+            return Ok(ToolResult::error(format!(
+                "Path not allowed by security policy: {path}"
+            )));
         }
 
         // Record action BEFORE canonicalization so that every non-trivially-rejected
         // request consumes rate limit budget. This prevents attackers from probing
         // path existence (via canonicalize errors) without rate limit cost.
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Rate limit exceeded: action budget exhausted".into()),
-            });
+            return Ok(ToolResult::error(
+                "Rate limit exceeded: action budget exhausted",
+            ));
         }
 
         let full_path = self.security.workspace_dir.join(path);
@@ -80,59 +74,39 @@ impl Tool for FileReadTool {
         let resolved_path = match tokio::fs::canonicalize(&full_path).await {
             Ok(p) => p,
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Failed to resolve file path: {e}")),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Failed to resolve file path: {e}"
+                )));
             }
         };
 
         if !self.security.is_resolved_path_allowed(&resolved_path) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Resolved path escapes workspace: {}",
-                    resolved_path.display()
-                )),
-            });
+            return Ok(ToolResult::error(format!(
+                "Resolved path escapes workspace: {}",
+                resolved_path.display()
+            )));
         }
 
         // Check file size AFTER canonicalization to prevent TOCTOU symlink bypass
         match tokio::fs::metadata(&resolved_path).await {
             Ok(meta) => {
                 if meta.len() > MAX_FILE_SIZE_BYTES {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!(
-                            "File too large: {} bytes (limit: {MAX_FILE_SIZE_BYTES} bytes)",
-                            meta.len()
-                        )),
-                    });
+                    return Ok(ToolResult::error(format!(
+                        "File too large: {} bytes (limit: {MAX_FILE_SIZE_BYTES} bytes)",
+                        meta.len()
+                    )));
                 }
             }
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Failed to read file metadata: {e}")),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Failed to read file metadata: {e}"
+                )));
             }
         }
 
         match tokio::fs::read_to_string(&resolved_path).await {
-            Ok(contents) => Ok(ToolResult {
-                success: true,
-                output: contents,
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to read file: {e}")),
-            }),
+            Ok(contents) => Ok(ToolResult::success(contents)),
+            Err(e) => Ok(ToolResult::error(format!("Failed to read file: {e}"))),
         }
     }
 }
@@ -191,9 +165,9 @@ mod tests {
 
         let tool = FileReadTool::new(test_security(dir.clone()));
         let result = tool.execute(json!({"path": "test.txt"})).await.unwrap();
-        assert!(result.success);
-        assert_eq!(result.output, "hello world");
-        assert!(result.error.is_none());
+        assert!(!result.is_error);
+        assert_eq!(result.output(), "hello world");
+        assert!(!result.is_error);
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -206,8 +180,8 @@ mod tests {
 
         let tool = FileReadTool::new(test_security(dir.clone()));
         let result = tool.execute(json!({"path": "nope.txt"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("Failed to resolve"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("Failed to resolve"));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -223,8 +197,8 @@ mod tests {
             .execute(json!({"path": "../../../etc/passwd"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not allowed"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("not allowed"));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -233,8 +207,8 @@ mod tests {
     async fn file_read_blocks_absolute_path() {
         let tool = FileReadTool::new(test_security(std::env::temp_dir()));
         let result = tool.execute(json!({"path": "/etc/passwd"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not allowed"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("not allowed"));
     }
 
     #[tokio::test]
@@ -253,12 +227,8 @@ mod tests {
         ));
         let result = tool.execute(json!({"path": "test.txt"})).await.unwrap();
 
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Rate limit exceeded"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Rate limit exceeded"));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -275,8 +245,8 @@ mod tests {
         let tool = FileReadTool::new(test_security_with(dir.clone(), AutonomyLevel::ReadOnly, 20));
         let result = tool.execute(json!({"path": "test.txt"})).await.unwrap();
 
-        assert!(result.success);
-        assert_eq!(result.output, "readonly ok");
+        assert!(!result.is_error);
+        assert_eq!(result.output(), "readonly ok");
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -297,8 +267,8 @@ mod tests {
 
         let tool = FileReadTool::new(test_security(dir.clone()));
         let result = tool.execute(json!({"path": "empty.txt"})).await.unwrap();
-        assert!(result.success);
-        assert_eq!(result.output, "");
+        assert!(!result.is_error);
+        assert_eq!(result.output(), "");
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -319,8 +289,8 @@ mod tests {
             .execute(json!({"path": "sub/dir/deep.txt"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert_eq!(result.output, "deep content");
+        assert!(!result.is_error);
+        assert_eq!(result.output(), "deep content");
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -347,12 +317,8 @@ mod tests {
         let tool = FileReadTool::new(test_security(workspace.clone()));
         let result = tool.execute(json!({"path": "escape.txt"})).await.unwrap();
 
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("escapes workspace"));
+        assert!(result.is_error);
+        assert!(result.output().contains("escapes workspace"));
 
         let _ = tokio::fs::remove_dir_all(&root).await;
     }
@@ -372,20 +338,21 @@ mod tests {
 
         // Both reads fail (file doesn't exist) but should consume budget
         let r1 = tool.execute(json!({"path": "nope1.txt"})).await.unwrap();
-        assert!(!r1.success);
-        assert!(r1.error.as_ref().unwrap().contains("Failed to resolve"));
+        assert!(r1.is_error);
+        assert!(r1.output().contains("Failed to resolve"));
 
         let r2 = tool.execute(json!({"path": "nope2.txt"})).await.unwrap();
-        assert!(!r2.success);
-        assert!(r2.error.as_ref().unwrap().contains("Failed to resolve"));
+        assert!(r2.is_error);
+        assert!(r2.output().contains("Failed to resolve"));
 
         // Third attempt should be rate limited even though file doesn't exist
         let r3 = tool.execute(json!({"path": "nope3.txt"})).await.unwrap();
-        assert!(!r3.success);
+        assert!(r3.is_error);
+        let r3_output = r3.output();
         assert!(
-            r3.error.as_ref().unwrap().contains("Rate limit"),
+            r3_output.contains("Rate limit"),
             "Expected rate limit error, got: {:?}",
-            r3.error
+            r3_output
         );
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -403,8 +370,8 @@ mod tests {
 
         let tool = FileReadTool::new(test_security(dir.clone()));
         let result = tool.execute(json!({"path": "huge.bin"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("File too large"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("File too large"));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }

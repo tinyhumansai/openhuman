@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+// Re-export the unified ToolResult from the skills module so all tools use one type.
+pub use crate::openhuman::skills::types::{ToolContent, ToolResult};
+
 /// Permission level required to execute a tool.
 ///
 /// Channels can set a maximum permission level to restrict which tools
@@ -33,14 +36,6 @@ impl std::fmt::Display for PermissionLevel {
     }
 }
 
-/// Result of a tool execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub success: bool,
-    pub output: String,
-    pub error: Option<String>,
-}
-
 /// Description of a tool for the LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -49,7 +44,7 @@ pub struct ToolSpec {
     pub parameters: serde_json::Value,
 }
 
-/// Core tool trait — implement for any capability
+/// Core tool trait — implement for any capability (built-in or skill-based).
 #[async_trait]
 pub trait Tool: Send + Sync {
     /// Tool name (used in LLM function calling)
@@ -61,7 +56,8 @@ pub trait Tool: Send + Sync {
     /// JSON schema for parameters
     fn parameters_schema(&self) -> serde_json::Value;
 
-    /// Execute the tool with given arguments
+    /// Execute the tool with given arguments.
+    /// Returns a unified `ToolResult` (MCP content blocks + error flag).
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult>;
 
     /// Permission level required to execute this tool.
@@ -107,15 +103,12 @@ mod tests {
         }
 
         async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
-            Ok(ToolResult {
-                success: true,
-                output: args
-                    .get("value")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                error: None,
-            })
+            let text = args
+                .get("value")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Ok(ToolResult::success(text))
         }
     }
 
@@ -138,23 +131,18 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.success);
-        assert_eq!(result.output, "hello-tool");
-        assert!(result.error.is_none());
+        assert!(!result.is_error);
+        assert_eq!(result.output(), "hello-tool");
     }
 
     #[test]
     fn tool_result_serialization_roundtrip() {
-        let result = ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some("boom".into()),
-        };
+        let result = ToolResult::error("boom");
 
         let json = serde_json::to_string(&result).unwrap();
         let parsed: ToolResult = serde_json::from_str(&json).unwrap();
 
-        assert!(!parsed.success);
-        assert_eq!(parsed.error.as_deref(), Some("boom"));
+        assert!(parsed.is_error);
+        assert_eq!(parsed.output(), "boom");
     }
 }

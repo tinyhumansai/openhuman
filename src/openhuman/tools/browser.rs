@@ -644,11 +644,9 @@ impl BrowserTool {
                 )
                 .await?;
 
-            Ok(ToolResult {
-                success: true,
-                output: serde_json::to_string_pretty(&output).unwrap_or_default(),
-                error: None,
-            })
+            Ok(ToolResult::success(
+                serde_json::to_string_pretty(&output).unwrap_or_default(),
+            ))
         }
 
         #[cfg(not(feature = "browser-native"))]
@@ -791,11 +789,7 @@ impl BrowserTool {
                         .unwrap_or_default()
                     });
 
-                return Ok(ToolResult {
-                    success: true,
-                    output,
-                    error: None,
-                });
+                return Ok(ToolResult::success(output));
             }
 
             let error = parsed.error.or_else(|| {
@@ -808,29 +802,17 @@ impl BrowserTool {
                 }
             });
 
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error,
-            });
+            return Ok(ToolResult::error(error.unwrap_or_default()));
         }
 
         if status.is_success() {
-            return Ok(ToolResult {
-                success: true,
-                output: body,
-                error: None,
-            });
+            return Ok(ToolResult::success(body));
         }
 
-        Ok(ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some(format!(
-                "computer-use sidecar request failed with status {status}: {}",
-                body.trim()
-            )),
-        })
+        Ok(ToolResult::error(format!(
+            "computer-use sidecar request failed with status {status}: {}",
+            body.trim()
+        )))
     }
 
     async fn execute_action(
@@ -854,17 +836,9 @@ impl BrowserTool {
                 .data
                 .map(|d| serde_json::to_string_pretty(&d).unwrap_or_default())
                 .unwrap_or_default();
-            Ok(ToolResult {
-                success: true,
-                output,
-                error: None,
-            })
+            Ok(ToolResult::success(output))
         } else {
-            Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: resp.error,
-            })
+            Ok(ToolResult::error(resp.error.unwrap_or_default()))
         }
     }
 }
@@ -1001,29 +975,17 @@ impl Tool for BrowserTool {
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         // Security checks
         if !self.security.can_act() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: autonomy is read-only".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
         }
 
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: rate limit exceeded".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
         let backend = match self.resolve_backend().await {
             Ok(selected) => selected,
             Err(error) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(error.to_string()),
-                });
+                return Ok(ToolResult::error(error.to_string()));
             }
         };
 
@@ -1034,11 +996,7 @@ impl Tool for BrowserTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'action' parameter"))?;
 
         if !is_supported_browser_action(action_str) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Unknown action: {action_str}")),
-            });
+            return Ok(ToolResult::error(format!("Unknown action: {action_str}")));
         }
 
         if backend == ResolvedBackend::ComputerUse {
@@ -1046,21 +1004,15 @@ impl Tool for BrowserTool {
         }
 
         if is_computer_use_only_action(action_str) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(unavailable_action_for_backend_error(action_str, backend)),
-            });
+            return Ok(ToolResult::error(unavailable_action_for_backend_error(
+                action_str, backend,
+            )));
         }
 
         let action = match parse_browser_action(action_str, &args) {
             Ok(a) => a,
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e.to_string()),
-                });
+                return Ok(ToolResult::error(e.to_string()));
             }
         };
 

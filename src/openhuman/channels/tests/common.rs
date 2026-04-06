@@ -348,18 +348,10 @@ impl Tool for MockPriceTool {
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let symbol = args.get("symbol").and_then(serde_json::Value::as_str);
         if symbol != Some("BTC") {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("unexpected symbol".to_string()),
-            });
+            return Ok(ToolResult::error("unexpected symbol"));
         }
 
-        Ok(ToolResult {
-            success: true,
-            output: "BTC is $65,000".to_string(),
-            error: None,
-        })
+        Ok(ToolResult::success("BTC is $65,000"))
     }
 }
 

@@ -91,26 +91,14 @@ impl Tool for ReadDiffTool {
             let diff = String::from_utf8_lossy(&output.stdout);
             tracing::debug!("[read_diff] success, diff length={}", diff.len());
             if diff.trim().is_empty() {
-                Ok(ToolResult {
-                    success: true,
-                    output: "No changes found.".into(),
-                    error: None,
-                })
+                Ok(ToolResult::success("No changes found."))
             } else {
-                Ok(ToolResult {
-                    success: true,
-                    output: diff.to_string(),
-                    error: None,
-                })
+                Ok(ToolResult::success(diff.to_string()))
             }
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
             tracing::debug!("[read_diff] failed: {stderr}");
-            Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(stderr.to_string()),
-            })
+            Ok(ToolResult::error(stderr.to_string()))
         }
     }
 }

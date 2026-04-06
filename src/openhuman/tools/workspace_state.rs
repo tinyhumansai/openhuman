@@ -122,11 +122,7 @@ impl Tool for WorkspaceStateTool {
         }
 
         tracing::debug!("[workspace_state] output length={}", output.len());
-        Ok(ToolResult {
-            success: true,
-            output,
-            error: None,
-        })
+        Ok(ToolResult::success(output))
     }
 }
 

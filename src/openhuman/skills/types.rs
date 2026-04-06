@@ -179,6 +179,9 @@ pub enum ToolCallOrigin {
 }
 
 /// Result of executing a tool, containing content blocks and error status.
+///
+/// This is the **unified** tool result type used by both built-in tools and
+/// QuickJS skill tools. Follows the MCP (Model Context Protocol) specification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     /// List of content blocks returned by the tool (follows MCP specification).
@@ -186,6 +189,60 @@ pub struct ToolResult {
     /// Indicates if the tool encountered an error during execution.
     #[serde(default)]
     pub is_error: bool,
+}
+
+impl ToolResult {
+    /// Create a successful result with a single text block.
+    pub fn success(text: impl Into<String>) -> Self {
+        Self {
+            content: vec![ToolContent::Text { text: text.into() }],
+            is_error: false,
+        }
+    }
+
+    /// Create an error result with a single text block.
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            content: vec![ToolContent::Text {
+                text: message.into(),
+            }],
+            is_error: true,
+        }
+    }
+
+    /// Create a successful result with structured JSON data.
+    pub fn json(data: serde_json::Value) -> Self {
+        Self {
+            content: vec![ToolContent::Json { data }],
+            is_error: false,
+        }
+    }
+
+    /// Extract all text content as a single joined string.
+    pub fn text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|c| match c {
+                ToolContent::Text { text } => Some(text.as_str()),
+                ToolContent::Json { data } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Extract all content (text + JSON) as a single string.
+    pub fn output(&self) -> String {
+        self.content
+            .iter()
+            .map(|c| match c {
+                ToolContent::Text { text } => text.clone(),
+                ToolContent::Json { data } => {
+                    serde_json::to_string_pretty(data).unwrap_or_default()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 /// A single content block within a `ToolResult`.

@@ -115,13 +115,9 @@ impl Tool for ScheduleTool {
                     .ok_or_else(|| anyhow::anyhow!("Missing 'id' parameter for resume action"))?;
                 Ok(self.handle_pause_resume(id, false))
             }
-            other => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
+            other => Ok(ToolResult::error(format!(
                     "Unknown action '{other}'. Use create/add/once/list/get/cancel/remove/pause/resume."
-                )),
-            }),
+                ))),
         }
     }
 }
@@ -129,21 +125,15 @@ impl Tool for ScheduleTool {
 impl ScheduleTool {
     fn enforce_mutation_allowed(&self, action: &str) -> Option<ToolResult> {
         if !self.security.can_act() {
-            return Some(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Security policy: read-only mode, cannot perform '{action}'"
-                )),
-            });
+            return Some(ToolResult::error(format!(
+                "Security policy: read-only mode, cannot perform '{action}'"
+            )));
         }
 
         if !self.security.record_action() {
-            return Some(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Rate limit exceeded: action budget exhausted".to_string()),
-            });
+            return Some(ToolResult::error(
+                "Rate limit exceeded: action budget exhausted".to_string(),
+            ));
         }
 
         None
@@ -152,11 +142,7 @@ impl ScheduleTool {
     fn handle_list(&self) -> Result<ToolResult> {
         let jobs = cron::list_jobs(&self.config)?;
         if jobs.is_empty() {
-            return Ok(ToolResult {
-                success: true,
-                output: "No scheduled jobs.".to_string(),
-                error: None,
-            });
+            return Ok(ToolResult::success("No scheduled jobs.".to_string()));
         }
 
         let mut lines = Vec::with_capacity(jobs.len());
@@ -185,11 +171,11 @@ impl ScheduleTool {
             ));
         }
 
-        Ok(ToolResult {
-            success: true,
-            output: format!("Scheduled jobs ({}):\n{}", lines.len(), lines.join("\n")),
-            error: None,
-        })
+        Ok(ToolResult::success(format!(
+            "Scheduled jobs ({}):\n{}",
+            lines.len(),
+            lines.join("\n")
+        )))
     }
 
     fn handle_get(&self, id: &str) -> Result<ToolResult> {
@@ -205,17 +191,9 @@ impl ScheduleTool {
                     "enabled": job.enabled,
                     "one_shot": matches!(job.schedule, cron::Schedule::At { .. }),
                 });
-                Ok(ToolResult {
-                    success: true,
-                    output: serde_json::to_string_pretty(&detail)?,
-                    error: None,
-                })
+                Ok(ToolResult::success(serde_json::to_string_pretty(&detail)?))
             }
-            Err(_) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Job '{id}' not found")),
-            }),
+            Err(_) => Ok(ToolResult::error(format!("Job '{id}' not found"))),
         }
     }
 
@@ -233,27 +211,21 @@ impl ScheduleTool {
         match action {
             "add" => {
                 if expression.is_none() || delay.is_some() || run_at.is_some() {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some("'add' requires 'expression' and forbids delay/run_at".into()),
-                    });
+                    return Ok(ToolResult::error(
+                        "'add' requires 'expression' and forbids delay/run_at",
+                    ));
                 }
             }
             "once" => {
                 if expression.is_some() || (delay.is_none() && run_at.is_none()) {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some("'once' requires exactly one of 'delay' or 'run_at'".into()),
-                    });
+                    return Ok(ToolResult::error(
+                        "'once' requires exactly one of 'delay' or 'run_at'",
+                    ));
                 }
                 if delay.is_some() && run_at.is_some() {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some("'once' supports either delay or run_at, not both".into()),
-                    });
+                    return Ok(ToolResult::error(
+                        "'once' supports either delay or run_at, not both",
+                    ));
                 }
             }
             _ => {
@@ -262,45 +234,32 @@ impl ScheduleTool {
                     .filter(|value| *value)
                     .count();
                 if count != 1 {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(
-                            "Exactly one of 'expression', 'delay', or 'run_at' must be provided"
-                                .into(),
-                        ),
-                    });
+                    return Ok(ToolResult::error(
+                        "Exactly one of 'expression', 'delay', or 'run_at' must be provided",
+                    ));
                 }
             }
         }
 
         if let Some(value) = expression {
             let job = cron::add_job(&self.config, value, command)?;
-            return Ok(ToolResult {
-                success: true,
-                output: format!(
-                    "Created recurring job {} (expr: {}, next: {}, cmd: {})",
-                    job.id,
-                    job.expression,
-                    job.next_run.to_rfc3339(),
-                    job.command
-                ),
-                error: None,
-            });
+            return Ok(ToolResult::success(format!(
+                "Created recurring job {} (expr: {}, next: {}, cmd: {})",
+                job.id,
+                job.expression,
+                job.next_run.to_rfc3339(),
+                job.command
+            )));
         }
 
         if let Some(value) = delay {
             let job = cron::add_once(&self.config, value, command)?;
-            return Ok(ToolResult {
-                success: true,
-                output: format!(
-                    "Created one-shot job {} (runs at: {}, cmd: {})",
-                    job.id,
-                    job.next_run.to_rfc3339(),
-                    job.command
-                ),
-                error: None,
-            });
+            return Ok(ToolResult::success(format!(
+                "Created one-shot job {} (runs at: {}, cmd: {})",
+                job.id,
+                job.next_run.to_rfc3339(),
+                job.command
+            )));
         }
 
         let run_at_raw = run_at.ok_or_else(|| anyhow::anyhow!("Missing scheduling parameters"))?;
@@ -309,30 +268,18 @@ impl ScheduleTool {
             .with_timezone(&Utc);
 
         let job = cron::add_once_at(&self.config, run_at_parsed, command)?;
-        Ok(ToolResult {
-            success: true,
-            output: format!(
-                "Created one-shot job {} (runs at: {}, cmd: {})",
-                job.id,
-                job.next_run.to_rfc3339(),
-                job.command
-            ),
-            error: None,
-        })
+        Ok(ToolResult::success(format!(
+            "Created one-shot job {} (runs at: {}, cmd: {})",
+            job.id,
+            job.next_run.to_rfc3339(),
+            job.command
+        )))
     }
 
     fn handle_cancel(&self, id: &str) -> ToolResult {
         match cron::remove_job(&self.config, id) {
-            Ok(()) => ToolResult {
-                success: true,
-                output: format!("Cancelled job {id}"),
-                error: None,
-            },
-            Err(error) => ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(error.to_string()),
-            },
+            Ok(()) => ToolResult::success(format!("Cancelled job {id}")),
+            Err(error) => ToolResult::error(error.to_string()),
         }
     }
 
@@ -344,20 +291,12 @@ impl ScheduleTool {
         };
 
         match operation {
-            Ok(_) => ToolResult {
-                success: true,
-                output: if pause {
-                    format!("Paused job {id}")
-                } else {
-                    format!("Resumed job {id}")
-                },
-                error: None,
-            },
-            Err(error) => ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(error.to_string()),
-            },
+            Ok(_) => ToolResult::success(if pause {
+                format!("Paused job {id}")
+            } else {
+                format!("Resumed job {id}")
+            }),
+            Err(error) => ToolResult::error(error.to_string()),
         }
     }
 }
@@ -400,8 +339,8 @@ mod tests {
         let tool = ScheduleTool::new(security, config);
 
         let result = tool.execute(json!({"action": "list"})).await.unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("No scheduled jobs"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("No scheduled jobs"));
     }
 
     #[tokio::test]
@@ -417,27 +356,28 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(create.success);
-        assert!(create.output.contains("Created recurring job"));
+        assert!(!create.is_error);
+        assert!(create.output().contains("Created recurring job"));
 
         let list = tool.execute(json!({"action": "list"})).await.unwrap();
-        assert!(list.success);
-        assert!(list.output.contains("echo hello"));
+        assert!(!list.is_error);
+        assert!(list.output().contains("echo hello"));
 
-        let id = create.output.split_whitespace().nth(3).unwrap();
+        let create_output = create.output();
+        let id = create_output.split_whitespace().nth(3).unwrap();
 
         let get = tool
             .execute(json!({"action": "get", "id": id}))
             .await
             .unwrap();
-        assert!(get.success);
-        assert!(get.output.contains("echo hello"));
+        assert!(!get.is_error);
+        assert!(get.output().contains("echo hello"));
 
         let cancel = tool
             .execute(json!({"action": "cancel", "id": id}))
             .await
             .unwrap();
-        assert!(cancel.success);
+        assert!(!cancel.is_error);
     }
 
     #[tokio::test]
@@ -453,7 +393,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(once.success);
+        assert!(!once.is_error);
 
         let add = tool
             .execute(json!({
@@ -463,20 +403,21 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(add.success);
+        assert!(!add.is_error);
 
-        let id = add.output.split_whitespace().nth(3).unwrap();
+        let add_output = add.output();
+        let id = add_output.split_whitespace().nth(3).unwrap();
         let pause = tool
             .execute(json!({"action": "pause", "id": id}))
             .await
             .unwrap();
-        assert!(pause.success);
+        assert!(!pause.is_error);
 
         let resume = tool
             .execute(json!({"action": "resume", "id": id}))
             .await
             .unwrap();
-        assert!(resume.success);
+        assert!(!resume.is_error);
     }
 
     #[tokio::test]
@@ -509,11 +450,11 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(!blocked.success);
-        assert!(blocked.error.as_deref().unwrap().contains("read-only"));
+        assert!(blocked.is_error);
+        assert!(blocked.output().contains("read-only"));
 
         let list = tool.execute(json!({"action": "list"})).await.unwrap();
-        assert!(list.success);
+        assert!(!list.is_error);
     }
 
     #[tokio::test]
@@ -522,7 +463,7 @@ mod tests {
         let tool = ScheduleTool::new(security, config);
 
         let result = tool.execute(json!({"action": "explode"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_deref().unwrap().contains("Unknown action"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Unknown action"));
     }
 }

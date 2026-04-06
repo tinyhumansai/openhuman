@@ -59,30 +59,18 @@ impl Tool for MemoryForgetTool {
             .security
             .enforce_tool_operation(ToolOperation::Act, "memory_forget")
         {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(error),
-            });
+            return Ok(ToolResult::error(error));
         }
 
         let namespaced_key = format!("{}/{}", namespace.trim(), key);
         match self.memory.forget(&namespaced_key).await {
-            Ok(true) => Ok(ToolResult {
-                success: true,
-                output: format!("Forgot memory: {namespaced_key}"),
-                error: None,
-            }),
-            Ok(false) => Ok(ToolResult {
-                success: true,
-                output: format!("No memory found with key: {key}"),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to forget memory: {e}")),
-            }),
+            Ok(true) => Ok(ToolResult::success(format!(
+                "Forgot memory: {namespaced_key}"
+            ))),
+            Ok(false) => Ok(ToolResult::success(format!(
+                "No memory found with key: {key}"
+            ))),
+            Err(e) => Ok(ToolResult::error(format!("Failed to forget memory: {e}"))),
         }
     }
 }
@@ -129,8 +117,8 @@ mod tests {
             .execute(json!({"namespace": "global", "key": "temp"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("Forgot"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("Forgot"));
 
         assert!(mem.get("global/temp").await.unwrap().is_none());
     }
@@ -143,8 +131,8 @@ mod tests {
             .execute(json!({"namespace": "global", "key": "nope"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("No memory found"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("No memory found"));
     }
 
     #[tokio::test]
@@ -175,12 +163,8 @@ mod tests {
             .execute(json!({"namespace": "global", "key": "temp"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("read-only mode"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only mode"));
         assert!(mem.get("global/temp").await.unwrap().is_some());
     }
 
@@ -204,12 +188,8 @@ mod tests {
             .execute(json!({"namespace": "global", "key": "temp"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Rate limit exceeded"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Rate limit exceeded"));
         assert!(mem.get("global/temp").await.unwrap().is_some());
     }
 }

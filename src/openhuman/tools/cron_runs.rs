@@ -52,21 +52,15 @@ impl Tool for CronRunsTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("cron is disabled by config (cron.enabled=false)".to_string()),
-            });
+            return Ok(ToolResult::error(
+                "cron is disabled by config (cron.enabled=false)".to_string(),
+            ));
         }
 
         let job_id = match args.get("job_id").and_then(serde_json::Value::as_str) {
             Some(v) if !v.trim().is_empty() => v,
             _ => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Missing 'job_id' parameter".to_string()),
-                });
+                return Ok(ToolResult::error("Missing 'job_id' parameter".to_string()));
             }
         };
 
@@ -90,17 +84,9 @@ impl Tool for CronRunsTool {
                     })
                     .collect();
 
-                Ok(ToolResult {
-                    success: true,
-                    output: serde_json::to_string_pretty(&runs)?,
-                    error: None,
-                })
+                Ok(ToolResult::success(serde_json::to_string_pretty(&runs)?))
             }
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(e.to_string()),
-            }),
+            Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }
 }
@@ -158,8 +144,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(result.success);
-        assert!(result.output.contains("..."));
+        assert!(!result.is_error);
+        assert!(result.output().contains("..."));
     }
 
     #[tokio::test]
@@ -168,10 +154,7 @@ mod tests {
         let cfg = test_config(&tmp).await;
         let tool = CronRunsTool::new(cfg);
         let result = tool.execute(json!({})).await.unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("Missing 'job_id'"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Missing 'job_id'"));
     }
 }

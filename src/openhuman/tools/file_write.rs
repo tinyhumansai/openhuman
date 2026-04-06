@@ -54,38 +54,26 @@ impl Tool for FileWriteTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'content' parameter"))?;
 
         if !self.security.can_act() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: autonomy is read-only".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
         }
 
         if self.security.is_rate_limited() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Rate limit exceeded: too many actions in the last hour".into()),
-            });
+            return Ok(ToolResult::error(
+                "Rate limit exceeded: too many actions in the last hour",
+            ));
         }
 
         // Security check: validate path is within workspace
         if !self.security.is_path_allowed(path) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Path not allowed by security policy: {path}")),
-            });
+            return Ok(ToolResult::error(format!(
+                "Path not allowed by security policy: {path}"
+            )));
         }
 
         let full_path = self.security.workspace_dir.join(path);
 
         let Some(parent) = full_path.parent() else {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Invalid path: missing parent directory".into()),
-            });
+            return Ok(ToolResult::error("Invalid path: missing parent directory"));
         };
 
         // Ensure parent directory exists
@@ -95,31 +83,21 @@ impl Tool for FileWriteTool {
         let resolved_parent = match tokio::fs::canonicalize(parent).await {
             Ok(p) => p,
             Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Failed to resolve file path: {e}")),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Failed to resolve file path: {e}"
+                )));
             }
         };
 
         if !self.security.is_resolved_path_allowed(&resolved_parent) {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!(
-                    "Resolved path escapes workspace: {}",
-                    resolved_parent.display()
-                )),
-            });
+            return Ok(ToolResult::error(format!(
+                "Resolved path escapes workspace: {}",
+                resolved_parent.display()
+            )));
         }
 
         let Some(file_name) = full_path.file_name() else {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Invalid path: missing file name".into()),
-            });
+            return Ok(ToolResult::error("Invalid path: missing file name"));
         };
 
         let resolved_target = resolved_parent.join(file_name);
@@ -127,36 +105,25 @@ impl Tool for FileWriteTool {
         // If the target already exists and is a symlink, refuse to follow it
         if let Ok(meta) = tokio::fs::symlink_metadata(&resolved_target).await {
             if meta.file_type().is_symlink() {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!(
-                        "Refusing to write through symlink: {}",
-                        resolved_target.display()
-                    )),
-                });
+                return Ok(ToolResult::error(format!(
+                    "Refusing to write through symlink: {}",
+                    resolved_target.display()
+                )));
             }
         }
 
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Rate limit exceeded: action budget exhausted".into()),
-            });
+            return Ok(ToolResult::error(
+                "Rate limit exceeded: action budget exhausted",
+            ));
         }
 
         match tokio::fs::write(&resolved_target, content).await {
-            Ok(()) => Ok(ToolResult {
-                success: true,
-                output: format!("Written {} bytes to {path}", content.len()),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to write file: {e}")),
-            }),
+            Ok(()) => Ok(ToolResult::success(format!(
+                "Written {} bytes to {path}",
+                content.len()
+            ))),
+            Err(e) => Ok(ToolResult::error(format!("Failed to write file: {e}"))),
         }
     }
 }
@@ -215,8 +182,8 @@ mod tests {
             .execute(json!({"path": "out.txt", "content": "written!"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("8 bytes"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("8 bytes"));
 
         let content = tokio::fs::read_to_string(dir.join("out.txt"))
             .await
@@ -237,7 +204,7 @@ mod tests {
             .execute(json!({"path": "a/b/c/deep.txt", "content": "deep"}))
             .await
             .unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
 
         let content = tokio::fs::read_to_string(dir.join("a/b/c/deep.txt"))
             .await
@@ -261,7 +228,7 @@ mod tests {
             .execute(json!({"path": "exist.txt", "content": "new"}))
             .await
             .unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
 
         let content = tokio::fs::read_to_string(dir.join("exist.txt"))
             .await
@@ -282,8 +249,8 @@ mod tests {
             .execute(json!({"path": "../../etc/evil", "content": "bad"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not allowed"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("not allowed"));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -295,8 +262,8 @@ mod tests {
             .execute(json!({"path": "/etc/evil", "content": "bad"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.as_ref().unwrap().contains("not allowed"));
+        assert!(result.is_error);
+        assert!(&result.output().contains("not allowed"));
     }
 
     #[tokio::test]
@@ -324,8 +291,8 @@ mod tests {
             .execute(json!({"path": "empty.txt", "content": ""}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("0 bytes"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("0 bytes"));
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -351,12 +318,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("escapes workspace"));
+        assert!(result.is_error);
+        assert!(result.output().contains("escapes workspace"));
         assert!(!outside.join("hijack.txt").exists());
 
         let _ = tokio::fs::remove_dir_all(&root).await;
@@ -374,8 +337,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result.error.as_deref().unwrap_or("").contains("read-only"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only"));
         assert!(!dir.join("out.txt").exists());
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -397,12 +360,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Rate limit exceeded"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Rate limit exceeded"));
         assert!(!dir.join("out.txt").exists());
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -435,9 +394,9 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success, "writing through symlink must be blocked");
+        assert!(result.is_error, "writing through symlink must be blocked");
         assert!(
-            result.error.as_deref().unwrap_or("").contains("symlink"),
+            result.output().contains("symlink"),
             "error should mention symlink"
         );
 
@@ -461,7 +420,7 @@ mod tests {
             .execute(json!({"path": "file\u{0000}.txt", "content": "bad"}))
             .await
             .unwrap();
-        assert!(!result.success, "paths with null bytes must be blocked");
+        assert!(result.is_error, "paths with null bytes must be blocked");
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }

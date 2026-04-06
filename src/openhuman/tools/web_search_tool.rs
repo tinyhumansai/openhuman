@@ -315,11 +315,7 @@ impl Tool for WebSearchTool {
             _ => anyhow::bail!("Unknown search provider: {}", self.provider),
         };
 
-        Ok(ToolResult {
-            success: true,
-            output: result,
-            error: None,
-        })
+        Ok(ToolResult::success(result))
     }
 }
 

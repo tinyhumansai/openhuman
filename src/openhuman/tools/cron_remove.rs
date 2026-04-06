@@ -37,35 +37,21 @@ impl Tool for CronRemoveTool {
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         if !self.config.cron.enabled {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("cron is disabled by config (cron.enabled=false)".to_string()),
-            });
+            return Ok(ToolResult::error(
+                "cron is disabled by config (cron.enabled=false)".to_string(),
+            ));
         }
 
         let job_id = match args.get("job_id").and_then(serde_json::Value::as_str) {
             Some(v) if !v.trim().is_empty() => v,
             _ => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Missing 'job_id' parameter".to_string()),
-                });
+                return Ok(ToolResult::error("Missing 'job_id' parameter".to_string()));
             }
         };
 
         match cron::remove_job(&self.config, job_id) {
-            Ok(()) => Ok(ToolResult {
-                success: true,
-                output: format!("Removed cron job {job_id}"),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(e.to_string()),
-            }),
+            Ok(()) => Ok(ToolResult::success(format!("Removed cron job {job_id}"))),
+            Err(e) => Ok(ToolResult::error(e.to_string())),
         }
     }
 }
@@ -96,7 +82,7 @@ mod tests {
         let tool = CronRemoveTool::new(cfg.clone());
 
         let result = tool.execute(json!({"job_id": job.id})).await.unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
         assert!(cron::list_jobs(&cfg).unwrap().is_empty());
     }
 
@@ -107,10 +93,7 @@ mod tests {
         let tool = CronRemoveTool::new(cfg);
 
         let result = tool.execute(json!({})).await.unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("Missing 'job_id'"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Missing 'job_id'"));
     }
 }

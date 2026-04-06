@@ -138,13 +138,8 @@ impl Provider for NoopProvider {
 // Tool trait — executable capabilities
 // ═══════════════════════════════════════════════════════════════════
 
-/// Result of a tool execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolResult {
-    pub success: bool,
-    pub output: String,
-    pub error: Option<String>,
-}
+/// Re-export the unified ToolResult from the tools module.
+pub use crate::openhuman::tools::ToolResult;
 
 /// Description of a tool for the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,11 +181,7 @@ impl Tool for NoopTool {
         serde_json::json!({"type": "object", "properties": {}})
     }
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        Ok(ToolResult {
-            success: true,
-            output: String::new(),
-            error: None,
-        })
+        Ok(ToolResult::success(""))
     }
 }
 
@@ -420,8 +411,8 @@ mod tests {
     async fn noop_tool_execute() {
         let tool = NoopTool;
         let result = tool.execute(serde_json::json!({})).await.unwrap();
-        assert!(result.success);
-        assert!(result.output.is_empty());
+        assert!(!result.is_error);
+        assert!(result.output().is_empty() || result.output() == "");
     }
 
     #[tokio::test]
@@ -473,14 +464,10 @@ mod tests {
 
     #[test]
     fn tool_result_serialization_roundtrip() {
-        let result = ToolResult {
-            success: false,
-            output: String::new(),
-            error: Some("boom".into()),
-        };
+        let result = ToolResult::error("boom");
         let json = serde_json::to_string(&result).unwrap();
         let parsed: ToolResult = serde_json::from_str(&json).unwrap();
-        assert!(!parsed.success);
-        assert_eq!(parsed.error.as_deref(), Some("boom"));
+        assert!(parsed.is_error);
+        assert_eq!(parsed.output(), "boom");
     }
 }

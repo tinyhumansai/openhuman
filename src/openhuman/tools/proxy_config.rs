@@ -40,19 +40,11 @@ impl ProxyConfigTool {
 
     fn require_write_access(&self) -> Option<ToolResult> {
         if !self.security.can_act() {
-            return Some(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: autonomy is read-only".into()),
-            });
+            return Some(ToolResult::error("Action blocked: autonomy is read-only"));
         }
 
         if !self.security.record_action() {
-            return Some(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: rate limit exceeded".into()),
-            });
+            return Some(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
         None
@@ -141,31 +133,23 @@ impl ProxyConfigTool {
     fn handle_get(&self) -> anyhow::Result<ToolResult> {
         let file_proxy = self.load_config_without_env()?.proxy;
         let runtime_proxy = runtime_proxy_config();
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
-                "proxy": Self::proxy_json(&file_proxy),
-                "runtime_proxy": Self::proxy_json(&runtime_proxy),
-                "environment": Self::env_snapshot(),
-            }))?,
-            error: None,
-        })
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "proxy": Self::proxy_json(&file_proxy),
+            "runtime_proxy": Self::proxy_json(&runtime_proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
     }
 
     fn handle_list_services(&self) -> anyhow::Result<ToolResult> {
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
-                "supported_service_keys": ProxyConfig::supported_service_keys(),
-                "supported_selectors": ProxyConfig::supported_service_selectors(),
-                "usage_example": {
-                    "action": "set",
-                    "scope": "services",
-                    "services": ["provider.openai", "tool.http_request", "channel.telegram"]
-                }
-            }))?,
-            error: None,
-        })
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "supported_service_keys": ProxyConfig::supported_service_keys(),
+            "supported_selectors": ProxyConfig::supported_service_selectors(),
+            "usage_example": {
+                "action": "set",
+                "scope": "services",
+                "services": ["provider.openai", "tool.http_request", "channel.telegram"]
+            }
+        }))?))
     }
 
     async fn handle_set(&self, args: &Value) -> anyhow::Result<ToolResult> {
@@ -254,15 +238,11 @@ impl ProxyConfigTool {
             ProxyConfig::clear_process_env();
         }
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
-                "message": "Proxy configuration updated",
-                "proxy": Self::proxy_json(&proxy),
-                "environment": Self::env_snapshot(),
-            }))?,
-            error: None,
-        })
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy configuration updated",
+            "proxy": Self::proxy_json(&proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
     }
 
     async fn handle_disable(&self, args: &Value) -> anyhow::Result<ToolResult> {
@@ -281,15 +261,11 @@ impl ProxyConfigTool {
             ProxyConfig::clear_process_env();
         }
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
-                "message": "Proxy disabled",
-                "proxy": Self::proxy_json(&cfg.proxy),
-                "environment": Self::env_snapshot(),
-            }))?,
-            error: None,
-        })
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy disabled",
+            "proxy": Self::proxy_json(&cfg.proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
     }
 
     fn handle_apply_env(&self) -> anyhow::Result<ToolResult> {
@@ -311,27 +287,19 @@ impl ProxyConfigTool {
         proxy.apply_to_process_env();
         set_runtime_proxy_config(proxy.clone());
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
-                "message": "Proxy environment variables applied",
-                "proxy": Self::proxy_json(&proxy),
-                "environment": Self::env_snapshot(),
-            }))?,
-            error: None,
-        })
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy environment variables applied",
+            "proxy": Self::proxy_json(&proxy),
+            "environment": Self::env_snapshot(),
+        }))?))
     }
 
     fn handle_clear_env(&self) -> anyhow::Result<ToolResult> {
         ProxyConfig::clear_process_env();
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
-                "message": "Proxy environment variables cleared",
-                "environment": Self::env_snapshot(),
-            }))?,
-            error: None,
-        })
+        Ok(ToolResult::success(serde_json::to_string_pretty(&json!({
+            "message": "Proxy environment variables cleared",
+            "environment": Self::env_snapshot(),
+        }))?))
     }
 }
 
@@ -426,11 +394,7 @@ impl Tool for ProxyConfigTool {
 
         match result {
             Ok(outcome) => Ok(outcome),
-            Err(error) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(error.to_string()),
-            }),
+            Err(error) => Ok(ToolResult::error(error.to_string())),
         }
     }
 }
@@ -468,9 +432,9 @@ mod tests {
             .execute(json!({"action": "list_services"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("provider.openai"));
-        assert!(result.output.contains("tool.http_request"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("provider.openai"));
+        assert!(result.output().contains("tool.http_request"));
     }
 
     #[tokio::test]
@@ -489,11 +453,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!result.success);
-        assert!(result
-            .error
-            .unwrap_or_default()
-            .contains("proxy.scope='services'"));
+        assert!(result.is_error);
+        assert!(result.output().contains("proxy.scope='services'"));
     }
 
     #[tokio::test]
@@ -510,12 +471,12 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(set_result.success, "{:?}", set_result.error);
+        assert!(!set_result.is_error, "{:?}", set_result.output());
 
         let get_result = tool.execute(json!({"action": "get"})).await.unwrap();
-        assert!(get_result.success);
-        assert!(get_result.output.contains("provider.openai"));
-        assert!(get_result.output.contains("services"));
+        assert!(!get_result.is_error);
+        assert!(get_result.output().contains("provider.openai"));
+        assert!(get_result.output().contains("services"));
     }
 
     #[tokio::test]
@@ -530,7 +491,7 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(set_result.success, "{:?}", set_result.error);
+        assert!(!set_result.is_error, "{:?}", set_result.output());
 
         let clear_result = tool
             .execute(json!({
@@ -539,11 +500,11 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert!(clear_result.success, "{:?}", clear_result.error);
+        assert!(!clear_result.is_error, "{:?}", clear_result.output());
 
         let get_result = tool.execute(json!({"action": "get"})).await.unwrap();
-        assert!(get_result.success);
-        let parsed: Value = serde_json::from_str(&get_result.output).unwrap();
+        assert!(!get_result.is_error);
+        let parsed: Value = serde_json::from_str(&get_result.output()).unwrap();
         assert!(parsed["proxy"]["http_proxy"].is_null());
         assert!(parsed["runtime_proxy"]["http_proxy"].is_null());
     }

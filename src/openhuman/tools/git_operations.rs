@@ -124,11 +124,9 @@ impl GitOperationsTool {
             json!(staged.is_empty() && unstaged.is_empty() && untracked.is_empty()),
         );
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&result).unwrap_or_default(),
-            error: None,
-        })
+        Ok(ToolResult::success(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        ))
     }
 
     async fn git_diff(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -203,11 +201,9 @@ impl GitOperationsTool {
         result.insert("hunks".to_string(), json!(hunks));
         result.insert("file_count".to_string(), json!(hunks.len()));
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&result).unwrap_or_default(),
-            error: None,
-        })
+        Ok(ToolResult::success(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        ))
     }
 
     async fn git_log(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -239,12 +235,9 @@ impl GitOperationsTool {
             }
         }
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({ "commits": commits }))
-                .unwrap_or_default(),
-            error: None,
-        })
+        Ok(ToolResult::success(
+            serde_json::to_string_pretty(&json!({ "commits": commits })).unwrap_or_default(),
+        ))
     }
 
     async fn git_branch(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -268,15 +261,13 @@ impl GitOperationsTool {
             }
         }
 
-        Ok(ToolResult {
-            success: true,
-            output: serde_json::to_string_pretty(&json!({
+        Ok(ToolResult::success(
+            serde_json::to_string_pretty(&json!({
                 "current": current,
                 "branches": branches
             }))
             .unwrap_or_default(),
-            error: None,
-        })
+        ))
     }
 
     fn truncate_commit_message(message: &str) -> String {
@@ -311,16 +302,8 @@ impl GitOperationsTool {
         let output = self.run_git_command(&["commit", "-m", &message]).await;
 
         match output {
-            Ok(_) => Ok(ToolResult {
-                success: true,
-                output: format!("Committed: {message}"),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Commit failed: {e}")),
-            }),
+            Ok(_) => Ok(ToolResult::success(format!("Committed: {message}"))),
+            Err(e) => Ok(ToolResult::error(format!("Commit failed: {e}"))),
         }
     }
 
@@ -336,16 +319,8 @@ impl GitOperationsTool {
         let output = self.run_git_command(&["add", "--", paths]).await;
 
         match output {
-            Ok(_) => Ok(ToolResult {
-                success: true,
-                output: format!("Staged: {paths}"),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Add failed: {e}")),
-            }),
+            Ok(_) => Ok(ToolResult::success(format!("Staged: {paths}"))),
+            Err(e) => Ok(ToolResult::error(format!("Add failed: {e}"))),
         }
     }
 
@@ -372,16 +347,10 @@ impl GitOperationsTool {
         let output = self.run_git_command(&["checkout", branch_name]).await;
 
         match output {
-            Ok(_) => Ok(ToolResult {
-                success: true,
-                output: format!("Switched to branch: {branch_name}"),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Checkout failed: {e}")),
-            }),
+            Ok(_) => Ok(ToolResult::success(format!(
+                "Switched to branch: {branch_name}"
+            ))),
+            Err(e) => Ok(ToolResult::error(format!("Checkout failed: {e}"))),
         }
     }
 
@@ -409,16 +378,8 @@ impl GitOperationsTool {
         };
 
         match output {
-            Ok(out) => Ok(ToolResult {
-                success: true,
-                output: out,
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Stash {action} failed: {e}")),
-            }),
+            Ok(out) => Ok(ToolResult::success(out)),
+            Err(e) => Ok(ToolResult::error(format!("Stash {action} failed: {e}"))),
         }
     }
 }
@@ -484,11 +445,7 @@ impl Tool for GitOperationsTool {
         let operation = match args.get("operation").and_then(|v| v.as_str()) {
             Some(op) => op,
             None => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Missing 'operation' parameter".into()),
-                });
+                return Ok(ToolResult::error("Missing 'operation' parameter"));
             }
         };
 
@@ -506,33 +463,21 @@ impl Tool for GitOperationsTool {
             }
 
             if !found_git {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Not in a git repository".into()),
-                });
+                return Ok(ToolResult::error("Not in a git repository"));
             }
         }
 
         // Check autonomy level for write operations
         if self.requires_write_access(operation) {
             if !self.security.can_act() {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(
-                        "Action blocked: git write operations require higher autonomy level".into(),
-                    ),
-                });
+                return Ok(ToolResult::error(
+                    "Action blocked: git write operations require higher autonomy level",
+                ));
             }
 
             match self.security.autonomy {
                 AutonomyLevel::ReadOnly => {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some("Action blocked: read-only mode".into()),
-                    });
+                    return Ok(ToolResult::error("Action blocked: read-only mode"));
                 }
                 AutonomyLevel::Supervised | AutonomyLevel::Full => {}
             }
@@ -540,11 +485,7 @@ impl Tool for GitOperationsTool {
 
         // Record action for rate limiting
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: rate limit exceeded".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
         // Execute the requested operation
@@ -557,11 +498,7 @@ impl Tool for GitOperationsTool {
             "add" => self.git_add(args).await,
             "checkout" => self.git_checkout(args).await,
             "stash" => self.git_stash(args).await,
-            _ => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Unknown operation: {operation}")),
-            }),
+            _ => Ok(ToolResult::error(format!("Unknown operation: {operation}"))),
         }
     }
 }
@@ -710,13 +647,9 @@ mod tests {
             .execute(json!({"operation": "commit", "message": "test"}))
             .await
             .unwrap();
-        assert!(!result.success);
+        assert!(result.is_error);
         // can_act() returns false for ReadOnly, so we get the "higher autonomy level" message
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("higher autonomy"));
+        assert!(result.output().contains("higher autonomy"));
     }
 
     #[tokio::test]
@@ -737,7 +670,7 @@ mod tests {
 
         let result = tool.execute(json!({"operation": "branch"})).await.unwrap();
         // Branch listing must not be blocked by read-only autonomy
-        let error_msg = result.error.as_deref().unwrap_or("");
+        let error_msg = result.output();
         assert!(
             !error_msg.contains("read-only") && !error_msg.contains("higher autonomy"),
             "branch listing should not be blocked in read-only mode, got: {error_msg}"
@@ -756,8 +689,8 @@ mod tests {
         // This will fail because there's no git repo, but it shouldn't be blocked by autonomy
         let result = tool.execute(json!({"operation": "status"})).await.unwrap();
         // The error should be about git (not about autonomy/read-only mode)
-        assert!(!result.success, "Expected failure due to missing git repo");
-        let error_msg = result.error.as_deref().unwrap_or("");
+        assert!(result.is_error, "Expected failure due to missing git repo");
+        let error_msg = result.output();
         assert!(
             !error_msg.is_empty(),
             "Expected a git-related error message"
@@ -774,12 +707,8 @@ mod tests {
         let tool = test_tool(tmp.path());
 
         let result = tool.execute(json!({})).await.unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Missing 'operation'"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Missing 'operation'"));
     }
 
     #[tokio::test]
@@ -795,12 +724,8 @@ mod tests {
         let tool = test_tool(tmp.path());
 
         let result = tool.execute(json!({"operation": "push"})).await.unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Unknown operation"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Unknown operation"));
     }
 
     #[test]

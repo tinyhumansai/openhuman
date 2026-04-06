@@ -298,7 +298,7 @@ impl Agent {
             None
         };
 
-        let tools = tools::all_tools_with_runtime(
+        let mut tools = tools::all_tools_with_runtime(
             Arc::new(config.clone()),
             &security,
             runtime,
@@ -312,6 +312,17 @@ impl Agent {
             config.api_key.as_deref(),
             config,
         );
+
+        // Bridge skill tools (Notion, Gmail, etc.) from the QuickJS runtime
+        // into the agent's tool registry so the LLM can call them.
+        let skill_tools = tools::skill_bridge::collect_skill_tools();
+        if !skill_tools.is_empty() {
+            log::info!(
+                "[agent] Injecting {} skill tool(s) into agent registry",
+                skill_tools.len()
+            );
+            tools.extend(skill_tools);
+        }
 
         let model_name = config
             .default_model
@@ -562,10 +573,10 @@ impl Agent {
             if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
                 match tool.execute(call.arguments.clone()).await {
                     Ok(r) => {
-                        if r.success {
-                            (r.output, true)
+                        if !r.is_error {
+                            (r.output(), true)
                         } else {
-                            (format!("Error: {}", r.error.unwrap_or(r.output)), false)
+                            (format!("Error: {}", r.output()), false)
                         }
                     }
                     Err(e) => (format!("Error executing {}: {e}", call.name), false),
@@ -981,11 +992,7 @@ mod tests {
             &self,
             _args: serde_json::Value,
         ) -> Result<crate::openhuman::tools::ToolResult> {
-            Ok(crate::openhuman::tools::ToolResult {
-                success: true,
-                output: "tool-out".into(),
-                error: None,
-            })
+            Ok(crate::openhuman::tools::ToolResult::success("tool-out"))
         }
     }
 

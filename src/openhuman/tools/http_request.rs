@@ -198,41 +198,21 @@ impl Tool for HttpRequestTool {
         let body = args.get("body").and_then(|v| v.as_str());
 
         if !self.security.can_act() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: autonomy is read-only".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
         }
 
         if !self.security.record_action() {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some("Action blocked: rate limit exceeded".into()),
-            });
+            return Ok(ToolResult::error("Action blocked: rate limit exceeded"));
         }
 
         let url = match self.validate_url(url) {
             Ok(v) => v,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e.to_string()),
-                })
-            }
+            Err(e) => return Ok(ToolResult::error(e.to_string())),
         };
 
         let method = match self.validate_method(method_str) {
             Ok(m) => m,
-            Err(e) => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(e.to_string()),
-                })
-            }
+            Err(e) => return Ok(ToolResult::error(e.to_string())),
         };
 
         let request_headers = self.parse_headers(&headers_val);
@@ -273,21 +253,13 @@ impl Tool for HttpRequestTool {
                     response_text
                 );
 
-                Ok(ToolResult {
-                    success: status.is_success(),
-                    output,
-                    error: if status.is_client_error() || status.is_server_error() {
-                        Some(format!("HTTP {}", status_code))
-                    } else {
-                        None
-                    },
-                })
+                if status.is_success() {
+                    Ok(ToolResult::success(output))
+                } else {
+                    Ok(ToolResult::error(format!("HTTP {}", status_code)))
+                }
             }
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("HTTP request failed: {e}")),
-            }),
+            Err(e) => Ok(ToolResult::error(format!("HTTP request failed: {e}"))),
         }
     }
 }
@@ -662,8 +634,8 @@ mod tests {
             .execute(json!({"url": "https://example.com"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("read-only"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only"));
     }
 
     #[tokio::test]
@@ -677,8 +649,8 @@ mod tests {
             .execute(json!({"url": "https://example.com"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("rate limit"));
+        assert!(result.is_error);
+        assert!(result.output().contains("rate limit"));
     }
 
     #[test]

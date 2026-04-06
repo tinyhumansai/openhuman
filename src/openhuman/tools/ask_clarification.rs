@@ -75,10 +75,6 @@ impl Tool for AskClarificationTool {
         // For now, return the question as output so the orchestrator can surface it.
         tracing::info!("[ask_clarification] question: {question}");
 
-        Ok(ToolResult {
-            success: true,
-            output,
-            error: None,
-        })
+        Ok(ToolResult::success(output))
     }
 }

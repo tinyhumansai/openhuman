@@ -79,11 +79,7 @@ impl Tool for MemoryStoreTool {
             .security
             .enforce_tool_operation(ToolOperation::Act, "memory_store")
         {
-            return Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(error),
-            });
+            return Ok(ToolResult::error(error));
         }
 
         let namespaced_key = format!("{}/{}", namespace.trim(), key);
@@ -92,16 +88,10 @@ impl Tool for MemoryStoreTool {
             .store(&namespaced_key, content, category, None)
             .await
         {
-            Ok(()) => Ok(ToolResult {
-                success: true,
-                output: format!("Stored memory: {namespaced_key}"),
-                error: None,
-            }),
-            Err(e) => Ok(ToolResult {
-                success: false,
-                output: String::new(),
-                error: Some(format!("Failed to store memory: {e}")),
-            }),
+            Ok(()) => Ok(ToolResult::success(format!(
+                "Stored memory: {namespaced_key}"
+            ))),
+            Err(e) => Ok(ToolResult::error(format!("Failed to store memory: {e}"))),
         }
     }
 }
@@ -141,8 +131,8 @@ mod tests {
             .execute(json!({"namespace": "global", "key": "lang", "content": "Prefers Rust"}))
             .await
             .unwrap();
-        assert!(result.success);
-        assert!(result.output.contains("lang"));
+        assert!(!result.is_error);
+        assert!(result.output().contains("lang"));
 
         let entry = mem.get("global/lang").await.unwrap();
         assert!(entry.is_some());
@@ -159,7 +149,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
     }
 
     #[tokio::test]
@@ -172,7 +162,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(result.success);
+        assert!(!result.is_error);
 
         let entry = mem.get("global/proj_note").await.unwrap().unwrap();
         assert_eq!(entry.content, "Uses async runtime");
@@ -207,12 +197,8 @@ mod tests {
             .execute(json!({"namespace": "global", "key": "lang", "content": "Prefers Rust"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("read-only mode"));
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only mode"));
         assert!(mem.get("global/lang").await.unwrap().is_none());
     }
 
@@ -228,12 +214,8 @@ mod tests {
             .execute(json!({"namespace": "global", "key": "lang", "content": "Prefers Rust"}))
             .await
             .unwrap();
-        assert!(!result.success);
-        assert!(result
-            .error
-            .as_deref()
-            .unwrap_or("")
-            .contains("Rate limit exceeded"));
+        assert!(result.is_error);
+        assert!(result.output().contains("Rate limit exceeded"));
         assert!(mem.get("global/lang").await.unwrap().is_none());
     }
 }

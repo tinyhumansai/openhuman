@@ -71,11 +71,9 @@ impl Tool for RunTestsTool {
             } else if self.workspace_dir.join("package.json").exists() {
                 "vitest"
             } else {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some("Could not detect project type for testing.".into()),
-                });
+                return Ok(ToolResult::error(
+                    "Could not detect project type for testing.",
+                ));
             }
         } else {
             runner
@@ -99,11 +97,7 @@ impl Tool for RunTestsTool {
                 c
             }
             other => {
-                return Ok(ToolResult {
-                    success: false,
-                    output: String::new(),
-                    error: Some(format!("Unknown test runner: {other}")),
-                });
+                return Ok(ToolResult::error(format!("Unknown test runner: {other}")));
             }
         };
 
@@ -118,18 +112,14 @@ impl Tool for RunTestsTool {
             {
                 Ok(Ok(output)) => output,
                 Ok(Err(e)) => {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("failed to spawn test runner: {e}")),
-                    });
+                    return Ok(ToolResult::error(format!(
+                        "failed to spawn test runner: {e}"
+                    )));
                 }
                 Err(_) => {
-                    return Ok(ToolResult {
-                        success: false,
-                        output: String::new(),
-                        error: Some(format!("test execution timed out after {timeout_secs}s")),
-                    });
+                    return Ok(ToolResult::error(format!(
+                        "test execution timed out after {timeout_secs}s"
+                    )));
                 }
             };
 
@@ -160,14 +150,13 @@ impl Tool for RunTestsTool {
             truncated.len()
         );
 
-        Ok(ToolResult {
-            success: output.status.success(),
-            output: truncated,
-            error: if output.status.success() {
-                None
-            } else {
-                Some(format!("Tests exited with code {:?}", output.status.code()))
-            },
-        })
+        if output.status.success() {
+            Ok(ToolResult::success(truncated))
+        } else {
+            Ok(ToolResult::error(format!(
+                "Tests exited with code {:?}",
+                output.status.code()
+            )))
+        }
     }
 }
