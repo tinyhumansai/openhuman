@@ -142,7 +142,7 @@ const Conversations = () => {
   >({});
   const rustChat = useRustChat();
   const defaultChannelType = useAppSelector(
-    (state) => state.channelConnections?.defaultMessagingChannel ?? 'web'
+    state => state.channelConnections?.defaultMessagingChannel ?? 'web'
   );
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
   const pendingReactionRef = useRef<
@@ -530,7 +530,7 @@ const Conversations = () => {
     console.debug('[conversations:gif] cadence reached, evaluating gif decision');
 
     void openhumanLocalAiShouldSendGif(messageContent, defaultChannelType)
-      .then(async (response) => {
+      .then(async response => {
         const decision = response.result;
         if (!decision?.should_send_gif || !decision.search_query) return;
 
@@ -548,7 +548,7 @@ const Conversations = () => {
         console.debug('[conversations:gif] sending gif:', picked.title || picked.id);
         dispatch(addInferenceResponse({ content: gifUrl, threadId }));
       })
-      .catch((err) => {
+      .catch(err => {
         console.debug('[conversations:gif] failed:', err);
       });
   };
@@ -567,7 +567,7 @@ const Conversations = () => {
     console.debug('[conversations:sentiment] interval reached, analyzing sentiment');
 
     void openhumanLocalAiAnalyzeSentiment(messageContent)
-      .then((response) => {
+      .then(response => {
         const sentiment = response.result;
         if (!sentiment) return;
         console.debug(
@@ -577,7 +577,7 @@ const Conversations = () => {
           `(${sentiment.confidence})`
         );
       })
-      .catch((err) => {
+      .catch(err => {
         console.debug('[conversations:sentiment] failed:', err);
       });
   };
