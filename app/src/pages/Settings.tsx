@@ -26,6 +26,7 @@ import VoicePanel from '../components/settings/panels/VoicePanel';
 import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
 import SettingsHome from '../components/settings/SettingsHome';
 import SettingsSectionPage from '../components/settings/SettingsSectionPage';
+import { APP_VERSION } from '../utils/config';
 
 const accountSettingsItems = [
   {
@@ -307,6 +308,9 @@ const Settings = () => {
           <Route path="memory-debug" element={<MemoryDebugPanel />} />
           <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />
         </Routes>
+        <div className="border-t border-stone-100 px-4 py-3 text-center text-[11px] text-stone-400">
+          Beta build - v{APP_VERSION}
+        </div>
       </div>
     </div>
   );

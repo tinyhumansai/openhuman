@@ -1,3 +1,5 @@
+import packageJson from '../../package.json';
+
 export const CORE_RPC_URL =
   import.meta.env.VITE_OPENHUMAN_CORE_RPC_URL || 'http://127.0.0.1:7788/rpc';
 
@@ -40,3 +42,5 @@ export const TELEGRAM_BOT_USERNAME =
 export const DEV_JWT_TOKEN = import.meta.env.DEV
   ? (import.meta.env.VITE_DEV_JWT_TOKEN as string | undefined)
   : undefined;
+
+export const APP_VERSION = packageJson.version;
