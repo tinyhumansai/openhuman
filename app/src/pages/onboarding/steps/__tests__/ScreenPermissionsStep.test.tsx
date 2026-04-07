@@ -73,10 +73,7 @@ const deniedStatus: AccessibilityStatus = {
 
 const grantedStatus: AccessibilityStatus = {
   ...deniedStatus,
-  permissions: {
-    ...deniedStatus.permissions,
-    accessibility: 'granted',
-  },
+  permissions: { ...deniedStatus.permissions, accessibility: 'granted' },
 };
 
 const createStore = () =>
@@ -113,10 +110,7 @@ describe('ScreenPermissionsStep', () => {
       result: deniedStatus.permissions,
       logs: [],
     } as never);
-    vi.mocked(openhumanAccessibilityStatus).mockResolvedValue({
-      result: deniedStatus,
-      logs: [],
-    });
+    vi.mocked(openhumanAccessibilityStatus).mockResolvedValue({ result: deniedStatus, logs: [] });
   });
 
   it('auto-refreshes permissions after returning from System Settings', async () => {
@@ -131,14 +125,9 @@ describe('ScreenPermissionsStep', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Request Permissions' }));
 
-    expect(
-      await screen.findByText(/OpenHuman will refresh automatically/i)
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/OpenHuman will refresh automatically/i)).toBeInTheDocument();
 
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      value: 'visible',
-    });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
     fireEvent(window, new Event('focus'));
 
     await waitFor(() => {

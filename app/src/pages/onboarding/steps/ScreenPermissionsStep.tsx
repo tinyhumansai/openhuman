@@ -117,7 +117,10 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
           {(lastError || status?.permission_check_process_path) && (
             <div className="text-xs text-stone-400 text-center px-2 space-y-1">
               {shouldAutoRefreshOnReturn ? (
-                <p>After granting access in System Settings, return here and OpenHuman will refresh automatically.</p>
+                <p>
+                  After granting access in System Settings, return here and OpenHuman will refresh
+                  automatically.
+                </p>
               ) : null}
               {lastError ? <p className="text-coral-400">{lastError}</p> : null}
               {status?.permission_check_process_path ? (
