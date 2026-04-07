@@ -1176,23 +1176,17 @@ impl AccessibilityEngine {
             .clone()
             .ok_or_else(|| "frame has no image payload".to_string())?;
 
-        // ── Compress & resize before sending to the LLM ─────────────────
-        tracing::trace!(
-            "[screen_intelligence] compress_screenshot: input image_ref len={}",
-            image_ref.len()
+        // ── Step 1: OCR via Apple Vision (fast, accurate, no hallucination) ──
+        tracing::debug!("[screen_intelligence] running Apple Vision OCR");
+        let ocr_text = Self::run_apple_vision_ocr(&image_ref)?;
+        tracing::debug!(
+            "[screen_intelligence] OCR extracted {} chars",
+            ocr_text.len()
         );
+
+        // ── Step 2: Compress for LLM vision ─────────────────────────────
         let compressed = super::image_processing::compress_screenshot(&image_ref, None, None)
             .map_err(|e| format!("image compression failed: {e}"))?;
-        tracing::trace!(
-            "[screen_intelligence] compress_screenshot: {}x{} -> {}x{}, {} -> {} bytes; vision_image_ref len={}",
-            compressed.original_dimensions.0,
-            compressed.original_dimensions.1,
-            compressed.final_dimensions.0,
-            compressed.final_dimensions.1,
-            compressed.original_bytes,
-            compressed.compressed_bytes,
-            compressed.data_uri.len()
-        );
         let vision_image_ref = compressed.data_uri;
 
         let config = Config::load_or_init()
@@ -1219,24 +1213,112 @@ impl AccessibilityEngine {
             }
         }
 
+        // ── Step 3: LLM for context/activity only (not text extraction) ──
         tracing::debug!(
-            "[screen_intelligence] running local vision inference (provider={} model={} compressed_bytes={})",
+            "[screen_intelligence] running LLM context analysis (provider={} model={})",
             provider,
             config.local_ai.vision_model_id,
-            compressed.compressed_bytes
         );
         let service = local_ai::global(&config);
-        let prompt = r#"You are a screen reader. Describe what's on screen in plain text.
+        let prompt = r#"Describe this screenshot briefly. Answer each on its own line:
 
-Line 1: APP — what app and page/view is showing (e.g. "Brave Browser — GitHub PR #341")
-Line 2: DOING — what the user appears to be doing
-Then: extract all visible text content you can read — article text, code, messages, tabs, buttons, notifications. Be thorough.
+APP: Name the application and the specific page/view/tab shown.
+DOING: What is the user actively doing? (e.g. writing code, reading email, browsing, chatting)
+FOCUS: What's the main content area about? (e.g. a PR review for auth refactor, a Slack thread about deployment)
+MOOD: Is anything urgent, broken, or notable? (errors, notifications, warnings — or "nothing notable")
 
-No JSON. No markdown. Just plain readable text."#;
+One line per answer. No text extraction. Be specific and concise."#;
         let raw = service
-            .vision_prompt(&config, prompt, &[vision_image_ref], Some(1024))
+            .vision_prompt(&config, prompt, &[vision_image_ref], Some(200))
             .await?;
-        Ok(parse_vision_summary_output(frame, &raw))
+
+        // ── Combine OCR text + LLM context into the summary ─────────────
+        // LLM returns structured lines: APP:, DOING:, FOCUS:, MOOD:
+        let ui_state = raw.trim().to_string();
+        let actionable_notes = String::new();
+
+        Ok(VisionSummary {
+            id: format!("vision-{}-{}", frame.captured_at_ms, uuid::Uuid::new_v4()),
+            captured_at_ms: frame.captured_at_ms,
+            app_name: frame.app_name,
+            window_title: frame.window_title,
+            ui_state: truncate_tail(&ui_state, 500),
+            key_text: truncate_tail(&ocr_text, 8000),
+            actionable_notes: truncate_tail(&actionable_notes, 1000),
+            confidence: 0.9,
+        })
+    }
+
+    /// Run Apple Vision framework OCR on a base64-encoded image.
+    /// Writes the image to a temp file, runs a Swift snippet, returns extracted text.
+    fn run_apple_vision_ocr(image_ref: &str) -> Result<String, String> {
+        use base64::{engine::general_purpose::STANDARD as B64, Engine};
+
+        let b64_payload = if let Some(pos) = image_ref.find(";base64,") {
+            &image_ref[pos + 8..]
+        } else {
+            image_ref
+        };
+
+        let raw_bytes = B64
+            .decode(b64_payload)
+            .map_err(|e| format!("base64 decode for OCR failed: {e}"))?;
+
+        // Write to temp file for Swift to read.
+        let tmp_path = std::env::temp_dir().join(format!(
+            "openhuman_ocr_{}.png",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&tmp_path, &raw_bytes)
+            .map_err(|e| format!("failed to write temp OCR image: {e}"))?;
+
+        let swift_code = format!(
+            r#"
+import Vision
+import AppKit
+
+let url = URL(fileURLWithPath: "{path}")
+guard let image = NSImage(contentsOf: url),
+      let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {{
+    fputs("ERROR: failed to load image\n", stderr)
+    exit(1)
+}}
+
+let request = VNRecognizeTextRequest()
+request.recognitionLevel = .accurate
+request.usesLanguageCorrection = true
+
+let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+try handler.perform([request])
+
+guard let observations = request.results else {{
+    exit(0)
+}}
+
+for obs in observations {{
+    if let candidate = obs.topCandidates(1).first {{
+        print(candidate.string)
+    }}
+}}
+"#,
+            path = tmp_path.display()
+        );
+
+        let output = std::process::Command::new("swift")
+            .arg("-e")
+            .arg(&swift_code)
+            .output()
+            .map_err(|e| format!("swift OCR failed to start: {e}"))?;
+
+        // Clean up temp file regardless of outcome.
+        let _ = std::fs::remove_file(&tmp_path);
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Apple Vision OCR failed: {}", stderr.trim()));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     async fn stop_session_internal(&self, reason: String) {
