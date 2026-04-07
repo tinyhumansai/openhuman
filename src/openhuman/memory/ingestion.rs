@@ -934,13 +934,24 @@ async fn parse_document(
     let chunks = UnifiedMemory::chunk_document_content(content, DEFAULT_CHUNK_TOKENS);
     let relex_runtime = relex::runtime(&config.model_name).await;
     let model_enabled = relex_runtime.is_some();
-    log::debug!(
-        "[memory:ingestion] parse_document title={title:?} model={} relex_available={model_enabled} \
-         content_len={} chunk_count={}",
-        config.model_name,
-        content.len(),
-        chunks.len(),
-    );
+    if model_enabled {
+        log::info!(
+            "[memory:ingestion] parse_document title={title:?} model={} \
+             content_len={} chunk_count={} — GLiNER model loaded",
+            config.model_name,
+            content.len(),
+            chunks.len(),
+        );
+    } else {
+        log::warn!(
+            "[memory:ingestion] parse_document title={title:?} model={} \
+             content_len={} chunk_count={} — GLiNER model NOT available, \
+             falling back to heuristic-only extraction",
+            config.model_name,
+            content.len(),
+            chunks.len(),
+        );
+    }
     let mut accumulator = ExtractionAccumulator {
         document_title: Some(sanitize_entity_name(title)),
         primary_subject: detect_primary_subject(title),

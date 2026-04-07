@@ -6,6 +6,7 @@ pub mod cli;
 pub mod dispatch;
 pub mod jsonrpc;
 pub mod logging;
+pub mod memory_cli;
 pub mod repl;
 pub mod rpc_log;
 pub mod screen_intelligence_cli;

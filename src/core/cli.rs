@@ -60,6 +60,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
         }
         "voice" | "dictate" => run_voice_server_command(&args[1..]),
         "text-input" => crate::core::text_input_cli::run_text_input_command(&args[1..]),
+        "memory" => crate::core::memory_cli::run_memory_command(&args[1..]),
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
 }

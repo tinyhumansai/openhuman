@@ -240,7 +240,16 @@ fn default_max_width() -> usize {
 /// Obtains a singleton or cached instance of the RelexRuntime.
 pub(crate) async fn runtime(model_name: &str) -> Option<Arc<RelexRuntime>> {
     if !uses_default_bundle(model_name) {
-        return load_runtime_for_model(model_name).await.ok();
+        return match load_runtime_for_model(model_name).await {
+            Ok(rt) => Some(rt),
+            Err(e) => {
+                log::error!(
+                    "[memory:relex] failed to load runtime for model {model_name}: {e:#}. \
+                     Graph extraction will use heuristics only."
+                );
+                None
+            }
+        };
     }
 
     static DEFAULT_RUNTIME: OnceLock<Mutex<Option<Arc<RelexRuntime>>>> = OnceLock::new();
@@ -260,9 +269,20 @@ pub(crate) async fn runtime(model_name: &str) -> Option<Arc<RelexRuntime>> {
         return Some(runtime);
     }
 
-    let runtime = load_default_runtime().await.ok().map(Arc::new)?;
-    *runtime_cell.lock() = Some(runtime.clone());
-    Some(runtime)
+    match load_default_runtime().await {
+        Ok(rt) => {
+            let runtime = Arc::new(rt);
+            *runtime_cell.lock() = Some(runtime.clone());
+            Some(runtime)
+        }
+        Err(e) => {
+            log::error!(
+                "[memory:relex] failed to load default GLiNER runtime: {e:#}. \
+                 Graph extraction will use heuristics only."
+            );
+            None
+        }
+    }
 }
 
 /// Pre-warms the default Relex bundle to ensure it's downloaded and ready.
