@@ -117,7 +117,9 @@ impl SiServer {
         if self.config.keep_screenshots {
             si_config.keep_screenshots = true;
         }
-        let _ = self.engine.apply_config(si_config).await;
+        if let Err(e) = self.engine.apply_config(si_config).await {
+            warn!("{LOG_PREFIX} apply_config failed: {e}");
+        }
 
         *self.state.lock().await = ServerState::Idle;
 
@@ -366,9 +368,10 @@ pub async fn run_standalone(
     server_arc.run(&app_config).await
 }
 
+#[cfg(test)]
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() > max {
-        format!("{}…", &s[..max])
+    if s.chars().count() > max {
+        format!("{}…", s.chars().take(max).collect::<String>())
     } else {
         s.to_string()
     }

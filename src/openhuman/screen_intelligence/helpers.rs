@@ -7,6 +7,10 @@ use uuid::Uuid;
 use super::limits::{MAX_CONTEXT_CHARS, MAX_EPHEMERAL_FRAMES, MAX_EPHEMERAL_VISION_SUMMARIES};
 use super::types::{AutocompleteSuggestion, CaptureFrame, InputActionParams, VisionSummary};
 
+/// Default confidence score used when the model does not provide one.
+/// Applied consistently across both JSON and plain-text vision output branches.
+const DEFAULT_VISION_CONFIDENCE: f32 = 0.8;
+
 pub(crate) const VISION_MEMORY_NAMESPACE: &str = "background";
 pub(crate) const VISION_MEMORY_SOURCE_TYPE: &str = "screenshot";
 pub(crate) const VISION_MEMORY_CATEGORY: &str = "screen_intelligence";
@@ -68,6 +72,19 @@ pub(crate) fn push_ephemeral_vision_summary(
     summaries: &mut VecDeque<VisionSummary>,
     summary: VisionSummary,
 ) {
+    // Deduplicate: skip if a summary with the same captured_at_ms already exists.
+    // This prevents `vision_flush` from storing duplicates when called concurrently
+    // with the processing worker channel path.
+    if summaries
+        .iter()
+        .any(|s| s.captured_at_ms == summary.captured_at_ms)
+    {
+        tracing::debug!(
+            "[screen_intelligence] skipping duplicate vision summary (captured_at_ms={})",
+            summary.captured_at_ms
+        );
+        return;
+    }
     summaries.push_back(summary);
     while summaries.len() > MAX_EPHEMERAL_VISION_SUMMARIES {
         let _ = summaries.pop_front();
@@ -98,7 +115,7 @@ pub(crate) fn parse_vision_summary_output(frame: CaptureFrame, raw: &str) -> Vis
             .get("confidence")
             .and_then(|v| v.as_f64())
             .map(|v| v as f32)
-            .unwrap_or(0.66)
+            .unwrap_or(DEFAULT_VISION_CONFIDENCE)
             .clamp(0.0, 1.0);
 
         return VisionSummary {
@@ -128,7 +145,7 @@ pub(crate) fn parse_vision_summary_output(frame: CaptureFrame, raw: &str) -> Vis
         ui_state: truncate_tail(&ui_state, 500),
         key_text: truncate_tail(&key_text, 4000),
         actionable_notes: truncate_tail(&actionable_notes, 1000),
-        confidence: 0.8,
+        confidence: DEFAULT_VISION_CONFIDENCE,
     }
 }
 
@@ -178,10 +195,16 @@ pub(crate) async fn persist_vision_summary(
     let title = format!("Screen capture — {} — {}", app, ts);
 
     // YAML frontmatter for metadata, body is clean markdown content.
+    // Limitation: escaping is best-effort — only double-quotes and newlines are
+    // escaped. Values containing YAML-special characters like `:`, `{`, `}`, `[`,
+    // `]`, `#`, `|`, `>`, `&`, `*` may still produce invalid YAML in edge cases.
+    let yaml_escape = |s: &str| -> String {
+        s.replace('"', "\\\"").replace('\n', "\\n").replace('\r', "")
+    };
     let mut content = String::from("---\n");
-    content.push_str(&format!("app: \"{}\"\n", app.replace('"', "\\\"")));
+    content.push_str(&format!("app: \"{}\"\n", yaml_escape(app)));
     if !window.is_empty() {
-        content.push_str(&format!("window: \"{}\"\n", window.replace('"', "\\\"")));
+        content.push_str(&format!("window: \"{}\"\n", yaml_escape(window)));
     }
     content.push_str(&format!("captured: \"{}\"\n", ts));
     content.push_str(&format!("captured_ms: {}\n", summary.captured_at_ms));

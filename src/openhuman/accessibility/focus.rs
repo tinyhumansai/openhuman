@@ -502,6 +502,11 @@ fn resolve_frontmost_window_id(app_name: Option<&str>, window_title: Option<&str
     // AppleScript during fast app switches.
     for attempt in 0..2 {
         if attempt > 0 {
+            // Intentional blocking sleep: `resolve_frontmost_window_id` is called
+            // from `foreground_context()`, which is a synchronous function invoked
+            // from within an async context (the capture/status hot path). The sleep
+            // is only 50ms and is rare (second attempt only), so the blocking impact
+            // on the Tokio runtime is minimal and acceptable here.
             std::thread::sleep(std::time::Duration::from_millis(50));
             tracing::debug!(
                 "[accessibility] retrying window_id resolution for app={:?} (attempt {})",
@@ -603,6 +608,9 @@ if fallback > 0 {{ print(fallback) }}
         has_title_swift = if has_title { "true" } else { "false" },
     );
 
+    // Note: this subprocess has no explicit timeout. This is consistent with
+    // the rest of the codebase (`screencapture`, `osascript`) which also run
+    // without timeouts. Swift startup for a trivial snippet is typically <1s.
     let output = std::process::Command::new("swift")
         .arg("-e")
         .arg(&swift_code)

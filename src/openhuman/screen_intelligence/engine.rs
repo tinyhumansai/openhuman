@@ -156,23 +156,36 @@ impl AccessibilityEngine {
     }
 
     pub(crate) async fn stop_session_internal(&self, reason: String) {
-        let mut state = self.inner.lock().await;
-        let Some(mut session) = state.session.take() else {
-            return;
+        let (task, vision_task) = {
+            let mut state = self.inner.lock().await;
+            let Some(mut session) = state.session.take() else {
+                return;
+            };
+            session.stop_reason = Some(reason.clone());
+            session.vision_tx = None;
+            state.last_event = Some(format!("session_stopped:{reason}"));
+            (session.task.take(), session.vision_task.take())
         };
-        session.stop_reason = Some(reason.clone());
-        if let Some(task) = session.task.take() {
+        // Abort + await outside the lock to avoid deadlocks.
+        if let Some(task) = task {
             task.abort();
+            let _ = task.await;
         }
-        if let Some(task) = session.vision_task.take() {
+        if let Some(task) = vision_task {
             task.abort();
+            let _ = task.await;
         }
-        session.vision_tx = None;
-        state.last_event = Some(format!("session_stopped:{reason}"));
     }
 
     async fn spawn_workers(self: &Arc<Self>) {
         let (vision_tx, vision_rx) = tokio::sync::mpsc::unbounded_channel::<CaptureFrame>();
+        // Store vision_tx before spawning workers so they can find it immediately.
+        {
+            let mut state = self.inner.lock().await;
+            if let Some(session) = state.session.as_mut() {
+                session.vision_tx = Some(vision_tx);
+            }
+        }
         let capture_engine = self.clone();
         let handle = tokio::spawn(async move {
             super::capture_worker::run(capture_engine).await;
@@ -181,12 +194,12 @@ impl AccessibilityEngine {
         let vision_handle = tokio::spawn(async move {
             super::processing_worker::run(processing_engine, vision_rx).await;
         });
-
-        let mut state = self.inner.lock().await;
-        if let Some(session) = state.session.as_mut() {
-            session.task = Some(handle);
-            session.vision_task = Some(vision_handle);
-            session.vision_tx = Some(vision_tx);
+        {
+            let mut state = self.inner.lock().await;
+            if let Some(session) = state.session.as_mut() {
+                session.task = Some(handle);
+                session.vision_task = Some(vision_handle);
+            }
         }
     }
 

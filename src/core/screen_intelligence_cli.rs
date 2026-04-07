@@ -5,7 +5,7 @@
 //! testing the capture → save → vision-analysis pipeline from a terminal.
 //!
 //! Usage:
-//!   openhuman screen-intelligence run       [--port <u16>] [--auto-start] [-v]
+//!   openhuman screen-intelligence run       [--ttl <secs>] [--keep] [-v]
 //!   openhuman screen-intelligence status    [-v]
 //!   openhuman screen-intelligence capture   [--keep] [-v]
 //!   openhuman screen-intelligence start     [--ttl <secs>] [-v]
@@ -394,8 +394,8 @@ fn run_start_session(args: &[String]) -> Result<()> {
                         status.session.last_context.as_deref().unwrap_or("-"),
                     );
                     if let Some(summary) = &status.session.last_vision_summary {
-                        let truncated = if summary.len() > 100 {
-                            format!("{}…", &summary[..100])
+                        let truncated = if summary.chars().count() > 100 {
+                            format!("{}…", summary.chars().take(100).collect::<String>())
                         } else {
                             summary.clone()
                         };
@@ -582,16 +582,16 @@ fn run_vision(args: &[String]) -> Result<()> {
                     s.confidence * 100.0,
                 );
                 if !s.ui_state.is_empty() {
-                    let truncated = if s.ui_state.len() > 120 {
-                        format!("{}…", &s.ui_state[..120])
+                    let truncated = if s.ui_state.chars().count() > 120 {
+                        format!("{}…", s.ui_state.chars().take(120).collect::<String>())
                     } else {
                         s.ui_state.clone()
                     };
                     eprintln!("       ui: {truncated}");
                 }
                 if !s.actionable_notes.is_empty() {
-                    let truncated = if s.actionable_notes.len() > 120 {
-                        format!("{}…", &s.actionable_notes[..120])
+                    let truncated = if s.actionable_notes.chars().count() > 120 {
+                        format!("{}…", s.actionable_notes.chars().take(120).collect::<String>())
                     } else {
                         s.actionable_notes.clone()
                     };

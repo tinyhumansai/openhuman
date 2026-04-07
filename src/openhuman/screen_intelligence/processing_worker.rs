@@ -194,7 +194,12 @@ pub(crate) async fn analyze_frame(
 
     // ── Pass 1: OCR via Apple Vision ────────────────────────────────
     tracing::debug!("[processing_worker] pass 1/3: Apple Vision OCR");
-    let ocr_text = run_apple_vision_ocr(&image_ref)?;
+    let ocr_text = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        run_apple_vision_ocr(image_ref.clone()),
+    )
+    .await
+    .map_err(|_| "Apple Vision OCR timed out after 30s".to_string())??;
     tracing::debug!("[processing_worker] OCR extracted {} chars", ocr_text.len());
 
     // ── Pass 2: Vision LLM for context ──────────────────────────────
@@ -297,13 +302,17 @@ Be specific and informative. Write in present tense. ~300-500 words."#
 // ── Apple Vision OCR ────────────────────────────────────────────────────
 
 /// Run Apple Vision framework OCR on a base64-encoded image.
-fn run_apple_vision_ocr(image_ref: &str) -> Result<String, String> {
+///
+/// Uses `tokio::process::Command` with `.kill_on_drop(true)` so the subprocess
+/// is cleaned up if the future is dropped (e.g. due to the 30s timeout in the
+/// caller). The temp file is removed whether or not the OCR succeeds.
+async fn run_apple_vision_ocr(image_ref: String) -> Result<String, String> {
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
 
     let b64_payload = if let Some(pos) = image_ref.find(";base64,") {
         &image_ref[pos + 8..]
     } else {
-        image_ref
+        &image_ref[..]
     };
 
     let raw_bytes = B64
@@ -346,10 +355,12 @@ for obs in observations {{
         path = tmp_path.display()
     );
 
-    let output = std::process::Command::new("swift")
+    let output = tokio::process::Command::new("swift")
         .arg("-e")
         .arg(&swift_code)
+        .kill_on_drop(true)
         .output()
+        .await
         .map_err(|e| format!("swift OCR failed to start: {e}"))?;
 
     let _ = std::fs::remove_file(&tmp_path);
