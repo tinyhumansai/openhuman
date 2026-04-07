@@ -10,7 +10,7 @@ use crate::openhuman::accessibility::{capture_screen_image_ref_for_context, fore
 use crate::openhuman::config::Config;
 
 use super::capture::now_ms;
-use super::engine::AccessibilityEngine;
+use super::state::AccessibilityEngine;
 use super::helpers::push_ephemeral_frame;
 use super::types::CaptureFrame;
 

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai;
 
-use super::engine::AccessibilityEngine;
+use super::state::AccessibilityEngine;
 use super::helpers::{persist_vision_summary, push_ephemeral_vision_summary, truncate_tail};
 use super::types::{CaptureFrame, VisionSummary};
 

@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::openhuman::config::Config;
 
-use super::engine::AccessibilityEngine;
+use super::state::AccessibilityEngine;
 use super::global_engine;
 use super::types::StartSessionParams;
 
