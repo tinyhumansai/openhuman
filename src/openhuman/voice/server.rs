@@ -162,15 +162,17 @@ impl VoiceServer {
 
             match event {
                 HotkeyEvent::Pressed => {
+                    let current_state = *self.state.lock().await;
                     info!(
-                        "{LOG_PREFIX} received hotkey event=Pressed state_before={:?}",
-                        *self.state.lock().await
+                        "{LOG_PREFIX} received hotkey event=Pressed state_before={current_state:?} recording={}",
+                        recording.is_some()
                     );
                     if recording.is_some() {
-                        // In tap mode, second press stops recording.
+                        // Recording in progress → stop it (tap toggle or
+                        // unreliable-release keys like Fn that always send Pressed).
                         debug!("{LOG_PREFIX} hotkey pressed while recording → stopping");
                         if let Some(handle) = recording.take() {
-                            self.process_recording(handle, app_config).await;
+                            self.spawn_process_recording(handle, app_config);
                         }
                     } else {
                         debug!("{LOG_PREFIX} hotkey pressed → starting recording");
@@ -195,9 +197,9 @@ impl VoiceServer {
                     // In push mode, release stops recording.
                     if let Some(handle) = recording.take() {
                         debug!("{LOG_PREFIX} hotkey released → stopping recording");
-                        self.process_recording(handle, app_config).await;
+                        self.spawn_process_recording(handle, app_config);
                     } else {
-                        warn!("{LOG_PREFIX} release received with no active recording");
+                        debug!("{LOG_PREFIX} release received with no active recording (normal for unreliable-release keys)");
                     }
                 }
             }
@@ -216,170 +218,207 @@ impl VoiceServer {
         self.cancel.cancel();
     }
 
-    /// Build the whisper initial_prompt from custom dictionary + recent transcripts.
-    ///
-    /// The prompt biases whisper's tokenizer toward known vocabulary and gives
-    /// it context from previous recordings for better continuity.
-    async fn build_initial_prompt(&self) -> Option<String> {
-        let mut parts: Vec<String> = Vec::new();
+    /// Spawn `process_recording` as a background task so the hotkey event
+    /// loop is not blocked during transcription. This ensures rapid
+    /// consecutive Fn presses are never missed.
+    fn spawn_process_recording(&self, handle: RecordingHandle, config: &Config) {
+        let state = self.state.clone();
+        let server_config = self.config.clone();
+        let transcription_count = self.transcription_count.clone();
+        let last_error = self.last_error.clone();
+        let recent_transcripts = self.recent_transcripts.clone();
+        let app_config = config.clone();
 
-        // Custom dictionary words first (highest priority).
-        if !self.config.custom_dictionary.is_empty() {
-            parts.push(self.config.custom_dictionary.join(", "));
-        }
-
-        // Recent transcripts for conversational continuity.
-        let recent = self.recent_transcripts.lock().await;
-        if !recent.is_empty() {
-            parts.push(recent.join(" "));
-        }
-
-        if parts.is_empty() {
-            return None;
-        }
-
-        let mut prompt = parts.join(". ");
-        if prompt.len() > MAX_INITIAL_PROMPT_CHARS {
-            // Truncate at last word boundary.
-            prompt.truncate(MAX_INITIAL_PROMPT_CHARS);
-            if let Some(last_space) = prompt.rfind(' ') {
-                prompt.truncate(last_space);
-            }
-        }
-        debug!(
-            "{LOG_PREFIX} built initial_prompt ({} chars): '{}'",
-            prompt.len(),
-            truncate_for_log(&prompt, 100)
-        );
-        Some(prompt)
+        tokio::spawn(async move {
+            process_recording_bg(
+                handle,
+                &app_config,
+                &server_config,
+                state,
+                transcription_count,
+                last_error,
+                recent_transcripts,
+            )
+            .await;
+        });
     }
 
-    /// Add a transcript to the rolling recent buffer.
-    async fn push_recent_transcript(&self, text: &str) {
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        let mut recent = self.recent_transcripts.lock().await;
-        recent.push(trimmed.to_string());
-        while recent.len() > MAX_RECENT_TRANSCRIPTS {
-            recent.remove(0);
-        }
+}
+
+// ── Background processing (free functions, spawnable) ─────────────────
+
+/// Build the whisper initial_prompt from custom dictionary + recent transcripts.
+async fn build_initial_prompt(
+    config: &VoiceServerConfig,
+    recent_transcripts: &Mutex<Vec<String>>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if !config.custom_dictionary.is_empty() {
+        parts.push(config.custom_dictionary.join(", "));
     }
 
-    /// Process a completed recording: silence check → transcribe → filter → insert.
-    async fn process_recording(&self, handle: RecordingHandle, config: &Config) {
-        let pipeline_started = Instant::now();
-        *self.state.lock().await = ServerState::Transcribing;
+    let recent = recent_transcripts.lock().await;
+    if !recent.is_empty() {
+        parts.push(recent.join(" "));
+    }
 
-        let stop_started = Instant::now();
-        match handle.stop().await {
-            Ok(result) => {
-                let stop_elapsed = stop_started.elapsed();
-                info!(
-                    "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes, peak_rms={:.6} (stop_elapsed_ms={})",
-                    result.duration_secs,
-                    result.wav_bytes.len(),
-                    result.peak_rms,
-                    stop_elapsed.as_millis()
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut prompt = parts.join(". ");
+    if prompt.len() > MAX_INITIAL_PROMPT_CHARS {
+        prompt.truncate(MAX_INITIAL_PROMPT_CHARS);
+        if let Some(last_space) = prompt.rfind(' ') {
+            prompt.truncate(last_space);
+        }
+    }
+    debug!(
+        "{LOG_PREFIX} built initial_prompt ({} chars): '{}'",
+        prompt.len(),
+        truncate_for_log(&prompt, 100)
+    );
+    Some(prompt)
+}
+
+/// Add a transcript to the rolling recent buffer.
+async fn push_recent_transcript(recent_transcripts: &Mutex<Vec<String>>, text: &str) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let mut recent = recent_transcripts.lock().await;
+    recent.push(trimmed.to_string());
+    while recent.len() > MAX_RECENT_TRANSCRIPTS {
+        recent.remove(0);
+    }
+}
+
+/// Process a completed recording in the background.
+///
+/// This is a free function (not `&self`) so it can be spawned via
+/// `tokio::spawn` without blocking the hotkey event loop. All shared
+/// state is passed as `Arc` handles.
+async fn process_recording_bg(
+    handle: RecordingHandle,
+    config: &Config,
+    server_config: &VoiceServerConfig,
+    state: Arc<Mutex<ServerState>>,
+    transcription_count: Arc<std::sync::atomic::AtomicU64>,
+    last_error: Arc<Mutex<Option<String>>>,
+    recent_transcripts: Arc<Mutex<Vec<String>>>,
+) {
+    let pipeline_started = Instant::now();
+    *state.lock().await = ServerState::Transcribing;
+
+    let stop_started = Instant::now();
+    match handle.stop().await {
+        Ok(result) => {
+            let stop_elapsed = stop_started.elapsed();
+            info!(
+                "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes, peak_rms={:.6} (stop_elapsed_ms={})",
+                result.duration_secs,
+                result.wav_bytes.len(),
+                result.peak_rms,
+                stop_elapsed.as_millis()
+            );
+
+            // Gate 1: minimum duration.
+            if result.duration_secs < server_config.min_duration_secs {
+                warn!(
+                    "{LOG_PREFIX} recording too short ({:.1}s), skipping",
+                    result.duration_secs
                 );
-
-                // Gate 1: minimum duration.
-                if result.duration_secs < self.config.min_duration_secs {
-                    warn!(
-                        "{LOG_PREFIX} recording too short ({:.1}s), skipping",
-                        result.duration_secs
-                    );
-                    *self.state.lock().await = ServerState::Idle;
-                    return;
-                }
-
-                // Gate 2: silence detection — skip if audio energy is below threshold.
-                if result.peak_rms < self.config.silence_threshold {
-                    warn!(
-                        "{LOG_PREFIX} audio is silence (peak_rms={:.6} < threshold={:.6}), skipping transcription",
-                        result.peak_rms,
-                        self.config.silence_threshold
-                    );
-                    *self.state.lock().await = ServerState::Idle;
-                    return;
-                }
-
-                // Build initial_prompt from dictionary + recent transcripts.
-                let initial_prompt = self.build_initial_prompt().await;
-                let context = initial_prompt
-                    .as_deref()
-                    .or(self.config.context.as_deref());
-
-                let transcribe_started = Instant::now();
-                match crate::openhuman::voice::voice_transcribe_bytes(
-                    config,
-                    &result.wav_bytes,
-                    Some("wav".to_string()),
-                    context,
-                    self.config.skip_cleanup,
-                )
-                .await
-                {
-                    Ok(outcome) => {
-                        let transcribe_elapsed = transcribe_started.elapsed();
-                        let text = &outcome.value.text;
-                        info!(
-                            "{LOG_PREFIX} transcription: '{}' ({} chars, transcribe_elapsed_ms={})",
-                            truncate_for_log(text, 80),
-                            text.len(),
-                            transcribe_elapsed.as_millis()
-                        );
-
-                        // Gate 3: filter hallucinated/blank output.
-                        if is_hallucinated_output(text) {
-                            warn!(
-                                "{LOG_PREFIX} detected hallucinated output, discarding: '{}'",
-                                truncate_for_log(text, 60)
-                            );
-                            *self.state.lock().await = ServerState::Idle;
-                            return;
-                        }
-
-                        if !text.trim().is_empty() {
-                            // Track successful transcription for future context.
-                            self.push_recent_transcript(text).await;
-
-                            let insert_started = Instant::now();
-                            if let Err(e) = text_input::insert_text(text) {
-                                error!("{LOG_PREFIX} failed to insert text: {e}");
-                                *self.last_error.lock().await = Some(e);
-                            } else {
-                                let insert_elapsed = insert_started.elapsed();
-                                self.transcription_count.fetch_add(1, Ordering::Relaxed);
-                                info!(
-                                    "{LOG_PREFIX} text inserted into active field (insert_elapsed_ms={}, total_pipeline_ms={})",
-                                    insert_elapsed.as_millis(),
-                                    pipeline_started.elapsed().as_millis()
-                                );
-                            }
-                        } else {
-                            debug!("{LOG_PREFIX} transcription was empty, nothing to insert");
-                        }
-                    }
-                    Err(e) => {
-                        error!("{LOG_PREFIX} transcription failed: {e}");
-                        *self.last_error.lock().await = Some(e);
-                    }
-                }
+                *state.lock().await = ServerState::Idle;
+                return;
             }
-            Err(e) => {
-                error!("{LOG_PREFIX} failed to stop recording: {e}");
-                *self.last_error.lock().await = Some(e);
+
+            // Gate 2: silence detection.
+            if result.peak_rms < server_config.silence_threshold {
+                warn!(
+                    "{LOG_PREFIX} audio is silence (peak_rms={:.6} < threshold={:.6}), skipping transcription",
+                    result.peak_rms,
+                    server_config.silence_threshold
+                );
+                *state.lock().await = ServerState::Idle;
+                return;
+            }
+
+            // Build initial_prompt from dictionary + recent transcripts.
+            let initial_prompt =
+                build_initial_prompt(server_config, &recent_transcripts).await;
+            let context = initial_prompt
+                .as_deref()
+                .or(server_config.context.as_deref());
+
+            let transcribe_started = Instant::now();
+            match crate::openhuman::voice::voice_transcribe_bytes(
+                config,
+                &result.wav_bytes,
+                Some("wav".to_string()),
+                context,
+                server_config.skip_cleanup,
+            )
+            .await
+            {
+                Ok(outcome) => {
+                    let transcribe_elapsed = transcribe_started.elapsed();
+                    let text = &outcome.value.text;
+                    info!(
+                        "{LOG_PREFIX} transcription: '{}' ({} chars, transcribe_elapsed_ms={})",
+                        truncate_for_log(text, 80),
+                        text.len(),
+                        transcribe_elapsed.as_millis()
+                    );
+
+                    // Gate 3: filter hallucinated/blank output.
+                    if is_hallucinated_output(text) {
+                        warn!(
+                            "{LOG_PREFIX} detected hallucinated output, discarding: '{}'",
+                            truncate_for_log(text, 60)
+                        );
+                        *state.lock().await = ServerState::Idle;
+                        return;
+                    }
+
+                    if !text.trim().is_empty() {
+                        push_recent_transcript(&recent_transcripts, text).await;
+
+                        let insert_started = Instant::now();
+                        if let Err(e) = text_input::insert_text(text) {
+                            error!("{LOG_PREFIX} failed to insert text: {e}");
+                            *last_error.lock().await = Some(e);
+                        } else {
+                            let insert_elapsed = insert_started.elapsed();
+                            transcription_count.fetch_add(1, Ordering::Relaxed);
+                            info!(
+                                "{LOG_PREFIX} text inserted into active field (insert_elapsed_ms={}, total_pipeline_ms={})",
+                                insert_elapsed.as_millis(),
+                                pipeline_started.elapsed().as_millis()
+                            );
+                        }
+                    } else {
+                        debug!("{LOG_PREFIX} transcription was empty, nothing to insert");
+                    }
+                }
+                Err(e) => {
+                    error!("{LOG_PREFIX} transcription failed: {e}");
+                    *last_error.lock().await = Some(e);
+                }
             }
         }
-
-        debug!(
-            "{LOG_PREFIX} process_recording finished (total_pipeline_ms={})",
-            pipeline_started.elapsed().as_millis()
-        );
-        *self.state.lock().await = ServerState::Idle;
+        Err(e) => {
+            error!("{LOG_PREFIX} failed to stop recording: {e}");
+            *last_error.lock().await = Some(e);
+        }
     }
+
+    debug!(
+        "{LOG_PREFIX} process_recording finished (total_pipeline_ms={})",
+        pipeline_started.elapsed().as_millis()
+    );
+    *state.lock().await = ServerState::Idle;
 }
 
 /// Global voice server instance, lazily initialized.
@@ -480,20 +519,50 @@ pub async fn run_standalone(
 
 /// Known whisper hallucination patterns. These are common outputs when
 /// whisper processes near-silent audio or audio with background noise.
+/// Sourced from community lists and OpenWhispr's filtering behavior.
 const HALLUCINATION_PATTERNS: &[&str] = &[
+    // whisper.cpp blank markers
     "[blank_audio]",
     "[ blank_audio ]",
     "[blank audio]",
+    "(blank audio)",
+    // Common hallucinations from YouTube-trained models
+    "thank you",
+    "thank you.",
+    "thanks.",
     "thank you for watching",
     "thanks for watching",
     "thank you for listening",
     "thanks for listening",
+    "thank you so much",
     "please subscribe",
     "like and subscribe",
     "see you next time",
+    "see you in the next video",
     "bye bye",
+    "bye.",
+    "goodbye.",
+    // Single-word noise artifacts
     "you",
+    "the",
+    "i",
+    "a",
+    "so",
+    "okay",
+    "ok",
+    "yeah",
+    "yes",
+    "no",
+    "oh",
+    "hmm",
+    "huh",
+    "ah",
+    // Punctuation-only
     "...",
+    ".",
+    ",",
+    "!",
+    "?",
 ];
 
 /// Check if whisper output is a known hallucination pattern.
@@ -507,9 +576,12 @@ fn is_hallucinated_output(text: &str) -> bool {
         return false; // handled separately as "empty"
     }
 
+    // Strip trailing punctuation for matching (whisper often appends periods).
+    let stripped = normalized.trim_end_matches(|c: char| c.is_ascii_punctuation());
+
     // Exact match against known hallucination phrases.
     for pattern in HALLUCINATION_PATTERNS {
-        if normalized == *pattern {
+        if normalized == *pattern || stripped == *pattern {
             return true;
         }
     }
@@ -552,18 +624,34 @@ mod tests {
 
     #[test]
     fn hallucination_detection() {
+        // Blank audio markers.
         assert!(is_hallucinated_output("[BLANK_AUDIO]"));
         assert!(is_hallucinated_output("  [blank_audio]  "));
         assert!(is_hallucinated_output("[ BLANK_AUDIO ]"));
+        // Common hallucinated phrases.
         assert!(is_hallucinated_output("Thank you for watching"));
         assert!(is_hallucinated_output("thanks for listening"));
+        assert!(is_hallucinated_output("Thank you."));
+        assert!(is_hallucinated_output("Thank you"));
+        assert!(is_hallucinated_output("Thanks."));
+        assert!(is_hallucinated_output("Bye."));
+        assert!(is_hallucinated_output("Goodbye."));
+        // Repeated words.
         assert!(is_hallucinated_output("you you you you"));
         assert!(is_hallucinated_output("the the the the"));
+        // Punctuation-only.
         assert!(is_hallucinated_output("..."));
+        assert!(is_hallucinated_output("."));
+        // Single noise words.
         assert!(is_hallucinated_output("you"));
+        assert!(is_hallucinated_output("Yeah"));
+        assert!(is_hallucinated_output("Hmm"));
+        assert!(is_hallucinated_output("Oh."));
         // Should NOT flag real speech.
         assert!(!is_hallucinated_output("Hello, how are you?"));
         assert!(!is_hallucinated_output("the quick brown fox"));
+        assert!(!is_hallucinated_output("I want to order pizza"));
+        assert!(!is_hallucinated_output("thank you for your help with the project"));
         assert!(!is_hallucinated_output(""));
     }
 

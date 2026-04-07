@@ -499,6 +499,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Minimum recording duration in seconds.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "silence_threshold",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
+                    comment: "RMS energy threshold for silence detection.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "custom_dictionary",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "Custom vocabulary words to bias whisper toward.",
+                    required: false,
+                },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },

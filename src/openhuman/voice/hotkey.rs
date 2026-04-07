@@ -43,20 +43,27 @@ pub enum HotkeyEvent {
     Released,
 }
 
+/// Whether the given key is known to have unreliable KeyRelease events on
+/// macOS (e.g. the Fn key, which the input stack often swallows).
+fn has_unreliable_release(key: Key) -> bool {
+    matches!(key, Key::Function)
+}
+
 fn push_press_event(trigger: Key, pressed_key: Key, is_active: bool) -> Option<HotkeyEvent> {
     if pressed_key != trigger {
         return None;
     }
 
-    if !is_active {
+    // Keys with unreliable release (like macOS Fn): always emit Pressed.
+    // The server loop handles toggling based on recording state, and we
+    // never wait for a release that may not come. Each Fn press is a
+    // reliable signal; each Fn release is not.
+    if has_unreliable_release(trigger) {
         return Some(HotkeyEvent::Pressed);
     }
 
-    // macOS Fn is special-cased in some keyboards/input stacks and can miss the
-    // corresponding release edge. When that happens, a second Fn press is the
-    // first reliable signal we get that the user is trying to stop recording.
-    if trigger == Key::Function {
-        return Some(HotkeyEvent::Released);
+    if !is_active {
+        return Some(HotkeyEvent::Pressed);
     }
 
     None
@@ -162,10 +169,20 @@ pub fn start_listener(
                 match event.event_type {
                     EventType::KeyPress(key) => {
                         let mut keys = pressed_keys.lock();
+                        let is_trigger = key == hotkey.trigger;
                         keys.insert(key);
 
+                        if is_trigger {
+                            debug!(
+                                "{LOG_PREFIX} KeyPress trigger={:?} is_active={} pressed_keys_count={}",
+                                key,
+                                is_active.load(Ordering::SeqCst),
+                                keys.len()
+                            );
+                        }
+
                         // Check if all modifiers + trigger are held.
-                        if key == hotkey.trigger
+                        if is_trigger
                             && hotkey.modifiers.iter().all(|m| keys.contains(m))
                         {
                             match mode {
@@ -186,25 +203,24 @@ pub fn start_listener(
                                     if let Some(event) =
                                         push_press_event(hotkey.trigger, key, was_active)
                                     {
-                                        match event {
-                                            HotkeyEvent::Pressed => {
-                                                is_active.store(true, Ordering::SeqCst);
-                                                info!(
-                                                    "{LOG_PREFIX} push hotkey event=Pressed trigger={:?}",
-                                                    hotkey.trigger
-                                                );
-                                            }
-                                            HotkeyEvent::Released => {
-                                                is_active.store(false, Ordering::SeqCst);
-                                                warn!(
-                                                    "{LOG_PREFIX} push hotkey fallback_stop trigger={:?} reason=second_press_without_release",
-                                                    hotkey.trigger
-                                                );
-                                            }
+                                        // For keys with unreliable release, don't track
+                                        // is_active — every press is Pressed and the server
+                                        // loop decides whether to start or stop recording.
+                                        if !has_unreliable_release(hotkey.trigger) {
+                                            is_active.store(true, Ordering::SeqCst);
                                         }
+                                        info!(
+                                            "{LOG_PREFIX} push hotkey event={event:?} trigger={:?}",
+                                            hotkey.trigger
+                                        );
                                         if tx.send(event).is_err() {
                                             warn!("{LOG_PREFIX} event receiver dropped");
                                         }
+                                    } else {
+                                        debug!(
+                                            "{LOG_PREFIX} push_press_event returned None for trigger={:?} was_active={}",
+                                            key, was_active
+                                        );
                                     }
                                 }
                             }
@@ -213,6 +229,14 @@ pub fn start_listener(
                     EventType::KeyRelease(key) => {
                         let mut keys = pressed_keys.lock();
                         keys.remove(&key);
+
+                        if key == hotkey.trigger {
+                            debug!(
+                                "{LOG_PREFIX} KeyRelease trigger={:?} is_active={}",
+                                key,
+                                is_active.load(Ordering::SeqCst)
+                            );
+                        }
 
                         // In push mode, release when the trigger key is released.
                         if mode == ActivationMode::Push
@@ -397,15 +421,32 @@ mod tests {
     }
 
     #[test]
-    fn push_press_event_allows_fn_fallback_stop_when_active() {
+    fn push_press_fn_always_pressed_even_when_active() {
+        // Fn has unreliable release, so every press is Pressed.
+        // The server loop handles toggling.
         assert_eq!(
             push_press_event(Key::Function, Key::Function, true),
-            Some(HotkeyEvent::Released)
+            Some(HotkeyEvent::Pressed)
         );
     }
 
     #[test]
     fn push_press_event_does_not_toggle_non_fn_key_when_active() {
         assert_eq!(push_press_event(Key::F6, Key::F6, true), None);
+    }
+
+    #[test]
+    fn push_press_non_fn_key_starts_when_inactive() {
+        assert_eq!(
+            push_press_event(Key::F6, Key::F6, false),
+            Some(HotkeyEvent::Pressed)
+        );
+    }
+
+    #[test]
+    fn fn_has_unreliable_release() {
+        assert!(has_unreliable_release(Key::Function));
+        assert!(!has_unreliable_release(Key::F6));
+        assert!(!has_unreliable_release(Key::Space));
     }
 }

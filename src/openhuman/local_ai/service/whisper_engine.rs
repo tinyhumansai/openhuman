@@ -121,8 +121,37 @@ pub fn transcribe_pcm_f32(
         }
     }
 
-    // Suppress non-speech tokens to reduce hallucinations.
+    // ── Anti-hallucination settings (matching OpenWhispr / whisper.cpp best practices) ──
+
+    // Suppress non-speech tokens (music notes, timestamps, etc.)
     params.set_suppress_nst(true);
+
+    // Suppress blank output at the start of segments.
+    params.set_suppress_blank(true);
+
+    // No-speech probability threshold. Segments where the no-speech
+    // probability exceeds this are silently dropped. Default 0.6.
+    params.set_no_speech_thold(0.6);
+
+    // Entropy threshold — segments with avg token entropy above this
+    // are considered too noisy/random (hallucination). Default 2.4.
+    params.set_entropy_thold(2.4);
+
+    // Log-probability threshold — segments with avg log-prob below this
+    // are rejected as low-confidence. Default -1.0.
+    params.set_logprob_thold(-1.0);
+
+    // Temperature 0 = greedy (deterministic, no randomness).
+    params.set_temperature(0.0);
+
+    // Disable temperature fallback — don't retry with higher temperatures
+    // which can produce hallucinated creative output.
+    params.set_temperature_inc(0.0);
+
+    // Use single segment mode for short dictation utterances.
+    // This prevents whisper from splitting short audio into multiple
+    // segments and hallucinating in the gaps.
+    params.set_single_segment(true);
 
     // Disable printing to stdout — we capture segments programmatically.
     params.set_print_special(false);

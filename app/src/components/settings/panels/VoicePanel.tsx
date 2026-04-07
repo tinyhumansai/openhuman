@@ -33,7 +33,7 @@ const VoicePanel = () => {
   const hasUnsavedChanges =
     settings != null && savedSettings != null && JSON.stringify(settings) !== JSON.stringify(savedSettings);
 
-  const loadData = async () => {
+  const loadData = async (forceSettings = false) => {
     try {
       const [settingsResponse, serverResponse, voiceResponse, assetsResponse] = await Promise.all([
         openhumanGetVoiceServerSettings(),
@@ -41,7 +41,12 @@ const VoicePanel = () => {
         openhumanVoiceStatus(),
         openhumanLocalAiAssetsStatus(),
       ]);
-      setSettings(settingsResponse.result);
+      // Only overwrite local settings if there are no unsaved edits,
+      // or if explicitly forced (e.g. after save or initial load).
+      // This prevents the 2s polling timer from clobbering user input.
+      if (forceSettings || !settings || JSON.stringify(settings) === JSON.stringify(savedSettings)) {
+        setSettings(settingsResponse.result);
+      }
       setSavedSettings(settingsResponse.result);
       setServerStatus(serverResponse.result);
       setVoiceStatus(voiceResponse);
@@ -56,9 +61,9 @@ const VoicePanel = () => {
   };
 
   useEffect(() => {
-    void loadData();
+    void loadData(true);
     const timer = window.setInterval(() => {
-      void loadData();
+      void loadData(false);
     }, 2000);
     return () => window.clearInterval(timer);
   }, []);
@@ -96,7 +101,7 @@ const VoicePanel = () => {
         setNotice('Voice settings saved.');
       }
 
-      await loadData();
+      await loadData(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save voice settings';
       setError(message);
@@ -127,7 +132,7 @@ const VoicePanel = () => {
         skip_cleanup: settings.skip_cleanup,
       });
       setNotice('Voice server started.');
-      await loadData();
+      await loadData(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start voice server';
       setError(message);
@@ -143,7 +148,7 @@ const VoicePanel = () => {
     try {
       await openhumanVoiceServerStop();
       setNotice('Voice server stopped.');
-      await loadData();
+      await loadData(true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to stop voice server';
       setError(message);
