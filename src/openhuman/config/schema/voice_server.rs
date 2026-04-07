@@ -35,6 +35,7 @@ pub struct VoiceServerConfig {
     pub activation_mode: VoiceActivationMode,
 
     /// Skip LLM post-processing for transcriptions.
+    /// Default: false (cleanup enabled — matches OpenWhispr behavior).
     #[serde(default)]
     pub skip_cleanup: bool,
 
@@ -74,7 +75,7 @@ impl Default for VoiceServerConfig {
             auto_start: false,
             hotkey: default_hotkey(),
             activation_mode: VoiceActivationMode::default(),
-            skip_cleanup: true,
+            skip_cleanup: false,
             min_duration_secs: default_min_duration(),
             silence_threshold: default_silence_threshold(),
             custom_dictionary: Vec::new(),

@@ -80,7 +80,7 @@ impl Default for VoiceServerConfig {
         Self {
             hotkey: "Fn".to_string(),
             activation_mode: ActivationMode::Push,
-            skip_cleanup: true,
+            skip_cleanup: false,
             context: None,
             min_duration_secs: 0.3,
             silence_threshold: DEFAULT_SILENCE_THRESHOLD,
@@ -352,6 +352,12 @@ async fn process_recording_bg(
                 .as_deref()
                 .or(server_config.context.as_deref());
 
+            info!(
+                "{LOG_PREFIX} transcribing: skip_cleanup={} context={}",
+                server_config.skip_cleanup,
+                context.map_or("none".to_string(), |c| format!("{}chars", c.len()))
+            );
+
             let transcribe_started = Instant::now();
             match crate::openhuman::voice::voice_transcribe_bytes(
                 config,
@@ -616,7 +622,7 @@ mod tests {
         let cfg = VoiceServerConfig::default();
         assert_eq!(cfg.hotkey, "Fn");
         assert_eq!(cfg.activation_mode, ActivationMode::Push);
-        assert!(cfg.skip_cleanup);
+        assert!(!cfg.skip_cleanup);
         assert!(cfg.context.is_none());
         assert!(cfg.custom_dictionary.is_empty());
         assert!((cfg.silence_threshold - DEFAULT_SILENCE_THRESHOLD).abs() < 1e-6);

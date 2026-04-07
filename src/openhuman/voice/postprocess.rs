@@ -4,7 +4,7 @@
 //! grammar, punctuation, and filler words. Optionally uses conversation
 //! context to disambiguate unclear words (names, technical terms).
 
-use log::{debug, warn};
+use log::{debug, info, warn};
 use std::time::Instant;
 
 use crate::openhuman::config::Config;
@@ -73,18 +73,24 @@ pub async fn cleanup_transcription(
     let llm_state = service.status.lock().state.clone();
     let llm_ready = matches!(llm_state.as_str(), "ready" | "degraded");
 
+    info!(
+        "{LOG_PREFIX} cleanup check: llm_state={llm_state} llm_ready={llm_ready} \
+         voice_llm_cleanup_enabled={}",
+        config.local_ai.voice_llm_cleanup_enabled
+    );
+
     // Enable cleanup when:
     // 1. Explicitly enabled in config (default: true), OR
     // 2. The local LLM is already downloaded and ready.
     let should_cleanup = config.local_ai.voice_llm_cleanup_enabled || llm_ready;
 
     if !should_cleanup {
-        debug!("{LOG_PREFIX} LLM cleanup skipped: config disabled and LLM not ready (state={llm_state})");
+        info!("{LOG_PREFIX} LLM cleanup skipped: config disabled and LLM not ready (state={llm_state})");
         return raw_text.to_string();
     }
 
     if !llm_ready {
-        debug!("{LOG_PREFIX} LLM cleanup enabled but LLM not ready (state={llm_state}), skipping");
+        info!("{LOG_PREFIX} LLM cleanup enabled but LLM not ready (state={llm_state}), returning raw text");
         return raw_text.to_string();
     }
 

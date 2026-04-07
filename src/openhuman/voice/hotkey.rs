@@ -43,32 +43,6 @@ pub enum HotkeyEvent {
     Released,
 }
 
-/// Whether the given key is known to have unreliable KeyRelease events on
-/// macOS (e.g. the Fn key, which the input stack often swallows).
-fn has_unreliable_release(key: Key) -> bool {
-    matches!(key, Key::Function)
-}
-
-fn push_press_event(trigger: Key, pressed_key: Key, is_active: bool) -> Option<HotkeyEvent> {
-    if pressed_key != trigger {
-        return None;
-    }
-
-    // Keys with unreliable release (like macOS Fn): always emit Pressed.
-    // The server loop handles toggling based on recording state, and we
-    // never wait for a release that may not come. Each Fn press is a
-    // reliable signal; each Fn release is not.
-    if has_unreliable_release(trigger) {
-        return Some(HotkeyEvent::Pressed);
-    }
-
-    if !is_active {
-        return Some(HotkeyEvent::Pressed);
-    }
-
-    None
-}
-
 /// Parsed hotkey combination (e.g. Ctrl+Shift+Space).
 #[derive(Debug, Clone)]
 pub struct HotkeyCombination {
@@ -121,7 +95,6 @@ pub fn parse_hotkey(hotkey_str: &str) -> Result<HotkeyCombination, String> {
     for (i, part) in parts.iter().enumerate() {
         let key = string_to_key(part)?;
         if i < parts.len() - 1 {
-            // Everything except the last part is a modifier.
             modifiers.insert(key);
         } else {
             trigger = Some(key);
@@ -172,56 +145,49 @@ pub fn start_listener(
                         let is_trigger = key == hotkey.trigger;
                         keys.insert(key);
 
-                        if is_trigger {
-                            debug!(
-                                "{LOG_PREFIX} KeyPress trigger={:?} is_active={} pressed_keys_count={}",
-                                key,
-                                is_active.load(Ordering::SeqCst),
-                                keys.len()
-                            );
+                        if !is_trigger {
+                            return;
                         }
 
-                        // Check if all modifiers + trigger are held.
-                        if is_trigger
-                            && hotkey.modifiers.iter().all(|m| keys.contains(m))
-                        {
-                            match mode {
-                                ActivationMode::Tap => {
-                                    let was_active = is_active.fetch_xor(true, Ordering::SeqCst);
-                                    let event = if was_active {
-                                        HotkeyEvent::Released
-                                    } else {
-                                        HotkeyEvent::Pressed
-                                    };
-                                    info!("{LOG_PREFIX} tap hotkey event={event:?} trigger={:?}", hotkey.trigger);
-                                    if tx.send(event).is_err() {
-                                        warn!("{LOG_PREFIX} event receiver dropped");
-                                    }
+                        // Check if all modifiers are held.
+                        if !hotkey.modifiers.iter().all(|m| keys.contains(m)) {
+                            return;
+                        }
+
+                        let was_active = is_active.load(Ordering::SeqCst);
+                        debug!(
+                            "{LOG_PREFIX} KeyPress trigger={:?} was_active={was_active} mode={mode:?}",
+                            key
+                        );
+
+                        match mode {
+                            ActivationMode::Tap => {
+                                // Tap: each press toggles.
+                                if was_active {
+                                    is_active.store(false, Ordering::SeqCst);
+                                    info!("{LOG_PREFIX} tap → Released");
+                                    let _ = tx.send(HotkeyEvent::Released);
+                                } else {
+                                    is_active.store(true, Ordering::SeqCst);
+                                    info!("{LOG_PREFIX} tap → Pressed");
+                                    let _ = tx.send(HotkeyEvent::Pressed);
                                 }
-                                ActivationMode::Push => {
-                                    let was_active = is_active.load(Ordering::SeqCst);
-                                    if let Some(event) =
-                                        push_press_event(hotkey.trigger, key, was_active)
-                                    {
-                                        // For keys with unreliable release, don't track
-                                        // is_active — every press is Pressed and the server
-                                        // loop decides whether to start or stop recording.
-                                        if !has_unreliable_release(hotkey.trigger) {
-                                            is_active.store(true, Ordering::SeqCst);
-                                        }
-                                        info!(
-                                            "{LOG_PREFIX} push hotkey event={event:?} trigger={:?}",
-                                            hotkey.trigger
-                                        );
-                                        if tx.send(event).is_err() {
-                                            warn!("{LOG_PREFIX} event receiver dropped");
-                                        }
-                                    } else {
-                                        debug!(
-                                            "{LOG_PREFIX} push_press_event returned None for trigger={:?} was_active={}",
-                                            key, was_active
-                                        );
-                                    }
+                            }
+                            ActivationMode::Push => {
+                                if !was_active {
+                                    // Normal: start recording.
+                                    is_active.store(true, Ordering::SeqCst);
+                                    info!("{LOG_PREFIX} push → Pressed");
+                                    let _ = tx.send(HotkeyEvent::Pressed);
+                                } else {
+                                    // Already active — this means the KeyRelease
+                                    // was missed (common with macOS Fn key).
+                                    // Send Released to stop the current recording.
+                                    is_active.store(false, Ordering::SeqCst);
+                                    info!(
+                                        "{LOG_PREFIX} push → Released (fallback, missed KeyRelease)"
+                                    );
+                                    let _ = tx.send(HotkeyEvent::Released);
                                 }
                             }
                         }
@@ -230,33 +196,28 @@ pub fn start_listener(
                         let mut keys = pressed_keys.lock();
                         keys.remove(&key);
 
-                        if key == hotkey.trigger {
-                            debug!(
-                                "{LOG_PREFIX} KeyRelease trigger={:?} is_active={}",
-                                key,
-                                is_active.load(Ordering::SeqCst)
-                            );
+                        if key != hotkey.trigger {
+                            return;
                         }
 
-                        // In push mode, release when the trigger key is released.
+                        debug!(
+                            "{LOG_PREFIX} KeyRelease trigger={:?} is_active={}",
+                            key,
+                            is_active.load(Ordering::SeqCst)
+                        );
+
+                        // In push mode, release stops recording.
                         if mode == ActivationMode::Push
-                            && key == hotkey.trigger
                             && is_active.swap(false, Ordering::SeqCst)
                         {
-                            info!("{LOG_PREFIX} push hotkey event=Released trigger={:?}", hotkey.trigger);
-                            if tx.send(HotkeyEvent::Released).is_err() {
-                                warn!("{LOG_PREFIX} event receiver dropped");
-                            }
+                            info!("{LOG_PREFIX} push → Released");
+                            let _ = tx.send(HotkeyEvent::Released);
                         }
                     }
                     _ => {}
                 }
             };
 
-            // rdev::listen blocks in the platform event loop and has no
-            // graceful cancellation API (rdev 0.5.3). The thread remains
-            // alive until the process exits; the stop_flag only causes the
-            // callback above to discard events. This is a known limitation.
             if let Err(e) = listen(callback) {
                 error!("{LOG_PREFIX} rdev listen error: {e:?}");
             }
@@ -410,43 +371,5 @@ mod tests {
     #[test]
     fn activation_mode_default_is_push() {
         assert_eq!(ActivationMode::default(), ActivationMode::Push);
-    }
-
-    #[test]
-    fn push_press_event_starts_when_inactive() {
-        assert_eq!(
-            push_press_event(Key::Function, Key::Function, false),
-            Some(HotkeyEvent::Pressed)
-        );
-    }
-
-    #[test]
-    fn push_press_fn_always_pressed_even_when_active() {
-        // Fn has unreliable release, so every press is Pressed.
-        // The server loop handles toggling.
-        assert_eq!(
-            push_press_event(Key::Function, Key::Function, true),
-            Some(HotkeyEvent::Pressed)
-        );
-    }
-
-    #[test]
-    fn push_press_event_does_not_toggle_non_fn_key_when_active() {
-        assert_eq!(push_press_event(Key::F6, Key::F6, true), None);
-    }
-
-    #[test]
-    fn push_press_non_fn_key_starts_when_inactive() {
-        assert_eq!(
-            push_press_event(Key::F6, Key::F6, false),
-            Some(HotkeyEvent::Pressed)
-        );
-    }
-
-    #[test]
-    fn fn_has_unreliable_release() {
-        assert!(has_unreliable_release(Key::Function));
-        assert!(!has_unreliable_release(Key::F6));
-        assert!(!has_unreliable_release(Key::Space));
     }
 }
