@@ -415,6 +415,7 @@ pub fn parse_foreground_output(stdout: &str) -> Option<AppContext> {
         app_name: app,
         window_title: title,
         bounds,
+        window_id: None, // Populated later by foreground_context() via resolve_frontmost_window_id.
     })
 }
 
@@ -463,13 +464,75 @@ pub fn foreground_context() -> Option<AppContext> {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    let result = parse_foreground_output(&text);
+    let mut result = parse_foreground_output(&text);
+
+    // Resolve the CGWindowID for the frontmost window so capture can use
+    // `screencapture -l <id>` instead of the fragile `-R x,y,w,h` region
+    // approach. Falls back gracefully — window_id stays None.
+    if let Some(ref mut ctx) = result {
+        ctx.window_id = resolve_frontmost_window_id(ctx.app_name.as_deref());
+    }
+
     tracing::debug!(
-        "[accessibility] foreground_context: app={:?} bounds_present={}",
+        "[accessibility] foreground_context: app={:?} window_id={:?} bounds_present={}",
         result.as_ref().and_then(|c| c.app_name.as_deref()),
+        result.as_ref().and_then(|c| c.window_id),
         result.as_ref().map(|c| c.bounds.is_some()).unwrap_or(false)
     );
     result
+}
+
+/// Resolve the CGWindowID of the frontmost on-screen window owned by the
+/// given application name. Uses `CGWindowListCopyWindowInfo` via JXA
+/// (JavaScript for Automation / osascript) which is built into macOS.
+#[cfg(target_os = "macos")]
+fn resolve_frontmost_window_id(app_name: Option<&str>) -> Option<u32> {
+    let app = app_name?;
+    // Escape quotes in app name for safe JS string interpolation.
+    let escaped = app.replace('\\', "\\\\").replace('"', "\\\"");
+
+    let script = format!(
+        r#"
+ObjC.import("CoreGraphics");
+var opts = $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements;
+var list = $.CGWindowListCopyWindowInfo(opts, 0);
+var count = list.count;
+var target = "{escaped}";
+for (var i = 0; i < count; i++) {{
+    var w = list.objectAtIndex(i);
+    var owner = ObjC.unwrap(w.objectForKey("kCGWindowOwnerName"));
+    var layer = ObjC.unwrap(w.objectForKey("kCGWindowLayer"));
+    if (owner === target && layer === 0) {{
+        ObjC.unwrap(w.objectForKey("kCGWindowNumber"));
+    }}
+}}
+"#
+    );
+
+    let output = std::process::Command::new("osascript")
+        .arg("-l")
+        .arg("JavaScript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        tracing::debug!(
+            "[accessibility] JXA CGWindowList failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        return None;
+    }
+
+    let id_str = String::from_utf8_lossy(&output.stdout);
+    let wid = id_str.trim().parse::<u32>().ok();
+    tracing::debug!(
+        "[accessibility] resolved window_id={:?} for app={:?}",
+        wid,
+        app
+    );
+    wid
 }
 
 #[cfg(not(target_os = "macos"))]

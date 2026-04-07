@@ -253,6 +253,7 @@ fn denylist_blocks_matching_context() {
         app_name: Some("1Password 8".to_string()),
         window_title: Some("Vault".to_string()),
         bounds: None,
+        window_id: None,
     };
     assert!(
         !engine.should_capture_context(&ctx, &config),
@@ -273,6 +274,7 @@ fn denylist_allows_non_matching_context() {
         app_name: Some("Safari".to_string()),
         window_title: Some("GitHub".to_string()),
         bounds: None,
+        window_id: None,
     };
     assert!(engine.should_capture_context(&ctx, &config));
 }
@@ -292,6 +294,7 @@ fn whitelist_only_mode_blocks_unlisted() {
         app_name: Some("Safari".to_string()),
         window_title: Some("Web".to_string()),
         bounds: None,
+        window_id: None,
     };
     assert!(
         !engine.should_capture_context(&ctx, &config),
@@ -302,6 +305,7 @@ fn whitelist_only_mode_blocks_unlisted() {
         app_name: Some("Visual Studio Code".to_string()),
         window_title: Some("main.rs".to_string()),
         bounds: None,
+        window_id: None,
     };
     assert!(engine.should_capture_context(&ctx_allowed, &config));
 }
@@ -319,6 +323,7 @@ fn denylist_matching_is_case_insensitive() {
         app_name: Some("KEYCHAIN Access".to_string()),
         window_title: None,
         bounds: None,
+        window_id: None,
     };
     assert!(!engine.should_capture_context(&ctx, &config));
 }

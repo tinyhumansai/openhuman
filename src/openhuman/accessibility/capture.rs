@@ -28,6 +28,10 @@ impl std::fmt::Display for CaptureMode {
 }
 
 fn capture_mode_for_context(context: Option<&AppContext>) -> CaptureMode {
+    // Prefer window ID capture — most reliable on macOS.
+    if context.and_then(|ctx| ctx.window_id).is_some() {
+        return CaptureMode::Windowed;
+    }
     match context.and_then(|ctx| ctx.bounds) {
         Some(bounds) if bounds.width > 0 && bounds.height > 0 => CaptureMode::Windowed,
         _ => CaptureMode::Fullscreen,
@@ -117,7 +121,15 @@ pub fn capture_screen_image_ref_for_context(
         let mut cmd = std::process::Command::new("screencapture");
         cmd.arg("-x").arg("-t").arg("png");
 
-        if capture_mode == CaptureMode::Windowed {
+        if let Some(wid) = context.and_then(|ctx| ctx.window_id) {
+            // Capture by window ID — most reliable, no coordinate issues.
+            cmd.arg("-l").arg(wid.to_string());
+            tracing::debug!(
+                "[accessibility] capture mode=window_id id={} app={:?}",
+                wid,
+                context.and_then(|ctx| ctx.app_name.as_deref())
+            );
+        } else if capture_mode == CaptureMode::Windowed {
             let b = &context
                 .and_then(|ctx| ctx.bounds)
                 .expect("windowed capture requires bounds");
@@ -235,6 +247,7 @@ mod tests {
                 width: 1440,
                 height: 900,
             }),
+            window_id: None,
         };
 
         assert_eq!(
@@ -248,6 +261,7 @@ mod tests {
         let invalid_context = AppContext {
             app_name: Some("Finder".to_string()),
             window_title: Some("Desktop".to_string()),
+            window_id: None,
             bounds: Some(ElementBounds {
                 x: 0,
                 y: 0,

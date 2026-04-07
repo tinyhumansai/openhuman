@@ -28,12 +28,15 @@ pub struct AppContext {
     pub app_name: Option<String>,
     pub window_title: Option<String>,
     pub bounds: Option<ElementBounds>,
+    /// macOS CGWindowID — used by `screencapture -l` for reliable window capture.
+    pub window_id: Option<u32>,
 }
 
 impl AppContext {
     pub fn same_as(&self, other: &AppContext) -> bool {
         self.app_name == other.app_name
             && self.window_title == other.window_title
+            && self.window_id == other.window_id
             && self.bounds.as_ref().map(|b| (b.x, b.y, b.width, b.height))
                 == other.bounds.as_ref().map(|b| (b.x, b.y, b.width, b.height))
     }

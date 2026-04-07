@@ -148,13 +148,14 @@ fn run_server(args: &[String]) -> Result<()> {
     let (opts, rest) = parse_opts(args)?;
 
     if rest.iter().any(|a| is_help(a)) {
-        println!("Usage: openhuman screen-intelligence run [--ttl <secs>] [-v]");
+        println!("Usage: openhuman screen-intelligence run [--ttl <secs>] [--keep] [-v]");
         println!();
         println!("Start the screen intelligence capture + vision loop.");
         println!("Captures screenshots at baseline FPS, sends to vision model,");
         println!("and logs summaries. Blocks until TTL expires or Ctrl+C.");
         println!();
         println!("  --ttl <secs>     Session duration (default: 300)");
+        println!("  --keep           Keep screenshots on disk after vision processing");
         println!("  -v, --verbose    Enable debug logging");
         return Ok(());
     }
@@ -173,6 +174,7 @@ fn run_server(args: &[String]) -> Result<()> {
         let server_config = crate::openhuman::screen_intelligence::server::SiServerConfig {
             ttl_secs: opts.ttl_secs,
             log_interval_secs: 5,
+            keep_screenshots: opts.keep,
         };
 
         eprintln!();
@@ -182,7 +184,7 @@ fn run_server(args: &[String]) -> Result<()> {
         eprintln!("  Vision:           {}", config.screen_intelligence.vision_enabled);
         eprintln!("  Vision model:     {}", config.local_ai.vision_model_id);
         eprintln!("  FPS:              {}", config.screen_intelligence.baseline_fps);
-        eprintln!("  Keep screenshots: {}", config.screen_intelligence.keep_screenshots);
+        eprintln!("  Keep screenshots: {}", opts.keep || config.screen_intelligence.keep_screenshots);
         eprintln!();
         eprintln!("  Capturing → Vision → Log. Press Ctrl+C to stop.");
         eprintln!();

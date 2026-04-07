@@ -50,6 +50,8 @@ pub struct SiServerConfig {
     pub ttl_secs: u64,
     /// Status log interval in seconds.
     pub log_interval_secs: u64,
+    /// Keep screenshots on disk after vision processing.
+    pub keep_screenshots: bool,
 }
 
 impl Default for SiServerConfig {
@@ -57,6 +59,7 @@ impl Default for SiServerConfig {
         Self {
             ttl_secs: 300,
             log_interval_secs: 5,
+            keep_screenshots: false,
         }
     }
 }
@@ -109,10 +112,11 @@ impl SiServer {
             app_config.screen_intelligence.keep_screenshots,
         );
 
-        // Apply config to the global engine, forcing keep_screenshots on so
-        // captures are always persisted to the workspace.
+        // Apply config to the global engine, optionally overriding keep_screenshots.
         let mut si_config = app_config.screen_intelligence.clone();
-        si_config.keep_screenshots = true;
+        if self.config.keep_screenshots {
+            si_config.keep_screenshots = true;
+        }
         let _ = self.engine.apply_config(si_config).await;
 
         *self.state.lock().await = ServerState::Idle;
@@ -274,6 +278,7 @@ pub async fn start_if_enabled(app_config: &Config) {
     let server_config = SiServerConfig {
         ttl_secs: app_config.screen_intelligence.session_ttl_secs,
         log_interval_secs: 10,
+        keep_screenshots: app_config.screen_intelligence.keep_screenshots,
     };
 
     if let Some(existing) = try_global_server() {

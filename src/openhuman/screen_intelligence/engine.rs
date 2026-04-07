@@ -880,6 +880,14 @@ impl AccessibilityEngine {
                     "baseline"
                 };
 
+                if let Some(ref ctx) = context {
+                    tracing::debug!(
+                        "[screen_intelligence] capturing app={:?} window_id={:?} bounds={:?}",
+                        ctx.app_name.as_deref().unwrap_or("?"),
+                        ctx.window_id,
+                        ctx.bounds.as_ref().map(|b| (b.x, b.y, b.width, b.height)),
+                    );
+                }
                 let capture_result = capture_screen_image_ref_for_context(context.as_ref());
                 if let Err(ref e) = capture_result {
                     tracing::debug!(
@@ -896,6 +904,26 @@ impl AccessibilityEngine {
                     window_title: context.as_ref().and_then(|c| c.window_title.clone()),
                     image_ref: capture_result.ok(),
                 };
+
+                // Save to disk immediately at capture time (not deferred to
+                // the vision worker) so screenshots land on disk without the
+                // Ollama inference delay.
+                if frame.image_ref.is_some() && config.keep_screenshots {
+                    let ws = match Config::load_or_init().await {
+                        Ok(c) => c.workspace_dir.clone(),
+                        Err(_) => PathBuf::from("."),
+                    };
+                    match Self::save_screenshot_to_disk(&ws, &frame) {
+                        Ok(path) => tracing::debug!(
+                            "[screen_intelligence] screenshot saved: {}",
+                            path.display()
+                        ),
+                        Err(e) => tracing::debug!(
+                            "[screen_intelligence] screenshot save failed: {e}"
+                        ),
+                    }
+                }
+
                 push_ephemeral_frame(&mut session.frames, frame.clone());
                 session.capture_count = session.capture_count.saturating_add(1);
                 session.last_capture_at_ms = Some(now);
@@ -981,18 +1009,18 @@ impl AccessibilityEngine {
                 frame.reason
             );
 
-            // Read config for keep_screenshots and workspace_dir.
-            let (keep_screenshots, workspace_dir) = match Config::load_or_init().await {
-                Ok(cfg) => (
-                    cfg.screen_intelligence.keep_screenshots,
-                    cfg.workspace_dir.clone(),
-                ),
-                Err(_) => (false, PathBuf::from(".")),
-            };
+            // Read keep_screenshots from the engine's in-memory config (set via
+            // apply_config) so runtime overrides like `--keep` are respected.
+            let keep_screenshots = self.inner.lock().await.config.keep_screenshots;
 
-            // Save screenshot to disk (always — we need it on disk for the workspace).
-            // If keep_screenshots is false, we delete after vision processing.
-            let saved_path = if frame.image_ref.is_some() {
+            // When keep_screenshots is true the capture worker already saved
+            // the file immediately — no need to save again here.  When false
+            // we save a temp copy for vision processing then delete after.
+            let saved_path = if !keep_screenshots && frame.image_ref.is_some() {
+                let workspace_dir = match Config::load_or_init().await {
+                    Ok(cfg) => cfg.workspace_dir.clone(),
+                    Err(_) => PathBuf::from("."),
+                };
                 match Self::save_screenshot_to_disk(&workspace_dir, &frame) {
                     Ok(path) => Some(path),
                     Err(err) => {

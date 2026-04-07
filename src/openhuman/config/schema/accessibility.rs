@@ -42,7 +42,7 @@ fn default_policy_mode() -> String {
 }
 
 fn default_baseline_fps() -> f32 {
-    1.0
+    0.2
 }
 
 fn default_vision_enabled() -> bool {
