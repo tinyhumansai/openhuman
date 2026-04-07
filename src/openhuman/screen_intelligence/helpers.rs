@@ -194,16 +194,6 @@ pub(crate) async fn persist_vision_summary(
         content.push_str(&format!("{}\n", summary.key_text));
     }
 
-    // ui_state = raw vision model context (short)
-    if !summary.ui_state.is_empty() {
-        content.push_str(&format!("\n## Visual Context\n\n{}\n", summary.ui_state));
-    }
-
-    // actionable_notes = raw OCR text
-    if !summary.actionable_notes.is_empty() {
-        content.push_str(&format!("\n## Raw OCR Text\n\n{}\n", summary.actionable_notes));
-    }
-
     let key = format!("screen_intelligence_{}", summary.id);
     mem.upsert_document(NamespaceDocumentInput {
         namespace: VISION_MEMORY_NAMESPACE.to_string(),

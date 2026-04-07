@@ -5,11 +5,13 @@ mod schemas;
 pub mod server;
 
 mod capture;
+mod capture_worker;
 mod engine;
 mod helpers;
 mod image_processing;
 mod limits;
 mod permissions;
+mod processing_worker;
 mod types;
 
 pub use engine::{global_engine, AccessibilityEngine};

@@ -539,22 +539,49 @@ fn run_swift_window_lookup(app_name: &str, window_title: Option<&str>) -> Option
         .unwrap_or_default();
     let has_title = window_title.is_some() && !escaped_title.is_empty();
 
+    // Strip Unicode formatting/control characters (e.g. U+200E LTR mark)
+    // from the app name before embedding in Swift. Some apps like WhatsApp
+    // have invisible Unicode prefixes in their bundle name that AppleScript
+    // preserves but can cause comparison issues.
+    let stripped_app: String = escaped_app
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '\u{200E}' | '\u{200F}' | '\u{200B}' | '\u{FEFF}' | '\u{200C}' | '\u{200D}'))
+        .collect();
+    let stripped_title: String = escaped_title
+        .chars()
+        .filter(|c| !c.is_control() && !matches!(c, '\u{200E}' | '\u{200F}' | '\u{200B}' | '\u{FEFF}' | '\u{200C}' | '\u{200D}'))
+        .collect();
+
     // Swift snippet: iterate CGWindowList, prefer title+app match, fall
     // back to first layer-0 app-name-only match.
+    //
+    // Uses `.optionAll` instead of `.optionOnScreenOnly` because some apps
+    // (e.g. WhatsApp, Catalyst/Electron apps) have visible windows that
+    // aren't reported by the on-screen-only filter. We compensate by
+    // requiring layer == 0 and positive bounds to skip truly off-screen
+    // or minimised windows.
     let swift_code = format!(
         r#"
 import CoreGraphics
 import Foundation
-let o: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+func strip(_ s: String) -> String {{
+    s.unicodeScalars.filter {{ !($0.properties.isDefaultIgnorableCodePoint || $0.value == 0x200E || $0.value == 0x200F || $0.value == 0xFEFF) }}.map {{ String($0) }}.joined()
+}}
+let target = strip("{stripped_app}")
+let targetTitle = strip("{stripped_title}")
+let o: CGWindowListOption = [.optionAll, .excludeDesktopElements]
 var fallback: Int = -1
 if let l = CGWindowListCopyWindowInfo(o, kCGNullWindowID) as? [[String: Any]] {{
     for w in l {{
-        let owner = w["kCGWindowOwnerName"] as? String ?? ""
+        let owner = strip(w["kCGWindowOwnerName"] as? String ?? "")
         let layer = w["kCGWindowLayer"] as? Int ?? -1
         let wid = w["kCGWindowNumber"] as? Int ?? -1
-        let name = w["kCGWindowName"] as? String ?? ""
-        if owner == "{escaped_app}" && layer == 0 {{
-            if {has_title_swift} && name == "{escaped_title}" {{
+        let name = strip(w["kCGWindowName"] as? String ?? "")
+        let bounds = w["kCGWindowBounds"] as? [String: Any] ?? [:]
+        let bw = bounds["Width"] as? Int ?? 0
+        let bh = bounds["Height"] as? Int ?? 0
+        if owner == target && layer == 0 && bw > 1 && bh > 1 {{
+            if {has_title_swift} && name == targetTitle {{
                 print(wid)
                 exit(0)
             }}
