@@ -55,7 +55,7 @@ describe('VoicePanel', () => {
         auto_start: false,
         hotkey: 'Fn',
         activation_mode: 'push',
-        skip_cleanup: false,
+        skip_cleanup: true,
         min_duration_secs: 0.3,
       },
       serverStatus: {
@@ -134,7 +134,7 @@ describe('VoicePanel', () => {
     await screen.findByDisplayValue('Fn');
 
     fireEvent.change(screen.getByDisplayValue('Fn'), { target: { value: 'F6' } });
-    fireEvent.change(screen.getByDisplayValue('Natural cleanup'), {
+    fireEvent.change(screen.getByDisplayValue('Verbatim transcription'), {
       target: { value: 'verbatim' },
     });
 
@@ -174,7 +174,7 @@ describe('VoicePanel', () => {
         auto_start: true,
         hotkey: 'Fn',
         activation_mode: 'push',
-        skip_cleanup: false,
+        skip_cleanup: true,
         min_duration_secs: 0.3,
       });
     });
@@ -182,7 +182,7 @@ describe('VoicePanel', () => {
     expect(openhumanVoiceServerStart).toHaveBeenCalledWith({
       hotkey: 'Fn',
       activation_mode: 'push',
-      skip_cleanup: false,
+      skip_cleanup: true,
     });
     expect(await screen.findByText('Voice server restarted with the new settings.')).toBeInTheDocument();
   });

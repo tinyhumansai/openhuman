@@ -58,7 +58,7 @@ impl Default for VoiceServerConfig {
             auto_start: false,
             hotkey: default_hotkey(),
             activation_mode: VoiceActivationMode::default(),
-            skip_cleanup: false,
+            skip_cleanup: true,
             min_duration_secs: default_min_duration(),
         }
     }

@@ -43,6 +43,25 @@ pub enum HotkeyEvent {
     Released,
 }
 
+fn push_press_event(trigger: Key, pressed_key: Key, is_active: bool) -> Option<HotkeyEvent> {
+    if pressed_key != trigger {
+        return None;
+    }
+
+    if !is_active {
+        return Some(HotkeyEvent::Pressed);
+    }
+
+    // macOS Fn is special-cased in some keyboards/input stacks and can miss the
+    // corresponding release edge. When that happens, a second Fn press is the
+    // first reliable signal we get that the user is trying to stop recording.
+    if trigger == Key::Function {
+        return Some(HotkeyEvent::Released);
+    }
+
+    None
+}
+
 /// Parsed hotkey combination (e.g. Ctrl+Shift+Space).
 #[derive(Debug, Clone)]
 pub struct HotkeyCombination {
@@ -157,15 +176,33 @@ pub fn start_listener(
                                     } else {
                                         HotkeyEvent::Pressed
                                     };
-                                    debug!("{LOG_PREFIX} tap hotkey → {event:?}");
+                                    info!("{LOG_PREFIX} tap hotkey event={event:?} trigger={:?}", hotkey.trigger);
                                     if tx.send(event).is_err() {
                                         warn!("{LOG_PREFIX} event receiver dropped");
                                     }
                                 }
                                 ActivationMode::Push => {
-                                    if !is_active.swap(true, Ordering::SeqCst) {
-                                        debug!("{LOG_PREFIX} push hotkey → Pressed");
-                                        if tx.send(HotkeyEvent::Pressed).is_err() {
+                                    let was_active = is_active.load(Ordering::SeqCst);
+                                    if let Some(event) =
+                                        push_press_event(hotkey.trigger, key, was_active)
+                                    {
+                                        match event {
+                                            HotkeyEvent::Pressed => {
+                                                is_active.store(true, Ordering::SeqCst);
+                                                info!(
+                                                    "{LOG_PREFIX} push hotkey event=Pressed trigger={:?}",
+                                                    hotkey.trigger
+                                                );
+                                            }
+                                            HotkeyEvent::Released => {
+                                                is_active.store(false, Ordering::SeqCst);
+                                                warn!(
+                                                    "{LOG_PREFIX} push hotkey fallback_stop trigger={:?} reason=second_press_without_release",
+                                                    hotkey.trigger
+                                                );
+                                            }
+                                        }
+                                        if tx.send(event).is_err() {
                                             warn!("{LOG_PREFIX} event receiver dropped");
                                         }
                                     }
@@ -182,7 +219,7 @@ pub fn start_listener(
                             && key == hotkey.trigger
                             && is_active.swap(false, Ordering::SeqCst)
                         {
-                            debug!("{LOG_PREFIX} push hotkey → Released");
+                            info!("{LOG_PREFIX} push hotkey event=Released trigger={:?}", hotkey.trigger);
                             if tx.send(HotkeyEvent::Released).is_err() {
                                 warn!("{LOG_PREFIX} event receiver dropped");
                             }
@@ -349,5 +386,26 @@ mod tests {
     #[test]
     fn activation_mode_default_is_push() {
         assert_eq!(ActivationMode::default(), ActivationMode::Push);
+    }
+
+    #[test]
+    fn push_press_event_starts_when_inactive() {
+        assert_eq!(
+            push_press_event(Key::Function, Key::Function, false),
+            Some(HotkeyEvent::Pressed)
+        );
+    }
+
+    #[test]
+    fn push_press_event_allows_fn_fallback_stop_when_active() {
+        assert_eq!(
+            push_press_event(Key::Function, Key::Function, true),
+            Some(HotkeyEvent::Released)
+        );
+    }
+
+    #[test]
+    fn push_press_event_does_not_toggle_non_fn_key_when_active() {
+        assert_eq!(push_press_event(Key::F6, Key::F6, true), None);
     }
 }

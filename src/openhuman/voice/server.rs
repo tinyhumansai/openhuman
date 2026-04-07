@@ -63,7 +63,7 @@ impl Default for VoiceServerConfig {
         Self {
             hotkey: "Fn".to_string(),
             activation_mode: ActivationMode::Push,
-            skip_cleanup: false,
+            skip_cleanup: true,
             context: None,
             min_duration_secs: 0.3,
         }
@@ -139,6 +139,10 @@ impl VoiceServer {
 
             match event {
                 HotkeyEvent::Pressed => {
+                    info!(
+                        "{LOG_PREFIX} received hotkey event=Pressed state_before={:?}",
+                        *self.state.lock().await
+                    );
                     if recording.is_some() {
                         // In tap mode, second press stops recording.
                         debug!("{LOG_PREFIX} hotkey pressed while recording → stopping");
@@ -161,10 +165,16 @@ impl VoiceServer {
                     }
                 }
                 HotkeyEvent::Released => {
+                    info!(
+                        "{LOG_PREFIX} received hotkey event=Released state_before={:?}",
+                        *self.state.lock().await
+                    );
                     // In push mode, release stops recording.
                     if let Some(handle) = recording.take() {
                         debug!("{LOG_PREFIX} hotkey released → stopping recording");
                         self.process_recording(handle, app_config).await;
+                    } else {
+                        warn!("{LOG_PREFIX} release received with no active recording");
                     }
                 }
             }
@@ -378,7 +388,7 @@ mod tests {
         let cfg = VoiceServerConfig::default();
         assert_eq!(cfg.hotkey, "Fn");
         assert_eq!(cfg.activation_mode, ActivationMode::Push);
-        assert!(!cfg.skip_cleanup);
+        assert!(cfg.skip_cleanup);
         assert!(cfg.context.is_none());
     }
 

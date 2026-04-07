@@ -244,8 +244,8 @@ const VoicePanel = () => {
                       value={settings.skip_cleanup ? 'verbatim' : 'natural'}
                       onChange={e => updateSetting('skip_cleanup', e.target.value === 'verbatim')}
                       className="w-full rounded-md border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900 focus:outline-none focus:ring-1 focus:ring-primary-400">
-                      <option value="natural">Natural cleanup</option>
                       <option value="verbatim">Verbatim transcription</option>
+                      <option value="natural">Natural cleanup</option>
                     </select>
                   </label>
                 </div>
