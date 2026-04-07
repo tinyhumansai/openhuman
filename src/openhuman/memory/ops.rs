@@ -5,8 +5,6 @@
 //! operations. It manages the active memory client and provides utility functions
 //! for formatting and filtering memory results.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path, PathBuf};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::store::GraphRelationRecord;
 use crate::openhuman::memory::{
@@ -25,6 +23,8 @@ use crate::rpc::RpcOutcome;
 use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path, PathBuf};
 
 // The global memory client singleton lives in `super::global`.
 // All access goes through `active_memory_client()` below.

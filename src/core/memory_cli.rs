@@ -254,7 +254,11 @@ fn run_graph_query(args: &[String]) -> Result<()> {
     let result = rt.block_on(async {
         let client = create_memory_client().await?;
         client
-            .graph_query(namespace.as_deref(), subject.as_deref(), predicate.as_deref())
+            .graph_query(
+                namespace.as_deref(),
+                subject.as_deref(),
+                predicate.as_deref(),
+            )
             .await
             .map_err(anyhow::Error::msg)
     })?;
@@ -281,7 +285,9 @@ fn run_query(args: &[String]) -> Result<()> {
             }
             "--limit" | "-l" => {
                 let raw = next_arg(args, &mut i, "--limit")?;
-                limit = raw.parse::<u32>().map_err(|e| anyhow::anyhow!("invalid --limit: {e}"))?;
+                limit = raw
+                    .parse::<u32>()
+                    .map_err(|e| anyhow::anyhow!("invalid --limit: {e}"))?;
             }
             "-v" | "--verbose" => {
                 verbose = true;
