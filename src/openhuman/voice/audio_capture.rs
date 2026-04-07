@@ -27,6 +27,9 @@ pub struct RecordingResult {
     pub duration_secs: f32,
     /// Number of samples captured.
     pub sample_count: usize,
+    /// Peak RMS energy observed during recording.
+    /// Used for silence detection — values below ~0.002 indicate no speech.
+    pub peak_rms: f32,
 }
 
 /// Handle to a recording in progress. Drop or call `stop()` to end recording.
@@ -117,50 +120,65 @@ fn record_on_thread(
         Vec::with_capacity(TARGET_SAMPLE_RATE as usize * 30),
     ));
 
+    // Track peak RMS energy across the recording for silence detection.
+    let peak_rms: Arc<std::sync::atomic::AtomicU32> =
+        Arc::new(std::sync::atomic::AtomicU32::new(0));
+
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();
 
     let stream = {
         let samples_writer = samples.clone();
+        let rms_tracker = peak_rms.clone();
         match sample_format {
             SampleFormat::F32 => device
                 .build_input_stream(
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         let mono = to_mono(data, source_channels);
+                        update_peak_rms(&rms_tracker, &mono);
                         samples_writer.lock().extend_from_slice(&mono);
                     },
                     |err| error!("{LOG_PREFIX} audio stream error: {err}"),
                     None,
                 )
                 .map_err(|e| format!("failed to build f32 input stream: {e}")),
-            SampleFormat::I16 => device
-                .build_input_stream(
-                    &stream_config,
-                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                        let floats: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
-                        let mono = to_mono(&floats, source_channels);
-                        samples_writer.lock().extend_from_slice(&mono);
-                    },
-                    |err| error!("{LOG_PREFIX} audio stream error: {err}"),
-                    None,
-                )
-                .map_err(|e| format!("failed to build i16 input stream: {e}")),
-            SampleFormat::U16 => device
-                .build_input_stream(
-                    &stream_config,
-                    move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                        let floats: Vec<f32> = data
-                            .iter()
-                            .map(|&s| (s as f32 - 32768.0) / 32768.0)
-                            .collect();
-                        let mono = to_mono(&floats, source_channels);
-                        samples_writer.lock().extend_from_slice(&mono);
-                    },
-                    |err| error!("{LOG_PREFIX} audio stream error: {err}"),
-                    None,
-                )
-                .map_err(|e| format!("failed to build u16 input stream: {e}")),
+            SampleFormat::I16 => {
+                let rms_tracker = peak_rms.clone();
+                device
+                    .build_input_stream(
+                        &stream_config,
+                        move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                            let floats: Vec<f32> =
+                                data.iter().map(|&s| s as f32 / 32768.0).collect();
+                            let mono = to_mono(&floats, source_channels);
+                            update_peak_rms(&rms_tracker, &mono);
+                            samples_writer.lock().extend_from_slice(&mono);
+                        },
+                        |err| error!("{LOG_PREFIX} audio stream error: {err}"),
+                        None,
+                    )
+                    .map_err(|e| format!("failed to build i16 input stream: {e}"))
+            }
+            SampleFormat::U16 => {
+                let rms_tracker = peak_rms.clone();
+                device
+                    .build_input_stream(
+                        &stream_config,
+                        move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                            let floats: Vec<f32> = data
+                                .iter()
+                                .map(|&s| (s as f32 - 32768.0) / 32768.0)
+                                .collect();
+                            let mono = to_mono(&floats, source_channels);
+                            update_peak_rms(&rms_tracker, &mono);
+                            samples_writer.lock().extend_from_slice(&mono);
+                        },
+                        |err| error!("{LOG_PREFIX} audio stream error: {err}"),
+                        None,
+                    )
+                    .map_err(|e| format!("failed to build u16 input stream: {e}"))
+            }
             other => Err(format!("unsupported sample format: {other:?}")),
         }
     };
@@ -191,7 +209,9 @@ fn record_on_thread(
     drop(stream);
 
     let raw_samples = samples.lock().clone();
-    finalize_recording(raw_samples, source_sample_rate)
+    let final_peak_rms = f32::from_bits(peak_rms.load(Ordering::Relaxed));
+    debug!("{LOG_PREFIX} peak_rms={final_peak_rms:.6}");
+    finalize_recording(raw_samples, source_sample_rate, final_peak_rms)
 }
 
 /// List available input devices.
@@ -241,10 +261,40 @@ fn resample(samples: &[f32], source_rate: u32) -> Vec<f32> {
     output
 }
 
+/// Compute RMS energy for a chunk of mono samples and update the peak tracker.
+/// Uses `AtomicU32` with `f32::to_bits`/`from_bits` for lock-free max tracking.
+fn update_peak_rms(peak: &std::sync::atomic::AtomicU32, mono_samples: &[f32]) {
+    if mono_samples.is_empty() {
+        return;
+    }
+    let sum_sq: f32 = mono_samples.iter().map(|s| s * s).sum();
+    let rms = (sum_sq / mono_samples.len() as f32).sqrt();
+    // Atomic max via compare-and-swap loop.
+    loop {
+        let current_bits = peak.load(Ordering::Relaxed);
+        let current = f32::from_bits(current_bits);
+        if rms <= current {
+            break;
+        }
+        if peak
+            .compare_exchange_weak(
+                current_bits,
+                rms.to_bits(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            break;
+        }
+    }
+}
+
 /// Finalize recorded samples into a 16-kHz mono WAV.
 fn finalize_recording(
     raw_samples: Vec<f32>,
     source_sample_rate: u32,
+    peak_rms: f32,
 ) -> Result<RecordingResult, String> {
     if raw_samples.is_empty() {
         warn!("{LOG_PREFIX} no audio samples captured");
@@ -295,6 +345,7 @@ fn finalize_recording(
         wav_bytes,
         duration_secs,
         sample_count,
+        peak_rms,
     })
 }
 
@@ -372,7 +423,7 @@ mod tests {
         let samples: Vec<f32> = (0..16000)
             .map(|i| (i as f32 * 440.0 * 2.0 * std::f32::consts::PI / 16000.0).sin())
             .collect();
-        let result = finalize_recording(samples, 16_000).unwrap();
+        let result = finalize_recording(samples, 16_000, 0.5).unwrap();
         assert!(result.wav_bytes.len() > 44); // WAV header is 44 bytes
         assert!((result.duration_secs - 1.0).abs() < 0.1);
         // Check WAV magic bytes.
@@ -381,7 +432,30 @@ mod tests {
 
     #[test]
     fn finalize_empty_samples_errors() {
-        let result = finalize_recording(vec![], 16_000);
+        let result = finalize_recording(vec![], 16_000, 0.0);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_peak_rms_tracks_maximum() {
+        let peak = std::sync::atomic::AtomicU32::new(0);
+        // First chunk: low energy
+        update_peak_rms(&peak, &[0.01, -0.01, 0.01]);
+        let first = f32::from_bits(peak.load(Ordering::Relaxed));
+        // Second chunk: higher energy
+        update_peak_rms(&peak, &[0.5, -0.5, 0.5]);
+        let second = f32::from_bits(peak.load(Ordering::Relaxed));
+        assert!(second > first);
+        // Third chunk: lower energy — peak should not decrease
+        update_peak_rms(&peak, &[0.01, -0.01]);
+        let third = f32::from_bits(peak.load(Ordering::Relaxed));
+        assert!((third - second).abs() < 1e-6);
+    }
+
+    #[test]
+    fn update_peak_rms_empty_is_noop() {
+        let peak = std::sync::atomic::AtomicU32::new(0.1f32.to_bits());
+        update_peak_rms(&peak, &[]);
+        assert!((f32::from_bits(peak.load(Ordering::Relaxed)) - 0.1).abs() < 1e-6);
     }
 }

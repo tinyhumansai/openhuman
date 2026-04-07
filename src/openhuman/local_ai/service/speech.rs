@@ -22,6 +22,20 @@ impl LocalAiService {
         config: &Config,
         audio_path: &str,
     ) -> Result<LocalAiSpeechResult, String> {
+        self.transcribe_with_prompt(config, audio_path, None).await
+    }
+
+    /// Transcribe audio with an optional initial_prompt for vocabulary bias.
+    ///
+    /// The `initial_prompt` is passed to whisper.cpp's `initial_prompt` parameter,
+    /// biasing the decoder toward the supplied words/phrases. Used for custom
+    /// dictionary support and conversational continuity.
+    pub async fn transcribe_with_prompt(
+        &self,
+        config: &Config,
+        audio_path: &str,
+        initial_prompt: Option<&str>,
+    ) -> Result<LocalAiSpeechResult, String> {
         let started = Instant::now();
         if !config.local_ai.enabled {
             return Err("local ai is disabled".to_string());
@@ -65,9 +79,10 @@ impl LocalAiService {
             debug!("{LOG_PREFIX} using in-process whisper engine for {audio_path}");
             let handle = self.whisper.clone();
             let path = audio_path.to_string();
+            let prompt_owned = initial_prompt.map(String::from);
             let in_process_started = Instant::now();
             let result = tokio::task::spawn_blocking(move || {
-                Self::transcribe_in_process_inner(&handle, &path)
+                Self::transcribe_in_process_inner(&handle, &path, prompt_owned.as_deref())
             })
             .await
             .map_err(|e| format!("whisper task join error: {e}"))?;
@@ -107,6 +122,7 @@ impl LocalAiService {
     fn transcribe_in_process_inner(
         handle: &whisper_engine::WhisperEngineHandle,
         audio_path: &str,
+        initial_prompt: Option<&str>,
     ) -> Result<String, String> {
         let path = std::path::Path::new(audio_path);
         let ext = path
@@ -116,13 +132,13 @@ impl LocalAiService {
             .to_ascii_lowercase();
 
         if ext == "wav" {
-            whisper_engine::transcribe_wav_file(handle, path, None)
+            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)
         } else {
             warn!(
                 "{LOG_PREFIX} non-WAV input ({ext}), attempting WAV decode anyway \
                  (may fail — use ffmpeg conversion for best results)"
             );
-            whisper_engine::transcribe_wav_file(handle, path, None)
+            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)
         }
     }
 

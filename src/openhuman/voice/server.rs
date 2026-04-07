@@ -45,6 +45,18 @@ pub struct VoiceServerStatus {
     pub last_error: Option<String>,
 }
 
+/// Default silence threshold (RMS energy). Recordings with peak RMS below
+/// this are considered silent and skipped. Matches OpenWhispr's 0.002 default.
+const DEFAULT_SILENCE_THRESHOLD: f32 = 0.002;
+
+/// Maximum number of recent transcriptions to keep as context for whisper's
+/// initial_prompt, improving continuity across consecutive recordings.
+const MAX_RECENT_TRANSCRIPTS: usize = 5;
+
+/// Maximum character length of the combined initial prompt (dictionary +
+/// recent transcripts). Whisper's prompt token budget is limited.
+const MAX_INITIAL_PROMPT_CHARS: usize = 500;
+
 /// Configuration for the voice server.
 #[derive(Debug, Clone)]
 pub struct VoiceServerConfig {
@@ -56,6 +68,11 @@ pub struct VoiceServerConfig {
     pub context: Option<String>,
     /// Minimum recording duration in seconds. Shorter recordings are discarded.
     pub min_duration_secs: f32,
+    /// RMS energy threshold for silence detection. Recordings with peak
+    /// energy below this are treated as silence and skipped.
+    pub silence_threshold: f32,
+    /// Custom vocabulary words to bias whisper toward (passed as initial_prompt).
+    pub custom_dictionary: Vec<String>,
 }
 
 impl Default for VoiceServerConfig {
@@ -66,6 +83,8 @@ impl Default for VoiceServerConfig {
             skip_cleanup: true,
             context: None,
             min_duration_secs: 0.3,
+            silence_threshold: DEFAULT_SILENCE_THRESHOLD,
+            custom_dictionary: Vec::new(),
         }
     }
 }
@@ -77,6 +96,9 @@ pub struct VoiceServer {
     config: VoiceServerConfig,
     transcription_count: Arc<std::sync::atomic::AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
+    /// Rolling buffer of recent transcriptions used as whisper context for
+    /// better continuity across consecutive recordings.
+    recent_transcripts: Arc<Mutex<Vec<String>>>,
 }
 
 impl VoiceServer {
@@ -87,6 +109,7 @@ impl VoiceServer {
             config,
             transcription_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
+            recent_transcripts: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -193,7 +216,58 @@ impl VoiceServer {
         self.cancel.cancel();
     }
 
-    /// Process a completed recording: transcribe and insert text.
+    /// Build the whisper initial_prompt from custom dictionary + recent transcripts.
+    ///
+    /// The prompt biases whisper's tokenizer toward known vocabulary and gives
+    /// it context from previous recordings for better continuity.
+    async fn build_initial_prompt(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+
+        // Custom dictionary words first (highest priority).
+        if !self.config.custom_dictionary.is_empty() {
+            parts.push(self.config.custom_dictionary.join(", "));
+        }
+
+        // Recent transcripts for conversational continuity.
+        let recent = self.recent_transcripts.lock().await;
+        if !recent.is_empty() {
+            parts.push(recent.join(" "));
+        }
+
+        if parts.is_empty() {
+            return None;
+        }
+
+        let mut prompt = parts.join(". ");
+        if prompt.len() > MAX_INITIAL_PROMPT_CHARS {
+            // Truncate at last word boundary.
+            prompt.truncate(MAX_INITIAL_PROMPT_CHARS);
+            if let Some(last_space) = prompt.rfind(' ') {
+                prompt.truncate(last_space);
+            }
+        }
+        debug!(
+            "{LOG_PREFIX} built initial_prompt ({} chars): '{}'",
+            prompt.len(),
+            truncate_for_log(&prompt, 100)
+        );
+        Some(prompt)
+    }
+
+    /// Add a transcript to the rolling recent buffer.
+    async fn push_recent_transcript(&self, text: &str) {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let mut recent = self.recent_transcripts.lock().await;
+        recent.push(trimmed.to_string());
+        while recent.len() > MAX_RECENT_TRANSCRIPTS {
+            recent.remove(0);
+        }
+    }
+
+    /// Process a completed recording: silence check → transcribe → filter → insert.
     async fn process_recording(&self, handle: RecordingHandle, config: &Config) {
         let pipeline_started = Instant::now();
         *self.state.lock().await = ServerState::Transcribing;
@@ -203,12 +277,14 @@ impl VoiceServer {
             Ok(result) => {
                 let stop_elapsed = stop_started.elapsed();
                 info!(
-                    "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes (stop_elapsed_ms={})",
+                    "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes, peak_rms={:.6} (stop_elapsed_ms={})",
                     result.duration_secs,
                     result.wav_bytes.len(),
+                    result.peak_rms,
                     stop_elapsed.as_millis()
                 );
 
+                // Gate 1: minimum duration.
                 if result.duration_secs < self.config.min_duration_secs {
                     warn!(
                         "{LOG_PREFIX} recording too short ({:.1}s), skipping",
@@ -218,12 +294,29 @@ impl VoiceServer {
                     return;
                 }
 
+                // Gate 2: silence detection — skip if audio energy is below threshold.
+                if result.peak_rms < self.config.silence_threshold {
+                    warn!(
+                        "{LOG_PREFIX} audio is silence (peak_rms={:.6} < threshold={:.6}), skipping transcription",
+                        result.peak_rms,
+                        self.config.silence_threshold
+                    );
+                    *self.state.lock().await = ServerState::Idle;
+                    return;
+                }
+
+                // Build initial_prompt from dictionary + recent transcripts.
+                let initial_prompt = self.build_initial_prompt().await;
+                let context = initial_prompt
+                    .as_deref()
+                    .or(self.config.context.as_deref());
+
                 let transcribe_started = Instant::now();
                 match crate::openhuman::voice::voice_transcribe_bytes(
                     config,
                     &result.wav_bytes,
                     Some("wav".to_string()),
-                    self.config.context.as_deref(),
+                    context,
                     self.config.skip_cleanup,
                 )
                 .await
@@ -238,7 +331,20 @@ impl VoiceServer {
                             transcribe_elapsed.as_millis()
                         );
 
+                        // Gate 3: filter hallucinated/blank output.
+                        if is_hallucinated_output(text) {
+                            warn!(
+                                "{LOG_PREFIX} detected hallucinated output, discarding: '{}'",
+                                truncate_for_log(text, 60)
+                            );
+                            *self.state.lock().await = ServerState::Idle;
+                            return;
+                        }
+
                         if !text.trim().is_empty() {
+                            // Track successful transcription for future context.
+                            self.push_recent_transcript(text).await;
+
                             let insert_started = Instant::now();
                             if let Err(e) = text_input::insert_text(text) {
                                 error!("{LOG_PREFIX} failed to insert text: {e}");
@@ -311,6 +417,8 @@ pub async fn start_if_enabled(app_config: &Config) {
         skip_cleanup: app_config.voice_server.skip_cleanup,
         context: None,
         min_duration_secs: app_config.voice_server.min_duration_secs,
+        silence_threshold: app_config.voice_server.silence_threshold,
+        custom_dictionary: app_config.voice_server.custom_dictionary.clone(),
     };
 
     if let Some(existing) = try_global_server() {
@@ -370,6 +478,54 @@ pub async fn run_standalone(
     server_arc.run(&app_config).await
 }
 
+/// Known whisper hallucination patterns. These are common outputs when
+/// whisper processes near-silent audio or audio with background noise.
+const HALLUCINATION_PATTERNS: &[&str] = &[
+    "[blank_audio]",
+    "[ blank_audio ]",
+    "[blank audio]",
+    "thank you for watching",
+    "thanks for watching",
+    "thank you for listening",
+    "thanks for listening",
+    "please subscribe",
+    "like and subscribe",
+    "see you next time",
+    "bye bye",
+    "you",
+    "...",
+];
+
+/// Check if whisper output is a known hallucination pattern.
+///
+/// Whisper.cpp famously outputs "[BLANK_AUDIO]" for silence and various
+/// stock phrases ("Thank you for watching", etc.) when fed noisy or
+/// near-empty audio. Filtering these prevents inserting garbage text.
+fn is_hallucinated_output(text: &str) -> bool {
+    let normalized = text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false; // handled separately as "empty"
+    }
+
+    // Exact match against known hallucination phrases.
+    for pattern in HALLUCINATION_PATTERNS {
+        if normalized == *pattern {
+            return true;
+        }
+    }
+
+    // Detect repeated short phrases (e.g. "you you you you").
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    if words.len() >= 3 {
+        let first = words[0];
+        if words.iter().all(|w| *w == first) {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn truncate_for_log(s: &str, max: usize) -> String {
     let truncated: String = s.chars().take(max).collect();
     if truncated.len() < s.len() {
@@ -390,6 +546,25 @@ mod tests {
         assert_eq!(cfg.activation_mode, ActivationMode::Push);
         assert!(cfg.skip_cleanup);
         assert!(cfg.context.is_none());
+        assert!(cfg.custom_dictionary.is_empty());
+        assert!((cfg.silence_threshold - DEFAULT_SILENCE_THRESHOLD).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hallucination_detection() {
+        assert!(is_hallucinated_output("[BLANK_AUDIO]"));
+        assert!(is_hallucinated_output("  [blank_audio]  "));
+        assert!(is_hallucinated_output("[ BLANK_AUDIO ]"));
+        assert!(is_hallucinated_output("Thank you for watching"));
+        assert!(is_hallucinated_output("thanks for listening"));
+        assert!(is_hallucinated_output("you you you you"));
+        assert!(is_hallucinated_output("the the the the"));
+        assert!(is_hallucinated_output("..."));
+        assert!(is_hallucinated_output("you"));
+        // Should NOT flag real speech.
+        assert!(!is_hallucinated_output("Hello, how are you?"));
+        assert!(!is_hallucinated_output("the quick brown fox"));
+        assert!(!is_hallucinated_output(""));
     }
 
     #[tokio::test]
