@@ -27,7 +27,11 @@ impl UnifiedMemory {
         let document_id = input
             .document_id
             .or(existing_document_id)
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+            .unwrap_or_else(|| {
+                let ts = Self::now_ts() as u64;
+                let short = &Uuid::new_v4().to_string()[..8];
+                format!("{ts}_{short}")
+            });
         let now = Self::now_ts();
         let created_at = {
             let conn = self.conn.lock();
