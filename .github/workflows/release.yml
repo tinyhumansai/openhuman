@@ -230,7 +230,7 @@ jobs:
         if: matrix.settings.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf cmake libasound2-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev
 
       # Skip first 7 lines of Cargo.lock (workspace package version bumps) so the key tracks dependency changes only
       - name: Cargo.lock fingerprint (deps only)
