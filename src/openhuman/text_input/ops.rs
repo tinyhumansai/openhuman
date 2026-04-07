@@ -114,7 +114,7 @@ pub async fn show_ghost(
         element_bounds.height,
     );
 
-    match accessibility::show_overlay(&element_bounds, &params.text, ttl_ms) {
+    match accessibility::show_overlay(&element_bounds, &params.text, ttl_ms, "") {
         Ok(()) => Ok(RpcOutcome::single_log(
             ShowGhostTextResult {
                 shown: true,
