@@ -192,21 +192,7 @@ pub(crate) async fn analyze_frame(
         }
     }
 
-    // ── Pass 1: OCR via Apple Vision ────────────────────────────────
-    tracing::debug!("[processing_worker] pass 1/3: Apple Vision OCR");
-    let ocr_text = tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        run_apple_vision_ocr(image_ref.clone()),
-    )
-    .await
-    .map_err(|_| "Apple Vision OCR timed out after 30s".to_string())??;
-    tracing::debug!("[processing_worker] OCR extracted {} chars", ocr_text.len());
-
-    // ── Pass 2: Vision LLM for context ──────────────────────────────
-    let compressed = super::image_processing::compress_screenshot(&image_ref, None, None)
-        .map_err(|e| format!("image compression failed: {e}"))?;
-    let vision_image_ref = compressed.data_uri;
-
+    // ── Validate config before doing any work ─────────────────────────
     let config = Config::load_or_init()
         .await
         .map_err(|e| format!("failed to load config: {e}"))?;
@@ -221,6 +207,21 @@ pub(crate) async fn analyze_frame(
             "screen intelligence vision requires provider 'ollama' (found '{provider}')",
         ));
     }
+
+    // ── Pass 1: OCR via Apple Vision ────────────────────────────────
+    tracing::debug!("[processing_worker] pass 1/3: Apple Vision OCR");
+    let ocr_text = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        run_apple_vision_ocr(image_ref.clone()),
+    )
+    .await
+    .map_err(|_| "Apple Vision OCR timed out after 30s".to_string())??;
+    tracing::debug!("[processing_worker] OCR extracted {} chars", ocr_text.len());
+
+    // ── Pass 2: Vision LLM for context ──────────────────────────────
+    let compressed = super::image_processing::compress_screenshot(&image_ref, None, None)
+        .map_err(|e| format!("image compression failed: {e}"))?;
+    let vision_image_ref = compressed.data_uri;
 
     tracing::debug!(
         "[processing_worker] pass 2/3: vision LLM (model={})",
