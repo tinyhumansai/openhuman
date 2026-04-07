@@ -7,6 +7,9 @@ import { skillManager } from '../lib/skills/manager';
 import { emitSkillStateChange } from '../lib/skills/skillEvents';
 import { startSkill } from '../lib/skills/skillsApi';
 import { consumeLoginToken } from '../services/api/authApi';
+import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
+import { evaluateOAuthAppVersionGate } from './oauthAppVersionGate';
+import { openUrl } from './openUrl';
 import { storeSession } from './tauriCommands';
 
 const focusMainWindow = async () => {
@@ -117,6 +120,43 @@ const handleOAuthDeepLink = async (parsed: URL) => {
 
     if (!integrationId || !skillId) {
       console.error('[DeepLink] OAuth success missing integrationId or skillId', parsed.href);
+      return;
+    }
+
+    const versionGate = await evaluateOAuthAppVersionGate();
+    if (!versionGate.ok) {
+      const msg = `This OpenHuman build (${versionGate.current}) is older than the minimum required for OAuth (${versionGate.minimum}). Install the latest release, then try connecting again.`;
+      try {
+        await openUrl(versionGate.downloadUrl);
+      } catch (e) {
+        console.warn('[DeepLink] Could not open latest release URL', e);
+      }
+      enqueueError({
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        source: 'manual',
+        title: 'Update OpenHuman to finish OAuth',
+        message: msg,
+        sentryEvent: buildManualSentryEvent(
+          { type: 'OAuthStaleAppVersion', value: `${versionGate.current}<${versionGate.minimum}` },
+          {
+            component: 'desktopDeepLinkListener',
+            current: versionGate.current,
+            minimum: versionGate.minimum,
+          }
+        ),
+      });
+      window.dispatchEvent(
+        new CustomEvent('oauth:stale-app', {
+          detail: {
+            current: versionGate.current,
+            minimum: versionGate.minimum,
+            downloadUrl: versionGate.downloadUrl,
+            skillId,
+            integrationId,
+          },
+        })
+      );
       return;
     }
 
