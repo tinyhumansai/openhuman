@@ -597,6 +597,13 @@ export function App() {
   }, [cleanupStream, transcribeBlob]);
 
   const handleMainButton = useCallback(() => {
+    // Always allow stopping an active recording, regardless of config state.
+    if (status === "listening") {
+      logOverlay("main button toggled to stop listening");
+      stopRecording();
+      return;
+    }
+
     if (!voiceCaptureEnabled) {
       setMessage("Turn on voice capture to use the microphone");
       return;
@@ -605,12 +612,6 @@ export function App() {
       setMessage(
         "Speech-to-text is not available. Configure Local AI / voice in the main OpenHuman app.",
       );
-      return;
-    }
-
-    if (status === "listening") {
-      logOverlay("main button toggled to stop listening");
-      stopRecording();
       return;
     }
 
