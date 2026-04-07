@@ -8,10 +8,10 @@ use image::codecs::png::PngEncoder;
 use image::{ImageBuffer, Rgb, RgbImage};
 use tempfile::tempdir;
 
-use super::engine::{AccessibilityEngine, EngineState};
 use super::helpers::{
     generate_suggestions, parse_vision_summary_output, truncate_tail, validate_input_action,
 };
+use super::state::{AccessibilityEngine, EngineState};
 use super::types::{CaptureFrame, InputActionParams, StartSessionParams};
 use crate::openhuman::accessibility::{parse_foreground_output, AppContext};
 use crate::openhuman::config::{Config, ScreenIntelligenceConfig};
