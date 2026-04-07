@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use parking_lot::Mutex;
 use rdev::{listen, Event, EventType, Key};
 use tokio::sync::mpsc;
