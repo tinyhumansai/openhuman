@@ -44,7 +44,7 @@ pub(crate) async fn run(engine: Arc<AccessibilityEngine>) {
         let context = foreground_context();
         let now = now_ms();
         let mut state = engine.inner.lock().await;
-        let baseline_ms = (1000.0 / state.config.baseline_fps.max(0.2)).round() as i64;
+        let baseline_ms = (1000.0_f64 / (state.config.baseline_fps.max(0.2) as f64)).round() as i64;
         let screen_monitoring = state.features.screen_monitoring;
         let config = state.config.clone();
 

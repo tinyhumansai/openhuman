@@ -1,5 +1,4 @@
 use crate::openhuman::config::{Config, ScreenIntelligenceConfig};
-use crate::openhuman::local_ai;
 use once_cell::sync::Lazy;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -10,8 +9,8 @@ use tokio::time::{self, Duration};
 
 use super::capture::now_ms;
 use super::helpers::{
-    generate_suggestions, parse_vision_summary_output, persist_vision_summary,
-    push_ephemeral_frame, push_ephemeral_vision_summary, truncate_tail, validate_input_action,
+    generate_suggestions, push_ephemeral_frame, push_ephemeral_vision_summary, truncate_tail,
+    validate_input_action,
 };
 use super::limits::{MAX_CONTEXT_CHARS, MAX_SUGGESTION_CHARS};
 use super::types::{
@@ -31,36 +30,36 @@ use crate::openhuman::accessibility::{
 };
 
 struct SessionRuntime {
-    started_at_ms: i64,
-    expires_at_ms: i64,
-    ttl_secs: u64,
-    panic_hotkey: String,
-    stop_reason: Option<String>,
-    last_capture_at_ms: Option<i64>,
-    capture_count: u64,
-    frames: VecDeque<CaptureFrame>,
-    last_context: Option<AppContext>,
-    task: Option<JoinHandle<()>>,
-    vision_enabled: bool,
-    vision_state: String,
-    vision_queue_depth: usize,
-    last_vision_at_ms: Option<i64>,
-    last_vision_summary: Option<String>,
-    vision_persist_count: u64,
-    last_vision_persisted_key: Option<String>,
-    last_vision_persist_error: Option<String>,
-    vision_summaries: VecDeque<VisionSummary>,
-    vision_task: Option<JoinHandle<()>>,
-    vision_tx: Option<tokio::sync::mpsc::UnboundedSender<CaptureFrame>>,
+    pub(crate) started_at_ms: i64,
+    pub(crate) expires_at_ms: i64,
+    pub(crate) ttl_secs: u64,
+    pub(crate) panic_hotkey: String,
+    pub(crate) stop_reason: Option<String>,
+    pub(crate) last_capture_at_ms: Option<i64>,
+    pub(crate) capture_count: u64,
+    pub(crate) frames: VecDeque<CaptureFrame>,
+    pub(crate) last_context: Option<AppContext>,
+    pub(crate) task: Option<JoinHandle<()>>,
+    pub(crate) vision_enabled: bool,
+    pub(crate) vision_state: String,
+    pub(crate) vision_queue_depth: usize,
+    pub(crate) last_vision_at_ms: Option<i64>,
+    pub(crate) last_vision_summary: Option<String>,
+    pub(crate) vision_persist_count: u64,
+    pub(crate) last_vision_persisted_key: Option<String>,
+    pub(crate) last_vision_persist_error: Option<String>,
+    pub(crate) vision_summaries: VecDeque<VisionSummary>,
+    pub(crate) vision_task: Option<JoinHandle<()>>,
+    pub(crate) vision_tx: Option<tokio::sync::mpsc::UnboundedSender<CaptureFrame>>,
 }
 
 pub(crate) struct EngineState {
-    config: ScreenIntelligenceConfig,
-    permissions: PermissionStatus,
-    features: AccessibilityFeatures,
-    session: Option<SessionRuntime>,
-    last_error: Option<String>,
-    last_event: Option<String>,
+    pub(crate) config: ScreenIntelligenceConfig,
+    pub(crate) permissions: PermissionStatus,
+    pub(crate) features: AccessibilityFeatures,
+    pub(crate) session: Option<SessionRuntime>,
+    pub(crate) last_error: Option<String>,
+    pub(crate) last_event: Option<String>,
     autocomplete_context: String,
 }
 
@@ -701,7 +700,7 @@ impl AccessibilityEngine {
             });
         };
 
-        let summary = match self.analyze_frame_with_vision(frame).await {
+        let summary = match super::processing_worker::analyze_frame(self, frame).await {
             Ok(summary) => summary,
             Err(err) => {
                 let mut state = self.inner.lock().await;
