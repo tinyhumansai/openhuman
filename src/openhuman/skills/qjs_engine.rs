@@ -31,7 +31,7 @@ pub fn require_engine() -> Result<Arc<RuntimeEngine>, String> {
 }
 
 use crate::openhuman::event_bus::{publish_global, DomainEvent};
-use crate::openhuman::memory::{MemoryClient, MemoryClientRef};
+use crate::openhuman::memory::MemoryClientRef;
 use crate::openhuman::skills::cron_scheduler::CronScheduler;
 use crate::openhuman::skills::manifest::SkillManifest;
 use crate::openhuman::skills::ping_scheduler::PingScheduler;
@@ -81,14 +81,15 @@ impl RuntimeEngine {
         ping_scheduler.set_registry(Arc::clone(&registry));
         let preferences = Arc::new(PreferencesStore::new(&skills_data_dir));
 
-        // Eagerly initialize local memory client for skill persistence.
-        let memory_client = match MemoryClient::new_local() {
+        // Use the process-global memory client singleton so the ingestion
+        // queue worker outlives individual skill instances.
+        let memory_client = match crate::openhuman::memory::global::init_default() {
             Ok(client) => {
-                log::info!("[runtime] Local MemoryClient initialized");
-                Some(Arc::new(client))
+                log::info!("[runtime] Using global MemoryClient for skills");
+                Some(client)
             }
             Err(e) => {
-                log::warn!("[runtime] Failed to create local MemoryClient: {e}");
+                log::warn!("[runtime] Global MemoryClient not available: {e}");
                 None
             }
         };

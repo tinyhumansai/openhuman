@@ -1,7 +1,5 @@
-use crate::openhuman::config::Config;
-use crate::openhuman::memory::{self, NamespaceDocumentInput, UnifiedMemory};
+use crate::openhuman::memory::NamespaceDocumentInput;
 use std::collections::VecDeque;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use super::limits::{MAX_CONTEXT_CHARS, MAX_EPHEMERAL_FRAMES, MAX_EPHEMERAL_VISION_SUMMARIES};
@@ -152,39 +150,16 @@ pub(crate) fn parse_vision_summary_output(frame: CaptureFrame, raw: &str) -> Vis
 pub(crate) async fn persist_vision_summary(
     summary: VisionSummary,
 ) -> Result<PersistVisionSummaryResult, String> {
-    let config = match Config::load_or_init().await {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            let message = format!("config load failed: {err}");
-            tracing::debug!(
-                "[screen_intelligence] vision summary persistence skipped: {}",
-                message
-            );
-            return Err(message);
-        }
-    };
-
-    let embedder = Arc::from(memory::embeddings::create_embedding_provider(
-        &config.memory.embedding_provider,
-        config.api_key.as_deref(),
-        &config.memory.embedding_model,
-        config.memory.embedding_dimensions,
-    ));
-    let mem = match UnifiedMemory::new(
-        &config.workspace_dir,
-        embedder,
-        config.memory.sqlite_open_timeout_secs,
-    ) {
-        Ok(mem) => mem,
-        Err(err) => {
-            let message = format!("memory init failed: {err}");
-            tracing::debug!(
-                "[screen_intelligence] vision summary persistence skipped: {}",
-                message
-            );
-            return Err(message);
-        }
-    };
+    // Use the process-global memory client so the ingestion queue worker
+    // is never dropped between calls.
+    let client = crate::openhuman::memory::global::client().map_err(|err| {
+        let message = format!("memory client not available: {err}");
+        tracing::debug!(
+            "[screen_intelligence] vision summary persistence skipped: {}",
+            message
+        );
+        message
+    })?;
 
     let ts = chrono::DateTime::from_timestamp_millis(summary.captured_at_ms)
         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
@@ -220,7 +195,7 @@ pub(crate) async fn persist_vision_summary(
     }
 
     let key = format!("screen_intelligence_{}", summary.id);
-    mem.upsert_document(NamespaceDocumentInput {
+    let document = NamespaceDocumentInput {
         namespace: VISION_MEMORY_NAMESPACE.to_string(),
         key: key.clone(),
         title,
@@ -232,9 +207,14 @@ pub(crate) async fn persist_vision_summary(
         category: VISION_MEMORY_CATEGORY.to_string(),
         session_id: None,
         document_id: None,
-    })
-    .await
-    .map_err(|err| format!("memory upsert failed: {err}"))?;
+    };
+
+    // put_doc stores the document + chunks immediately, then enqueues
+    // background graph extraction on the global ingestion queue worker.
+    client
+        .put_doc(document)
+        .await
+        .map_err(|err| format!("memory upsert failed: {err}"))?;
 
     tracing::debug!(
         "[screen_intelligence] persisted vision summary into unified memory (namespace={} key={} app={:?} captured_at_ms={})",

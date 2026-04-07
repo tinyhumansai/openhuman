@@ -7,8 +7,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
-
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::store::GraphRelationRecord;
 use crate::openhuman::memory::{
@@ -28,20 +26,8 @@ use chrono::TimeZone;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-static MEMORY_CLIENT_STATE: OnceLock<Mutex<Option<MemoryClientRef>>> = OnceLock::new();
-
-/// Returns the static mutex for the active memory client state.
-fn memory_client_state() -> &'static Mutex<Option<MemoryClientRef>> {
-    MEMORY_CLIENT_STATE.get_or_init(|| Mutex::new(None))
-}
-
-/// Locks the memory client state and returns the guard.
-fn lock_memory_client_state(
-) -> Result<std::sync::MutexGuard<'static, Option<MemoryClientRef>>, String> {
-    memory_client_state()
-        .lock()
-        .map_err(|_| "memory client state lock poisoned".to_string())
-}
+// The global memory client singleton lives in `super::global`.
+// All access goes through `active_memory_client()` below.
 
 /// Generates a unique request ID for memory operations.
 fn memory_request_id() -> String {
@@ -341,14 +327,14 @@ async fn current_workspace_dir() -> Result<PathBuf, String> {
         .map_err(|e| format!("load config: {e}"))
 }
 
-/// Returns the active memory client, initializing it if necessary.
+/// Returns the active memory client from the process-global singleton,
+/// lazily initializing it if necessary.
 async fn active_memory_client() -> Result<MemoryClientRef, String> {
-    if let Some(client) = lock_memory_client_state()?.clone() {
+    if let Some(client) = super::global::client_if_ready() {
         return Ok(client);
     }
-
     let workspace_dir = current_workspace_dir().await?;
-    Ok(Arc::new(MemoryClient::from_workspace_dir(workspace_dir)?))
+    super::global::init(workspace_dir)
 }
 
 /// Validates that a relative path does not escape the memory directory.
@@ -833,12 +819,9 @@ pub async fn memory_init(
 ) -> Result<RpcOutcome<ApiEnvelope<MemoryInitResponse>>, String> {
     let _ = request.jwt_token; // accepted but unused — memory is local-only
     let workspace_dir = current_workspace_dir().await?;
-    let client = Arc::new(MemoryClient::from_workspace_dir(workspace_dir.clone())?);
-    *lock_memory_client_state()? = Some(client);
+    // Initialise (or return existing) global singleton.
+    let _ = super::global::init(workspace_dir.clone())?;
     let memory_dir = workspace_dir.join("memory");
-    tokio::spawn(async {
-        let _ = super::relex::warm_default_bundle().await;
-    });
     Ok(envelope(
         MemoryInitResponse {
             initialized: true,

@@ -16,7 +16,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use crate::openhuman::memory::ingestion::{MemoryIngestionConfig, MemoryIngestionRequest};
-use crate::openhuman::memory::{MemoryClient, NamespaceDocumentInput};
+use crate::openhuman::memory::NamespaceDocumentInput;
 
 /// Entry point for `openhuman memory <subcommand>`.
 pub fn run_memory_command(args: &[String]) -> Result<()> {
@@ -426,11 +426,11 @@ fn read_input(path: &str) -> Result<String> {
     }
 }
 
-async fn create_memory_client() -> Result<MemoryClient> {
+async fn create_memory_client() -> Result<crate::openhuman::memory::MemoryClientRef> {
     let config = crate::openhuman::config::Config::load_or_init()
         .await
         .unwrap_or_default();
-    MemoryClient::from_workspace_dir(config.workspace_dir).map_err(anyhow::Error::msg)
+    crate::openhuman::memory::global::init(config.workspace_dir).map_err(anyhow::Error::msg)
 }
 
 fn print_memory_help() {

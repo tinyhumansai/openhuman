@@ -7,6 +7,7 @@
 
 pub mod chunker;
 pub mod embeddings;
+pub mod global;
 pub mod ingestion;
 pub mod ingestion_queue;
 pub mod ops;
