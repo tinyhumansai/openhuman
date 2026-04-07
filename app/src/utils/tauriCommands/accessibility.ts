@@ -1,7 +1,7 @@
 /**
  * Accessibility and Screen Intelligence commands.
  */
-import { callCoreRpc } from '../services/coreRpcClient';
+import { callCoreRpc } from '../../services/coreRpcClient';
 import { isTauri, CommandResponse } from './common';
 
 export type AccessibilityPermissionState = 'granted' | 'denied' | 'unknown' | 'unsupported';

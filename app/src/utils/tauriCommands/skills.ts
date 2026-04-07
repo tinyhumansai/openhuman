@@ -1,7 +1,7 @@
 /**
  * Skill runtime commands.
  */
-import { callCoreRpc } from '../services/coreRpcClient';
+import { callCoreRpc } from '../../services/coreRpcClient';
 import { isTauri } from './common';
 
 export type IntegrationStatus = 'Available' | 'Active' | 'ComingSoon';

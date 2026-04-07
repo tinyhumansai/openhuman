@@ -1,7 +1,7 @@
 /**
  * Config and settings commands.
  */
-import { callCoreRpc } from '../services/coreRpcClient';
+import { callCoreRpc } from '../../services/coreRpcClient';
 import { isTauri, CommandResponse } from './common';
 
 export interface ConfigSnapshot {
