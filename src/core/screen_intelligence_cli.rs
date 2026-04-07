@@ -42,35 +42,22 @@ pub fn run_screen_intelligence_command(args: &[String]) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 struct CliOpts {
-    port: u16,
     verbose: bool,
     ttl_secs: u64,
     keep: bool,
     limit: usize,
-    auto_start: bool,
 }
 
 fn parse_opts(args: &[String]) -> Result<(CliOpts, Vec<String>)> {
-    let mut port: u16 = 7797;
     let mut verbose = false;
     let mut ttl_secs: u64 = 300;
     let mut keep = false;
     let mut limit: usize = 10;
-    let mut auto_start = false;
     let mut rest = Vec::new();
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
-            "--port" => {
-                let val = args
-                    .get(i + 1)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --port"))?;
-                port = val
-                    .parse()
-                    .map_err(|e| anyhow::anyhow!("invalid --port: {e}"))?;
-                i += 2;
-            }
             "--ttl" => {
                 let val = args
                     .get(i + 1)
@@ -93,10 +80,6 @@ fn parse_opts(args: &[String]) -> Result<(CliOpts, Vec<String>)> {
                 keep = true;
                 i += 1;
             }
-            "--auto-start" => {
-                auto_start = true;
-                i += 1;
-            }
             "-v" | "--verbose" => {
                 verbose = true;
                 i += 1;
@@ -114,12 +97,10 @@ fn parse_opts(args: &[String]) -> Result<(CliOpts, Vec<String>)> {
 
     Ok((
         CliOpts {
-            port,
             verbose,
             ttl_secs,
             keep,
             limit,
-            auto_start,
         },
         rest,
     ))
@@ -158,27 +139,23 @@ async fn bootstrap_engine(
 // Subcommands
 // ---------------------------------------------------------------------------
 
-/// `openhuman screen-intelligence run` — start the standalone dev server.
+/// `openhuman screen-intelligence run` — start the standalone capture + vision loop.
 ///
 /// Delegates to [`crate::openhuman::screen_intelligence::server::run_standalone`],
-/// which boots the engine, optionally auto-starts a session, and serves
-/// JSON-RPC + REST endpoints for debugging the full pipeline.
+/// which boots the engine, starts a capture session, and blocks in a
+/// monitoring loop logging captures and vision summaries until TTL or Ctrl+C.
 fn run_server(args: &[String]) -> Result<()> {
     let (opts, rest) = parse_opts(args)?;
 
     if rest.iter().any(|a| is_help(a)) {
-        println!("Usage: openhuman screen-intelligence run [--port <u16>] [--auto-start] [--ttl <secs>] [-v]");
+        println!("Usage: openhuman screen-intelligence run [--ttl <secs>] [-v]");
         println!();
-        println!("Start a standalone dev server with JSON-RPC + REST endpoints.");
+        println!("Start the screen intelligence capture + vision loop.");
+        println!("Captures screenshots at baseline FPS, sends to vision model,");
+        println!("and logs summaries. Blocks until TTL expires or Ctrl+C.");
         println!();
-        println!("  --port <u16>     Listen port (default: 7797)");
-        println!("  --auto-start     Auto-start a capture session on boot");
-        println!("  --ttl <secs>     Session TTL for auto-start (default: 300)");
+        println!("  --ttl <secs>     Session duration (default: 300)");
         println!("  -v, --verbose    Enable debug logging");
-        println!();
-        println!("REST endpoints:");
-        println!("  GET  /status, /permissions, /session, /vision/recent, /doctor, /config");
-        println!("  POST /session/start, /session/stop, /capture, /capture/test, /vision/flush");
         return Ok(());
     }
 
@@ -194,30 +171,20 @@ fn run_server(args: &[String]) -> Result<()> {
             .map_err(|e| anyhow::anyhow!("config load failed: {e}"))?;
 
         let server_config = crate::openhuman::screen_intelligence::server::SiServerConfig {
-            port: opts.port,
-            auto_start_session: opts.auto_start,
-            session_ttl_secs: opts.ttl_secs,
-            vision_enabled: config.screen_intelligence.vision_enabled,
+            ttl_secs: opts.ttl_secs,
+            log_interval_secs: 5,
         };
 
         eprintln!();
-        eprintln!("  Screen Intelligence dev server");
-        eprintln!("  ─────────────────────────────");
-        eprintln!("  Port:         {}", opts.port);
-        eprintln!("  Auto-start:   {}", opts.auto_start);
-        eprintln!("  Vision:       {}", config.screen_intelligence.vision_enabled);
+        eprintln!("  Screen Intelligence");
+        eprintln!("  ───────────────────");
+        eprintln!("  TTL:              {}s", opts.ttl_secs);
+        eprintln!("  Vision:           {}", config.screen_intelligence.vision_enabled);
+        eprintln!("  Vision model:     {}", config.local_ai.vision_model_id);
+        eprintln!("  FPS:              {}", config.screen_intelligence.baseline_fps);
+        eprintln!("  Keep screenshots: {}", config.screen_intelligence.keep_screenshots);
         eprintln!();
-        eprintln!("  Core:");
-        eprintln!("    POST http://127.0.0.1:{}/rpc            JSON-RPC 2.0", opts.port);
-        eprintln!("    GET  http://127.0.0.1:{}/health         Health check", opts.port);
-        eprintln!();
-        eprintln!("  REST:");
-        eprintln!("    GET  /status, /permissions, /session, /doctor, /config");
-        eprintln!("    GET  /vision/recent?limit=10");
-        eprintln!("    POST /session/start, /session/stop");
-        eprintln!("    POST /capture, /capture/test, /vision/flush");
-        eprintln!();
-        eprintln!("  Press Ctrl+C to stop.");
+        eprintln!("  Capturing → Vision → Log. Press Ctrl+C to stop.");
         eprintln!();
 
         crate::openhuman::screen_intelligence::server::run_standalone(config, server_config)
@@ -653,7 +620,7 @@ fn print_help() {
     println!("Boots only the screen intelligence engine (accessibility capture + local-AI");
     println!("vision) without the full desktop app, Socket.IO, or skills runtime.\n");
     println!("Usage:");
-    println!("  openhuman screen-intelligence run       [--port <u16>] [--auto-start] [-v]");
+    println!("  openhuman screen-intelligence run       [--ttl <secs>] [-v]");
     println!("  openhuman screen-intelligence status     [-v]");
     println!("  openhuman screen-intelligence capture    [--keep] [-v]");
     println!("  openhuman screen-intelligence start      [--ttl <secs>] [-v]");
@@ -662,7 +629,7 @@ fn print_help() {
     println!("  openhuman screen-intelligence vision     [--limit <n>] [-v]");
     println!();
     println!("Subcommands:");
-    println!("  run       Start a dev server with JSON-RPC + REST endpoints");
+    println!("  run       Start the capture → vision → log loop (blocks until TTL/Ctrl+C)");
     println!("  status    Print current engine status (permissions, session, config)");
     println!("  capture   Take a single screenshot and print diagnostics");
     println!("  start     Start a capture + vision session (runs until TTL or Ctrl+C)");
@@ -671,14 +638,8 @@ fn print_help() {
     println!("  vision    Print recent vision summaries from the active session");
     println!();
     println!("Common options:");
-    println!("  --port <u16>     Server port for 'run' (default: 7797)");
-    println!("  --auto-start     Auto-start capture session on server boot");
     println!("  --ttl <secs>     Session TTL (default: 300)");
     println!("  --limit <n>      Max vision summaries for 'vision' (default: 10)");
     println!("  --keep           Save screenshot to disk (for 'capture')");
     println!("  -v, --verbose    Enable debug logging");
-    println!();
-    println!("The 'run' server exposes REST endpoints alongside JSON-RPC:");
-    println!("  GET  /status, /permissions, /session, /vision/recent, /doctor, /config");
-    println!("  POST /session/start, /session/stop, /capture, /capture/test, /vision/flush");
 }
