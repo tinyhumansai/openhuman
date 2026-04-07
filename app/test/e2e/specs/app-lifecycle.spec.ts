@@ -32,7 +32,6 @@
  *   - macOS: `yarn tauri build --debug --bundles app,dmg` → .app + .dmg in target/debug/bundle/
  *   - App must be built with VITE_BACKEND_URL=http://127.0.0.1:18473 (mock server).
  */
-
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -120,11 +119,7 @@ function safeExec(cmd: string): { stdout: string; stderr: string; success: boole
     const stdout = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
     return { stdout: stdout.trim(), stderr: '', success: true };
   } catch (err: any) {
-    return {
-      stdout: (err.stdout || '').trim(),
-      stderr: (err.stderr || '').trim(),
-      success: false,
-    };
+    return { stdout: (err.stdout || '').trim(), stderr: (err.stderr || '').trim(), success: false };
   }
 }
 
@@ -284,9 +279,7 @@ describe('0.1 Application Download', () => {
       }
 
       // Snapshot current auth state so we can restore it after the test
-      const priorAuth = await browser.execute(
-        () => localStorage.getItem('persist:auth') ?? null
-      );
+      const priorAuth = await browser.execute(() => localStorage.getItem('persist:auth') ?? null);
 
       try {
         // Write intentionally malformed data simulating a corrupted installer payload
@@ -306,9 +299,7 @@ describe('0.1 Application Download', () => {
         expect(appAlive).toBe(true);
 
         // Verify corrupted auth was cleared / reset rather than retained
-        const authAfter = await browser.execute(
-          () => localStorage.getItem('persist:auth') ?? null
-        );
+        const authAfter = await browser.execute(() => localStorage.getItem('persist:auth') ?? null);
         console.log(
           '[AppLifecycle][0.1.3] Auth after reload:',
           authAfter ? authAfter.slice(0, 100) : '(null)'
@@ -489,9 +480,7 @@ describe('0.2 Installation & Launch', () => {
 
       // spctl will reject unsigned/ad-hoc binaries — log result without failing the test,
       // since debug builds are not notarized. This test records Gatekeeper disposition.
-      const { stdout, stderr, success } = safeExec(
-        `spctl -a -vvv -t exec "${appPath}" 2>&1`
-      );
+      const { stdout, stderr, success } = safeExec(`spctl -a -vvv -t exec "${appPath}" 2>&1`);
       console.log(
         `[AppLifecycle][0.2.2] spctl: success=${success} output=${(stdout + stderr).slice(0, 400)}`
       );
@@ -535,9 +524,7 @@ describe('0.2 Installation & Launch', () => {
       const appPath = resolveAppArtifact();
       if (!appPath) return;
 
-      const { stdout, stderr } = safeExec(
-        `codesign -d --entitlements :- "${appPath}" 2>&1`
-      );
+      const { stdout, stderr } = safeExec(`codesign -d --entitlements :- "${appPath}" 2>&1`);
       const combined = stdout + stderr;
       console.log(
         `[AppLifecycle][0.2.3] codesign entitlements output (first 400 chars): ${combined.slice(0, 400)}`
@@ -608,10 +595,10 @@ describe('0.2 Installation & Launch', () => {
       // We verify the permissions-related text exists somewhere in the onboarding DOM,
       // OR that the app has already passed this step (home is visible).
       const permissionsIndicators = [
-        'Screen',           // ScreenPermissionsStep heading
-        'Permission',       // generic permissions text
+        'Screen', // ScreenPermissionsStep heading
+        'Permission', // generic permissions text
         'Continue Without', // "Continue Without Permission" CTA
-        'Accessibility',    // accessibility permission request
+        'Accessibility', // accessibility permission request
         // Post-onboarding indicators (user has already passed the permissions step)
         'Home',
         'Skills',
@@ -758,9 +745,7 @@ describe('0.3 Updates & Reinstallation', () => {
 
       // The app's updater is active:false so it won't call this automatically.
       // We verify the mock server itself can serve a properly shaped response.
-      const resp = await fetch(
-        'http://127.0.0.1:18473/__admin/health'
-      ).catch(() => null);
+      const resp = await fetch('http://127.0.0.1:18473/__admin/health').catch(() => null);
       console.log(`[AppLifecycle][0.3.1] Mock server health: ${resp?.status ?? 'unreachable'}`);
       // Mock server is running if this test suite reached here
       expect(resp).not.toBeNull();
@@ -821,7 +806,9 @@ describe('0.3 Updates & Reinstallation', () => {
         return (window as any).__APP_VERSION__ ?? null;
       });
 
-      console.log(`[AppLifecycle][0.3.2] Detected app version in DOM: ${versionInfo ?? '(not exposed — normal for production builds)'}`);
+      console.log(
+        `[AppLifecycle][0.3.2] Detected app version in DOM: ${versionInfo ?? '(not exposed — normal for production builds)'}`
+      );
       // Not exposing version in DOM is acceptable; the test passes as long as the app is alive.
       expect(await hasAppChrome()).toBe(true);
     });
@@ -871,9 +858,7 @@ describe('0.3 Updates & Reinstallation', () => {
     it('redux-persist auth state is restored after reload', async () => {
       if (!isTauriDriver()) return;
 
-      const authBefore = await browser.execute(
-        () => localStorage.getItem('persist:auth') ?? null
-      );
+      const authBefore = await browser.execute(() => localStorage.getItem('persist:auth') ?? null);
       console.log(
         `[AppLifecycle][0.3.3] Auth before reload: ${authBefore ? authBefore.slice(0, 80) + '…' : '(null)'}`
       );
@@ -882,9 +867,7 @@ describe('0.3 Updates & Reinstallation', () => {
       await browser.pause(3_000);
       await waitForAppReady(20_000);
 
-      const authAfter = await browser.execute(
-        () => localStorage.getItem('persist:auth') ?? null
-      );
+      const authAfter = await browser.execute(() => localStorage.getItem('persist:auth') ?? null);
       console.log(
         `[AppLifecycle][0.3.3] Auth after reload: ${authAfter ? authAfter.slice(0, 80) + '…' : '(null)'}`
       );
@@ -904,7 +887,9 @@ describe('0.3 Updates & Reinstallation', () => {
       // Data directory is created on first launch; the app has been running, so it should exist.
       // Non-fatal if it doesn't — some Tauri sandboxing configurations may differ.
       if (!exists) {
-        console.log('[AppLifecycle][0.3.3] Data dir not yet created (first-run or sandboxed build)');
+        console.log(
+          '[AppLifecycle][0.3.3] Data dir not yet created (first-run or sandboxed build)'
+        );
       }
     });
   });
@@ -963,9 +948,7 @@ describe('0.3 Updates & Reinstallation', () => {
         'com.openhuman.app.plist'
       );
       const exists = fs.existsSync(launchAgentPath);
-      console.log(
-        `[AppLifecycle][0.3.4] LaunchAgent plist: ${launchAgentPath} — exists=${exists}`
-      );
+      console.log(`[AppLifecycle][0.3.4] LaunchAgent plist: ${launchAgentPath} — exists=${exists}`);
       // LaunchAgent only exists if autostart was enabled by the user — non-fatal absence.
     });
 
@@ -983,12 +966,7 @@ describe('0.3 Updates & Reinstallation', () => {
     it('macOS: WebKit cache directory is identifiable for removal', function () {
       if (process.platform !== 'darwin') return;
 
-      const webkitCache = path.join(
-        os.homedir(),
-        'Library',
-        'WebKit',
-        'com.openhuman.app'
-      );
+      const webkitCache = path.join(os.homedir(), 'Library', 'WebKit', 'com.openhuman.app');
       const exists = fs.existsSync(webkitCache);
       console.log(`[AppLifecycle][0.3.4] WebKit cache: ${webkitCache} — exists=${exists}`);
       // Cache may not exist if no web content has been loaded yet — informational.
