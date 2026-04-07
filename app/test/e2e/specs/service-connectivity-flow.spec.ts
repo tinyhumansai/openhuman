@@ -74,6 +74,12 @@ describe('Service connectivity flow (UI ↔ Rust service)', () => {
       this.skip();
     }
 
+    // The current app tree ships a no-op ServiceBlockingGate component, so the
+    // blocking gate UI that this spec validates is not rendered on any platform.
+    // Skip until the gate UX is reintroduced.
+    stepLog('Skipping suite: ServiceBlockingGate is currently a no-op in app/src');
+    this.skip();
+
     stepLog('Starting suite with service mock mode enabled', {
       openhumanServiceMock: process.env.OPENHUMAN_SERVICE_MOCK,
       mockStateFile,

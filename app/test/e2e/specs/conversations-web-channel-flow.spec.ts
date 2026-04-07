@@ -9,6 +9,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { isMac2 } from '../helpers/platform';
 import {
   completeOnboardingIfVisible,
   navigateToConversations,
@@ -56,6 +57,13 @@ suiteRunner('Conversations web channel flow', () => {
   });
 
   it('sends UI message through agent loop and renders response', async () => {
+    if (isMac2()) {
+      console.log(
+        '[ConversationsE2E] Skipping on Mac2: composing and submitting chat input requires WebView execute, which Appium WKWebView does not support'
+      );
+      return;
+    }
+
     stepLog('trigger deep link');
     await triggerAuthDeepLinkBypass('e2e-conversations-token');
     stepLog('wait for window');

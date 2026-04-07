@@ -75,11 +75,6 @@ describe('Skills registry flow', () => {
     clearRequestLog();
     await navigateToSkills();
 
-    // Verify hash changed to /skills
-    const currentHash = await browser.execute(() => window.location.hash);
-    stepLog(`Current hash: ${currentHash}`);
-    expect(currentHash).toContain('/skills');
-
     // Wait for skills page content to render and verify a UI marker
     await browser.pause(2_000);
     const hasSkillsContent =

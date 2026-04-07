@@ -31,6 +31,8 @@
  * The mock server runs on http://127.0.0.1:18473 and the .app bundle must
  * have been built with VITE_BACKEND_URL pointing there.
  */
+import { execSync } from 'child_process';
+
 import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
 import { buildBypassJwt, triggerAuthDeepLink, triggerDeepLink } from '../helpers/deep-link-helpers';
 import {
@@ -41,6 +43,7 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
+import { isTauriDriver } from '../helpers/platform';
 import {
   clearRequestLog,
   getRequestLog,
@@ -432,11 +435,35 @@ describe('Login flow — complete with mock data (Linux)', () => {
     // Clear auth state so we start unauthenticated — prevents stale session
     clearRequestLog();
     resetMockBehavior();
-    await browser.execute(() => {
-      localStorage.removeItem('persist:auth');
-      window.location.hash = '/';
-    });
-    await browser.pause(2_000);
+
+    if (isTauriDriver()) {
+      // tauri-driver (Linux/Windows): clear localStorage directly via JS
+      await browser.execute(() => {
+        localStorage.removeItem('persist:auth');
+        window.location.hash = '/';
+      });
+      await browser.pause(2_000);
+    } else {
+      // Appium Mac2 (macOS): browser.execute() is not supported for DOM access.
+      // Terminate the app, wipe WebKit storage, and relaunch for a clean slate.
+      try {
+        await browser.execute('macos: terminateApp', { bundleId: 'com.openhuman.app' });
+      } catch {
+        // ignore if already stopped
+      }
+      await browser.pause(500);
+      try {
+        execSync(
+          'rm -rf "$HOME/Library/WebKit/com.openhuman.app" "$HOME/Library/Caches/com.openhuman.app" "$HOME/Library/Application Support/com.openhuman.app"',
+          { shell: '/bin/bash' }
+        );
+      } catch {
+        // best-effort cleanup
+      }
+      await browser.execute('macos: launchApp', { bundleId: 'com.openhuman.app' });
+      await waitForAppReady(20_000);
+      console.log('[LoginFlow] Bypass auth: app relaunched fresh (macOS)');
+    }
 
     const bypassJwt = buildBypassJwt('e2e-bypass-user');
 
@@ -464,18 +491,28 @@ describe('Login flow — complete with mock data (Linux)', () => {
     console.log(`[LoginFlow] Bypass auth: home reached with "${foundHome}"`);
 
     // Assert Redux token was persisted in localStorage
-    const tokenSet = await browser.execute(() => {
-      const persisted = localStorage.getItem('persist:auth');
-      if (!persisted) return false;
-      try {
-        const parsed = JSON.parse(persisted);
-        const token = typeof parsed.token === 'string' ? parsed.token.replace(/^"|"$/g, '') : null;
-        return !!token && token !== 'null';
-      } catch {
-        return false;
-      }
-    });
-    expect(tokenSet).toBe(true);
-    console.log('[LoginFlow] Bypass auth: Redux token present in localStorage');
+    // On Mac2 (Appium), browser.execute() is not available for DOM reads.
+    // The successful navigation to home is sufficient evidence that the token
+    // was set — skip the explicit localStorage check on that platform.
+    if (isTauriDriver()) {
+      const tokenSet = await browser.execute(() => {
+        const persisted = localStorage.getItem('persist:auth');
+        if (!persisted) return false;
+        try {
+          const parsed = JSON.parse(persisted);
+          const token =
+            typeof parsed.token === 'string' ? parsed.token.replace(/^"|"$/g, '') : null;
+          return !!token && token !== 'null';
+        } catch {
+          return false;
+        }
+      });
+      expect(tokenSet).toBe(true);
+      console.log('[LoginFlow] Bypass auth: Redux token present in localStorage');
+    } else {
+      console.log(
+        '[LoginFlow] Bypass auth: localStorage check skipped on macOS (Appium Mac2 does not support execute/sync)'
+      );
+    }
   });
 });

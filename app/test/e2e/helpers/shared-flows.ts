@@ -9,6 +9,7 @@
 import { waitForAppReady, waitForAuthBootstrap } from './app-helpers';
 import { triggerAuthDeepLink } from './deep-link-helpers';
 import {
+  clickNativeButton,
   clickText,
   dumpAccessibilityTree,
   textExists,
@@ -72,6 +73,24 @@ export async function clickFirstMatch(candidates, timeout = 5_000) {
   return null;
 }
 
+async function clickFirstButtonOrText(candidates, timeout = 10_000) {
+  for (const text of candidates) {
+    try {
+      await clickNativeButton(text, timeout);
+      return text;
+    } catch {
+      // Fall through to generic text click; some WebView nodes are not exposed as buttons.
+    }
+
+    if (await textExists(text)) {
+      await clickText(text, timeout);
+      return text;
+    }
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Navigation helpers (JS hash-based — icon-only sidebar buttons)
 // ---------------------------------------------------------------------------
@@ -105,9 +124,18 @@ export async function navigateViaHash(hash) {
   // Appium Mac2 — Settings → Billing (nested route)
   if (normalized === '/settings/billing') {
     try {
-      await clickText('Settings', 12_000);
+      await clickNativeButton('Settings', 12_000);
       await browser.pause(1_500);
-      const sub = await clickFirstMatch(['Billing & Usage', 'Billing'], 12_000);
+      let sub = await clickFirstButtonOrText(['Billing & Usage', 'Billing'], 4_000);
+      if (!sub) {
+        const section = await clickFirstButtonOrText(['Account & Security', 'Account'], 12_000);
+        console.log(`[E2E] Mac2 billing navigation: account section ${section}`);
+        if (!section) {
+          throw new Error('Mac2: could not find Account & Security after opening Settings');
+        }
+        await browser.pause(1_500);
+        sub = await clickFirstButtonOrText(['Billing & Usage', 'Billing'], 12_000);
+      }
       if (!sub) {
         throw new Error('Mac2: could not find Billing / Billing & Usage after opening Settings');
       }
@@ -123,7 +151,7 @@ export async function navigateViaHash(hash) {
   const label = HASH_TO_SIDEBAR_LABEL[normalized];
   if (label) {
     try {
-      await clickText(label, 12_000);
+      await clickFirstButtonOrText([label], 12_000);
       await browser.pause(2_000);
       console.log(`[E2E] Mac2 sidebar navigation to ${hash} via "${label}"`);
     } catch (err) {
@@ -151,7 +179,7 @@ export async function navigateToHome() {
       }
     } else {
       try {
-        await clickText('Home', 8_000);
+        await clickFirstButtonOrText(['Home'], 8_000);
       } catch {
         /* ignore */
       }
@@ -210,7 +238,7 @@ export async function navigateToBilling() {
     });
     console.log(`[E2E] Billing fallback: ${clicked}`);
   } else {
-    const sub = await clickFirstMatch(['Billing & Usage', 'Billing'], 10_000);
+    const sub = await clickFirstButtonOrText(['Billing & Usage', 'Billing'], 10_000);
     console.log(`[E2E] Billing fallback (Mac2): clicked ${sub}`);
   }
   await browser.pause(3_000);
@@ -369,62 +397,23 @@ export async function waitForLoggedOutState(timeout = 10_000): Promise<string | 
 export async function logoutViaSettings(logPrefix = '[E2E]') {
   await navigateToSettings();
 
-  const loggedOut = await browser.execute(() => {
-    const candidates = ['Log out', 'Logout', 'Sign out'];
-    const allElements = document.querySelectorAll('*');
-    for (const label of candidates) {
-      for (const el of allElements) {
-        const text = el.textContent?.trim() || '';
-        if (text !== label) continue;
-        const clickable = el.closest(
-          'button, [role="button"], a, [class*="MenuItem"]'
-        ) as HTMLElement | null;
-        if (clickable) {
-          clickable.click();
-          return label;
-        }
-        (el as HTMLElement).click();
-        return label;
-      }
-    }
-    return null;
-  });
-
-  if (!loggedOut) {
-    const clicked = await clickFirstMatch(['Log out', 'Logout', 'Sign out'], 10_000);
-    if (!clicked) {
-      const tree = await dumpAccessibilityTree();
-      console.log(`${logPrefix} Logout button not found. Tree:\n`, tree.slice(0, 4000));
-      throw new Error('Could not find logout button in Settings');
-    }
-    console.log(`${logPrefix} Logout clicked via text helper: "${clicked}"`);
-  } else {
-    console.log(`${logPrefix} Logout clicked: "${loggedOut}"`);
+  const clicked = await clickFirstButtonOrText(['Log out', 'Logout', 'Sign out'], 10_000);
+  if (!clicked) {
+    const tree = await dumpAccessibilityTree();
+    console.log(`${logPrefix} Logout button not found. Tree:\n`, tree.slice(0, 4000));
+    throw new Error('Could not find logout button in Settings');
   }
+  console.log(`${logPrefix} Logout clicked: "${clicked}"`);
 
   await browser.pause(2_000);
 
-  const hasConfirm =
-    (await textExists('Confirm')) || (await textExists('Yes')) || (await textExists('Log Out'));
+  const hasConfirm = (await textExists('Confirm')) || (await textExists('Yes'));
   if (hasConfirm) {
-    const confirmed = await browser.execute(() => {
-      const candidates = document.querySelectorAll('button, [role="button"], a');
-      for (const el of candidates) {
-        const text = el.textContent?.trim() || '';
-        const label = el.getAttribute('aria-label') || '';
-        if (
-          ['Confirm', 'Yes', 'Log Out'].some(candidate => text === candidate || label === candidate)
-        ) {
-          (el as HTMLElement).click();
-          return true;
-        }
-      }
-      return false;
-    });
+    const confirmed = await clickFirstButtonOrText(['Confirm', 'Yes'], 10_000);
     if (!confirmed) {
       throw new Error('Logout confirmation dialog appeared but confirm button was not clickable');
     }
-    console.log(`${logPrefix} Logout confirmation accepted`);
+    console.log(`${logPrefix} Logout confirmation accepted via "${confirmed}"`);
   }
 
   const loggedOutMarker = await waitForLoggedOutState(10_000);

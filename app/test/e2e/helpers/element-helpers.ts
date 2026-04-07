@@ -26,11 +26,13 @@ import { isTauriDriver } from './platform';
 // ---------------------------------------------------------------------------
 
 function xpathStringLiteral(text: string): string {
-  if (!text.includes('"')) return `"${text}"`;
-  if (!text.includes("'")) return `'${text}'`;
+  const escaped = text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+
+  if (!escaped.includes('"')) return `"${escaped}"`;
+  if (!escaped.includes("'")) return `'${escaped}'`;
   const parts: string[] = [];
   let current = '';
-  for (const ch of text) {
+  for (const ch of escaped) {
     if (ch === '"') {
       if (current) parts.push(`"${current}"`);
       parts.push("'\"'");
@@ -157,7 +159,9 @@ export async function waitForButton(
     const literal = xpathStringLiteral(text);
     const btnXpath =
       `//button[contains(text(),${literal})] | ` +
+      `//button[.//*[contains(text(),${literal})]] | ` +
       `//*[@role='button'][contains(text(),${literal})] | ` +
+      `//*[@role='button'][.//*[contains(text(),${literal})]] | ` +
       `//a[contains(text(),${literal})]`;
     const el = await browser.$(btnXpath);
     try {
