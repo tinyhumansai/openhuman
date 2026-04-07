@@ -39,10 +39,14 @@ interface JsonRpcResponse<T> {
   error?: JsonRpcError;
 }
 
+/** Default timeout for parent core RPC requests (ms). */
+const DEFAULT_RPC_TIMEOUT_MS = 10_000;
+
 export async function callParentCoreRpc<T>(
   rpcUrl: string,
   method: string,
   params: Record<string, unknown> = {},
+  timeoutMs: number = DEFAULT_RPC_TIMEOUT_MS,
 ): Promise<T> {
   const normalizedMethod = normalizeLegacyMethod(method);
   const payload = {
@@ -52,11 +56,26 @@ export async function callParentCoreRpc<T>(
     params,
   };
 
-  const response = await fetch(rpcUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Core RPC request timed out after ${timeoutMs}ms (method: ${normalizedMethod})`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!response.ok) {
     const text = await response.text();
