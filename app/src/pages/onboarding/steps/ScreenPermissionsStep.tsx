@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   fetchAccessibilityStatus,
@@ -17,6 +17,7 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
   const dispatch = useAppDispatch();
   const { status, isLoading, isRequestingPermissions, isRestartingCore, lastError } =
     useAppSelector(state => state.accessibility);
+  const [shouldAutoRefreshOnReturn, setShouldAutoRefreshOnReturn] = useState(false);
 
   useEffect(() => {
     void dispatch(fetchAccessibilityStatus());
@@ -24,6 +25,40 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
 
   const accessibilityPermission = status?.permissions.accessibility ?? 'unknown';
   const isGranted = accessibilityPermission === 'granted';
+
+  useEffect(() => {
+    if (!shouldAutoRefreshOnReturn) {
+      return;
+    }
+
+    const refreshAfterReturn = () => {
+      if (document.visibilityState !== 'visible' || isLoading || isRestartingCore || isGranted) {
+        return;
+      }
+
+      setShouldAutoRefreshOnReturn(false);
+      void dispatch(refreshPermissionsWithRestart());
+    };
+
+    window.addEventListener('focus', refreshAfterReturn);
+    document.addEventListener('visibilitychange', refreshAfterReturn);
+
+    return () => {
+      window.removeEventListener('focus', refreshAfterReturn);
+      document.removeEventListener('visibilitychange', refreshAfterReturn);
+    };
+  }, [dispatch, isGranted, isLoading, isRestartingCore, shouldAutoRefreshOnReturn]);
+
+  useEffect(() => {
+    if (isGranted && shouldAutoRefreshOnReturn) {
+      setShouldAutoRefreshOnReturn(false);
+    }
+  }, [isGranted, shouldAutoRefreshOnReturn]);
+
+  const handleRequestPermissions = () => {
+    setShouldAutoRefreshOnReturn(true);
+    void dispatch(requestAccessibilityPermission('accessibility'));
+  };
 
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
@@ -67,7 +102,7 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
         <div className="space-y-2 mb-3">
           <button
             type="button"
-            onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
+            onClick={handleRequestPermissions}
             disabled={isRequestingPermissions || isLoading}
             className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
             {isRequestingPermissions ? 'Requesting...' : 'Request Permissions'}
@@ -81,6 +116,9 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
           </button>
           {(lastError || status?.permission_check_process_path) && (
             <div className="text-xs text-stone-400 text-center px-2 space-y-1">
+              {shouldAutoRefreshOnReturn ? (
+                <p>After granting access in System Settings, return here and OpenHuman will refresh automatically.</p>
+              ) : null}
               {lastError ? <p className="text-coral-400">{lastError}</p> : null}
               {status?.permission_check_process_path ? (
                 <p className="font-mono break-all text-stone-500">
