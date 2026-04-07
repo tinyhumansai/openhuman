@@ -11,7 +11,7 @@ FIXTURES="./tests/fixtures/subconscious"
 if [ ! -f "$CORE_BIN" ]; then echo "ERROR: Core binary not found"; exit 1; fi
 
 # Check Ollama
-if ! curl -s --max-time 3 http://127.0.0.1:11434/ >/dev/null 2>&1; then
+if ! curl -s --max-time 3 http://localhost:11434/ >/dev/null 2>&1; then
   echo "ERROR: Ollama not running. Start with: ollama serve"
   exit 1
 fi

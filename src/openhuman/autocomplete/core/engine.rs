@@ -9,7 +9,7 @@ use tokio::time::{self, Duration, Instant};
 
 use super::focus::{
     apply_text_to_focused_field, focused_text_context_verbose, is_escape_key_down, is_tab_key_down,
-    validate_focused_target,
+    send_backspace, validate_focused_target,
 };
 use super::overlay::{overlay_helper_quit, show_overflow_badge};
 use super::terminal::{
@@ -158,13 +158,15 @@ impl AutocompleteEngine {
                             state.target_role.clone(),
                         )
                     };
-                    let refresh_result = time::timeout(
-                        Duration::from_secs(REFRESH_TIMEOUT_SECS),
-                        engine.refresh(None),
-                    )
-                    .await;
+                    let mut refresh_task = tokio::spawn({
+                        let engine = engine.clone();
+                        async move { engine.refresh(None).await }
+                    });
+                    let refresh_result =
+                        time::timeout(Duration::from_secs(REFRESH_TIMEOUT_SECS), &mut refresh_task)
+                            .await;
                     match refresh_result {
-                        Ok(Err(err)) => {
+                        Ok(Ok(Err(err))) => {
                             let error_message = {
                                 let mut state = engine.inner.lock().await;
                                 state.phase = "error".to_string();
@@ -194,14 +196,25 @@ impl AutocompleteEngine {
                                 }
                             }
                         }
-                        Ok(Ok(())) => {
+                        Ok(Ok(Ok(()))) => {
                             let mut state = engine.inner.lock().await;
                             if state.phase == "error" {
                                 state.phase = "idle".to_string();
                             }
                             state.last_error = None;
                         }
+                        Ok(Err(join_err)) => {
+                            log::error!(
+                                "[autocomplete] refresh task crashed; keeping loop alive: {}",
+                                join_err
+                            );
+                            let mut state = engine.inner.lock().await;
+                            state.phase = "error".to_string();
+                            state.last_error = Some(format!("refresh task crashed: {join_err}"));
+                            state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                        }
                         Err(_elapsed) => {
+                            refresh_task.abort();
                             log::warn!(
                                 "[autocomplete] refresh timed out after {}s, skipping",
                                 REFRESH_TIMEOUT_SECS
@@ -267,7 +280,16 @@ impl AutocompleteEngine {
         let context_override = params
             .and_then(|p| p.context)
             .filter(|c| !c.trim().is_empty());
-        self.refresh(context_override).await?;
+        if let Err(err) = self.refresh(context_override).await {
+            // `current()` can be called independently from the background loop
+            // (for example from the in-app composer polling path). Ensure an
+            // inference failure here cannot leave phase stuck at "generating".
+            let mut state = self.inner.lock().await;
+            state.phase = "error".to_string();
+            state.last_error = Some(err.clone());
+            state.updated_at_ms = Some(Utc::now().timestamp_millis());
+            return Err(err);
+        }
         let state = self.inner.lock().await;
         Ok(AutocompleteCurrentResult {
             app_name: state.app_name.clone(),
@@ -572,7 +594,30 @@ impl AutocompleteEngine {
 
         {
             let mut state = self.inner.lock().await;
+            if state.phase == "generating" {
+                let now_ms = Utc::now().timestamp_millis();
+                let generating_age_ms = state
+                    .updated_at_ms
+                    .map(|ts| now_ms.saturating_sub(ts))
+                    .unwrap_or(0);
+                // Self-heal stale generating state so inference cannot freeze.
+                if generating_age_ms > 12_000 {
+                    log::warn!(
+                        "[autocomplete] detected stale generating phase (age={}ms); resetting to continue inference",
+                        generating_age_ms
+                    );
+                    state.phase = "idle".to_string();
+                } else {
+                    log::debug!(
+                        "[autocomplete] skipping refresh while generation is in-flight (context_chars={}, age={}ms)",
+                        context.chars().count(),
+                        generating_age_ms
+                    );
+                    return Ok(());
+                }
+            }
             state.phase = "generating".to_string();
+            state.updated_at_ms = Some(Utc::now().timestamp_millis());
         }
         let service = local_ai::global(&config);
 
@@ -581,10 +626,28 @@ impl AutocompleteEngine {
         //  2. Most recent past completions (KV recency signal / fallback)
         //  3. Static user-configured examples
         // Deduplicated and capped at 8 total.
-        let relevant_examples =
-            crate::openhuman::autocomplete::history::query_relevant_examples(&context, 4).await;
-        let recent_examples =
-            crate::openhuman::autocomplete::history::load_recent_examples(4).await;
+        let (relevant_examples, recent_examples) = if is_in_app {
+            // Keep in-app typing latency low by skipping local memory queries.
+            (Vec::new(), Vec::new())
+        } else {
+            let relevant_future =
+                crate::openhuman::autocomplete::history::query_relevant_examples(&context, 4);
+            let recent_future = crate::openhuman::autocomplete::history::load_recent_examples(4);
+            let (relevant_result, recent_result) = tokio::join!(
+                time::timeout(Duration::from_millis(35), relevant_future),
+                time::timeout(Duration::from_millis(35), recent_future)
+            );
+            (
+                relevant_result.unwrap_or_else(|_| {
+                    log::debug!("[autocomplete] skipped semantic history examples due to timeout");
+                    Vec::new()
+                }),
+                recent_result.unwrap_or_else(|_| {
+                    log::debug!("[autocomplete] skipped recent history examples due to timeout");
+                    Vec::new()
+                }),
+            )
+        };
         let static_examples = config.autocomplete.style_examples.clone();
 
         let merged_examples: Vec<String> = {
@@ -605,16 +668,26 @@ impl AutocompleteEngine {
             v
         };
 
-        let generated = service
+        let generated = match service
             .inline_complete(
                 &config,
                 &context,
                 &config.autocomplete.style_preset,
                 config.autocomplete.style_instructions.as_deref(),
                 &merged_examples,
-                Some(36),
+                Some(24),
             )
-            .await?;
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                let mut state = self.inner.lock().await;
+                state.phase = "error".to_string();
+                state.last_error = Some(err.clone());
+                state.updated_at_ms = Some(Utc::now().timestamp_millis());
+                return Err(err);
+            }
+        };
 
         let suggestion = sanitize_suggestion(&generated);
         let app_name = focused.app_name.clone();
@@ -690,11 +763,14 @@ impl AutocompleteEngine {
             if !edge {
                 None
             } else {
-                state.suggestion.as_ref().map(|s| s.value.clone())
+                state
+                    .suggestion
+                    .as_ref()
+                    .map(|s| (s.value.clone(), state.context.clone()))
             }
         };
 
-        if let Some(suggestion) = pending {
+        if let Some((suggestion, expected_context)) = pending {
             let cleaned = sanitize_suggestion(&suggestion);
             if !cleaned.is_empty() {
                 // Validate the focused element still matches before inserting.
@@ -721,6 +797,7 @@ impl AutocompleteEngine {
                     let mut state = self.inner.lock().await;
                     state.phase = "accepting".to_string();
                 }
+                self.cleanup_tab_side_effect(&expected_context).await;
                 apply_text_to_focused_field(&cleaned)?;
                 {
                     let mut state = self.inner.lock().await;
@@ -781,6 +858,50 @@ impl AutocompleteEngine {
         Ok(())
     }
 
+    async fn cleanup_tab_side_effect(&self, expected_context: &str) {
+        if expected_context.trim().is_empty() {
+            return;
+        }
+
+        let focused = match focused_text_context_verbose() {
+            Ok(value) => value,
+            Err(err) => {
+                log::debug!(
+                    "[autocomplete] tab cleanup skipped: unable to read focused context: {err}"
+                );
+                return;
+            }
+        };
+
+        if focused.raw_error.is_some() {
+            return;
+        }
+
+        let current_context = if is_terminal_app(focused.app_name.as_deref())
+            || looks_like_terminal_buffer(&focused.text)
+        {
+            extract_terminal_input_context(&focused.text)
+        } else {
+            focused.text
+        };
+
+        let cleanup_count = detect_tab_artifact_suffix(expected_context, &current_context);
+        if cleanup_count == 0 {
+            return;
+        }
+
+        match send_backspace(cleanup_count) {
+            Ok(()) => log::debug!(
+                "[autocomplete] tab cleanup removed {cleanup_count} trailing tab-indentation chars before accept"
+            ),
+            Err(err) => log::warn!(
+                "[autocomplete] tab cleanup failed (count={}): {}",
+                cleanup_count,
+                err
+            ),
+        }
+    }
+
     async fn try_reject_via_escape(&self) -> Result<(), String> {
         let is_down = is_escape_key_down();
         let rejected = {
@@ -820,4 +941,60 @@ pub static AUTOCOMPLETE_ENGINE: Lazy<Arc<AutocompleteEngine>> =
 
 pub fn global_engine() -> Arc<AutocompleteEngine> {
     AUTOCOMPLETE_ENGINE.clone()
+}
+
+fn detect_tab_artifact_suffix(expected_context: &str, current_context: &str) -> usize {
+    if expected_context.is_empty() || current_context.is_empty() {
+        return 0;
+    }
+
+    // Ordered by preference: literal tab, then common indentation widths.
+    const CANDIDATE_SUFFIXES: [&str; 9] = [
+        "\t", "        ", "      ", "    ", "   ", "  ", " ", "       ", "     ",
+    ];
+
+    for suffix in CANDIDATE_SUFFIXES {
+        let mut expected_plus_suffix = String::with_capacity(expected_context.len() + suffix.len());
+        expected_plus_suffix.push_str(expected_context);
+        expected_plus_suffix.push_str(suffix);
+        if current_context.ends_with(&expected_plus_suffix) {
+            return suffix.chars().count();
+        }
+    }
+
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_tab_artifact_suffix;
+
+    #[test]
+    fn detects_literal_tab_suffix() {
+        assert_eq!(
+            detect_tab_artifact_suffix("hello world", "hello world\t"),
+            1
+        );
+    }
+
+    #[test]
+    fn detects_space_indentation_suffix() {
+        assert_eq!(
+            detect_tab_artifact_suffix("hello world", "hello world    "),
+            4
+        );
+    }
+
+    #[test]
+    fn returns_zero_when_context_does_not_match_expected_tail() {
+        assert_eq!(
+            detect_tab_artifact_suffix("hello world", "different    "),
+            0
+        );
+    }
+
+    #[test]
+    fn returns_zero_when_no_tab_like_suffix_present() {
+        assert_eq!(detect_tab_artifact_suffix("hello world", "hello worldx"), 0);
+    }
 }

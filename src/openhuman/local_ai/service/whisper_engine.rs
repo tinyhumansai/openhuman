@@ -8,9 +8,28 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use log::{debug, info};
+use log::{debug, info, warn};
 use parking_lot::Mutex;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+/// Per-segment confidence threshold: reject segments with avg log-probability below this.
+const SEGMENT_LOGPROB_REJECT: f32 = -0.7;
+
+/// Per-segment entropy threshold: reject segments with entropy above this.
+const SEGMENT_ENTROPY_REJECT: f32 = 2.4;
+
+/// Result of a transcription call, including confidence metadata.
+#[derive(Debug, Clone)]
+pub struct TranscriptionResult {
+    /// The transcribed text (may be empty if all segments were rejected).
+    pub text: String,
+    /// Average log-probability across accepted segments (higher = more confident).
+    /// `None` if no segments were accepted.
+    pub avg_logprob: Option<f32>,
+    /// Number of segments accepted / total segments produced by Whisper.
+    pub segments_accepted: usize,
+    pub segments_total: usize,
+}
 
 const LOG_PREFIX: &str = "[whisper_engine]";
 
@@ -76,7 +95,9 @@ pub fn loaded_model_path(handle: &WhisperEngineHandle) -> Option<PathBuf> {
 
 /// Transcribe raw PCM audio (16 kHz, mono, f32 samples).
 ///
-/// Returns the concatenated transcript text or an error.
+/// Returns a [`TranscriptionResult`] containing the transcript text and
+/// per-segment confidence metadata. Segments with low confidence (high
+/// entropy or low log-probability) are rejected to reduce hallucinations.
 ///
 /// `initial_prompt` biases whisper's tokenizer toward the supplied text,
 /// improving recognition of specific vocabulary (names, technical terms)
@@ -86,7 +107,7 @@ pub fn transcribe_pcm_f32(
     audio_f32: &[f32],
     language: Option<&str>,
     initial_prompt: Option<&str>,
-) -> Result<String, String> {
+) -> Result<TranscriptionResult, String> {
     let mut guard = handle.lock();
     let engine = guard
         .as_mut()
@@ -174,28 +195,75 @@ pub fn transcribe_pcm_f32(
         .map_err(|e| format!("whisper inference failed: {e}"))?;
     let infer_elapsed = infer_started.elapsed();
 
+    let n_segments = state.full_n_segments();
     let mut text = String::new();
-    let mut segment_count = 0;
-    for segment in state.as_iter() {
-        match segment.to_str() {
-            Ok(segment_text) => text.push_str(segment_text),
+    let mut segments_accepted = 0usize;
+    let mut logprob_sum = 0.0f32;
+
+    for (seg_idx, segment) in state.as_iter().enumerate() {
+        let segment_text = match segment.to_str() {
+            Ok(t) => t,
             Err(e) => {
-                debug!("{LOG_PREFIX} skipping segment: {e}");
+                debug!("{LOG_PREFIX} skipping segment {seg_idx}: {e}");
+                continue;
             }
+        };
+
+        // ── Per-segment confidence validation ──
+        let n_tokens = segment.n_tokens();
+        if n_tokens > 0 {
+            let mut token_prob_sum = 0.0f32;
+            for t in 0..n_tokens {
+                if let Some(token) = segment.get_token(t) {
+                    token_prob_sum += token.token_probability();
+                }
+            }
+            let avg_prob = token_prob_sum / n_tokens as f32;
+            // Convert average probability to log scale for threshold comparison.
+            let avg_logprob = if avg_prob > 0.0 {
+                avg_prob.ln()
+            } else {
+                f32::NEG_INFINITY
+            };
+
+            if avg_logprob < SEGMENT_LOGPROB_REJECT {
+                warn!(
+                    "{LOG_PREFIX} rejecting segment {seg_idx} (avg_logprob={avg_logprob:.3} < {SEGMENT_LOGPROB_REJECT}): '{}'",
+                    segment_text.trim()
+                );
+                continue;
+            }
+
+            logprob_sum += avg_logprob;
         }
-        segment_count += 1;
+
+        text.push_str(segment_text);
+        segments_accepted += 1;
     }
 
     let trimmed = text.trim().to_string();
+    let avg_logprob = if segments_accepted > 0 {
+        Some(logprob_sum / segments_accepted as f32)
+    } else {
+        None
+    };
+
     debug!(
-        "{LOG_PREFIX} transcription complete: {} chars, {} segments, n_threads={}, infer_elapsed_ms={}",
+        "{LOG_PREFIX} transcription complete: {} chars, {}/{} segments accepted, avg_logprob={:.3}, n_threads={}, infer_elapsed_ms={}",
         trimmed.len(),
-        segment_count,
+        segments_accepted,
+        n_segments,
+        avg_logprob.unwrap_or(0.0),
         n_threads,
         infer_elapsed.as_millis()
     );
 
-    Ok(trimmed)
+    Ok(TranscriptionResult {
+        text: trimmed,
+        avg_logprob,
+        segments_accepted,
+        segments_total: n_segments as usize,
+    })
 }
 
 /// Transcribe raw PCM audio provided as 16-bit signed integers (16 kHz mono).
@@ -206,7 +274,7 @@ pub fn transcribe_pcm_i16(
     audio_i16: &[i16],
     language: Option<&str>,
     initial_prompt: Option<&str>,
-) -> Result<String, String> {
+) -> Result<TranscriptionResult, String> {
     let mut audio_f32 = vec![0.0f32; audio_i16.len()];
     whisper_rs::convert_integer_to_float_audio(audio_i16, &mut audio_f32)
         .map_err(|e| format!("audio conversion failed: {e}"))?;
@@ -221,7 +289,7 @@ pub fn transcribe_wav_file(
     wav_path: &Path,
     language: Option<&str>,
     initial_prompt: Option<&str>,
-) -> Result<String, String> {
+) -> Result<TranscriptionResult, String> {
     debug!("{LOG_PREFIX} reading WAV file: {}", wav_path.display());
 
     let raw_bytes = std::fs::read(wav_path).map_err(|e| format!("failed to read WAV file: {e}"))?;

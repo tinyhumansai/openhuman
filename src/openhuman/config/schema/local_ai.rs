@@ -89,7 +89,7 @@ fn default_embedding_model_id() -> String {
 }
 
 fn default_stt_model_id() -> String {
-    "ggml-tiny-q5_1.bin".to_string()
+    "ggml-base-q5_1.bin".to_string()
 }
 
 fn default_tts_voice_id() -> String {
@@ -98,7 +98,7 @@ fn default_tts_voice_id() -> String {
 
 fn default_stt_download_url() -> Option<String> {
     Some(
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin?download=true"
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin?download=true"
             .to_string(),
     )
 }

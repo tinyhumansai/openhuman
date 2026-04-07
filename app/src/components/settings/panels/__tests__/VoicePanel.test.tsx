@@ -87,8 +87,7 @@ describe('VoicePanel', () => {
       logs: [],
     }));
     vi.mocked(openhumanVoiceServerStatus).mockImplementation(async () => ({
-      result: { ...runtime.serverStatus },
-      logs: [],
+      ...runtime.serverStatus,
     }));
     vi.mocked(openhumanVoiceStatus).mockImplementation(async () => ({ ...runtime.voiceStatus }));
     vi.mocked(openhumanLocalAiAssetsStatus).mockImplementation(async () => ({
@@ -109,11 +108,11 @@ describe('VoicePanel', () => {
         hotkey: params?.hotkey ?? runtime.settings.hotkey,
         activation_mode: params?.activation_mode ?? runtime.settings.activation_mode,
       };
-      return { result: { ...runtime.serverStatus }, logs: [] };
+      return { ...runtime.serverStatus };
     });
     vi.mocked(openhumanVoiceServerStop).mockImplementation(async () => {
       runtime.serverStatus = { ...runtime.serverStatus, state: 'stopped' };
-      return { result: { ...runtime.serverStatus }, logs: [] };
+      return { ...runtime.serverStatus };
     });
   });
 

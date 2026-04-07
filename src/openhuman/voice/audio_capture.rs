@@ -18,6 +18,99 @@ const LOG_PREFIX: &str = "[voice_capture]";
 /// Target sample rate for whisper (16 kHz mono).
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 
+/// RMS threshold below which audio is considered silence.
+const SILENCE_RMS_THRESHOLD: f32 = 0.002;
+
+/// Duration of continuous silence before gating kicks in.
+const SILENCE_GATE_MS: usize = 500;
+
+/// Look-ahead duration to preserve while gated, avoiding clipped speech onset.
+const LOOKAHEAD_MS: usize = 100;
+
+/// Tracks consecutive silent samples to gate silence from being sent to Whisper.
+/// When silence exceeds `SILENCE_GATE_SAMPLES`, new silent chunks are discarded
+/// but a look-ahead ring buffer is maintained so speech onset isn't clipped.
+struct SilenceGate {
+    /// Source sample rate used to convert ms thresholds to sample counts.
+    source_sample_rate: u32,
+    /// Number of consecutive silent samples required to activate gating.
+    gate_samples: usize,
+    /// Maximum number of samples to keep in the look-ahead ring buffer.
+    lookahead_samples: usize,
+    /// Count of consecutive silent mono samples observed.
+    silent_samples: usize,
+    /// Whether the gate is currently active (suppressing silence).
+    gating: bool,
+    /// Ring buffer holding the most recent ~100ms of audio for look-ahead.
+    lookahead: Vec<f32>,
+}
+
+impl SilenceGate {
+    fn new(source_sample_rate: u32) -> Self {
+        let gate_samples = ((source_sample_rate as usize * SILENCE_GATE_MS) / 1000).max(1);
+        let lookahead_samples = ((source_sample_rate as usize * LOOKAHEAD_MS) / 1000).max(1);
+        Self {
+            source_sample_rate,
+            gate_samples,
+            lookahead_samples,
+            silent_samples: 0,
+            gating: false,
+            lookahead: Vec::with_capacity(lookahead_samples),
+        }
+    }
+
+    /// Process a chunk of mono samples. Returns the samples that should be
+    /// appended to the main buffer (may be empty during gated silence).
+    fn process(&mut self, mono: &[f32]) -> Vec<f32> {
+        let rms = chunk_rms(mono);
+        let is_silent = rms < SILENCE_RMS_THRESHOLD;
+
+        if is_silent {
+            self.silent_samples += mono.len();
+            if self.silent_samples >= self.gate_samples {
+                if !self.gating {
+                    debug!(
+                        "{LOG_PREFIX} silence gate activated after {}ms of silence",
+                        self.silent_samples * 1000 / self.source_sample_rate as usize
+                    );
+                    self.gating = true;
+                }
+                // Update look-ahead ring buffer with latest silent audio.
+                self.lookahead.extend_from_slice(mono);
+                if self.lookahead.len() > self.lookahead_samples {
+                    let excess = self.lookahead.len() - self.lookahead_samples;
+                    self.lookahead.drain(..excess);
+                }
+                return Vec::new(); // Gate: don't append silence.
+            }
+            // Not yet past threshold — still accumulate normally.
+            return mono.to_vec();
+        }
+
+        // Speech detected — reset silence counter.
+        self.silent_samples = 0;
+        if self.gating {
+            debug!("{LOG_PREFIX} silence gate deactivated, flushing look-ahead buffer");
+            self.gating = false;
+            // Flush look-ahead buffer + current chunk so transition isn't clipped.
+            let mut result = std::mem::take(&mut self.lookahead);
+            result.extend_from_slice(mono);
+            return result;
+        }
+
+        mono.to_vec()
+    }
+}
+
+/// Compute RMS energy for a chunk of mono samples.
+fn chunk_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+    (sum_sq / samples.len() as f32).sqrt()
+}
+
 /// Result of a completed recording.
 #[derive(Debug, Clone)]
 pub struct RecordingResult {
@@ -130,21 +223,32 @@ fn record_on_thread(
     let stream = {
         let samples_writer = samples.clone();
         let rms_tracker = peak_rms.clone();
+        // Shared silence gate — suppresses sustained silence to reduce Whisper hallucinations.
+        let silence_gate = Arc::new(parking_lot::Mutex::new(SilenceGate::new(
+            source_sample_rate,
+        )));
         match sample_format {
-            SampleFormat::F32 => device
-                .build_input_stream(
-                    &stream_config,
-                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        let mono = to_mono(data, source_channels);
-                        update_peak_rms(&rms_tracker, &mono);
-                        samples_writer.lock().extend_from_slice(&mono);
-                    },
-                    |err| error!("{LOG_PREFIX} audio stream error: {err}"),
-                    None,
-                )
-                .map_err(|e| format!("failed to build f32 input stream: {e}")),
+            SampleFormat::F32 => {
+                let gate = silence_gate.clone();
+                device
+                    .build_input_stream(
+                        &stream_config,
+                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                            let mono = to_mono(data, source_channels);
+                            update_peak_rms(&rms_tracker, &mono);
+                            let gated = gate.lock().process(&mono);
+                            if !gated.is_empty() {
+                                samples_writer.lock().extend_from_slice(&gated);
+                            }
+                        },
+                        |err| error!("{LOG_PREFIX} audio stream error: {err}"),
+                        None,
+                    )
+                    .map_err(|e| format!("failed to build f32 input stream: {e}"))
+            }
             SampleFormat::I16 => {
                 let rms_tracker = peak_rms.clone();
+                let gate = silence_gate.clone();
                 device
                     .build_input_stream(
                         &stream_config,
@@ -153,7 +257,10 @@ fn record_on_thread(
                                 data.iter().map(|&s| s as f32 / 32768.0).collect();
                             let mono = to_mono(&floats, source_channels);
                             update_peak_rms(&rms_tracker, &mono);
-                            samples_writer.lock().extend_from_slice(&mono);
+                            let gated = gate.lock().process(&mono);
+                            if !gated.is_empty() {
+                                samples_writer.lock().extend_from_slice(&gated);
+                            }
                         },
                         |err| error!("{LOG_PREFIX} audio stream error: {err}"),
                         None,
@@ -162,6 +269,7 @@ fn record_on_thread(
             }
             SampleFormat::U16 => {
                 let rms_tracker = peak_rms.clone();
+                let gate = silence_gate.clone();
                 device
                     .build_input_stream(
                         &stream_config,
@@ -172,7 +280,10 @@ fn record_on_thread(
                                 .collect();
                             let mono = to_mono(&floats, source_channels);
                             update_peak_rms(&rms_tracker, &mono);
-                            samples_writer.lock().extend_from_slice(&mono);
+                            let gated = gate.lock().process(&mono);
+                            if !gated.is_empty() {
+                                samples_writer.lock().extend_from_slice(&gated);
+                            }
                         },
                         |err| error!("{LOG_PREFIX} audio stream error: {err}"),
                         None,
@@ -380,7 +491,7 @@ fn find_best_config(
         best.max_sample_rate()
     };
 
-    Ok(best.clone().with_sample_rate(rate))
+    Ok((*best).with_sample_rate(rate))
 }
 
 #[cfg(test)]

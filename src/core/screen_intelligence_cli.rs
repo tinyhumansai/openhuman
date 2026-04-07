@@ -160,7 +160,10 @@ fn run_server(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    crate::core::logging::init_for_cli_run(opts.verbose);
+    crate::core::logging::init_for_cli_run(
+        opts.verbose,
+        crate::core::logging::CliLogDefault::Global,
+    );
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -342,7 +345,10 @@ fn run_start_session(args: &[String]) -> Result<()> {
     }
 
     let (opts, _) = parse_opts(args)?;
-    crate::core::logging::init_for_cli_run(opts.verbose);
+    crate::core::logging::init_for_cli_run(
+        opts.verbose,
+        crate::core::logging::CliLogDefault::Global,
+    );
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -622,7 +628,7 @@ fn init_quiet_logging(verbose: bool) {
     if !verbose && std::env::var_os("RUST_LOG").is_none() {
         std::env::set_var("RUST_LOG", "warn");
     }
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, crate::core::logging::CliLogDefault::Global);
 }
 
 fn is_help(value: &str) -> bool {

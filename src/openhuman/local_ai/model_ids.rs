@@ -49,7 +49,7 @@ pub(crate) fn effective_embedding_model_id(config: &Config) -> String {
 pub(crate) fn effective_stt_model_id(config: &Config) -> String {
     let raw = config.local_ai.stt_model_id.trim();
     if raw.is_empty() {
-        "ggml-tiny-q5_1.bin".to_string()
+        "ggml-base-q5_1.bin".to_string()
     } else {
         raw.to_string()
     }
@@ -126,7 +126,7 @@ mod tests {
         config.local_ai.tts_voice_id.clear();
         config.local_ai.quantization = "Q5_K_M".to_string();
 
-        assert_eq!(effective_stt_model_id(&config), "ggml-tiny-q5_1.bin");
+        assert_eq!(effective_stt_model_id(&config), "ggml-base-q5_1.bin");
         assert_eq!(effective_tts_voice_id(&config), "en_US-lessac-medium");
         assert_eq!(effective_quantization(&config), "q5_k_m");
     }

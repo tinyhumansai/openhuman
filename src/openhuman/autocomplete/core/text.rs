@@ -11,10 +11,30 @@ pub(super) fn truncate_head(text: &str, max_chars: usize) -> String {
 
 pub(super) fn sanitize_suggestion(text: &str) -> String {
     let first_line = text.lines().next().unwrap_or_default().trim();
-    let cleaned = first_line
-        .trim_matches('"')
+    let stripped_prefix = {
+        const TOKEN_PREFIXES: [&str; 4] = ["- ", "* ", "> ", "→ "];
+        let mut value = first_line.trim_matches('"').trim_start();
+        loop {
+            let mut changed = false;
+            for prefix in TOKEN_PREFIXES {
+                if let Some(rest) = value.strip_prefix(prefix) {
+                    value = rest.trim_start();
+                    changed = true;
+                    break;
+                }
+            }
+            if !changed {
+                break value;
+            }
+        }
+    };
+    let cleaned = stripped_prefix
         .replace('\t', " ")
+        .replace('→', " ")
         .replace('\r', "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
         .trim()
         .to_string();
     if cleaned.is_empty() {
@@ -93,8 +113,26 @@ mod tests {
 
     #[test]
     fn sanitize_suggestion_replaces_embedded_tabs_with_spaces() {
-        // Leading/trailing tabs are stripped by trim(); only interior tabs become spaces.
+        // Leading/trailing tabs are stripped by trim(); interior tabs are normalized.
         assert_eq!(sanitize_suggestion("he\tllo"), "he llo");
+    }
+
+    #[test]
+    fn sanitize_suggestion_removes_arrow_tokens_and_collapses_spaces() {
+        assert_eq!(
+            sanitize_suggestion("  \t→  keep   it   concise  "),
+            "keep it concise"
+        );
+    }
+
+    #[test]
+    fn sanitize_suggestion_preserves_double_dash_tokens() {
+        assert_eq!(sanitize_suggestion("--help"), "--help");
+    }
+
+    #[test]
+    fn sanitize_suggestion_preserves_dash_without_space_prefix() {
+        assert_eq!(sanitize_suggestion("-[ ] task"), "-[ ] task");
     }
 
     #[test]

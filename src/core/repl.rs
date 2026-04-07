@@ -35,7 +35,10 @@ pub fn run_repl(args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    crate::core::logging::init_for_cli_run(opts.verbose);
+    crate::core::logging::init_for_cli_run(
+        opts.verbose,
+        crate::core::logging::CliLogDefault::Global,
+    );
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

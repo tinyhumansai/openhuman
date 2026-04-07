@@ -39,6 +39,48 @@ pub fn apply_text_to_focused_field(text: &str) -> Result<(), String> {
     apply_text_via_axvalue(text)
 }
 
+/// Synthesize backspace keypresses on the focused element.
+///
+/// Used by autocomplete Tab-accept flow to remove the native Tab indentation
+/// side-effect before pasting the accepted suggestion.
+#[cfg(target_os = "macos")]
+pub fn send_backspace(count: usize) -> Result<(), String> {
+    if count == 0 {
+        return Ok(());
+    }
+
+    // Safety clamp: autocomplete only ever asks for small cleanup counts.
+    let presses = count.min(8);
+    log::debug!(
+        "[accessibility] sending backspace cleanup keypresses count={}",
+        presses
+    );
+
+    unsafe {
+        for _ in 0..presses {
+            let key_down = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_DELETE, true);
+            let key_up = CGEventCreateKeyboardEvent(std::ptr::null(), KVK_DELETE, false);
+            if key_down.is_null() || key_up.is_null() {
+                if !key_down.is_null() {
+                    CFRelease(key_down as *const _);
+                }
+                if !key_up.is_null() {
+                    CFRelease(key_up as *const _);
+                }
+                return Err("failed to create CGEvent for backspace".to_string());
+            }
+            CGEventPost(KCG_HID_EVENT_TAP, key_down);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            CGEventPost(KCG_HID_EVENT_TAP, key_up);
+            CFRelease(key_down as *const _);
+            CFRelease(key_up as *const _);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    Ok(())
+}
+
 /// Paste via the unified Swift helper.
 #[cfg(target_os = "macos")]
 fn paste_text_via_helper(text: &str) -> Result<(), String> {
@@ -216,6 +258,11 @@ pub fn apply_text_to_focused_field(_text: &str) -> Result<(), String> {
     Err("text insertion is only supported on macOS".to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn send_backspace(_count: usize) -> Result<(), String> {
+    Err("backspace synthesis is only supported on macOS".to_string())
+}
+
 // ---------------------------------------------------------------------------
 // macOS FFI declarations for paste
 // ---------------------------------------------------------------------------
@@ -240,6 +287,8 @@ extern "C" {
 
 #[cfg(target_os = "macos")]
 const KVK_V: u16 = 9;
+#[cfg(target_os = "macos")]
+const KVK_DELETE: u16 = 51;
 #[cfg(target_os = "macos")]
 const KCG_HID_EVENT_TAP: u32 = 0;
 #[cfg(target_os = "macos")]

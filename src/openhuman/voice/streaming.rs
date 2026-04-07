@@ -13,6 +13,7 @@
 //!     { "type": "error",    "message": "..." }        — on error
 //!   Client → Server: text frame `{"type":"stop"}`     — end recording, get final result
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket};
@@ -25,6 +26,9 @@ use crate::openhuman::local_ai;
 use crate::openhuman::local_ai::whisper_engine;
 
 const LOG_PREFIX: &str = "[voice-stream]";
+const AUDIO_SAMPLE_RATE: usize = 16_000;
+const MIN_PARTIAL_SAMPLES: usize = AUDIO_SAMPLE_RATE / 2; // 0.5s
+const MAX_STREAM_BUFFER_SAMPLES: usize = AUDIO_SAMPLE_RATE * 15; // 15s sliding window
 
 #[derive(Debug, Deserialize)]
 struct ClientCommand {
@@ -37,11 +41,14 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
     log::info!("{LOG_PREFIX} new streaming dictation connection");
 
     let audio_buf: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
+    let full_audio_buf: Arc<Mutex<Vec<i16>>> = Arc::new(Mutex::new(Vec::new()));
+    let audio_revision = Arc::new(AtomicU64::new(0));
     let interval_ms = config.dictation.streaming_interval_ms;
     let do_streaming = config.dictation.streaming;
 
     // Periodic inference task — runs every `interval_ms` on the accumulated buffer
     let buf_clone = audio_buf.clone();
+    let revision_clone = audio_revision.clone();
     let config_clone = config.clone();
     let (partial_tx, mut partial_rx) = tokio::sync::mpsc::channel::<String>(8);
 
@@ -49,32 +56,37 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
         let handle = tokio::spawn(async move {
             let mut interval =
                 tokio::time::interval(std::time::Duration::from_millis(interval_ms.max(500)));
-            let mut last_len: usize = 0;
+            let mut last_seen_revision = 0u64;
 
             loop {
                 interval.tick().await;
 
+                let current_revision = revision_clone.load(Ordering::Relaxed);
+                if current_revision == last_seen_revision {
+                    continue;
+                }
+                last_seen_revision = current_revision;
+
                 let samples: Vec<i16> = {
                     let guard = buf_clone.lock().await;
-                    if guard.len() <= last_len || guard.len() < 8000 {
-                        // No new data or less than 0.5s of audio — skip
+                    if guard.len() < MIN_PARTIAL_SAMPLES {
+                        // Less than 0.5s of audio — skip
                         continue;
                     }
-                    last_len = guard.len();
                     guard.clone()
                 };
 
                 let service = local_ai::global(&config_clone);
                 match whisper_engine::transcribe_pcm_i16(&service.whisper, &samples, None, None) {
-                    Ok(text) => {
-                        let trimmed = text.trim().to_string();
-                        if !trimmed.is_empty() {
+                    Ok(result) => {
+                        if !result.text.is_empty() {
                             log::debug!(
-                                "{LOG_PREFIX} partial transcription ({} samples): {}",
+                                "{LOG_PREFIX} partial transcription ({} samples, avg_logprob={:.3}): {}",
                                 samples.len(),
-                                &trimmed[..trimmed.len().min(80)]
+                                result.avg_logprob.unwrap_or(0.0),
+                                &result.text[..result.text.len().min(80)]
                             );
-                            if partial_tx.send(trimmed).await.is_err() {
+                            if partial_tx.send(result.text).await.is_err() {
                                 break; // receiver dropped
                             }
                         }
@@ -118,8 +130,19 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
                             .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
                             .collect();
 
+                        full_audio_buf.lock().await.extend_from_slice(&samples);
                         let mut buf = audio_buf.lock().await;
                         buf.extend_from_slice(&samples);
+                        if buf.len() > MAX_STREAM_BUFFER_SAMPLES {
+                            let drop_count = buf.len() - MAX_STREAM_BUFFER_SAMPLES;
+                            buf.drain(..drop_count);
+                            log::debug!(
+                                "{LOG_PREFIX} sliding window trimmed {} samples, kept {}",
+                                drop_count,
+                                buf.len()
+                            );
+                        }
+                        audio_revision.fetch_add(1, Ordering::Relaxed);
                         log::trace!(
                             "{LOG_PREFIX} buffered {} new samples, total {}",
                             samples.len(),
@@ -164,7 +187,7 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
     }
 
     // Run final transcription on the complete buffer
-    let final_samples = audio_buf.lock().await.clone();
+    let final_samples = full_audio_buf.lock().await.clone();
     if final_samples.is_empty() {
         let msg = serde_json::json!({
             "type": "final",
@@ -184,7 +207,7 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
     let service = local_ai::global(&config);
     let raw_text =
         match whisper_engine::transcribe_pcm_i16(&service.whisper, &final_samples, None, None) {
-            Ok(text) => text.trim().to_string(),
+            Ok(result) => result.text,
             Err(e) => {
                 log::error!("{LOG_PREFIX} final inference error: {e}");
                 let msg = serde_json::json!({

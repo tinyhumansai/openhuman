@@ -47,7 +47,8 @@ const AGENTIC_MODEL_ID = 'agentic-v1';
 type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
 type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
-const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 180;
+const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 320;
+const AUTOCOMPLETE_MIN_CONTEXT_CHARS = 3;
 
 interface ToolTimelineEntry {
   id: string;
@@ -71,13 +72,54 @@ function formatRelativeTime(dateStr: string): string {
 
 function getInlineCompletionSuffix(input: string, suggestion: string): string {
   if (!input || !suggestion) return '';
-  // If backend returns full string (starts with input), extract the suffix portion.
-  if (suggestion.startsWith(input)) {
-    const suffix = suggestion.slice(input.length);
-    return suffix || '';
+  const normalize = (value: string) =>
+    value
+      .replace(/\u2192/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const normalizedInput = normalize(input);
+  const normalizedSuggestion = normalize(suggestion);
+  if (!normalizedSuggestion) return '';
+
+  // Full-text response: strip already-typed prefix.
+  if (normalizedSuggestion.startsWith(normalizedInput)) {
+    return normalizedSuggestion.slice(normalizedInput.length).trimStart();
   }
-  // Suggestion doesn't start with current input — it's stale; discard it.
-  return '';
+
+  // Remove overlap to prevent duplicate phrase insertion:
+  // "...want to" + "want to create..." => "create..."
+  const maxOverlap = Math.min(normalizedInput.length, normalizedSuggestion.length, 120);
+  for (let overlap = maxOverlap; overlap >= 1; overlap -= 1) {
+    if (
+      normalizedInput.slice(normalizedInput.length - overlap) ===
+      normalizedSuggestion.slice(0, overlap)
+    ) {
+      return normalizedSuggestion.slice(overlap).trimStart();
+    }
+  }
+
+  // Suffix-only fallback (the backend is intended to return suffix text).
+  if (normalizedInput.endsWith(normalizedSuggestion)) {
+    return '';
+  }
+  return normalizedSuggestion;
+}
+
+function buildAcceptedInlineCompletion(input: string, suffix: string): string {
+  const normalizedInput = input.replace(/\u2192/g, ' ').replace(/\t+/g, ' ');
+  const cleanSuffix = suffix
+    .replace(/\u2192/g, ' ')
+    .replace(/\t+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleanSuffix) return normalizedInput;
+
+  const needsSpace =
+    normalizedInput.length > 0 && !/\s$/.test(normalizedInput) && !/^[,.;:!?)]/.test(cleanSuffix);
+
+  return `${normalizedInput}${needsSpace ? ' ' : ''}${cleanSuffix}`;
 }
 
 function formatResetTime(isoStr: string): string {
@@ -269,7 +311,7 @@ const Conversations = () => {
       !rustChat ||
       inputMode !== 'text' ||
       isSending ||
-      inputValue.trim().length === 0
+      inputValue.trim().length < AUTOCOMPLETE_MIN_CONTEXT_CHARS
     ) {
       setInlineSuggestionValue('');
       return;
@@ -813,39 +855,40 @@ const Conversations = () => {
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const inlineSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
-
-    if (e.key === 'Tab' && inlineSuffix.length > 0) {
-      e.preventDefault();
-      setInputValue(prev => prev + inlineSuffix);
+    const textarea = e.currentTarget;
+    const caretAtEnd =
+      textarea.selectionStart === inputValue.length && textarea.selectionEnd === inputValue.length;
+    const tryAcceptInlineSuggestion = () => {
+      const nextValue = buildAcceptedInlineCompletion(inputValue, inlineSuffix);
+      if (!nextValue || nextValue === inputValue) return false;
+      setInputValue(nextValue);
       setInlineSuggestionValue('');
       if (isTauri()) {
-        void openhumanAutocompleteAccept({
-          suggestion: inputValue + inlineSuffix,
-          skip_apply: true,
-        }).catch(() => {
+        void openhumanAutocompleteAccept({ suggestion: nextValue, skip_apply: true }).catch(() => {
           // Keep local UX smooth even if accept RPC fails.
         });
       }
+      return true;
+    };
+
+    if (
+      e.key === 'Tab' &&
+      !e.shiftKey &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      inlineSuffix.length > 0 &&
+      caretAtEnd
+    ) {
+      e.preventDefault();
+      tryAcceptInlineSuggestion();
       return;
     }
 
-    if (e.key === 'ArrowRight' && inlineSuffix.length > 0) {
-      const textarea = e.currentTarget;
-      if (
-        textarea.selectionStart === inputValue.length &&
-        textarea.selectionEnd === inputValue.length
-      ) {
-        e.preventDefault();
-        setInputValue(prev => prev + inlineSuffix);
-        setInlineSuggestionValue('');
-        if (isTauri()) {
-          void openhumanAutocompleteAccept({
-            suggestion: inputValue + inlineSuffix,
-            skip_apply: true,
-          }).catch(() => {});
-        }
-        return;
-      }
+    if (e.key === 'ArrowRight' && inlineSuffix.length > 0 && caretAtEnd) {
+      e.preventDefault();
+      tryAcceptInlineSuggestion();
+      return;
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {

@@ -29,7 +29,7 @@ pub use globe::{
 pub use helper::precompile_helper_background;
 pub use keys::{is_escape_key_down, is_tab_key_down};
 pub use overlay::{hide_overlay, quit_overlay, show_overlay};
-pub use paste::apply_text_to_focused_field;
+pub use paste::{apply_text_to_focused_field, send_backspace};
 #[cfg(target_os = "macos")]
 pub use permissions::{
     detect_accessibility_permission, detect_input_monitoring_permission,

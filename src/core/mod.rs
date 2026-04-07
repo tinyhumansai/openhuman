@@ -2,6 +2,7 @@
 use serde::Serialize;
 
 pub mod all;
+pub mod autocomplete_cli_adapter;
 pub mod cli;
 pub mod dispatch;
 pub mod jsonrpc;

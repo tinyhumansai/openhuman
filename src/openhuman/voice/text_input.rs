@@ -11,6 +11,8 @@
 use log::{debug, info, warn};
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
+use crate::openhuman::accessibility;
 use arboard::Clipboard;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
@@ -24,6 +26,8 @@ const PASTE_DELAY: Duration = Duration::from_millis(120);
 /// target application time to read from the clipboard.
 /// OpenWhispr uses 450ms on macOS.
 const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(450);
+#[cfg(target_os = "macos")]
+const FOCUS_RESTORE_DELAY: Duration = Duration::from_millis(100);
 
 /// Insert text into the currently active text field via clipboard-paste.
 ///
@@ -35,11 +39,14 @@ const CLIPBOARD_RESTORE_DELAY: Duration = Duration::from_millis(450);
 ///
 /// This avoids the character-by-character typing issues with enigo's
 /// `text()` method which causes garbled/repeated output.
-pub fn insert_text(text: &str) -> Result<(), String> {
+pub fn insert_text(text: &str, expected_app: Option<&str>) -> Result<(), String> {
     if text.trim().is_empty() {
         warn!("{LOG_PREFIX} transcription was empty/whitespace, skipping insertion");
         return Ok(());
     }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = expected_app;
 
     info!(
         "{LOG_PREFIX} inserting {} chars via clipboard-paste",
@@ -62,6 +69,24 @@ pub fn insert_text(text: &str) -> Result<(), String> {
 
     // Step 3: Brief delay to let clipboard write settle, then simulate paste.
     std::thread::sleep(PASTE_DELAY);
+
+    #[cfg(target_os = "macos")]
+    if let Some(app_name) = expected_app {
+        debug!("{LOG_PREFIX} validating focus before paste; expected_app='{app_name}'");
+        if let Err(validation_err) = accessibility::validate_focused_target(Some(app_name), None) {
+            warn!("{LOG_PREFIX} focus changed before paste: {validation_err}");
+            // Always try to restore focus — even if the user hasn't clicked a
+            // text field yet, activating the app brings it to front and most
+            // apps will accept Cmd+V into their last-focused element.
+            if let Err(restore_err) = restore_focus_to_app(app_name) {
+                warn!(
+                    "{LOG_PREFIX} focus restore failed: {restore_err} — will attempt paste anyway"
+                );
+            } else {
+                info!("{LOG_PREFIX} focus restored to '{app_name}' before paste");
+            }
+        }
+    }
 
     let mut enigo = Enigo::new(&Settings::default())
         .map_err(|e| format!("failed to create enigo instance: {e}"))?;
@@ -100,6 +125,38 @@ pub fn insert_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn restore_focus_to_app(app_name: &str) -> Result<(), String> {
+    let script = format!(
+        r#"tell application "{}" to activate"#,
+        escape_applescript_string(app_name)
+    );
+    let output = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("failed to run osascript for focus restore: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            "unknown osascript error".to_string()
+        } else {
+            stderr
+        };
+        return Err(format!(
+            "failed to restore focus to '{}': {}",
+            app_name, detail
+        ));
+    }
+    std::thread::sleep(FOCUS_RESTORE_DELAY);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn escape_applescript_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// Returns the platform-appropriate paste modifier key.
 fn paste_modifier_key() -> Key {
     if cfg!(target_os = "macos") {
@@ -115,12 +172,12 @@ mod tests {
 
     #[test]
     fn empty_text_is_noop() {
-        assert!(insert_text("").is_ok());
+        assert!(insert_text("", None).is_ok());
     }
 
     #[test]
     fn whitespace_only_skips_insertion() {
-        assert!(insert_text("   ").is_ok());
+        assert!(insert_text("   ", None).is_ok());
     }
 
     #[test]

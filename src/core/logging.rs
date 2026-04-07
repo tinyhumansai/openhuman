@@ -16,6 +16,15 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 static INIT: Once = Once::new();
 
+/// Default `RUST_LOG` when it is unset: either global levels or only the inline autocomplete module tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CliLogDefault {
+    /// Typical server/CLI logging (`info`, or `debug` when `verbose`).
+    Global,
+    /// Silence other modules; only `openhuman_core::openhuman::autocomplete::*` emits logs.
+    AutocompleteOnly,
+}
+
 /// `14:32:01 <INFO> (jsonrpc) message…` — colors when stderr is a TTY.
 struct CleanCliFormat;
 
@@ -77,16 +86,39 @@ fn short_target(target: &str) -> &str {
 
 /// Initialize `tracing` + bridge the `log` crate so existing `log::info!` calls appear.
 ///
-/// - If `RUST_LOG` is unset: uses `info`, or `debug` when `verbose` is true.
+/// - If `RUST_LOG` is unset: uses [`CliLogDefault`] and `verbose` to pick a default filter string.
 /// - Safe to call once; subsequent calls are ignored.
-pub fn init_for_cli_run(verbose: bool) {
+pub fn init_for_cli_run(verbose: bool, default_scope: CliLogDefault) {
     INIT.call_once(|| {
         if std::env::var_os("RUST_LOG").is_none() {
-            std::env::set_var("RUST_LOG", if verbose { "debug" } else { "info" });
+            let default = match default_scope {
+                CliLogDefault::Global => {
+                    if verbose {
+                        "debug".to_string()
+                    } else {
+                        "info".to_string()
+                    }
+                }
+                CliLogDefault::AutocompleteOnly => {
+                    let level = if verbose { "trace" } else { "debug" };
+                    format!("off,openhuman_core::openhuman::autocomplete={level}")
+                }
+            };
+            std::env::set_var("RUST_LOG", default);
         }
 
         let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            tracing_subscriber::EnvFilter::new(if verbose { "debug" } else { "info" })
+            match default_scope {
+                CliLogDefault::Global => {
+                    tracing_subscriber::EnvFilter::new(if verbose { "debug" } else { "info" })
+                }
+                CliLogDefault::AutocompleteOnly => {
+                    let level = if verbose { "trace" } else { "debug" };
+                    tracing_subscriber::EnvFilter::new(format!(
+                        "off,openhuman_core::openhuman::autocomplete={level}"
+                    ))
+                }
+            }
         });
 
         let use_color = io::stderr().is_terminal();

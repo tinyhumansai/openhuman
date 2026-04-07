@@ -60,8 +60,8 @@ export async function openhumanVoiceStatus(): Promise<VoiceStatus> {
   return await callCoreRpc<VoiceStatus>({ method: 'openhuman.voice_status', params: {} });
 }
 
-export async function openhumanVoiceServerStatus(): Promise<CommandResponse<VoiceServerStatus>> {
-  return await callCoreRpc<CommandResponse<VoiceServerStatus>>({
+export async function openhumanVoiceServerStatus(): Promise<VoiceServerStatus> {
+  return await callCoreRpc<VoiceServerStatus>({
     method: 'openhuman.voice_server_status',
     params: {},
   });
@@ -71,15 +71,15 @@ export async function openhumanVoiceServerStart(params?: {
   hotkey?: string;
   activation_mode?: 'tap' | 'push';
   skip_cleanup?: boolean;
-}): Promise<CommandResponse<VoiceServerStatus>> {
-  return await callCoreRpc<CommandResponse<VoiceServerStatus>>({
+}): Promise<VoiceServerStatus> {
+  return await callCoreRpc<VoiceServerStatus>({
     method: 'openhuman.voice_server_start',
     params: params ?? {},
   });
 }
 
-export async function openhumanVoiceServerStop(): Promise<CommandResponse<VoiceServerStatus>> {
-  return await callCoreRpc<CommandResponse<VoiceServerStatus>>({
+export async function openhumanVoiceServerStop(): Promise<VoiceServerStatus> {
+  return await callCoreRpc<VoiceServerStatus>({
     method: 'openhuman.voice_server_stop',
     params: {},
   });

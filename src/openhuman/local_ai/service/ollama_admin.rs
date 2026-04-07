@@ -71,11 +71,29 @@ impl LocalAiService {
             ));
         }
 
-        let _ = tokio::process::Command::new(ollama_cmd)
+        match tokio::process::Command::new(ollama_cmd)
             .arg("serve")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn();
+            .spawn()
+        {
+            Ok(_) => {
+                log::debug!(
+                    "[local_ai] spawned `ollama serve` from {}",
+                    ollama_cmd.display()
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[local_ai] failed to spawn `ollama serve` from {}: {err}",
+                    ollama_cmd.display()
+                );
+                return Err(format!(
+                    "Failed to start Ollama server ({}): {err}",
+                    ollama_cmd.display()
+                ));
+            }
+        }
 
         for _ in 0..20 {
             if self.ollama_healthy().await {
@@ -136,8 +154,17 @@ impl LocalAiService {
         self.download_and_install_ollama(config).await?;
         if let Some(installed) = find_workspace_ollama_binary(config) {
             Ok(installed)
+        } else if let Some(system_bin) = find_system_ollama_binary() {
+            log::debug!(
+                "[local_ai] workspace binary not found after install, using system binary: {}",
+                system_bin.display()
+            );
+            Ok(system_bin)
         } else {
-            Err("Ollama download completed but executable is missing.".to_string())
+            Err("Ollama download completed but executable is missing. \
+                 The installer may have placed it in an unexpected location. \
+                 Set OLLAMA_BIN or configure the path in Settings > Local Model."
+                .to_string())
         }
     }
 

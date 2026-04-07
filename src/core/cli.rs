@@ -9,9 +9,10 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
 use crate::core::all;
+use crate::core::autocomplete_cli_adapter;
 use crate::core::jsonrpc::{default_state, invoke_method, parse_json_params};
+use crate::core::logging::CliLogDefault;
 use crate::core::{ControllerSchema, TypeSchema};
-use crate::openhuman::autocomplete::ops::{autocomplete_start_cli, AutocompleteStartCliOptions};
 
 /// The ASCII banner displayed when the CLI starts.
 const CLI_BANNER: &str = r#"
@@ -77,6 +78,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
     let mut host: Option<String> = None;
     let mut socketio_enabled = true;
     let mut verbose = false;
+    let mut log_scope = CliLogDefault::Global;
     let mut i = 0usize;
 
     // Manual argument parsing loop for specific flags.
@@ -108,8 +110,13 @@ fn run_server_command(args: &[String]) -> Result<()> {
                 verbose = true;
                 i += 1;
             }
+            other if autocomplete_cli_adapter::parse_run_scope_flag(other).is_some() => {
+                log_scope = autocomplete_cli_adapter::parse_run_scope_flag(other)
+                    .unwrap_or(CliLogDefault::Global);
+                i += 1;
+            }
             "-h" | "--help" => {
-                println!("Usage: openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [-v|--verbose]");
+                println!("Usage: openhuman run [--host <addr>] [--port <u16>] [--jsonrpc-only] [--autocomplete-logs] [-v|--verbose]");
                 println!();
                 println!(
                     "  --host <addr>    Bind address (default: 127.0.0.1 or OPENHUMAN_CORE_HOST)"
@@ -118,6 +125,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
                     "  --port <u16>     Listen address port (default: 7788 or OPENHUMAN_CORE_PORT)"
                 );
                 println!("  --jsonrpc-only   HTTP JSON-RPC only; disable Socket.IO");
+                autocomplete_cli_adapter::print_run_scope_help_line();
                 println!("  -v, --verbose    Shorthand for RUST_LOG=debug when RUST_LOG is unset");
                 println!();
                 println!("Logging: set RUST_LOG (e.g. RUST_LOG=debug openhuman run). Default level is info.");
@@ -127,7 +135,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
         }
     }
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, log_scope);
 
     // Initialize the Tokio runtime and start the server.
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -250,7 +258,7 @@ fn run_voice_server_command(args: &[String]) -> Result<()> {
         }
     }
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, CliLogDefault::Global);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -305,6 +313,12 @@ fn run_namespace_command(
         ));
     };
 
+    let preparsed = autocomplete_cli_adapter::preparse_namespace(namespace, args);
+    let args: &[String] = &preparsed.args;
+    if let Some((verbose, scope)) = preparsed.init_logging {
+        crate::core::logging::init_for_cli_run(verbose, scope);
+    }
+
     if args.is_empty() || is_help(&args[0]) {
         print_namespace_help(namespace, schemas);
         return Ok(());
@@ -317,19 +331,15 @@ fn run_namespace_command(
         ));
     };
 
-    // Special case for autocomplete start command which has its own CLI options.
-    if namespace == "autocomplete" && function == "start" {
-        if args.len() > 1 && is_help(&args[1]) {
-            print_autocomplete_start_help();
+    // Domain adapters can intercept specific namespace/function combinations.
+    if args.len() > 1 && is_help(&args[1]) {
+        if autocomplete_cli_adapter::maybe_print_start_help(namespace, function) {
             return Ok(());
         }
-        let cli_options = parse_autocomplete_start_cli_options(&args[1..])?;
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        let value = rt
-            .block_on(async { autocomplete_start_cli(cli_options).await })
-            .map_err(anyhow::Error::msg)?;
+    }
+    if let Some(value) =
+        autocomplete_cli_adapter::maybe_handle_namespace_start(namespace, function, &args[1..])?
+    {
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
@@ -353,64 +363,6 @@ fn run_namespace_command(
 
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
-}
-
-/// Parses CLI options specific to the `autocomplete start` command.
-///
-/// # Arguments
-///
-/// * `args` - CLI arguments for the autocomplete start command.
-fn parse_autocomplete_start_cli_options(args: &[String]) -> Result<AutocompleteStartCliOptions> {
-    let mut debounce_ms: Option<u64> = None;
-    let mut serve = false;
-    let mut spawn = false;
-    let mut i = 0usize;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--debounce-ms" => {
-                let raw = args
-                    .get(i + 1)
-                    .ok_or_else(|| anyhow::anyhow!("missing value for --debounce-ms"))?;
-                debounce_ms = Some(
-                    raw.parse::<u64>()
-                        .map_err(|e| anyhow::anyhow!("invalid --debounce-ms: {e}"))?,
-                );
-                i += 2;
-            }
-            "--serve" => {
-                serve = true;
-                i += 1;
-            }
-            "--spawn" => {
-                spawn = true;
-                i += 1;
-            }
-            other => return Err(anyhow::anyhow!("unknown autocomplete start arg: {other}")),
-        }
-    }
-
-    // Ensure the user doesn't try to both foreground and background the process.
-    if serve && spawn {
-        return Err(anyhow::anyhow!(
-            "--serve and --spawn are mutually exclusive"
-        ));
-    }
-
-    Ok(AutocompleteStartCliOptions {
-        debounce_ms,
-        serve,
-        spawn,
-    })
-}
-
-/// Prints help information for the `autocomplete start` command.
-fn print_autocomplete_start_help() {
-    println!("Usage: openhuman autocomplete start [--debounce-ms <u64>] [--serve|--spawn]");
-    println!();
-    println!("  --debounce-ms <u64>  Override debounce in milliseconds.");
-    println!("  --serve              Run autocomplete loop in the current foreground process.");
-    println!("  --spawn              Spawn autocomplete loop as a background process.");
 }
 
 /// Parses command-line arguments into a JSON map based on a function's schema.
@@ -548,6 +500,7 @@ fn print_namespace_help(namespace: &str, schemas: &[ControllerSchema]) {
         println!("  {} - {}", schema.function, schema.description);
     }
     println!("\nUse `openhuman {namespace} <function> --help` for parameters.");
+    autocomplete_cli_adapter::maybe_print_namespace_help_footer(namespace);
 }
 
 /// Prints detailed help for a specific function, including its parameters and description.
@@ -576,10 +529,7 @@ fn is_help(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        grouped_schemas, parse_autocomplete_start_cli_options, parse_function_params,
-        parse_input_value,
-    };
+    use super::{grouped_schemas, parse_function_params, parse_input_value};
     use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 
     #[test]
@@ -595,14 +545,6 @@ mod tests {
         assert!(grouped.contains_key("service"));
         assert!(grouped.contains_key("migrate"));
         assert!(grouped.contains_key("local_ai"));
-    }
-
-    #[test]
-    fn parse_autocomplete_start_cli_options_rejects_serve_and_spawn() {
-        let args = vec!["--serve".to_string(), "--spawn".to_string()];
-        let err = parse_autocomplete_start_cli_options(&args)
-            .expect_err("must reject mutually exclusive flags");
-        assert!(err.to_string().contains("mutually exclusive"));
     }
 
     #[test]

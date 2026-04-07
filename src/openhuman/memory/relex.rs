@@ -20,6 +20,7 @@ use futures_util::TryStreamExt;
 use glob::glob;
 use ndarray::{Array, Array2, Array3, Array4, Ix2, Ix3, Ix4};
 use ort::{
+    ep,
     session::{builder::GraphOptimizationLevel, Session},
     value::Tensor,
 };
@@ -37,7 +38,7 @@ const DEFAULT_EXPORTED_RELEX_DIR: &str =
     "_tmp/gliner-export/artifacts/gliner-relex-large-v0.5-onnx";
 const DEFAULT_MANAGED_RELEX_DIR: &str = ".openhuman/models/gliner-relex-large-v0.5-onnx";
 const DEFAULT_RELEX_RELEASE_BASE_URL: &str =
-    "https://github.com/sanil-23/GLiNER/releases/download/tinyhumans-gliner-relex-v0.5-onnx.1";
+    "https://github.com/sanil-23/GLiNER/releases/download/tinyhumans-gliner-relex-v0.5-onnx.2";
 const MODEL_FILE_NAME: &str = "model_quantized.onnx";
 const FALLBACK_MODEL_FILE_NAME: &str = "model.onnx";
 const TOKENIZER_FILE_NAME: &str = "tokenizer.json";
@@ -89,13 +90,13 @@ const CORE_BUNDLE_ASSETS: &[BundleAsset] = &[
 const PLATFORM_BUNDLE_ASSETS: &[BundleAsset] = &[BundleAsset {
     remote_name: ORT_DYLIB_FILE_NAME,
     local_name: ORT_DYLIB_FILE_NAME,
-    sha256: "EF720FC44A4EA48626BFE1EBD29642DE20222D7F104A509EA305D9F3CB3B7850",
+    sha256: "E7EEDEC6A6F26DC39DC948276A75EF6D2BEE3FFF944D874CEED0BBD3B97BFF40",
 }];
 #[cfg(target_os = "macos")]
 const PLATFORM_BUNDLE_ASSETS: &[BundleAsset] = &[BundleAsset {
     remote_name: ORT_DYLIB_FILE_NAME,
     local_name: ORT_DYLIB_FILE_NAME,
-    sha256: "285C8CD1E53856507B9B2E38EE9AFFC69AA6E90AC30F8670DC8195710CA14B77",
+    sha256: "872533F130F1839A5BC01788DDB4F75C83A189763441BA1178788ED965449289",
 }];
 #[cfg(target_os = "linux")]
 const PLATFORM_BUNDLE_ASSETS: &[BundleAsset] = &[
@@ -437,6 +438,31 @@ async fn load_runtime_for_model(model_name: &str) -> Result<Arc<RelexRuntime>> {
     load_runtime_from_bundle_dir(&bundle_dir).map(Arc::new)
 }
 
+/// Returns platform-appropriate ONNX execution providers for GPU acceleration.
+/// Providers are tried in order; ORT silently falls back to CPU if none register.
+fn platform_execution_providers() -> Vec<ep::ExecutionProviderDispatch> {
+    let mut providers = Vec::new();
+
+    // Windows: DirectML works with any DirectX 12 GPU (NVIDIA, AMD, Intel).
+    #[cfg(target_os = "windows")]
+    {
+        providers.push(ep::DirectML::default().build());
+        log::debug!("[memory:relex] offering DirectML execution provider");
+    }
+
+    // macOS: CoreML for Apple Silicon / Neural Engine.
+    #[cfg(target_os = "macos")]
+    {
+        providers.push(ep::CoreML::default().build());
+        log::debug!("[memory:relex] offering CoreML execution provider");
+    }
+
+    // All platforms: try CUDA for NVIDIA GPUs.
+    providers.push(ep::CUDA::default().build());
+
+    providers
+}
+
 /// Initializes the ONNX session and tokenizer from a local bundle directory.
 fn load_runtime_from_bundle_dir(bundle_dir: &Path) -> Result<RelexRuntime> {
     ensure_ort_dylib_path(bundle_dir);
@@ -459,6 +485,7 @@ fn load_runtime_from_bundle_dir(bundle_dir: &Path) -> Result<RelexRuntime> {
     .with_context(|| format!("failed to parse {}", config_path.display()))?;
 
     let session = Session::builder()?
+        .with_execution_providers(platform_execution_providers())?
         .with_optimization_level(GraphOptimizationLevel::Level3)?
         .commit_from_file(&model_path)
         .with_context(|| format!("failed to load model {}", model_path.display()))?;
@@ -542,14 +569,18 @@ fn bundle_complete(bundle_dir: &Path) -> bool {
     bundle_dir.join(TOKENIZER_FILE_NAME).exists()
         && bundle_dir.join(GLINER_CONFIG_FILE_NAME).exists()
         && model_file_path(bundle_dir).is_some()
+        && bundle_dir.join(ORT_DYLIB_FILE_NAME).exists()
 }
 
-/// Checks if a managed bundle contains core files AND platform-specific libraries.
+/// Checks if a managed bundle contains core files AND platform-specific libraries
+/// with correct checksums. A checksum mismatch (e.g. after a release update)
+/// triggers a re-download of the mismatched assets.
 fn managed_bundle_complete(bundle_dir: &Path) -> bool {
     bundle_complete(bundle_dir)
-        && PLATFORM_BUNDLE_ASSETS
-            .iter()
-            .all(|asset| bundle_dir.join(asset.local_name).exists())
+        && PLATFORM_BUNDLE_ASSETS.iter().all(|asset| {
+            let path = bundle_dir.join(asset.local_name);
+            path.exists() && file_matches_sha256_sync(&path, asset.sha256)
+        })
 }
 
 /// Returns the path to the ONNX model file within a bundle, checking for quantized first.
@@ -743,6 +774,18 @@ async fn file_matches_sha256(path: &Path, expected: &str) -> Result<bool> {
         .with_context(|| format!("failed to read {}", path.display()))?;
     let actual = hex::encode(Sha256::digest(bytes));
     Ok(actual.eq_ignore_ascii_case(expected))
+}
+
+/// Synchronous SHA256 check for use in non-async contexts (e.g. bundle completeness).
+fn file_matches_sha256_sync(path: &Path, expected: &str) -> bool {
+    if expected.is_empty() {
+        return path.exists();
+    }
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    let actual = hex::encode(Sha256::digest(bytes));
+    actual.eq_ignore_ascii_case(expected)
 }
 
 /// Simple whitespace-based tokenizer that preserves character offsets.

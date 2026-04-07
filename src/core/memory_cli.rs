@@ -92,7 +92,7 @@ fn run_ingest(args: &[String]) -> Result<()> {
         anyhow::anyhow!("missing file argument. Use a file path or '-' for stdin.")
     })?;
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, crate::core::logging::CliLogDefault::Global);
 
     let content = read_input(&file_path)?;
     let doc_key = key.unwrap_or_else(|| file_path.clone());
@@ -194,7 +194,7 @@ fn run_docs(args: &[String]) -> Result<()> {
         }
     }
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, crate::core::logging::CliLogDefault::Global);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -245,7 +245,7 @@ fn run_graph_query(args: &[String]) -> Result<()> {
         }
     }
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, crate::core::logging::CliLogDefault::Global);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -307,7 +307,7 @@ fn run_query(args: &[String]) -> Result<()> {
         namespace.ok_or_else(|| anyhow::anyhow!("--namespace is required for query"))?;
     let query = query.ok_or_else(|| anyhow::anyhow!("--query is required"))?;
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, crate::core::logging::CliLogDefault::Global);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -339,7 +339,7 @@ fn run_namespaces(args: &[String]) -> Result<()> {
         }
     }
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, crate::core::logging::CliLogDefault::Global);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -382,7 +382,7 @@ fn run_clear(args: &[String]) -> Result<()> {
     let namespace =
         namespace.ok_or_else(|| anyhow::anyhow!("--namespace is required for clear"))?;
 
-    crate::core::logging::init_for_cli_run(verbose);
+    crate::core::logging::init_for_cli_run(verbose, crate::core::logging::CliLogDefault::Global);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

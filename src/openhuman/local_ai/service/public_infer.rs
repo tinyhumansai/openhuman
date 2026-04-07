@@ -83,10 +83,18 @@ impl LocalAiService {
         }
 
         let mut prompt = String::from(
-            "Complete the user's text with the most likely next words.\n\
-             Return only the continuation suffix, no explanations.\n\
-             Do not repeat text already written by the user.\n\
-             Keep it natural and concise.\n\n",
+            "You are an inline autocomplete engine.\n\
+     Predict the most likely continuation of the user's partial text.\n\
+     Return only the exact continuation suffix.\n\
+     Do not repeat or rewrite any part of the user's existing text.\n\
+     Do not include any prefix labels like 'suffix:' or 'completion:'.\n\
+     Return exactly one line with plain text and no quotes.\n\
+     Do not add leading or trailing whitespace.\n\
+     Do not add tabs or newlines.\n\
+     Do not add non-breaking spaces or zero-width characters.\n\
+     Preserve natural spacing inside the continuation only when required between words.\n\
+     If the user is in the middle of a word, continue that word directly with no space.\n\
+     If the continuation is uncertain, return an empty string.\n",
         );
         prompt.push_str(&format!("Style preset: {}\n", style_preset.trim()));
         if let Some(instructions) = style_instructions {
@@ -105,19 +113,22 @@ impl LocalAiService {
                 }
             }
         }
-        prompt.push_str("\nUser text:\n");
-        prompt.push_str(context.trim());
+        let escaped_context = context.replace("</USER_TEXT>", "<\\/USER_TEXT>");
+        prompt.push_str("\nUser text (verbatim):\n<USER_TEXT>\n");
+        prompt.push_str(&escaped_context);
+        prompt.push_str("\n</USER_TEXT>");
 
         let raw = self
-            .inference(
+            .inference_with_temperature_allow_empty(
                 config,
                 "You are a low-latency inline text completion assistant.",
                 &prompt,
-                max_tokens.or(Some(36)),
+                max_tokens.or(Some(24)),
                 true,
+                0.05,
             )
             .await?;
-        Ok(sanitize_inline_completion(&raw))
+        Ok(sanitize_inline_completion(&raw, context))
     }
 
     /// Multi-turn chat completion via Ollama /api/chat.
@@ -235,6 +246,62 @@ impl LocalAiService {
         max_tokens: Option<u32>,
         no_think: bool,
     ) -> Result<String, String> {
+        self.inference_with_temperature(config, system, prompt, max_tokens, no_think, 0.2)
+            .await
+    }
+
+    pub(crate) async fn inference_with_temperature(
+        &self,
+        config: &Config,
+        system: &str,
+        prompt: &str,
+        max_tokens: Option<u32>,
+        no_think: bool,
+        temperature: f32,
+    ) -> Result<String, String> {
+        self.inference_with_temperature_internal(
+            config,
+            system,
+            prompt,
+            max_tokens,
+            no_think,
+            temperature,
+            false,
+        )
+        .await
+    }
+
+    async fn inference_with_temperature_allow_empty(
+        &self,
+        config: &Config,
+        system: &str,
+        prompt: &str,
+        max_tokens: Option<u32>,
+        no_think: bool,
+        temperature: f32,
+    ) -> Result<String, String> {
+        self.inference_with_temperature_internal(
+            config,
+            system,
+            prompt,
+            max_tokens,
+            no_think,
+            temperature,
+            true,
+        )
+        .await
+    }
+
+    async fn inference_with_temperature_internal(
+        &self,
+        config: &Config,
+        system: &str,
+        prompt: &str,
+        max_tokens: Option<u32>,
+        no_think: bool,
+        temperature: f32,
+        allow_empty: bool,
+    ) -> Result<String, String> {
         if !matches!(self.status.lock().state.as_str(), "ready") {
             self.bootstrap(config).await;
         }
@@ -253,7 +320,7 @@ impl LocalAiService {
             images: None,
             stream: false,
             options: Some(OllamaGenerateOptions {
-                temperature: Some(0.2),
+                temperature: Some(temperature),
                 top_k: Some(40),
                 top_p: Some(0.9),
                 num_predict: max_tokens.map(|v| v as i32),
@@ -307,7 +374,11 @@ impl LocalAiService {
         }
 
         if payload.response.trim().is_empty() {
-            Err("ollama returned empty content".to_string())
+            if allow_empty {
+                Ok(String::new())
+            } else {
+                Err("ollama returned empty content".to_string())
+            }
         } else {
             Ok(payload.response)
         }

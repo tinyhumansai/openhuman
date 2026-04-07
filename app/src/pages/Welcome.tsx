@@ -1,27 +1,77 @@
-import OAuthLoginSection from '../components/oauth/OAuthLoginSection';
+import { useState } from 'react';
+
+import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
+import { oauthProviderConfigs } from '../components/oauth/providerConfigs';
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
-import TypewriterGreeting from '../components/TypewriterGreeting';
 
 const Welcome = () => {
+  const [email, setEmail] = useState('');
+
+  const handleEmailSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+    // TODO: implement email auth flow
+    console.log('[Welcome] email submit:', email);
+  };
+
   return (
-    <div className="min-h-full flex items-center justify-center p-4 pt-6">
-      <div className="flex w-full max-w-md flex-col items-center gap-7 text-center animate-fade-up">
-        <div className="h-36 w-36 md:h-44 md:w-44">
-          <RotatingTetrahedronCanvas />
+    <div className="min-h-full flex flex-col items-center justify-center p-4">
+      <div className="max-w-md w-full">
+        <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-8 animate-fade-up">
+          {/* Logo */}
+          <div className="flex justify-center mb-6">
+            <div className="h-20 w-20">
+              <RotatingTetrahedronCanvas />
+            </div>
+          </div>
+
+          {/* Heading */}
+          <h1 className="text-2xl font-bold text-stone-900 text-center mb-2">
+            Sign in! Let's Cook
+          </h1>
+
+          {/* Subtitle */}
+          <p className="text-sm text-stone-500 text-center mb-6 leading-relaxed">
+            Welcome to <span className="font-medium text-stone-900">OpenHuman</span>! Your Personal
+            AI Super Intelligence. Private, Simple and extremely powerful.
+          </p>
+
+          {/* OAuth buttons — horizontal row */}
+          <div className="flex items-center justify-center gap-3 mb-5">
+            {oauthProviderConfigs
+              .filter(p => ['google', 'github', 'twitter'].includes(p.id))
+              .map(provider => (
+                <OAuthProviderButton
+                  key={provider.id}
+                  provider={provider}
+                  className="!rounded-full !px-4 !py-2 !text-xs"
+                />
+              ))}
+          </div>
+
+          {/* Divider */}
+          <div className="flex items-center gap-3 mb-5">
+            <div className="flex-1 h-px bg-stone-200" />
+            <span className="text-xs text-stone-400">Or</span>
+            <div className="flex-1 h-px bg-stone-200" />
+          </div>
+
+          {/* Email input + CTA */}
+          <form onSubmit={handleEmailSubmit} className="space-y-3">
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="Enter your email"
+              className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-colors"
+            />
+            <button
+              type="submit"
+              className="w-full py-3 bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm rounded-xl transition-colors duration-200">
+              Continue with email
+            </button>
+          </form>
         </div>
-
-        <TypewriterGreeting
-          greetings={['Hello HAL9000! 👋', "Let's cook! 🔥", 'The A-Team is here! 👊']}
-        />
-
-        <p className="max-w-xl text-sm text-stone-500 md:text-base">
-          Welcome to <span className="font-medium text-stone-900">OpenHuman</span>! Your Personal AI
-          super intelligence. Private, Simple and extremely powerful.
-        </p>
-
-        {/* <div className="glass rounded-3xl p-8 text-center animate-fade-up shadow-large"> */}
-        <OAuthLoginSection />
-        {/* </div> */}
       </div>
     </div>
   );

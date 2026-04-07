@@ -157,6 +157,39 @@ pub(crate) fn find_system_ollama_binary() -> Option<PathBuf> {
         }
     }
 
+    if cfg!(windows) {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            candidates.push(
+                PathBuf::from(&local_app_data)
+                    .join("Programs")
+                    .join("Ollama")
+                    .join("ollama.exe"),
+            );
+            candidates.push(
+                PathBuf::from(&local_app_data)
+                    .join("Ollama")
+                    .join("ollama.exe"),
+            );
+        }
+        if let Ok(program_files) = std::env::var("PROGRAMFILES") {
+            candidates.push(
+                PathBuf::from(&program_files)
+                    .join("Ollama")
+                    .join("ollama.exe"),
+            );
+        }
+        for candidate in candidates {
+            if candidate.is_file() {
+                log::debug!(
+                    "[local_ai] found system Ollama at common Windows path: {}",
+                    candidate.display()
+                );
+                return Some(candidate);
+            }
+        }
+    }
+
     if cfg!(target_os = "macos") {
         let common = [
             PathBuf::from("/usr/local/bin/ollama"),

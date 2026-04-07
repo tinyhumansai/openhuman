@@ -131,15 +131,23 @@ impl LocalAiService {
             .unwrap_or("")
             .to_ascii_lowercase();
 
-        if ext == "wav" {
-            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)
+        let result = if ext == "wav" {
+            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)?
         } else {
             warn!(
                 "{LOG_PREFIX} non-WAV input ({ext}), attempting WAV decode anyway \
                  (may fail — use ffmpeg conversion for best results)"
             );
-            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)
-        }
+            whisper_engine::transcribe_wav_file(handle, path, None, initial_prompt)?
+        };
+
+        debug!(
+            "{LOG_PREFIX} in-process result: avg_logprob={:.3}, segments={}/{}",
+            result.avg_logprob.unwrap_or(0.0),
+            result.segments_accepted,
+            result.segments_total
+        );
+        Ok(result.text)
     }
 
     /// Original subprocess-based transcription via whisper-cli.
