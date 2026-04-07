@@ -119,11 +119,20 @@ const handleOAuthDeepLink = async (parsed: URL) => {
     const skillId = parsed.searchParams.get('skillId');
 
     if (!integrationId || !skillId) {
-      console.error('[DeepLink] OAuth success missing integrationId or skillId', parsed.href);
+      // Do not log full URL — query can contain secrets (e.g. clientKey).
+      console.error('[DeepLink] OAuth success missing integrationId or skillId');
       return;
     }
 
-    const versionGate = await evaluateOAuthAppVersionGate();
+    let versionGate: Awaited<ReturnType<typeof evaluateOAuthAppVersionGate>>;
+    try {
+      versionGate = await evaluateOAuthAppVersionGate();
+    } catch (gateErr) {
+      // Avoid bubbling: outer handler logs the raw URL and would leak query secrets.
+      console.warn('[DeepLink] OAuth version gate failed; continuing OAuth', gateErr);
+      versionGate = { ok: true };
+    }
+
     if (!versionGate.ok) {
       const msg = `This OpenHuman build (${versionGate.current}) is older than the minimum required for OAuth (${versionGate.minimum}). Install the latest release, then try connecting again.`;
       try {
@@ -234,7 +243,8 @@ const handleDeepLinkUrls = async (urls: string[] | null | undefined) => {
         break;
     }
   } catch (error) {
-    console.error('[DeepLink] Failed to handle deep link URL:', url, error);
+    // Avoid logging full `url` — OAuth callbacks can include sensitive query params.
+    console.error('[DeepLink] Failed to handle deep link:', error);
   }
 };
 

@@ -9,7 +9,7 @@ This runbook describes how we avoid users completing **OAuth** (including **Gmai
 
 ## Minimum app version for OAuth
 
-Production web builds can embed a **minimum supported app semver** so OAuth deep links cannot complete on deprecated binaries:
+Production web builds embed a **minimum supported app semver** at **build time** so OAuth deep links cannot complete on deprecated binaries. Each installer carries the floor that was set when that build was produced; raising the floor for users who never upgrade requires a **new** release they install (or in-app update). Optional future work: enforce a moving minimum via a **runtime** API with the bundled value as fallback only.
 
 | Variable                             | Purpose                                                                                                               |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |

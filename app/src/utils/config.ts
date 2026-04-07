@@ -47,13 +47,19 @@ export const APP_VERSION = packageJson.version;
 
 /**
  * Minimum **desktop app** semver required for OAuth deep-link completion (`openhuman://oauth/success`).
- * Set in production builds (e.g. GitHub Actions `vars`) so outdated installs cannot finish OAuth.
- * Empty = no gate (default for local dev).
+ *
+ * **Build-time embedding:** This value is baked into each shipped installer. Raising the floor for
+ * users already on an older build requires them to install a **new** release (or use in-app update
+ * when available)—changing CI vars alone does not retrofit existing binaries. For a fleet-wide
+ * minimum that can move without a new app build, add a runtime policy endpoint later and consult it
+ * here with this constant as fallback only.
+ *
+ * Set in production builds (e.g. GitHub Actions `vars`). Empty = no gate (default for local dev).
  */
 export const MINIMUM_SUPPORTED_APP_VERSION =
   (import.meta.env.VITE_MINIMUM_SUPPORTED_APP_VERSION as string | undefined)?.trim() ?? '';
 
-/** Recovery link opened when OAuth is blocked due to an outdated app build. */
+/** Recovery link opened when OAuth is blocked due to an outdated app build (build-time default; override via CI). */
 export const LATEST_APP_DOWNLOAD_URL =
   (import.meta.env.VITE_LATEST_APP_DOWNLOAD_URL as string | undefined)?.trim() ||
   'https://github.com/tinyhumansai/openhuman/releases/latest';

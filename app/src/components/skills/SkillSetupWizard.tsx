@@ -12,7 +12,7 @@
  * as a single "managed" auth mode.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSkillSnapshot } from "../../lib/skills/hooks.ts";
 import { skillManager } from "../../lib/skills/manager.ts";
 import { getSkillSnapshot, installSkill, listAvailable, setSetupComplete, startSkill } from "../../lib/skills/skillsApi.ts";
