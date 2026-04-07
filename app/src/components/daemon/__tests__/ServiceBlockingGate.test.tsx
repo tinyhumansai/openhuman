@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, type Mock } from 'vitest';
 
 import * as tauriCommands from '../../../utils/tauriCommands';
@@ -23,7 +23,7 @@ describe('ServiceBlockingGate', () => {
     await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
   });
 
-  it('shows blocking screen when service is not installed', async () => {
+  it('renders children even when service is not installed', async () => {
     mockIsTauri.mockReturnValue(true);
     mockServiceStatus.mockResolvedValue({ result: { state: 'NotInstalled' }, logs: [] });
     mockAgentStatus.mockResolvedValue({ result: { running: false }, logs: [] });
@@ -34,12 +34,11 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    await waitFor(() => expect(screen.getByText('OpenHuman Service Required')).toBeInTheDocument());
-    expect(screen.queryByText('App Content')).not.toBeInTheDocument();
-    expect(screen.getByText('NotInstalled')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByText('OpenHuman Service Required')).not.toBeInTheDocument();
   });
 
-  it('runs install and start actions from blocker', async () => {
+  it('does not expose forced install actions from the app shell', async () => {
     mockIsTauri.mockReturnValue(true);
     mockServiceStatus.mockResolvedValue({ result: { state: 'NotInstalled' }, logs: [] });
     mockAgentStatus.mockResolvedValue({ result: { running: false }, logs: [] });
@@ -52,10 +51,10 @@ describe('ServiceBlockingGate', () => {
       </ServiceBlockingGate>
     );
 
-    await waitFor(() => expect(screen.getByText('OpenHuman Service Required')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Install Service' }));
-    await waitFor(() => expect(mockInstall).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('App Content')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Install Service' })).not.toBeInTheDocument();
+    expect(mockInstall).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
   });
 
   it('renders children when service is running even if agent is not running', async () => {

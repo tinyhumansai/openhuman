@@ -2,8 +2,8 @@
  * DictationHotkeyManager
  *
  * Headless component that auto-registers the global dictation hotkey on mount
- * and logs toggle events. Mount inside ServiceBlockingGate so the core RPC
- * is available when it initialises.
+ * and logs toggle events. Mount inside the main app tree after the core host
+ * has been initialized so core RPC is available when it starts up.
  */
 import { useEffect } from 'react';
 

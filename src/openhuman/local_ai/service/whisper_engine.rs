@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 
 use log::{debug, info};
 use parking_lot::Mutex;
@@ -76,10 +77,15 @@ pub fn loaded_model_path(handle: &WhisperEngineHandle) -> Option<PathBuf> {
 /// Transcribe raw PCM audio (16 kHz, mono, f32 samples).
 ///
 /// Returns the concatenated transcript text or an error.
+///
+/// `initial_prompt` biases whisper's tokenizer toward the supplied text,
+/// improving recognition of specific vocabulary (names, technical terms)
+/// and providing conversational continuity across consecutive recordings.
 pub fn transcribe_pcm_f32(
     handle: &WhisperEngineHandle,
     audio_f32: &[f32],
     language: Option<&str>,
+    initial_prompt: Option<&str>,
 ) -> Result<String, String> {
     let mut guard = handle.lock();
     let engine = guard
@@ -87,9 +93,10 @@ pub fn transcribe_pcm_f32(
         .ok_or_else(|| "whisper engine not loaded".to_string())?;
 
     debug!(
-        "{LOG_PREFIX} transcribing {} samples ({:.1}s of audio)",
+        "{LOG_PREFIX} transcribing {} samples ({:.1}s of audio), initial_prompt={}",
         audio_f32.len(),
-        audio_f32.len() as f64 / 16000.0
+        audio_f32.len() as f64 / 16000.0,
+        initial_prompt.map_or("none".to_string(), |p| format!("{}chars", p.len()))
     );
 
     let mut state = engine
@@ -105,6 +112,50 @@ pub fn transcribe_pcm_f32(
         params.set_language(Some("en"));
     }
 
+    // Pass initial_prompt to bias whisper toward known vocabulary and
+    // provide conversational context (like OpenWhispr's dictionary prompt).
+    if let Some(prompt) = initial_prompt {
+        if !prompt.trim().is_empty() {
+            params.set_initial_prompt(prompt);
+            debug!(
+                "{LOG_PREFIX} set initial_prompt: '{}...'",
+                &prompt[..prompt.len().min(80)]
+            );
+        }
+    }
+
+    // ── Anti-hallucination settings (matching OpenWhispr / whisper.cpp best practices) ──
+
+    // Suppress non-speech tokens (music notes, timestamps, etc.)
+    params.set_suppress_nst(true);
+
+    // Suppress blank output at the start of segments.
+    params.set_suppress_blank(true);
+
+    // No-speech probability threshold. Segments where the no-speech
+    // probability exceeds this are silently dropped. Default 0.6.
+    params.set_no_speech_thold(0.6);
+
+    // Entropy threshold — segments with avg token entropy above this
+    // are considered too noisy/random (hallucination). Default 2.4.
+    params.set_entropy_thold(2.4);
+
+    // Log-probability threshold — segments with avg log-prob below this
+    // are rejected as low-confidence. Default -1.0.
+    params.set_logprob_thold(-1.0);
+
+    // Temperature 0 = greedy (deterministic, no randomness).
+    params.set_temperature(0.0);
+
+    // Disable temperature fallback — don't retry with higher temperatures
+    // which can produce hallucinated creative output.
+    params.set_temperature_inc(0.0);
+
+    // Use single segment mode for short dictation utterances.
+    // This prevents whisper from splitting short audio into multiple
+    // segments and hallucinating in the gaps.
+    params.set_single_segment(true);
+
     // Disable printing to stdout — we capture segments programmatically.
     params.set_print_special(false);
     params.set_print_progress(false);
@@ -117,9 +168,11 @@ pub fn transcribe_pcm_f32(
         .unwrap_or(2);
     params.set_n_threads(n_threads);
 
+    let infer_started = Instant::now();
     state
         .full(params, audio_f32)
         .map_err(|e| format!("whisper inference failed: {e}"))?;
+    let infer_elapsed = infer_started.elapsed();
 
     let mut text = String::new();
     let mut segment_count = 0;
@@ -135,9 +188,11 @@ pub fn transcribe_pcm_f32(
 
     let trimmed = text.trim().to_string();
     debug!(
-        "{LOG_PREFIX} transcription complete: {} chars, {} segments",
+        "{LOG_PREFIX} transcription complete: {} chars, {} segments, n_threads={}, infer_elapsed_ms={}",
         trimmed.len(),
-        segment_count
+        segment_count,
+        n_threads,
+        infer_elapsed.as_millis()
     );
 
     Ok(trimmed)
@@ -150,11 +205,12 @@ pub fn transcribe_pcm_i16(
     handle: &WhisperEngineHandle,
     audio_i16: &[i16],
     language: Option<&str>,
+    initial_prompt: Option<&str>,
 ) -> Result<String, String> {
     let mut audio_f32 = vec![0.0f32; audio_i16.len()];
     whisper_rs::convert_integer_to_float_audio(audio_i16, &mut audio_f32)
         .map_err(|e| format!("audio conversion failed: {e}"))?;
-    transcribe_pcm_f32(handle, &audio_f32, language)
+    transcribe_pcm_f32(handle, &audio_f32, language, initial_prompt)
 }
 
 /// Read a WAV file and transcribe it. The WAV must be 16 kHz mono PCM
@@ -164,13 +220,14 @@ pub fn transcribe_wav_file(
     handle: &WhisperEngineHandle,
     wav_path: &Path,
     language: Option<&str>,
+    initial_prompt: Option<&str>,
 ) -> Result<String, String> {
     debug!("{LOG_PREFIX} reading WAV file: {}", wav_path.display());
 
     let raw_bytes = std::fs::read(wav_path).map_err(|e| format!("failed to read WAV file: {e}"))?;
 
     let audio_f32 = decode_wav_to_f32(&raw_bytes)?;
-    transcribe_pcm_f32(handle, &audio_f32, language)
+    transcribe_pcm_f32(handle, &audio_f32, language, initial_prompt)
 }
 
 /// Minimal WAV decoder — extracts PCM samples as f32 from a standard
@@ -305,7 +362,7 @@ mod tests {
     fn transcribe_pcm_fails_when_not_loaded() {
         let handle = new_handle();
         let audio = vec![0.0f32; 16000];
-        let result = transcribe_pcm_f32(&handle, &audio, None);
+        let result = transcribe_pcm_f32(&handle, &audio, None, None);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not loaded"));
     }
@@ -326,7 +383,7 @@ mod tests {
     fn convert_i16_produces_correct_length() {
         let handle = new_handle();
         let audio_i16 = vec![0i16; 100];
-        let result = transcribe_pcm_i16(&handle, &audio_i16, None);
+        let result = transcribe_pcm_i16(&handle, &audio_i16, None, None);
         assert!(result.is_err()); // expected: engine not loaded
     }
 }

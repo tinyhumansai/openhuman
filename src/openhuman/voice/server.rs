@@ -7,6 +7,7 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Instant;
 
 use log::{debug, error, info, warn};
 use tokio::sync::Mutex;
@@ -44,6 +45,18 @@ pub struct VoiceServerStatus {
     pub last_error: Option<String>,
 }
 
+/// Default silence threshold (RMS energy). Recordings with peak RMS below
+/// this are considered silent and skipped. Matches OpenWhispr's 0.002 default.
+const DEFAULT_SILENCE_THRESHOLD: f32 = 0.002;
+
+/// Maximum number of recent transcriptions to keep as context for whisper's
+/// initial_prompt, improving continuity across consecutive recordings.
+const MAX_RECENT_TRANSCRIPTS: usize = 5;
+
+/// Maximum character length of the combined initial prompt (dictionary +
+/// recent transcripts). Whisper's prompt token budget is limited.
+const MAX_INITIAL_PROMPT_CHARS: usize = 500;
+
 /// Configuration for the voice server.
 #[derive(Debug, Clone)]
 pub struct VoiceServerConfig {
@@ -55,16 +68,23 @@ pub struct VoiceServerConfig {
     pub context: Option<String>,
     /// Minimum recording duration in seconds. Shorter recordings are discarded.
     pub min_duration_secs: f32,
+    /// RMS energy threshold for silence detection. Recordings with peak
+    /// energy below this are treated as silence and skipped.
+    pub silence_threshold: f32,
+    /// Custom vocabulary words to bias whisper toward (passed as initial_prompt).
+    pub custom_dictionary: Vec<String>,
 }
 
 impl Default for VoiceServerConfig {
     fn default() -> Self {
         Self {
-            hotkey: "ctrl+shift+space".to_string(),
-            activation_mode: ActivationMode::Tap,
+            hotkey: "Fn".to_string(),
+            activation_mode: ActivationMode::Push,
             skip_cleanup: false,
             context: None,
             min_duration_secs: 0.3,
+            silence_threshold: DEFAULT_SILENCE_THRESHOLD,
+            custom_dictionary: Vec::new(),
         }
     }
 }
@@ -76,6 +96,9 @@ pub struct VoiceServer {
     config: VoiceServerConfig,
     transcription_count: Arc<std::sync::atomic::AtomicU64>,
     last_error: Arc<Mutex<Option<String>>>,
+    /// Rolling buffer of recent transcriptions used as whisper context for
+    /// better continuity across consecutive recordings.
+    recent_transcripts: Arc<Mutex<Vec<String>>>,
 }
 
 impl VoiceServer {
@@ -86,6 +109,7 @@ impl VoiceServer {
             config,
             transcription_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
+            recent_transcripts: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -138,11 +162,17 @@ impl VoiceServer {
 
             match event {
                 HotkeyEvent::Pressed => {
+                    let current_state = *self.state.lock().await;
+                    info!(
+                        "{LOG_PREFIX} received hotkey event=Pressed state_before={current_state:?} recording={}",
+                        recording.is_some()
+                    );
                     if recording.is_some() {
-                        // In tap mode, second press stops recording.
+                        // Recording in progress → stop it (tap toggle or
+                        // unreliable-release keys like Fn that always send Pressed).
                         debug!("{LOG_PREFIX} hotkey pressed while recording → stopping");
                         if let Some(handle) = recording.take() {
-                            self.process_recording(handle, app_config).await;
+                            self.spawn_process_recording(handle, app_config);
                         }
                     } else {
                         debug!("{LOG_PREFIX} hotkey pressed → starting recording");
@@ -160,10 +190,16 @@ impl VoiceServer {
                     }
                 }
                 HotkeyEvent::Released => {
+                    info!(
+                        "{LOG_PREFIX} received hotkey event=Released state_before={:?}",
+                        *self.state.lock().await
+                    );
                     // In push mode, release stops recording.
                     if let Some(handle) = recording.take() {
                         debug!("{LOG_PREFIX} hotkey released → stopping recording");
-                        self.process_recording(handle, app_config).await;
+                        self.spawn_process_recording(handle, app_config);
+                    } else {
+                        debug!("{LOG_PREFIX} release received with no active recording (normal for unreliable-release keys)");
                     }
                 }
             }
@@ -182,70 +218,211 @@ impl VoiceServer {
         self.cancel.cancel();
     }
 
-    /// Process a completed recording: transcribe and insert text.
-    async fn process_recording(&self, handle: RecordingHandle, config: &Config) {
-        *self.state.lock().await = ServerState::Transcribing;
+    /// Spawn `process_recording` as a background task so the hotkey event
+    /// loop is not blocked during transcription. This ensures rapid
+    /// consecutive Fn presses are never missed.
+    fn spawn_process_recording(&self, handle: RecordingHandle, config: &Config) {
+        let state = self.state.clone();
+        let server_config = self.config.clone();
+        let transcription_count = self.transcription_count.clone();
+        let last_error = self.last_error.clone();
+        let recent_transcripts = self.recent_transcripts.clone();
+        let app_config = config.clone();
 
-        match handle.stop().await {
-            Ok(result) => {
-                info!(
-                    "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes",
-                    result.duration_secs,
-                    result.wav_bytes.len()
+        tokio::spawn(async move {
+            process_recording_bg(
+                handle,
+                &app_config,
+                &server_config,
+                state,
+                transcription_count,
+                last_error,
+                recent_transcripts,
+            )
+            .await;
+        });
+    }
+}
+
+// ── Background processing (free functions, spawnable) ─────────────────
+
+/// Build the whisper initial_prompt from custom dictionary + recent transcripts.
+async fn build_initial_prompt(
+    config: &VoiceServerConfig,
+    recent_transcripts: &Mutex<Vec<String>>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if !config.custom_dictionary.is_empty() {
+        parts.push(config.custom_dictionary.join(", "));
+    }
+
+    let recent = recent_transcripts.lock().await;
+    if !recent.is_empty() {
+        parts.push(recent.join(" "));
+    }
+
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut prompt = parts.join(". ");
+    if prompt.len() > MAX_INITIAL_PROMPT_CHARS {
+        prompt.truncate(MAX_INITIAL_PROMPT_CHARS);
+        if let Some(last_space) = prompt.rfind(' ') {
+            prompt.truncate(last_space);
+        }
+    }
+    debug!(
+        "{LOG_PREFIX} built initial_prompt ({} chars): '{}'",
+        prompt.len(),
+        truncate_for_log(&prompt, 100)
+    );
+    Some(prompt)
+}
+
+/// Add a transcript to the rolling recent buffer.
+async fn push_recent_transcript(recent_transcripts: &Mutex<Vec<String>>, text: &str) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let mut recent = recent_transcripts.lock().await;
+    recent.push(trimmed.to_string());
+    while recent.len() > MAX_RECENT_TRANSCRIPTS {
+        recent.remove(0);
+    }
+}
+
+/// Process a completed recording in the background.
+///
+/// This is a free function (not `&self`) so it can be spawned via
+/// `tokio::spawn` without blocking the hotkey event loop. All shared
+/// state is passed as `Arc` handles.
+async fn process_recording_bg(
+    handle: RecordingHandle,
+    config: &Config,
+    server_config: &VoiceServerConfig,
+    state: Arc<Mutex<ServerState>>,
+    transcription_count: Arc<std::sync::atomic::AtomicU64>,
+    last_error: Arc<Mutex<Option<String>>>,
+    recent_transcripts: Arc<Mutex<Vec<String>>>,
+) {
+    let pipeline_started = Instant::now();
+    *state.lock().await = ServerState::Transcribing;
+
+    let stop_started = Instant::now();
+    match handle.stop().await {
+        Ok(result) => {
+            let stop_elapsed = stop_started.elapsed();
+            info!(
+                "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes, peak_rms={:.6} (stop_elapsed_ms={})",
+                result.duration_secs,
+                result.wav_bytes.len(),
+                result.peak_rms,
+                stop_elapsed.as_millis()
+            );
+
+            // Gate 1: minimum duration.
+            if result.duration_secs < server_config.min_duration_secs {
+                warn!(
+                    "{LOG_PREFIX} recording too short ({:.1}s), skipping",
+                    result.duration_secs
                 );
-
-                if result.duration_secs < self.config.min_duration_secs {
-                    warn!(
-                        "{LOG_PREFIX} recording too short ({:.1}s), skipping",
-                        result.duration_secs
-                    );
-                    *self.state.lock().await = ServerState::Idle;
-                    return;
-                }
-
-                match crate::openhuman::voice::voice_transcribe_bytes(
-                    config,
-                    &result.wav_bytes,
-                    Some("wav".to_string()),
-                    self.config.context.as_deref(),
-                    self.config.skip_cleanup,
-                )
-                .await
-                {
-                    Ok(outcome) => {
-                        let text = &outcome.value.text;
-                        info!(
-                            "{LOG_PREFIX} transcription: '{}' ({} chars)",
-                            truncate_for_log(text, 80),
-                            text.len()
-                        );
-
-                        if !text.trim().is_empty() {
-                            if let Err(e) = text_input::insert_text(text) {
-                                error!("{LOG_PREFIX} failed to insert text: {e}");
-                                *self.last_error.lock().await = Some(e);
-                            } else {
-                                self.transcription_count.fetch_add(1, Ordering::Relaxed);
-                                info!("{LOG_PREFIX} text inserted into active field");
-                            }
-                        } else {
-                            debug!("{LOG_PREFIX} transcription was empty, nothing to insert");
-                        }
-                    }
-                    Err(e) => {
-                        error!("{LOG_PREFIX} transcription failed: {e}");
-                        *self.last_error.lock().await = Some(e);
-                    }
-                }
+                *state.lock().await = ServerState::Idle;
+                return;
             }
-            Err(e) => {
-                error!("{LOG_PREFIX} failed to stop recording: {e}");
-                *self.last_error.lock().await = Some(e);
+
+            // Gate 2: silence detection.
+            if result.peak_rms < server_config.silence_threshold {
+                warn!(
+                    "{LOG_PREFIX} audio is silence (peak_rms={:.6} < threshold={:.6}), skipping transcription",
+                    result.peak_rms,
+                    server_config.silence_threshold
+                );
+                *state.lock().await = ServerState::Idle;
+                return;
+            }
+
+            // Build initial_prompt from dictionary + recent transcripts.
+            let initial_prompt = build_initial_prompt(server_config, &recent_transcripts).await;
+            let context = initial_prompt
+                .as_deref()
+                .or(server_config.context.as_deref());
+
+            info!(
+                "{LOG_PREFIX} transcribing: skip_cleanup={} context={}",
+                server_config.skip_cleanup,
+                context.map_or("none".to_string(), |c| format!("{}chars", c.len()))
+            );
+
+            let transcribe_started = Instant::now();
+            match crate::openhuman::voice::voice_transcribe_bytes(
+                config,
+                &result.wav_bytes,
+                Some("wav".to_string()),
+                context,
+                server_config.skip_cleanup,
+            )
+            .await
+            {
+                Ok(outcome) => {
+                    let transcribe_elapsed = transcribe_started.elapsed();
+                    let text = &outcome.value.text;
+                    info!(
+                        "{LOG_PREFIX} transcription: '{}' ({} chars, transcribe_elapsed_ms={})",
+                        truncate_for_log(text, 80),
+                        text.len(),
+                        transcribe_elapsed.as_millis()
+                    );
+
+                    // Gate 3: filter hallucinated/blank output.
+                    if is_hallucinated_output(text) {
+                        warn!(
+                            "{LOG_PREFIX} detected hallucinated output, discarding: '{}'",
+                            truncate_for_log(text, 60)
+                        );
+                        *state.lock().await = ServerState::Idle;
+                        return;
+                    }
+
+                    if !text.trim().is_empty() {
+                        push_recent_transcript(&recent_transcripts, text).await;
+
+                        let insert_started = Instant::now();
+                        if let Err(e) = text_input::insert_text(text) {
+                            error!("{LOG_PREFIX} failed to insert text: {e}");
+                            *last_error.lock().await = Some(e);
+                        } else {
+                            let insert_elapsed = insert_started.elapsed();
+                            transcription_count.fetch_add(1, Ordering::Relaxed);
+                            info!(
+                                "{LOG_PREFIX} text inserted into active field (insert_elapsed_ms={}, total_pipeline_ms={})",
+                                insert_elapsed.as_millis(),
+                                pipeline_started.elapsed().as_millis()
+                            );
+                        }
+                    } else {
+                        debug!("{LOG_PREFIX} transcription was empty, nothing to insert");
+                    }
+                }
+                Err(e) => {
+                    error!("{LOG_PREFIX} transcription failed: {e}");
+                    *last_error.lock().await = Some(e);
+                }
             }
         }
-
-        *self.state.lock().await = ServerState::Idle;
+        Err(e) => {
+            error!("{LOG_PREFIX} failed to stop recording: {e}");
+            *last_error.lock().await = Some(e);
+        }
     }
+
+    debug!(
+        "{LOG_PREFIX} process_recording finished (total_pipeline_ms={})",
+        pipeline_started.elapsed().as_millis()
+    );
+    *state.lock().await = ServerState::Idle;
 }
 
 /// Global voice server instance, lazily initialized.
@@ -261,6 +438,55 @@ pub fn global_server(config: VoiceServerConfig) -> Arc<VoiceServer> {
 /// Get the global voice server if already initialized.
 pub fn try_global_server() -> Option<Arc<VoiceServer>> {
     VOICE_SERVER.get().cloned()
+}
+
+/// Start the embedded global voice server when config enables auto-start.
+///
+/// This is intended for core process startup. The server runs in the background
+/// and reuses the process-global singleton so RPC status/stop calls continue to
+/// operate on the same instance.
+pub async fn start_if_enabled(app_config: &Config) {
+    if !app_config.voice_server.auto_start {
+        info!("{LOG_PREFIX} auto-start disabled in config, skipping embedded voice server");
+        return;
+    }
+
+    let server_config = VoiceServerConfig {
+        hotkey: app_config.voice_server.hotkey.clone(),
+        activation_mode: match app_config.voice_server.activation_mode {
+            crate::openhuman::config::VoiceActivationMode::Tap => ActivationMode::Tap,
+            crate::openhuman::config::VoiceActivationMode::Push => ActivationMode::Push,
+        },
+        skip_cleanup: app_config.voice_server.skip_cleanup,
+        context: None,
+        min_duration_secs: app_config.voice_server.min_duration_secs,
+        silence_threshold: app_config.voice_server.silence_threshold,
+        custom_dictionary: app_config.voice_server.custom_dictionary.clone(),
+    };
+
+    if let Some(existing) = try_global_server() {
+        let status = existing.status().await;
+        if status.state != ServerState::Stopped {
+            info!(
+                "{LOG_PREFIX} embedded voice server already running: hotkey={} mode={:?}",
+                status.hotkey, status.activation_mode
+            );
+            return;
+        }
+    }
+
+    info!(
+        "{LOG_PREFIX} auto-start enabled, launching embedded voice server: hotkey={} mode={:?}",
+        server_config.hotkey, server_config.activation_mode
+    );
+
+    let server = global_server(server_config);
+    let config_for_run = app_config.clone();
+    tokio::spawn(async move {
+        if let Err(e) = server.run(&config_for_run).await {
+            error!("{LOG_PREFIX} embedded voice server exited with error: {e}");
+        }
+    });
 }
 
 /// Run the voice server standalone (blocking). Intended for CLI usage.
@@ -295,6 +521,87 @@ pub async fn run_standalone(
     server_arc.run(&app_config).await
 }
 
+/// Known whisper hallucination patterns. These are common outputs when
+/// whisper processes near-silent audio or audio with background noise.
+/// Sourced from community lists and OpenWhispr's filtering behavior.
+const HALLUCINATION_PATTERNS: &[&str] = &[
+    // whisper.cpp blank markers
+    "[blank_audio]",
+    "[ blank_audio ]",
+    "[blank audio]",
+    "(blank audio)",
+    // Common hallucinations from YouTube-trained models
+    "thank you",
+    "thank you.",
+    "thanks.",
+    "thank you for watching",
+    "thanks for watching",
+    "thank you for listening",
+    "thanks for listening",
+    "thank you so much",
+    "please subscribe",
+    "like and subscribe",
+    "see you next time",
+    "see you in the next video",
+    "bye bye",
+    "bye.",
+    "goodbye.",
+    // Single-word noise artifacts
+    "you",
+    "the",
+    "i",
+    "a",
+    "so",
+    "okay",
+    "ok",
+    "yeah",
+    "yes",
+    "no",
+    "oh",
+    "hmm",
+    "huh",
+    "ah",
+    // Punctuation-only
+    "...",
+    ".",
+    ",",
+    "!",
+    "?",
+];
+
+/// Check if whisper output is a known hallucination pattern.
+///
+/// Whisper.cpp famously outputs "[BLANK_AUDIO]" for silence and various
+/// stock phrases ("Thank you for watching", etc.) when fed noisy or
+/// near-empty audio. Filtering these prevents inserting garbage text.
+fn is_hallucinated_output(text: &str) -> bool {
+    let normalized = text.trim().to_lowercase();
+    if normalized.is_empty() {
+        return false; // handled separately as "empty"
+    }
+
+    // Strip trailing punctuation for matching (whisper often appends periods).
+    let stripped = normalized.trim_end_matches(|c: char| c.is_ascii_punctuation());
+
+    // Exact match against known hallucination phrases.
+    for pattern in HALLUCINATION_PATTERNS {
+        if normalized == *pattern || stripped == *pattern {
+            return true;
+        }
+    }
+
+    // Detect repeated short phrases (e.g. "you you you you").
+    let words: Vec<&str> = normalized.split_whitespace().collect();
+    if words.len() >= 3 {
+        let first = words[0];
+        if words.iter().all(|w| *w == first) {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn truncate_for_log(s: &str, max: usize) -> String {
     let truncated: String = s.chars().take(max).collect();
     if truncated.len() < s.len() {
@@ -311,10 +618,47 @@ mod tests {
     #[test]
     fn default_server_config() {
         let cfg = VoiceServerConfig::default();
-        assert_eq!(cfg.hotkey, "ctrl+shift+space");
-        assert_eq!(cfg.activation_mode, ActivationMode::Tap);
+        assert_eq!(cfg.hotkey, "Fn");
+        assert_eq!(cfg.activation_mode, ActivationMode::Push);
         assert!(!cfg.skip_cleanup);
         assert!(cfg.context.is_none());
+        assert!(cfg.custom_dictionary.is_empty());
+        assert!((cfg.silence_threshold - DEFAULT_SILENCE_THRESHOLD).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hallucination_detection() {
+        // Blank audio markers.
+        assert!(is_hallucinated_output("[BLANK_AUDIO]"));
+        assert!(is_hallucinated_output("  [blank_audio]  "));
+        assert!(is_hallucinated_output("[ BLANK_AUDIO ]"));
+        // Common hallucinated phrases.
+        assert!(is_hallucinated_output("Thank you for watching"));
+        assert!(is_hallucinated_output("thanks for listening"));
+        assert!(is_hallucinated_output("Thank you."));
+        assert!(is_hallucinated_output("Thank you"));
+        assert!(is_hallucinated_output("Thanks."));
+        assert!(is_hallucinated_output("Bye."));
+        assert!(is_hallucinated_output("Goodbye."));
+        // Repeated words.
+        assert!(is_hallucinated_output("you you you you"));
+        assert!(is_hallucinated_output("the the the the"));
+        // Punctuation-only.
+        assert!(is_hallucinated_output("..."));
+        assert!(is_hallucinated_output("."));
+        // Single noise words.
+        assert!(is_hallucinated_output("you"));
+        assert!(is_hallucinated_output("Yeah"));
+        assert!(is_hallucinated_output("Hmm"));
+        assert!(is_hallucinated_output("Oh."));
+        // Should NOT flag real speech.
+        assert!(!is_hallucinated_output("Hello, how are you?"));
+        assert!(!is_hallucinated_output("the quick brown fox"));
+        assert!(!is_hallucinated_output("I want to order pizza"));
+        assert!(!is_hallucinated_output(
+            "thank you for your help with the project"
+        ));
+        assert!(!is_hallucinated_output(""));
     }
 
     #[tokio::test]
@@ -336,8 +680,8 @@ mod tests {
     fn voice_server_status_serializes() {
         let status = VoiceServerStatus {
             state: ServerState::Idle,
-            hotkey: "ctrl+shift+space".into(),
-            activation_mode: ActivationMode::Tap,
+            hotkey: "Fn".into(),
+            activation_mode: ActivationMode::Push,
             transcription_count: 5,
             last_error: None,
         };

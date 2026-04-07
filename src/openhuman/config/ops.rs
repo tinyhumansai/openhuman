@@ -608,6 +608,85 @@ pub async fn load_and_apply_dictation_settings(
     ))
 }
 
+// ── Voice server settings ───────────────────────────────────────────
+
+pub struct VoiceServerSettingsPatch {
+    pub auto_start: Option<bool>,
+    pub hotkey: Option<String>,
+    pub activation_mode: Option<String>,
+    pub skip_cleanup: Option<bool>,
+    pub min_duration_secs: Option<f32>,
+    pub silence_threshold: Option<f32>,
+    pub custom_dictionary: Option<Vec<String>>,
+}
+
+pub async fn get_voice_server_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let result = json!({
+        "auto_start": config.voice_server.auto_start,
+        "hotkey": config.voice_server.hotkey,
+        "activation_mode": config.voice_server.activation_mode,
+        "skip_cleanup": config.voice_server.skip_cleanup,
+        "min_duration_secs": config.voice_server.min_duration_secs,
+        "silence_threshold": config.voice_server.silence_threshold,
+        "custom_dictionary": config.voice_server.custom_dictionary,
+    });
+    Ok(RpcOutcome::new(
+        result,
+        vec!["voice server settings read".to_string()],
+    ))
+}
+
+pub async fn load_and_apply_voice_server_settings(
+    update: VoiceServerSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    if let Some(auto_start) = update.auto_start {
+        config.voice_server.auto_start = auto_start;
+    }
+    if let Some(hotkey) = update.hotkey {
+        config.voice_server.hotkey = hotkey;
+    }
+    if let Some(mode) = update.activation_mode {
+        match mode.as_str() {
+            "tap" => {
+                config.voice_server.activation_mode =
+                    crate::openhuman::config::VoiceActivationMode::Tap;
+            }
+            "push" => {
+                config.voice_server.activation_mode =
+                    crate::openhuman::config::VoiceActivationMode::Push;
+            }
+            _ => {
+                return Err(format!(
+                    "invalid activation_mode: {mode} (valid: tap, push)"
+                ))
+            }
+        }
+    }
+    if let Some(skip_cleanup) = update.skip_cleanup {
+        config.voice_server.skip_cleanup = skip_cleanup;
+    }
+    if let Some(min_duration_secs) = update.min_duration_secs {
+        config.voice_server.min_duration_secs = min_duration_secs.max(0.0);
+    }
+    if let Some(silence_threshold) = update.silence_threshold {
+        config.voice_server.silence_threshold = silence_threshold.max(0.0);
+    }
+    if let Some(custom_dictionary) = update.custom_dictionary {
+        config.voice_server.custom_dictionary = custom_dictionary;
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(&config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "voice server settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
 pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
     let running = crate::openhuman::service::mock::mock_agent_running().unwrap_or(true);
     log::info!("[config] agent_server_status requested: running={running}");

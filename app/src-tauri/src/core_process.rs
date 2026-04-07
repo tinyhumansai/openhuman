@@ -499,6 +499,9 @@ mod tests {
 
     #[test]
     fn default_core_run_mode_env_parsing() {
+        let _unset = EnvGuard::unset("OPENHUMAN_CORE_RUN_MODE");
+        assert_eq!(default_core_run_mode(false), CoreRunMode::ChildProcess);
+
         let _guard = EnvGuard::set("OPENHUMAN_CORE_RUN_MODE", "in-process");
         assert_eq!(default_core_run_mode(false), CoreRunMode::InProcess);
 

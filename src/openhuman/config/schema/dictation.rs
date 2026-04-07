@@ -15,7 +15,7 @@ pub enum DictationActivationMode {
 
 impl Default for DictationActivationMode {
     fn default() -> Self {
-        Self::Toggle
+        Self::Push
     }
 }
 
@@ -25,7 +25,7 @@ pub struct DictationConfig {
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 
-    /// Global hotkey for activating dictation (e.g. "CmdOrCtrl+Shift+D").
+    /// Global hotkey for activating dictation (e.g. "Fn").
     #[serde(default = "default_hotkey")]
     pub hotkey: String,
 
@@ -52,7 +52,7 @@ fn default_enabled() -> bool {
 }
 
 fn default_hotkey() -> String {
-    "CmdOrCtrl+Shift+D".to_string()
+    "Fn".to_string()
 }
 
 fn default_llm_refinement() -> bool {

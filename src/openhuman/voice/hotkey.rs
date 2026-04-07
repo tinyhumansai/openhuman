@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use parking_lot::Mutex;
 use rdev::{listen, Event, EventType, Key};
 use tokio::sync::mpsc;
@@ -30,7 +30,7 @@ pub enum ActivationMode {
 
 impl Default for ActivationMode {
     fn default() -> Self {
-        Self::Tap
+        Self::Push
     }
 }
 
@@ -77,7 +77,7 @@ impl Drop for HotkeyListenerHandle {
     }
 }
 
-/// Parse a hotkey string like "ctrl+shift+space" into a `HotkeyCombination`.
+/// Parse a hotkey string like "ctrl+shift+space" or "fn" into a `HotkeyCombination`.
 pub fn parse_hotkey(hotkey_str: &str) -> Result<HotkeyCombination, String> {
     let parts: Vec<&str> = hotkey_str
         .split('+')
@@ -95,7 +95,6 @@ pub fn parse_hotkey(hotkey_str: &str) -> Result<HotkeyCombination, String> {
     for (i, part) in parts.iter().enumerate() {
         let key = string_to_key(part)?;
         if i < parts.len() - 1 {
-            // Everything except the last part is a modifier.
             modifiers.insert(key);
         } else {
             trigger = Some(key);
@@ -143,32 +142,52 @@ pub fn start_listener(
                 match event.event_type {
                     EventType::KeyPress(key) => {
                         let mut keys = pressed_keys.lock();
+                        let is_trigger = key == hotkey.trigger;
                         keys.insert(key);
 
-                        // Check if all modifiers + trigger are held.
-                        if key == hotkey.trigger
-                            && hotkey.modifiers.iter().all(|m| keys.contains(m))
-                        {
-                            match mode {
-                                ActivationMode::Tap => {
-                                    let was_active = is_active.fetch_xor(true, Ordering::SeqCst);
-                                    let event = if was_active {
-                                        HotkeyEvent::Released
-                                    } else {
-                                        HotkeyEvent::Pressed
-                                    };
-                                    debug!("{LOG_PREFIX} tap hotkey → {event:?}");
-                                    if tx.send(event).is_err() {
-                                        warn!("{LOG_PREFIX} event receiver dropped");
-                                    }
+                        if !is_trigger {
+                            return;
+                        }
+
+                        // Check if all modifiers are held.
+                        if !hotkey.modifiers.iter().all(|m| keys.contains(m)) {
+                            return;
+                        }
+
+                        let was_active = is_active.load(Ordering::SeqCst);
+                        debug!(
+                            "{LOG_PREFIX} KeyPress trigger={:?} was_active={was_active} mode={mode:?}",
+                            key
+                        );
+
+                        match mode {
+                            ActivationMode::Tap => {
+                                // Tap: each press toggles.
+                                if was_active {
+                                    is_active.store(false, Ordering::SeqCst);
+                                    info!("{LOG_PREFIX} tap → Released");
+                                    let _ = tx.send(HotkeyEvent::Released);
+                                } else {
+                                    is_active.store(true, Ordering::SeqCst);
+                                    info!("{LOG_PREFIX} tap → Pressed");
+                                    let _ = tx.send(HotkeyEvent::Pressed);
                                 }
-                                ActivationMode::Push => {
-                                    if !is_active.swap(true, Ordering::SeqCst) {
-                                        debug!("{LOG_PREFIX} push hotkey → Pressed");
-                                        if tx.send(HotkeyEvent::Pressed).is_err() {
-                                            warn!("{LOG_PREFIX} event receiver dropped");
-                                        }
-                                    }
+                            }
+                            ActivationMode::Push => {
+                                if !was_active {
+                                    // Normal: start recording.
+                                    is_active.store(true, Ordering::SeqCst);
+                                    info!("{LOG_PREFIX} push → Pressed");
+                                    let _ = tx.send(HotkeyEvent::Pressed);
+                                } else {
+                                    // Already active — this means the KeyRelease
+                                    // was missed (common with macOS Fn key).
+                                    // Send Released to stop the current recording.
+                                    is_active.store(false, Ordering::SeqCst);
+                                    info!(
+                                        "{LOG_PREFIX} push → Released (fallback, missed KeyRelease)"
+                                    );
+                                    let _ = tx.send(HotkeyEvent::Released);
                                 }
                             }
                         }
@@ -177,25 +196,28 @@ pub fn start_listener(
                         let mut keys = pressed_keys.lock();
                         keys.remove(&key);
 
-                        // In push mode, release when the trigger key is released.
+                        if key != hotkey.trigger {
+                            return;
+                        }
+
+                        debug!(
+                            "{LOG_PREFIX} KeyRelease trigger={:?} is_active={}",
+                            key,
+                            is_active.load(Ordering::SeqCst)
+                        );
+
+                        // In push mode, release stops recording.
                         if mode == ActivationMode::Push
-                            && key == hotkey.trigger
                             && is_active.swap(false, Ordering::SeqCst)
                         {
-                            debug!("{LOG_PREFIX} push hotkey → Released");
-                            if tx.send(HotkeyEvent::Released).is_err() {
-                                warn!("{LOG_PREFIX} event receiver dropped");
-                            }
+                            info!("{LOG_PREFIX} push → Released");
+                            let _ = tx.send(HotkeyEvent::Released);
                         }
                     }
                     _ => {}
                 }
             };
 
-            // rdev::listen blocks in the platform event loop and has no
-            // graceful cancellation API (rdev 0.5.3). The thread remains
-            // alive until the process exits; the stop_flag only causes the
-            // callback above to discard events. This is a known limitation.
             if let Err(e) = listen(callback) {
                 error!("{LOG_PREFIX} rdev listen error: {e:?}");
             }
@@ -232,6 +254,7 @@ fn string_to_key(s: &str) -> Result<Key, String> {
         "backspace" => Ok(Key::Backspace),
         "delete" | "del" => Ok(Key::Delete),
         "capslock" => Ok(Key::CapsLock),
+        "fn" | "function" => Ok(Key::Function),
 
         // F-keys
         "f1" => Ok(Key::F1),
@@ -329,6 +352,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_function_key() {
+        let combo = parse_hotkey("fn").unwrap();
+        assert_eq!(combo.trigger, Key::Function);
+        assert!(combo.modifiers.is_empty());
+    }
+
+    #[test]
     fn parse_empty_errors() {
         assert!(parse_hotkey("").is_err());
     }
@@ -339,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn activation_mode_default_is_tap() {
-        assert_eq!(ActivationMode::default(), ActivationMode::Tap);
+    fn activation_mode_default_is_push() {
+        assert_eq!(ActivationMode::default(), ActivationMode::Push);
     }
 }

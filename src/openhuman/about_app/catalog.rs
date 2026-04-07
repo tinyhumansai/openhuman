@@ -594,8 +594,8 @@ const CAPABILITIES: &[Capability] = &[
         name: "Manage Desktop Service",
         domain: "settings",
         category: CapabilityCategory::Settings,
-        description: "Install, start, stop, restart, uninstall, or refresh the required desktop service.",
-        how_to: "App startup > OpenHuman Service Required",
+        description: "Install, start, stop, restart, uninstall, or inspect the optional desktop background service.",
+        how_to: "Settings > Developer Options > Tauri Commands",
         status: CapabilityStatus::Stable,
     },
     Capability {

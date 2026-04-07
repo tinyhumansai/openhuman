@@ -234,9 +234,9 @@ fn run_voice_server_command(args: &[String]) -> Result<()> {
             "-h" | "--help" => {
                 println!("Usage: openhuman voice [--hotkey <combo>] [--mode <tap|push>] [--skip-cleanup] [-v]");
                 println!();
-                println!("  --hotkey <combo>   Key combination (default: ctrl+shift+space)");
+                println!("  --hotkey <combo>   Key combination (default: fn)");
                 println!(
-                    "  --mode <tap|push>  Activation: tap to toggle, push to hold (default: tap)"
+                    "  --mode <tap|push>  Activation: tap to toggle, push to hold (default: push)"
                 );
                 println!("  --skip-cleanup     Skip LLM post-processing on transcriptions");
                 println!("  -v, --verbose      Enable debug logging");
@@ -262,8 +262,8 @@ fn run_voice_server_command(args: &[String]) -> Result<()> {
         config.apply_env_overrides();
 
         let activation_mode = match mode.as_deref() {
-            Some("push") => ActivationMode::Push,
-            _ => ActivationMode::Tap,
+            Some("tap") => ActivationMode::Tap,
+            _ => ActivationMode::Push,
         };
 
         let server_config = VoiceServerConfig {
@@ -272,6 +272,8 @@ fn run_voice_server_command(args: &[String]) -> Result<()> {
             skip_cleanup,
             context: None,
             min_duration_secs: config.voice_server.min_duration_secs,
+            silence_threshold: config.voice_server.silence_threshold,
+            custom_dictionary: config.voice_server.custom_dictionary.clone(),
         };
 
         run_standalone(config, server_config)
