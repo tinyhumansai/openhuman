@@ -217,11 +217,11 @@ jobs:
 
   e2e-macos:
     name: E2E (macOS / Appium Mac2)
-    # Run on manual dispatch with opt-in flag, or on pushes to main.
-    # macOS runners are ~10× more expensive than Linux — keep gated by default.
+    # Run on: PRs, pushes to main, or manual dispatch with opt-in flag.
     if: >
-      github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true' ||
-      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true'
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
@@ -320,11 +320,12 @@ jobs:
 
   e2e-windows:
     name: E2E (Windows / tauri-driver)
-    # Run on manual dispatch (same flag as macOS) or pushes to main.
+    # Run on: PRs, pushes to main, or manual dispatch with opt-in flag.
     # windows-latest runners are ~2× more expensive than Linux.
     if: >
-      github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true' ||
-      github.event_name == 'push' && github.ref == 'refs/heads/main'
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
