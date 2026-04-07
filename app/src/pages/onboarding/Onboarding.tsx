@@ -5,10 +5,10 @@ import ProgressIndicator from '../../components/ProgressIndicator';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { userApi } from '../../services/api/userApi';
 import { bootstrapLocalAiWithRecommendedPreset } from '../../utils/localAiBootstrap';
+import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
 import LocalAIStep from './steps/LocalAIStep';
 import ScreenPermissionsStep from './steps/ScreenPermissionsStep';
 import SkillsStep from './steps/SkillsStep';
-import ToolsStep from './steps/ToolsStep';
 import WelcomeStep from './steps/WelcomeStep';
 
 interface OnboardingProps {
@@ -20,7 +20,6 @@ interface OnboardingDraft {
   localModelConsentGiven: boolean;
   localModelDownloadStarted: boolean;
   accessibilityPermissionGranted: boolean;
-  enabledTools: string[];
   connectedSources: string[];
 }
 
@@ -35,10 +34,9 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
     localModelConsentGiven: false,
     localModelDownloadStarted: false,
     accessibilityPermissionGranted: false,
-    enabledTools: [],
     connectedSources: [],
   });
-  const totalSteps = 5;
+  const totalSteps = 4;
 
   // Auto-dismiss the error banner after LOCAL_AI_ERROR_DISMISS_MS milliseconds.
   useEffect(() => {
@@ -96,11 +94,6 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
     handleNext();
   };
 
-  const handleToolsNext = (enabledTools: string[]) => {
-    setDraft(prev => ({ ...prev, enabledTools }));
-    handleNext();
-  };
-
   const handleSkillsNext = async (connectedSources: string[]) => {
     setDraft(prev => ({ ...prev, connectedSources }));
 
@@ -108,7 +101,7 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       accessibilityPermissionGranted: draft.accessibilityPermissionGranted,
       localModelConsentGiven: draft.localModelConsentGiven,
       localModelDownloadStarted: draft.localModelDownloadStarted,
-      enabledTools: draft.enabledTools,
+      enabledTools: getDefaultEnabledTools(),
       connectedSources,
       updatedAtMs: Date.now(),
     });
@@ -145,8 +138,6 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       case 2:
         return <ScreenPermissionsStep onNext={handleAccessibilityNext} onBack={handleBack} />;
       case 3:
-        return <ToolsStep onNext={handleToolsNext} onBack={handleBack} />;
-      case 4:
         return <SkillsStep onNext={handleSkillsNext} onBack={handleBack} />;
       default:
         return null;
