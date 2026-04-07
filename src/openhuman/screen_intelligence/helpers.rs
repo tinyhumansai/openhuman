@@ -199,7 +199,9 @@ pub(crate) async fn persist_vision_summary(
     // escaped. Values containing YAML-special characters like `:`, `{`, `}`, `[`,
     // `]`, `#`, `|`, `>`, `&`, `*` may still produce invalid YAML in edge cases.
     let yaml_escape = |s: &str| -> String {
-        s.replace('"', "\\\"").replace('\n', "\\n").replace('\r', "")
+        s.replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "")
     };
     let mut content = String::from("---\n");
     content.push_str(&format!("app: \"{}\"\n", yaml_escape(app)));

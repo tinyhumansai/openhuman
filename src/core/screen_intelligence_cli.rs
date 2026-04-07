@@ -591,7 +591,10 @@ fn run_vision(args: &[String]) -> Result<()> {
                 }
                 if !s.actionable_notes.is_empty() {
                     let truncated = if s.actionable_notes.chars().count() > 120 {
-                        format!("{}…", s.actionable_notes.chars().take(120).collect::<String>())
+                        format!(
+                            "{}…",
+                            s.actionable_notes.chars().take(120).collect::<String>()
+                        )
                     } else {
                         s.actionable_notes.clone()
                     };

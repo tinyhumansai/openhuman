@@ -46,9 +46,17 @@ pub(crate) async fn run(engine: Arc<AccessibilityEngine>) {
 
         // Read all session/config fields we need while holding the lock, then
         // drop it before performing I/O (screencapture + optional disk save).
-        let (baseline_ms, screen_monitoring, config, last_capture_at_ms, last_context_clone, vision_enabled) = {
+        let (
+            baseline_ms,
+            screen_monitoring,
+            config,
+            last_capture_at_ms,
+            last_context_clone,
+            vision_enabled,
+        ) = {
             let state = engine.inner.lock().await;
-            let baseline_ms = (1000.0_f64 / (state.config.baseline_fps.max(0.2) as f64)).round() as i64;
+            let baseline_ms =
+                (1000.0_f64 / (state.config.baseline_fps.max(0.2) as f64)).round() as i64;
             let screen_monitoring = state.features.screen_monitoring;
             let config = state.config.clone();
             let (last_capture_at_ms, last_context_clone, vision_enabled) = match &state.session {
@@ -62,7 +70,14 @@ pub(crate) async fn run(engine: Arc<AccessibilityEngine>) {
                     return;
                 }
             };
-            (baseline_ms, screen_monitoring, config, last_capture_at_ms, last_context_clone, vision_enabled)
+            (
+                baseline_ms,
+                screen_monitoring,
+                config,
+                last_capture_at_ms,
+                last_context_clone,
+                vision_enabled,
+            )
         };
 
         if !screen_monitoring {
