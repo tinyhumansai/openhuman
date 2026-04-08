@@ -37,7 +37,11 @@ describe('OnboardingOverlay', () => {
   it('does not render when onboarding is completed', () => {
     mockUseCoreState.mockReturnValue(makeCoreState({ onboardingCompleted: true }));
 
-    render(<MemoryRouter><OnboardingOverlay /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <OnboardingOverlay />
+      </MemoryRouter>
+    );
 
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
@@ -45,7 +49,11 @@ describe('OnboardingOverlay', () => {
   it('does not render when no token', () => {
     mockUseCoreState.mockReturnValue(makeCoreState({ sessionToken: null }));
 
-    render(<MemoryRouter><OnboardingOverlay /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <OnboardingOverlay />
+      </MemoryRouter>
+    );
 
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
@@ -53,7 +61,11 @@ describe('OnboardingOverlay', () => {
   it('does not render when user profile is not loaded yet', () => {
     mockUseCoreState.mockReturnValue(makeCoreState({ currentUser: {} }));
 
-    render(<MemoryRouter><OnboardingOverlay /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <OnboardingOverlay />
+      </MemoryRouter>
+    );
 
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
@@ -61,7 +73,11 @@ describe('OnboardingOverlay', () => {
   it('renders when the user is authenticated and onboarding is incomplete', () => {
     mockUseCoreState.mockReturnValue(makeCoreState());
 
-    render(<MemoryRouter><OnboardingOverlay /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <OnboardingOverlay />
+      </MemoryRouter>
+    );
 
     expect(screen.getByText('Skip')).toBeInTheDocument();
   });
@@ -69,7 +85,11 @@ describe('OnboardingOverlay', () => {
   it('does not render while bootstrapping', () => {
     mockUseCoreState.mockReturnValue({ ...makeCoreState(), isBootstrapping: true });
 
-    render(<MemoryRouter><OnboardingOverlay /></MemoryRouter>);
+    render(
+      <MemoryRouter>
+        <OnboardingOverlay />
+      </MemoryRouter>
+    );
 
     expect(screen.queryByText('Skip')).not.toBeInTheDocument();
   });
