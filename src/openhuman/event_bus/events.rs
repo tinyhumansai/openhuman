@@ -59,6 +59,20 @@ pub enum DomainEvent {
         elapsed_ms: u64,
         success: bool,
     },
+    /// A reaction event was received from a channel transport.
+    ChannelReactionReceived {
+        channel: String,
+        sender: String,
+        target_message_id: String,
+        emoji: String,
+    },
+    /// A reaction update was sent to a channel transport.
+    ChannelReactionSent {
+        channel: String,
+        target_message_id: String,
+        emoji: String,
+        success: bool,
+    },
     /// A channel connected successfully.
     ChannelConnected { channel: String },
     /// A channel disconnected.
@@ -181,6 +195,8 @@ impl DomainEvent {
             Self::ChannelInboundMessage { .. }
             | Self::ChannelMessageReceived { .. }
             | Self::ChannelMessageProcessed { .. }
+            | Self::ChannelReactionReceived { .. }
+            | Self::ChannelReactionSent { .. }
             | Self::ChannelConnected { .. }
             | Self::ChannelDisconnected { .. } => "channel",
 
@@ -285,6 +301,24 @@ mod tests {
                     content: "hi".into(),
                     response: "hello".into(),
                     elapsed_ms: 0,
+                    success: true,
+                },
+                "channel",
+            ),
+            (
+                DomainEvent::ChannelReactionReceived {
+                    channel: "c".into(),
+                    sender: "s".into(),
+                    target_message_id: "m1".into(),
+                    emoji: "👍".into(),
+                },
+                "channel",
+            ),
+            (
+                DomainEvent::ChannelReactionSent {
+                    channel: "c".into(),
+                    target_message_id: "m1".into(),
+                    emoji: "✅".into(),
                     success: true,
                 },
                 "channel",

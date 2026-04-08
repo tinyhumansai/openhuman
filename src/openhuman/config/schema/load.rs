@@ -10,7 +10,9 @@ use super::{
 use anyhow::{Context, Result};
 use directories::UserDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 
@@ -20,6 +22,7 @@ fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
 }
 
 const ACTIVE_WORKSPACE_STATE_FILE: &str = "active_workspace.toml";
+static WARNED_WORLD_READABLE_CONFIGS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ActiveWorkspaceState {
@@ -387,13 +390,18 @@ impl Config {
                 use std::os::unix::fs::PermissionsExt;
                 if let Ok(meta) = fs::metadata(&config_path).await {
                     if meta.permissions().mode() & 0o004 != 0 {
-                        tracing::warn!(
-                            "Config file {:?} is world-readable (mode {:o}). \
-                             Consider restricting with: chmod 600 {:?}",
-                            config_path,
-                            meta.permissions().mode() & 0o777,
-                            config_path,
-                        );
+                        let warned = WARNED_WORLD_READABLE_CONFIGS
+                            .get_or_init(|| Mutex::new(HashSet::new()));
+                        let mut warned_guard = warned.lock().unwrap_or_else(|e| e.into_inner());
+                        if warned_guard.insert(config_path.clone()) {
+                            tracing::warn!(
+                                "Config file {:?} is world-readable (mode {:o}). \
+                                 Consider restricting with: chmod 600 {:?}",
+                                config_path,
+                                meta.permissions().mode() & 0o777,
+                                config_path,
+                            );
+                        }
                     }
                 }
             }
