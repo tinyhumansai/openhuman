@@ -1151,7 +1151,8 @@ const Conversations = () => {
         <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
           {teamUsage &&
             (teamUsage.remainingUsd <= 0 ||
-              (teamUsage.fiveHourCapUsd > 0 &&
+              (!teamUsage.bypassRateLimit &&
+                teamUsage.fiveHourCapUsd > 0 &&
                 teamUsage.fiveHourSpendUsd >= teamUsage.fiveHourCapUsd)) && (
               <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
@@ -1188,14 +1189,16 @@ const Conversations = () => {
               <div className="relative group">
                 {teamUsage ? (
                   <div className="flex items-center gap-2">
-                    <LimitPill
-                      label="5h"
-                      usedPct={
-                        teamUsage.fiveHourCapUsd > 0
-                          ? Math.min(1, teamUsage.fiveHourSpendUsd / teamUsage.fiveHourCapUsd)
-                          : 0
-                      }
-                    />
+                    {!teamUsage.bypassRateLimit && (
+                      <LimitPill
+                        label="5h"
+                        usedPct={
+                          teamUsage.fiveHourCapUsd > 0
+                            ? Math.min(1, teamUsage.fiveHourSpendUsd / teamUsage.fiveHourCapUsd)
+                            : 0
+                        }
+                      />
+                    )}
                     <LimitPill
                       label="7d"
                       usedPct={
@@ -1215,18 +1218,20 @@ const Conversations = () => {
                 {teamUsage && (
                   <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
                     <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-stone-400">5-hour limit</span>
-                        <span>
-                          ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
-                          {teamUsage.fiveHourCapUsd.toFixed(2)}
-                          {teamUsage.fiveHourResetsAt && (
-                            <span className="text-stone-400 ml-1">
-                              — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
-                            </span>
-                          )}
-                        </span>
-                      </div>
+                      {!teamUsage.bypassRateLimit && (
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="text-stone-400">5-hour limit</span>
+                          <span>
+                            ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
+                            {teamUsage.fiveHourCapUsd.toFixed(2)}
+                            {teamUsage.fiveHourResetsAt && (
+                              <span className="text-stone-400 ml-1">
+                                — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between gap-4">
                         <span className="text-stone-400">Weekly limit</span>
                         <span>

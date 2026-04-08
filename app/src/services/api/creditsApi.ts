@@ -22,6 +22,8 @@ export interface TeamUsage {
   cycleStartDate: string;
   /** ISO timestamp when the current weekly cycle ends */
   cycleEndsAt: string;
+  /** When true, the 10-hour rolling window rate limit is not enforced for this user (test/internal accounts) */
+  bypassRateLimit?: boolean;
 }
 
 export interface TopUpResult {
