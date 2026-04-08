@@ -407,6 +407,7 @@ pub(crate) async fn run_event_loop(
 
     let memory_write_tx = spawn_memory_write_worker();
     let mut pending_tool: Option<PendingToolCall> = None;
+    let mut sync_in_flight = false;
 
     loop {
         // 1. Poll and fire ready timers (setTimeout / setInterval)
@@ -425,6 +426,7 @@ pub(crate) async fn run_event_loop(
                     state,
                     skill_id,
                     &mut pending_tool,
+                    &mut sync_in_flight,
                     &memory_client,
                     ops_state,
                     data_dir,
@@ -487,6 +489,30 @@ pub(crate) async fn run_event_loop(
             }
         }
 
+        // 4b. Check if a background sync has completed
+        if sync_in_flight {
+            let done = ctx
+                .with(|js_ctx| {
+                    js_ctx
+                        .eval::<bool, _>(b"globalThis.__syncInFlight === false")
+                        .unwrap_or(false)
+                })
+                .await;
+
+            if done {
+                sync_in_flight = false;
+                log::info!("[skill:{}] Background sync completed, persisting state to memory", skill_id);
+                persist_state_to_memory(
+                    skill_id,
+                    "periodic sync",
+                    ops_state,
+                    &memory_client,
+                    &memory_write_tx,
+                    true,
+                );
+            }
+        }
+
         // 5. Sync bridge-level published state to the instance's SkillState
         {
             let mut ops = ops_state.write();
@@ -502,8 +528,8 @@ pub(crate) async fn run_event_loop(
         }
 
         // 6. Calculate sleep duration to save CPU cycles when idle
-        let sleep_duration = if pending_tool.is_some() {
-            // Poll more frequently when waiting for an async tool result
+        let sleep_duration = if pending_tool.is_some() || sync_in_flight {
+            // Poll more frequently when waiting for an async tool result or sync
             TOOL_POLL_SLEEP
         } else {
             let (_, next_timer) = qjs_ops::poll_timers(timer_state);
@@ -540,6 +566,7 @@ async fn handle_message(
     state: &Arc<RwLock<SkillState>>,
     skill_id: &str,
     pending_tool: &mut Option<PendingToolCall>,
+    sync_in_flight: &mut bool,
     memory_client: &Option<MemoryClientRef>,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
     data_dir: &std::path::Path,
@@ -741,7 +768,7 @@ async fn handle_message(
                 }
                 "skill/ping" => handle_js_call(rt, ctx, "onPing", "{}").await,
                 "skill/sync" => {
-                    rpc_handlers::handle_sync(
+                    let result = rpc_handlers::handle_sync(
                         rt,
                         ctx,
                         skill_id,
@@ -749,7 +776,11 @@ async fn handle_message(
                         memory_client,
                         memory_write_tx,
                     )
-                    .await
+                    .await;
+                    if result.is_ok() {
+                        *sync_in_flight = true;
+                    }
+                    result
                 }
                 "oauth/revoked" => {
                     rpc_handlers::handle_oauth_revoked(

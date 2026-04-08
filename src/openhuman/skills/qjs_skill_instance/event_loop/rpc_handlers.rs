@@ -373,29 +373,100 @@ pub(crate) async fn handle_auth_revoked(
 
 /// Handle `skill/sync` RPC.
 ///
-/// Invokes the `onSync` handler in JS and triggers a state snapshot persistence
-/// to the OpenHuman memory system on success.
+/// Fires `onSync` in the JS runtime as a background task and returns immediately.
+/// The JS function runs asynchronously via the QuickJS job queue — progress is
+/// published by the skill through `state.setPartial()` and can be read via
+/// `sync-status` tool or `skills_status` RPC.
+///
+/// On completion (success or failure) the JS skill updates its own state. A
+/// memory snapshot is persisted once the sync finishes via a completion callback
+/// injected into the JS promise chain.
 pub(crate) async fn handle_sync(
-    rt: &rquickjs::AsyncRuntime,
+    _rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
     skill_id: &str,
     ops_state: &Arc<RwLock<qjs_ops::SkillState>>,
     memory_client: &Option<MemoryClientRef>,
     memory_write_tx: &mpsc::Sender<MemoryWriteJob>,
 ) -> Result<serde_json::Value, String> {
-    let result = handle_js_call(rt, ctx, "onSync", "{}").await;
-    if result.is_ok() {
-        // Only persist to memory if the JS sync was successful; set
-        // extract_working_memory=true so this explicit sync payload derives
-        // working.user.* documents.
-        persist_state_to_memory(
-            skill_id,
-            "periodic sync",
-            ops_state,
-            memory_client,
-            memory_write_tx,
-            true,
-        );
+    let skill_id_owned = skill_id.to_string();
+
+    // Clone handles for the completion callback
+    let ops_for_cb = ops_state.clone();
+    let mem_client_for_cb = memory_client.clone();
+    let mem_tx_for_cb = memory_write_tx.clone();
+
+    // Fire onSync without awaiting the promise — it runs in the QuickJS job
+    // queue and the event loop drives it on subsequent ticks.
+    let start_result = ctx
+        .with(|js_ctx| {
+            let code = r#"(function() {
+                var skill = globalThis.__skill && globalThis.__skill.default
+                    ? globalThis.__skill.default
+                    : (globalThis.__skill || globalThis);
+                var fn = skill.onSync || globalThis.onSync;
+                if (typeof fn !== 'function') {
+                    return "no_handler";
+                }
+                var result = fn.call(skill, {});
+                if (result && typeof result.then === 'function') {
+                    // Mark sync as in-flight so completion callback can persist memory
+                    globalThis.__syncInFlight = true;
+                    result.then(
+                        function() {
+                            globalThis.__syncInFlight = false;
+                            console.log('[notion][sync] background sync completed successfully');
+                        },
+                        function(e) {
+                            globalThis.__syncInFlight = false;
+                            console.error('[notion][sync] background sync failed: ' + (e && e.message ? e.message : String(e)));
+                        }
+                    );
+                    return "started";
+                }
+                // Synchronous — already done
+                return "done";
+            })()"#;
+
+            match js_ctx.eval::<String, _>(code.as_bytes()) {
+                Ok(s) => Ok(s),
+                Err(e) => {
+                    let detail = super::super::js_helpers::format_js_exception(&js_ctx, &e);
+                    Err(format!("onSync() failed to start: {detail}"))
+                }
+            }
+        })
+        .await;
+
+    match start_result {
+        Ok(ref status) if status == "no_handler" => {
+            Err("Skill does not implement onSync".to_string())
+        }
+        Ok(ref status) => {
+            log::info!(
+                "[skill:{}] sync started in background (status={})",
+                skill_id_owned,
+                status
+            );
+
+            // If synchronous ("done"), persist memory now
+            if status == "done" {
+                persist_state_to_memory(
+                    &skill_id_owned,
+                    "periodic sync",
+                    &ops_for_cb,
+                    &mem_client_for_cb,
+                    &mem_tx_for_cb,
+                    true,
+                );
+            }
+
+            Ok(serde_json::json!({
+                "ok": true,
+                "status": status,
+                "message": "Sync started in background. Query sync-status for progress."
+            }))
+        }
+        Err(e) => Err(e),
     }
-    result
 }
