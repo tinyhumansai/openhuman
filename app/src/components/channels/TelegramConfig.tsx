@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
+import { restartCoreProcess } from '../../utils/tauriCommands/core';
 import {
   disconnectChannelConnection,
   setChannelConnectionStatus,
@@ -251,7 +252,15 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         );
 
         if (result.restart_required) {
-          setError(result.message ?? 'Restart the service to activate the channel.');
+          log('restart required after connect — restarting core process');
+          try {
+            await restartCoreProcess();
+            log('core process restarted successfully');
+          } catch (restartErr) {
+            const msg = restartErr instanceof Error ? restartErr.message : String(restartErr);
+            log('core restart failed: %s', msg);
+            setError('Channel saved. Restart the app to activate it.');
+          }
         }
       });
     },
