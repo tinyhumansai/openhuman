@@ -11,6 +11,7 @@ import ErrorFallbackScreen from './components/ErrorFallbackScreen';
 import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
 import OnboardingOverlay from './components/OnboardingOverlay';
+import RouteLoadingScreen from './components/RouteLoadingScreen';
 import CoreStateProvider from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import { tagErrorSource } from './services/errorReportQueue';
@@ -26,7 +27,7 @@ function App() {
         tagErrorSource(eventId, 'react', componentStack);
       }}>
       <Provider store={store}>
-        <PersistGate loading={null} persistor={persistor}>
+        <PersistGate loading={<RouteLoadingScreen />} persistor={persistor}>
           <CoreStateProvider>
             <SocketProvider>
               <Router>

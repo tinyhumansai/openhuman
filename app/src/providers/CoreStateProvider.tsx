@@ -33,6 +33,7 @@ import {
 } from '../utils/tauriCommands';
 
 const POLL_MS = 3000;
+const MAX_BOOTSTRAP_RETRIES = 5;
 
 interface CoreStateContextValue extends CoreState {
   refresh: () => Promise<void>;
@@ -76,6 +77,7 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const snapshotRequestIdRef = useRef(0);
   const teamsRequestIdRef = useRef(0);
   const memoryTokenRef = useRef<string | null>(state.snapshot.sessionToken);
+  const bootstrapFailCountRef = useRef(0);
 
   const commitState = useCallback((updater: (previous: CoreState) => CoreState) => {
     setState(previous => {
@@ -170,23 +172,48 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     const load = async () => {
       try {
         await refresh();
+        bootstrapFailCountRef.current = 0;
         const next = getCoreStateSnapshot();
         if (next.snapshot.auth.isAuthenticated) {
           await refreshTeams().catch(() => {});
         }
       } catch (error) {
         if (!cancelled) {
-          console.warn('[core-state] initial refresh failed:', error);
-          commitState(previous => ({ ...previous, isBootstrapping: false }));
+          bootstrapFailCountRef.current += 1;
+          console.warn(
+            `[core-state] initial refresh failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
+            error
+          );
+          if (bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES) {
+            commitState(previous => ({ ...previous, isBootstrapping: false }));
+          }
         }
       }
     };
 
     void load();
     const interval = window.setInterval(() => {
-      void refresh().catch(error => {
-        console.warn('[core-state] poll failed:', error);
-      });
+      void refresh()
+        .then(() => {
+          bootstrapFailCountRef.current = 0;
+        })
+        .catch(error => {
+          if (!cancelled) {
+            bootstrapFailCountRef.current += 1;
+            console.warn(
+              `[core-state] poll failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
+              error
+            );
+            if (bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES) {
+              commitState(previous => {
+                if (previous.isBootstrapping) {
+                  return { ...previous, isBootstrapping: false };
+                }
+                return previous;
+              });
+            }
+          }
+        });
     }, POLL_MS);
 
     return () => {
