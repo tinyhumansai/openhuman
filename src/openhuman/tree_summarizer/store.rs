@@ -75,7 +75,9 @@ pub fn validate_node_id(node_id: &str) -> Result<(), String> {
 
     // Reject path traversal and dangerous characters
     if node_id.contains("..") || node_id.starts_with('/') || node_id.ends_with('/') {
-        return Err(format!("invalid node_id '{node_id}': contains path traversal or leading/trailing slashes"));
+        return Err(format!(
+            "invalid node_id '{node_id}': contains path traversal or leading/trailing slashes"
+        ));
     }
 
     let parts: Vec<&str> = node_id.split('/').collect();
@@ -88,7 +90,9 @@ pub fn validate_node_id(node_id: &str) -> Result<(), String> {
     // All parts must be non-empty numeric strings
     for (i, part) in parts.iter().enumerate() {
         if part.is_empty() {
-            return Err(format!("invalid node_id '{node_id}': empty segment at position {i}"));
+            return Err(format!(
+                "invalid node_id '{node_id}': empty segment at position {i}"
+            ));
         }
         if !part.chars().all(|c| c.is_ascii_digit()) {
             return Err(format!(
@@ -101,19 +105,25 @@ pub fn validate_node_id(node_id: &str) -> Result<(), String> {
     if parts.len() >= 2 {
         let month: u32 = parts[1].parse().unwrap_or(0);
         if !(1..=12).contains(&month) {
-            return Err(format!("invalid node_id '{node_id}': month {month} out of range 1-12"));
+            return Err(format!(
+                "invalid node_id '{node_id}': month {month} out of range 1-12"
+            ));
         }
     }
     if parts.len() >= 3 {
         let day: u32 = parts[2].parse().unwrap_or(0);
         if !(1..=31).contains(&day) {
-            return Err(format!("invalid node_id '{node_id}': day {day} out of range 1-31"));
+            return Err(format!(
+                "invalid node_id '{node_id}': day {day} out of range 1-31"
+            ));
         }
     }
     if parts.len() >= 4 {
         let hour: u32 = parts[3].parse().unwrap_or(99);
         if hour > 23 {
-            return Err(format!("invalid node_id '{node_id}': hour {hour} out of range 0-23"));
+            return Err(format!(
+                "invalid node_id '{node_id}': hour {hour} out of range 0-23"
+            ));
         }
     }
 
@@ -437,7 +447,9 @@ fn strip_buffer_frontmatter(raw: &str) -> String {
     let after_open = &trimmed[3..];
     if let Some(close_pos) = after_open.find("\n---") {
         let body_start = close_pos + 4;
-        after_open[body_start..].trim_start_matches('\n').to_string()
+        after_open[body_start..]
+            .trim_start_matches('\n')
+            .to_string()
     } else {
         raw.to_string()
     }
