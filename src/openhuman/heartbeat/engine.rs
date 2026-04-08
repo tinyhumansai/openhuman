@@ -204,7 +204,11 @@ mod tests {
 
     #[tokio::test]
     async fn run_returns_immediately_when_disabled() {
-        let engine = HeartbeatEngine::new(HeartbeatConfig::default(), std::env::temp_dir());
+        let config = HeartbeatConfig {
+            enabled: false,
+            ..HeartbeatConfig::default()
+        };
+        let engine = HeartbeatEngine::new(config, std::env::temp_dir());
         let result = engine.run().await;
         assert!(result.is_ok());
     }
