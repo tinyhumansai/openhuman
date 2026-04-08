@@ -178,7 +178,8 @@ async fn process_channel_message_handles_models_command_without_llm_call() {
     assert_eq!(sent.len(), 1);
     assert!(sent[0].contains("Provider switched to `openhuman`"));
 
-    let route_key = "telegram_alice";
+    // Must match `conversation_history_key` (channel + sender + reply_target for Telegram).
+    let route_key = "telegram_alice_chat-1";
     let route = runtime_ctx
         .route_overrides
         .lock()
@@ -210,7 +211,7 @@ async fn process_channel_message_uses_route_override_provider_and_model() {
     provider_cache_seed.insert("test-provider".to_string(), Arc::clone(&default_provider));
     provider_cache_seed.insert("openrouter".to_string(), routed_provider);
 
-    let route_key = "telegram_alice".to_string();
+    let route_key = "telegram_alice_chat-1".to_string();
     let mut route_overrides = HashMap::new();
     route_overrides.insert(
         route_key,
