@@ -97,9 +97,7 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
           </button>
         </div>
       )}
-      <div className="relative z-10 max-w-lg w-full mx-4">
-        {renderStep()}
-      </div>
+      <div className="relative z-10 max-w-lg w-full mx-4">{renderStep()}</div>
     </div>
   );
 };
