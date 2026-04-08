@@ -193,11 +193,11 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
 
     void load();
     const interval = window.setInterval(() => {
-      void refresh()
-        .then(() => {
+      void (async () => {
+        try {
+          await refresh();
           bootstrapFailCountRef.current = 0;
-        })
-        .catch(error => {
+        } catch (error) {
           if (!cancelled) {
             bootstrapFailCountRef.current += 1;
             console.warn(
@@ -213,7 +213,8 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
               });
             }
           }
-        });
+        }
+      })();
     }, POLL_MS);
 
     return () => {
