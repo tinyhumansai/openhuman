@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 
 import Onboarding from '../pages/onboarding/Onboarding';
 import { useCoreState } from '../providers/CoreStateProvider';
@@ -12,6 +13,7 @@ import { DEV_FORCE_ONBOARDING } from '../utils/config';
  * Reads `onboarding_completed` from the core config (persisted in config.toml).
  */
 const OnboardingOverlay = () => {
+  const navigate = useNavigate();
   const { isBootstrapping, snapshot, setOnboardingCompletedFlag } = useCoreState();
   const token = snapshot.sessionToken;
   const user = snapshot.currentUser;
@@ -43,7 +45,8 @@ const OnboardingOverlay = () => {
     } catch {
       console.warn('[onboarding] Failed to persist onboarding_completed');
     }
-  }, [setOnboardingCompletedFlag]);
+    navigate('/conversations');
+  }, [setOnboardingCompletedFlag, navigate]);
 
   // Don't show if not logged in, bootstrap not complete, or user not ready
   if (!token || isBootstrapping || !userReady) return null;
