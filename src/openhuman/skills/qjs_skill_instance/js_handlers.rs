@@ -624,7 +624,10 @@ pub(crate) async fn handle_js_call(
 
             // Log progress every 2 seconds so we can see if the loop is running
             if poll_count % 400 == 0 {
-                let elapsed = 30 - deadline.duration_since(tokio::time::Instant::now()).as_secs();
+                let elapsed = 30
+                    - deadline
+                        .duration_since(tokio::time::Instant::now())
+                        .as_secs();
                 log::warn!(
                     "[handle_js_call] {fn_name}() still waiting after ~{elapsed}s ({poll_count} polls)"
                 );

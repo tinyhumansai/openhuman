@@ -501,7 +501,10 @@ pub(crate) async fn run_event_loop(
 
             if done {
                 sync_in_flight = false;
-                log::info!("[skill:{}] Background sync completed, persisting state to memory", skill_id);
+                log::info!(
+                    "[skill:{}] Background sync completed, persisting state to memory",
+                    skill_id
+                );
                 persist_state_to_memory(
                     skill_id,
                     "periodic sync",
