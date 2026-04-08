@@ -362,7 +362,9 @@ fn run_capture(args: &[String]) -> Result<()> {
 /// `openhuman screen-intelligence start` — start a capture + vision session.
 fn run_start_session(args: &[String]) -> Result<()> {
     if args.iter().any(|a| is_help(a)) {
-        println!("Usage: openhuman screen-intelligence start [--ttl <secs>] [--no-vision-model] [-v]");
+        println!(
+            "Usage: openhuman screen-intelligence start [--ttl <secs>] [--no-vision-model] [-v]"
+        );
         println!();
         println!("Start a screen intelligence capture session with vision analysis.");
         println!("The session runs until TTL expires or Ctrl+C is pressed.");
