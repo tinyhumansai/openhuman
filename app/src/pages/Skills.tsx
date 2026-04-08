@@ -304,6 +304,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
             </button>
             {/* Settings */}
             <button
+              type="button"
               onClick={e => {
                 e.stopPropagation();
                 onSetup();

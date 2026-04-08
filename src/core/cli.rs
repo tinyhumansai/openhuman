@@ -72,13 +72,19 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
 /// Loads key/value pairs from a dotenv file into the process environment.
 ///
 /// Precedence: variables already set in the environment are **not** overwritten.
-/// Order: `OPENHUMAN_DOTENV_PATH` (if set), else `.env` in the current working directory.
-fn load_dotenv_for_server() {
-    if let Ok(path) = std::env::var("OPENHUMAN_DOTENV_PATH") {
-        let _ignored = dotenvy::from_path(path);
-    } else {
-        let _ignored = dotenvy::dotenv();
+/// Order: `OPENHUMAN_DOTENV_PATH` (if set to a non-empty path), else `.env` in the current working directory.
+fn load_dotenv_for_server() -> Result<()> {
+    match std::env::var("OPENHUMAN_DOTENV_PATH") {
+        Ok(path) if !path.trim().is_empty() => {
+            dotenvy::from_path(&path).map_err(|e| {
+                anyhow::anyhow!("failed to load dotenv from OPENHUMAN_DOTENV_PATH={path}: {e}")
+            })?;
+        }
+        _ => {
+            let _ = dotenvy::dotenv();
+        }
     }
+    Ok(())
 }
 
 /// Handles the `run` subcommand to start the core HTTP/JSON-RPC server.
@@ -89,7 +95,7 @@ fn load_dotenv_for_server() {
 ///
 /// * `args` - Command-line arguments for the `run` command.
 fn run_server_command(args: &[String]) -> Result<()> {
-    load_dotenv_for_server();
+    load_dotenv_for_server()?;
 
     let mut port: Option<u16> = None;
     let mut host: Option<String> = None;

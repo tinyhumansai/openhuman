@@ -19,6 +19,11 @@ pub fn set_global_engine(engine: Arc<RuntimeEngine>) {
     *GLOBAL_ENGINE.write() = Some(engine);
 }
 
+/// Swap the global engine and return the previous value (for isolated tests / harnesses).
+pub fn replace_global_engine(engine: Option<Arc<RuntimeEngine>>) -> Option<Arc<RuntimeEngine>> {
+    std::mem::replace(&mut *GLOBAL_ENGINE.write(), engine)
+}
+
 /// Get a clone of the global RuntimeEngine Arc.
 /// Returns `None` if the engine has not been initialized yet.
 pub fn global_engine() -> Option<Arc<RuntimeEngine>> {

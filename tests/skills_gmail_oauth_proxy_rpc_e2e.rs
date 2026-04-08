@@ -17,7 +17,8 @@ use tempfile::tempdir;
 
 use openhuman_core::core::jsonrpc::build_core_http_router;
 use openhuman_core::openhuman::memory::MemoryClient;
-use openhuman_core::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
+use openhuman_core::openhuman::skills::qjs_engine::{replace_global_engine, RuntimeEngine};
+use std::ffi::OsString;
 
 fn try_find_skills_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("SKILL_DEBUG_DIR") {
@@ -107,6 +108,84 @@ fn assert_rpc_ok(resp: &Value, context: &str) -> Value {
         .unwrap_or_else(|| panic!("{context}: missing result field: {resp}"))
 }
 
+/// Restores prior process environment for keys we mutate in this test (runs on panic too).
+struct ProcessEnvGuard {
+    home: Option<OsString>,
+    backend_url: Option<OsString>,
+    jwt_token: Option<OsString>,
+    openhuman_workspace: Option<OsString>,
+    vite_backend_url: Option<OsString>,
+}
+
+impl ProcessEnvGuard {
+    fn apply(
+        home: &std::path::Path,
+        workspace_dir: &std::path::Path,
+        backend_url: &str,
+        jwt: &str,
+    ) -> Self {
+        let guard = Self {
+            home: std::env::var_os("HOME"),
+            backend_url: std::env::var_os("BACKEND_URL"),
+            jwt_token: std::env::var_os("JWT_TOKEN"),
+            openhuman_workspace: std::env::var_os("OPENHUMAN_WORKSPACE"),
+            vite_backend_url: std::env::var_os("VITE_BACKEND_URL"),
+        };
+        unsafe {
+            std::env::set_var("HOME", home.as_os_str());
+            std::env::set_var("BACKEND_URL", backend_url);
+            std::env::set_var("JWT_TOKEN", jwt);
+            std::env::set_var("OPENHUMAN_WORKSPACE", workspace_dir.as_os_str());
+            std::env::remove_var("VITE_BACKEND_URL");
+        }
+        guard
+    }
+}
+
+impl Drop for ProcessEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.home.take() {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match self.backend_url.take() {
+                Some(v) => std::env::set_var("BACKEND_URL", v),
+                None => std::env::remove_var("BACKEND_URL"),
+            }
+            match self.jwt_token.take() {
+                Some(v) => std::env::set_var("JWT_TOKEN", v),
+                None => std::env::remove_var("JWT_TOKEN"),
+            }
+            match self.openhuman_workspace.take() {
+                Some(v) => std::env::set_var("OPENHUMAN_WORKSPACE", v),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+            match self.vite_backend_url.take() {
+                Some(v) => std::env::set_var("VITE_BACKEND_URL", v),
+                None => std::env::remove_var("VITE_BACKEND_URL"),
+            }
+        }
+    }
+}
+
+struct GlobalEngineGuard {
+    previous: Option<Arc<RuntimeEngine>>,
+}
+
+impl GlobalEngineGuard {
+    fn install(engine: Arc<RuntimeEngine>) -> Self {
+        let previous = replace_global_engine(Some(engine));
+        Self { previous }
+    }
+}
+
+impl Drop for GlobalEngineGuard {
+    fn drop(&mut self) {
+        let _ = replace_global_engine(self.previous.take());
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn gmail_tool_call_sends_encrypted_oauth_proxy_headers() {
     let _ = env_logger::builder()
@@ -157,9 +236,9 @@ encrypt = false
             return;
         }
     };
-    eprintln!("[gmail-oauth-proxy-e2e] JWT_TOKEN={test_jwt}");
-    eprintln!("[gmail-oauth-proxy-e2e] CREDENTIAL_ID={credential_id}");
-    eprintln!("[gmail-oauth-proxy-e2e] CLIENT_KEY_SHARE={client_key_share}");
+    eprintln!("[gmail-oauth-proxy-e2e] JWT_TOKEN loaded");
+    eprintln!("[gmail-oauth-proxy-e2e] CREDENTIAL_ID loaded");
+    eprintln!("[gmail-oauth-proxy-e2e] CLIENT_KEY_SHARE loaded");
 
     // Quick staging reachability check.
     let health = reqwest::Client::new()
@@ -175,19 +254,11 @@ encrypt = false
         Err(err) => panic!("failed to reach staging backend {backend_url}: {err}"),
     }
 
-    // Safety: this test manages process env for an isolated runtime.
-    unsafe {
-        std::env::set_var("HOME", home.as_os_str());
-        std::env::set_var("BACKEND_URL", backend_url);
-        std::env::set_var("JWT_TOKEN", &test_jwt);
-        std::env::remove_var("OPENHUMAN_WORKSPACE");
-        std::env::remove_var("VITE_BACKEND_URL");
-    }
-
-    // Start runtime engine used by JSON-RPC server.
+    // Isolated env + global engine so parallel tests do not leak state.
+    let _env_guard = ProcessEnvGuard::apply(home, &workspace_dir, backend_url, &test_jwt);
     let engine = Arc::new(RuntimeEngine::new(data_dir).expect("engine"));
     engine.set_skills_source_dir(skills_dir);
-    set_global_engine(engine.clone());
+    let _engine_guard = GlobalEngineGuard::install(engine.clone());
 
     // Start HTTP JSON-RPC server.
     let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
@@ -236,13 +307,15 @@ encrypt = false
     )
     .await;
     eprintln!(
-        "[gmail-oauth-proxy-e2e] skills_call_tool raw={}",
-        serde_json::to_string_pretty(&call_tool).unwrap_or_else(|_| call_tool.to_string())
+        "[gmail-oauth-proxy-e2e] skills_call_tool completed (has_error={})",
+        call_tool.get("error").is_some()
     );
     let tool_result = assert_rpc_ok(&call_tool, "skills_call_tool get-profile");
     eprintln!(
-        "[gmail-oauth-proxy-e2e] tool_result={}",
-        serde_json::to_string_pretty(&tool_result).unwrap_or_else(|_| tool_result.to_string())
+        "[gmail-oauth-proxy-e2e] get-profile tool result keys: {:?}",
+        tool_result
+            .as_object()
+            .map(|m| m.keys().collect::<Vec<_>>())
     );
     assert_eq!(
         tool_result.get("is_error").and_then(|v| v.as_bool()),
@@ -265,10 +338,7 @@ encrypt = false
     let parsed: Value = serde_json::from_str(content_text)
         .unwrap_or_else(|e| panic!("tool text payload should be JSON: {e}; got {content_text}"));
     assert_eq!(parsed.get("success").and_then(|v| v.as_bool()), Some(true));
-    eprintln!(
-        "[gmail-oauth-proxy-e2e] live profile payload={}",
-        serde_json::to_string(&parsed).unwrap_or_else(|_| parsed.to_string())
-    );
+    eprintln!("[gmail-oauth-proxy-e2e] get-profile JSON: success flag present");
 
     // 5) Trigger sync via controller RPC (routes to skill/sync)
     let sync = rpc_call(
@@ -279,13 +349,15 @@ encrypt = false
     )
     .await;
     eprintln!(
-        "[gmail-oauth-proxy-e2e] skills_sync raw={}",
-        serde_json::to_string_pretty(&sync).unwrap_or_else(|_| sync.to_string())
+        "[gmail-oauth-proxy-e2e] skills_sync RPC completed (has_error={})",
+        sync.get("error").is_some()
     );
     let sync_result = assert_rpc_ok(&sync, "openhuman.skills_sync");
     eprintln!(
-        "[gmail-oauth-proxy-e2e] skills_sync result={}",
-        serde_json::to_string_pretty(&sync_result).unwrap_or_else(|_| sync_result.to_string())
+        "[gmail-oauth-proxy-e2e] skills_sync result keys: {:?}",
+        sync_result
+            .as_object()
+            .map(|m| m.keys().collect::<Vec<_>>())
     );
 
     // 6) Verify memory persistence in skill-gmail namespace (async)

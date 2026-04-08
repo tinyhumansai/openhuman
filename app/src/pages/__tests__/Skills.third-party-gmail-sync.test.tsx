@@ -2,7 +2,7 @@
  * Skills page — 3rd Party Skills: manual sync triggers core `openhuman.skills_sync`
  * via `skillManager.triggerSync` (see `lib/skills/manager.ts`).
  */
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../test/test-utils';
@@ -56,7 +56,7 @@ describe('Skills page — 3rd Party Gmail sync', () => {
     mocks.startSkill.mockClear();
   });
 
-  it('renders 3rd Party Skills and Gmail with a Sync control when connected', () => {
+  it('renders 3rd Party Skills and Gmail with a Sync control when connected', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     expect(screen.getByRole('heading', { name: '3rd Party Skills' })).toBeInTheDocument();
@@ -68,7 +68,9 @@ describe('Skills page — 3rd Party Gmail sync', () => {
 
     fireEvent.click(syncBtn);
 
-    expect(mocks.triggerSync).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mocks.triggerSync).toHaveBeenCalledTimes(1);
+    });
     expect(mocks.triggerSync).toHaveBeenCalledWith('gmail');
   });
 });

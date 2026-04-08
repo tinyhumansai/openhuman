@@ -129,6 +129,7 @@ export default function SkillDebugModal({ skillId, skillName, onClose }: SkillDe
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 text-stone-400 hover:text-stone-900 transition-colors rounded-lg hover:bg-stone-100">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

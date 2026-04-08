@@ -157,12 +157,14 @@ describe('Skills page — Notion debug tools (live-test parity)', () => {
     expectToolCallArgs('list-users', { tryCache: false });
   });
 
-  it('Sync control calls skillManager.triggerSync(notion)', () => {
+  it('Sync control calls skillManager.triggerSync(notion)', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     fireEvent.click(screen.getByTestId('skill-sync-button-notion'));
 
-    expect(mocks.triggerSync).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(mocks.triggerSync).toHaveBeenCalledTimes(1);
+    });
     expect(mocks.triggerSync).toHaveBeenCalledWith('notion');
   });
 });

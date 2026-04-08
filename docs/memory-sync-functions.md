@@ -10,7 +10,7 @@ How to use the memory layer from services outside `src/openhuman/memory/`.
 
 ### Decision Tree
 
-```
+```text
 Need to store data?
   |
   +-- Structured key-value pair (config, state, counters)?
@@ -54,7 +54,7 @@ Need to delete data?
   |
   +-- Single document?       -> delete_document()
   +-- Single KV entry?       -> kv_delete()
-  +-- All data for a skill?  -> clear_skill_memory()
+  +-- All data for a skill (e.g. on disconnect/revoke)?  -> clear_skill_memory()
   +-- All data in namespace? -> clear_namespace()
 ```
 
@@ -198,7 +198,7 @@ let relations = client.graph_query(None, None, None).await?;
 |----------|-------------|
 | `delete_document(namespace, id)` | Remove a specific document |
 | `kv_delete(namespace, key)` | Remove a specific KV entry |
-| `clear_skill_memory(skill_id, integration_id)` | Skill OAuth/auth revoked — wipes `skill-{skill_id}` namespace |
+| `clear_skill_memory(skill_id, integration_id)` | Disconnect / revoke: clears skill-scoped memory in the shared `skill-{skill_id}` namespace. Storage is not isolated per integration—multiple integrations share that namespace; `integration_id` identifies the integration in the API contract (see implementation in `MemoryClient::clear_skill_memory`) |
 | `clear_namespace(namespace)` | Wipe an arbitrary namespace |
 
 ---
@@ -256,7 +256,7 @@ tokio::spawn(async move {
 |----------|------|------|-------------|
 | `list_namespaces() -> Result<Vec<String>>` | 192 | READ | Lists all namespaces |
 | `clear_namespace(&str) -> Result<()>` | 206 | DELETE | Clears all data in a namespace |
-| `clear_skill_memory(&str, &str) -> Result<()>` | 211 | DELETE | Clears `skill-{skill_id}` namespace |
+| `clear_skill_memory(&str, &str) -> Result<()>` | 211 | DELETE | Clears documents in the shared `skill-{skill_id}` namespace; second arg is the integration identifier passed from disconnect flows |
 
 ### Query / Recall
 
