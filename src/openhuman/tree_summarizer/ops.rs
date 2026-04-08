@@ -14,16 +14,15 @@ pub async fn tree_summarizer_ingest(
     namespace: &str,
     content: &str,
     timestamp: Option<DateTime<Utc>>,
+    metadata: Option<&Value>,
 ) -> Result<RpcOutcome<Value>, String> {
-    if namespace.trim().is_empty() {
-        return Err("namespace must not be empty".to_string());
-    }
+    store::validate_namespace(namespace)?;
     if content.trim().is_empty() {
         return Err("content must not be empty".to_string());
     }
 
     let ts = timestamp.unwrap_or_else(Utc::now);
-    let path = store::buffer_write(config, namespace.trim(), content, &ts)
+    let path = store::buffer_write(config, namespace.trim(), content, &ts, metadata)
         .map_err(|e| format!("buffer write failed: {e}"))?;
 
     Ok(RpcOutcome::single_log(
@@ -33,6 +32,7 @@ pub async fn tree_summarizer_ingest(
             "timestamp": ts.to_rfc3339(),
             "tokens": estimate_tokens(content),
             "path": path.display().to_string(),
+            "has_metadata": metadata.is_some(),
         }),
         format!("content buffered for namespace '{}'", namespace.trim()),
     ))
@@ -43,9 +43,7 @@ pub async fn tree_summarizer_run(
     config: &Config,
     namespace: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    if namespace.trim().is_empty() {
-        return Err("namespace must not be empty".to_string());
-    }
+    store::validate_namespace(namespace)?;
 
     let provider = create_provider(config)?;
     let ts = Utc::now();
@@ -77,11 +75,11 @@ pub async fn tree_summarizer_query(
     namespace: &str,
     node_id: Option<&str>,
 ) -> Result<RpcOutcome<Value>, String> {
-    if namespace.trim().is_empty() {
-        return Err("namespace must not be empty".to_string());
-    }
+    store::validate_namespace(namespace)?;
 
     let target_id = node_id.unwrap_or("root");
+    store::validate_node_id(target_id)?;
+
     let node = store::read_node(config, namespace.trim(), target_id)
         .map_err(|e| format!("read node: {e}"))?
         .ok_or_else(|| {
@@ -111,9 +109,7 @@ pub async fn tree_summarizer_status(
     config: &Config,
     namespace: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    if namespace.trim().is_empty() {
-        return Err("namespace must not be empty".to_string());
-    }
+    store::validate_namespace(namespace)?;
 
     let status =
         store::get_tree_status(config, namespace.trim()).map_err(|e| format!("get status: {e}"))?;
@@ -129,9 +125,7 @@ pub async fn tree_summarizer_rebuild(
     config: &Config,
     namespace: &str,
 ) -> Result<RpcOutcome<Value>, String> {
-    if namespace.trim().is_empty() {
-        return Err("namespace must not be empty".to_string());
-    }
+    store::validate_namespace(namespace)?;
 
     let provider = create_provider(config)?;
 

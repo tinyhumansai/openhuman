@@ -127,7 +127,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Get tree metadata: node count, depth, date range.",
             inputs: vec![namespace_input("Namespace of the summary tree.")],
             outputs: vec![FieldSchema {
-                name: "status",
+                name: "result",
                 ty: TypeSchema::Json,
                 comment: "Tree status metadata.",
                 required: true,
@@ -140,7 +140,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "Rebuild the entire summary tree from hour leaves upward (re-summarizes all levels).",
             inputs: vec![namespace_input("Namespace to rebuild.")],
             outputs: vec![FieldSchema {
-                name: "status",
+                name: "result",
                 ty: TypeSchema::Json,
                 comment: "Tree status after rebuild.",
                 required: true,
@@ -174,9 +174,14 @@ fn handle_ingest(params: Map<String, Value>) -> ControllerFuture {
         let namespace = read_required::<String>(&params, "namespace")?;
         let content = read_required::<String>(&params, "content")?;
         let timestamp = read_optional_timestamp(&params, "timestamp")?;
+        let metadata = read_optional::<Value>(&params, "metadata")?;
         to_json(
             crate::openhuman::tree_summarizer::rpc::tree_summarizer_ingest(
-                &config, &namespace, &content, timestamp,
+                &config,
+                &namespace,
+                &content,
+                timestamp,
+                metadata.as_ref(),
             )
             .await?,
         )

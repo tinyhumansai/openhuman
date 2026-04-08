@@ -153,7 +153,7 @@ fn run_ingest(args: &[String]) -> Result<()> {
     rt.block_on(async {
         let config = load_config().await?;
         let outcome = crate::openhuman::tree_summarizer::rpc::tree_summarizer_ingest(
-            &config, namespace, &content, None,
+            &config, namespace, &content, None, None,
         )
         .await
         .map_err(anyhow::Error::msg)?;

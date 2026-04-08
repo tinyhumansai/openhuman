@@ -9,6 +9,7 @@
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 use crate::openhuman::config::Config;
@@ -39,11 +40,84 @@ pub fn node_file_path(config: &Config, namespace: &str, node_id: &str) -> PathBu
     tree_dir(config, namespace).join(node_id_to_path(node_id))
 }
 
+/// Sanitize a namespace string for use as a directory name.
+/// Rejects namespaces containing path-traversal or reserved characters.
 fn sanitize(namespace: &str) -> String {
-    namespace
-        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-        .trim()
-        .to_string()
+    let trimmed = namespace.trim();
+    // Replace characters that are unsafe for directory names
+    trimmed
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|', '.'], "_")
+        .replace("__", "_")
+}
+
+/// Validate a namespace string, returning an error for empty or dangerous input.
+pub fn validate_namespace(namespace: &str) -> Result<(), String> {
+    let trimmed = namespace.trim();
+    if trimmed.is_empty() {
+        return Err("namespace must not be empty".to_string());
+    }
+    if trimmed.contains("..") {
+        return Err("namespace must not contain '..'".to_string());
+    }
+    if trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return Err("namespace must not start with a path separator".to_string());
+    }
+    Ok(())
+}
+
+/// Validate a node_id against the allowed canonical formats.
+/// Accepts: "root", "YYYY", "YYYY/MM", "YYYY/MM/DD", "YYYY/MM/DD/HH".
+/// Rejects path traversal, empty segments, and non-numeric components.
+pub fn validate_node_id(node_id: &str) -> Result<(), String> {
+    if node_id == "root" {
+        return Ok(());
+    }
+
+    // Reject path traversal and dangerous characters
+    if node_id.contains("..") || node_id.starts_with('/') || node_id.ends_with('/') {
+        return Err(format!("invalid node_id '{node_id}': contains path traversal or leading/trailing slashes"));
+    }
+
+    let parts: Vec<&str> = node_id.split('/').collect();
+    if parts.is_empty() || parts.len() > 4 {
+        return Err(format!(
+            "invalid node_id '{node_id}': expected 1-4 segments (YYYY[/MM[/DD[/HH]]])"
+        ));
+    }
+
+    // All parts must be non-empty numeric strings
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            return Err(format!("invalid node_id '{node_id}': empty segment at position {i}"));
+        }
+        if !part.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!(
+                "invalid node_id '{node_id}': non-numeric segment '{part}' at position {i}"
+            ));
+        }
+    }
+
+    // Basic range validation
+    if parts.len() >= 2 {
+        let month: u32 = parts[1].parse().unwrap_or(0);
+        if !(1..=12).contains(&month) {
+            return Err(format!("invalid node_id '{node_id}': month {month} out of range 1-12"));
+        }
+    }
+    if parts.len() >= 3 {
+        let day: u32 = parts[2].parse().unwrap_or(0);
+        if !(1..=31).contains(&day) {
+            return Err(format!("invalid node_id '{node_id}': day {day} out of range 1-31"));
+        }
+    }
+    if parts.len() >= 4 {
+        let hour: u32 = parts[3].parse().unwrap_or(99);
+        if hour > 23 {
+            return Err(format!("invalid node_id '{node_id}': hour {hour} out of range 0-23"));
+        }
+    }
+
+    Ok(())
 }
 
 // ── Write ──────────────────────────────────────────────────────────────
@@ -56,6 +130,11 @@ pub fn write_node(config: &Config, node: &TreeNode) -> Result<()> {
             .with_context(|| format!("create dirs for {}", parent.display()))?;
     }
 
+    let metadata_line = match &node.metadata {
+        Some(m) => format!("metadata: {m}\n"),
+        None => String::new(),
+    };
+
     let frontmatter = format!(
         "---\n\
          node_id: \"{}\"\n\
@@ -66,6 +145,7 @@ pub fn write_node(config: &Config, node: &TreeNode) -> Result<()> {
          child_count: {}\n\
          created_at: {}\n\
          updated_at: {}\n\
+         {}\
          ---\n\n",
         node.node_id,
         node.namespace,
@@ -78,6 +158,7 @@ pub fn write_node(config: &Config, node: &TreeNode) -> Result<()> {
         node.child_count,
         node.created_at.to_rfc3339(),
         node.updated_at.to_rfc3339(),
+        metadata_line,
     );
 
     let content = format!("{frontmatter}{}\n", node.summary);
@@ -257,11 +338,13 @@ pub fn delete_tree(config: &Config, namespace: &str) -> Result<u64> {
 // ── Buffer operations ──────────────────────────────────────────────────
 
 /// Append raw content to the ingestion buffer as a timestamped file.
+/// Optionally includes metadata as a JSON object stored alongside the content.
 pub fn buffer_write(
     config: &Config,
     namespace: &str,
     content: &str,
     ts: &DateTime<Utc>,
+    metadata: Option<&Value>,
 ) -> Result<PathBuf> {
     let dir = buffer_dir(config, namespace);
     std::fs::create_dir_all(&dir)
@@ -273,7 +356,16 @@ pub fn buffer_write(
         &uuid::Uuid::new_v4().to_string()[..8]
     );
     let path = dir.join(&filename);
-    std::fs::write(&path, content)
+
+    // If metadata is provided, write it as a YAML frontmatter block
+    let file_content = if let Some(meta) = metadata {
+        let meta_str = serde_json::to_string(meta).unwrap_or_default();
+        format!("---\nmetadata: {meta_str}\n---\n\n{content}")
+    } else {
+        content.to_string()
+    };
+
+    std::fs::write(&path, file_content)
         .with_context(|| format!("write buffer entry {}", path.display()))?;
 
     tracing::debug!(
@@ -285,9 +377,11 @@ pub fn buffer_write(
     Ok(path)
 }
 
-/// Read and drain all buffered entries, returning their contents sorted by filename (chronological).
-/// Files are deleted after reading.
-pub fn buffer_drain(config: &Config, namespace: &str) -> Result<Vec<String>> {
+/// Read and drain all buffered entries, returning `(filename, content)` pairs
+/// sorted by filename (chronological). Files are deleted after reading.
+///
+/// Returns an error if any file deletion fails, to prevent duplicate processing.
+pub fn buffer_drain(config: &Config, namespace: &str) -> Result<Vec<(String, String)>> {
     let dir = buffer_dir(config, namespace);
     if !dir.exists() {
         return Ok(vec![]);
@@ -306,15 +400,23 @@ pub fn buffer_drain(config: &Config, namespace: &str) -> Result<Vec<String>> {
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut contents = Vec::with_capacity(entries.len());
-    for (_, path) in &entries {
-        let text = std::fs::read_to_string(path)
+    for (name, path) in &entries {
+        let raw = std::fs::read_to_string(path)
             .with_context(|| format!("read buffer entry {}", path.display()))?;
-        contents.push(text);
+        // Strip metadata frontmatter if present, pass raw content
+        let text = strip_buffer_frontmatter(&raw);
+        contents.push((name.clone(), text));
     }
 
-    // Delete after successful reads
-    for (_, path) in &entries {
-        let _ = std::fs::remove_file(path);
+    // Delete after successful reads — propagate errors to prevent duplicates
+    for (name, path) in &entries {
+        std::fs::remove_file(path).with_context(|| {
+            format!(
+                "failed to remove buffer entry '{}' at {}",
+                name,
+                path.display()
+            )
+        })?;
     }
 
     tracing::debug!(
@@ -323,6 +425,22 @@ pub fn buffer_drain(config: &Config, namespace: &str) -> Result<Vec<String>> {
         namespace
     );
     Ok(contents)
+}
+
+/// Strip the optional metadata frontmatter from a buffer entry,
+/// returning only the content body.
+fn strip_buffer_frontmatter(raw: &str) -> String {
+    let trimmed = raw.trim_start();
+    if !trimmed.starts_with("---") {
+        return raw.to_string();
+    }
+    let after_open = &trimmed[3..];
+    if let Some(close_pos) = after_open.find("\n---") {
+        let body_start = close_pos + 4;
+        after_open[body_start..].trim_start_matches('\n').to_string()
+    } else {
+        raw.to_string()
+    }
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────
@@ -350,7 +468,10 @@ fn read_subdirectory_summaries(
         }
         let child_name = entry.file_name().to_string_lossy().to_string();
         // Skip non-numeric directories and the buffer directory
-        if child_name == "buffer" || child_name.chars().any(|c| !c.is_ascii_digit()) {
+        if child_name == "buffer"
+            || child_name == "buffer_backup"
+            || child_name.chars().any(|c| !c.is_ascii_digit())
+        {
             continue;
         }
         let child_id = if parent_id.is_empty() {
@@ -445,6 +566,8 @@ fn parse_node_markdown(raw: &str, namespace: &str, node_id: &str) -> Result<Tree
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
 
+    let metadata = frontmatter.get("metadata").map(|v| v.to_string());
+
     Ok(TreeNode {
         node_id: node_id.to_string(),
         namespace: namespace.to_string(),
@@ -455,7 +578,7 @@ fn parse_node_markdown(raw: &str, namespace: &str, node_id: &str) -> Result<Tree
         child_count,
         created_at,
         updated_at,
-        metadata: None,
+        metadata,
     })
 }
 
@@ -502,8 +625,8 @@ fn count_md_files(dir: &Path) -> Result<u64> {
         let ft = entry.file_type()?;
         if ft.is_dir() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name == "buffer" {
-                continue; // skip buffer directory
+            if name == "buffer" || name == "buffer_backup" {
+                continue; // skip buffer directories
             }
             count += count_md_files(&entry.path())?;
         } else if ft.is_file() {
@@ -683,17 +806,33 @@ mod tests {
         let ns = "test-ns";
         let now = Utc::now();
 
-        buffer_write(&config, ns, "entry one", &now).unwrap();
-        buffer_write(&config, ns, "entry two", &now).unwrap();
+        buffer_write(&config, ns, "entry one", &now, None).unwrap();
+        buffer_write(&config, ns, "entry two", &now, None).unwrap();
 
         let drained = buffer_drain(&config, ns).unwrap();
         assert_eq!(drained.len(), 2);
-        assert_eq!(drained[0], "entry one");
-        assert_eq!(drained[1], "entry two");
+        assert_eq!(drained[0].1, "entry one");
+        assert_eq!(drained[1].1, "entry two");
 
         // Buffer should be empty now
         let again = buffer_drain(&config, ns).unwrap();
         assert!(again.is_empty());
+    }
+
+    #[test]
+    fn buffer_write_with_metadata() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let ns = "test-ns";
+        let now = Utc::now();
+
+        let meta = serde_json::json!({"source": "test", "priority": 1});
+        buffer_write(&config, ns, "entry with meta", &now, Some(&meta)).unwrap();
+
+        let drained = buffer_drain(&config, ns).unwrap();
+        assert_eq!(drained.len(), 1);
+        // Content should be stripped of frontmatter
+        assert_eq!(drained[0].1, "entry with meta");
     }
 
     #[test]
@@ -719,5 +858,51 @@ mod tests {
         assert_eq!(fm.get("level").unwrap(), "root");
         assert_eq!(fm.get("token_count").unwrap(), "42");
         assert_eq!(body, "Hello world.");
+    }
+
+    #[test]
+    fn validate_node_id_accepts_valid() {
+        assert!(validate_node_id("root").is_ok());
+        assert!(validate_node_id("2024").is_ok());
+        assert!(validate_node_id("2024/03").is_ok());
+        assert!(validate_node_id("2024/03/15").is_ok());
+        assert!(validate_node_id("2024/03/15/14").is_ok());
+    }
+
+    #[test]
+    fn validate_node_id_rejects_traversal() {
+        assert!(validate_node_id("..").is_err());
+        assert!(validate_node_id("../etc").is_err());
+        assert!(validate_node_id("2024/../etc").is_err());
+        assert!(validate_node_id("/2024").is_err());
+        assert!(validate_node_id("2024/").is_err());
+    }
+
+    #[test]
+    fn validate_node_id_rejects_non_numeric() {
+        assert!(validate_node_id("abc").is_err());
+        assert!(validate_node_id("2024/abc").is_err());
+        assert!(validate_node_id("2024/03/15/foo").is_err());
+    }
+
+    #[test]
+    fn validate_node_id_rejects_out_of_range() {
+        assert!(validate_node_id("2024/13").is_err()); // month 13
+        assert!(validate_node_id("2024/03/32").is_err()); // day 32
+        assert!(validate_node_id("2024/03/15/24").is_err()); // hour 24
+    }
+
+    #[test]
+    fn validate_namespace_rejects_dangerous() {
+        assert!(validate_namespace("").is_err());
+        assert!(validate_namespace("  ").is_err());
+        assert!(validate_namespace("../etc").is_err());
+        assert!(validate_namespace("/absolute").is_err());
+    }
+
+    #[test]
+    fn validate_namespace_accepts_valid() {
+        assert!(validate_namespace("my-namespace").is_ok());
+        assert!(validate_namespace("skill:gmail:user@example.com").is_ok());
     }
 }
