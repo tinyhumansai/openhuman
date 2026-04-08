@@ -702,6 +702,7 @@ async fn run_server_inner(
 
                 // Initialize screen intelligence engine if enabled in config.
                 crate::openhuman::screen_intelligence::server::start_if_enabled(&config).await;
+                crate::openhuman::autocomplete::start_if_enabled(&config).await;
             }
             Err(err) => {
                 log::warn!("[core] config load failed, skipping local-ai and overlay: {err}");
