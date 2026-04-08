@@ -19,8 +19,10 @@ fn get_http_client() -> &'static reqwest::Client {
         reqwest::Client::builder()
             .use_rustls_tls()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .pool_max_idle_per_host(10)
+            // Disable connection pooling entirely — reused connections hang on
+            // consecutive POST requests through the staging proxy.
+            .pool_idle_timeout(std::time::Duration::from_millis(0))
+            .pool_max_idle_per_host(0)
             .build()
             .expect("failed to build shared HTTP client")
     })
