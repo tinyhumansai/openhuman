@@ -4,7 +4,6 @@ import { useCallback, useState } from 'react';
 import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { restartCoreProcess } from '../../utils/tauriCommands/core';
 import {
   disconnectChannelConnection,
   setChannelConnectionStatus,
@@ -18,6 +17,7 @@ import type {
   ChannelDefinition,
 } from '../../types/channels';
 import { openUrl } from '../../utils/openUrl';
+import { restartCoreProcess } from '../../utils/tauriCommands/core';
 import ChannelFieldInput from './ChannelFieldInput';
 import ChannelStatusBadge from './ChannelStatusBadge';
 import DiscordServerChannelPicker from './DiscordServerChannelPicker';
