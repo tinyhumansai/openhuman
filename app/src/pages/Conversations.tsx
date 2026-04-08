@@ -4,7 +4,10 @@ import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
-import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
+import UpsellBanner from '../components/upsell/UpsellBanner';
+import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
+import UsageLimitModal from '../components/upsell/UsageLimitModal';
+import { useUsageState } from '../hooks/useUsageState';
 import {
   chatCancel,
   type ChatSegmentEvent,
@@ -203,8 +206,18 @@ const Conversations = () => {
     selectedThreadIdRef.current = selectedThreadId;
   }, [selectedThreadId]);
 
-  const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
-  const [isLoadingBudget, setIsLoadingBudget] = useState(false);
+  const {
+    teamUsage,
+    isLoading: isLoadingBudget,
+    isAtLimit,
+    isBudgetExhausted,
+    isNearLimit,
+    isFreeTier,
+    usagePct10h,
+    usagePct7d,
+    currentTier,
+  } = useUsageState();
+  const [showLimitModal, setShowLimitModal] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
@@ -247,17 +260,6 @@ const Conversations = () => {
     dispatch(setSelectedThread(DEFAULT_THREAD_ID));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
-
-  useEffect(() => {
-    setIsLoadingBudget(true);
-    creditsApi
-      .getTeamUsage()
-      .then(data => setTeamUsage(data))
-      .catch(() => {
-        // Budget unavailable — silently ignore
-      })
-      .finally(() => setIsLoadingBudget(false));
-  }, []);
 
   useEffect(() => {
     if (selectedThreadId) dispatch(setLastViewed(selectedThreadId));
@@ -628,6 +630,13 @@ const Conversations = () => {
     const trimmed = normalized.trim();
 
     if (!trimmed || !selectedThreadId || isSending) return;
+    if (isAtLimit) {
+      setShowLimitModal(true);
+      setSendError(
+        chatSendError('usage_limit_reached', 'Usage limit reached. Upgrade or wait for reset.')
+      );
+      return;
+    }
     if (socketStatus !== 'connected') {
       setSendError(
         chatSendError(
@@ -1149,6 +1158,22 @@ const Conversations = () => {
         )}
 
         <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
+          {isNearLimit &&
+            !isAtLimit &&
+            isFreeTier &&
+            shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
+              <div className="mb-3">
+                <UpsellBanner
+                  variant="warning"
+                  title="Approaching usage limit"
+                  message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
+                  ctaLabel="Upgrade"
+                  onCtaClick={() => navigate('/settings/billing')}
+                  dismissible
+                  onDismiss={() => dismissBanner('conversations-warning')}
+                />
+              </div>
+            )}
           {teamUsage &&
             (teamUsage.remainingUsd <= 0 ||
               (!teamUsage.bypassRateLimit &&
@@ -1376,6 +1401,13 @@ const Conversations = () => {
           )}
         </div>
       </div>
+      <UsageLimitModal
+        open={showLimitModal}
+        onClose={() => setShowLimitModal(false)}
+        isBudgetExhausted={isBudgetExhausted}
+        resetTime={teamUsage?.fiveHourResetsAt}
+        currentTier={currentTier}
+      />
     </div>
   );
 };

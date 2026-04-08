@@ -12,6 +12,7 @@ import LocalAIDownloadSnackbar from './components/LocalAIDownloadSnackbar';
 import MeshGradient from './components/MeshGradient';
 import OnboardingOverlay from './components/OnboardingOverlay';
 import RouteLoadingScreen from './components/RouteLoadingScreen';
+import GlobalUpsellBanner from './components/upsell/GlobalUpsellBanner';
 import CoreStateProvider from './providers/CoreStateProvider';
 import SocketProvider from './providers/SocketProvider';
 import { tagErrorSource } from './services/errorReportQueue';
@@ -44,6 +45,7 @@ function App() {
                   <OnboardingOverlay />
                   <DictationHotkeyManager />
                   <LocalAIDownloadSnackbar />
+                  <GlobalUpsellBanner />
                 </ServiceBlockingGate>
               </Router>
             </SocketProvider>

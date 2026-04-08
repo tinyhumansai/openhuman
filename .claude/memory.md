@@ -79,6 +79,15 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Agent message bubbles** need `bg-stone-200/80` (not `bg-stone-100`) on `#F5F5F5` background — `bg-stone-100` is nearly invisible.
 - **~55 files touched** — purely CSS class changes, zero logic/handler/state changes.
 
+## Upsell / Billing (Phase 1 — Issue #403)
+
+- **Upsell components** live in `app/src/components/upsell/` — `UpsellBanner`, `UsageLimitModal`, `GlobalUpsellBanner`, `upsellDismissState`. Shared hook: `app/src/hooks/useUsageState.ts`.
+- **Usage data sources** — `creditsApi.getTeamUsage()` returns `TeamUsage` (rolling 10h spend/cap + weekly budget/remaining). `billingApi.getCurrentPlan()` returns `CurrentPlanData` (plan tier, caps, subscription status). Both go through `callCoreCommand` (core RPC). No Redux slice — all local hook state.
+- **Module-level cache in `useUsageState`** — `_cache` variable with 60s TTL prevents duplicate API calls when multiple components mount simultaneously. New pattern; do not remove.
+- **Banner dismiss state uses localStorage** (prefix `openhuman:upsell:`), not Redux — consistent with CLAUDE.md exception for ephemeral UI state.
+- **Phased rollout** — Phase 1 = banners + limit modal + hook. Phase 2 = onboarding upsell + analytics. Phase 3 = remote config + A/B testing.
+- **"5-hour" label stragglers in Conversations.tsx** — `LimitPill` label and its hover tooltip still say "5h" / "5-hour". Commit 8c52236's "10-hour" terminology refactor missed those two spots.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.
