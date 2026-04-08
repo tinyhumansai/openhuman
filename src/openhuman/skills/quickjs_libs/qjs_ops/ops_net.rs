@@ -44,7 +44,12 @@ fn do_fetch(url: String, options: String) -> Result<String, rquickjs::Error> {
         .or_else(|| opts["timeout"].as_f64().map(|f| f as u64))
         .unwrap_or(30);
 
-    log::info!("[net.fetch] {} {} (timeout={}s)", method, &url, timeout_secs);
+    log::info!(
+        "[net.fetch] {} {} (timeout={}s)",
+        method,
+        &url,
+        timeout_secs
+    );
 
     let client = get_http_client();
     let mut req = match method {
@@ -81,9 +86,7 @@ fn do_fetch(url: String, options: String) -> Result<String, rquickjs::Error> {
 
             let response = tokio::time::timeout(total_deadline, req.send())
                 .await
-                .map_err(|_| {
-                    js_err(format!("request timed out after {}s", timeout_secs + 5))
-                })?
+                .map_err(|_| js_err(format!("request timed out after {}s", timeout_secs + 5)))?
                 .map_err(|e| {
                     let mut msg = e.to_string();
                     let mut source = std::error::Error::source(&e);
