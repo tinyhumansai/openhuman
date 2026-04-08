@@ -420,7 +420,7 @@ pub fn get_escalation(conn: &Connection, escalation_id: &str) -> Result<Escalati
     .with_context(|| format!("escalation not found: {escalation_id}"))
 }
 
-// ── Seed from HEARTBEAT.md ───────────────────────────────────────────────────
+// ── Seed default system tasks ────────────────────────────────────────────────
 
 /// Default system tasks that are always seeded and cannot be deleted.
 const DEFAULT_SYSTEM_TASKS: &[&str] = &[
@@ -429,33 +429,15 @@ const DEFAULT_SYSTEM_TASKS: &[&str] = &[
     "Monitor system health (Ollama, memory, connections)",
 ];
 
-/// Seed default system tasks + any tasks from HEARTBEAT.md into SQLite.
+/// Seed default system tasks into SQLite.
 /// Skips tasks whose title already exists. Returns the count of newly created tasks.
-pub fn seed_from_heartbeat(conn: &Connection, workspace_dir: &Path) -> Result<usize> {
+pub fn seed_default_tasks(conn: &Connection) -> Result<usize> {
     let mut count = 0;
 
-    // 1. Always seed the default system tasks
     for title in DEFAULT_SYSTEM_TASKS {
         if !task_title_exists(conn, title)? {
             add_task(conn, title, TaskSource::System, TaskRecurrence::Pending)?;
             count += 1;
-        }
-    }
-
-    // 2. Also import from HEARTBEAT.md if it exists
-    let heartbeat_path = workspace_dir.join("HEARTBEAT.md");
-    if let Ok(content) = std::fs::read_to_string(&heartbeat_path) {
-        let tasks: Vec<&str> = content
-            .lines()
-            .filter_map(|line| line.trim().strip_prefix("- "))
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        for title in tasks {
-            if !task_title_exists(conn, title)? {
-                add_task(conn, title, TaskSource::System, TaskRecurrence::Pending)?;
-                count += 1;
-            }
         }
     }
 
@@ -699,33 +681,19 @@ mod tests {
     }
 
     #[test]
-    fn seed_from_heartbeat_imports_tasks() {
+    fn seed_default_tasks_creates_system_tasks() {
         let conn = test_conn();
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("HEARTBEAT.md"),
-            "# Tasks\n\n- Check email\n- Monitor skills\n",
-        )
-        .unwrap();
 
-        let count = seed_from_heartbeat(&conn, dir.path()).unwrap();
-        assert_eq!(count, 2);
+        let count = seed_default_tasks(&conn).unwrap();
+        assert_eq!(count, DEFAULT_SYSTEM_TASKS.len());
 
         // Second seed should not duplicate
-        let count2 = seed_from_heartbeat(&conn, dir.path()).unwrap();
+        let count2 = seed_default_tasks(&conn).unwrap();
         assert_eq!(count2, 0);
 
         let tasks = list_tasks(&conn, false).unwrap();
-        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks.len(), DEFAULT_SYSTEM_TASKS.len());
         assert!(tasks.iter().all(|t| t.source == TaskSource::System));
-    }
-
-    #[test]
-    fn seed_from_missing_heartbeat_returns_zero() {
-        let conn = test_conn();
-        let dir = tempfile::tempdir().unwrap();
-        let count = seed_from_heartbeat(&conn, dir.path()).unwrap();
-        assert_eq!(count, 0);
     }
 
     #[test]

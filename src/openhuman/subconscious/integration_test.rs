@@ -202,14 +202,9 @@ mod tests {
     #[test]
     fn seed_then_query_tasks() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("HEARTBEAT.md"),
-            "# Tasks\n\n- Check email\n- Monitor skills\n- Review calendar\n",
-        )
-        .unwrap();
 
         store::with_connection(dir.path(), |conn| {
-            let count = store::seed_from_heartbeat(conn, dir.path())?;
+            let count = store::seed_default_tasks(conn)?;
             assert_eq!(count, 3);
 
             let tasks = store::list_tasks(conn, true)?;

@@ -114,14 +114,12 @@ impl HeartbeatEngine {
     pub async fn ensure_heartbeat_file(workspace_dir: &Path) -> Result<()> {
         let path = workspace_dir.join("HEARTBEAT.md");
         if !path.exists() {
-            let default = "# Periodic Tasks\n\
+            let default = "# Subconscious Instructions\n\
                            #\n\
-                           # The subconscious loop checks these tasks periodically against\n\
+                           # The subconscious loop evaluates pending tasks periodically against\n\
                            # your workspace state (memory, skills, email, etc.)\n\
-                           # Add or remove tasks — one per line starting with `- `\n\n\
-                           - Check for new emails that need attention\n\
-                           - Review upcoming deadlines and calendar events\n\
-                           - Monitor connected skills for errors or disconnections\n";
+                           # Tasks are managed in the Subconscious UI — this file provides\n\
+                           # additional context and instructions for task evaluation.\n";
             tokio::fs::write(&path, default).await?;
         }
         Ok(())
@@ -178,9 +176,10 @@ mod tests {
         let path = dir.join("HEARTBEAT.md");
         assert!(path.exists());
         let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains("Subconscious Instructions"));
+        // Instructions only — no task lines
         let tasks = HeartbeatEngine::parse_tasks(&content);
-        assert_eq!(tasks.len(), 3);
-        assert!(tasks.iter().any(|t| t.contains("email")));
+        assert_eq!(tasks.len(), 0);
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }

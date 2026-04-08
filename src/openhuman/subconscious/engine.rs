@@ -57,7 +57,7 @@ impl SubconsciousEngine {
         // Seed default system tasks eagerly so they show in the UI immediately,
         // without waiting for the first tick.
         let seeded = match store::with_connection(&workspace_dir, |conn| {
-            store::seed_from_heartbeat(conn, &workspace_dir)
+            store::seed_default_tasks(conn)
         }) {
             Ok(count) => {
                 if count > 0 {
@@ -130,7 +130,7 @@ impl SubconsciousEngine {
 
         let mut state = self.state.lock().await;
 
-        // Seed from HEARTBEAT.md on first tick (fallback if init seeding failed)
+        // Seed default tasks on first tick (fallback if init seeding failed)
         if !state.seeded {
             self.seed_tasks();
             state.seeded = true;
@@ -418,11 +418,11 @@ impl SubconsciousEngine {
 
     fn seed_tasks(&self) {
         match store::with_connection(&self.workspace_dir, |conn| {
-            store::seed_from_heartbeat(conn, &self.workspace_dir)
+            store::seed_default_tasks(conn)
         }) {
             Ok(count) => {
                 if count > 0 {
-                    info!("[subconscious] seeded {count} tasks from HEARTBEAT.md");
+                    info!("[subconscious] seeded {count} default tasks");
                 }
             }
             Err(e) => warn!("[subconscious] seed failed: {e}"),

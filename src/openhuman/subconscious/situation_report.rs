@@ -1,6 +1,6 @@
 //! Assembles a bounded "situation report" for the subconscious tick.
 //! Gathers deltas since the last tick from memory, tools, environment,
-//! and HEARTBEAT.md — capped at the configured token budget.
+//! and pending tasks — capped at the configured token budget.
 
 use crate::openhuman::memory::MemoryClient;
 use std::fmt::Write;
@@ -27,8 +27,8 @@ pub async fn build_situation_report(
     let env_section = build_environment_section(workspace_dir);
     append_section(&mut report, &mut remaining, &env_section);
 
-    // Section 2: HEARTBEAT.md tasks
-    let tasks_section = build_tasks_section(workspace_dir).await;
+    // Section 2: Pending tasks from SQLite
+    let tasks_section = build_tasks_section(workspace_dir);
     append_section(&mut report, &mut remaining, &tasks_section);
 
     // Section 3: Memory documents (delta since last tick)
@@ -74,17 +74,13 @@ fn build_environment_section(workspace_dir: &Path) -> String {
     )
 }
 
-async fn build_tasks_section(workspace_dir: &Path) -> String {
-    let heartbeat_path = workspace_dir.join("HEARTBEAT.md");
-    let content = match tokio::fs::read_to_string(&heartbeat_path).await {
-        Ok(c) => c,
-        Err(_) => return "## Pending Tasks\n\nNo HEARTBEAT.md found.\n".to_string(),
+fn build_tasks_section(workspace_dir: &Path) -> String {
+    let tasks = match super::store::with_connection(workspace_dir, |conn| {
+        super::store::list_tasks(conn, false)
+    }) {
+        Ok(tasks) => tasks,
+        Err(_) => return "## Pending Tasks\n\nFailed to read tasks.\n".to_string(),
     };
-
-    let tasks: Vec<&str> = content
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("- "))
-        .collect();
 
     if tasks.is_empty() {
         return "## Pending Tasks\n\nNo tasks defined.\n".to_string();
@@ -92,7 +88,7 @@ async fn build_tasks_section(workspace_dir: &Path) -> String {
 
     let mut section = String::from("## Pending Tasks\n\n");
     for task in &tasks {
-        let _ = writeln!(section, "- {task}");
+        let _ = writeln!(section, "- {}", task.title);
     }
     section
 }
