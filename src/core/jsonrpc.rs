@@ -703,6 +703,42 @@ async fn run_server_inner(
                 // Initialize screen intelligence engine if enabled in config.
                 crate::openhuman::screen_intelligence::server::start_if_enabled(&config).await;
                 crate::openhuman::autocomplete::start_if_enabled(&config).await;
+
+                // Eagerly initialize the subconscious engine so default system
+                // tasks are seeded to SQLite before any UI request, and spawn
+                // the heartbeat loop so tasks actually tick periodically.
+                //
+                // Engine construction is idempotent via OnceLock; its
+                // constructor runs seed_default_tasks() which itself skips
+                // titles that already exist on repeat opens. The heartbeat
+                // loop re-acquires the shared engine each tick via
+                // get_or_init_engine() and calls engine.tick().
+                if config.heartbeat.enabled {
+                    match crate::openhuman::subconscious::global::get_or_init_engine().await {
+                        Ok(_) => log::info!(
+                            "[subconscious] initialized on startup (defaults seeded if missing)"
+                        ),
+                        Err(e) => {
+                            log::warn!("[subconscious] startup init failed: {e}")
+                        }
+                    }
+
+                    let heartbeat = crate::openhuman::heartbeat::engine::HeartbeatEngine::new(
+                        config.heartbeat.clone(),
+                        config.workspace_dir.clone(),
+                    );
+                    tokio::spawn(async move {
+                        if let Err(e) = heartbeat.run().await {
+                            log::warn!("[heartbeat] loop exited with error: {e}");
+                        }
+                    });
+                    log::info!(
+                        "[heartbeat] periodic loop spawned ({}min interval)",
+                        config.heartbeat.interval_minutes
+                    );
+                } else {
+                    log::info!("[subconscious] disabled by config (heartbeat.enabled = false)");
+                }
             }
             Err(err) => {
                 log::warn!("[core] config load failed, skipping local-ai and overlay: {err}");

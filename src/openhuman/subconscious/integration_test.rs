@@ -222,4 +222,66 @@ mod tests {
         })
         .unwrap();
     }
+
+    /// Regression test for the "empty task list on fresh install" bug.
+    ///
+    /// The core server's startup path calls `get_or_init_engine()` to
+    /// eagerly construct a `SubconsciousEngine`, relying on the constructor
+    /// to seed the 3 default system tasks. This test locks in that
+    /// invariant: constructing the engine alone — with no tick, no
+    /// trigger RPC, and no explicit seed call — must leave the 3 defaults
+    /// in the SQLite store.
+    #[test]
+    fn engine_construction_seeds_default_tasks() {
+        use crate::openhuman::config::HeartbeatConfig;
+        use crate::openhuman::subconscious::SubconsciousEngine;
+
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().to_path_buf();
+
+        // Construct the engine via the same path the core server uses at
+        // startup. Memory client is not required for seeding.
+        let _engine = SubconsciousEngine::from_heartbeat_config(
+            &HeartbeatConfig::default(),
+            workspace.clone(),
+            None,
+        );
+
+        // The 3 default system tasks must now exist in the store.
+        store::with_connection(&workspace, |conn| {
+            let tasks = store::list_tasks(conn, false)?;
+            assert_eq!(
+                tasks.len(),
+                3,
+                "engine construction must seed the 3 default system tasks"
+            );
+            assert!(tasks.iter().all(|t| t.source == TaskSource::System));
+            assert!(tasks
+                .iter()
+                .all(|t| t.recurrence == TaskRecurrence::Pending));
+
+            Ok(())
+        })
+        .unwrap();
+
+        // Reconstructing the engine on the same workspace must not
+        // duplicate the defaults — seed_default_tasks is idempotent.
+
+        let _engine2 = SubconsciousEngine::from_heartbeat_config(
+            &HeartbeatConfig::default(),
+            workspace.clone(),
+            None,
+        );
+
+        store::with_connection(&workspace, |conn| {
+            let tasks = store::list_tasks(conn, false)?;
+            assert_eq!(
+                tasks.len(),
+                3,
+                "repeat engine construction must not duplicate default tasks"
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
 }
