@@ -8,14 +8,14 @@
 use crate::openhuman::config::ScreenIntelligenceConfig;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::capture::now_ms;
 use super::helpers::push_ephemeral_frame;
 use super::state::{AccessibilityEngine, SessionRuntime};
 use super::types::{
     AccessibilityStatus, AppContextInfo, CaptureFrame, CaptureImageRefResult, CaptureNowResult,
-    CaptureTestResult, SessionStatus, StartSessionParams,
+    CaptureTestResult, CoreProcessStatus, SessionStatus, StartSessionParams,
 };
 use crate::openhuman::accessibility::{
     capture_screen_image_ref_for_context, detect_permissions, foreground_context,
@@ -334,6 +334,10 @@ impl AccessibilityEngine {
             permission_check_process_path: std::env::current_exe()
                 .ok()
                 .map(|p| p.display().to_string()),
+            core_process: Some(CoreProcessStatus {
+                pid: std::process::id(),
+                started_at_ms: core_process_started_at_ms(),
+            }),
         }
     }
 
@@ -542,6 +546,11 @@ impl AccessibilityEngine {
             _ => !blacklisted,
         }
     }
+}
+
+fn core_process_started_at_ms() -> i64 {
+    static CORE_PROCESS_STARTED_AT_MS: OnceLock<i64> = OnceLock::new();
+    *CORE_PROCESS_STARTED_AT_MS.get_or_init(now_ms)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

@@ -809,7 +809,10 @@ pub async fn bootstrap_skill_runtime() {
     std::mem::forget(bus.subscribe(Arc::new(
         crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
     )));
-    log::info!("[event_bus] webhook and channel subscribers registered");
+    // Restart requests are executed from a subscriber instead of inline in RPC
+    // handlers so every trigger path shares the same respawn logic.
+    std::mem::forget(bus.subscribe(Arc::new(crate::openhuman::service::bus::RestartSubscriber)));
+    log::info!("[event_bus] webhook, channel, and restart subscribers registered");
 
     // --- Socket manager bootstrap ---
     let socket_mgr = Arc::new(SocketManager::new());
