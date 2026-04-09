@@ -26,11 +26,12 @@ import { isTauriDriver } from './platform';
 // ---------------------------------------------------------------------------
 
 function xpathStringLiteral(text: string): string {
-  if (!text.includes('"')) return `"${text}"`;
-  if (!text.includes("'")) return `'${text}'`;
+  const xmlSafe = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  if (!xmlSafe.includes('"')) return `"${xmlSafe}"`;
+  if (!xmlSafe.includes("'")) return `'${xmlSafe}'`;
   const parts: string[] = [];
   let current = '';
-  for (const ch of text) {
+  for (const ch of xmlSafe) {
     if (ch === '"') {
       if (current) parts.push(`"${current}"`);
       parts.push("'\"'");
@@ -55,6 +56,75 @@ function xpathContainsText(text: string): string {
 // ---------------------------------------------------------------------------
 // Click helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Mac2-only: scroll the WebView content until `el` is inside the visible
+ * viewport.  Mac2 includes off-screen DOM elements in the accessibility tree,
+ * so we must bring the element into view before pointer-clicking it.
+ *
+ * Mac2 (WebDriverAgentMac) only supports:
+ * - W3C pointer/key action types (no 'touch', no 'wheel')
+ * - execute() only accepts 'macos: *' method names (no JS eval)
+ *
+ * Strategy: use the Mac2 native 'macos: scroll' execute method which issues
+ * a CGEvent scrollWheel at the given screen coordinates.
+ * deltaY < 0  → scrolls page DOWN  (brings below-fold content into view)
+ * deltaY > 0  → scrolls page UP    (brings above-fold content into view)
+ */
+async function scrollElementIntoViewMac2(el: ChainablePromiseElement): Promise<void> {
+  const MAX_ITERS = 12;
+  try {
+    let loc: { x: number; y: number };
+    try {
+      loc = await el.getLocation();
+    } catch {
+      return; // stale element — let the click attempt handle it
+    }
+
+    const webView = await browser.$('//XCUIElementTypeWebView');
+    if (!(await webView.isExisting())) return;
+
+    const wvLoc = await webView.getLocation();
+    const wvSize = await webView.getSize();
+    const viewportTop = wvLoc.y;
+    const viewportBottom = wvLoc.y + wvSize.height;
+
+    // Already visible — nothing to do
+    if (loc.y >= viewportTop + 10 && loc.y + 30 <= viewportBottom) return;
+
+    // Scroll at the center of the WebView
+    const scrollX = Math.round(wvLoc.x + wvSize.width / 2);
+    const scrollY = Math.round(wvLoc.y + wvSize.height / 2);
+
+    for (let i = 0; i < MAX_ITERS; i++) {
+      const isBelow = loc.y > viewportBottom;
+      // Negative deltaY scrolls page DOWN (more content from below appears).
+      // Positive deltaY scrolls page UP (content from above reappears).
+      const deltaY = isBelow ? -300 : 300;
+
+      try {
+        await browser.execute('macos: scroll', {
+          x: scrollX,
+          y: scrollY,
+          deltaX: 0,
+          deltaY,
+        });
+      } catch {
+        break; // macos: scroll failed — stop
+      }
+      await browser.pause(400);
+
+      try {
+        loc = await el.getLocation();
+        if (loc.y >= viewportTop + 10 && loc.y + 30 <= viewportBottom) return;
+      } catch {
+        return; // element went stale during scroll
+      }
+    }
+  } catch {
+    // Non-fatal — fall through to the click attempt
+  }
+}
 
 /**
  * Perform a real mouse click at the center of an element using W3C Actions.
@@ -89,6 +159,9 @@ async function clickAtElement(el: ChainablePromiseElement): Promise<void> {
     }
     return;
   }
+
+  // Mac2: scroll element into the visible WebView viewport before clicking
+  await scrollElementIntoViewMac2(el);
 
   const location = await el.getLocation();
   const size = await el.getSize();
@@ -354,6 +427,104 @@ export async function hasAppChrome(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Scroll down inside the WebView / page by `amount` pixels.
+ *
+ * - Mac2: W3C wheel action centered on XCUIElementTypeWebView
+ * - tauri-driver: JS window.scrollBy
+ */
+export async function scrollDownInPage(amount: number = 400): Promise<void> {
+  if (isTauriDriver()) {
+    try {
+      await browser.execute((amt: number) => window.scrollBy(0, amt), amount);
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
+  // Mac2: wheel action on the WebView center
+  try {
+    const webView = await browser.$('//XCUIElementTypeWebView');
+    if (await webView.isExisting()) {
+      const location = await webView.getLocation();
+      const size = await webView.getSize();
+      const centerX = Math.round(location.x + size.width / 2);
+      const centerY = Math.round(location.y + size.height / 2);
+
+      await (browser as any).performActions([
+        {
+          type: 'wheel',
+          id: 'scroll_wheel',
+          actions: [
+            { type: 'scroll', x: centerX, y: centerY, deltaX: 0, deltaY: amount, duration: 300 },
+          ],
+        },
+      ]);
+      await (browser as any).releaseActions();
+      await browser.pause(400);
+      return;
+    }
+  } catch {
+    // fall through to key fallback
+  }
+
+  // Fallback: Page Down key
+  try {
+    await browser.keys(['PageDown']);
+    await browser.pause(400);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Scroll back to the top of the page.
+ *
+ * - Mac2: Home key
+ * - tauri-driver: JS window.scrollTo(0,0)
+ */
+export async function scrollToTop(): Promise<void> {
+  if (isTauriDriver()) {
+    try {
+      await browser.execute(() => window.scrollTo(0, 0));
+    } catch {
+      // ignore
+    }
+    return;
+  }
+  try {
+    await browser.keys(['Home']);
+    await browser.pause(300);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Scroll incrementally through the page looking for `text`.
+ *
+ * Checks for the text before each scroll.  Scrolls up to `maxScrolls` times
+ * before giving up.  Returns `true` if found, `false` otherwise.
+ *
+ * The page is left at whatever scroll position the text was found at —
+ * callers that need to click the element can proceed immediately.
+ */
+export async function scrollToFindText(
+  text: string,
+  maxScrolls: number = 6,
+  scrollAmount: number = 400
+): Promise<boolean> {
+  // Check without scrolling first
+  if (await textExists(text)) return true;
+
+  for (let i = 0; i < maxScrolls; i++) {
+    await scrollDownInPage(scrollAmount);
+    if (await textExists(text)) return true;
+  }
+  return false;
 }
 
 /**

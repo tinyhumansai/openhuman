@@ -83,7 +83,8 @@ export const config: Options.Testrunner & Record<string, unknown> = {
   runner: 'local',
   hostname: '127.0.0.1',
   port: driverPort,
-  specs: ['./test/e2e/specs/**/*.spec.ts'],
+  // Paths are resolved relative to this config file's directory (`app/test`).
+  specs: ['./e2e/specs/**/*.spec.ts'],
   maxInstances: 1, // Tauri apps are single-instance
   capabilities: getPlatformCapabilities(),
   logLevel: 'warn',

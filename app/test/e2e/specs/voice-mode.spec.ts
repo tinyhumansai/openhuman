@@ -1,19 +1,20 @@
 // @ts-nocheck
 /**
- * E2E test: Voice mode integration
+ * E2E test: Voice Intelligence (Built-in Skill — accessed from Skills tab)
  *
  * Covers:
- *   - Navigating to conversations page
- *   - Switching to voice input mode
- *   - Voice status check fires and displays availability message
- *   - Voice input/reply mode toggle buttons render
- *   - Voice recording button renders in voice mode
- *   - Switching back to text mode restores text input
+ *   9.3.1 — Navigate to Skills page and verify Voice Intelligence built-in card
+ *   9.3.2 — Click Voice Intelligence card → opens /settings/voice panel
+ *   9.3.3 — Voice Dictation settings panel renders with key sections (Runtime, Settings)
+ *   9.3.4 — voice_status RPC returns STT/TTS availability info
+ *   9.3.5 — voice_server_status RPC returns server state
+ *   9.3.6 — Voice configuration options render (Hotkey, Activation Mode, Writing Style)
  *
  * The mock server runs on http://127.0.0.1:18473
  */
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
-import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
+import { callOpenhumanRpc } from '../helpers/core-rpc';
+import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
   clickText,
   dumpAccessibilityTree,
@@ -21,42 +22,40 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import { completeOnboardingIfVisible } from '../helpers/shared-flows';
-import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
+import { supportsExecuteScript } from '../helpers/platform';
+import {
+  completeOnboardingIfVisible,
+  dismissLocalAISnackbarIfVisible,
+  navigateViaHash,
+  waitForHomePage,
+} from '../helpers/shared-flows';
+import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
-async function waitForRequest(method, urlFragment, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    const log = getRequestLog();
-    const match = log.find(r => r.method === method && r.url.includes(urlFragment));
-    if (match) return match;
-    await browser.pause(500);
+const LOG_PREFIX = '[VoiceModeE2E]';
+
+function stepLog(message: string, context?: unknown): void {
+  const stamp = new Date().toISOString();
+  if (context === undefined) {
+    console.log(`${LOG_PREFIX}[${stamp}] ${message}`);
+    return;
   }
-  return undefined;
+  console.log(`${LOG_PREFIX}[${stamp}] ${message}`, JSON.stringify(context, null, 2));
 }
 
-async function waitForHome(timeout = 20_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (await textExists('Message OpenHuman')) return true;
-    await browser.pause(700);
-  }
-  return false;
-}
-
-async function waitForAnyText(candidates, timeout = 20_000) {
+async function waitForAnyText(candidates: string[], timeout = 15_000): Promise<string | null> {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     for (const t of candidates) {
       if (await textExists(t)) return t;
     }
-    await browser.pause(600);
+    await browser.pause(500);
   }
   return null;
 }
 
-describe('Voice mode integration', () => {
+describe('Voice Intelligence (Built-in Skill)', () => {
   before(async () => {
+    stepLog('Starting Voice Intelligence E2E');
     await startMockServer();
     await waitForApp();
     clearRequestLog();
@@ -66,103 +65,166 @@ describe('Voice mode integration', () => {
     await stopMockServer();
   });
 
-  it('can switch to voice input mode, see status message, and switch back to text', async () => {
-    // --- Authenticate and reach conversations ---
-    await triggerAuthDeepLink('e2e-voice-token');
+  // ── Auth + reach app shell ──────────────────────────────────────────────
+
+  it('authenticates and reaches the app shell', async () => {
+    await triggerAuthDeepLinkBypass('e2e-voice-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
     await waitForAppReady(15_000);
+    await completeOnboardingIfVisible(LOG_PREFIX);
 
-    const consume = await waitForRequest('POST', '/telegram/login-tokens/');
-    expect(consume).toBeDefined();
-
-    await completeOnboardingIfVisible('[VoiceModeE2E]');
-
-    const onHome = await waitForHome(20_000);
-    if (!onHome) {
+    const home = await waitForHomePage(20_000);
+    if (!home) {
       const tree = await dumpAccessibilityTree();
-      console.log('[VoiceModeE2E] Home not reached. Tree:\n', tree.slice(0, 4000));
+      stepLog('Home not reached', { tree: tree.slice(0, 4000) });
     }
-    expect(onHome).toBe(true);
-
-    // --- Verify we see the text input area (default mode) ---
-    const hasTextInput = await waitForAnyText(['Message OpenHuman', 'Type a message'], 10_000);
-    expect(hasTextInput).not.toBeNull();
-
-    // --- Verify voice toggle buttons are visible ---
-    // The Input toggle group should show "Text" and "Voice" buttons
-    const hasInputLabel = await textExists('Input');
-    expect(hasInputLabel).toBe(true);
-
-    // --- Switch to voice input mode ---
-    // There are two "Voice" buttons (Input toggle and Reply toggle).
-    // We click the first one which is the Input mode toggle.
-    await clickText('Voice', 10_000);
-    await browser.pause(2_000);
-
-    // --- Voice status check should fire ---
-    // Since whisper-cli is not installed in the E2E environment,
-    // we expect the unavailability message or the ready message.
-    const voiceStatusMessage = await waitForAnyText(
-      [
-        'Speech-to-text unavailable',
-        'whisper-cli binary',
-        'STT model not found',
-        'Ready',
-        'Start Talking',
-        'Could not check voice availability',
-      ],
-      15_000
-    );
-
-    if (!voiceStatusMessage) {
-      const tree = await dumpAccessibilityTree();
-      console.log('[VoiceModeE2E] No voice status message seen. Tree:\n', tree.slice(0, 5000));
-    }
-    expect(voiceStatusMessage).not.toBeNull();
-
-    // --- Verify the voice recording button or unavailability message is visible ---
-    const hasVoiceButton = await waitForAnyText(
-      ['Start Talking', 'Transcribing', 'Stop & Send'],
-      10_000
-    );
-    if (!hasVoiceButton) {
-      const hasStatus = await textExists('Speech-to-text unavailable');
-      expect(hasStatus).toBe(true);
-    }
-
-    // --- Switch back to text mode ---
-    // Click the "Text" button in the Input toggle group
-    await clickText('Text', 10_000);
-    await browser.pause(1_500);
-
-    // --- Verify text input is restored ---
-    const textRestored = await waitForAnyText(['Message OpenHuman', 'Type a message'], 10_000);
-    expect(textRestored).not.toBeNull();
+    expect(home).not.toBeNull();
   });
 
-  it('shows reply mode toggle with text and voice options', async () => {
-    // Ensure conversations page is loaded (re-authenticate if state was lost).
-    const onConversations = await waitForAnyText(
-      ['Message OpenHuman', 'Type a message', 'Reply'],
-      5_000
-    );
-    if (!onConversations) {
-      await triggerAuthDeepLink('e2e-voice-token');
-      await waitForWindowVisible(25_000);
-      await waitForWebView(15_000);
-      await waitForAppReady(15_000);
-      await completeOnboardingIfVisible('[VoiceModeE2E]');
-      await waitForHome(20_000);
+  // ── 9.3.1 Skills page shows Voice Intelligence built-in card ────────────
+
+  it('shows the Voice Intelligence card in the Skills tab', async () => {
+    await dismissLocalAISnackbarIfVisible(LOG_PREFIX);
+    await navigateViaHash('/skills');
+    await browser.pause(2_000);
+
+    const hasBuiltIn = await waitForAnyText(['Built-in Skills'], 10_000);
+    stepLog('Built-in Skills section', { found: hasBuiltIn });
+    expect(hasBuiltIn).not.toBeNull();
+
+    const hasVoiceCard = await waitForAnyText(['Voice Intelligence'], 10_000);
+    stepLog('Voice Intelligence card', { found: hasVoiceCard });
+    expect(hasVoiceCard).not.toBeNull();
+
+    const hasDescription = await textExists('Use the microphone');
+    stepLog('Voice card description', { hasDescription });
+    expect(hasDescription).toBe(true);
+  });
+
+  // ── 9.3.2 Click card → opens Voice settings panel ──────────────────────
+
+  it('navigates to Voice settings panel from Skills tab', async () => {
+    await clickText('Voice Intelligence', 10_000);
+    await browser.pause(2_000);
+
+    if (supportsExecuteScript()) {
+      const currentHash = await browser.execute(() => window.location.hash);
+      stepLog('After clicking Voice Intelligence card', { currentHash });
+      expect(currentHash).toContain('voice');
     }
 
-    // The Reply toggle should be visible on the conversations page
-    const hasReplyLabel = await textExists('Reply');
-    expect(hasReplyLabel).toBe(true);
+    const hasPanel = await waitForAnyText(
+      ['Voice Dictation', 'Voice Server Settings', 'Runtime'],
+      15_000
+    );
+    if (!hasPanel) {
+      const tree = await dumpAccessibilityTree();
+      stepLog('Voice panel missing expected headings', { tree: tree.slice(0, 4000) });
+    }
+    stepLog('Voice settings panel', { found: hasPanel });
+    expect(hasPanel).not.toBeNull();
+  });
 
-    // Verify both reply mode options exist
-    // (There are multiple "Text" and "Voice" buttons — Input + Reply groups)
-    const hasText = await textExists('Text');
-    expect(hasText).toBe(true);
+  // ── 9.3.3 Voice Dictation panel renders key sections ────────────────────
+
+  it('shows key sections in the Voice Dictation panel', async () => {
+    const alreadyOnPage = await textExists('Voice Dictation');
+    if (!alreadyOnPage) {
+      await navigateViaHash('/settings/voice');
+      await browser.pause(2_000);
+    }
+
+    const hasRuntime = await waitForAnyText(['Runtime', 'STT', 'Server'], 10_000);
+    stepLog('Runtime section', { found: hasRuntime });
+    expect(hasRuntime).not.toBeNull();
+
+    // Check for voice server settings heading
+    const hasServerSettings = await waitForAnyText(
+      ['Voice Server Settings', 'Hotkey', 'Activation Mode'],
+      10_000
+    );
+    stepLog('Server settings section', { found: hasServerSettings });
+    expect(hasServerSettings).not.toBeNull();
+  });
+
+  // ── 9.3.4 voice_status RPC ─────────────────────────────────────────────
+
+  it('voice_status RPC returns STT/TTS availability info', async () => {
+    const result = await callOpenhumanRpc('openhuman.voice_status', {});
+    stepLog('voice_status RPC raw', JSON.stringify(result, null, 2));
+
+    expect(result.ok).toBe(true);
+
+    const raw = result.result;
+    const data = raw?.result ?? raw;
+    expect(data).toBeDefined();
+
+    expect(typeof data.stt_available).toBe('boolean');
+    expect(typeof data.tts_available).toBe('boolean');
+    expect(typeof data.stt_model_id).toBe('string');
+    expect(typeof data.tts_voice_id).toBe('string');
+
+    stepLog('Voice availability', {
+      stt_available: data.stt_available,
+      tts_available: data.tts_available,
+      whisper_binary: data.whisper_binary,
+      piper_binary: data.piper_binary,
+      whisper_in_process: data.whisper_in_process,
+    });
+  });
+
+  // ── 9.3.5 voice_server_status RPC ──────────────────────────────────────
+
+  it('voice_server_status RPC returns server state', async () => {
+    const result = await callOpenhumanRpc('openhuman.voice_server_status', {});
+    stepLog('voice_server_status RPC raw', JSON.stringify(result, null, 2));
+
+    expect(result.ok).toBe(true);
+
+    const raw = result.result;
+    const data = raw?.result ?? raw;
+    expect(data).toBeDefined();
+
+    const validStates = ['stopped', 'idle', 'recording', 'transcribing'];
+    expect(validStates).toContain(data.state);
+    expect(typeof data.hotkey).toBe('string');
+    expect(typeof data.activation_mode).toBe('string');
+
+    stepLog('Voice server state', {
+      state: data.state,
+      hotkey: data.hotkey,
+      activation_mode: data.activation_mode,
+      transcription_count: data.transcription_count,
+    });
+  });
+
+  // ── 9.3.6 Voice configuration options ──────────────────────────────────
+
+  it('shows voice configuration options (Hotkey, Activation Mode, Writing Style)', async () => {
+    const alreadyOnPage = await textExists('Voice Dictation');
+    if (!alreadyOnPage) {
+      await navigateViaHash('/settings/voice');
+      await browser.pause(2_000);
+    }
+
+    // These labels should be visible without deep scrolling
+    const configLabels = [
+      'Hotkey',
+      'Activation Mode',
+      'Writing Style',
+      'Save Voice Settings',
+      'Start Voice Server',
+      'Stop Voice Server',
+    ];
+
+    const foundLabels: string[] = [];
+    for (const label of configLabels) {
+      if (await textExists(label)) foundLabels.push(label);
+    }
+
+    stepLog('Voice config labels found', { foundLabels });
+    // At least 2 should be visible
+    expect(foundLabels.length).toBeGreaterThanOrEqual(2);
   });
 });

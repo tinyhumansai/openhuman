@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 use openhuman_core::core::jsonrpc::build_core_http_router;
+use openhuman_core::openhuman::cron::{add_shell_job, Schedule};
 use openhuman_core::openhuman::skills::qjs_engine::RuntimeEngine;
 use openhuman_core::openhuman::skills::set_global_engine;
 
@@ -2238,6 +2239,262 @@ async fn about_app_rpc_list_lookup_and_search() {
             capability.get("id").and_then(Value::as_str) == Some("team.generate_invite_codes")
         }),
         "expected invite generation capability in search results: {search_result}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_automation_and_scheduling_spec_6x() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    fn inner(outer: &Value, context: &str) -> Value {
+        let result = assert_no_jsonrpc_error(outer, context);
+        result
+            .get("result")
+            .cloned()
+            .unwrap_or_else(|| result.clone())
+    }
+
+    fn pick_task_id(payload: &Value) -> Option<String> {
+        payload
+            .get("task")
+            .and_then(|task| task.get("id"))
+            .and_then(Value::as_str)
+            .or_else(|| payload.get("id").and_then(Value::as_str))
+            .or_else(|| payload.get("task_id").and_then(Value::as_str))
+            .map(ToString::to_string)
+    }
+
+    // 6.1.1 Task Creation
+    let created = post_json_rpc(
+        &rpc_base,
+        3001,
+        "openhuman.subconscious_tasks_add",
+        json!({
+            "title": "json-rpc e2e scheduled task",
+            "source": "user"
+        }),
+    )
+    .await;
+    let created_payload = inner(&created, "subconscious_tasks_add");
+    let task_id = pick_task_id(&created_payload)
+        .unwrap_or_else(|| panic!("expected task id in tasks_add payload: {created_payload}"));
+
+    // 6.1.2 Task Update
+    let updated = post_json_rpc(
+        &rpc_base,
+        3002,
+        "openhuman.subconscious_tasks_update",
+        json!({
+            "task_id": task_id,
+            "title": "json-rpc e2e scheduled task updated",
+            "enabled": true
+        }),
+    )
+    .await;
+    inner(&updated, "subconscious_tasks_update");
+
+    let listed_after_update = post_json_rpc(
+        &rpc_base,
+        3003,
+        "openhuman.subconscious_tasks_list",
+        json!({}),
+    )
+    .await;
+    let listed_payload = inner(&listed_after_update, "subconscious_tasks_list");
+    let listed_text = listed_payload.to_string();
+    assert!(
+        listed_text.contains("json-rpc e2e scheduled task updated"),
+        "expected updated task title in list payload: {listed_payload}"
+    );
+
+    // 6.1.3 Task Deletion
+    let removed = post_json_rpc(
+        &rpc_base,
+        3004,
+        "openhuman.subconscious_tasks_remove",
+        json!({ "task_id": task_id }),
+    )
+    .await;
+    inner(&removed, "subconscious_tasks_remove");
+
+    let listed_after_remove = post_json_rpc(
+        &rpc_base,
+        3005,
+        "openhuman.subconscious_tasks_list",
+        json!({}),
+    )
+    .await;
+    let listed_after_remove_payload = inner(&listed_after_remove, "subconscious_tasks_list");
+    assert!(
+        !listed_after_remove_payload.to_string().contains(&task_id),
+        "expected removed task to be absent: {listed_after_remove_payload}"
+    );
+
+    // 6.2.1 Cron Expression Validation
+    let cron_task = post_json_rpc(
+        &rpc_base,
+        3006,
+        "openhuman.subconscious_tasks_add",
+        json!({
+            "title": "json-rpc e2e cron validation task",
+            "source": "user"
+        }),
+    )
+    .await;
+    let cron_task_payload = inner(&cron_task, "subconscious_tasks_add cron");
+    let cron_task_id = pick_task_id(&cron_task_payload).unwrap_or_else(|| {
+        panic!("expected task id in cron validation task payload: {cron_task_payload}")
+    });
+
+    let invalid_update = post_json_rpc(
+        &rpc_base,
+        3007,
+        "openhuman.subconscious_tasks_update",
+        json!({
+            "task_id": cron_task_id,
+            "recurrence": "cron:not-a-valid-expression"
+        }),
+    )
+    .await;
+    let invalid_msg = invalid_update
+        .get("error")
+        .and_then(|error| error.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        invalid_update.get("error").is_some() && invalid_msg.contains("invalid cron expression"),
+        "expected invalid cron recurrence error, got: {invalid_update}"
+    );
+
+    let cleanup_invalid_task = post_json_rpc(
+        &rpc_base,
+        3008,
+        "openhuman.subconscious_tasks_remove",
+        json!({ "task_id": cron_task_id }),
+    )
+    .await;
+    inner(
+        &cleanup_invalid_task,
+        "subconscious_tasks_remove cron validation",
+    );
+
+    // 6.2.2 Recurring Execution + 6.2.3 Missed Execution Handling
+    let trigger_1 = post_json_rpc(&rpc_base, 3009, "openhuman.subconscious_trigger", json!({})).await;
+    inner(&trigger_1, "subconscious_trigger first");
+    let trigger_2 = post_json_rpc(&rpc_base, 3010, "openhuman.subconscious_trigger", json!({})).await;
+    inner(&trigger_2, "subconscious_trigger second");
+
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let logs = post_json_rpc(
+        &rpc_base,
+        3011,
+        "openhuman.subconscious_log_list",
+        json!({ "limit": 20 }),
+    )
+    .await;
+    let logs_payload = inner(&logs, "subconscious_log_list");
+    let logs_arr = logs_payload
+        .as_array()
+        .or_else(|| logs_payload.get("entries").and_then(Value::as_array))
+        .unwrap_or_else(|| panic!("expected log array payload, got: {logs_payload}"));
+    assert!(
+        !logs_arr.is_empty(),
+        "expected non-empty subconscious log entries after trigger: {logs_payload}"
+    );
+
+    // 6.3.1 Remote Agent Scheduling
+    let cron_list = post_json_rpc(&rpc_base, 3012, "openhuman.cron_list", json!({})).await;
+    inner(&cron_list, "cron_list");
+
+    // 6.3.2 Execution Trigger Handling
+    let missing_run = post_json_rpc(
+        &rpc_base,
+        3013,
+        "openhuman.cron_run",
+        json!({ "job_id": "missing-job-id-e2e" }),
+    )
+    .await;
+    assert!(
+        missing_run.get("error").is_some(),
+        "expected explicit error for missing cron job id: {missing_run}"
+    );
+
+    // 6.3.3 Failure Retry Logic
+    let config = openhuman_core::openhuman::config::load_config_with_timeout()
+        .await
+        .expect("load config for cron setup");
+    let failing_job = add_shell_job(
+        &config,
+        Some("json-rpc e2e failing cron job".to_string()),
+        Schedule::Every { every_ms: 60_000 },
+        "this-command-should-not-exist-openhuman-e2e",
+    )
+    .expect("create failing cron job");
+
+    let run_failure = post_json_rpc(
+        &rpc_base,
+        3014,
+        "openhuman.cron_run",
+        json!({ "job_id": failing_job.id }),
+    )
+    .await;
+    let run_payload = inner(&run_failure, "cron_run failing job");
+    let run_status = run_payload
+        .get("status")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            run_payload
+                .get("result")
+                .and_then(|v| v.get("status"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        run_status, "error",
+        "expected failing cron command to record error status: {run_payload}"
+    );
+
+    let run_history = post_json_rpc(
+        &rpc_base,
+        3015,
+        "openhuman.cron_runs",
+        json!({ "job_id": failing_job.id, "limit": 5 }),
+    )
+    .await;
+    let run_history_payload = inner(&run_history, "cron_runs failing job");
+    let run_history_arr = run_history_payload
+        .as_array()
+        .or_else(|| run_history_payload.get("runs").and_then(Value::as_array))
+        .unwrap_or_else(|| panic!("expected cron run history array, got: {run_history_payload}"));
+    assert!(
+        !run_history_arr.is_empty(),
+        "expected non-empty cron run history after failed run: {run_history_payload}"
+    );
+    assert!(
+        run_history_arr
+            .iter()
+            .any(|entry| entry.get("status").and_then(Value::as_str) == Some("error")),
+        "expected at least one failed run in history: {run_history_payload}"
     );
 
     mock_join.abort();

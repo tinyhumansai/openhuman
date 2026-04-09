@@ -105,6 +105,17 @@ TOML
 fi
 echo "Wrote E2E config.toml with api_url=http://127.0.0.1:${E2E_MOCK_PORT}"
 
+# Also write config to user-scoped directories that store_session may activate.
+# The mock /auth/me returns _id: "user-123", so the core will create
+# ~/.openhuman/users/user-123/ and reload config from there.
+# Without this, the user-scoped config won't have api_url pointing to the mock.
+for MOCK_USER_ID in "user-123" "e2e-user"; do
+  USER_CONFIG_DIR="$E2E_CONFIG_DIR/users/$MOCK_USER_ID"
+  mkdir -p "$USER_CONFIG_DIR"
+  cp "$E2E_CONFIG_FILE" "$USER_CONFIG_DIR/config.toml"
+done
+echo "Wrote user-scoped config.toml for mock users"
+
 DIST_JS="$(ls dist/assets/index-*.js 2>/dev/null | head -1)"
 if [ -z "$DIST_JS" ]; then
   echo "ERROR: No frontend bundle found at dist/assets/index-*.js." >&2
@@ -164,7 +175,7 @@ else
   NODE_VER=$("$NODE24" --version)
   echo "Starting Appium on port $APPIUM_PORT (Node $NODE_VER)..."
   echo "  Appium logs: $APPIUM_LOG"
-  "$APPIUM_BIN" --port "$APPIUM_PORT" --relaxed-security > "$APPIUM_LOG" 2>&1 &
+  "$NODE24" "$APPIUM_BIN" --port "$APPIUM_PORT" --relaxed-security > "$APPIUM_LOG" 2>&1 &
   DRIVER_PID=$!
 
   for i in $(seq 1 30); do

@@ -39,6 +39,8 @@ export async function waitForHomePage(timeout = 15_000) {
     'Good evening',
     'Message OpenHuman',
     'Upgrade to Premium',
+    'No messages yet',
+    'Type a message',
   ];
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -80,9 +82,10 @@ export async function clickFirstMatch(candidates, timeout = 5_000) {
 const HASH_TO_SIDEBAR_LABEL = {
   '/skills': 'Skills',
   '/home': 'Home',
-  '/conversations': 'Conversations',
+  '/conversations': 'Chat',
   '/settings': 'Settings',
   '/intelligence': 'Intelligence',
+  '/channels': 'Channels',
 };
 
 export async function navigateViaHash(hash) {
@@ -113,6 +116,40 @@ export async function navigateViaHash(hash) {
       }
       await browser.pause(2_000);
       console.log(`[E2E] Mac2 navigated to ${hash} via Settings → ${sub}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`[E2E] Mac2: failed to navigate to ${hash}: ${msg}`);
+    }
+    return;
+  }
+
+  // Appium Mac2 — nested settings routes via Skills built-in cards
+  const SKILLS_BUILTIN_ROUTES: Record<string, string[]> = {
+    '/settings/screen-intelligence': ['Screen Intelligence'],
+    '/settings/voice': ['Voice Intelligence', 'Voice Dictation'],
+    '/settings/autocomplete': ['Text Auto-Complete', 'Inline Autocomplete'],
+  };
+  const builtInLabels = SKILLS_BUILTIN_ROUTES[normalized];
+  if (builtInLabels) {
+    try {
+      // Navigate to Skills page first, then click the built-in card
+      await clickText('Skills', 12_000);
+      await browser.pause(2_000);
+      const sub = await clickFirstMatch(builtInLabels, 12_000);
+      if (!sub) {
+        // Fallback: try Settings sidebar → Automation menu item
+        await clickText('Settings', 12_000);
+        await browser.pause(1_500);
+        const settingsSub = await clickFirstMatch(builtInLabels, 12_000);
+        if (!settingsSub) {
+          throw new Error(`Mac2: could not find ${builtInLabels.join(' / ')} in Skills or Settings`);
+        }
+        await browser.pause(2_000);
+        console.log(`[E2E] Mac2 navigated to ${hash} via Settings → ${settingsSub}`);
+        return;
+      }
+      await browser.pause(2_000);
+      console.log(`[E2E] Mac2 navigated to ${hash} via Skills → ${sub}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`[E2E] Mac2: failed to navigate to ${hash}: ${msg}`);
@@ -235,6 +272,56 @@ export async function navigateToBilling() {
   console.log('[E2E] Billing page loaded (after fallback)');
 }
 
+/**
+ * Dismiss the LocalAIDownloadSnackbar floating card if it is visible.
+ *
+ * The snackbar sits fixed bottom-right over the UI and can intercept clicks
+ * on skill action buttons below it.  Call this before interacting with Skills.
+ *
+ * Two forms:
+ *  - Expanded: has "Dismiss download notification" button (the ✕)
+ *  - Collapsed pill: has "Expand download progress" button — less likely to overlap
+ */
+export async function dismissLocalAISnackbarIfVisible(logPrefix = '[E2E]') {
+  try {
+    // Try the X / dismiss button (visible when expanded)
+    if (await textExists('Dismiss download notification')) {
+      await clickText('Dismiss download notification', 5_000);
+      await browser.pause(800);
+      console.log(`${logPrefix} Dismissed LocalAI download snackbar`);
+      return;
+    }
+
+    // Snackbar status texts that indicate it is expanded
+    const snackbarTexts = [
+      'Loading model...',
+      'Downloading',
+      'Installing Runtime',
+      'Needs Attention',
+      'Idle',
+      'Ready',
+    ];
+    for (const text of snackbarTexts) {
+      if (await textExists(text)) {
+        // Dismiss button should now be accessible
+        if (await textExists('Dismiss download notification')) {
+          await clickText('Dismiss download notification', 5_000);
+          await browser.pause(800);
+          console.log(`${logPrefix} Dismissed LocalAI snackbar (state: ${text})`);
+        } else if (await textExists('Collapse download progress')) {
+          // Collapse to pill so it stops covering buttons
+          await clickText('Collapse download progress', 5_000);
+          await browser.pause(500);
+          console.log(`${logPrefix} Collapsed LocalAI snackbar to pill (state: ${text})`);
+        }
+        return;
+      }
+    }
+  } catch {
+    // Non-fatal — snackbar may not be present
+  }
+}
+
 export async function navigateToSkills() {
   await navigateViaHash('/skills');
 }
@@ -255,10 +342,11 @@ export async function navigateToConversations() {
 /** Labels used to detect the onboarding overlay (same strings as Onboarding copy). */
 export const ONBOARDING_OVERLAY_TEXTS = [
   'Skip',
-  'Welcome',
-  'Run AI Models Locally',
+  'Welcome On Board',
+  'Let\'s Start',
+  'referral code',
+  'Skip for now',
   'Screen & Accessibility',
-  'Enable Tools',
   'Install Skills',
 ] as const;
 
@@ -293,8 +381,12 @@ export async function waitForOnboardingOverlayHidden(timeout = 10_000): Promise<
 }
 
 /**
- * Walk through onboarding: Welcome → Local AI → Screen & Accessibility → Tools → Skills.
- * Each step uses the shared primary button label "Continue" (see OnboardingNextButton).
+ * Walk through onboarding steps:
+ *   Step 0: WelcomeStep        → "Let's Start"
+ *   Step 1: ReferralApplyStep  → "Skip for now" (may be auto-skipped)
+ *   Step 2: ScreenPermissions  → "Continue"
+ *   Step 3: SkillsStep         → "Continue"
+ *
  * Completing the last step dismisses the overlay.
  */
 export async function walkOnboarding(logPrefix = '[E2E]') {
@@ -313,26 +405,51 @@ export async function walkOnboarding(logPrefix = '[E2E]') {
     return;
   }
 
-  // Up to 6 "Continue" clicks — covers 5 steps plus one retry if the list is still loading.
-  for (let step = 0; step < 6; step++) {
+  // Step 0: WelcomeStep — click "Let's Start"
+  {
+    const clicked = await clickFirstMatch(["Let's Start"], 12_000);
+    if (clicked) {
+      console.log(`${logPrefix} Onboarding WelcomeStep: clicked "${clicked}"`);
+      await browser.pause(2_000);
+    }
+  }
+
+  if (!(await onboardingOverlayLikelyVisible())) {
+    console.log(`${logPrefix} Onboarding dismissed after WelcomeStep`);
+    return;
+  }
+
+  // Step 1: ReferralApplyStep — may be auto-skipped; click "Skip for now" if visible
+  {
+    const isReferral =
+      (await textExists('referral code')) || (await textExists('Skip for now'));
+    if (isReferral) {
+      const clicked = await clickFirstMatch(['Skip for now', 'Continue'], 10_000);
+      if (clicked) {
+        console.log(`${logPrefix} Onboarding ReferralStep: clicked "${clicked}"`);
+        await browser.pause(2_000);
+      }
+    }
+  }
+
+  // Steps 2-3: ScreenPermissions + SkillsStep — both use "Continue"
+  for (let step = 2; step <= 3; step++) {
     if (!(await onboardingOverlayLikelyVisible())) {
-      console.log(`${logPrefix} Onboarding dismissed after step ${step}`);
+      console.log(`${logPrefix} Onboarding dismissed after step ${step - 1}`);
       return;
     }
 
     const clicked = await clickFirstMatch(['Continue'], 12_000);
     if (clicked) {
       console.log(`${logPrefix} Onboarding step ${step}: clicked Continue`);
-      await browser.pause(step >= 4 ? 4_000 : 2_000);
+      await browser.pause(step === 3 ? 4_000 : 2_000);
     } else {
-      const installSkillsLabel = ONBOARDING_OVERLAY_TEXTS[ONBOARDING_OVERLAY_TEXTS.length - 1]!;
-      if (await textExists(installSkillsLabel)) {
+      // SkillsStep may take time to load — retry once
+      if (await textExists('Install Skills')) {
         await browser.pause(2_500);
         const retry = await clickFirstMatch(['Continue'], 10_000);
         if (retry) {
-          console.log(
-            `${logPrefix} Onboarding step ${step}: retry Continue on ${installSkillsLabel}`
-          );
+          console.log(`${logPrefix} Onboarding step ${step}: retry Continue on Install Skills`);
           await browser.pause(4_000);
         }
       }
@@ -455,15 +572,34 @@ export async function performFullLogin(
   logPrefix = '[E2E]',
   postLoginVerifier?: (logPrefix: string) => Promise<void>
 ) {
-  await triggerAuthDeepLink(token);
-  await waitForWindowVisible(25_000);
-  await waitForWebView(15_000);
-  await waitForAppReady(15_000);
-  await waitForAuthBootstrap(15_000);
+  let homeText: string | null = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    if (attempt > 1) {
+      console.log(`${logPrefix} Retrying full login via deep link (attempt ${attempt}/2)`);
+    }
 
-  await walkOnboarding(logPrefix);
+    await triggerAuthDeepLink(token);
+    await waitForWindowVisible(25_000);
+    await waitForWebView(15_000);
+    await waitForAppReady(15_000);
+    await waitForAuthBootstrap(15_000);
+    await walkOnboarding(logPrefix);
 
-  const homeText = await waitForHomePage(15_000);
+    homeText = await waitForHomePage(15_000);
+    if (homeText) {
+      break;
+    }
+
+    const loggedOutMarker = await waitForLoggedOutState(2_000);
+    if (loggedOutMarker) {
+      console.log(
+        `${logPrefix} Login retry condition met — still on logged-out UI ("${loggedOutMarker}")`
+      );
+      continue;
+    }
+    break;
+  }
+
   if (!homeText) {
     const tree = await dumpAccessibilityTree();
     console.log(`${logPrefix} Home page not reached after login. Tree:\n`, tree.slice(0, 4000));

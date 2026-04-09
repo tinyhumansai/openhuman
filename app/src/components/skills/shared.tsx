@@ -133,6 +133,7 @@ export function SkillActionButton({
     return (
       <button
         onClick={handleEnable}
+        aria-label={`Enable ${skill.name}`}
         className="ml-3 flex-shrink-0 rounded-lg border border-sage-200 bg-sage-50 px-4 py-1.5 text-xs font-medium text-sage-700 transition-colors hover:bg-sage-100">
         Enable
       </button>
@@ -146,6 +147,7 @@ export function SkillActionButton({
           e.stopPropagation();
           onOpenModal();
         }}
+        aria-label={`Setup ${skill.name}`}
         className="ml-3 flex-shrink-0 rounded-lg border border-primary-200 bg-primary-50 px-4 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100">
         Setup
       </button>
@@ -156,6 +158,7 @@ export function SkillActionButton({
     return (
       <button
         onClick={handleEnable}
+        aria-label={`Retry ${skill.name}`}
         className="ml-3 flex-shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-4 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100">
         Retry
       </button>
@@ -168,6 +171,7 @@ export function SkillActionButton({
         e.stopPropagation();
         onOpenModal();
       }}
+      aria-label={`Configure ${skill.name}`}
       className="ml-3 flex-shrink-0 rounded-lg border border-primary-200 bg-primary-50 px-4 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100">
       Configure
     </button>

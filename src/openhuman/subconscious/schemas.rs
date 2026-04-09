@@ -9,6 +9,14 @@ use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::rpc::RpcOutcome;
 
+/// Validate a cron expression using the `cron` crate.
+fn validate_cron_expression(expr: &str) -> Result<(), String> {
+    use std::str::FromStr;
+    cron::Schedule::from_str(expr)
+        .map(|_| ())
+        .map_err(|e| format!("invalid cron expression '{expr}': {e}"))
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("status"),
@@ -319,15 +327,19 @@ fn handle_tasks_update(params: Map<String, Value>) -> ControllerFuture {
                 .get("title")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            recurrence: params.get("recurrence").and_then(|v| v.as_str()).map(|s| {
-                if s == "once" {
-                    TaskRecurrence::Once
-                } else if let Some(expr) = s.strip_prefix("cron:") {
-                    TaskRecurrence::Cron(expr.to_string())
-                } else {
-                    TaskRecurrence::Pending
+            recurrence: {
+                let raw = params.get("recurrence").and_then(|v| v.as_str());
+                match raw {
+                    Some("once") => Some(TaskRecurrence::Once),
+                    Some(s) if s.starts_with("cron:") => {
+                        let expr = &s["cron:".len()..];
+                        validate_cron_expression(expr)?;
+                        Some(TaskRecurrence::Cron(expr.to_string()))
+                    }
+                    Some(_) => Some(TaskRecurrence::Pending),
+                    None => None,
                 }
-            }),
+            },
             enabled: params.get("enabled").and_then(|v| v.as_bool()),
         };
         let config = load_config().await?;

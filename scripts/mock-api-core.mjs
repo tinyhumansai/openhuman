@@ -316,6 +316,10 @@ async function handleRequest(req, res) {
         spentThisCycleUsd: 0,
         spentTodayUsd: 0,
         cycleStartDate: new Date().toISOString(),
+        fiveHourSpendUsd: 0,
+        fiveHourCapUsd: 3,
+        fiveHourResetsAt: null,
+        bypassRateLimit: false,
       },
     });
     return;
@@ -512,6 +516,36 @@ async function handleRequest(req, res) {
   }
 
   if (method === "POST" && /^\/openai\/v1\/chat\/completions\/?$/.test(url)) {
+    // When chatToolCalls behavior is set, return a tool_calls response on the
+    // first completion request, then a normal text response on subsequent ones.
+    // Format: "toolName|argumentsJson" e.g. "e2e-runtime__echo|{\"message\":\"hi\"}"
+    if (mockBehavior.chatToolCalls) {
+      const spec = mockBehavior.chatToolCalls;
+      // Clear after first use so the second call returns normal text
+      delete mockBehavior.chatToolCalls;
+      const pipeIdx = spec.indexOf("|");
+      const toolName = pipeIdx > 0 ? spec.slice(0, pipeIdx) : spec;
+      const toolArgs = pipeIdx > 0 ? spec.slice(pipeIdx + 1) : "{}";
+      json(res, 200, {
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "call_e2e_" + Date.now(),
+                  type: "function",
+                  function: { name: toolName, arguments: toolArgs },
+                },
+              ],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+      });
+      return;
+    }
     json(res, 200, {
       choices: [
         {
@@ -544,7 +578,8 @@ async function handleRequest(req, res) {
     }
     json(res, 200, {
       success: true,
-      data: { oauthUrl: `${origin}/mock-telegram-oauth` },
+      oauthUrl: `${origin}/mock-telegram-oauth`,
+      state: "mock-telegram-state",
     });
     return;
   }
@@ -557,7 +592,9 @@ async function handleRequest(req, res) {
     const workspace = mockBehavior.notionWorkspace || "Test User's Workspace";
     json(res, 200, {
       success: true,
-      data: { oauthUrl: `${origin}/mock-notion-oauth`, workspace },
+      oauthUrl: `${origin}/mock-notion-oauth`,
+      state: "mock-notion-state",
+      workspace,
     });
     return;
   }
@@ -573,7 +610,8 @@ async function handleRequest(req, res) {
     }
     json(res, 200, {
       success: true,
-      data: { oauthUrl: `${origin}/mock-google-oauth` },
+      oauthUrl: `${origin}/mock-google-oauth`,
+      state: "mock-google-state",
     });
     return;
   }
