@@ -61,9 +61,7 @@ const ScreenIntelligencePanel = () => {
     recentVisionSummaries,
     lastError,
   } = useAppSelector(state => state.accessibility);
-  const [featureOverrides, setFeatureOverrides] = useState<{
-    screen_monitoring?: boolean;
-  }>({});
+  const [featureOverrides, setFeatureOverrides] = useState<{ screen_monitoring?: boolean }>({});
   const [enabled, setEnabled] = useState<boolean>(false);
   const [policyMode, setPolicyMode] = useState<'all_except_blacklist' | 'whitelist_only'>(
     'all_except_blacklist'

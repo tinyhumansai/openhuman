@@ -156,11 +156,7 @@ export const refreshPermissionsWithRestart = createAsyncThunk(
 export const startAccessibilitySession = createAsyncThunk(
   'accessibility/startSession',
   async (
-    params: {
-      consent: boolean;
-      ttl_secs?: number;
-      screen_monitoring?: boolean;
-    },
+    params: { consent: boolean; ttl_secs?: number; screen_monitoring?: boolean },
     { rejectWithValue }
   ) => {
     try {

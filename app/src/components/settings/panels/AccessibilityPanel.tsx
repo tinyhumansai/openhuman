@@ -59,9 +59,7 @@ const AccessibilityPanel = () => {
     recentVisionSummaries,
     lastError,
   } = useAppSelector(state => state.accessibility);
-  const [featureOverrides, setFeatureOverrides] = useState<{
-    screen_monitoring?: boolean;
-  }>({});
+  const [featureOverrides, setFeatureOverrides] = useState<{ screen_monitoring?: boolean }>({});
 
   useEffect(() => {
     void dispatch(fetchAccessibilityStatus());

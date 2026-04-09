@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use super::capture::now_ms;
 use super::helpers::push_ephemeral_frame;
-use super::state::{AccessibilityEngine, EngineState, SessionRuntime};
+use super::state::{AccessibilityEngine, SessionRuntime};
 use super::types::{
     AccessibilityStatus, AppContextInfo, CaptureFrame, CaptureImageRefResult, CaptureNowResult,
     CaptureTestResult, SessionStatus, StartSessionParams,
@@ -25,9 +25,6 @@ use crate::openhuman::accessibility::{
 use crate::openhuman::accessibility::{
     open_macos_privacy_pane, request_accessibility_access, request_screen_recording_access,
 };
-
-// Re-export for backward compat.
-pub use super::state::{global_engine, AccessibilityEngine as _AccessibilityEngineAlias};
 
 impl AccessibilityEngine {
     // ── Config ───────────────────────────────────────────────────────
@@ -583,6 +580,7 @@ fn new_session_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::screen_intelligence::state::EngineState;
     use tokio::sync::Mutex;
     use tokio::time::Duration;
 
