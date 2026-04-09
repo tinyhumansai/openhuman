@@ -30,7 +30,6 @@ import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/ap
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { buildBypassJwt, triggerAuthDeepLink, triggerDeepLink } from '../helpers/deep-link-helpers';
 import {
-  clickText,
   dumpAccessibilityTree,
   hasAppChrome,
   textExists,
@@ -41,7 +40,6 @@ import {
   clickFirstMatch,
   completeOnboardingIfVisible,
   waitForHomePage,
-  waitForLoggedOutState,
 } from '../helpers/shared-flows';
 import {
   clearRequestLog,

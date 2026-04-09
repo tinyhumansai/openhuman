@@ -67,7 +67,7 @@ function looksLikeNotImplemented(error?: string): boolean {
 /**
  * Call an RPC method and require ok=true. Throws on failure.
  */
-async function rpcOk(method: string, params: Record<string, unknown> = {}) {
+async function _rpcOk(method: string, params: Record<string, unknown> = {}) {
   const result = await callOpenhumanRpc(method, params);
   if (!result.ok) {
     console.log(`${LOG_PREFIX} ${method} failed:`, result.error);

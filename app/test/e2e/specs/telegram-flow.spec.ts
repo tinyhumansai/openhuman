@@ -46,7 +46,6 @@ import {
   clickText,
   dumpAccessibilityTree,
   textExists,
-  waitForText,
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
@@ -66,7 +65,7 @@ function stepLog(message: string, context?: unknown) {
   console.log(`[TelegramFlow][${stamp}] ${message}`, JSON.stringify(context, null, 2));
 }
 
-async function waitForRequest(method: string, urlFragment: string, timeout = 15_000) {
+async function _waitForRequest(method: string, urlFragment: string, timeout = 15_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const log = getRequestLog();

@@ -2399,9 +2399,11 @@ async fn json_rpc_automation_and_scheduling_spec_6x() {
     );
 
     // 6.2.2 Recurring Execution + 6.2.3 Missed Execution Handling
-    let trigger_1 = post_json_rpc(&rpc_base, 3009, "openhuman.subconscious_trigger", json!({})).await;
+    let trigger_1 =
+        post_json_rpc(&rpc_base, 3009, "openhuman.subconscious_trigger", json!({})).await;
     inner(&trigger_1, "subconscious_trigger first");
-    let trigger_2 = post_json_rpc(&rpc_base, 3010, "openhuman.subconscious_trigger", json!({})).await;
+    let trigger_2 =
+        post_json_rpc(&rpc_base, 3010, "openhuman.subconscious_trigger", json!({})).await;
     inner(&trigger_2, "subconscious_trigger second");
 
     tokio::time::sleep(Duration::from_millis(250)).await;

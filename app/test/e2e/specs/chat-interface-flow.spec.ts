@@ -42,16 +42,12 @@ import {
   clickText,
   dumpAccessibilityTree,
   textExists,
-  waitForText,
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
 import {
   completeOnboardingIfVisible,
   navigateToConversations,
-  navigateToHome,
-  navigateViaHash,
-  waitForHomePage,
 } from '../helpers/shared-flows';
 import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
@@ -68,7 +64,7 @@ function stepLog(message: string, context?: unknown) {
   console.log(`[ChatInterfaceE2E][${stamp}] ${message}`, JSON.stringify(context, null, 2));
 }
 
-async function waitForRequest(method: string, urlFragment: string, timeout = 20_000) {
+async function _waitForRequest(method: string, urlFragment: string, timeout = 20_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const log = getRequestLog();
