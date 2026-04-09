@@ -1,8 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "test/e2e/specs/**/*.spec.ts"
-  ],
+  "entry": ["test/e2e/specs/**/*.spec.ts"],
   "project": [
     "src/**/*.{ts,tsx}",
     "test/**/*.{ts,tsx}",
@@ -25,14 +23,5 @@
     "process",
     "util"
   ],
-  "ignoreBinaries": [
-    "eslint",
-    "knip",
-    "open",
-    "prettier",
-    "tauri",
-    "tsc",
-    "vite",
-    "vitest"
-  ]
+  "ignoreBinaries": ["eslint", "knip", "open", "prettier", "tauri", "tsc", "vite", "vitest"]
 }
