@@ -12,14 +12,10 @@ import {
 } from 'redux-persist';
 import storage from 'redux-persist/lib/storage';
 
-import type { User } from '../types/api';
-import type { TeamInvite, TeamMember, TeamWithRole } from '../types/team';
 import { IS_DEV } from '../utils/config';
 import aiReducer from './aiSlice';
-import type { AuthState } from './authSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import daemonReducer from './daemonSlice';
-import type { IntelligenceState } from './intelligenceSlice';
 import inviteReducer from './inviteSlice';
 import socketReducer from './socketSlice';
 import threadReducer from './threadSlice';
@@ -73,22 +69,5 @@ export const store = configureStore({
 
 export const persistor = persistStore(store);
 
-type RuntimeRootState = ReturnType<typeof store.getState>;
-
-type LegacyRootState = {
-  auth: AuthState;
-  user: { user: User | null; isLoading: boolean; error: string | null };
-  team: {
-    teams: TeamWithRole[];
-    members: TeamMember[];
-    invites: TeamInvite[];
-    isLoading: boolean;
-    isLoadingMembers: boolean;
-    isLoadingInvites: boolean;
-    error: string | null;
-  };
-  intelligence: IntelligenceState;
-};
-
-export type RootState = RuntimeRootState & LegacyRootState;
+export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;
