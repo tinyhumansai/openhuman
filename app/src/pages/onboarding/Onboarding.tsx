@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import ProgressIndicator from '../../components/ProgressIndicator';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { referralApi } from '../../services/api/referralApi';
 import { userApi } from '../../services/api/userApi';
@@ -93,15 +92,6 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       : referralStatsToken === token && skipReferralFromStats;
 
   const resolvedStep = resolveOnboardingStep(currentStep, skipReferralStep);
-
-  const totalSteps = skipReferralStep ? 3 : 4;
-  const progressCurrentStep = skipReferralStep
-    ? resolvedStep === 0
-      ? 0
-      : resolvedStep === 2
-        ? 1
-        : 2
-    : resolvedStep;
 
   const handleWelcomeNext = () => {
     if (skipReferralStep) {
@@ -206,7 +196,6 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
         </div>
       )}
       <div className="relative z-10 max-w-lg w-full mx-4">
-        <ProgressIndicator currentStep={progressCurrentStep} totalSteps={totalSteps} />
         {renderStep()}
       </div>
     </div>

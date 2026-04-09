@@ -38,11 +38,29 @@ const ReferralApplyStep = ({ onNext, onBack, onApplied }: ReferralApplyStepProps
       onApplied?.();
       console.debug('[onboarding] referral code applied');
       setTimeout(() => onNext(), 1200);
-    } catch (err) {
-      const msg =
-        err && typeof err === 'object' && 'error' in err
-          ? String((err as { error: string }).error)
-          : 'Could not apply referral code';
+    } catch (err: unknown) {
+      let msg = 'Could not apply referral code. Please check and try again.';
+      try {
+        if (err && typeof err === 'object') {
+          const obj = err as Record<string, unknown>;
+          if (typeof obj.error === 'string' && obj.error.trim()) {
+            // Try to parse JSON body embedded in the error string
+            const jsonMatch = String(obj.error).match(/\{.*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+              if (typeof parsed.error === 'string' && parsed.error.trim()) {
+                msg = parsed.error;
+              }
+            } else if (!obj.error.includes('{')) {
+              msg = obj.error;
+            }
+          } else if (typeof obj.message === 'string' && obj.message.trim()) {
+            msg = obj.message;
+          }
+        }
+      } catch {
+        // keep default msg
+      }
       setError(msg);
     } finally {
       setIsLoading(false);
@@ -92,27 +110,20 @@ const ReferralApplyStep = ({ onNext, onBack, onApplied }: ReferralApplyStepProps
             {error ? <p className="text-coral-500 text-xs mt-2 text-center">{error}</p> : null}
           </div>
 
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => void handleApply()}
-              disabled={isLoading || !code.trim()}
-              className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed">
-              {isLoading ? 'Applying…' : 'Apply code'}
-            </button>
+          <div className="flex gap-3">
             <button
               type="button"
               onClick={onNext}
               disabled={isLoading}
-              className="w-full py-2.5 text-sm font-medium rounded-xl text-stone-400 hover:text-stone-700 transition-colors">
+              className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-stone-200 text-stone-500 hover:text-stone-700 hover:border-stone-300 transition-colors">
               Skip for now
             </button>
             <button
               type="button"
-              onClick={onBack}
-              disabled={isLoading}
-              className="w-full py-2 text-sm text-stone-500 hover:text-stone-800 transition-colors">
-              Back
+              onClick={() => void handleApply()}
+              disabled={isLoading || !code.trim()}
+              className="btn-primary flex-1 py-2.5 text-sm font-medium rounded-xl disabled:opacity-50 disabled:cursor-not-allowed">
+              {isLoading ? 'Applying…' : 'Apply code'}
             </button>
           </div>
         </>
