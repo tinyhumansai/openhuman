@@ -57,7 +57,7 @@ impl SubconsciousEngine {
         // Seed default system tasks eagerly so they show in the UI immediately,
         // without waiting for the first tick.
         let seeded =
-            match store::with_connection(&workspace_dir, |conn| store::seed_default_tasks(conn)) {
+            match store::with_connection(&workspace_dir, store::seed_default_tasks) {
                 Ok(count) => {
                     if count > 0 {
                         info!("[subconscious] seeded {count} tasks on init");
@@ -416,7 +416,7 @@ impl SubconsciousEngine {
     // ── Internal methods ─────────────────────────────────────────────────────
 
     fn seed_tasks(&self) {
-        match store::with_connection(&self.workspace_dir, |conn| store::seed_default_tasks(conn)) {
+        match store::with_connection(&self.workspace_dir, store::seed_default_tasks) {
             Ok(count) => {
                 if count > 0 {
                     info!("[subconscious] seeded {count} default tasks");

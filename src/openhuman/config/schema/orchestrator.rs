@@ -48,6 +48,7 @@ pub struct OrchestratorConfig {
 ///
 /// Any field left `None` uses the archetype's built-in default.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default)]
 pub struct ArchetypeConfig {
     /// Model name or hint override (e.g. "coding-v1", "local:phi3").
     #[serde(default)]
@@ -105,15 +106,3 @@ impl Default for OrchestratorConfig {
     }
 }
 
-impl Default for ArchetypeConfig {
-    fn default() -> Self {
-        Self {
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            max_tool_iterations: None,
-            timeout_secs: None,
-            sandbox: None,
-        }
-    }
-}

@@ -224,7 +224,7 @@ impl ToolResult {
             .iter()
             .filter_map(|c| match c {
                 ToolContent::Text { text } => Some(text.as_str()),
-                ToolContent::Json { data } => None,
+                ToolContent::Json { data: _ } => None,
             })
             .collect::<Vec<_>>()
             .join("\n")

@@ -189,7 +189,7 @@ pub fn profile_load_all(conn: &Arc<Mutex<Connection>>) -> anyhow::Result<Vec<Pro
          ORDER BY facet_type, evidence_count DESC",
     )?;
     let rows = stmt
-        .query_map([], |row| row_to_facet(row))?
+        .query_map([], row_to_facet)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -208,7 +208,7 @@ pub fn profile_facets_by_type(
          ORDER BY evidence_count DESC",
     )?;
     let rows = stmt
-        .query_map(params![facet_type.as_str()], |row| row_to_facet(row))?
+        .query_map(params![facet_type.as_str()], row_to_facet)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }

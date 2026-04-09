@@ -236,7 +236,7 @@ fn run_skills_list(args: &[String]) -> Result<()> {
         if manifests.is_empty() {
             println!("No skills found.");
         } else {
-            println!("{:<20} {:<10} {}", "ID", "VERSION", "NAME");
+            println!("{:<20} {:<10} NAME", "ID", "VERSION");
             println!("{}", "-".repeat(60));
             for m in &manifests {
                 println!(

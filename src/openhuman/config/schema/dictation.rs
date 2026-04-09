@@ -6,18 +6,15 @@ use serde::{Deserialize, Serialize};
 /// Activation mode for the dictation hotkey.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum DictationActivationMode {
     /// Press once to start, press again to stop.
     Toggle,
     /// Hold to record, release to stop (push-to-talk).
+    #[default]
     Push,
 }
 
-impl Default for DictationActivationMode {
-    fn default() -> Self {
-        Self::Push
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DictationConfig {

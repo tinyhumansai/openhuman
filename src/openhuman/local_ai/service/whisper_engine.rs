@@ -352,7 +352,7 @@ fn decode_wav_to_f32(data: &[u8]) -> Result<Vec<f32>, String> {
         }
 
         pos += 8 + chunk_size;
-        if chunk_size % 2 != 0 {
+        if !chunk_size.is_multiple_of(2) {
             pos += 1;
         }
     }

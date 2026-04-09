@@ -294,8 +294,8 @@ pub fn get_tree_status(config: &Config, namespace: &str) -> Result<TreeStatus> {
                                         // Try to parse timestamp from path
                                         if let Some(ts) = timestamp_from_hour_path(
                                             &name,
-                                            &month_entry.file_name().to_string_lossy().to_string(),
-                                            &day_entry.file_name().to_string_lossy().to_string(),
+                                            month_entry.file_name().to_string_lossy().as_ref(),
+                                            day_entry.file_name().to_string_lossy().as_ref(),
                                             &hname,
                                         ) {
                                             match &oldest {
@@ -672,11 +672,10 @@ fn count_md_files(dir: &Path) -> Result<u64> {
                 continue; // skip buffer directories
             }
             count += count_md_files(&entry.path())?;
-        } else if ft.is_file() {
-            if entry.path().extension().map(|e| e == "md").unwrap_or(false) {
+        } else if ft.is_file()
+            && entry.path().extension().map(|e| e == "md").unwrap_or(false) {
                 count += 1;
             }
-        }
     }
     Ok(count)
 }

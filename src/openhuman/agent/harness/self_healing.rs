@@ -168,7 +168,7 @@ fn extract_command_name(error: &str) -> Option<String> {
 
     // Pattern: "'CMD' is not recognized"
     if error.contains("is not recognized") {
-        let stripped = error.replace('\'', "").replace('"', "");
+        let stripped = error.replace(['\'', '"'], "");
         if let Some(cmd) = stripped.split_whitespace().next() {
             if cmd.len() < 64 {
                 return Some(cmd.to_string());

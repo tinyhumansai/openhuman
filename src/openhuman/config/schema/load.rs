@@ -30,7 +30,7 @@ struct ActiveWorkspaceState {
 }
 
 fn default_config_dir() -> Result<PathBuf> {
-    Ok(default_root_openhuman_dir()?)
+    default_root_openhuman_dir()
 }
 
 /// Returns the root openhuman directory (`~/.openhuman`), independent of any

@@ -355,11 +355,10 @@ fn run_namespace_command(
     };
 
     // Domain adapters can intercept specific namespace/function combinations.
-    if args.len() > 1 && is_help(&args[1]) {
-        if autocomplete_cli_adapter::maybe_print_start_help(namespace, function) {
+    if args.len() > 1 && is_help(&args[1])
+        && autocomplete_cli_adapter::maybe_print_start_help(namespace, function) {
             return Ok(());
         }
-    }
     if let Some(value) =
         autocomplete_cli_adapter::maybe_handle_namespace_start(namespace, function, &args[1..])?
     {

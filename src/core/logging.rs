@@ -49,7 +49,7 @@ where
             let time_styled = Style::new().dimmed().paint(time.to_string());
             write!(writer, "{time_styled}:")?;
 
-            let tag = format!("{level}");
+            let tag = level.to_string();
             let level_styled = match *meta.level() {
                 Level::ERROR => Style::new().fg(Color::Red).bold().paint(tag),
                 Level::WARN => Style::new().fg(Color::Yellow).bold().paint(tag),
@@ -59,7 +59,7 @@ where
             };
             write!(writer, "{level_styled}:")?;
 
-            let scope = format!("{target}");
+            let scope = target.to_string();
             let scope_styled = Style::new().fg(Color::Fixed(247)).paint(scope);
             write!(writer, "{scope_styled} ")?;
         } else {

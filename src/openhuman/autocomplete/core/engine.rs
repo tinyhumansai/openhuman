@@ -190,8 +190,7 @@ impl AutocompleteEngine {
                                 // Only notify if this is a *new* error message.
                                 let is_new_error = state
                                     .last_notified_error
-                                    .as_ref()
-                                    .map_or(true, |prev| prev != &err);
+                                    .as_ref() != Some(&err);
                                 if is_new_error {
                                     state.last_notified_error = Some(err.clone());
                                 }

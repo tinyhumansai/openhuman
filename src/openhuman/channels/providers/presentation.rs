@@ -277,8 +277,8 @@ fn split_sentences(text: &str) -> Vec<String> {
 
 /// Group sentences into 2-3 bubbles.
 fn group_sentences(sentences: &[String]) -> Vec<String> {
-    let target_count = std::cmp::min(3, (sentences.len() + 1) / 2);
-    let group_size = (sentences.len() + target_count - 1) / target_count;
+    let target_count = std::cmp::min(3, sentences.len().div_ceil(2));
+    let group_size = sentences.len().div_ceil(target_count);
     let mut groups: Vec<String> = Vec::new();
 
     for chunk in sentences.chunks(group_size) {

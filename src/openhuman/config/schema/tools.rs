@@ -261,6 +261,7 @@ impl Default for IntegrationToggle {
 /// handles external API calls, billing, and rate limiting; the client only
 /// forwards requests and displays results.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default)]
 pub struct IntegrationsConfig {
     /// Master switch — set to `true` to register integration tools.
     #[serde(default)]
@@ -287,15 +288,3 @@ pub struct IntegrationsConfig {
     pub parallel: IntegrationToggle,
 }
 
-impl Default for IntegrationsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            backend_url: None,
-            auth_token: None,
-            twilio: IntegrationToggle::default(),
-            google_places: IntegrationToggle::default(),
-            parallel: IntegrationToggle::default(),
-        }
-    }
-}
