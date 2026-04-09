@@ -9,6 +9,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::screen_intelligence;
 use crate::rpc::RpcOutcome;
 
+/// Checks if an environment variable flag is enabled (e.g., "1", "true", "yes").
 fn env_flag_enabled(key: &str) -> bool {
     matches!(
         std::env::var(key).ok().as_deref(),
@@ -16,6 +17,7 @@ fn env_flag_enabled(key: &str) -> bool {
     )
 }
 
+/// Returns the core RPC URL from environment variables or a default value.
 pub fn core_rpc_url_from_env() -> String {
     std::env::var("OPENHUMAN_CORE_RPC_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
@@ -23,7 +25,10 @@ pub fn core_rpc_url_from_env() -> String {
 
 const CONFIG_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Loads persisted config with the same 30s timeout used by JSON-RPC and the core CLI.
+/// Loads persisted config with a 30s timeout.
+///
+/// This is used by JSON-RPC and CLI handlers to ensure they don't hang
+/// indefinitely if disk I/O is blocked.
 pub async fn load_config_with_timeout() -> Result<Config, String> {
     match tokio::time::timeout(CONFIG_LOAD_TIMEOUT, Config::load_or_init()).await {
         Ok(Ok(config)) => Ok(config),
@@ -32,6 +37,7 @@ pub async fn load_config_with_timeout() -> Result<Config, String> {
     }
 }
 
+/// Returns the default workspace directory fallback (~/.openhuman/workspace).
 fn fallback_workspace_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -39,16 +45,19 @@ fn fallback_workspace_dir() -> PathBuf {
         .join("workspace")
 }
 
+/// Returns the default OpenHuman configuration directory (~/.openhuman).
 fn default_openhuman_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".openhuman")
 }
 
+/// Returns the path to the active workspace marker file.
 fn active_workspace_marker_path(default_openhuman_dir: &Path) -> PathBuf {
     default_openhuman_dir.join("active_workspace.toml")
 }
 
+/// Returns the parent directory of the config file.
 fn config_openhuman_dir(config: &Config) -> PathBuf {
     config
         .config_path
@@ -56,6 +65,7 @@ fn config_openhuman_dir(config: &Config) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
+/// Internal helper to reset local data by removing specific directories and markers.
 async fn reset_local_data_for_paths(
     current_openhuman_dir: &Path,
     default_openhuman_dir: &Path,
@@ -119,6 +129,7 @@ async fn reset_local_data_for_paths(
     ))
 }
 
+/// Serializes the current configuration into a JSON snapshot for the UI.
 pub fn snapshot_config_json(config: &Config) -> Result<serde_json::Value, String> {
     let value = serde_json::to_value(config).map_err(|e| e.to_string())?;
     Ok(json!({
@@ -181,6 +192,7 @@ pub struct RuntimeFlagsOut {
     pub log_prompts: bool,
 }
 
+/// Returns a full configuration snapshot for the UI.
 pub async fn get_config_snapshot(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
@@ -192,6 +204,7 @@ pub async fn get_config_snapshot(config: &Config) -> Result<RpcOutcome<serde_jso
     ))
 }
 
+/// Updates the model-related settings in the configuration.
 pub async fn apply_model_settings(
     config: &mut Config,
     update: ModelSettingsPatch,
@@ -231,6 +244,7 @@ pub async fn apply_model_settings(
     ))
 }
 
+/// Updates the memory-related settings in the configuration.
 pub async fn apply_memory_settings(
     config: &mut Config,
     update: MemorySettingsPatch,
@@ -261,6 +275,7 @@ pub async fn apply_memory_settings(
     ))
 }
 
+/// Updates the screen intelligence settings in the configuration.
 pub async fn apply_screen_intelligence_settings(
     config: &mut Config,
     update: ScreenIntelligenceSettingsPatch,
@@ -311,6 +326,7 @@ pub async fn apply_screen_intelligence_settings(
     ))
 }
 
+/// Updates the runtime-related settings in the configuration.
 pub async fn apply_runtime_settings(
     config: &mut Config,
     update: RuntimeSettingsPatch,
@@ -332,6 +348,7 @@ pub async fn apply_runtime_settings(
     ))
 }
 
+/// Updates the browser-related settings in the configuration.
 pub async fn apply_browser_settings(
     config: &mut Config,
     update: BrowserSettingsPatch,
@@ -350,11 +367,13 @@ pub async fn apply_browser_settings(
     ))
 }
 
+/// Loads the configuration from disk and returns a snapshot.
 pub async fn load_and_get_config_snapshot() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     get_config_snapshot(&config).await
 }
 
+/// Loads the configuration, applies model settings updates, and saves it.
 pub async fn load_and_apply_model_settings(
     update: ModelSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -362,6 +381,7 @@ pub async fn load_and_apply_model_settings(
     apply_model_settings(&mut config, update).await
 }
 
+/// Loads the configuration, applies memory settings updates, and saves it.
 pub async fn load_and_apply_memory_settings(
     update: MemorySettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -369,6 +389,7 @@ pub async fn load_and_apply_memory_settings(
     apply_memory_settings(&mut config, update).await
 }
 
+/// Loads the configuration, applies screen intelligence settings updates, and saves it.
 pub async fn load_and_apply_screen_intelligence_settings(
     update: ScreenIntelligenceSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -376,6 +397,7 @@ pub async fn load_and_apply_screen_intelligence_settings(
     apply_screen_intelligence_settings(&mut config, update).await
 }
 
+/// Loads the configuration, applies runtime settings updates, and saves it.
 pub async fn load_and_apply_runtime_settings(
     update: RuntimeSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -383,6 +405,7 @@ pub async fn load_and_apply_runtime_settings(
     apply_runtime_settings(&mut config, update).await
 }
 
+/// Updates the analytics-related settings in the configuration.
 pub async fn apply_analytics_settings(
     config: &mut Config,
     update: AnalyticsSettingsPatch,
@@ -401,6 +424,7 @@ pub async fn apply_analytics_settings(
     ))
 }
 
+/// Loads the configuration, applies analytics settings updates, and saves it.
 pub async fn load_and_apply_analytics_settings(
     update: AnalyticsSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -408,6 +432,7 @@ pub async fn load_and_apply_analytics_settings(
     apply_analytics_settings(&mut config, update).await
 }
 
+/// Loads the configuration, applies browser settings updates, and saves it.
 pub async fn load_and_apply_browser_settings(
     update: BrowserSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -415,13 +440,14 @@ pub async fn load_and_apply_browser_settings(
     apply_browser_settings(&mut config, update).await
 }
 
+/// Resolves the effective API URL from configuration or defaults.
 pub async fn load_and_resolve_api_url() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     let resolved = crate::api::config::effective_api_url(&config.api_url);
     Ok(RpcOutcome::new(json!({ "api_url": resolved }), Vec::new()))
 }
 
-/// Resolves workspace (load config or fallback), validates flag name, returns whether the flag file exists.
+/// Resolves a workspace onboarding flag, creating or checking its existence.
 pub async fn workspace_onboarding_flag_resolve(
     flag_name: Option<String>,
     default_name: &str,
@@ -442,6 +468,7 @@ pub async fn workspace_onboarding_flag_resolve(
     workspace_onboarding_flag_exists(workspace_dir, trimmed)
 }
 
+/// Returns the current state of runtime-only flags.
 pub fn get_runtime_flags() -> RpcOutcome<RuntimeFlagsOut> {
     RpcOutcome::single_log(
         RuntimeFlagsOut {
@@ -452,6 +479,7 @@ pub fn get_runtime_flags() -> RpcOutcome<RuntimeFlagsOut> {
     )
 }
 
+/// Updates the `OPENHUMAN_BROWSER_ALLOW_ALL` environment flag.
 pub fn set_browser_allow_all(enabled: bool) -> RpcOutcome<RuntimeFlagsOut> {
     if enabled {
         std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", "1");
@@ -465,6 +493,7 @@ pub fn set_browser_allow_all(enabled: bool) -> RpcOutcome<RuntimeFlagsOut> {
     RpcOutcome::single_log(flags, "browser allow-all flag updated")
 }
 
+/// Checks if a specific onboarding flag file exists in the workspace.
 pub fn workspace_onboarding_flag_exists(
     workspace_dir: PathBuf,
     flag_name: &str,
@@ -483,7 +512,7 @@ pub fn workspace_onboarding_flag_exists(
     ))
 }
 
-/// Creates or removes the workspace onboarding flag file.
+/// Creates or removes an onboarding flag file in the workspace.
 pub async fn workspace_onboarding_flag_set(
     flag_name: Option<String>,
     default_name: &str,
@@ -520,6 +549,7 @@ pub async fn workspace_onboarding_flag_set(
     ))
 }
 
+/// Returns whether the onboarding process has been marked as completed.
 pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
     let config = load_config_with_timeout().await?;
     Ok(RpcOutcome::single_log(
@@ -528,6 +558,7 @@ pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
     ))
 }
 
+/// Updates and persists the onboarding completion status.
 pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, String> {
     let mut config = load_config_with_timeout().await?;
     config.onboarding_completed = value;
@@ -540,6 +571,7 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
 
 // ── Dictation settings ───────────────────────────────────────────────
 
+/// Represents a partial update to dictation-related settings.
 pub struct DictationSettingsPatch {
     pub enabled: Option<bool>,
     pub hotkey: Option<String>,
@@ -549,6 +581,7 @@ pub struct DictationSettingsPatch {
     pub streaming_interval_ms: Option<u64>,
 }
 
+/// Returns the current dictation settings as a JSON object.
 pub async fn get_dictation_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     let result = json!({
@@ -565,6 +598,7 @@ pub async fn get_dictation_settings() -> Result<RpcOutcome<serde_json::Value>, S
     ))
 }
 
+/// Loads configuration, applies dictation settings updates, and saves it.
 pub async fn load_and_apply_dictation_settings(
     update: DictationSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -614,6 +648,7 @@ pub async fn load_and_apply_dictation_settings(
 
 // ── Voice server settings ───────────────────────────────────────────
 
+/// Represents a partial update to voice server related settings.
 pub struct VoiceServerSettingsPatch {
     pub auto_start: Option<bool>,
     pub hotkey: Option<String>,
@@ -624,6 +659,7 @@ pub struct VoiceServerSettingsPatch {
     pub custom_dictionary: Option<Vec<String>>,
 }
 
+/// Returns the current voice server settings as a JSON object.
 pub async fn get_voice_server_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     let result = json!({
@@ -641,6 +677,7 @@ pub async fn get_voice_server_settings() -> Result<RpcOutcome<serde_json::Value>
     ))
 }
 
+/// Loads configuration, applies voice server settings updates, and saves it.
 pub async fn load_and_apply_voice_server_settings(
     update: VoiceServerSettingsPatch,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -691,6 +728,7 @@ pub async fn load_and_apply_voice_server_settings(
     ))
 }
 
+/// Returns the operational status of the agent server.
 pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
     let running = crate::openhuman::service::mock::mock_agent_running().unwrap_or(true);
     log::info!("[config] agent_server_status requested: running={running}");
@@ -701,6 +739,7 @@ pub fn agent_server_status() -> RpcOutcome<serde_json::Value> {
     RpcOutcome::single_log(payload, "agent server status checked")
 }
 
+/// Deletes all local data directories and workspace markers.
 pub async fn reset_local_data() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     let current_openhuman_dir = config_openhuman_dir(&config);
