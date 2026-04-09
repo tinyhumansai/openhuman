@@ -690,6 +690,12 @@ async fn run_server_inner(
                 // Skip when running as an embedded core inside the overlay itself.
                 if is_embedded {
                     log::info!("[overlay] embedded core — skipping overlay auto-spawn");
+                } else if std::env::var("OPENHUMAN_HOST_MANAGES_OVERLAY")
+                    .ok()
+                    .as_deref()
+                    == Some("1")
+                {
+                    log::info!("[overlay] desktop host manages overlay window — skipping child overlay spawn");
                 } else if config.overlay_enabled {
                     crate::openhuman::overlay::spawn_overlay(parent_core_rpc_url.as_str());
                 } else {

@@ -53,6 +53,16 @@ fn core_rpc_url() -> String {
         .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
 }
 
+#[tauri::command]
+fn overlay_parent_rpc_url() -> Option<String> {
+    let url = std::env::var("OPENHUMAN_CORE_RPC_URL").ok()?;
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 /// Resolve the core binary, preferring the staged sidecar.
 fn resolve_core_bin() -> Result<std::path::PathBuf, String> {
     if let Some(bin) = core_process::default_core_bin() {
@@ -410,6 +420,21 @@ pub fn run() {
                 }
             }
 
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(window) = app.get_webview_window("overlay") {
+                    if let Err(err) = window.set_always_on_top(true) {
+                        log::warn!("[overlay] failed to set always-on-top: {err}");
+                    }
+                    if let Err(err) = window.set_visible_on_all_workspaces(true) {
+                        log::warn!("[overlay] failed to set visible-on-all-workspaces: {err}");
+                    }
+                    log::debug!("[overlay] window configured for all workspaces");
+                } else {
+                    log::warn!("[overlay] overlay window not found during setup");
+                }
+            }
+
             if let Err(err) = setup_tray(app.handle()) {
                 log::error!("[tray] failed to setup tray icon: {err}");
             }
@@ -418,6 +443,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             core_rpc_url,
+            overlay_parent_rpc_url,
             check_core_update,
             apply_core_update,
             restart_core_process,

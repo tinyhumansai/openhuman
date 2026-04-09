@@ -20,23 +20,31 @@
         "decorations": true,
         "resizable": true,
         "center": true
+      },
+      {
+        "label": "overlay",
+        "title": "OpenHuman Overlay",
+        "width": 376,
+        "height": 520,
+        "minWidth": 376,
+        "minHeight": 432,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "visible": false,
+        "center": false,
+        "x": 16,
+        "y": 16
       }
     ],
-    "security": {
-      "csp": null
-    },
+    "security": { "csp": null },
     "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg",
-      "deb",
-      "nsis",
-      "msi",
-      "appimage"
-    ],
+    "targets": ["app", "dmg", "deb", "nsis", "msi", "appimage"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,19 +52,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../../src/openhuman/agent/prompts"
-    ],
-    "externalBin": [
-      "binaries/openhuman-core"
-    ],
+    "resources": ["../../src/openhuman/agent/prompts"],
+    "externalBin": ["binaries/openhuman-core"],
     "createUpdaterArtifacts": false,
     "macOS": {
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.sidecar.plist",
-      "dmg": {
-        "background": "./images/background-dmg.png"
-      }
+      "dmg": { "background": "./images/background-dmg.png" }
     }
   },
   "plugins": {
@@ -67,12 +69,6 @@
         "https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json"
       ]
     },
-    "deep-link": {
-      "desktop": {
-        "schemes": [
-          "openhuman"
-        ]
-      }
-    }
+    "deep-link": { "desktop": { "schemes": ["openhuman"] } }
   }
 }

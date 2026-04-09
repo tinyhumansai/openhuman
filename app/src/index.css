@@ -41,6 +41,14 @@
     bottom: 0;
   }
 
+  html[data-window='overlay'],
+  html[data-window='overlay'] body,
+  html[data-window='overlay'] #root {
+    background: transparent;
+    overflow: hidden;
+    user-select: none;
+  }
+
   * {
     color: inherit;
   }
