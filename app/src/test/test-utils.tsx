@@ -8,22 +8,16 @@ import type { PropsWithChildren, ReactElement } from 'react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 
-import authReducer from '../store/authSlice';
 import channelConnectionsReducer from '../store/channelConnectionsSlice';
 import socketReducer from '../store/socketSlice';
-import teamReducer from '../store/teamSlice';
-import userReducer from '../store/userSlice';
 
 /**
  * Creates a fresh Redux store for testing.
  * Uses raw (non-persisted) reducers to avoid persist complexity in tests.
  */
 const testRootReducer = combineReducers({
-  auth: authReducer,
   channelConnections: channelConnectionsReducer,
   socket: socketReducer,
-  user: userReducer,
-  team: teamReducer,
 });
 
 export function createTestStore(preloadedState?: Record<string, unknown>) {

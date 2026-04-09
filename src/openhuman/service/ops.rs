@@ -25,6 +25,13 @@ pub async fn service_status(config: &Config) -> Result<RpcOutcome<ServiceStatus>
     Ok(RpcOutcome::single_log(status, "service status fetched"))
 }
 
+pub async fn service_restart(
+    source: Option<String>,
+    reason: Option<String>,
+) -> Result<RpcOutcome<service::RestartStatus>, String> {
+    service::restart::service_restart(source, reason).await
+}
+
 pub async fn service_uninstall(config: &Config) -> Result<RpcOutcome<ServiceStatus>, String> {
     let status = service::uninstall(config).map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(

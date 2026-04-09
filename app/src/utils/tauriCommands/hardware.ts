@@ -41,6 +41,12 @@ export interface DaemonHostConfig {
   show_tray: boolean;
 }
 
+export interface RestartStatus {
+  accepted: boolean;
+  source: string;
+  reason: string;
+}
+
 export async function openhumanHardwareDiscover(): Promise<CommandResponse<DiscoveredDevice[]>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');
@@ -126,6 +132,19 @@ export async function openhumanServiceUninstall(): Promise<CommandResponse<Servi
     const raw = await invoke<string>('service_uninstall_direct');
     return parseServiceCliOutput<ServiceStatus>(raw);
   }
+}
+
+export async function openhumanServiceRestart(
+  source?: string,
+  reason?: string
+): Promise<CommandResponse<RestartStatus>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<RestartStatus>>({
+    method: 'openhuman.service_restart',
+    params: { source, reason },
+  });
 }
 
 export async function openhumanAgentServerStatus(): Promise<CommandResponse<AgentServerStatus>> {

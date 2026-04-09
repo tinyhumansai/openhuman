@@ -1,4 +1,4 @@
-import type { WebhookActivityEntry } from '../../store/webhooksSlice';
+import type { WebhookActivityEntry } from '../../features/webhooks/types';
 
 interface WebhookActivityProps {
   activity: WebhookActivityEntry[];

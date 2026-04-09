@@ -1,5 +1,9 @@
 import type { User } from '../../types/api';
 import type { TeamInvite, TeamMember, TeamWithRole } from '../../types/team';
+import type { AccessibilityStatus } from '../../utils/tauriCommands/accessibility';
+import type { AutocompleteStatus } from '../../utils/tauriCommands/autocomplete';
+import type { ServiceStatus } from '../../utils/tauriCommands/hardware';
+import type { LocalAiStatus } from '../../utils/tauriCommands/localAi';
 
 export interface CoreOnboardingTasks {
   accessibilityPermissionGranted: boolean;
@@ -16,6 +20,13 @@ export interface CoreLocalState {
   onboardingTasks: CoreOnboardingTasks | null;
 }
 
+export interface CoreRuntimeSnapshot {
+  screenIntelligence: AccessibilityStatus | null;
+  localAi: LocalAiStatus | null;
+  autocomplete: AutocompleteStatus | null;
+  service: ServiceStatus | null;
+}
+
 export interface CoreAppSnapshot {
   auth: {
     isAuthenticated: boolean;
@@ -28,6 +39,7 @@ export interface CoreAppSnapshot {
   onboardingCompleted: boolean;
   analyticsEnabled: boolean;
   localState: CoreLocalState;
+  runtime: CoreRuntimeSnapshot;
 }
 
 export interface CoreState {
@@ -46,6 +58,7 @@ const emptySnapshot: CoreAppSnapshot = {
   onboardingCompleted: false,
   analyticsEnabled: false,
   localState: { encryptionKey: null, primaryWalletAddress: null, onboardingTasks: null },
+  runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
 };
 
 let currentState: CoreState = {

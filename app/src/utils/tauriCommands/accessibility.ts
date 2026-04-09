@@ -15,8 +15,6 @@ export interface AccessibilityPermissionStatus {
 
 export interface AccessibilityFeatures {
   screen_monitoring: boolean;
-  device_control: boolean;
-  predictive_input: boolean;
 }
 
 export interface AccessibilitySessionStatus {
@@ -52,6 +50,11 @@ export interface AccessibilityConfig {
   denylist: string[];
 }
 
+export interface AccessibilityCoreProcessStatus {
+  pid: number;
+  started_at_ms: number;
+}
+
 export interface AccessibilityStatus {
   platform_supported: boolean;
   permissions: AccessibilityPermissionStatus;
@@ -62,14 +65,14 @@ export interface AccessibilityStatus {
   is_context_blocked: boolean;
   /** Absolute path of the core binary; macOS TCC applies to this executable. */
   permission_check_process_path?: string | null;
+  /** Identity of the core process currently serving RPC requests. */
+  core_process?: AccessibilityCoreProcessStatus | null;
 }
 
 export interface AccessibilityStartSessionParams {
   consent: boolean;
   ttl_secs?: number;
   screen_monitoring?: boolean;
-  device_control?: boolean;
-  predictive_input?: boolean;
 }
 
 export interface AccessibilityStopSessionParams {

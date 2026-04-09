@@ -178,6 +178,8 @@ pub enum DomainEvent {
     SystemStartup { component: String },
     /// A system component is shutting down.
     SystemShutdown { component: String },
+    /// A restart of the current core process was requested.
+    SystemRestartRequested { source: String, reason: String },
     /// A component's health status changed.
     HealthChanged { component: String, healthy: bool },
 }
@@ -223,6 +225,7 @@ impl DomainEvent {
 
             Self::SystemStartup { .. }
             | Self::SystemShutdown { .. }
+            | Self::SystemRestartRequested { .. }
             | Self::HealthChanged { .. } => "system",
         }
     }
@@ -500,6 +503,13 @@ mod tests {
             (
                 DomainEvent::SystemShutdown {
                     component: "c".into(),
+                },
+                "system",
+            ),
+            (
+                DomainEvent::SystemRestartRequested {
+                    source: "rpc".into(),
+                    reason: "test".into(),
                 },
                 "system",
             ),

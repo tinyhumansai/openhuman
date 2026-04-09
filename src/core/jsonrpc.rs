@@ -750,6 +750,41 @@ async fn run_server_inner(
     Ok(())
 }
 
+/// Registers all long-lived domain event-bus subscribers exactly once.
+///
+/// Guarded by `std::sync::Once` so repeated calls (e.g. jsonrpc + repl paths
+/// both invoking `bootstrap_skill_runtime`) are safe and idempotent.
+fn register_domain_subscribers() {
+    use std::sync::{Arc, Once};
+
+    static REGISTERED: Once = Once::new();
+    REGISTERED.call_once(|| {
+        // Leak the SubscriptionHandle so the background tasks live for the
+        // entire process — SubscriptionHandle::drop aborts the task.
+        if let Some(handle) = crate::openhuman::event_bus::subscribe_global(Arc::new(
+            crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
+        )) {
+            std::mem::forget(handle);
+        } else {
+            log::warn!("[event_bus] failed to register webhook subscriber — bus not initialized");
+        }
+
+        if let Some(handle) = crate::openhuman::event_bus::subscribe_global(Arc::new(
+            crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
+        )) {
+            std::mem::forget(handle);
+        } else {
+            log::warn!("[event_bus] failed to register channel subscriber — bus not initialized");
+        }
+
+        // Restart requests go through a subscriber so every trigger path shares
+        // the same respawn logic.
+        crate::openhuman::service::bus::register_restart_subscriber();
+
+        log::info!("[event_bus] webhook, channel, and restart subscribers registered");
+    });
+}
+
 /// Initializes the QuickJS skill runtime, socket manager, and registers them
 /// globally so RPC handlers (`openhuman.skills_*`, `openhuman.socket_*`) can
 /// reach them.
@@ -790,19 +825,11 @@ pub async fn bootstrap_skill_runtime() {
 
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
-    let bus =
-        crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
     // Register domain subscribers for cross-module event handling.
-    // Leak the handles so the background tasks live for the entire process —
-    // SubscriptionHandle::drop aborts the task, and bootstrap_skill_runtime()
-    // returns immediately after setup.
-    std::mem::forget(bus.subscribe(Arc::new(
-        crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
-    )));
-    std::mem::forget(bus.subscribe(Arc::new(
-        crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
-    )));
-    log::info!("[event_bus] webhook and channel subscribers registered");
+    // Uses a Once guard so repeated calls to bootstrap_skill_runtime() (e.g.
+    // from both jsonrpc and repl paths) cannot double-subscribe.
+    register_domain_subscribers();
 
     // --- Socket manager bootstrap ---
     let socket_mgr = Arc::new(SocketManager::new());

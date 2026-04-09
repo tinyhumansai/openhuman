@@ -1,11 +1,9 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 
 import {
-  fetchAccessibilityStatus,
-  fetchAccessibilityVisionRecent,
-  runCaptureTest,
-} from '../../store/accessibilitySlice';
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
+  type ScreenIntelligenceState,
+  useScreenIntelligenceState,
+} from '../../features/screen-intelligence/useScreenIntelligenceState';
 
 const formatBytes = (bytes: number | null | undefined): string => {
   if (bytes == null) return '-';
@@ -14,24 +12,42 @@ const formatBytes = (bytes: number | null | undefined): string => {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 };
 
-const ScreenIntelligenceDebugPanel = () => {
-  const dispatch = useAppDispatch();
-  const { status, captureTestResult, isCaptureTestRunning, recentVisionSummaries, lastError } =
-    useAppSelector(state => state.accessibility);
+interface ScreenIntelligenceDebugPanelProps {
+  state?: Pick<
+    ScreenIntelligenceState,
+    | 'status'
+    | 'captureTestResult'
+    | 'isCaptureTestRunning'
+    | 'recentVisionSummaries'
+    | 'lastError'
+    | 'refreshStatus'
+    | 'refreshVision'
+    | 'runCaptureTest'
+  >;
+}
 
-  useEffect(() => {
-    void dispatch(fetchAccessibilityStatus());
-    void dispatch(fetchAccessibilityVisionRecent(5));
-  }, [dispatch]);
+const ScreenIntelligenceDebugPanelContent = ({
+  state: providedState,
+}: Required<Pick<ScreenIntelligenceDebugPanelProps, 'state'>>) => {
+  const {
+    status,
+    captureTestResult,
+    isCaptureTestRunning,
+    recentVisionSummaries,
+    lastError,
+    refreshStatus,
+    refreshVision,
+    runCaptureTest,
+  } = providedState;
 
   const handleCaptureTest = useCallback(() => {
-    void dispatch(runCaptureTest());
-  }, [dispatch]);
+    void runCaptureTest();
+  }, [runCaptureTest]);
 
   const handleRefreshStatus = useCallback(() => {
-    void dispatch(fetchAccessibilityStatus());
-    void dispatch(fetchAccessibilityVisionRecent(5));
-  }, [dispatch]);
+    void refreshStatus();
+    void refreshVision(5);
+  }, [refreshStatus, refreshVision]);
 
   const permissions = status?.permissions;
   const session = status?.session;
@@ -197,6 +213,18 @@ const ScreenIntelligenceDebugPanel = () => {
       )}
     </div>
   );
+};
+
+const OwnedScreenIntelligenceDebugPanel = () => {
+  const state = useScreenIntelligenceState({ loadVision: true, visionLimit: 5, pollMs: 2000 });
+  return <ScreenIntelligenceDebugPanelContent state={state} />;
+};
+
+const ScreenIntelligenceDebugPanel = ({ state }: ScreenIntelligenceDebugPanelProps) => {
+  if (state) {
+    return <ScreenIntelligenceDebugPanelContent state={state} />;
+  }
+  return <OwnedScreenIntelligenceDebugPanel />;
 };
 
 const PermissionDot = ({ label, value }: { label: string; value?: string }) => {

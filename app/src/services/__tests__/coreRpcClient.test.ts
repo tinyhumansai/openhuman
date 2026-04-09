@@ -9,12 +9,13 @@ function sampleAccessibilityStatus(
 ): AccessibilityStatus {
   return {
     platform_supported: true,
+    core_process: { pid: 4242, started_at_ms: 1712700000000 },
     permissions: {
       screen_recording: 'denied',
       accessibility: 'granted',
       input_monitoring: 'unknown',
     },
-    features: { screen_monitoring: true, device_control: true, predictive_input: true },
+    features: { screen_monitoring: true },
     session: {
       active: false,
       started_at_ms: null,
@@ -117,6 +118,7 @@ describe('coreRpcClient', () => {
     expect(out.result.permissions.screen_recording).toBe('denied');
     expect(out.result.permissions.accessibility).toBe('granted');
     expect(out.result.permissions.input_monitoring).toBe('unknown');
+    expect(out.result.core_process?.pid).toBe(4242);
     expect(out.result.permission_check_process_path).toBe(
       '/Users/dev/openhuman/app/src-tauri/binaries/openhuman-core-aarch64-apple-darwin'
     );

@@ -9,6 +9,7 @@ use crate::rpc::RpcOutcome;
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("install"),
+        schemas("restart"),
         schemas("start"),
         schemas("stop"),
         schemas("status"),
@@ -23,6 +24,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("install"),
             handler: handle_install,
+        },
+        RegisteredController {
+            schema: schemas("restart"),
+            handler: handle_restart,
         },
         RegisteredController {
             schema: schemas("start"),
@@ -53,21 +58,47 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
-        "install" | "start" | "stop" | "status" | "uninstall" => ControllerSchema {
+        "install" | "restart" | "start" | "stop" | "status" | "uninstall" => ControllerSchema {
             namespace: "service",
             function: match function {
                 "install" => "install",
+                "restart" => "restart",
                 "start" => "start",
                 "stop" => "stop",
                 "status" => "status",
                 _ => "uninstall",
             },
             description: "Manage desktop service lifecycle.",
-            inputs: vec![],
+            inputs: if function == "restart" {
+                vec![
+                    FieldSchema {
+                        name: "source",
+                        ty: TypeSchema::String,
+                        comment: "Optional caller label for restart diagnostics.",
+                        required: false,
+                    },
+                    FieldSchema {
+                        name: "reason",
+                        ty: TypeSchema::String,
+                        comment: "Optional free-form reason for the restart request.",
+                        required: false,
+                    },
+                ]
+            } else {
+                vec![]
+            },
             outputs: vec![FieldSchema {
                 name: "status",
-                ty: TypeSchema::Ref("ServiceStatus"),
-                comment: "Service status payload.",
+                ty: if function == "restart" {
+                    TypeSchema::Json
+                } else {
+                    TypeSchema::Ref("ServiceStatus")
+                },
+                comment: if function == "restart" {
+                    "Restart request acknowledgement payload."
+                } else {
+                    "Service status payload."
+                },
                 required: true,
             }],
         },
@@ -126,6 +157,27 @@ fn handle_start(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(crate::openhuman::service::rpc::service_start(&config).await?)
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct ServiceRestartParams {
+    source: Option<String>,
+    reason: Option<String>,
+}
+
+/// Service restart is intentionally config-free.
+///
+/// Unlike install/start/stop/status, the restart action targets the currently
+/// running core process itself, so it only needs restart metadata and not the
+/// persisted service config.
+fn handle_restart(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let payload: ServiceRestartParams =
+            serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
+        to_json(
+            crate::openhuman::service::rpc::service_restart(payload.source, payload.reason).await?,
+        )
     })
 }
 

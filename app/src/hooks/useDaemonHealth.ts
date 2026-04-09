@@ -8,18 +8,12 @@ import { useCallback, useEffect } from 'react';
 
 import {
   resetConnectionAttempts,
-  selectDaemonComponents,
-  selectDaemonConnectionAttempts,
-  selectDaemonHealthSnapshot,
-  selectDaemonLastHealthUpdate,
-  selectDaemonStatus,
-  selectIsDaemonAutoStartEnabled,
-  selectIsDaemonRecovering,
   setAutoStartEnabled,
   setDaemonStatus,
   setIsRecovering,
-} from '../store/daemonSlice';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
+  useDaemonUserState,
+} from '../features/daemon/store';
+import { daemonHealthService } from '../services/daemonHealthService';
 import {
   type CommandResponse,
   openhumanAgentServerStatus,
@@ -30,30 +24,21 @@ import {
 } from '../utils/tauriCommands';
 
 export const useDaemonHealth = (userId?: string) => {
-  const dispatch = useAppDispatch();
-
-  // Selectors
-  const status = useAppSelector(state => selectDaemonStatus(state, userId));
-  const components = useAppSelector(state => selectDaemonComponents(state, userId));
-  const healthSnapshot = useAppSelector(state => selectDaemonHealthSnapshot(state, userId));
-  const lastUpdate = useAppSelector(state => selectDaemonLastHealthUpdate(state, userId));
-  const isAutoStartEnabled = useAppSelector(state => selectIsDaemonAutoStartEnabled(state, userId));
-  const connectionAttempts = useAppSelector(state => selectDaemonConnectionAttempts(state, userId));
-  const isRecovering = useAppSelector(state => selectIsDaemonRecovering(state, userId));
+  const daemonState = useDaemonUserState(userId);
   const uid = userId || '__pending__';
 
   const probeAgentStatus = useCallback(async (): Promise<boolean> => {
     try {
       const result = await openhumanAgentServerStatus();
       const running = !!result?.result?.running;
-      dispatch(setDaemonStatus({ userId: uid, status: running ? 'running' : 'disconnected' }));
+      setDaemonStatus(uid, running ? 'running' : 'disconnected');
       return running;
     } catch (error) {
       console.error('[useDaemonHealth] Failed to probe agent status:', error);
-      dispatch(setDaemonStatus({ userId: uid, status: 'disconnected' }));
+      setDaemonStatus(uid, 'disconnected');
       return false;
     }
-  }, [dispatch, uid]);
+  }, [uid]);
 
   const waitForAgentStatus = useCallback(
     async (targetRunning: boolean, timeoutMs = 10000): Promise<boolean> => {
@@ -73,28 +58,28 @@ export const useDaemonHealth = (userId?: string) => {
   // Action creators
   const startDaemon = useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
     try {
-      dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
+      setDaemonStatus(uid, 'starting');
       const result = await openhumanServiceStart();
       const running = await waitForAgentStatus(true);
       if (running) {
         if (result?.result) {
           (result.result as { state?: string }).state = 'Running';
         }
-        dispatch(resetConnectionAttempts({ userId: uid }));
+        resetConnectionAttempts(uid);
       } else {
-        dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
+        setDaemonStatus(uid, 'error');
       }
       return result;
     } catch (error) {
       console.error('[useDaemonHealth] Failed to start daemon:', error);
-      dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
+      setDaemonStatus(uid, 'error');
       return null;
     }
-  }, [dispatch, uid, waitForAgentStatus]);
+  }, [uid, waitForAgentStatus]);
 
   const stopDaemon = useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
     try {
-      dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
+      setDaemonStatus(uid, 'stopping');
       const result = await openhumanServiceStop();
       await waitForAgentStatus(false, 7000);
       return result;
@@ -102,12 +87,12 @@ export const useDaemonHealth = (userId?: string) => {
       console.error('[useDaemonHealth] Failed to stop daemon:', error);
       return null;
     }
-  }, [dispatch, uid, waitForAgentStatus]);
+  }, [uid, waitForAgentStatus]);
 
   const restartDaemon = useCallback(async (): Promise<boolean> => {
     try {
-      dispatch(setIsRecovering({ userId: uid, isRecovering: true }));
-      dispatch(setDaemonStatus({ userId: uid, status: 'starting' }));
+      setIsRecovering(uid, true);
+      setDaemonStatus(uid, 'starting');
 
       // Stop first
       await openhumanServiceStop();
@@ -121,20 +106,20 @@ export const useDaemonHealth = (userId?: string) => {
       const success = await waitForAgentStatus(true, 12000);
 
       if (success) {
-        dispatch(resetConnectionAttempts({ userId: uid }));
+        resetConnectionAttempts(uid);
       } else {
-        dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
+        setDaemonStatus(uid, 'error');
       }
 
-      dispatch(setIsRecovering({ userId: uid, isRecovering: false }));
+      setIsRecovering(uid, false);
       return success;
     } catch (error) {
       console.error('[useDaemonHealth] Failed to restart daemon:', error);
-      dispatch(setIsRecovering({ userId: uid, isRecovering: false }));
-      dispatch(setDaemonStatus({ userId: uid, status: 'error' }));
+      setIsRecovering(uid, false);
+      setDaemonStatus(uid, 'error');
       return false;
     }
-  }, [dispatch, uid, waitForAgentStatus]);
+  }, [uid, waitForAgentStatus]);
 
   const checkDaemonStatus =
     useCallback(async (): Promise<CommandResponse<ServiceStatus> | null> => {
@@ -152,37 +137,61 @@ export const useDaemonHealth = (userId?: string) => {
 
   const setAutoStart = useCallback(
     (enabled: boolean) => {
-      dispatch(setAutoStartEnabled({ userId: userId || '__pending__', enabled }));
+      setAutoStartEnabled(userId || '__pending__', enabled);
     },
-    [dispatch, userId]
+    [userId]
   );
 
   // Derived state
-  const isHealthy = status === 'running';
-  const hasErrors = status === 'error';
-  const isConnected = status !== 'disconnected';
-  const isStarting = status === 'starting';
+  const isHealthy = daemonState.status === 'running';
+  const hasErrors = daemonState.status === 'error';
+  const isConnected = daemonState.status !== 'disconnected';
+  const isStarting = daemonState.status === 'starting';
 
-  const componentCount = Object.keys(components).length;
-  const healthyComponentCount = Object.values(components).filter(c => c.status === 'ok').length;
-  const errorComponentCount = Object.values(components).filter(c => c.status === 'error').length;
+  const componentCount = Object.keys(daemonState.components).length;
+  const healthyComponentCount = Object.values(daemonState.components).filter(
+    c => c.status === 'ok'
+  ).length;
+  const errorComponentCount = Object.values(daemonState.components).filter(
+    c => c.status === 'error'
+  ).length;
 
   // Get uptime in human readable format
-  const uptimeText = healthSnapshot ? formatUptime(healthSnapshot.uptime_seconds) : 'Unknown';
+  const uptimeText = daemonState.healthSnapshot
+    ? formatUptime(daemonState.healthSnapshot.uptime_seconds)
+    : 'Unknown';
 
   useEffect(() => {
     void probeAgentStatus();
   }, [probeAgentStatus]);
 
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    let cancelled = false;
+
+    void daemonHealthService.setupHealthListener().then(result => {
+      if (cancelled) {
+        result?.();
+      } else {
+        cleanup = result;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, []);
+
   return {
     // State
-    status,
-    components,
-    healthSnapshot,
-    lastUpdate,
-    isAutoStartEnabled,
-    connectionAttempts,
-    isRecovering,
+    status: daemonState.status,
+    components: daemonState.components,
+    healthSnapshot: daemonState.healthSnapshot,
+    lastUpdate: daemonState.lastHealthUpdate,
+    isAutoStartEnabled: daemonState.autoStartEnabled,
+    connectionAttempts: daemonState.connectionAttempts,
+    isRecovering: daemonState.isRecovering,
 
     // Derived state
     isHealthy,

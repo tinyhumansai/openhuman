@@ -73,7 +73,7 @@ pub async fn accessibility_doctor_cli_json() -> Result<serde_json::Value, String
                 "platform_supported": status.platform_supported,
                 "session_active": status.session.active,
                 "screen_capture_ready": screen_ready,
-                "device_control_ready": control_ready,
+                "accessibility_ready": control_ready,
                 "input_monitoring_ready": monitoring_ready
             },
             "permissions": permissions,

@@ -54,8 +54,6 @@ impl EngineState {
             },
             features: AccessibilityFeatures {
                 screen_monitoring: true,
-                device_control: true,
-                predictive_input: config.autocomplete_enabled,
             },
             config,
             session: None,

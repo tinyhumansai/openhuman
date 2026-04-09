@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import debugFactory from 'debug';
+import { useEffect, useRef, useState } from 'react';
 
 import { useUser } from '../hooks/useUser';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { clearRedeemStatus, fetchInviteCodes, redeemCode } from '../store/inviteSlice';
+import { inviteApi } from '../services/api/inviteApi';
 import type { InviteCode } from '../types/invite';
+
+const log = debugFactory('invites');
+
+type RedeemStatus = 'idle' | 'loading' | 'success' | 'error';
 
 const CodeRow = ({ invite }: { invite: InviteCode }) => {
   const [copied, setCopied] = useState(false);
@@ -70,26 +74,75 @@ const CodeRow = ({ invite }: { invite: InviteCode }) => {
 };
 
 const Invites = () => {
-  const dispatch = useAppDispatch();
   const { user, refetch: refetchUser } = useUser();
-  const { codes, isLoading, redeemStatus, redeemError } = useAppSelector(state => state.invite);
+  const [codes, setCodes] = useState<InviteCode[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [redeemStatus, setRedeemStatus] = useState<RedeemStatus>('idle');
+  const [redeemError, setRedeemError] = useState<string | null>(null);
 
   const [redeemInput, setRedeemInput] = useState('');
+  const redeemTimeoutRef = useRef<number | null>(null);
+  const loadRequestIdRef = useRef(0);
   const hasBeenInvited = !!user?.referral?.invitedBy;
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const loadInviteCodes = async () => {
+    const requestId = ++loadRequestIdRef.current;
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const data = await inviteApi.getMyInviteCodes();
+      if (requestId !== loadRequestIdRef.current) return;
+      setCodes(data);
+    } catch (error) {
+      if (requestId !== loadRequestIdRef.current) return;
+      log('loadInviteCodes failed requestId=%d error=%O', requestId, error);
+      setLoadError(error instanceof Error ? error.message : 'Failed to load invite codes');
+    } finally {
+      if (requestId === loadRequestIdRef.current) {
+        setIsLoading(false);
+      }
+    }
+  };
+
   useEffect(() => {
-    dispatch(fetchInviteCodes());
-  }, [dispatch]);
+    void loadInviteCodes();
+    return () => {
+      // Invalidate any in-flight loadInviteCodes requests
+      loadRequestIdRef.current += 1;
+      if (redeemTimeoutRef.current) {
+        clearTimeout(redeemTimeoutRef.current);
+        redeemTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const handleRedeem = async () => {
     const trimmed = redeemInput.trim();
     if (!trimmed) return;
 
-    const result = await dispatch(redeemCode(trimmed));
-    if (redeemCode.fulfilled.match(result)) {
+    setRedeemStatus('loading');
+    setRedeemError(null);
+
+    try {
+      await inviteApi.redeemInviteCode(trimmed);
+      await loadInviteCodes();
       setRedeemInput('');
-      refetchUser();
-      setTimeout(() => dispatch(clearRedeemStatus()), 3000);
+      setRedeemStatus('success');
+      if (redeemTimeoutRef.current) {
+        clearTimeout(redeemTimeoutRef.current);
+      }
+      redeemTimeoutRef.current = window.setTimeout(() => {
+        redeemTimeoutRef.current = null;
+        setRedeemStatus('idle');
+        setRedeemError(null);
+      }, 3000);
+      // Refresh user in background — don't let failure override the successful redeem
+      refetchUser().catch(() => {});
+    } catch (error) {
+      setRedeemStatus('error');
+      setRedeemError(error instanceof Error ? error.message : 'Failed to redeem invite code');
     }
   };
 
@@ -139,6 +192,8 @@ const Invites = () => {
                   Share these codes with friends. Each code can be used once.
                 </p>
               </div>
+
+              {loadError && <p className="text-coral-500 text-xs text-center py-2">{loadError}</p>}
 
               {isLoading ? (
                 <div className="space-y-3">

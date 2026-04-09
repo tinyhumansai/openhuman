@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
+import type { TunnelRegistration } from '../../features/webhooks/types';
 import { type Tunnel, tunnelsApi } from '../../services/api/tunnelsApi';
-import type { TunnelRegistration } from '../../store/webhooksSlice';
 import { BACKEND_URL } from '../../utils/config';
 
 interface TunnelListProps {
