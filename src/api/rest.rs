@@ -64,10 +64,10 @@ fn user_id_from_object(obj: &serde_json::Map<String, Value>) -> Option<String> {
     None
 }
 
-/// Best-effort user id from an authenticated profile payload.
+/// Best-effort extraction of a user ID from an authenticated profile payload.
 ///
-/// Accepts a raw user object or an envelope that nests the user under `data`
-/// or `user`.
+/// This function handles various envelope formats, including raw user objects
+/// or those nested under `data` or `user` keys.
 pub fn user_id_from_profile_payload(payload: &Value) -> Option<String> {
     let obj = payload.as_object()?;
     if let Some(data) = obj.get("data").and_then(|v| v.as_object()) {
@@ -85,14 +85,17 @@ pub fn user_id_from_profile_payload(payload: &Value) -> Option<String> {
     })
 }
 
+/// Alias for [`user_id_from_profile_payload`] for semantic clarity in auth flows.
 pub fn user_id_from_auth_me_payload(payload: &Value) -> Option<String> {
     user_id_from_profile_payload(payload)
 }
 
-/// JSON body returned by the backend after OAuth connect starts.
+/// JSON body returned by the backend when an OAuth connection process is initiated.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectResponse {
+    /// The URL to redirect the user to for OAuth authorization.
     pub oauth_url: String,
+    /// The state parameter used to prevent CSRF and correlate the callback.
     pub state: String,
 }
 
@@ -117,12 +120,15 @@ struct IntegrationsData {
     integrations: Vec<IntegrationSummary>,
 }
 
-/// Integration row from `GET /auth/integrations` (no tokens).
+/// A summary of an active integration, as returned by the backend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrationSummary {
+    /// Unique identifier for the integration.
     pub id: String,
+    /// The name of the integration provider (e.g., "google", "slack").
     pub provider: String,
+    /// RFC3339 timestamp of when the integration was created.
     pub created_at: String,
 }
 
@@ -149,16 +155,20 @@ struct LoginTokenConsumeData {
     jwt_token: String,
 }
 
-/// Decrypted OAuth token payload from `POST /auth/integrations/:id/tokens`.
+/// Decrypted OAuth token payload for handing off tokens to a local service or skill.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IntegrationTokensHandoff {
+    /// The OAuth access token.
     pub access_token: String,
+    /// The optional OAuth refresh token.
     #[serde(default)]
     pub refresh_token: Option<String>,
+    /// RFC3339 timestamp of when the access token expires.
     pub expires_at: String,
 }
 
+/// A client for interacting with the TinyHumans / AlphaHuman backend API.
 #[derive(Clone)]
 pub struct BackendOAuthClient {
     client: Client,
@@ -166,13 +176,14 @@ pub struct BackendOAuthClient {
 }
 
 impl BackendOAuthClient {
+    /// Creates a new `BackendOAuthClient` with the given API base URL.
     pub fn new(api_base: &str) -> Result<Self> {
         let base = Url::parse(api_base.trim()).context("Invalid API base URL")?;
         let client = build_backend_reqwest_client()?;
         Ok(Self { client, base })
     }
 
-    /// `GET /auth/{provider}/login` — open in browser; Origin/Referer must be allowlisted on the server.
+    /// Returns the URL for initiating a login flow for a specific provider.
     pub fn login_url(&self, provider: &str) -> Result<Url> {
         let p = provider.trim().trim_matches('/');
         anyhow::ensure!(!p.is_empty(), "provider is required");
@@ -181,7 +192,7 @@ impl BackendOAuthClient {
             .context("build login URL")
     }
 
-    /// `GET /auth/{provider}/connect` with Bearer JWT.
+    /// Initiates an OAuth connection flow for the current user and a specific provider.
     pub async fn connect(
         &self,
         provider: &str,
@@ -236,7 +247,7 @@ impl BackendOAuthClient {
         Ok(ConnectResponse { oauth_url, state })
     }
 
-    /// `GET /auth/me` — current authenticated user profile for the Bearer session JWT.
+    /// Fetches the current authenticated user profile using the provided JWT.
     pub async fn fetch_current_user(&self, bearer_jwt: &str) -> Result<Value> {
         let url = self.base.join("auth/me").context("build /auth/me URL")?;
         let resp = self
@@ -255,7 +266,7 @@ impl BackendOAuthClient {
         parse_api_response_json(&text)
     }
 
-    /// `POST /telegram/login-tokens/:token/consume` — exchange a one-time login token for a JWT.
+    /// Exchanges a one-time login token (e.g. from Telegram) for a long-lived JWT.
     pub async fn consume_login_token(&self, login_token: &str) -> Result<String> {
         let token = login_token.trim();
         anyhow::ensure!(!token.is_empty(), "login token is required");
@@ -295,13 +306,13 @@ impl BackendOAuthClient {
         Ok(jwt)
     }
 
-    /// Confirms the JWT is accepted by the API using `GET /auth/me`.
+    /// Validates that the provided session token is still active and accepted.
     pub async fn validate_session_token(&self, bearer_jwt: &str) -> Result<()> {
         let _ = self.fetch_current_user(bearer_jwt).await?;
         Ok(())
     }
 
-    /// `POST /auth/channels/:channel/link-token` — create a short-lived channel link token.
+    /// Creates a short-lived link token for connecting a specific communication channel.
     pub async fn create_channel_link_token(
         &self,
         channel: &str,
@@ -333,8 +344,7 @@ impl BackendOAuthClient {
         parse_api_response_json(&text)
     }
 
-    /// Generic authenticated JSON request helper for backend API routes that
-    /// follow the standard `{ success, data, message }` envelope.
+    /// Generic authenticated JSON request helper for backend API routes.
     pub async fn authed_json(
         &self,
         bearer_jwt: &str,
@@ -374,7 +384,7 @@ impl BackendOAuthClient {
         parse_api_response_json(&text)
     }
 
-    /// `GET /auth/integrations`
+    /// Lists all active integrations for the current user.
     pub async fn list_integrations(&self, bearer_jwt: &str) -> Result<Vec<IntegrationSummary>> {
         let url = self
             .base
@@ -401,7 +411,10 @@ impl BackendOAuthClient {
         Ok(env.data.integrations)
     }
 
-    /// `POST /auth/integrations/:id/tokens` — one-time handoff; decrypt with same key format as backend.
+    /// Fetches the decrypted OAuth tokens for a specific integration.
+    ///
+    /// This is a one-time handoff process. The encryption key must match the
+    /// one used by the backend to encrypt the tokens.
     pub async fn fetch_integration_tokens_handoff(
         &self,
         integration_id: &str,
@@ -441,7 +454,10 @@ impl BackendOAuthClient {
         serde_json::from_str(&plaintext).context("parse decrypted token JSON")
     }
 
-    /// `POST /auth/integrations/:id/client-key` — one-time handoff of client key share (deleted from Redis after retrieval).
+    /// Fetches the client key share for a specific integration.
+    ///
+    /// This is a one-time handoff; the key is deleted from the backend's
+    /// temporary storage (Redis) after retrieval.
     pub async fn fetch_client_key(&self, integration_id: &str, bearer_jwt: &str) -> Result<String> {
         let id = integration_id.trim();
         anyhow::ensure!(
@@ -487,7 +503,7 @@ impl BackendOAuthClient {
         Ok(client_key.to_string())
     }
 
-    /// `POST /channels/:channel/messages` — Send a rich message to a channel.
+    /// Sends a message to a communication channel.
     pub async fn send_channel_message(
         &self,
         channel: &str,
@@ -506,7 +522,7 @@ impl BackendOAuthClient {
         .await
     }
 
-    /// `POST /channels/:channel/reactions` — React to a message in a channel.
+    /// Sends a reaction (e.g. emoji) to a message in a channel.
     pub async fn send_channel_reaction(
         &self,
         channel: &str,
@@ -525,7 +541,7 @@ impl BackendOAuthClient {
         .await
     }
 
-    /// `POST /agent-integrations/tenor/search` — Search for GIFs via Tenor.
+    /// Searches for GIFs using the Tenor integration.
     pub async fn search_tenor_gifs(
         &self,
         bearer_jwt: &str,
@@ -547,7 +563,7 @@ impl BackendOAuthClient {
         .await
     }
 
-    /// `POST /channels/:channel/threads` — Create a thread in a channel.
+    /// Creates a new thread in a communication channel.
     pub async fn create_channel_thread(
         &self,
         channel: &str,
@@ -568,7 +584,7 @@ impl BackendOAuthClient {
         .await
     }
 
-    /// `PATCH /channels/:channel/threads/:thread_id` — Close or reopen a thread.
+    /// Updates an existing thread (e.g., closing or reopening it).
     pub async fn update_channel_thread(
         &self,
         channel: &str,
@@ -595,7 +611,7 @@ impl BackendOAuthClient {
         .await
     }
 
-    /// `GET /channels/:channel/threads` — List threads, optionally filtered by active status.
+    /// Lists threads in a communication channel, optionally filtering by status.
     pub async fn list_channel_threads(
         &self,
         channel: &str,
@@ -616,7 +632,7 @@ impl BackendOAuthClient {
         self.authed_json(bearer_jwt, Method::GET, &path, None).await
     }
 
-    /// `DELETE /auth/integrations/:id`
+    /// Revokes (deletes) an active integration.
     pub async fn revoke_integration(&self, integration_id: &str, bearer_jwt: &str) -> Result<()> {
         let id = integration_id.trim();
         anyhow::ensure!(!id.is_empty(), "integration id is required");

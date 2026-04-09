@@ -1,4 +1,8 @@
 //! JSON-RPC / CLI controller surface for the bundled local AI stack.
+//!
+//! This module provides high-level functions for interacting with local AI
+//! services such as agent chat, model downloads, summarization, and
+//! transcription. These functions are typically invoked via RPC or CLI.
 
 use chrono::Utc;
 use once_cell::sync::Lazy;
@@ -16,9 +20,21 @@ use crate::openhuman::local_ai::{
 use crate::openhuman::providers::{self, ProviderRuntimeOptions};
 use crate::rpc::RpcOutcome;
 
+/// A static registry of active agent sessions for the REPL.
 static REPL_AGENT_SESSIONS: Lazy<Mutex<HashMap<String, Agent>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
+/// Executes a single chat turn with an AI agent.
+///
+/// This function initializes an agent from the provided configuration and
+/// processes the input message.
+///
+/// # Arguments
+///
+/// * `config` - The configuration used to build the agent. May be updated with model/temp overrides.
+/// * `message` - The user message to process.
+/// * `model_override` - Optional model name to use for this call.
+/// * `temperature` - Optional sampling temperature override.
 pub async fn agent_chat(
     config: &mut Config,
     message: &str,
@@ -36,6 +52,7 @@ pub async fn agent_chat(
     Ok(RpcOutcome::single_log(response, "agent chat completed"))
 }
 
+/// A simplified chat interface that does not update the base configuration.
 pub async fn agent_chat_simple(
     config: &Config,
     message: &str,
@@ -88,6 +105,7 @@ pub async fn agent_chat_simple(
     ))
 }
 
+/// Starts a persistent agent session for REPL interactions.
 pub async fn agent_repl_session_start(
     config: &Config,
     session_id: Option<String>,
@@ -122,6 +140,7 @@ pub async fn agent_repl_session_start(
     ))
 }
 
+/// Resets the history of an active REPL session.
 pub async fn agent_repl_session_reset(
     session_id: &str,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -144,6 +163,7 @@ pub async fn agent_repl_session_reset(
     ))
 }
 
+/// Terminates an active REPL session.
 pub async fn agent_repl_session_end(
     session_id: &str,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -163,6 +183,7 @@ pub async fn agent_repl_session_end(
     ))
 }
 
+/// Returns the current operational status of the local AI stack.
 pub async fn local_ai_status(
     config: &Config,
 ) -> Result<RpcOutcome<local_ai::LocalAiStatus>, String> {
@@ -181,6 +202,7 @@ pub async fn local_ai_status(
     ))
 }
 
+/// Triggers a full download of all required local AI models.
 pub async fn local_ai_download(
     config: &Config,
     force: bool,
@@ -202,6 +224,7 @@ pub async fn local_ai_download(
     ))
 }
 
+/// Triggers a download of all local AI assets and returns progress information.
 pub async fn local_ai_download_all_assets(
     config: &Config,
     force: bool,
@@ -227,6 +250,7 @@ pub async fn local_ai_download_all_assets(
     ))
 }
 
+/// Generates a summary of the provided text using local AI models.
 pub async fn local_ai_summarize(
     config: &Config,
     text: &str,
@@ -247,6 +271,7 @@ pub async fn local_ai_summarize(
     ))
 }
 
+/// Suggests relevant follow-up questions based on the provided context.
 pub async fn local_ai_suggest_questions(
     config: &Config,
     context: Option<String>,
@@ -273,6 +298,7 @@ pub async fn local_ai_suggest_questions(
     ))
 }
 
+/// Executes a raw prompt directly against the local AI model.
 pub async fn local_ai_prompt(
     config: &Config,
     prompt: &str,
@@ -291,6 +317,7 @@ pub async fn local_ai_prompt(
     Ok(RpcOutcome::single_log(output, "local ai prompt completed"))
 }
 
+/// Executes a multimodal (vision) prompt with associated images.
 pub async fn local_ai_vision_prompt(
     config: &Config,
     prompt: &str,
@@ -308,6 +335,7 @@ pub async fn local_ai_vision_prompt(
     ))
 }
 
+/// Generates semantic embeddings for the provided input strings.
 pub async fn local_ai_embed(
     config: &Config,
     inputs: &[String],
@@ -323,6 +351,7 @@ pub async fn local_ai_embed(
     ))
 }
 
+/// Transcribes the audio file at the specified path.
 pub async fn local_ai_transcribe(
     config: &Config,
     audio_path: &str,
@@ -338,6 +367,7 @@ pub async fn local_ai_transcribe(
     ))
 }
 
+/// Transcribes raw audio bytes by first saving them to a temporary file.
 pub async fn local_ai_transcribe_bytes(
     config: &Config,
     audio_bytes: &[u8],
@@ -382,6 +412,7 @@ pub async fn local_ai_transcribe_bytes(
     ))
 }
 
+/// Performs text-to-speech synthesis and optionally saves the result to a file.
 pub async fn local_ai_tts(
     config: &Config,
     text: &str,
@@ -395,6 +426,7 @@ pub async fn local_ai_tts(
     Ok(RpcOutcome::single_log(output, "local ai tts completed"))
 }
 
+/// Returns the status of all local AI assets (models and support files).
 pub async fn local_ai_assets_status(
     config: &Config,
 ) -> Result<RpcOutcome<LocalAiAssetsStatus>, String> {
@@ -409,6 +441,7 @@ pub async fn local_ai_assets_status(
     ))
 }
 
+/// Returns progress for any ongoing asset downloads.
 pub async fn local_ai_downloads_progress(
     config: &Config,
 ) -> Result<RpcOutcome<LocalAiDownloadsProgress>, String> {
@@ -423,6 +456,7 @@ pub async fn local_ai_downloads_progress(
     ))
 }
 
+/// Triggers the download of a specific AI asset based on capability name.
 pub async fn local_ai_download_asset(
     config: &Config,
     capability: &str,
@@ -438,12 +472,16 @@ pub async fn local_ai_download_asset(
     ))
 }
 
+/// A single message in a local AI chat conversation.
 #[derive(Debug, serde::Deserialize)]
 pub struct LocalAiChatMessage {
+    /// The role of the message sender (e.g., "user", "assistant").
     pub role: String,
+    /// The text content of the message.
     pub content: String,
 }
 
+/// Executes a multi-turn chat conversation using the local model.
 pub async fn local_ai_chat(
     config: &Config,
     messages: Vec<LocalAiChatMessage>,
@@ -489,9 +527,10 @@ pub struct ReactionDecision {
     pub emoji: Option<String>,
 }
 
-/// Ask the local model whether the assistant should add an emoji reaction to
-/// the user's message, based on channel type and message content.
-/// Designed to be called fire-and-forget — fast, lightweight, no cloud cost.
+/// Evaluates whether the assistant should add an emoji reaction to a user message.
+///
+/// This uses the local model to make a quick decision based on the message
+/// content and the channel context.
 pub async fn local_ai_should_react(
     config: &Config,
     message: &str,

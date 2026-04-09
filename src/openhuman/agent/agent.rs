@@ -1,3 +1,10 @@
+//! Core agent implementation for the OpenHuman platform.
+//!
+//! This module provides the `Agent` struct, which orchestrates the interaction
+//! between the AI provider, available tools, memory systems, and the user.
+//! It handles the agent's "turn" logic, including tool execution and history
+//! management.
+
 use super::dispatcher::{
     NativeToolDispatcher, ParsedToolCall, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
@@ -18,6 +25,11 @@ use anyhow::Result;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
 
+/// An autonomous or semi-autonomous AI agent.
+///
+/// The `Agent` is the central component that manages conversation state,
+/// executes tools based on model requests, and interacts with the memory system
+/// to maintain context across turns.
 pub struct Agent {
     provider: Box<dyn Provider>,
     tools: Vec<Box<dyn Tool>>,
@@ -42,6 +54,7 @@ pub struct Agent {
     event_channel: String,
 }
 
+/// A builder for creating `Agent` instances with custom configuration.
 pub struct AgentBuilder {
     provider: Option<Box<dyn Provider>>,
     tools: Option<Vec<Box<dyn Tool>>>,
@@ -71,6 +84,7 @@ impl Default for AgentBuilder {
 }
 
 impl AgentBuilder {
+    /// Creates a new `AgentBuilder` with default values.
     pub fn new() -> Self {
         Self {
             provider: None,
@@ -95,56 +109,67 @@ impl AgentBuilder {
         }
     }
 
+    /// Sets the AI provider for the agent.
     pub fn provider(mut self, provider: Box<dyn Provider>) -> Self {
         self.provider = Some(provider);
         self
     }
 
+    /// Sets the available tools for the agent.
     pub fn tools(mut self, tools: Vec<Box<dyn Tool>>) -> Self {
         self.tools = Some(tools);
         self
     }
 
+    /// Sets the memory system for the agent.
     pub fn memory(mut self, memory: Arc<dyn Memory>) -> Self {
         self.memory = Some(memory);
         self
     }
 
+    /// Sets the system prompt builder for the agent.
     pub fn prompt_builder(mut self, prompt_builder: SystemPromptBuilder) -> Self {
         self.prompt_builder = Some(prompt_builder);
         self
     }
 
+    /// Sets the tool dispatcher for the agent.
     pub fn tool_dispatcher(mut self, tool_dispatcher: Box<dyn ToolDispatcher>) -> Self {
         self.tool_dispatcher = Some(tool_dispatcher);
         self
     }
 
+    /// Sets the memory loader for the agent.
     pub fn memory_loader(mut self, memory_loader: Box<dyn MemoryLoader>) -> Self {
         self.memory_loader = Some(memory_loader);
         self
     }
 
+    /// Sets the agent configuration.
     pub fn config(mut self, config: crate::openhuman::config::AgentConfig) -> Self {
         self.config = Some(config);
         self
     }
 
+    /// Sets the model name to use for chat requests.
     pub fn model_name(mut self, model_name: String) -> Self {
         self.model_name = Some(model_name);
         self
     }
 
+    /// Sets the temperature for chat requests.
     pub fn temperature(mut self, temperature: f64) -> Self {
         self.temperature = Some(temperature);
         self
     }
 
+    /// Sets the workspace directory for the agent.
     pub fn workspace_dir(mut self, workspace_dir: std::path::PathBuf) -> Self {
         self.workspace_dir = Some(workspace_dir);
         self
     }
 
+    /// Sets the identity configuration for the agent.
     pub fn identity_config(
         mut self,
         identity_config: crate::openhuman::config::IdentityConfig,
@@ -153,16 +178,19 @@ impl AgentBuilder {
         self
     }
 
+    /// Sets the skills available to the agent.
     pub fn skills(mut self, skills: Vec<crate::openhuman::skills::Skill>) -> Self {
         self.skills = Some(skills);
         self
     }
 
+    /// Enables or disables automatic saving of conversation history to memory.
     pub fn auto_save(mut self, auto_save: bool) -> Self {
         self.auto_save = Some(auto_save);
         self
     }
 
+    /// Sets the query classification configuration.
     pub fn classification_config(
         mut self,
         classification_config: crate::openhuman::config::QueryClassificationConfig,
@@ -171,16 +199,19 @@ impl AgentBuilder {
         self
     }
 
+    /// Sets the available model hints for auto-classification.
     pub fn available_hints(mut self, available_hints: Vec<String>) -> Self {
         self.available_hints = Some(available_hints);
         self
     }
 
+    /// Sets the post-turn hooks to be executed after each turn.
     pub fn post_turn_hooks(mut self, hooks: Vec<Arc<dyn PostTurnHook>>) -> Self {
         self.post_turn_hooks = hooks;
         self
     }
 
+    /// Enables or disables learning features.
     pub fn learning_enabled(mut self, enabled: bool) -> Self {
         self.learning_enabled = enabled;
         self
@@ -196,6 +227,7 @@ impl AgentBuilder {
         self
     }
 
+    /// Validates the configuration and builds the `Agent` instance.
     pub fn build(self) -> Result<Agent> {
         let tools = self
             .tools
@@ -261,6 +293,10 @@ impl Agent {
             + 1
     }
 
+    /// Injects unique IDs into tool calls that are missing them.
+    ///
+    /// This is necessary for some tool dispatchers to correctly track and
+    /// associate results.
     fn with_fallback_tool_call_ids(
         mut parsed_calls: Vec<ParsedToolCall>,
         iteration: usize,
@@ -273,6 +309,10 @@ impl Agent {
         parsed_calls
     }
 
+    /// Converts parsed tool calls into the provider-standard `ToolCall` format.
+    ///
+    /// If the provider response already contains native tool calls, they are
+    /// returned as-is.
     fn persisted_tool_calls_for_history(
         response: &crate::openhuman::providers::ChatResponse,
         parsed_calls: &[ParsedToolCall],
@@ -296,10 +336,12 @@ impl Agent {
             .collect()
     }
 
+    /// Returns a new `AgentBuilder`.
     pub fn builder() -> AgentBuilder {
         AgentBuilder::new()
     }
 
+    /// Returns the current conversation history.
     pub fn history(&self) -> &[ConversationMessage] {
         &self.history
     }
@@ -309,10 +351,15 @@ impl Agent {
         self.event_channel = channel.into();
     }
 
+    /// Clears the agent's conversation history.
     pub fn clear_history(&mut self) {
         self.history.clear();
     }
 
+    /// Creates an `Agent` instance from a global configuration.
+    ///
+    /// This is the primary way to initialize an agent with all system
+    /// integrations (memory, tools, skills, etc.) configured.
     pub fn from_config(config: &Config) -> Result<Self> {
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
             Arc::from(host_runtime::create_runtime(&config.runtime)?);
@@ -487,6 +534,10 @@ impl Agent {
             .build()
     }
 
+    /// Truncates the conversation history to the configured maximum message count.
+    ///
+    /// System messages are always preserved. Older non-system messages are
+    /// dropped first.
     fn trim_history(&mut self) {
         let max = self.config.max_history_messages;
         if self.history.len() <= max {
@@ -514,7 +565,10 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
-    /// Pre-fetch learned context data from memory (async, non-blocking).
+    /// Pre-fetches learned context data from memory (observations, patterns, user profile).
+    ///
+    /// This is an async, non-blocking operation that populates the context
+    /// for the system prompt.
     async fn fetch_learned_context(&self) -> crate::openhuman::agent::prompt::LearnedContextData {
         use crate::openhuman::agent::prompt::LearnedContextData;
 
@@ -566,6 +620,8 @@ impl Agent {
         }
     }
 
+    /// Builds the system prompt for the current turn, including tool
+    /// instructions and learned context.
     fn build_system_prompt(
         &self,
         learned: crate::openhuman::agent::prompt::LearnedContextData,
@@ -613,6 +669,7 @@ impl Agent {
         }
     }
 
+    /// Executes a single tool call and returns the result and execution record.
     async fn execute_tool_call(
         &self,
         call: &ParsedToolCall,
@@ -673,6 +730,7 @@ impl Agent {
         (exec_result, record)
     }
 
+    /// Executes multiple tool calls in sequence.
     async fn execute_tools(
         &self,
         calls: &[ParsedToolCall],
@@ -687,6 +745,7 @@ impl Agent {
         (results, records)
     }
 
+    /// Classifies the user message to determine if a specific model hint should be used.
     fn classify_model(&self, user_message: &str) -> String {
         if let Some(hint) = super::classifier::classify(&self.classification_config, user_message) {
             if self.available_hints.contains(&hint) {
@@ -697,6 +756,11 @@ impl Agent {
         self.model_name.clone()
     }
 
+    /// Performs a single interaction "turn" with the agent.
+    ///
+    /// This is the core logic that takes user input, manages the history,
+    /// calls the LLM, handles tool calls (up to `max_tool_iterations`),
+    /// and returns the final assistant response.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
         let turn_started = std::time::Instant::now();
         log::info!(
@@ -916,6 +980,7 @@ impl Agent {
         )
     }
 
+    /// Runs a single turn with the given message and returns the response.
     pub async fn run_single(&mut self, message: &str) -> Result<String> {
         let history_before = self.history.len();
         publish_global(DomainEvent::AgentTurnStarted {
@@ -943,6 +1008,7 @@ impl Agent {
         }
     }
 
+    /// Runs an interactive CLI loop, reading from standard input and printing to standard output.
     pub async fn run_interactive(&mut self) -> Result<()> {
         println!("🦀 OpenHuman Interactive Mode");
         println!("Type /quit to exit.\n");
@@ -970,6 +1036,7 @@ impl Agent {
     }
 }
 
+/// Convenience entry point to run an agent with the given configuration and message.
 pub async fn run(
     config: Config,
     message: Option<String>,

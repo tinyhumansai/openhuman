@@ -198,11 +198,7 @@ let relations = client.graph_query(None, None, None).await?;
 |----------|-------------|
 | `delete_document(namespace, id)` | Remove a specific document |
 | `kv_delete(namespace, key)` | Remove a specific KV entry |
-<<<<<<< HEAD
 | `clear_skill_memory(skill_id, integration_id)` | Disconnect / revoke: clears skill-scoped memory in the shared `skill-{skill_id}` namespace. Storage is not isolated per integration—multiple integrations share that namespace; `integration_id` identifies the integration in the API contract (see implementation in `MemoryClient::clear_skill_memory`) |
-=======
-| `clear_skill_memory(skill_id, integration_id)` | Skill OAuth/auth revoked — wipes `skill-{skill_id}` namespace |
->>>>>>> 5b6b1e2 (feat(subconscious): stabilize heartbeat + subconscious loop (#392))
 | `clear_namespace(namespace)` | Wipe an arbitrary namespace |
 
 ---
