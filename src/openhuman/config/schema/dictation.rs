@@ -15,7 +15,6 @@ pub enum DictationActivationMode {
     Push,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DictationConfig {
     /// Whether voice dictation is enabled.

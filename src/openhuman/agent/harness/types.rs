@@ -21,7 +21,6 @@ pub enum TaskStatus {
     Cancelled,
 }
 
-
 /// Request sent from the orchestrator to spawn a sub-agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubAgentRequest {

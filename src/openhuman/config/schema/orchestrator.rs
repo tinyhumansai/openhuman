@@ -47,8 +47,7 @@ pub struct OrchestratorConfig {
 /// Per-archetype configuration override.
 ///
 /// Any field left `None` uses the archetype's built-in default.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ArchetypeConfig {
     /// Model name or hint override (e.g. "coding-v1", "local:phi3").
     #[serde(default)]
@@ -105,4 +104,3 @@ impl Default for OrchestratorConfig {
         }
     }
 }
-

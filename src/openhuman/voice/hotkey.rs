@@ -30,7 +30,6 @@ pub enum ActivationMode {
     Push,
 }
 
-
 /// Events emitted by the hotkey listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyEvent {

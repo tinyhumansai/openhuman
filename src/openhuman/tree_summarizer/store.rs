@@ -672,10 +672,9 @@ fn count_md_files(dir: &Path) -> Result<u64> {
                 continue; // skip buffer directories
             }
             count += count_md_files(&entry.path())?;
-        } else if ft.is_file()
-            && entry.path().extension().map(|e| e == "md").unwrap_or(false) {
-                count += 1;
-            }
+        } else if ft.is_file() && entry.path().extension().map(|e| e == "md").unwrap_or(false) {
+            count += 1;
+        }
     }
     Ok(count)
 }

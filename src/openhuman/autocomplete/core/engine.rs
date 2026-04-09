@@ -188,9 +188,7 @@ impl AutocompleteEngine {
                                 state.updated_at_ms = Some(Utc::now().timestamp_millis());
 
                                 // Only notify if this is a *new* error message.
-                                let is_new_error = state
-                                    .last_notified_error
-                                    .as_ref() != Some(&err);
+                                let is_new_error = state.last_notified_error.as_ref() != Some(&err);
                                 if is_new_error {
                                     state.last_notified_error = Some(err.clone());
                                 }

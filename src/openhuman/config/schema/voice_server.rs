@@ -15,7 +15,6 @@ pub enum VoiceActivationMode {
     Push,
 }
 
-
 /// Configuration for the voice dictation server.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VoiceServerConfig {

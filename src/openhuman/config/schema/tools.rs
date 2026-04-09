@@ -260,8 +260,7 @@ impl Default for IntegrationToggle {
 /// location search (Google Places), and phone calls (Twilio). The backend
 /// handles external API calls, billing, and rate limiting; the client only
 /// forwards requests and displays results.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct IntegrationsConfig {
     /// Master switch — set to `true` to register integration tools.
     #[serde(default)]
@@ -287,4 +286,3 @@ pub struct IntegrationsConfig {
     #[serde(default)]
     pub parallel: IntegrationToggle,
 }
-
