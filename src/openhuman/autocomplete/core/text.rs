@@ -29,8 +29,7 @@ pub(super) fn sanitize_suggestion(text: &str) -> String {
         }
     };
     let cleaned = stripped_prefix
-        .replace('\t', " ")
-        .replace('→', " ")
+        .replace(['\t', '→'], " ")
         .replace('\r', "")
         .split_whitespace()
         .collect::<Vec<_>>()

@@ -93,9 +93,8 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
     // SubconsciousEngine::new calls seed_default_tasks() inside the
     // constructor, so by the time this returns the 3 system defaults are
     // present in `<workspace>/subconscious/subconscious.db`.
-    get_or_init_engine().await.map_err(|e| {
+    get_or_init_engine().await.inspect_err(|_e| {
         BOOTSTRAPPED.store(false, Ordering::SeqCst);
-        e
     })?;
     tracing::info!(
         workspace = %config.workspace_dir.display(),

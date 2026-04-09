@@ -27,6 +27,12 @@ fn error_body(message: &str) -> String {
 /// flow: lookup tunnel → dispatch to skill/echo → emit response via socket.
 pub struct WebhookRequestSubscriber;
 
+impl Default for WebhookRequestSubscriber {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebhookRequestSubscriber {
     pub fn new() -> Self {
         Self

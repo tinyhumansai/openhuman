@@ -44,10 +44,10 @@
     "format:check": "prettier --check . && yarn rust:format:check",
     "lint": "eslint . --ext .ts,.tsx",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
-    "knip": "knip"
+    "knip": "knip --config knip.json",
+    "knip:production": "knip --config knip.json --production"
   },
   "dependencies": {
-    "@heroicons/react": "^2.2.0",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
     "@reduxjs/toolkit": "^2.11.2",

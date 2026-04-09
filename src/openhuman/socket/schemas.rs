@@ -195,7 +195,7 @@ fn handle_state(_params: Map<String, Value>) -> ControllerFuture {
         let mgr = require_manager()?;
         let state = mgr.get_state();
         log::debug!("[socket:rpc] state → {:?}", state.status);
-        Ok(serde_json::to_value(state).map_err(|e| format!("serialize: {e}"))?)
+        serde_json::to_value(state).map_err(|e| format!("serialize: {e}"))
     })
 }
 

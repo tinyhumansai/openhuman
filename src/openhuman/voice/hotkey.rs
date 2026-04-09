@@ -21,17 +21,13 @@ const LOG_PREFIX: &str = "[voice_hotkey]";
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ActivationMode {
     /// Single press toggles recording on/off.
     Tap,
     /// Hold to record, release to stop.
+    #[default]
     Push,
-}
-
-impl Default for ActivationMode {
-    fn default() -> Self {
-        Self::Push
-    }
 }
 
 /// Events emitted by the hotkey listener.

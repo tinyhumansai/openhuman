@@ -9,6 +9,12 @@ use serde_json::json;
 /// Available only to the Orchestrator archetype.
 pub struct SpawnSubagentTool;
 
+impl Default for SpawnSubagentTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpawnSubagentTool {
     pub fn new() -> Self {
         Self
@@ -63,7 +69,7 @@ impl Tool for SpawnSubagentTool {
 
         let prompt = args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
 
-        let context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
+        let _context = args.get("context").and_then(|v| v.as_str()).unwrap_or("");
 
         if prompt.is_empty() {
             return Ok(ToolResult::error("prompt is required"));

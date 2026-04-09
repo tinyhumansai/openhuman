@@ -19,15 +19,8 @@ pub(crate) fn parse_suggestions(raw: &str, limit: usize) -> Vec<Suggestion> {
 
 fn normalize_inline_text(value: &str) -> String {
     value
-        .replace('\u{200B}', "")
-        .replace('\u{200C}', "")
-        .replace('\u{200D}', "")
-        .replace('\u{FEFF}', "")
-        .replace('\u{00A0}', " ")
-        .replace('\u{2028}', " ")
-        .replace('\u{2029}', " ")
-        .replace('\t', " ")
-        .replace('→', " ")
+        .replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
+        .replace(['\u{00A0}', '\u{2028}', '\u{2029}', '\t', '→'], " ")
 }
 
 fn trim_generation_prefixes(mut value: &str) -> &str {
@@ -37,7 +30,7 @@ fn trim_generation_prefixes(mut value: &str) -> &str {
     for prefix in ["suffix:", "completion:", "result:", "output:"] {
         if value
             .get(..prefix.len())
-            .map_or(false, |s| s.eq_ignore_ascii_case(prefix))
+            .is_some_and(|s| s.eq_ignore_ascii_case(prefix))
         {
             value = value.get(prefix.len()..).unwrap_or(value).trim_start();
             break;

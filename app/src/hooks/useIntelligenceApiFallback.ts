@@ -1,7 +1,14 @@
 import { useCallback, useState } from 'react';
 
-import type { ConnectedTool } from '../services/intelligenceApi';
 import type { ActionableItemStatus, ChatMessage } from '../types/intelligence';
+
+interface ConnectedTool {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  skillId: string;
+  enabled: boolean;
+}
 
 /**
  * Local-only implementations of Intelligence action hooks.

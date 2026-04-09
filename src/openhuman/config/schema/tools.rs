@@ -260,7 +260,7 @@ impl Default for IntegrationToggle {
 /// location search (Google Places), and phone calls (Twilio). The backend
 /// handles external API calls, billing, and rate limiting; the client only
 /// forwards requests and displays results.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct IntegrationsConfig {
     /// Master switch — set to `true` to register integration tools.
     #[serde(default)]
@@ -285,17 +285,4 @@ pub struct IntegrationsConfig {
     /// Parallel web search & content extraction integration.
     #[serde(default)]
     pub parallel: IntegrationToggle,
-}
-
-impl Default for IntegrationsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            backend_url: None,
-            auth_token: None,
-            twilio: IntegrationToggle::default(),
-            google_places: IntegrationToggle::default(),
-            parallel: IntegrationToggle::default(),
-        }
-    }
 }

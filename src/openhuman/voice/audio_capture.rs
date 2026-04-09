@@ -304,7 +304,7 @@ fn record_on_thread(
     };
 
     // If the preferred config failed, retry with the device's default config.
-    let (stream, source_sample_rate, source_channels) = match stream {
+    let (stream, source_sample_rate, _source_channels) = match stream {
         Ok(s) => (s, source_sample_rate, source_channels),
         Err(ref preferred_err) => {
             warn!(

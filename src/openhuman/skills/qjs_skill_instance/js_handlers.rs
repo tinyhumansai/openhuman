@@ -623,7 +623,7 @@ pub(crate) async fn handle_js_call(
             }
 
             // Log progress every 2 seconds so we can see if the loop is running
-            if poll_count % 400 == 0 {
+            if poll_count.is_multiple_of(400) {
                 let elapsed = 30
                     - deadline
                         .duration_since(tokio::time::Instant::now())

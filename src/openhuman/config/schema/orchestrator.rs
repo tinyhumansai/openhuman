@@ -47,7 +47,7 @@ pub struct OrchestratorConfig {
 /// Per-archetype configuration override.
 ///
 /// Any field left `None` uses the archetype's built-in default.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ArchetypeConfig {
     /// Model name or hint override (e.g. "coding-v1", "local:phi3").
     #[serde(default)]
@@ -101,19 +101,6 @@ impl Default for OrchestratorConfig {
             self_healing_enabled: default_true(),
             max_dag_tasks: default_max_dag_tasks(),
             max_task_retries: default_max_retries(),
-        }
-    }
-}
-
-impl Default for ArchetypeConfig {
-    fn default() -> Self {
-        Self {
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            max_tool_iterations: None,
-            timeout_secs: None,
-            sandbox: None,
         }
     }
 }
