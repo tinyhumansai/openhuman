@@ -12,7 +12,8 @@ const InferenceBudget = ({ teamUsage, isLoadingCredits }: InferenceBudgetProps) 
       {isLoadingCredits && <span className="text-[10px] text-stone-500">Loading…</span>}
       {teamUsage && !isLoadingCredits && (
         <span className="text-xs text-stone-400">
-          ${teamUsage.remainingUsd.toFixed(2)} / ${teamUsage.cycleBudgetUsd.toFixed(2)} remaining
+          ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
+          {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} remaining
         </span>
       )}
     </div>
@@ -21,27 +22,27 @@ const InferenceBudget = ({ teamUsage, isLoadingCredits }: InferenceBudgetProps) 
         <div className="h-1.5 bg-stone-700/60 rounded-full overflow-hidden mb-2">
           <div
             className={`h-full rounded-full transition-all duration-300 ${
-              teamUsage.remainingUsd <= 0
+              (teamUsage.remainingUsd ?? 0) <= 0
                 ? 'bg-coral-500'
-                : teamUsage.remainingUsd / teamUsage.cycleBudgetUsd < 0.2
+                : (teamUsage.remainingUsd ?? 0) / (teamUsage.cycleBudgetUsd || 1) < 0.2
                   ? 'bg-amber-500'
                   : 'bg-primary-500'
             }`}
             style={{
-              width: `${Math.min(100, (teamUsage.remainingUsd / teamUsage.cycleBudgetUsd) * 100)}%`,
+              width: `${Math.min(100, ((teamUsage.remainingUsd ?? 0) / (teamUsage.cycleBudgetUsd || 1)) * 100)}%`,
             }}
           />
         </div>
         <div className="mt-1 flex items-center justify-between">
           <span className="text-[11px] text-stone-500">
-            5-hour cap: ${teamUsage.cycleLimit5hr.toFixed(2)} / $
-            {teamUsage.fiveHourCapUsd.toFixed(2)}
+            5-hour cap: ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
+            {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
           </span>
           <span className="text-[11px] text-stone-500">
             Cycle ends {new Date(teamUsage.cycleEndsAt).toLocaleDateString('en-US')}
           </span>
         </div>
-        {teamUsage.remainingUsd <= 0 && (
+        {(teamUsage.remainingUsd ?? 0) <= 0 && (
           <p className="text-[11px] text-coral-400 mt-1.5">
             Included subscription usage is exhausted. Top up credits to continue using AI features
             without waiting for the next cycle.

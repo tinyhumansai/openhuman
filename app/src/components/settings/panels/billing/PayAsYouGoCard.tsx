@@ -67,14 +67,14 @@ const PayAsYouGoCard = ({
           <div className="flex items-center justify-between">
             <span className="text-xs text-stone-400">General credits</span>
             <span className="text-xs font-medium text-stone-900">
-              ${creditBalance.balanceUsd.toFixed(2)}
+              ${(creditBalance.balanceUsd ?? 0).toFixed(2)}
             </span>
           </div>
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-xs text-stone-400">Top-up credits</span>
               <span className="text-xs font-medium text-stone-900">
-                ${creditBalance.topUpBalanceUsd.toFixed(2)}
+                ${(creditBalance.topUpBalanceUsd ?? 0).toFixed(2)}
                 {creditBalance.topUpBaselineUsd != null && creditBalance.topUpBaselineUsd > 0 && (
                   <span className="text-stone-500 font-normal">
                     {' '}

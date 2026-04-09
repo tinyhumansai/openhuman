@@ -29,9 +29,8 @@ run "test/e2e/specs/notion-flow.spec.ts" "notion"
 run "test/e2e/specs/screen-intelligence.spec.ts" "screen-intelligence"
 run "test/e2e/specs/voice-mode.spec.ts" "voice-mode"
 run "test/e2e/specs/text-autocomplete-flow.spec.ts" "text-autocomplete"
+run "test/e2e/specs/rewards-flow.spec.ts" "rewards-flow"
+run "test/e2e/specs/settings-flow.spec.ts" "settings-flow"
 
-# run "test/e2e/specs/skills-registry.spec.ts" "skills-registry"
-# run "test/e2e/specs/rewards-settings.spec.ts" "rewards-settings"
-# run "test/e2e/specs/navigation.spec.ts" "navigation"
 
 echo "All E2E flows completed."

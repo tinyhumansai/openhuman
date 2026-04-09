@@ -315,7 +315,8 @@ async function handleRequest(req, res) {
         fiveHourCapUsd: 5,
         fiveHourResetsAt: null,
         cycleStartDate: new Date().toISOString(),
-        cycleEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        cycleEndsAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+        fiveHourSpendUsd: 0,
         bypassCycleLimit: false,
       },
     });
@@ -406,8 +407,11 @@ async function handleRequest(req, res) {
         hasActiveSubscription: isActive,
         planExpiry: isActive ? periodEnd : null,
         subscription: isActive
-          ? { id: "sub_mock_1", status: "active", currentPeriodEnd: periodEnd }
+          ? { id: "sub_mock_1", status: "active", currentPeriodEnd: periodEnd, quantity: 1 }
           : null,
+        monthlyBudgetUsd: 0,
+        weeklyBudgetUsd: 0,
+        fiveHourCapUsd: 0,
       },
     });
     return;

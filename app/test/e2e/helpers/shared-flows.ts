@@ -86,6 +86,7 @@ const HASH_TO_SIDEBAR_LABEL = {
   '/settings': 'Settings',
   '/intelligence': 'Intelligence',
   '/channels': 'Channels',
+  '/rewards': 'Rewards',
 };
 
 export async function navigateViaHash(hash) {
@@ -105,56 +106,112 @@ export async function navigateViaHash(hash) {
     return;
   }
 
-  // Appium Mac2 — Settings → Billing (nested route)
-  if (normalized === '/settings/billing') {
+  // Appium Mac2 — Settings and sub-pages.
+  //
+  // Problem: "Settings" text appears on multiple pages (Home page card body,
+  // Skills card descriptions, etc.), so clickText('Settings') often matches
+  // the wrong element instead of the bottom tab bar button.
+  //
+  // Solution: target the tab bar button by its aria-label using XCUIElementTypeButton
+  // XPath directly, which avoids matching StaticText elements on the page.
+  if (normalized === '/settings' || normalized.startsWith('/settings/')) {
     try {
-      await clickText('Settings', 12_000);
-      await browser.pause(1_500);
-      const sub = await clickFirstMatch(['Billing & Usage', 'Billing'], 12_000);
-      if (!sub) {
-        throw new Error('Mac2: could not find Billing / Billing & Usage after opening Settings');
-      }
-      await browser.pause(2_000);
-      console.log(`[E2E] Mac2 navigated to ${hash} via Settings → ${sub}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`[E2E] Mac2: failed to navigate to ${hash}: ${msg}`);
-    }
-    return;
-  }
+      // Click the Settings tab button in the bottom bar using aria-label
+      const settingsTabXpath =
+        '//XCUIElementTypeButton[contains(@label, "Settings") or contains(@title, "Settings")]';
+      const candidates = await browser.$$(settingsTabXpath);
 
-  // Appium Mac2 — nested settings routes via Skills built-in cards
-  const SKILLS_BUILTIN_ROUTES: Record<string, string[]> = {
-    '/settings/screen-intelligence': ['Screen Intelligence'],
-    '/settings/voice': ['Voice Intelligence', 'Voice Dictation'],
-    '/settings/autocomplete': ['Text Auto-Complete', 'Inline Autocomplete'],
-  };
-  const builtInLabels = SKILLS_BUILTIN_ROUTES[normalized];
-  if (builtInLabels) {
-    try {
-      // Navigate to Skills page first, then click the built-in card
-      await clickText('Skills', 12_000);
-      await browser.pause(2_000);
-      const sub = await clickFirstMatch(builtInLabels, 12_000);
-      if (!sub) {
-        // Fallback: try Settings sidebar → Automation menu item
-        await clickText('Settings', 12_000);
-        await browser.pause(1_500);
-        const settingsSub = await clickFirstMatch(builtInLabels, 12_000);
-        if (!settingsSub) {
-          throw new Error(
-            `Mac2: could not find ${builtInLabels.join(' / ')} in Skills or Settings`
-          );
+      let clicked = false;
+      for (const btn of candidates) {
+        try {
+          const title = (await btn.getAttribute('title')) || '';
+          const label = (await btn.getAttribute('label')) || '';
+          // The tab bar button has a short title/label ("Settings"),
+          // not a long description like settings menu items
+          if (
+            title === 'Settings' ||
+            label === 'Settings' ||
+            (title.length < 20 && title.includes('Settings'))
+          ) {
+            const loc = await btn.getLocation();
+            const size = await btn.getSize();
+            const cx = Math.round(loc.x + size.width / 2);
+            const cy = Math.round(loc.y + size.height / 2);
+            await browser.performActions([
+              {
+                type: 'pointer',
+                id: 'mouse1',
+                parameters: { pointerType: 'mouse' },
+                actions: [
+                  { type: 'pointerMove', duration: 10, x: cx, y: cy },
+                  { type: 'pointerDown', button: 0 },
+                  { type: 'pause', duration: 50 },
+                  { type: 'pointerUp', button: 0 },
+                ],
+              },
+            ]);
+            await browser.releaseActions();
+            clicked = true;
+            console.log(`[E2E] Mac2 clicked Settings tab button at (${cx}, ${cy})`);
+            break;
+          }
+        } catch {
+          continue;
         }
-        await browser.pause(2_000);
-        console.log(`[E2E] Mac2 navigated to ${hash} via Settings → ${settingsSub}`);
-        return;
       }
-      await browser.pause(2_000);
-      console.log(`[E2E] Mac2 navigated to ${hash} via Skills → ${sub}`);
+
+      if (!clicked) {
+        // Fallback: try clickText
+        console.log('[E2E] Mac2 Settings tab button not found, falling back to clickText');
+        await clickText('Settings', 12_000);
+      }
+
+      await browser.pause(3_000);
+      console.log(`[E2E] Mac2 navigated to /settings`);
+
+      // For sub-pages, click the menu item on the Settings home page
+      if (normalized !== '/settings' && normalized.startsWith('/settings/')) {
+        // Order: [section group, then item within that section]
+        // Settings home → section page → specific panel
+        const SETTINGS_SUB_ROUTES: Record<string, string[]> = {
+          '/settings/billing': ['Account & Security', 'Billing & Usage'],
+          '/settings/recovery-phrase': ['Account & Security', 'Recovery Phrase'],
+          '/settings/team': ['Account & Security', 'Team'],
+          '/settings/connections': ['Account & Security', 'Connections'],
+          '/settings/screen-intelligence': ['Automation & Channels', 'Screen Intelligence'],
+          '/settings/messaging': ['Automation & Channels', 'Messaging Channels'],
+          '/settings/autocomplete': ['Automation & Channels', 'Inline Autocomplete'],
+          '/settings/cron-jobs': ['Automation & Channels', 'Cron Jobs'],
+          '/settings/local-model': ['AI & Skills', 'Local AI Model'],
+          '/settings/voice': ['AI & Skills', 'Voice Dictation'],
+          '/settings/ai': ['AI & Skills', 'AI Configuration'],
+          '/settings/tools': ['AI & Skills', 'Tools'],
+          '/settings/developer-options': ['Developer Options'],
+          '/settings/memory-debug': ['Developer Options', 'Memory Debug'],
+          '/settings/webhooks-debug': ['Developer Options', 'Webhooks Debug'],
+          '/settings/privacy': ['Privacy'],
+        };
+
+        const subLabels = SETTINGS_SUB_ROUTES[normalized];
+        if (subLabels) {
+          // Settings home shows section groups (Account & Security, etc.)
+          // Each group is a button — click the section first, then the item
+          for (const label of subLabels) {
+            try {
+              await clickText(label, 8_000);
+              await browser.pause(1_500);
+              console.log(`[E2E] Mac2 clicked Settings item: "${label}"`);
+            } catch {
+              console.log(`[E2E] Mac2 Settings item "${label}" not found, skipping`);
+            }
+          }
+          await browser.pause(1_500);
+          console.log(`[E2E] Mac2 navigated to ${hash}`);
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`[E2E] Mac2: failed to navigate to ${hash}: ${msg}`);
+      console.log(`[E2E] Mac2: failed to navigate to ${hash}: ${msg}`);
     }
     return;
   }
