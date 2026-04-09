@@ -465,6 +465,8 @@ describe('Login flow — complete with mock data (Linux)', () => {
 
     // Auth slice persistence moved away from a standalone persist:auth key.
     // Home-route confirmation above is the stable assertion that bypass auth succeeded.
-    console.log('[LoginFlow] Bypass auth: home route reached (token persistence format is implementation-specific)');
+    console.log(
+      '[LoginFlow] Bypass auth: home route reached (token persistence format is implementation-specific)'
+    );
   });
 });
