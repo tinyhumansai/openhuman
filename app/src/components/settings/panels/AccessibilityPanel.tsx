@@ -1,15 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import {
-  fetchAccessibilityStatus,
-  fetchAccessibilityVisionRecent,
-  flushAccessibilityVision,
-  refreshPermissionsWithRestart,
-  requestAccessibilityPermission,
-  startAccessibilitySession,
-  stopAccessibilitySession,
-} from '../../../store/accessibilitySlice';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -46,7 +37,6 @@ const PermissionBadge = ({ label, value }: { label: string; value: string }) => 
 
 const AccessibilityPanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const dispatch = useAppDispatch();
   const {
     status,
     isLoading,
@@ -58,27 +48,15 @@ const AccessibilityPanel = () => {
     isFlushingVision,
     recentVisionSummaries,
     lastError,
-  } = useAppSelector(state => state.accessibility);
+    requestPermission,
+    refreshPermissionsWithRestart,
+    refreshStatus,
+    refreshVision,
+    startSession,
+    stopSession,
+    flushVision,
+  } = useScreenIntelligenceState({ loadVision: true, visionLimit: 10, pollMs: 2000 });
   const [featureOverrides, setFeatureOverrides] = useState<{ screen_monitoring?: boolean }>({});
-
-  useEffect(() => {
-    void dispatch(fetchAccessibilityStatus());
-  }, [dispatch]);
-
-  useEffect(() => {
-    if (!status?.session.active) {
-      return;
-    }
-    const intervalId = window.setInterval(() => {
-      void dispatch(fetchAccessibilityStatus());
-      void dispatch(fetchAccessibilityVisionRecent(10));
-    }, 1000);
-    return () => window.clearInterval(intervalId);
-  }, [dispatch, status?.session.active]);
-
-  useEffect(() => {
-    void dispatch(fetchAccessibilityVisionRecent(10));
-  }, [dispatch]);
 
   const anyPermissionDenied =
     status?.permissions.accessibility === 'denied' ||
@@ -145,14 +123,14 @@ const AccessibilityPanel = () => {
 
           <button
             type="button"
-            onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
+            onClick={() => void requestPermission('accessibility')}
             disabled={isRequestingPermissions || isRestartingCore}
             className="mt-1 rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Request Accessibility'}
           </button>
           <button
             type="button"
-            onClick={() => void dispatch(requestAccessibilityPermission('input_monitoring'))}
+            onClick={() => void requestPermission('input_monitoring')}
             disabled={isRequestingPermissions || isRestartingCore}
             className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
             {isRequestingPermissions ? 'Requesting…' : 'Open Input Monitoring'}
@@ -161,7 +139,7 @@ const AccessibilityPanel = () => {
           {anyPermissionDenied ? (
             <button
               type="button"
-              onClick={() => void dispatch(refreshPermissionsWithRestart())}
+              onClick={() => void refreshPermissionsWithRestart()}
               disabled={isRestartingCore || isLoading}
               className="rounded-lg border border-amber-500/60 bg-amber-50 px-3 py-2 text-sm text-amber-700 disabled:opacity-50">
               {isRestartingCore ? 'Restarting core…' : 'Restart & Refresh Permissions'}
@@ -169,7 +147,7 @@ const AccessibilityPanel = () => {
           ) : (
             <button
               type="button"
-              onClick={() => void dispatch(fetchAccessibilityStatus())}
+              onClick={() => void refreshStatus()}
               disabled={isLoading || isRestartingCore}
               className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-2 text-sm text-stone-700 disabled:opacity-50">
               {isLoading ? 'Refreshing…' : 'Refresh Status'}
@@ -216,13 +194,11 @@ const AccessibilityPanel = () => {
             <button
               type="button"
               onClick={() =>
-                void dispatch(
-                  startAccessibilitySession({
-                    consent: true,
-                    ttl_secs: status?.config.session_ttl_secs ?? 300,
-                    screen_monitoring: screenMonitoring,
-                  })
-                )
+                void startSession({
+                  consent: true,
+                  ttl_secs: status?.config.session_ttl_secs ?? 300,
+                  screen_monitoring: screenMonitoring,
+                })
               }
               disabled={startDisabled}
               className="rounded-lg border border-green-500/60 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
@@ -230,14 +206,14 @@ const AccessibilityPanel = () => {
             </button>
             <button
               type="button"
-              onClick={() => void dispatch(stopAccessibilitySession('manual_stop'))}
+              onClick={() => void stopSession('manual_stop')}
               disabled={stopDisabled}
               className="rounded-lg border border-red-500/60 bg-red-50 px-3 py-2 text-sm text-red-600 disabled:opacity-50">
               {isStoppingSession ? 'Stopping…' : 'Stop Session'}
             </button>
             <button
               type="button"
-              onClick={() => void dispatch(flushAccessibilityVision())}
+              onClick={() => void flushVision()}
               disabled={isFlushingVision || !status?.session.active}
               className="rounded-lg border border-primary-500/60 bg-primary-50 px-3 py-2 text-sm text-primary-600 disabled:opacity-50">
               {isFlushingVision ? 'Analyzing…' : 'Analyze Now'}
@@ -250,7 +226,7 @@ const AccessibilityPanel = () => {
             <h3 className="text-sm font-semibold text-stone-900">Vision Summaries</h3>
             <button
               type="button"
-              onClick={() => void dispatch(fetchAccessibilityVisionRecent(10))}
+              onClick={() => void refreshVision(10)}
               disabled={isLoadingVision}
               className="rounded-lg border border-stone-300 bg-stone-100 px-3 py-1.5 text-xs text-stone-700 disabled:opacity-50">
               {isLoadingVision ? 'Refreshing…' : 'Refresh'}

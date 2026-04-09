@@ -35,7 +35,6 @@ function makeState(
     thread: {} as RootState['thread'],
     intelligence: {} as RootState['intelligence'],
     invite: {} as RootState['invite'],
-    accessibility: {} as RootState['accessibility'],
     channelConnections: {} as RootState['channelConnections'],
   } as unknown as RootState;
 }

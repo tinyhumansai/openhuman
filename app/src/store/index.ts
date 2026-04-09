@@ -15,7 +15,6 @@ import storage from 'redux-persist/lib/storage';
 import type { User } from '../types/api';
 import type { TeamInvite, TeamMember, TeamWithRole } from '../types/team';
 import { IS_DEV } from '../utils/config';
-import accessibilityReducer from './accessibilitySlice';
 import aiReducer from './aiSlice';
 import type { AuthState } from './authSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
@@ -56,7 +55,6 @@ export const store = configureStore({
     ai: persistedAiReducer,
     thread: persistedThreadReducer,
     invite: inviteReducer,
-    accessibility: accessibilityReducer,
     channelConnections: persistedChannelConnectionsReducer,
     webhooks: webhooksReducer,
   },

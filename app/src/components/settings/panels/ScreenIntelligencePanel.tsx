@@ -1,14 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type ComponentProps, useEffect, useMemo, useState } from 'react';
 
 import ScreenIntelligenceDebugPanel from '../../../components/intelligence/ScreenIntelligenceDebugPanel';
-import {
-  fetchAccessibilityStatus,
-  fetchAccessibilityVisionRecent,
-  flushAccessibilityVision,
-  startAccessibilitySession,
-  stopAccessibilitySession,
-} from '../../../store/accessibilitySlice';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
 import { isTauri, openhumanUpdateScreenIntelligenceSettings } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -27,7 +20,11 @@ const formatRemaining = (remainingMs: number | null): string => {
   return `${mins}:${secs}`;
 };
 
-const DebugSection = () => {
+const DebugSection = ({
+  state,
+}: {
+  state: ComponentProps<typeof ScreenIntelligenceDebugPanel>['state'];
+}) => {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -39,14 +36,13 @@ const DebugSection = () => {
         <span>Debug & Diagnostics</span>
         <span className="text-xs text-stone-400">{isOpen ? 'Collapse' : 'Expand'}</span>
       </button>
-      {isOpen && <ScreenIntelligenceDebugPanel />}
+      {isOpen && <ScreenIntelligenceDebugPanel state={state} />}
     </section>
   );
 };
 
 const ScreenIntelligencePanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const dispatch = useAppDispatch();
   const {
     status,
     lastRestartSummary,
@@ -59,7 +55,17 @@ const ScreenIntelligencePanel = () => {
     isFlushingVision,
     recentVisionSummaries,
     lastError,
-  } = useAppSelector(state => state.accessibility);
+    refreshStatus,
+    refreshVision,
+    startSession,
+    stopSession,
+    flushVision,
+    requestPermission,
+    refreshPermissionsWithRestart,
+    runCaptureTest,
+    captureTestResult,
+    isCaptureTestRunning,
+  } = useScreenIntelligenceState({ loadVision: true, visionLimit: 10, pollMs: 2000 });
   const [featureOverrides, setFeatureOverrides] = useState<{ screen_monitoring?: boolean }>({});
   const [enabled, setEnabled] = useState<boolean>(false);
   const [policyMode, setPolicyMode] = useState<'all_except_blacklist' | 'whitelist_only'>(
@@ -72,25 +78,6 @@ const ScreenIntelligencePanel = () => {
   const [denylistText, setDenylistText] = useState('');
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void dispatch(fetchAccessibilityStatus());
-  }, [dispatch]);
-
-  useEffect(() => {
-    if (!status?.session.active) {
-      return;
-    }
-    const intervalId = window.setInterval(() => {
-      void dispatch(fetchAccessibilityStatus());
-      void dispatch(fetchAccessibilityVisionRecent(10));
-    }, 1000);
-    return () => window.clearInterval(intervalId);
-  }, [dispatch, status?.session.active]);
-
-  useEffect(() => {
-    void dispatch(fetchAccessibilityVisionRecent(10));
-  }, [dispatch]);
 
   useEffect(() => {
     if (!status?.config) {
@@ -150,7 +137,7 @@ const ScreenIntelligencePanel = () => {
           .map(v => v.trim())
           .filter(Boolean),
       });
-      await dispatch(fetchAccessibilityStatus());
+      await refreshStatus();
     } catch (error) {
       setConfigError(error instanceof Error ? error.message : 'Failed to save screen intelligence');
     } finally {
@@ -178,6 +165,9 @@ const ScreenIntelligencePanel = () => {
           isRequestingPermissions={isRequestingPermissions}
           isRestartingCore={isRestartingCore}
           isLoading={isLoading}
+          requestPermission={requestPermission}
+          refreshPermissionsWithRestart={refreshPermissionsWithRestart}
+          refreshStatus={refreshStatus}
         />
 
         <section className="space-y-3">
@@ -316,13 +306,11 @@ const ScreenIntelligencePanel = () => {
             <button
               type="button"
               onClick={() =>
-                void dispatch(
-                  startAccessibilitySession({
-                    consent: true,
-                    ttl_secs: status?.config.session_ttl_secs ?? 300,
-                    screen_monitoring: screenMonitoring,
-                  })
-                )
+                void startSession({
+                  consent: true,
+                  ttl_secs: status?.config.session_ttl_secs ?? 300,
+                  screen_monitoring: screenMonitoring,
+                })
               }
               disabled={startDisabled}
               className="rounded-lg border border-green-400 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
@@ -330,14 +318,14 @@ const ScreenIntelligencePanel = () => {
             </button>
             <button
               type="button"
-              onClick={() => void dispatch(stopAccessibilitySession('manual_stop'))}
+              onClick={() => void stopSession('manual_stop')}
               disabled={stopDisabled}
               className="rounded-lg border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-700 disabled:opacity-50">
               {isStoppingSession ? 'Stopping…' : 'Stop Session'}
             </button>
             <button
               type="button"
-              onClick={() => void dispatch(flushAccessibilityVision())}
+              onClick={() => void flushVision()}
               disabled={isFlushingVision || !status?.session.active}
               className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
               {isFlushingVision ? 'Analyzing…' : 'Analyze Now'}
@@ -350,7 +338,7 @@ const ScreenIntelligencePanel = () => {
             <h3 className="text-sm font-semibold text-stone-900">Vision Summaries</h3>
             <button
               type="button"
-              onClick={() => void dispatch(fetchAccessibilityVisionRecent(10))}
+              onClick={() => void refreshVision(10)}
               disabled={isLoadingVision}
               className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-600 disabled:opacity-50">
               {isLoadingVision ? 'Refreshing…' : 'Refresh'}
@@ -377,8 +365,18 @@ const ScreenIntelligencePanel = () => {
           )}
         </section>
 
-        <DebugSection />
-
+        <DebugSection
+          state={{
+            status,
+            recentVisionSummaries,
+            lastError,
+            captureTestResult,
+            isCaptureTestRunning,
+            refreshStatus,
+            refreshVision,
+            runCaptureTest,
+          }}
+        />
         {status !== null && !status.platform_supported && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700">
             Screen Intelligence V1 is currently supported on macOS only.

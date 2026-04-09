@@ -1,9 +1,4 @@
-import {
-  fetchAccessibilityStatus,
-  refreshPermissionsWithRestart,
-  requestAccessibilityPermission,
-} from '../../../../store/accessibilitySlice';
-import { useAppDispatch } from '../../../../store/hooks';
+import type { AccessibilityPermissionKind } from '../../../../utils/tauriCommands';
 
 interface PermissionsBadgeProps {
   label: string;
@@ -38,6 +33,9 @@ interface PermissionsSectionProps {
   isRequestingPermissions: boolean;
   isRestartingCore: boolean;
   isLoading: boolean;
+  requestPermission: (permission: AccessibilityPermissionKind) => Promise<unknown>;
+  refreshPermissionsWithRestart: () => Promise<unknown>;
+  refreshStatus: () => Promise<unknown>;
 }
 
 const PermissionsSection = ({
@@ -50,9 +48,10 @@ const PermissionsSection = ({
   isRequestingPermissions,
   isRestartingCore,
   isLoading,
+  requestPermission,
+  refreshPermissionsWithRestart,
+  refreshStatus,
 }: PermissionsSectionProps) => {
-  const dispatch = useAppDispatch();
-
   return (
     <section className="space-y-3">
       <h3 className="text-sm font-semibold text-stone-900">Permissions</h3>
@@ -85,21 +84,21 @@ const PermissionsSection = ({
 
       <button
         type="button"
-        onClick={() => void dispatch(requestAccessibilityPermission('screen_recording'))}
+        onClick={() => void requestPermission('screen_recording')}
         disabled={isRequestingPermissions || isRestartingCore}
         className="mt-1 rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
         {isRequestingPermissions ? 'Requesting…' : 'Request Screen Recording'}
       </button>
       <button
         type="button"
-        onClick={() => void dispatch(requestAccessibilityPermission('accessibility'))}
+        onClick={() => void requestPermission('accessibility')}
         disabled={isRequestingPermissions || isRestartingCore}
         className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
         {isRequestingPermissions ? 'Requesting…' : 'Request Accessibility'}
       </button>
       <button
         type="button"
-        onClick={() => void dispatch(requestAccessibilityPermission('input_monitoring'))}
+        onClick={() => void requestPermission('input_monitoring')}
         disabled={isRequestingPermissions || isRestartingCore}
         className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
         {isRequestingPermissions ? 'Requesting…' : 'Open Input Monitoring'}
@@ -107,7 +106,7 @@ const PermissionsSection = ({
       {anyPermissionDenied ? (
         <button
           type="button"
-          onClick={() => void dispatch(refreshPermissionsWithRestart())}
+          onClick={() => void refreshPermissionsWithRestart()}
           disabled={isRestartingCore || isLoading}
           className="rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-700 disabled:opacity-50">
           {isRestartingCore ? 'Restarting core…' : 'Restart & Refresh Permissions'}
@@ -115,7 +114,7 @@ const PermissionsSection = ({
       ) : (
         <button
           type="button"
-          onClick={() => void dispatch(fetchAccessibilityStatus())}
+          onClick={() => void refreshStatus()}
           disabled={isLoading || isRestartingCore}
           className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-700 disabled:opacity-50">
           {isLoading ? 'Refreshing…' : 'Refresh Status'}

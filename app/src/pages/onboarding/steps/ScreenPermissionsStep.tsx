@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import {
-  fetchAccessibilityStatus,
-  refreshPermissionsWithRestart,
-  requestAccessibilityPermission,
-} from '../../../store/accessibilitySlice';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface ScreenPermissionsStepProps {
@@ -14,14 +9,16 @@ interface ScreenPermissionsStepProps {
 }
 
 const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsStepProps) => {
-  const dispatch = useAppDispatch();
-  const { status, isLoading, isRequestingPermissions, isRestartingCore, lastError } =
-    useAppSelector(state => state.accessibility);
+  const {
+    status,
+    isLoading,
+    isRequestingPermissions,
+    isRestartingCore,
+    lastError,
+    requestPermission,
+    refreshPermissionsWithRestart,
+  } = useScreenIntelligenceState({ pollMs: 2000 });
   const [shouldAutoRefreshOnReturn, setShouldAutoRefreshOnReturn] = useState(false);
-
-  useEffect(() => {
-    void dispatch(fetchAccessibilityStatus());
-  }, [dispatch]);
 
   const accessibilityPermission = status?.permissions.accessibility ?? 'unknown';
   const isGranted = accessibilityPermission === 'granted';
@@ -42,7 +39,7 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
       }
 
       setShouldAutoRefreshOnReturn(false);
-      void dispatch(refreshPermissionsWithRestart());
+      void refreshPermissionsWithRestart();
     };
 
     window.addEventListener('focus', refreshAfterReturn);
@@ -52,11 +49,11 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
       window.removeEventListener('focus', refreshAfterReturn);
       document.removeEventListener('visibilitychange', refreshAfterReturn);
     };
-  }, [dispatch, isGranted, isLoading, isRestartingCore, shouldAutoRefreshOnReturn]);
+  }, [isGranted, isLoading, isRestartingCore, refreshPermissionsWithRestart, shouldAutoRefreshOnReturn]);
 
   const handleRequestPermissions = () => {
     setShouldAutoRefreshOnReturn(true);
-    void dispatch(requestAccessibilityPermission('accessibility'));
+    void requestPermission('accessibility');
   };
 
   return (
@@ -102,7 +99,7 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => void dispatch(refreshPermissionsWithRestart())}
+              onClick={() => void refreshPermissionsWithRestart()}
               disabled={isRestartingCore || isLoading}
               className="flex-1 py-2 text-sm font-medium rounded-xl border border-stone-200 hover:border-stone-400 text-stone-600 hover:text-stone-900 opacity-70 hover:opacity-100 transition-all disabled:opacity-40">
               {isRestartingCore ? 'Restarting...' : 'Restart & Refresh'}

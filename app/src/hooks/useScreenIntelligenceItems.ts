@@ -1,7 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 
-import { fetchAccessibilityVisionRecent } from '../store/accessibilitySlice';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { useScreenIntelligenceState } from '../features/screen-intelligence/useScreenIntelligenceState';
 import type { ActionableItem, ActionableItemPriority } from '../types/intelligence';
 
 function confidenceToPriority(confidence: number): ActionableItemPriority {
@@ -11,12 +10,11 @@ function confidenceToPriority(confidence: number): ActionableItemPriority {
 }
 
 export function useScreenIntelligenceItems() {
-  const dispatch = useAppDispatch();
-  const { recentVisionSummaries, isLoadingVision } = useAppSelector(state => state.accessibility);
-
-  useEffect(() => {
-    void dispatch(fetchAccessibilityVisionRecent(20));
-  }, [dispatch]);
+  const { recentVisionSummaries, isLoadingVision, refreshVision } = useScreenIntelligenceState({
+    loadVision: true,
+    visionLimit: 20,
+    pollMs: 2000,
+  });
 
   const items: ActionableItem[] = useMemo(() => {
     return recentVisionSummaries.map(summary => ({
@@ -33,5 +31,5 @@ export function useScreenIntelligenceItems() {
     }));
   }, [recentVisionSummaries]);
 
-  return { items, loading: isLoadingVision };
+  return { items, loading: isLoadingVision, refresh: () => refreshVision(20) };
 }
