@@ -13,7 +13,7 @@ export const normalizeLegacyMethod = (method: string): string => {
 };
 
 /** RpcOutcome with non-empty logs serializes as `{ result, logs }` in the core. */
-const unwrapCliCompatibleJson = <T,>(raw: unknown): T => {
+const unwrapCliCompatibleJson = <T>(raw: unknown): T => {
   if (
     raw !== null &&
     typeof raw === 'object' &&
@@ -57,7 +57,7 @@ const isJsonRpcEnvelope = (value: unknown): value is JsonRpcResponse<unknown> =>
   );
 };
 
-export const callParentCoreRpc = async <T,>(
+export const callParentCoreRpc = async <T>(
   rpcUrl: string,
   method: string,
   params: Record<string, unknown> = {},
