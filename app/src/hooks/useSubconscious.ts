@@ -66,11 +66,19 @@ export function useSubconscious(): UseSubconsciousResult {
     setLoading(true);
     setError(null);
     try {
+      // Each RPC is bounded by RPC_TIMEOUT_MS so Promise.all is guaranteed
+      // to settle. Without this, a single hung request (e.g. sidecar held
+      // in a long-running tick) would leave fetchingRef.current === true
+      // forever, and every subsequent 3s poll would silently no-op at the
+      // early-return above — freezing the Intelligence page on a stale
+      // snapshot. withTimeout returns null on timeout, matching the
+      // existing `.catch(() => null)` failure contract, so downstream
+      // setState calls just skip that slice for this tick.
       const [tasksRes, escalationsRes, logRes, statusRes] = await Promise.all([
-        subconsciousTasksList().catch(() => null),
-        subconsciousEscalationsList('pending').catch(() => null),
-        subconsciousLogList(undefined, 30).catch(() => null),
-        subconsciousStatus().catch(() => null),
+        withTimeout(subconsciousTasksList()),
+        withTimeout(subconsciousEscalationsList('pending')),
+        withTimeout(subconsciousLogList(undefined, 30)),
+        withTimeout(subconsciousStatus()),
       ]);
 
       if (tasksRes) setTasks(unwrap(tasksRes) ?? []);
@@ -167,10 +175,19 @@ export function useSubconscious(): UseSubconsciousResult {
   // Poll every 3s while the hook is mounted (user is on Subconscious tab).
   // Picks up all state changes: in_progress → act/noop/escalate/failed,
   // new escalations, background tick completions, etc.
+  //
+  // On unmount we also clear fetchingRef — otherwise a request that times
+  // out or resolves after the component has been torn down would leave the
+  // ref stuck `true` for the next mount (React Strict Mode double-mount in
+  // dev, or tab navigation back to Intelligence), silently wedging the
+  // poller exactly as before.
   useEffect(() => {
     refresh();
     const interval = setInterval(refresh, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      fetchingRef.current = false;
+    };
   }, [refresh]);
 
   return {
@@ -189,6 +206,26 @@ export function useSubconscious(): UseSubconsciousResult {
     dismissEscalation,
     error,
   };
+}
+
+/**
+ * Per-RPC client-side timeout for the polling refresh. Must be strictly
+ * less than the 3s poll interval so a hung call can't stack up across
+ * ticks. 2500ms leaves a 500ms safety margin.
+ */
+const RPC_TIMEOUT_MS = 2500;
+
+/**
+ * Race a promise against a timeout. Resolves to `null` on timeout or
+ * rejection — matching the prior `.catch(() => null)` contract used by
+ * the refresh logic so downstream code can treat "no data this tick" and
+ * "RPC failed this tick" identically.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number = RPC_TIMEOUT_MS): Promise<T | null> {
+  return Promise.race<T | null>([
+    promise.catch(() => null),
+    new Promise<null>(resolve => setTimeout(() => resolve(null), ms)),
+  ]);
 }
 
 /**
