@@ -56,23 +56,18 @@ async fn tick() {
                     info.latest_version,
                     info.download_url.as_deref().unwrap_or("(no asset)")
                 );
-                publish_global(DomainEvent::HealthChanged {
-                    component: "update_checker".to_string(),
-                    healthy: true,
-                    message: None,
-                });
             } else {
                 log::info!(
                     "[update:scheduler] up to date (current: {}, latest: {})",
                     info.current_version,
                     info.latest_version
                 );
-                publish_global(DomainEvent::HealthChanged {
-                    component: "update_checker".to_string(),
-                    healthy: true,
-                    message: None,
-                });
             }
+            publish_global(DomainEvent::HealthChanged {
+                component: "update_checker".to_string(),
+                healthy: true,
+                message: None,
+            });
         }
         Err(e) => {
             log::warn!("[update:scheduler] update check failed: {e}");

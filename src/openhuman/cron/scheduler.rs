@@ -102,12 +102,18 @@ async fn process_due_jobs(config: &Config, security: &Arc<SecurityPolicy>, jobs:
     }))
     .buffer_unordered(max_concurrent);
 
-    while let Some((job_id, success)) = in_flight.next().await {
-        if !success {
+    while let Some((job_id, success, failure_message)) = in_flight.next().await {
+        if success {
+            publish_global(DomainEvent::HealthChanged {
+                component: "scheduler".to_string(),
+                healthy: true,
+                message: None,
+            });
+        } else {
             publish_global(DomainEvent::HealthChanged {
                 component: "scheduler".to_string(),
                 healthy: false,
-                message: Some(format!("job {job_id} failed")),
+                message: Some(failure_message.unwrap_or_else(|| format!("job {job_id} failed"))),
             });
         }
     }
@@ -117,20 +123,17 @@ async fn execute_and_persist_job(
     config: &Config,
     security: &SecurityPolicy,
     job: &CronJob,
-) -> (String, bool) {
-    publish_global(DomainEvent::HealthChanged {
-        component: "scheduler".to_string(),
-        healthy: true,
-        message: None,
-    });
+) -> (String, bool, Option<String>) {
     warn_if_high_frequency_agent_job(job);
 
     let started_at = Utc::now();
     let (success, output) = execute_job_with_retry(config, security, job).await;
     let finished_at = Utc::now();
     let success = persist_job_result(config, job, success, &output, started_at, finished_at).await;
+    let failure_message =
+        (!success).then(|| crate::openhuman::util::truncate_with_ellipsis(&output, 256));
 
-    (job.id.clone(), success)
+    (job.id.clone(), success, failure_message)
 }
 
 async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String) {

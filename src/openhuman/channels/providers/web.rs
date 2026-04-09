@@ -51,6 +51,14 @@ fn key_for(client_id: &str, thread_id: &str) -> String {
     format!("{client_id}::{thread_id}")
 }
 
+fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
+    json!({
+        "client_id": client_id,
+        "thread_id": thread_id,
+    })
+    .to_string()
+}
+
 pub async fn start_chat(
     client_id: &str,
     thread_id: &str,
@@ -400,7 +408,7 @@ fn build_session_agent(
 
     Agent::from_config(&effective)
         .map(|mut agent| {
-            agent.set_event_context(format!("{client_id}::{thread_id}"), "web_channel");
+            agent.set_event_context(event_session_id_for(client_id, thread_id), "web_channel");
             agent
         })
         .map_err(|e| e.to_string())
