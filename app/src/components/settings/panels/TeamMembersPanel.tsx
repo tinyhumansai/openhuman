@@ -12,7 +12,7 @@ const ROLES: TeamRole[] = ['ADMIN', 'BILLING_MANAGER', 'MEMBER'];
 const TeamMembersPanel = () => {
   const { teamId } = useParams<{ teamId: string }>();
   const location = useLocation();
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, teams, teamMembersById, refreshTeamMembers } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -114,10 +114,15 @@ const TeamMembersPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Members" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Members"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-4">
           {error && (
             <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
               <p className="text-xs text-coral-400">{error}</p>

@@ -8,7 +8,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const TeamManagementPanel = () => {
   const { teamId } = useParams<{ teamId: string }>();
-  const { navigateBack, navigateToSettings } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const { teams, refreshTeams } = useCoreState();
   const initialFetchAttemptedRef = useRef(false);
 
@@ -89,7 +89,12 @@ const TeamManagementPanel = () => {
   if (!teamEntry) {
     return (
       <div className="">
-        <SettingsHeader title="Team Management" showBackButton={true} onBack={navigateBack} />
+        <SettingsHeader
+          title="Team Management"
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-stone-500">Team not found</p>
         </div>
@@ -100,7 +105,12 @@ const TeamManagementPanel = () => {
   if (!isAdmin) {
     return (
       <div className="">
-        <SettingsHeader title="Team Management" showBackButton={true} onBack={navigateBack} />
+        <SettingsHeader
+          title="Team Management"
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
         <div className="flex-1 flex items-center justify-center">
           <p className="text-sm text-stone-500">Access denied</p>
         </div>
@@ -112,7 +122,12 @@ const TeamManagementPanel = () => {
 
   return (
     <div className="">
-      <SettingsHeader title={`Manage ${team.name}`} showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title={`Manage ${team.name}`}
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
         <div className="p-4 space-y-4">

@@ -139,7 +139,7 @@ function ConnectionOptionRow({
 // ---------------------------------------------------------------------------
 
 const ConnectionsPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
   const [setupModalOpen, setSetupModalOpen] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
@@ -189,7 +189,12 @@ const ConnectionsPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Connections" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Connections"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
         <div className="p-4 space-y-4">

@@ -12,15 +12,12 @@ export type SettingsRoute =
   | 'screen-intelligence'
   | 'autocomplete'
   | 'privacy'
-  | 'profile'
-  | 'advanced'
   | 'billing'
   | 'team'
   | 'team-members'
   | 'team-invites'
   | 'developer-options'
   | 'accessibility'
-  | 'skills'
   | 'ai'
   | 'local-model'
   | 'voice'
@@ -30,12 +27,18 @@ export type SettingsRoute =
   | 'webhooks-debug'
   | 'agent-chat';
 
+export interface BreadcrumbItem {
+  label: string;
+  onClick?: () => void;
+}
+
 interface SettingsNavigationHook {
   currentRoute: SettingsRoute;
   navigateToSettings: (route?: SettingsRoute | string) => void;
   navigateToTeamManagement: (teamId: string) => void;
   navigateBack: () => void;
   closeSettings: () => void;
+  breadcrumbs: BreadcrumbItem[];
 }
 
 export const useSettingsNavigation = (): SettingsNavigationHook => {
@@ -74,12 +77,9 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/screen-intelligence')) return 'screen-intelligence';
     if (path.includes('/settings/autocomplete')) return 'autocomplete';
     if (path.includes('/settings/privacy')) return 'privacy';
-    if (path.includes('/settings/profile')) return 'profile';
-    if (path.includes('/settings/advanced')) return 'advanced';
     if (path.includes('/settings/billing')) return 'billing';
     if (path.includes('/settings/developer-options')) return 'developer-options';
     if (path.includes('/settings/accessibility')) return 'accessibility';
-    if (path.includes('/settings/skills')) return 'skills';
     if (path.includes('/settings/ai')) return 'ai';
     if (path.includes('/settings/local-model')) return 'local-model';
     if (path.includes('/settings/voice')) return 'voice';
@@ -123,11 +123,90 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     goBackWithFallback('/home');
   }, [goBackWithFallback]);
 
+  const settingsCrumb: BreadcrumbItem = { label: 'Settings', onClick: () => navigate('/settings') };
+
+  const accountCrumb: BreadcrumbItem = {
+    label: 'Account & Security',
+    onClick: () => navigate('/settings/account'),
+  };
+
+  const automationCrumb: BreadcrumbItem = {
+    label: 'Automation & Channels',
+    onClick: () => navigate('/settings/automation'),
+  };
+
+  const aiToolsCrumb: BreadcrumbItem = {
+    label: 'AI & Skills',
+    onClick: () => navigate('/settings/ai-tools'),
+  };
+
+  const teamCrumb: BreadcrumbItem = { label: 'Team', onClick: () => navigate('/settings/team') };
+
+  const developerCrumb: BreadcrumbItem = {
+    label: 'Developer Options',
+    onClick: () => navigate('/settings/developer-options'),
+  };
+
+  const getBreadcrumbs = (): BreadcrumbItem[] => {
+    switch (currentRoute) {
+      // Section pages
+      case 'account':
+      case 'automation':
+      case 'ai-tools':
+        return [settingsCrumb];
+
+      // Leaf panels under account
+      case 'billing':
+      case 'recovery-phrase':
+      case 'team':
+      case 'connections':
+        return [settingsCrumb, accountCrumb];
+
+      // Leaf panels under automation
+      case 'accessibility':
+      case 'screen-intelligence':
+      case 'autocomplete':
+      case 'messaging':
+      case 'cron-jobs':
+        return [settingsCrumb, automationCrumb];
+
+      // Leaf panels under ai-tools
+      case 'voice':
+      case 'local-model':
+      case 'ai':
+        return [settingsCrumb, aiToolsCrumb];
+
+      // Team sub-pages
+      case 'team-members':
+      case 'team-invites':
+        return [settingsCrumb, accountCrumb, teamCrumb];
+
+      // Developer sub-pages
+      case 'webhooks-debug':
+      case 'memory-data':
+      case 'memory-debug':
+        return [settingsCrumb, developerCrumb];
+
+      // Other leaf pages
+      case 'privacy':
+      case 'agent-chat':
+      case 'developer-options':
+        return [settingsCrumb];
+
+      case 'home':
+      default:
+        return [];
+    }
+  };
+
+  const breadcrumbs = getBreadcrumbs();
+
   return {
     currentRoute,
     navigateToSettings,
     navigateToTeamManagement,
     navigateBack,
     closeSettings,
+    breadcrumbs,
   };
 };

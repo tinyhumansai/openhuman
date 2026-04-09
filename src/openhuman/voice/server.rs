@@ -191,6 +191,27 @@ impl VoiceServer {
                         }
                     };
 
+                    // Forward hotkey event to the dictation bus so Socket.IO
+                    // clients receive dictation:toggle events even when the
+                    // dictation_listener is not running (single rdev listener).
+                    {
+                        use super::dictation_listener;
+                        let event_type = match event {
+                            HotkeyEvent::Pressed => "pressed",
+                            HotkeyEvent::Released => "released",
+                        };
+                        dictation_listener::publish_dictation_event(
+                            dictation_listener::DictationEvent {
+                                event_type: event_type.to_string(),
+                                hotkey: self.config.hotkey.clone(),
+                                activation_mode: match self.config.activation_mode {
+                                    ActivationMode::Tap => "toggle".to_string(),
+                                    ActivationMode::Push => "push".to_string(),
+                                },
+                            },
+                        );
+                    }
+
                     match event {
                         HotkeyEvent::Pressed => {
                             let current_state = *self.state.lock().await;
@@ -554,18 +575,36 @@ async fn process_recording_bg(
                     if !text.trim().is_empty() {
                         push_recent_transcript(&recent_transcripts, text).await;
 
-                        let insert_started = Instant::now();
-                        if let Err(e) = text_input::insert_text(text, expected_app.as_deref()) {
-                            error!("{LOG_PREFIX} failed to insert text: {e}");
-                            *last_error.lock().await = Some(e);
-                        } else {
-                            let insert_elapsed = insert_started.elapsed();
+                        // When the Tauri app itself is focused, deliver via
+                        // Socket.IO so the frontend inserts into the chat.
+                        // Otherwise paste via OS-level Cmd+V into the
+                        // external app.
+                        let is_self = expected_app
+                            .as_deref()
+                            .map(|app| app.to_lowercase().contains("openhuman"))
+                            .unwrap_or(false);
+
+                        if is_self {
+                            super::dictation_listener::publish_transcription(text.to_string());
                             transcription_count.fetch_add(1, Ordering::Relaxed);
                             info!(
-                                "{LOG_PREFIX} text inserted into active field (insert_elapsed_ms={}, total_pipeline_ms={})",
-                                insert_elapsed.as_millis(),
+                                "{LOG_PREFIX} app is focused — delivered via Socket.IO (total_pipeline_ms={})",
                                 pipeline_started.elapsed().as_millis()
                             );
+                        } else {
+                            let insert_started = Instant::now();
+                            if let Err(e) = text_input::insert_text(text, expected_app.as_deref()) {
+                                error!("{LOG_PREFIX} failed to insert text: {e}");
+                                *last_error.lock().await = Some(e);
+                            } else {
+                                let insert_elapsed = insert_started.elapsed();
+                                transcription_count.fetch_add(1, Ordering::Relaxed);
+                                info!(
+                                    "{LOG_PREFIX} text inserted into active field (insert_elapsed_ms={}, total_pipeline_ms={})",
+                                    insert_elapsed.as_millis(),
+                                    pipeline_started.elapsed().as_millis()
+                                );
+                            }
                         }
                     } else {
                         debug!("{LOG_PREFIX} transcription was empty, nothing to insert");

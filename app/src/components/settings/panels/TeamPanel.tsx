@@ -7,7 +7,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const TeamPanel = () => {
-  const { navigateBack, navigateToTeamManagement } = useSettingsNavigation();
+  const { navigateBack, navigateToTeamManagement, breadcrumbs } = useSettingsNavigation();
   const { snapshot, teams, refresh, refreshTeams } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -232,7 +232,12 @@ const TeamPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Team" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Team"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
         <div className="p-4 space-y-4">

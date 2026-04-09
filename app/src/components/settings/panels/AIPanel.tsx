@@ -12,7 +12,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const AIPanel = () => {
-  const { navigateBack, navigateToSettings } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const [aiConfig, setAiConfig] = useState<AIPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshingComponent, setRefreshingComponent] = useState<'soul' | 'tools' | 'all' | null>(
@@ -75,7 +75,12 @@ const AIPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="AI Configuration" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="AI Configuration"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div className="p-4 space-y-4">
         <section className="space-y-4">

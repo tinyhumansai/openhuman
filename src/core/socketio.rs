@@ -218,6 +218,9 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         log::debug!("[socketio] web_channel bridge stopped");
     });
 
+    // Clone for the transcription bridge spawned below.
+    let io_transcription = io.clone();
+
     // Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
         let mut rx = crate::openhuman::voice::dictation_listener::subscribe_dictation_events();
@@ -241,6 +244,32 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] dictation bridge stopped");
+    });
+
+    // Transcription results → broadcast to all connected clients.
+    tokio::spawn(async move {
+        let mut rx = crate::openhuman::voice::dictation_listener::subscribe_transcription_results();
+        loop {
+            let text = match rx.recv().await {
+                Ok(text) => text,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} transcription events due to lag",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+
+            log::debug!(
+                "[socketio] broadcast dictation:transcription ({} chars) to all clients",
+                text.len()
+            );
+            let payload = serde_json::json!({ "text": text });
+            let _ = io_transcription.emit("dictation:transcription", &payload);
+        }
+        log::debug!("[socketio] transcription bridge stopped");
     });
 }
 

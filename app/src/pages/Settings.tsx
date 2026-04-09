@@ -1,7 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import AccessibilityPanel from '../components/settings/panels/AccessibilityPanel';
-import AdvancedPanel from '../components/settings/panels/AdvancedPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
@@ -14,10 +13,8 @@ import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MessagingPanel from '../components/settings/panels/MessagingPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
-import ProfilePanel from '../components/settings/panels/ProfilePanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
-import SkillsPanel from '../components/settings/panels/SkillsPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -250,22 +247,6 @@ const aiSettingsItems = [
       </svg>
     ),
   },
-  {
-    id: 'skills',
-    title: 'Skills',
-    description: 'Configure browser access, skill behavior, and installed skill capabilities',
-    route: 'skills',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M9.75 3a.75.75 0 00-1.5 0v2.25H6a2.25 2.25 0 000 4.5h2.25V12H6a2.25 2.25 0 000 4.5h2.25V18a.75.75 0 001.5 0v-1.5H12V18a.75.75 0 001.5 0v-1.5H18a2.25 2.25 0 000-4.5h-4.5V9.75H18a2.25 2.25 0 000-4.5h-4.5V3a.75.75 0 00-1.5 0v2.25H9.75V3z"
-        />
-      </svg>
-    ),
-  },
 ];
 
 const Settings = () => {
@@ -310,15 +291,12 @@ const Settings = () => {
           <Route path="screen-intelligence" element={<ScreenIntelligencePanel />} />
           <Route path="autocomplete" element={<AutocompletePanel />} />
           <Route path="privacy" element={<PrivacyPanel />} />
-          <Route path="profile" element={<ProfilePanel />} />
-          <Route path="advanced" element={<AdvancedPanel />} />
           <Route path="agent-chat" element={<AgentChatPanel />} />
           <Route path="ai" element={<AIPanel />} />
           <Route path="accessibility" element={<AccessibilityPanel />} />
           <Route path="local-model" element={<LocalModelPanel />} />
           <Route path="voice" element={<VoicePanel />} />
           <Route path="billing" element={<BillingPanel />} />
-          <Route path="skills" element={<SkillsPanel />} />
           <Route path="tools" element={<ToolsPanel />} />
           <Route path="team" element={<TeamPanel />} />
           <Route path="team/manage/:teamId" element={<TeamManagementPanel />} />

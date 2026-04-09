@@ -97,24 +97,27 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
         </div>
       </div>
 
-      {!isGranted && (
-        <div className="space-y-2 mb-3">
-          <button
-            type="button"
-            onClick={handleRequestPermissions}
-            disabled={isRequestingPermissions || isLoading}
-            className="btn-primary w-full py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
-            {isRequestingPermissions ? 'Requesting...' : 'Request Permissions'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void dispatch(refreshPermissionsWithRestart())}
-            disabled={isRestartingCore || isLoading}
-            className="w-full py-2 text-sm font-medium rounded-xl border border-stone-200 hover:border-stone-400 text-stone-600 hover:text-stone-900 opacity-70 hover:opacity-100 transition-all disabled:opacity-40">
-            {isRestartingCore ? 'Restarting core...' : 'Restart & Refresh Permissions'}
-          </button>
+      {!isGranted ? (
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void dispatch(refreshPermissionsWithRestart())}
+              disabled={isRestartingCore || isLoading}
+              className="flex-1 py-2 text-sm font-medium rounded-xl border border-stone-200 hover:border-stone-400 text-stone-600 hover:text-stone-900 opacity-70 hover:opacity-100 transition-all disabled:opacity-40">
+              {isRestartingCore ? 'Restarting...' : 'Restart & Refresh'}
+            </button>
+            <button
+              type="button"
+              onClick={handleRequestPermissions}
+              disabled={isRequestingPermissions || isLoading}
+              className="btn-primary flex-1 py-2.5 text-sm font-medium rounded-xl disabled:opacity-60">
+              {isRequestingPermissions ? 'Requesting...' : 'Request Permissions'}
+            </button>
+          </div>
+          <OnboardingNextButton onClick={() => onNext(isGranted)} />
           {(lastError || status?.permission_check_process_path) && (
-            <div className="text-xs text-stone-400 text-center px-2 space-y-1">
+            <div className="text-xs text-stone-400 text-center px-2 space-y-1 pt-1">
               {shouldAutoRefreshOnReturn ? (
                 <p>
                   After granting access in System Settings, return here and OpenHuman will refresh
@@ -130,9 +133,9 @@ const ScreenPermissionsStep = ({ onNext, onBack: _onBack }: ScreenPermissionsSte
             </div>
           )}
         </div>
+      ) : (
+        <OnboardingNextButton onClick={() => onNext(isGranted)} />
       )}
-
-      <OnboardingNextButton onClick={() => onNext(isGranted)} />
     </div>
   );
 };

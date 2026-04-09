@@ -24,7 +24,7 @@ const log = createDebug('openhuman:billing-panel');
 
 // ── Component ───────────────────────────────────────────────────────────
 const BillingPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, teams, refresh } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -371,10 +371,11 @@ const BillingPanel = () => {
         title={teamName ? `Billing — ${teamName}` : 'Billing & Subscription'}
         showBackButton={true}
         onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
       />
 
       <div className="overflow-y-auto">
-        <div className="p-4 space-y-3">
+        <div className="p-4 space-y-4">
           {/* ── Current Plan Header ───────────────────────────────── */}
           <div className="rounded-2xl border border-stone-200 bg-white p-3">
             <div className="flex items-center justify-between mb-1.5">

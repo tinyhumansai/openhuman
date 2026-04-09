@@ -41,7 +41,7 @@ function prettyJson(value: unknown): string {
 }
 
 const WebhooksDebugPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [registrations, setRegistrations] = useState<WebhookDebugRegistration[]>([]);
   const [logs, setLogs] = useState<WebhookDebugLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -140,9 +140,14 @@ const WebhooksDebugPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Webhooks Debug" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Webhooks Debug"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
-      <div className="p-4 space-y-5">
+      <div className="p-4 space-y-4">
         {/* Status bar */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <button

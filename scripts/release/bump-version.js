@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Bump version in package.json, tauri.conf.json, and Cargo.toml.
+// Bump version in package.json, tauri.conf.json, and both Cargo.toml manifests.
 //
 // Usage:
 //   node scripts/release/bump-version.js <patch|minor|major>
@@ -25,7 +25,8 @@ if (!allowed.has(RELEASE_TYPE)) {
 const root = path.resolve(__dirname, '..', '..');
 const packagePath = path.join(root, 'app/package.json');
 const tauriPath = path.join(root, 'app/src-tauri/tauri.conf.json');
-const cargoPath = path.join(root, 'app/src-tauri/Cargo.toml');
+const tauriCargoPath = path.join(root, 'app/src-tauri/Cargo.toml');
+const coreCargoPath = path.join(root, 'Cargo.toml');
 
 // ── Read current version ────────────────────────────────────────────────────
 const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
@@ -57,16 +58,21 @@ const tauri = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
 tauri.version = nextVersion;
 fs.writeFileSync(tauriPath, `${JSON.stringify(tauri, null, 2)}\n`);
 
-// ── Write Cargo.toml ────────────────────────────────────────────────────────
-const cargo = fs.readFileSync(cargoPath, 'utf8');
-const updatedCargo = cargo.replace(
-  /(\[package\][\s\S]*?^version\s*=\s*")([^"]+)(")/m,
-  `$1${nextVersion}$3`,
-);
-if (updatedCargo === cargo) {
-  throw new Error('Failed to update [package].version in app/src-tauri/Cargo.toml');
+function bumpCargoVersion(filePath, nextVersion) {
+  const cargo = fs.readFileSync(filePath, 'utf8');
+  const updatedCargo = cargo.replace(
+    /(\[package\][\s\S]*?^version\s*=\s*")([^"]+)(")/m,
+    `$1${nextVersion}$3`,
+  );
+  if (updatedCargo === cargo) {
+    throw new Error(`Failed to update [package].version in ${path.relative(root, filePath)}`);
+  }
+  fs.writeFileSync(filePath, updatedCargo);
 }
-fs.writeFileSync(cargoPath, updatedCargo);
+
+// ── Write Cargo.toml files ──────────────────────────────────────────────────
+bumpCargoVersion(tauriCargoPath, nextVersion);
+bumpCargoVersion(coreCargoPath, nextVersion);
 
 // ── Output ──────────────────────────────────────────────────────────────────
 const lines = `version=${nextVersion}\ntag=v${nextVersion}\n`;

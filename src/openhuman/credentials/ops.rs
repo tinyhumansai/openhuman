@@ -135,6 +135,19 @@ pub async fn store_session(
         .map_err(|e| e.to_string())?;
 
     logs.push("session stored".to_string());
+
+    // Now that active_user.toml exists and config.workspace_dir resolves to
+    // the per-user path, seed the subconscious defaults and spawn the
+    // heartbeat loop. Idempotent — no-op on subsequent logins of the same
+    // process. Bootstrap failures are non-fatal: the session itself is
+    // already stored above, so we only warn.
+    if let Err(e) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
+        tracing::warn!(error = %e, "[subconscious] post-login bootstrap failed");
+        logs.push(format!("subconscious bootstrap warning: {e}"));
+    } else {
+        logs.push("subconscious engine bootstrapped".to_string());
+    }
+
     Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
 }
 
@@ -151,6 +164,12 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
             tracing::warn!(error = %e, "failed to clear active_user.toml on logout");
         }
     }
+
+    // Tear down the subconscious engine + heartbeat loop. Without this the
+    // cached engine would keep pointing at the previous user's workspace_dir
+    // and the heartbeat task would leak, ticking against the wrong DB when a
+    // different user signs in to the same sidecar process.
+    crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
 
     Ok(RpcOutcome::single_log(
         json!({ "removed": removed }),

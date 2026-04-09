@@ -19,11 +19,16 @@ interface SettingsSectionPageProps {
 }
 
 const SettingsSectionPage = ({ title, description, items }: SettingsSectionPageProps) => {
-  const { navigateBack, navigateToSettings } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader title={title} showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title={title}
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
         {description && <p className="mt-1 text-xs text-stone-500 px-5 pb-3">{description}</p>}

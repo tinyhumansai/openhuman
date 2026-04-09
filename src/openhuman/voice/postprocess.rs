@@ -110,9 +110,17 @@ pub async fn cleanup_transcription(
         _ => raw_text.to_string(),
     };
 
-    let result: Result<String, String> = service
-        .inference(config, CLEANUP_SYSTEM_PROMPT, &prompt, Some(512), true)
-        .await;
+    // Hard timeout — dictation must feel instant. If the LLM doesn't
+    // respond within 3 seconds, fall back to the raw Whisper text.
+    let inference_fut = service.inference(config, CLEANUP_SYSTEM_PROMPT, &prompt, Some(512), true);
+    let result: Result<String, String> =
+        match tokio::time::timeout(std::time::Duration::from_secs(3), inference_fut).await {
+            Ok(r) => r,
+            Err(_) => {
+                warn!("{LOG_PREFIX} LLM cleanup timed out after 3s, using raw text");
+                return raw_text.to_string();
+            }
+        };
 
     match result {
         Ok(ref cleaned_ref) => {

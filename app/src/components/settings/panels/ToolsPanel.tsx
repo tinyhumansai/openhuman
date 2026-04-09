@@ -11,7 +11,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const ToolsPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, setOnboardingTasks } = useCoreState();
   const toolsByCategory = getToolsByCategory();
 
@@ -64,14 +64,19 @@ const ToolsPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Tools" showBackButton onBack={navigateBack} />
+      <SettingsHeader
+        title="Tools"
+        showBackButton
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
-      <div className="px-5 pb-5">
-        <p className="text-stone-500 text-sm mb-4">
+      <div className="p-4 space-y-4">
+        <p className="text-stone-500 text-sm">
           Choose which capabilities OpenHuman can use on your behalf.
         </p>
 
-        <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+        <div className="max-h-[420px] overflow-y-auto pr-1 space-y-4">
           {TOOL_CATEGORIES.map(category => {
             const tools = toolsByCategory[category];
             if (tools.length === 0) return null;

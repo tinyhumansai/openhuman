@@ -16,7 +16,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const VoicePanel = () => {
-  const { navigateBack, navigateToSettings } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
   const [settings, setSettings] = useState<VoiceServerSettings | null>(null);
   const [savedSettings, setSavedSettings] = useState<VoiceServerSettings | null>(null);
   const [serverStatus, setServerStatus] = useState<VoiceServerStatus | null>(null);
@@ -183,7 +183,12 @@ const VoicePanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Voice Dictation" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Voice Dictation"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div className="p-4 space-y-4">
         <section className="space-y-3">

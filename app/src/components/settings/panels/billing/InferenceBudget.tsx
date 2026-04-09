@@ -32,21 +32,9 @@ const InferenceBudget = ({ teamUsage, isLoadingCredits }: InferenceBudgetProps) 
             }}
           />
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] text-stone-500">
-            Daily usage: ${teamUsage.dailyUsage.toFixed(3)}
-          </span>
-          <span className="text-[11px] text-stone-500">
-            {(
-              (teamUsage.totalInputTokensThisCycle + teamUsage.totalOutputTokensThisCycle) /
-              1000
-            ).toFixed(1)}
-            k tokens this cycle
-          </span>
-        </div>
         <div className="mt-1 flex items-center justify-between">
           <span className="text-[11px] text-stone-500">
-            10-hour cap: ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
+            5-hour cap: ${teamUsage.cycleLimit5hr.toFixed(2)} / $
             {teamUsage.fiveHourCapUsd.toFixed(2)}
           </span>
           <span className="text-[11px] text-stone-500">

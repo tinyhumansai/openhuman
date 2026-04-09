@@ -9,27 +9,20 @@ export interface CreditBalance {
 export interface TeamUsage {
   remainingUsd: number;
   cycleBudgetUsd: number;
-  dailyUsage: number;
-  totalInputTokensThisCycle: number;
-  totalOutputTokensThisCycle: number;
-  /**
-   * Rolling inference window: USD spent in the last 10 hours (server-enforced window).
-   * JSON field name is historical (`fiveHour*`).
-   */
-  fiveHourSpendUsd: number;
-  /**
-   * Max USD allowed in that 10-hour rolling window for the current subscription tier
-   * (FREE / BASIC / PRO). Backend sets the amount; the window length is fixed server-side.
-   */
+  /** Amount spent in the current 5-hour fixed window (USD) */
+  cycleLimit5hr: number;
+  /** Amount spent in the current 7-day cycle (USD) */
+  cycleLimit7day: number;
+  /** Max USD allowed in the 5-hour window for the current subscription tier */
   fiveHourCapUsd: number;
-  /** ISO timestamp when the oldest rolling-window entry expires (null if window is empty) */
+  /** ISO timestamp when the 5-hour window resets (null if window is empty) */
   fiveHourResetsAt: string | null;
   /** ISO timestamp when the current weekly cycle started */
   cycleStartDate: string;
   /** ISO timestamp when the current weekly cycle ends */
   cycleEndsAt: string;
-  /** When true, the 10-hour rolling window rate limit is not enforced for this user (test/internal accounts) */
-  bypassRateLimit?: boolean;
+  /** When true, cycle limits are not enforced for this user (test/internal accounts) */
+  bypassCycleLimit?: boolean;
 }
 
 export interface TopUpResult {

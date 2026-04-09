@@ -14,19 +14,19 @@ globalThis.window = globalThis;
 // ============================================================================
 globalThis.console = {
   log: function (...args) {
-    __ops.console_log(args.map(String).join(' '));
+    __ops.console_log(args.map(String).join(" "));
   },
   info: function (...args) {
-    __ops.console_log(args.map(String).join(' '));
+    __ops.console_log(args.map(String).join(" "));
   },
   warn: function (...args) {
-    __ops.console_warn(args.map(String).join(' '));
+    __ops.console_warn(args.map(String).join(" "));
   },
   error: function (...args) {
-    __ops.console_error(args.map(String).join(' '));
+    __ops.console_error(args.map(String).join(" "));
   },
   debug: function (...args) {
-    __ops.console_log('[DEBUG] ' + args.map(String).join(' '));
+    __ops.console_log("[DEBUG] " + args.map(String).join(" "));
   },
 };
 
@@ -38,14 +38,14 @@ let nextTimerId = 1;
 
 globalThis.setTimeout = function (callback, delay, ...args) {
   const id = nextTimerId++;
-  timerCallbacks.set(id, { callback, args, type: 'timeout' });
+  timerCallbacks.set(id, { callback, args, type: "timeout" });
   __ops.timer_start(id, delay || 0, false);
   return id;
 };
 
 globalThis.setInterval = function (callback, delay, ...args) {
   const id = nextTimerId++;
-  timerCallbacks.set(id, { callback, args, type: 'interval' });
+  timerCallbacks.set(id, { callback, args, type: "interval" });
   __ops.timer_start(id, delay || 0, true);
   return id;
 };
@@ -64,13 +64,13 @@ globalThis.clearInterval = function (id) {
 globalThis.__handleTimer = function (id) {
   const timer = timerCallbacks.get(id);
   if (timer) {
-    if (timer.type === 'timeout') {
+    if (timer.type === "timeout") {
       timerCallbacks.delete(id);
     }
     try {
       timer.callback.apply(null, timer.args);
     } catch (e) {
-      console.error('Timer callback error:', e);
+      console.error("Timer callback error:", e);
     }
   }
 };
@@ -86,13 +86,13 @@ class AbortSignal {
   }
 
   addEventListener(type, listener) {
-    if (type === 'abort') {
+    if (type === "abort") {
       this._listeners.push(listener);
     }
   }
 
   removeEventListener(type, listener) {
-    if (type === 'abort') {
+    if (type === "abort") {
       const idx = this._listeners.indexOf(listener);
       if (idx >= 0) this._listeners.splice(idx, 1);
     }
@@ -100,7 +100,7 @@ class AbortSignal {
 
   throwIfAborted() {
     if (this.aborted) {
-      throw this.reason || new Error('Aborted');
+      throw this.reason || new Error("Aborted");
     }
   }
 }
@@ -113,12 +113,12 @@ class AbortController {
   abort(reason) {
     if (!this.signal.aborted) {
       this.signal.aborted = true;
-      this.signal.reason = reason || new Error('Aborted');
+      this.signal.reason = reason || new Error("Aborted");
       for (const listener of this.signal._listeners) {
         try {
-          listener({ type: 'abort', target: this.signal });
+          listener({ type: "abort", target: this.signal });
         } catch (e) {
-          console.error('AbortController listener error:', e);
+          console.error("AbortController listener error:", e);
         }
       }
     }
@@ -133,7 +133,7 @@ globalThis.AbortSignal = AbortSignal;
 // ============================================================================
 globalThis.fetch = function (url, options) {
   options = options || {};
-  var method = options.method || 'GET';
+  var method = options.method || "GET";
   var headers = options.headers || {};
   var body = options.body || null;
 
@@ -153,8 +153,9 @@ globalThis.fetch = function (url, options) {
     JSON.stringify({
       method: method,
       headers: headersObj,
-      body: typeof body === 'string' ? body : body ? JSON.stringify(body) : null,
-    })
+      body:
+        typeof body === "string" ? body : body ? JSON.stringify(body) : null,
+    }),
   );
 
   // __ops.fetch returns a JSON string — parse it to access status/headers/body
@@ -162,7 +163,7 @@ globalThis.fetch = function (url, options) {
 
   return new Response(parsed.body, {
     status: parsed.status,
-    statusText: parsed.statusText || '',
+    statusText: parsed.statusText || "",
     headers: new Headers(parsed.headers || {}),
   });
 };
@@ -172,7 +173,7 @@ class Response {
   constructor(body, init = {}) {
     this._body = body;
     this.status = init.status || 200;
-    this.statusText = init.statusText || '';
+    this.statusText = init.statusText || "";
     this.headers = init.headers || new Headers();
     this.ok = this.status >= 200 && this.status < 300;
   }
@@ -191,7 +192,7 @@ class Response {
   }
 
   blob() {
-    throw new Error('Blob not supported');
+    throw new Error("Blob not supported");
   }
 }
 
@@ -200,7 +201,7 @@ class Headers {
   constructor(init = {}) {
     this._headers = {};
     if (init) {
-      if (typeof init.forEach === 'function') {
+      if (typeof init.forEach === "function") {
         init.forEach((value, key) => {
           this._headers[key.toLowerCase()] = value;
         });
@@ -251,7 +252,7 @@ class WebSocket {
     this.url = url;
     this.protocols = protocols;
     this.readyState = WebSocket.CONNECTING;
-    this.binaryType = 'blob';
+    this.binaryType = "blob";
     this._id = null;
 
     // Event handlers
@@ -273,7 +274,7 @@ class WebSocket {
       WebSocket._instances.set(this._id, this);
 
       if (this.onopen) {
-        this.onopen({ type: 'open', target: this });
+        this.onopen({ type: "open", target: this });
       }
 
       // Start receiving messages
@@ -281,7 +282,7 @@ class WebSocket {
     } catch (e) {
       this.readyState = WebSocket.CLOSED;
       if (this.onerror) {
-        this.onerror({ type: 'error', error: e, target: this });
+        this.onerror({ type: "error", error: e, target: this });
       }
     }
   }
@@ -292,12 +293,12 @@ class WebSocket {
         const message = await __ops.ws_recv(this._id);
         if (message === null) {
           // Connection closed
-          this._handleClose(1000, '');
+          this._handleClose(1000, "");
           break;
         }
 
         if (this.onmessage) {
-          this.onmessage({ type: 'message', data: message, target: this });
+          this.onmessage({ type: "message", data: message, target: this });
         }
       } catch (e) {
         if (this.readyState === WebSocket.OPEN) {
@@ -313,21 +314,30 @@ class WebSocket {
     WebSocket._instances.delete(this._id);
 
     if (this.onclose) {
-      this.onclose({ type: 'close', code, reason, wasClean: code === 1000, target: this });
+      this.onclose({
+        type: "close",
+        code,
+        reason,
+        wasClean: code === 1000,
+        target: this,
+      });
     }
   }
 
   send(data) {
     if (this.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is not open');
+      throw new Error("WebSocket is not open");
     }
 
-    const dataStr = typeof data === 'string' ? data : JSON.stringify(data);
+    const dataStr = typeof data === "string" ? data : JSON.stringify(data);
     __ops.ws_send(this._id, dataStr);
   }
 
-  close(code = 1000, reason = '') {
-    if (this.readyState === WebSocket.CLOSING || this.readyState === WebSocket.CLOSED) {
+  close(code = 1000, reason = "") {
+    if (
+      this.readyState === WebSocket.CLOSING ||
+      this.readyState === WebSocket.CLOSED
+    ) {
       return;
     }
 
@@ -365,24 +375,24 @@ class IDBRequest {
   constructor() {
     this.result = undefined;
     this.error = null;
-    this.readyState = 'pending';
+    this.readyState = "pending";
     this.onsuccess = null;
     this.onerror = null;
   }
 
   _success(result) {
     this.result = result;
-    this.readyState = 'done';
+    this.readyState = "done";
     if (this.onsuccess) {
-      this.onsuccess({ type: 'success', target: this });
+      this.onsuccess({ type: "success", target: this });
     }
   }
 
   _error(error) {
     this.error = error;
-    this.readyState = 'done';
+    this.readyState = "done";
     if (this.onerror) {
-      this.onerror({ type: 'error', target: this });
+      this.onerror({ type: "error", target: this });
     }
   }
 }
@@ -400,12 +410,16 @@ class IDBOpenDBRequest extends IDBRequest {
   async _open() {
     try {
       const info = await __ops.idb_open(this._name, this._version);
-      const db = new IDBDatabase(this._name, this._version, info.objectStores || []);
+      const db = new IDBDatabase(
+        this._name,
+        this._version,
+        info.objectStores || [],
+      );
 
       if (info.needsUpgrade) {
         if (this.onupgradeneeded) {
           const event = {
-            type: 'upgradeneeded',
+            type: "upgradeneeded",
             target: this,
             oldVersion: info.oldVersion || 0,
             newVersion: this._version,
@@ -445,7 +459,7 @@ class IDBDatabase {
     if (idx >= 0) this.objectStoreNames.splice(idx, 1);
   }
 
-  transaction(storeNames, mode = 'readonly') {
+  transaction(storeNames, mode = "readonly") {
     return new IDBTransaction(this, storeNames, mode);
   }
 
@@ -474,13 +488,13 @@ class IDBTransaction {
 
   abort() {
     if (this.onabort) {
-      this.onabort({ type: 'abort', target: this });
+      this.onabort({ type: "abort", target: this });
     }
   }
 
   _complete() {
     if (this.oncomplete) {
-      this.oncomplete({ type: 'complete', target: this });
+      this.oncomplete({ type: "complete", target: this });
     }
   }
 }
@@ -565,7 +579,11 @@ class IDBObjectStore {
     const request = new IDBRequest();
     (async () => {
       try {
-        const keys = await __ops.idb_get_all_keys(this._db.name, this.name, count);
+        const keys = await __ops.idb_get_all_keys(
+          this._db.name,
+          this.name,
+          count,
+        );
         request._success(keys);
       } catch (e) {
         request._error(e);
@@ -599,7 +617,7 @@ globalThis.IDBObjectStore = IDBObjectStore;
 // ============================================================================
 // TextEncoder / TextDecoder (for binary data handling)
 // ============================================================================
-if (typeof globalThis.TextEncoder === 'undefined') {
+if (typeof globalThis.TextEncoder === "undefined") {
   globalThis.TextEncoder = class TextEncoder {
     encode(str) {
       const arr = [];
@@ -618,12 +636,12 @@ if (typeof globalThis.TextEncoder === 'undefined') {
   };
 }
 
-if (typeof globalThis.TextDecoder === 'undefined') {
+if (typeof globalThis.TextDecoder === "undefined") {
   globalThis.TextDecoder = class TextDecoder {
     decode(arr) {
-      if (!arr) return '';
+      if (!arr) return "";
       const bytes = arr instanceof Uint8Array ? arr : new Uint8Array(arr);
-      let result = '';
+      let result = "";
       for (let i = 0; i < bytes.length; i++) {
         result += String.fromCharCode(bytes[i]);
       }
@@ -635,13 +653,13 @@ if (typeof globalThis.TextDecoder === 'undefined') {
 // ============================================================================
 // atob / btoa (Base64)
 // ============================================================================
-if (typeof globalThis.atob === 'undefined') {
+if (typeof globalThis.atob === "undefined") {
   globalThis.atob = function (str) {
     return __ops.atob(str);
   };
 }
 
-if (typeof globalThis.btoa === 'undefined') {
+if (typeof globalThis.btoa === "undefined") {
   globalThis.btoa = function (str) {
     return __ops.btoa(str);
   };
@@ -705,11 +723,15 @@ globalThis.__platform = {
  * Trailing slashes are stripped.
  */
 globalThis.__resolveBackendBaseUrl = () => {
-  let raw = (__platform.env('BACKEND_URL') || __platform.env('VITE_BACKEND_URL') || '').trim();
+  let raw = (
+    __platform.env("BACKEND_URL") ||
+    __platform.env("VITE_BACKEND_URL") ||
+    ""
+  ).trim();
   if (!raw) {
-    return 'https://api.tinyhumans.ai';
+    return "https://api.tinyhumans.ai";
   }
-  while (raw.length > 0 && raw.charAt(raw.length - 1) === '/') {
+  while (raw.length > 0 && raw.charAt(raw.length - 1) === "/") {
     raw = raw.slice(0, -1);
   }
   return raw;
@@ -739,7 +761,7 @@ globalThis.db = {
 
 globalThis.net = {
   fetch: function (url, options) {
-    var result = __ops.fetch(url, options ? JSON.stringify(options) : '{}');
+    var result = __ops.fetch(url, options ? JSON.stringify(options) : "{}");
     return JSON.parse(result);
   },
 };
@@ -756,7 +778,7 @@ globalThis.platform = {
    * avoid logging title/body (may contain PII); shim exists so sync flows do not throw "not a function".
    */
   notify: function (_title, _body) {
-    console.log('[platform.notify] notification requested');
+    console.log("[platform.notify] notification requested");
   },
 };
 
@@ -771,8 +793,8 @@ globalThis.memory = {
    * @returns {boolean}
    */
   insert: function (metadata) {
-    if (!metadata || typeof metadata !== 'object') {
-      throw new Error('memory.insert requires an object payload');
+    if (!metadata || typeof metadata !== "object") {
+      throw new Error("memory.insert requires an object payload");
     }
 
     __ops.memory_insert(JSON.stringify(metadata));
@@ -867,12 +889,14 @@ globalThis.data = {
         return {
           status: 401,
           headers: {},
-          body: JSON.stringify({ error: 'No OAuth credential. Complete OAuth setup first.' }),
+          body: JSON.stringify({
+            error: "No OAuth credential. Complete OAuth setup first.",
+          }),
         };
       }
       const backendUrl = globalThis.__resolveBackendBaseUrl();
-      const jwtToken = __ops.get_session_token() || '';
-      const cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
+      const jwtToken = __ops.get_session_token() || "";
+      const cleanPath = path.charAt(0) === "/" ? path.slice(1) : path;
       const credentialId = globalThis.__oauthCredential.credentialId;
       const clientKey = globalThis.__oauthClientKey || null;
 
@@ -884,13 +908,13 @@ globalThis.data = {
         proxyUrl = `${backendUrl}/proxy/by-id/${credentialId}/${cleanPath}`;
       }
 
-      var method = (options && options.method) || 'GET';
-      var headers = { 'Content-Type': 'application/json' };
+      var method = (options && options.method) || "GET";
+      var headers = { "Content-Type": "application/json" };
       if (jwtToken) {
-        headers['Authorization'] = 'Bearer ' + jwtToken;
+        headers["Authorization"] = "Bearer " + jwtToken;
       }
       if (clientKey) {
-        headers['X-Encryption-Key'] = clientKey;
+        headers["X-Encryption-Key"] = clientKey;
       }
       if (options && options.headers) {
         for (var k in options.headers) {
@@ -904,20 +928,70 @@ globalThis.data = {
         timeout: options ? options.timeout : undefined,
       };
 
-      console.log('[oauth.fetch] ' + method + ' ' + proxyUrl + ' (credentialId=' + credentialId + ', encrypted=' + !!clientKey + ', Notion-Version=' + (headers['Notion-Version'] || 'none') + ')');
+      console.log(
+        "[oauth.fetch] " +
+          method +
+          " " +
+          proxyUrl +
+          " (credentialId=" +
+          credentialId +
+          ", encrypted=" +
+          !!clientKey +
+          ", jwtToken=" +
+          jwtToken +
+          ", Notion-Version=" +
+          (headers["Notion-Version"] || "none") +
+          ")",
+      );
       var result = net.fetch(proxyUrl, fetchOpts);
-      console.log('[oauth.fetch] response status=' + result.status + ' body_len=' + (result.body ? result.body.length : 0));
+      console.log(
+        "[oauth.fetch] response status=" +
+          result.status +
+          " body_len=" +
+          (result.body ? result.body.length : 0),
+      );
 
-      // Auto-clear invalid/expired credentials so the user is prompted to re-auth
-      if (result.status === 401 || result.status === 403) {
-        console.warn('[oauth.fetch] Got ' + result.status + ' — clearing invalid credential for re-auth');
+      // Detect auth failures from both HTTP status codes and structured proxy error bodies.
+      // The encrypted proxy route returns { success: false, error, authError: true, reconnectRequired: true }
+      // as a JSON body — sometimes with a non-401/403 HTTP status — so we must check both.
+      var isAuthError = result.status === 401 || result.status === 403;
+      var reconnectRequired = false;
+      if (!isAuthError && result.body) {
+        try {
+          var parsed = JSON.parse(result.body);
+          if (parsed.authError === true) {
+            isAuthError = true;
+            reconnectRequired = parsed.reconnectRequired === true;
+            console.warn(
+              "[oauth.fetch] authError in response body (status=" +
+                result.status +
+                ", reconnectRequired=" +
+                reconnectRequired +
+                ")",
+            );
+          }
+        } catch (e) {
+          /* non-JSON body — ignore */
+        }
+      } else if (isAuthError) {
+        reconnectRequired = true;
+      }
+
+      if (isAuthError) {
+        console.warn(
+          "[oauth.fetch] Got auth error (status=" +
+            result.status +
+            ") — clearing invalid credential for re-auth",
+        );
         globalThis.__oauthCredential = null;
-        if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {
-          globalThis.state.set('__oauth_credential', '');
+        if (typeof globalThis.state !== "undefined" && globalThis.state.set) {
+          globalThis.state.set("__oauth_credential", "");
           globalThis.state.setPartial({
-            connection_status: 'error',
-            connection_error: 'Integration token expired or invalid. Please reconnect.',
-            auth_status: 'not_authenticated',
+            connection_status: "error",
+            connection_error:
+              "Integration token expired or invalid. Please reconnect.",
+            auth_status: "not_authenticated",
+            reconnect_required: reconnectRequired,
           });
         }
       }
@@ -927,26 +1001,32 @@ globalThis.data = {
 
     /** Revoke the current OAuth credential server-side. */
     revoke: function () {
-      if (__oauthCredential) {
+      if (globalThis.__oauthCredential) {
         try {
           const backendUrl = globalThis.__resolveBackendBaseUrl();
-          const jwtToken = __ops.get_session_token() || '';
+          const jwtToken = __ops.get_session_token() || "";
           const revokeOpts = {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${jwtToken}`,
+            },
           };
-          net.fetch(`${backendUrl}/auth/integrations/${__oauthCredential.credentialId}`, revokeOpts);
+          net.fetch(
+            `${backendUrl}/auth/integrations/${globalThis.__oauthCredential.credentialId}`,
+            revokeOpts,
+          );
         } catch (e) {
           /* best effort */
         }
       }
-      __oauthCredential = null;
+      globalThis.__oauthCredential = null;
       return true;
     },
 
     /** Internal: set credential (called by runtime on oauth/complete). */
     __setCredential: function (cred) {
-      __oauthCredential = cred;
+      globalThis.__oauthCredential = cred;
     },
   };
 })();
@@ -971,7 +1051,9 @@ globalThis.data = {
      * @returns {"managed"|"self_hosted"|"text"|null}
      */
     getMode: function () {
-      return globalThis.__authCredential ? globalThis.__authCredential.mode : null;
+      return globalThis.__authCredential
+        ? globalThis.__authCredential.mode
+        : null;
     },
 
     /**
@@ -979,7 +1061,9 @@ globalThis.data = {
      * @returns {Object|null}
      */
     getCredentials: function () {
-      return globalThis.__authCredential ? globalThis.__authCredential.credentials : null;
+      return globalThis.__authCredential
+        ? globalThis.__authCredential.credentials
+        : null;
     },
 
     /**
@@ -993,7 +1077,9 @@ globalThis.data = {
         return {
           status: 401,
           headers: {},
-          body: JSON.stringify({ error: 'No auth credential. Complete auth setup first.' }),
+          body: JSON.stringify({
+            error: "No auth credential. Complete auth setup first.",
+          }),
         };
       }
 
@@ -1001,7 +1087,7 @@ globalThis.data = {
       var creds = globalThis.__authCredential.credentials;
 
       // Managed mode: delegate to oauth.fetch for proxy behavior
-      if (mode === 'managed' && typeof globalThis.oauth !== 'undefined') {
+      if (mode === "managed" && typeof globalThis.oauth !== "undefined") {
         return globalThis.oauth.fetch(url, options);
       }
 
@@ -1011,25 +1097,34 @@ globalThis.data = {
           headers[k] = options.headers[k];
         }
       }
-      if (!headers['Content-Type']) {
-        headers['Content-Type'] = 'application/json';
+      if (!headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
       }
 
       // Check for existing Authorization header (case-insensitive)
       var hasAuth = false;
       for (var hk in headers) {
-        if (hk.toLowerCase() === 'authorization') { hasAuth = true; break; }
+        if (hk.toLowerCase() === "authorization") {
+          hasAuth = true;
+          break;
+        }
       }
 
       // Self-hosted: auto-inject basic auth if client_id + client_secret present
-      if (mode === 'self_hosted' && creds.client_id && creds.client_secret && !hasAuth) {
-        headers['Authorization'] = 'Basic ' + btoa(creds.client_id + ':' + creds.client_secret);
+      if (
+        mode === "self_hosted" &&
+        creds.client_id &&
+        creds.client_secret &&
+        !hasAuth
+      ) {
+        headers["Authorization"] =
+          "Basic " + btoa(creds.client_id + ":" + creds.client_secret);
         hasAuth = true;
       }
 
       // Self-hosted with access_token or refresh_token: inject Bearer token
-      if (mode === 'self_hosted' && !hasAuth && creds.access_token) {
-        headers['Authorization'] = 'Bearer ' + creds.access_token;
+      if (mode === "self_hosted" && !hasAuth && creds.access_token) {
+        headers["Authorization"] = "Bearer " + creds.access_token;
         hasAuth = true;
       }
 
@@ -1037,26 +1132,33 @@ globalThis.data = {
       // Text mode credentials are opaque — the skill handles auth manually.
 
       var fetchOpts = {
-        method: (options && options.method) || 'GET',
+        method: (options && options.method) || "GET",
         headers: headers,
         body: options ? options.body : undefined,
         timeout: options ? options.timeout : undefined,
       };
 
-      console.log('[auth.fetch] ' + fetchOpts.method + ' ' + url + ' (mode=' + mode + ')');
+      console.log(
+        "[auth.fetch] " + fetchOpts.method + " " + url + " (mode=" + mode + ")",
+      );
       var result = net.fetch(url, fetchOpts);
-      console.log('[auth.fetch] response status=' + result.status);
+      console.log("[auth.fetch] response status=" + result.status);
 
       // Auto-clear on 401/403 so user is prompted to re-auth
       if (result.status === 401 || result.status === 403) {
-        console.warn('[auth.fetch] Got ' + result.status + ' — clearing invalid credential');
+        console.warn(
+          "[auth.fetch] Got " +
+            result.status +
+            " — clearing invalid credential",
+        );
         globalThis.__authCredential = null;
-        if (typeof globalThis.state !== 'undefined' && globalThis.state.set) {
-          globalThis.state.set('__auth_credential', '');
+        if (typeof globalThis.state !== "undefined" && globalThis.state.set) {
+          globalThis.state.set("__auth_credential", "");
           globalThis.state.setPartial({
-            connection_status: 'error',
-            connection_error: 'Auth credential expired or invalid. Please reconnect.',
-            auth_status: 'not_authenticated',
+            connection_status: "error",
+            connection_error:
+              "Auth credential expired or invalid. Please reconnect.",
+            auth_status: "not_authenticated",
           });
         }
       }
@@ -1084,15 +1186,15 @@ globalThis.tools = [];
 // ============================================================================
 globalThis.cron = {
   register: function (scheduleId, cronExpr) {
-    console.warn('[cron] register not implemented in QuickJS runtime yet');
+    console.warn("[cron] register not implemented in QuickJS runtime yet");
     return false;
   },
   unregister: function (scheduleId) {
-    console.warn('[cron] unregister not implemented in QuickJS runtime yet');
+    console.warn("[cron] unregister not implemented in QuickJS runtime yet");
     return false;
   },
   list: function () {
-    console.warn('[cron] list not implemented in QuickJS runtime yet');
+    console.warn("[cron] list not implemented in QuickJS runtime yet");
     return [];
   },
 };
@@ -1102,12 +1204,14 @@ globalThis.cron = {
 // ============================================================================
 globalThis.skills = {
   list: function () {
-    console.warn('[skills] list is intentionally unavailable in isolated runtime');
+    console.warn(
+      "[skills] list is intentionally unavailable in isolated runtime",
+    );
     return [];
   },
   callTool: function (skillId, toolName, args) {
-    console.warn('[skills] callTool is disabled by runtime isolation policy');
-    return { error: 'Cross-skill invocation is disabled' };
+    console.warn("[skills] callTool is disabled by runtime isolation policy");
+    return { error: "Cross-skill invocation is disabled" };
   },
 };
 
@@ -1131,7 +1235,7 @@ globalThis.webhook = {
     __ops.webhook_register(
       tunnelUuid,
       tunnelName || null,
-      backendTunnelId || null
+      backendTunnelId || null,
     );
   },
 
@@ -1163,21 +1267,23 @@ globalThis.webhook = {
    */
   createTunnel: async function (name, description) {
     const backendUrl = globalThis.__resolveBackendBaseUrl();
-    const jwtToken = __ops.get_session_token() || '';
+    const jwtToken = __ops.get_session_token() || "";
 
     var result = await net.fetch(`${backendUrl}/webhooks/core`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + jwtToken,
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + jwtToken,
       },
-      body: JSON.stringify({ name: name, description: description || '' }),
+      body: JSON.stringify({ name: name, description: description || "" }),
       timeout: 15000,
     });
 
     var parsed = JSON.parse(result);
     if (parsed.status >= 400) {
-      throw new Error('Failed to create tunnel: ' + parsed.status + ' ' + parsed.body);
+      throw new Error(
+        "Failed to create tunnel: " + parsed.status + " " + parsed.body,
+      );
     }
     var data = JSON.parse(parsed.body);
     var tunnel = data.data || data.tunnel || data;
@@ -1188,9 +1294,12 @@ globalThis.webhook = {
     }
 
     // Build webhook URL for the caller
-    tunnel.webhookUrl = backendUrl.replace(/\/$/, '') + '/webhooks/ingress/' + tunnel.uuid;
+    tunnel.webhookUrl =
+      backendUrl.replace(/\/$/, "") + "/webhooks/ingress/" + tunnel.uuid;
 
-    console.log('[webhook] Created tunnel: ' + name + ' → ' + tunnel.webhookUrl);
+    console.log(
+      "[webhook] Created tunnel: " + name + " → " + tunnel.webhookUrl,
+    );
     return tunnel;
   },
 
@@ -1215,36 +1324,43 @@ globalThis.webhook = {
       }
     });
     if (!registration) {
-      throw new Error('[webhook] Tunnel is not registered to this skill: ' + tunnelUuid);
+      throw new Error(
+        "[webhook] Tunnel is not registered to this skill: " + tunnelUuid,
+      );
     }
     if (!registration.backend_tunnel_id) {
       throw new Error(
-        '[webhook] Missing backend tunnel id for deleteTunnel; re-create or re-register this tunnel'
+        "[webhook] Missing backend tunnel id for deleteTunnel; re-create or re-register this tunnel",
       );
     }
 
     // Delete from backend first
     const backendUrl = globalThis.__resolveBackendBaseUrl();
-    const jwtToken = __ops.get_session_token() || '';
+    const jwtToken = __ops.get_session_token() || "";
 
-    var result = await net.fetch(`${backendUrl}/webhooks/core/${registration.backend_tunnel_id}`, {
-      method: 'DELETE',
-      headers: { Authorization: 'Bearer ' + jwtToken },
-      timeout: 10000,
-    });
+    var result = await net.fetch(
+      `${backendUrl}/webhooks/core/${registration.backend_tunnel_id}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: "Bearer " + jwtToken },
+        timeout: 10000,
+      },
+    );
 
     var parsed = JSON.parse(result);
     if (parsed.status >= 400 && parsed.status !== 404) {
-      throw new Error('[webhook] Backend delete failed with status ' + parsed.status);
+      throw new Error(
+        "[webhook] Backend delete failed with status " + parsed.status,
+      );
     }
 
     // Backend confirmed deletion (or 404 = already gone) — now safe to
     // remove the local registration.
     webhook.unregister(tunnelUuid);
 
-    console.log('[webhook] Deleted tunnel: ' + tunnelUuid);
+    console.log("[webhook] Deleted tunnel: " + tunnelUuid);
   },
 };
 
-console.log('[bootstrap] Webhook API initialized');
-console.log('[bootstrap] QuickJS browser APIs initialized');
+console.log("[bootstrap] Webhook API initialized");
+console.log("[bootstrap] QuickJS browser APIs initialized");

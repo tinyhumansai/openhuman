@@ -9,7 +9,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 const TeamInvitesPanel = () => {
   const { teamId } = useParams<{ teamId: string }>();
   const location = useLocation();
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, teams, teamInvitesById, refreshTeamInvites } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -102,7 +102,12 @@ const TeamInvitesPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Invites" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Invites"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
         <div className="p-4 space-y-4">

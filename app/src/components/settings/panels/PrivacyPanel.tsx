@@ -3,7 +3,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const PrivacyPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, setAnalyticsEnabled } = useCoreState();
   const analyticsEnabled = snapshot.analyticsEnabled;
 
@@ -18,7 +18,12 @@ const PrivacyPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Privacy & Security" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Privacy & Security"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
         <div className="p-4 space-y-4">

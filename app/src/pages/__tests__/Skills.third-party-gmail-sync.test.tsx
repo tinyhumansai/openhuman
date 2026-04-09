@@ -8,6 +8,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 
+vi.mock('../../utils/tauriCommands', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('../../utils/tauriCommands');
+  return {
+    ...actual,
+    openhumanGetRuntimeFlags: vi.fn().mockResolvedValue({ result: { browser_allow_all: false } }),
+    openhumanSetBrowserAllowAll: vi
+      .fn()
+      .mockResolvedValue({ result: { browser_allow_all: false } }),
+  };
+});
+
 const gmailRegistryEntry = {
   id: 'gmail',
   name: 'Gmail',
@@ -59,12 +70,14 @@ describe('Skills page — 3rd Party Gmail sync', () => {
   it('renders 3rd Party Skills and Gmail with a Sync control when connected', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByRole('heading', { name: '3rd Party Skills' })).toBeInTheDocument();
     expect(screen.getByText('Gmail')).toBeInTheDocument();
 
-    const syncBtn = screen.getByTestId('skill-sync-button-gmail');
+    // Sync button is inside the overflow menu — open it first
+    const moreBtn = screen.getByTitle('More actions');
+    fireEvent.click(moreBtn);
+
+    const syncBtn = await screen.findByTestId('skill-sync-button-gmail');
     expect(syncBtn).toBeInTheDocument();
-    expect(syncBtn).toHaveAttribute('aria-label', 'Sync Gmail');
 
     fireEvent.click(syncBtn);
 

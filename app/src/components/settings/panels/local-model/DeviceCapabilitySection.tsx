@@ -1,0 +1,132 @@
+import type { ApplyPresetResult, PresetsResponse } from '../../../../utils/tauriCommands';
+
+interface DeviceCapabilitySectionProps {
+  presetsData: PresetsResponse | null;
+  presetsLoading: boolean;
+  presetError: string;
+  presetSuccess: ApplyPresetResult | null;
+  isApplyingPreset: boolean;
+  onApplyPreset: (tier: string) => void;
+  formatRamGb: (bytes: number) => string;
+}
+
+const DeviceCapabilitySection = ({
+  presetsData,
+  presetsLoading,
+  presetError,
+  presetSuccess,
+  isApplyingPreset,
+  onApplyPreset,
+  formatRamGb,
+}: DeviceCapabilitySectionProps) => {
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-stone-900">Model Tier</h3>
+
+      {presetsLoading && !presetsData && (
+        <div className="bg-stone-50 rounded-lg border border-stone-200 p-4 text-sm text-stone-500 animate-pulse">
+          Loading device info and presets…
+        </div>
+      )}
+      {!presetsLoading && !presetsData && presetError && (
+        <div className="bg-red-50 rounded-lg border border-red-300 p-4 text-sm text-red-600">
+          Could not load presets: {presetError}
+        </div>
+      )}
+
+      {presetsData?.device && (
+        <div className="bg-stone-50 rounded-lg border border-stone-200 p-3">
+          <div className="grid grid-cols-3 gap-3 text-xs">
+            <div>
+              <div className="text-stone-500 uppercase tracking-wide">RAM</div>
+              <div className="text-stone-800 mt-0.5 font-medium">
+                {formatRamGb(presetsData.device.total_ram_bytes)}
+              </div>
+            </div>
+            <div>
+              <div className="text-stone-500 uppercase tracking-wide">CPU</div>
+              <div
+                className="text-stone-800 mt-0.5 font-medium truncate"
+                title={presetsData.device.cpu_brand}>
+                {presetsData.device.cpu_count} cores
+              </div>
+            </div>
+            <div>
+              <div className="text-stone-500 uppercase tracking-wide">GPU</div>
+              <div
+                className="text-stone-800 mt-0.5 font-medium truncate"
+                title={presetsData.device.gpu_description ?? undefined}>
+                {presetsData.device.has_gpu
+                  ? (presetsData.device.gpu_description ?? 'Detected')
+                  : 'Not detected'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {presetsData && (
+        <div className="space-y-2">
+          {presetsData.presets.map(preset => {
+            const isRecommended = preset.tier === presetsData.recommended_tier;
+            const isCurrent = preset.tier === presetsData.current_tier;
+            return (
+              <button
+                key={preset.tier}
+                type="button"
+                onClick={() => onApplyPreset(preset.tier)}
+                disabled={isApplyingPreset || isCurrent}
+                className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  isCurrent
+                    ? 'border-primary-400 bg-primary-50'
+                    : 'border-stone-200 bg-white hover:border-stone-300'
+                } ${isApplyingPreset ? 'opacity-60' : ''}`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-stone-900">{preset.label}</span>
+                    {isRecommended && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-50 text-emerald-700 uppercase tracking-wide">
+                        Recommended
+                      </span>
+                    )}
+                    {isCurrent && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-primary-50 text-primary-600 uppercase tracking-wide">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-stone-500">~{preset.approx_download_gb} GB</span>
+                </div>
+                <div className="text-xs text-stone-400 mt-1">{preset.description}</div>
+                <div className="text-[10px] text-stone-500 mt-1">
+                  Chat: {preset.chat_model_id} &middot; Vision:{' '}
+                  {preset.vision_mode === 'disabled'
+                    ? 'disabled'
+                    : preset.vision_model_id || preset.vision_mode}{' '}
+                  &middot; Target RAM: {preset.target_ram_gb} GB
+                </div>
+              </button>
+            );
+          })}
+
+          {presetsData.current_tier === 'custom' && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+              You are using custom model IDs that do not match any built-in preset.
+            </div>
+          )}
+        </div>
+      )}
+
+      {presetError && !(!presetsLoading && !presetsData) && (
+        <div className="text-xs text-red-600">{presetError}</div>
+      )}
+      {presetSuccess && (
+        <div className="text-xs text-green-700">
+          Applied {presetSuccess.applied_tier} tier: {presetSuccess.chat_model_id}
+        </div>
+      )}
+    </section>
+  );
+};
+
+export default DeviceCapabilitySection;

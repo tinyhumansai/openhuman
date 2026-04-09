@@ -450,9 +450,15 @@ fn handle_escalations_dismiss(params: Map<String, Value>) -> ControllerFuture {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 async fn load_config() -> Result<crate::openhuman::config::Config, String> {
-    crate::openhuman::config::Config::load_or_init()
-        .await
-        .map_err(|e| format!("load config: {e}"))
+    // Use the same 30s-bounded loader every other JSON-RPC domain uses
+    // (see cron/schemas.rs, webhooks/schemas.rs, etc.). Raw
+    // `Config::load_or_init()` can stall on `SecretStore::new` plus a chain
+    // of `decrypt_optional_secret` calls that may IPC to an OS keychain,
+    // so the subconscious handlers used to be the only unbounded outlier
+    // in the entire JSON-RPC surface. Under the Intelligence page's 3s
+    // poll that chokepoint let a slow keychain call pin the frontend's
+    // `Promise.all` and freeze the activity log on a stale snapshot.
+    crate::openhuman::config::load_config_with_timeout().await
 }
 
 fn field(name: &'static str, ty: TypeSchema, comment: &'static str) -> FieldSchema {

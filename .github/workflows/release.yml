@@ -95,6 +95,9 @@ jobs:
         id: bump
         run: node scripts/release/bump-version.js "${{ inputs.release_type }}"
 
+      - name: Verify release version sync
+        run: node scripts/release/verify-version-sync.js "${{ steps.bump.outputs.version }}"
+
       - name: Ensure tag does not already exist
         env:
           TAG: ${{ steps.bump.outputs.tag }}
@@ -115,7 +118,7 @@ jobs:
           VERSION: ${{ steps.bump.outputs.version }}
           TAG: ${{ steps.bump.outputs.tag }}
         run: |
-          git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml
+          git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml Cargo.toml
           git commit -m "chore(release): v${VERSION}"
           git push origin main
 

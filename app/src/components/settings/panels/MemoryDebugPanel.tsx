@@ -16,7 +16,7 @@ import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import { normalizeMemoryDocuments } from './memoryDebugUtils';
 
 const MemoryDebugPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [documents, setDocuments] = useState<MemoryDebugDocument[]>([]);
   const [documentsRaw, setDocumentsRaw] = useState<unknown>(null);
   const [documentsNamespaceFilter, setDocumentsNamespaceFilter] = useState('');
@@ -171,9 +171,14 @@ const MemoryDebugPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Memory Debug" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Memory Debug"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
-      <div className="p-4 space-y-5">
+      <div className="p-4 space-y-4">
         {/* Documents */}
         <section className="space-y-2">
           <h3 className="text-sm font-semibold text-stone-900">Documents</h3>

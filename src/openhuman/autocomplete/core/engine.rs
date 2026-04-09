@@ -26,6 +26,10 @@ use super::types::{
 
 const REFRESH_TIMEOUT_SECS: u64 = 120;
 
+/// Maximum consecutive errors before the engine auto-stops to prevent
+/// notification floods (e.g. missing Ollama, denied AX permissions).
+const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+
 struct EngineState {
     running: bool,
     phase: String,
@@ -40,6 +44,11 @@ struct EngineState {
     last_tab_down: bool,
     last_escape_down: bool,
     last_overlay_signature: Option<String>,
+    /// Tracks the last error message that triggered a notification so we
+    /// suppress duplicate badge toasts on consecutive identical failures.
+    last_notified_error: Option<String>,
+    /// Counts consecutive refresh errors; reset to 0 on any success.
+    consecutive_error_count: u32,
     task: Option<JoinHandle<()>>,
 }
 
@@ -58,6 +67,8 @@ impl Default for EngineState {
             last_tab_down: false,
             last_escape_down: false,
             last_overlay_signature: None,
+            last_notified_error: None,
+            consecutive_error_count: 0,
             task: None,
         }
     }
@@ -135,6 +146,8 @@ impl AutocompleteEngine {
         state.phase = "idle".to_string();
         state.debounce_ms = debounce_ms;
         state.last_error = None;
+        state.consecutive_error_count = 0;
+        state.last_notified_error = None;
 
         let engine = global_engine();
         state.task = Some(tokio::spawn(async move {
@@ -167,14 +180,37 @@ impl AutocompleteEngine {
                             .await;
                     match refresh_result {
                         Ok(Ok(Err(err))) => {
-                            let error_message = {
+                            let (should_notify, should_stop) = {
                                 let mut state = engine.inner.lock().await;
                                 state.phase = "error".to_string();
-                                state.last_error = Some(err);
+                                state.consecutive_error_count += 1;
+                                state.last_error = Some(err.clone());
                                 state.updated_at_ms = Some(Utc::now().timestamp_millis());
-                                state.last_error.clone()
+
+                                // Only notify if this is a *new* error message.
+                                let is_new_error = state
+                                    .last_notified_error
+                                    .as_ref()
+                                    .map_or(true, |prev| prev != &err);
+                                if is_new_error {
+                                    state.last_notified_error = Some(err.clone());
+                                }
+
+                                let stop = state.consecutive_error_count >= MAX_CONSECUTIVE_ERRORS;
+                                (is_new_error, stop)
                             };
-                            if let Some(error_message) = error_message {
+
+                            if should_stop {
+                                log::warn!(
+                                    "[autocomplete] {} consecutive errors, auto-stopping engine to prevent notification floods: {}",
+                                    MAX_CONSECUTIVE_ERRORS,
+                                    err
+                                );
+                                engine.stop(None).await;
+                                break;
+                            }
+
+                            if should_notify {
                                 let app_lower = engine
                                     .inner
                                     .lock()
@@ -187,7 +223,7 @@ impl AutocompleteEngine {
                                     show_overflow_badge(
                                         "error",
                                         None,
-                                        Some(&error_message),
+                                        Some(&err),
                                         None,
                                         None,
                                         700,
@@ -202,6 +238,8 @@ impl AutocompleteEngine {
                                 state.phase = "idle".to_string();
                             }
                             state.last_error = None;
+                            state.consecutive_error_count = 0;
+                            state.last_notified_error = None;
                         }
                         Ok(Err(join_err)) => {
                             log::error!(

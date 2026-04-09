@@ -88,6 +88,17 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Phased rollout** — Phase 1 = banners + limit modal + hook. Phase 2 = onboarding upsell + analytics. Phase 3 = remote config + A/B testing.
 - **"5-hour" label stragglers in Conversations.tsx** — `LimitPill` label and its hover tooltip still say "5h" / "5-hour". Commit 8c52236's "10-hour" terminology refactor missed those two spots.
 
+## Settings & Skills Reorganization (Issue #396)
+
+- **Settings is NOT a modal** — It's a full route (`/settings/*`) with nested `<Routes>`. The `.claude/rules/15-settings-modal-system.md` doc is outdated.
+- **SettingsHeader breadcrumbs** — All panels now receive `breadcrumbs` from `useSettingsNavigation()` hook. The hook derives breadcrumbs from the current route path. When adding a new settings panel, destructure `breadcrumbs` from the hook and pass to `<SettingsHeader>`.
+- **Standard settings padding** — All settings panel content areas use `p-4 space-y-4`. Don't deviate.
+- **Dead code removed** — `TauriCommandsPanel`, `useSettingsAnimation`, `SettingsPanelLayout`, `SettingsBackButton`, `ProfilePanel`, `AdvancedPanel`, `SkillsPanel`, `SkillsGrid` were all deleted. Don't re-create them.
+- **Skills page is the single management surface** — Browser Access toggle moved from SkillsPanel to the Skills page. There is no `/settings/skills` route anymore.
+- **Panel decomposition** — LocalModelPanel, AutocompletePanel, CronJobsPanel, ScreenIntelligencePanel were split into sub-components in subdirectories. Each orchestrator is ≤ ~300 lines.
+- **UnifiedSkillCard** — All skill types (built-in, channels, 3rd party) use `UnifiedSkillCard` from `app/src/components/skills/SkillCard.tsx`. Secondary actions use an overflow menu. `data-testid` attributes (`skill-sync-button-*`, `skill-debug-button-*`) must be preserved.
+- **SkillSearchBar + SkillCategoryFilter** — New components in `app/src/components/skills/` for search and category filtering on the Skills page.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

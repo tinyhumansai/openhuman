@@ -696,13 +696,66 @@ async fn run_server_inner(
                     log::info!("[overlay] overlay disabled by config (overlay_enabled = false)");
                 }
 
-                // Start the global dictation hotkey listener (rdev-based, core-side).
+                // Start the voice server (records + transcribes) and/or the
+                // dictation hotkey listener (broadcasts hotkey events to
+                // Socket.IO). Both use rdev::listen() which only supports
+                // one instance per process on macOS — so when the voice
+                // server is active it owns the single listener and forwards
+                // hotkey events to the dictation bus itself.
                 crate::openhuman::voice::server::start_if_enabled(&config).await;
-                crate::openhuman::voice::dictation_listener::start_if_enabled(&config).await;
+                if !config.voice_server.auto_start {
+                    crate::openhuman::voice::dictation_listener::start_if_enabled(&config).await;
+                }
 
                 // Initialize screen intelligence engine if enabled in config.
                 crate::openhuman::screen_intelligence::server::start_if_enabled(&config).await;
                 crate::openhuman::autocomplete::start_if_enabled(&config).await;
+
+                // Register autocomplete shutdown hook so the engine (and its
+                // Swift overlay helper) are stopped cleanly on process exit.
+                crate::core::shutdown::register(|| async {
+                    let engine = crate::openhuman::autocomplete::global_engine();
+                    let status = engine.status().await;
+                    if status.running {
+                        log::info!(
+                            "[core] stopping autocomplete engine (phase={})",
+                            status.phase
+                        );
+                        engine.stop(None).await;
+                        log::info!("[core] autocomplete engine stopped");
+                    }
+                });
+
+                // Subconscious engine + heartbeat bootstrap is now gated on
+                // login so seed_default_tasks() runs against the per-user
+                // workspace (`~/.openhuman/users/<id>/workspace/`) instead
+                // of the pre-login global workspace. The login handler in
+                // `credentials::ops` triggers the same bootstrap after it
+                // writes `active_user.toml`.
+                //
+                // If the user is already logged in from a previous session
+                // (active_user.toml exists on disk), kick the bootstrap now
+                // so the heartbeat loop starts without waiting for the user
+                // to re-authenticate.
+                if !config.heartbeat.enabled {
+                    log::info!("[subconscious] disabled by config (heartbeat.enabled = false)");
+                } else {
+                    let already_logged_in = crate::openhuman::config::default_root_openhuman_dir()
+                        .ok()
+                        .and_then(|root| crate::openhuman::config::read_active_user_id(&root))
+                        .is_some();
+                    if already_logged_in {
+                        match crate::openhuman::subconscious::global::bootstrap_after_login().await
+                        {
+                            Ok(()) => log::info!(
+                                "[subconscious] bootstrapped on startup (existing session)"
+                            ),
+                            Err(e) => log::warn!("[subconscious] startup bootstrap failed: {e}"),
+                        }
+                    } else {
+                        log::info!("[subconscious] bootstrap deferred — waiting for login");
+                    }
+                }
             }
             Err(err) => {
                 log::warn!("[core] config load failed, skipping local-ai and overlay: {err}");
@@ -722,7 +775,9 @@ async fn run_server_inner(
         }
     });
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(crate::core::shutdown::signal())
+        .await?;
     Ok(())
 }
 

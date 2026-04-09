@@ -7,7 +7,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const MemoryDataPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   const addToast = (toast: Omit<ToastNotification, 'id'>) => {
@@ -21,7 +21,12 @@ const MemoryDataPanel = () => {
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader title="Memory Data" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Memory Data"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
       <div className="p-4">
         <MemoryWorkspace onToast={addToast} />
       </div>

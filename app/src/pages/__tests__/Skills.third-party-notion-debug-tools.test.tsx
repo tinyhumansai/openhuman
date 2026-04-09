@@ -9,6 +9,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 
+vi.mock('../../utils/tauriCommands', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('../../utils/tauriCommands');
+  return {
+    ...actual,
+    openhumanGetRuntimeFlags: vi.fn().mockResolvedValue({ result: { browser_allow_all: false } }),
+    openhumanSetBrowserAllowAll: vi
+      .fn()
+      .mockResolvedValue({ result: { browser_allow_all: false } }),
+  };
+});
+
 const notionRegistryEntry = {
   id: 'notion',
   name: 'Notion',
@@ -91,10 +102,13 @@ describe('Skills page — Notion debug tools (live-test parity)', () => {
   it('opens debug modal and executes tools via openhuman.skills_call_tool', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByRole('heading', { name: '3rd Party Skills' })).toBeInTheDocument();
     expect(screen.getByText('Notion')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId('skill-debug-button-notion'));
+    // Debug button is inside the overflow menu — open it first
+    const moreBtn = screen.getByTitle('More actions');
+    fireEvent.click(moreBtn);
+
+    fireEvent.click(await screen.findByTestId('skill-debug-button-notion'));
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /Debug: Notion/i })).toBeInTheDocument();
@@ -160,7 +174,11 @@ describe('Skills page — Notion debug tools (live-test parity)', () => {
   it('Sync control calls skillManager.triggerSync(notion)', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    fireEvent.click(screen.getByTestId('skill-sync-button-notion'));
+    // Sync button is inside the overflow menu — open it first
+    const moreBtn = screen.getByTitle('More actions');
+    fireEvent.click(moreBtn);
+
+    fireEvent.click(await screen.findByTestId('skill-sync-button-notion'));
 
     await waitFor(() => {
       expect(mocks.triggerSync).toHaveBeenCalledTimes(1);

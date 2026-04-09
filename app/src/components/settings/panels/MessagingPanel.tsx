@@ -60,7 +60,7 @@ function statusColor(status: ChannelConnectionStatus): string {
 }
 
 const MessagingPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const channelConnections = useAppSelector(state => state.channelConnections);
   const { definitions, loading, error: loadError } = useChannelDefinitions();
@@ -106,7 +106,12 @@ const MessagingPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Messaging" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Messaging"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div className="p-4 space-y-4">
         {/* Default channel selector */}

@@ -45,7 +45,7 @@ const PermissionBadge = ({ label, value }: { label: string; value: string }) => 
 };
 
 const AccessibilityPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const {
     status,
@@ -113,6 +113,7 @@ const AccessibilityPanel = () => {
         title="Accessibility Automation"
         showBackButton={true}
         onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
       />
 
       <div className="max-w-2xl mx-auto w-full p-4 space-y-4">

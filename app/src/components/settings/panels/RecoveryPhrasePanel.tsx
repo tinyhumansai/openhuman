@@ -17,7 +17,7 @@ const BIP39_IMPORT_LENGTHS = [12, 15, 18, 21, 24] as const;
 const IMPORT_SLOTS_INITIAL = MNEMONIC_GENERATE_WORD_COUNT;
 
 const RecoveryPhrasePanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const { snapshot, setEncryptionKey } = useCoreState();
   const user = snapshot.currentUser;
 
@@ -201,7 +201,12 @@ const RecoveryPhrasePanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Recovery Phrase" showBackButton onBack={navigateBack} />
+      <SettingsHeader
+        title="Recovery Phrase"
+        showBackButton
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div>
         <div className="p-4">

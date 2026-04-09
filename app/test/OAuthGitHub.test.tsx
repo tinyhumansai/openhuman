@@ -73,15 +73,15 @@ describe('OAuthProviderButton (GitHub) — rendering', () => {
     expect(container.querySelector('svg')).toBeInTheDocument();
   });
 
-  it('has dark background styling', () => {
+  it('has neutral light background styling', () => {
     renderGitHubButton();
-    expect(screen.getByRole('button', { name: /github/i })).toHaveClass('bg-gray-900');
+    expect(screen.getByRole('button', { name: /github/i })).toHaveClass('bg-white');
   });
 
-  it('has white text', () => {
+  it('has dark text', () => {
     const { container } = renderGitHubButton();
     const label = container.querySelector('span');
-    expect(label).toHaveClass('text-white');
+    expect(label).toHaveClass('text-gray-900');
   });
 });
 

@@ -9,7 +9,7 @@ type ChatMessage = { role: 'user' | 'agent'; text: string };
 const STORAGE_KEY = 'openhuman.settings.agentChat.history';
 
 const AgentChatPanel = () => {
-  const { navigateBack } = useSettingsNavigation();
+  const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [modelOverride, setModelOverride] = useState('');
@@ -73,7 +73,12 @@ const AgentChatPanel = () => {
 
   return (
     <div>
-      <SettingsHeader title="Agent Chat" showBackButton={true} onBack={navigateBack} />
+      <SettingsHeader
+        title="Agent Chat"
+        showBackButton={true}
+        onBack={navigateBack}
+        breadcrumbs={breadcrumbs}
+      />
 
       <div className="p-4 space-y-4">
         <section className="space-y-3">
