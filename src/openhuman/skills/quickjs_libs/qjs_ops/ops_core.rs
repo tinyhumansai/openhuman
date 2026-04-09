@@ -12,13 +12,14 @@ use super::types::{TimerEntry, TimerState, ALLOWED_ENV_VARS};
 /// This checks the standard OpenHuman configuration directory and attempts
 /// to retrieve the active session token. Returns `None` on any failure.
 fn token_from_credentials_store() -> Option<String> {
+    use crate::openhuman::config::{read_active_user_id, user_openhuman_dir};
     use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
 
     let home = directories::UserDirs::new()?.home_dir().to_path_buf();
     let default_dir = home.join(".openhuman");
 
     // Resolve the workspace directory
-    let state_dir = match std::env::var("OPENHUMAN_WORKSPACE") {
+    let root_dir = match std::env::var("OPENHUMAN_WORKSPACE") {
         Ok(ws) if !ws.is_empty() => {
             let ws_path = std::path::PathBuf::from(&ws);
             if ws_path.join("config.toml").exists() {
@@ -30,9 +31,24 @@ fn token_from_credentials_store() -> Option<String> {
         _ => default_dir,
     };
 
-    if !state_dir.exists() {
+    if !root_dir.exists() {
         return None;
     }
+
+    // If there is an active user, credentials are stored in the user-scoped
+    // subdirectory (e.g. ~/.openhuman/users/<user_id>/). Fall back to the
+    // root dir for single-user / pre-login scenarios.
+    let state_dir = match read_active_user_id(&root_dir) {
+        Some(uid) => {
+            let user_dir = user_openhuman_dir(&root_dir, &uid);
+            if user_dir.exists() {
+                user_dir
+            } else {
+                root_dir
+            }
+        }
+        None => root_dir,
+    };
 
     let auth = AuthService::new(&state_dir, true);
     let profile = auth.get_profile(APP_SESSION_PROVIDER, None).ok()??;

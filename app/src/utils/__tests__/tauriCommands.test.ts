@@ -34,7 +34,7 @@ describe('tauriCommands', () => {
 
     const response = await getAuthState();
 
-    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.auth.get_state' });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({ method: 'openhuman.auth_get_state' });
     expect(response).toEqual({ is_authenticated: true, user: { id: 'u1' } });
   });
 
@@ -42,7 +42,7 @@ describe('tauriCommands', () => {
     await storeSession('jwt-token', { id: 'u1' });
 
     expect(mockCallCoreRpc).toHaveBeenCalledWith({
-      method: 'openhuman.auth.store_session',
+      method: 'openhuman.auth_store_session',
       params: { token: 'jwt-token', user: { id: 'u1' } },
     });
   });
