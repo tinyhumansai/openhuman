@@ -1,19 +1,8 @@
-import { useState } from 'react';
-
 import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../components/oauth/providerConfigs';
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 
 const Welcome = () => {
-  const [email, setEmail] = useState('');
-
-  const handleEmailSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim()) return;
-    // TODO: implement email auth flow
-    console.log('[Welcome] email submit:', email);
-  };
-
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full">
@@ -44,24 +33,20 @@ const Welcome = () => {
                 <OAuthProviderButton
                   key={provider.id}
                   provider={provider}
-                  className="!rounded-full !px-4 !py-2 !text-xs"
+                  className="!rounded-full !px-4 !py-2"
                 />
               ))}
           </div>
 
-          {/* Divider */}
+          {/* Email login — disabled until backend auth flow is implemented
           <div className="flex items-center gap-3 mb-5">
             <div className="flex-1 h-px bg-stone-200" />
             <span className="text-xs text-stone-400">Or</span>
             <div className="flex-1 h-px bg-stone-200" />
           </div>
-
-          {/* Email input + CTA */}
-          <form onSubmit={handleEmailSubmit} className="space-y-3">
+          <form className="space-y-3">
             <input
               type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
               placeholder="Enter your email"
               className="w-full rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm text-stone-900 placeholder:text-stone-400 outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 transition-colors"
             />
@@ -71,6 +56,7 @@ const Welcome = () => {
               Continue with email
             </button>
           </form>
+          */}
         </div>
       </div>
     </div>
