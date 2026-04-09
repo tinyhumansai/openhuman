@@ -72,7 +72,10 @@ impl EventHandler for RestartSubscriber {
             return;
         }
 
-        log::warn!("[service:restart] executing restart request source={}", source);
+        log::warn!(
+            "[service:restart] executing restart request source={}",
+            source
+        );
 
         match crate::openhuman::service::restart::trigger_self_restart_now(source, reason) {
             Ok(child_pid) => {
