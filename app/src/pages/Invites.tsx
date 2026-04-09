@@ -1,8 +1,11 @@
+import debugFactory from 'debug';
 import { useEffect, useRef, useState } from 'react';
 
 import { useUser } from '../hooks/useUser';
 import { inviteApi } from '../services/api/inviteApi';
 import type { InviteCode } from '../types/invite';
+
+const log = debugFactory('invites');
 
 type RedeemStatus = 'idle' | 'loading' | 'success' | 'error';
 
@@ -94,6 +97,7 @@ const Invites = () => {
       setCodes(data);
     } catch (error) {
       if (requestId !== loadRequestIdRef.current) return;
+      log('loadInviteCodes failed requestId=%d error=%O', requestId, error);
       setLoadError(error instanceof Error ? error.message : 'Failed to load invite codes');
     } finally {
       if (requestId === loadRequestIdRef.current) {

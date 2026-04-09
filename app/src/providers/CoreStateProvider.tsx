@@ -1,3 +1,4 @@
+import debugFactory from 'debug';
 import {
   createContext,
   type ReactNode,
@@ -17,6 +18,8 @@ import {
   setCoreStateSnapshot,
 } from '../lib/coreState/store';
 import { syncAnalyticsConsent } from '../services/analytics';
+
+const log = debugFactory('core-state');
 import {
   fetchCoreAppSnapshot,
   getTeamInvites,
@@ -185,6 +188,12 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       } catch (error) {
         if (!cancelled) {
           bootstrapFailCountRef.current += 1;
+          log(
+            'refresh failed attempt=%d/%d error=%O',
+            bootstrapFailCountRef.current,
+            MAX_BOOTSTRAP_RETRIES,
+            error
+          );
           console.warn(
             `[core-state] poll failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
             error
