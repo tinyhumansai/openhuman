@@ -5,7 +5,7 @@ import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 
 const OVERLAY_WIDTH = 248;
 const OVERLAY_HEIGHT = 228;
-const SCENARIO_TWO_TEXT = 'Noted. Need milk.';
+const SCENARIO_TWO_TEXT = '"Noted. Need milk."';
 
 type OverlayStatus = 'idle' | 'active';
 type OverlayScenario = 1 | 2 | 3;
@@ -56,7 +56,7 @@ export default function OverlayApp() {
   }, [appWindow]);
 
   useEffect(() => {
-    if (scenario !== 2) {
+    if (scenario !== 3) {
       setTypedText('');
       return;
     }
@@ -76,6 +76,20 @@ export default function OverlayApp() {
     };
   }, [scenario]);
 
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setScenario(current => {
+        if (current === 1) return 2;
+        if (current === 2) return 3;
+        return 1;
+      });
+    }, 5000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [scenario]);
+
   const status: OverlayStatus = scenario === 1 ? 'idle' : 'active';
 
   const bubbles = useMemo<OverlayBubble[]>(() => {
@@ -84,16 +98,16 @@ export default function OverlayApp() {
     }
 
     if (scenario === 2) {
-      return [{ id: 'stt', text: typedText || ' ', tone: 'accent' }];
+      return [
+        {
+          id: 'assistant',
+          text: '"Hey I think your coffee is getting cold. Want me to get you a new one?"',
+          tone: 'accent',
+        },
+      ];
     }
 
-    return [
-      {
-        id: 'assistant',
-        text: 'Hey I think your coffee is getting cold. Want me to get you a new one?',
-        tone: 'accent',
-      },
-    ];
+    return [{ id: 'stt', text: typedText || ' ', tone: 'accent' }];
   }, [scenario, typedText]);
 
   const orbClassName = useMemo(() => {
@@ -120,14 +134,10 @@ export default function OverlayApp() {
             type="button"
             aria-label="Activate overlay orb"
             onClick={() => {
-              setScenario(current => {
-                if (current === 1) return 2;
-                if (current === 2) return 3;
-                return 1;
-              });
+              setScenario(2);
             }}
             className={`group relative flex h-[56px] w-[56px] cursor-pointer items-center justify-center overflow-hidden rounded-full border transition-all duration-200 ${orbClassName}`}
-            title="Click to cycle scenarios.">
+            title="Click to start the demo.">
             <div className="pointer-events-none h-[92%] w-[92%] opacity-95 transition-transform duration-300 group-hover:scale-105">
               <RotatingTetrahedronCanvas inverted={tetrahedronInverted} />
             </div>
