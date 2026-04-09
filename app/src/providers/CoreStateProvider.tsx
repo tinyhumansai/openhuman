@@ -38,6 +38,22 @@ const log = debugFactory('core-state');
 const POLL_MS = 2000;
 const MAX_BOOTSTRAP_RETRIES = 5;
 
+/** Extract only non-sensitive fields from an RPC/fetch error. */
+function sanitizeError(error: unknown): { message?: string; code?: string; status?: number } {
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+  if (error && typeof error === 'object') {
+    const e = error as Record<string, unknown>;
+    return {
+      message: typeof e.message === 'string' ? e.message : undefined,
+      code: typeof e.code === 'string' ? e.code : undefined,
+      status: typeof e.status === 'number' ? e.status : undefined,
+    };
+  }
+  return { message: String(error) };
+}
+
 interface CoreStateContextValue extends CoreState {
   refresh: () => Promise<void>;
   refreshTeams: () => Promise<void>;
@@ -87,6 +103,7 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const teamsRequestIdRef = useRef(0);
   const memoryTokenRef = useRef<string | null>(state.snapshot.sessionToken);
   const bootstrapFailCountRef = useRef(0);
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
 
   const commitState = useCallback((updater: (previous: CoreState) => CoreState) => {
     setState(previous => {
@@ -96,7 +113,7 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     });
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refreshCore = useCallback(async () => {
     const requestId = ++snapshotRequestIdRef.current;
     const snapshot = normalizeSnapshot(await fetchCoreAppSnapshot());
     commitState(previous => {
@@ -136,6 +153,18 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       }
     }
   }, [commitState]);
+
+  /** Serialized refresh — all callers share the same in-flight promise. */
+  const refresh = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
+    }
+    const promise = refreshCore().finally(() => {
+      refreshInFlightRef.current = null;
+    });
+    refreshInFlightRef.current = promise;
+    return promise;
+  }, [refreshCore]);
 
   const refreshTeams = useCallback(async () => {
     const requestId = ++teamsRequestIdRef.current;
@@ -178,25 +207,23 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
 
   useEffect(() => {
     let cancelled = false;
-    let isRefreshing = false;
     const doRefresh = async () => {
-      if (isRefreshing) return;
-      isRefreshing = true;
       try {
         await refresh();
         bootstrapFailCountRef.current = 0;
       } catch (error) {
         if (!cancelled) {
           bootstrapFailCountRef.current += 1;
+          const safe = sanitizeError(error);
           log(
             'refresh failed attempt=%d/%d error=%O',
             bootstrapFailCountRef.current,
             MAX_BOOTSTRAP_RETRIES,
-            error
+            safe
           );
           console.warn(
             `[core-state] poll failed (attempt ${bootstrapFailCountRef.current}/${MAX_BOOTSTRAP_RETRIES}):`,
-            error
+            safe
           );
           if (bootstrapFailCountRef.current >= MAX_BOOTSTRAP_RETRIES) {
             commitState(previous => {
@@ -207,8 +234,6 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
             });
           }
         }
-      } finally {
-        isRefreshing = false;
       }
     };
 
@@ -217,7 +242,9 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       if (!cancelled) {
         const next = getCoreStateSnapshot();
         if (next.snapshot.auth.isAuthenticated) {
-          await refreshTeams().catch(() => {});
+          await refreshTeams().catch(err => {
+            log('refreshTeams failed during bootstrap: %O', sanitizeError(err));
+          });
         }
       }
     };
@@ -283,7 +310,9 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         console.warn('[core-state] memory client sync failed after session store:', error);
       }
       await refresh();
-      await refreshTeams().catch(() => {});
+      await refreshTeams().catch(err => {
+        log('refreshTeams failed after session store: %O', sanitizeError(err));
+      });
     },
     [refresh, refreshTeams]
   );

@@ -65,19 +65,14 @@ impl EventHandler for RestartSubscriber {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            log::warn!(
-                "[service:restart] ignoring duplicate restart request source={} reason={} (restart already in progress)",
+            log::debug!(
+                "[service:restart] ignoring duplicate restart request source={} (restart already in progress)",
                 source,
-                reason
             );
             return;
         }
 
-        log::warn!(
-            "[service:restart] executing restart request source={} reason={}",
-            source,
-            reason
-        );
+        log::warn!("[service:restart] executing restart request source={}", source);
 
         match crate::openhuman::service::restart::trigger_self_restart_now(source, reason) {
             Ok(child_pid) => {
