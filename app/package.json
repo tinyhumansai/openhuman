@@ -43,7 +43,8 @@
     "format": "prettier --write . && yarn rust:format",
     "format:check": "prettier --check . && yarn rust:format:check",
     "lint": "eslint . --ext .ts,.tsx",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix"
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "knip": "knip"
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
@@ -105,6 +106,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "husky": "^9.1.7",
     "jsdom": "^28.0.0",
+    "knip": "^6.3.1",
     "postcss": "^8.5.6",
     "prettier": "^3.8.1",
     "tailwindcss": "^3.4.19",
