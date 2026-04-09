@@ -59,10 +59,7 @@ describe('Memory System', () => {
       value: { level: 'high', score: 42, flags: ['a', 'b'] },
     });
 
-    const read = await expectRpcOk('openhuman.memory_kv_get', {
-      namespace: NS,
-      key: KV_KEY,
-    });
+    const read = await expectRpcOk('openhuman.memory_kv_get', { namespace: NS, key: KV_KEY });
 
     expect(JSON.stringify(read || {}).includes('42')).toBe(true);
   });
@@ -88,7 +85,11 @@ describe('Memory System', () => {
     });
 
     if (recall.ok) {
-      expect(JSON.stringify(recall.result || {}).toLowerCase().includes('e2e')).toBe(true);
+      expect(
+        JSON.stringify(recall.result || {})
+          .toLowerCase()
+          .includes('e2e')
+      ).toBe(true);
       return;
     }
 
@@ -147,10 +148,7 @@ describe('Memory System', () => {
     }
     expect(Boolean(bulkDocId0)).toBe(true);
 
-    await expectRpcOk('openhuman.memory_doc_delete', {
-      namespace: NS,
-      document_id: bulkDocId0,
-    });
+    await expectRpcOk('openhuman.memory_doc_delete', { namespace: NS, document_id: bulkDocId0 });
 
     const listed = await expectRpcOk('openhuman.memory_doc_list', { namespace: NS });
     const text = JSON.stringify(listed || {});
@@ -172,15 +170,9 @@ describe('Memory System', () => {
       key: 'to-delete',
       value: { alive: true },
     });
-    await expectRpcOk('openhuman.memory_kv_delete', {
-      namespace: NS,
-      key: 'to-delete',
-    });
+    await expectRpcOk('openhuman.memory_kv_delete', { namespace: NS, key: 'to-delete' });
 
-    const after = await expectRpcOk('openhuman.memory_kv_get', {
-      namespace: NS,
-      key: 'to-delete',
-    });
+    const after = await expectRpcOk('openhuman.memory_kv_get', { namespace: NS, key: 'to-delete' });
     expect(JSON.stringify(after || {}).includes('alive')).toBe(false);
   });
 });

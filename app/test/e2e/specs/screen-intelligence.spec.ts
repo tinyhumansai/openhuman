@@ -148,7 +148,13 @@ describe('Screen Intelligence', () => {
     expect(hasPolicy).toBe(true);
 
     // Look for config labels visible without scrolling
-    const configLabels = ['Enabled', 'Mode', 'Screen Monitoring', 'Device Control', 'Predictive Input'];
+    const configLabels = [
+      'Enabled',
+      'Mode',
+      'Screen Monitoring',
+      'Device Control',
+      'Predictive Input',
+    ];
     const foundLabels: string[] = [];
     for (const label of configLabels) {
       if (await textExists(label)) foundLabels.push(label);
@@ -215,7 +221,7 @@ describe('Screen Intelligence', () => {
       // capture_mode or error should be present
       const hasDetail =
         (typeof data.error === 'string' && data.error.length > 0) ||
-        (typeof data.capture_mode === 'string');
+        typeof data.capture_mode === 'string';
       expect(hasDetail).toBe(true);
     }
   });

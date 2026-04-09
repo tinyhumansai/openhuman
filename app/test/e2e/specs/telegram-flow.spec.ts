@@ -50,11 +50,8 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import {
-  completeOnboardingIfVisible,
-  navigateViaHash,
-} from '../helpers/shared-flows';
-import { startMockServer, stopMockServer, clearRequestLog, getRequestLog } from '../mock-server';
+import { completeOnboardingIfVisible, navigateViaHash } from '../helpers/shared-flows';
+import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -367,7 +364,8 @@ describe('8.5 Integrations (Telegram) — UI flow', () => {
     });
 
     // The modal should show at least one auth mode label
-    const modalOpened = hasManagedDm || hasBotToken || hasChannelBadge || hasConnect || hasDisconnect;
+    const modalOpened =
+      hasManagedDm || hasBotToken || hasChannelBadge || hasConnect || hasDisconnect;
     expect(modalOpened).toBe(true);
 
     // Auth modes

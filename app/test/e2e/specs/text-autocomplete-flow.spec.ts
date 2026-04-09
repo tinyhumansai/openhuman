@@ -41,7 +41,13 @@ import {
   removeSeededEchoSkill,
   seedMinimalEchoSkill,
 } from '../helpers/skill-e2e-runtime';
-import { clearRequestLog, getRequestLog, setMockBehavior, startMockServer, stopMockServer } from '../mock-server';
+import {
+  clearRequestLog,
+  getRequestLog,
+  setMockBehavior,
+  startMockServer,
+  stopMockServer,
+} from '../mock-server';
 
 const LOG_PREFIX = '[SkillExecutionE2E]';
 
@@ -171,10 +177,7 @@ describe('Skill execution & Text Auto-Complete (Built-in Skill)', () => {
       expect(currentHash).toContain('autocomplete');
     }
 
-    const hasPanel = await waitForAnyText(
-      ['Inline Autocomplete', 'Runtime', 'Settings'],
-      15_000
-    );
+    const hasPanel = await waitForAnyText(['Inline Autocomplete', 'Runtime', 'Settings'], 15_000);
     if (!hasPanel) {
       const tree = await dumpAccessibilityTree();
       stepLog('Autocomplete panel missing expected headings', { tree: tree.slice(0, 4000) });
@@ -356,15 +359,13 @@ describe('Skill execution & Text Auto-Complete (Built-in Skill)', () => {
     while (Date.now() < deadline) {
       const log = getRequestLog();
       completionRequests = log.filter(
-        (r) => r.method === 'POST' && r.url.includes('/openai/v1/chat/completions')
+        r => r.method === 'POST' && r.url.includes('/openai/v1/chat/completions')
       );
       if (completionRequests.length >= 2) break;
       await browser.pause(500);
     }
 
-    stepLog('Completion requests captured', {
-      count: completionRequests.length,
-    });
+    stepLog('Completion requests captured', { count: completionRequests.length });
     expect(completionRequests.length).toBeGreaterThanOrEqual(2);
 
     // 5. Verify the second request contains the tool result from the echo skill.

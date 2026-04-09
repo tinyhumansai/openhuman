@@ -44,11 +44,8 @@ import {
   waitForWebView,
   waitForWindowVisible,
 } from '../helpers/element-helpers';
-import {
-  completeOnboardingIfVisible,
-  navigateViaHash,
-} from '../helpers/shared-flows';
-import { startMockServer, stopMockServer, clearRequestLog } from '../mock-server';
+import { completeOnboardingIfVisible, navigateViaHash } from '../helpers/shared-flows';
+import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -255,8 +252,11 @@ describe('8.5 Integrations (Discord) — UI flow', () => {
     // Status: Connected, Not configured, Connecting, Error
     const hasConnected = await textExists('Connected');
     const hasNotConfigured = await textExists('Not configured');
-    const hasStatus = hasConnected || hasNotConfigured ||
-      (await textExists('Connecting')) || (await textExists('Error'));
+    const hasStatus =
+      hasConnected ||
+      hasNotConfigured ||
+      (await textExists('Connecting')) ||
+      (await textExists('Error'));
     stepLog('Discord status', { connected: hasConnected, notConfigured: hasNotConfigured });
     expect(hasStatus).toBe(true);
   });

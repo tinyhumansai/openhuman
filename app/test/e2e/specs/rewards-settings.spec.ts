@@ -22,8 +22,14 @@ describe('Rewards, Progression & Settings', () => {
   });
 
   it('10.1.1 — Activity-Based Unlock: capability catalog exposes conversation activity features', async () => {
-    const result = await expectRpcOk('openhuman.about_app_lookup', { id: 'conversation.suggested_questions' });
-    expect(JSON.stringify(result || {}).toLowerCase().includes('conversation')).toBe(true);
+    const result = await expectRpcOk('openhuman.about_app_lookup', {
+      id: 'conversation.suggested_questions',
+    });
+    expect(
+      JSON.stringify(result || {})
+        .toLowerCase()
+        .includes('conversation')
+    ).toBe(true);
   });
 
   it('10.1.2 — Plan-Based Unlock: billing plan RPC endpoint is available', async () => {
@@ -32,7 +38,11 @@ describe('Rewards, Progression & Settings', () => {
 
   it('10.1.3 — Integration-Based Unlock: skills connection capabilities are discoverable', async () => {
     const result = await expectRpcOk('openhuman.about_app_search', { query: 'connect' });
-    expect(JSON.stringify(result || {}).toLowerCase().includes('connect')).toBe(true);
+    expect(
+      JSON.stringify(result || {})
+        .toLowerCase()
+        .includes('connect')
+    ).toBe(true);
   });
 
   it('10.2.1 — Message Count Tracking: subconscious status endpoint is available', async () => {

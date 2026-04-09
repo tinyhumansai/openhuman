@@ -134,7 +134,9 @@ describe('Authentication & Multi-Provider Login', () => {
       setActive: true,
     });
 
-    const listed = await expectRpcOk('openhuman.auth_list_provider_credentials', { provider: 'github' });
+    const listed = await expectRpcOk('openhuman.auth_list_provider_credentials', {
+      provider: 'github',
+    });
     expect(JSON.stringify(listed || {}).includes(profile)).toBe(true);
   });
 
@@ -167,7 +169,9 @@ describe('Authentication & Multi-Provider Login', () => {
       token: 'second-token',
     });
 
-    const list = await expectRpcOk('openhuman.auth_list_provider_credentials', { provider: 'discord' });
+    const list = await expectRpcOk('openhuman.auth_list_provider_credentials', {
+      provider: 'discord',
+    });
     expect(JSON.stringify(list || {}).includes(profile)).toBe(true);
   });
 

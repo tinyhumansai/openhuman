@@ -21,9 +21,7 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { expectRpcMethod, fetchCoreRpcMethods } from '../helpers/core-schema';
-import {
-  performFullLogin,
-} from '../helpers/shared-flows';
+import { performFullLogin } from '../helpers/shared-flows';
 import {
   clearRequestLog,
   resetMockBehavior,
@@ -80,7 +78,8 @@ async function rpcOk(method: string, params: Record<string, unknown> = {}) {
 async function rpcOkOrPermission(method: string, params: Record<string, unknown> = {}) {
   const result = await callOpenhumanRpc(method, params);
   if (!result.ok) {
-    const acceptable = looksLikePermissionError(result.error) || looksLikeNotImplemented(result.error);
+    const acceptable =
+      looksLikePermissionError(result.error) || looksLikeNotImplemented(result.error);
     if (!acceptable) {
       console.log(`${LOG_PREFIX} unexpected error for ${method}:`, result.error);
     }
@@ -128,7 +127,11 @@ describe('System Resource Access', function () {
   after(async function () {
     this.timeout(30_000);
     resetMockBehavior();
-    try { await stopMockServer(); } catch { /* non-fatal */ }
+    try {
+      await stopMockServer();
+    } catch {
+      /* non-fatal */
+    }
   });
 
   beforeEach(() => {
@@ -252,7 +255,11 @@ describe('System Resource Access', function () {
       if (!requireMethod(methods, 'openhuman.about_app_search', '4.4.1')) return;
 
       const result = await rpcOk('openhuman.about_app_search', { query: 'browser' });
-      expect(JSON.stringify(result || {}).toLowerCase().includes('browser')).toBe(true);
+      expect(
+        JSON.stringify(result || {})
+          .toLowerCase()
+          .includes('browser')
+      ).toBe(true);
       console.log(`${LOG_PREFIX} 4.4.1 PASSED`);
     });
 

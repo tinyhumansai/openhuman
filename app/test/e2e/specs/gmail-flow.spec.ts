@@ -48,7 +48,7 @@ import {
   dismissLocalAISnackbarIfVisible,
   navigateViaHash,
 } from '../helpers/shared-flows';
-import { startMockServer, stopMockServer, clearRequestLog } from '../mock-server';
+import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 function stepLog(message: string, context?: unknown) {
   const stamp = new Date().toISOString();
@@ -284,7 +284,12 @@ describe('8.5 Integrations (Gmail) — UI flow', () => {
     const hasConfigure = await textExists('Configure');
     const hasRetry = await textExists('Retry');
     const hasAction = hasEnable || hasSetup || hasConfigure || hasRetry;
-    stepLog('Email action button', { enable: hasEnable, setup: hasSetup, configure: hasConfigure, retry: hasRetry });
+    stepLog('Email action button', {
+      enable: hasEnable,
+      setup: hasSetup,
+      configure: hasConfigure,
+      retry: hasRetry,
+    });
     expect(hasAction).toBe(true);
   });
 

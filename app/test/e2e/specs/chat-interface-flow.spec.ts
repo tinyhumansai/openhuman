@@ -187,7 +187,16 @@ describe('7.4 Chat Interface — UI flow', () => {
       await waitForAppReady(15_000);
 
       // Wait up to 10s for a positive auth marker (sidebar nav labels)
-      const authMarkers = ['Home', 'Skills', 'Chat', 'Intelligence', 'Good morning', 'Good afternoon', 'Good evening', 'Message OpenHuman'];
+      const authMarkers = [
+        'Home',
+        'Skills',
+        'Chat',
+        'Intelligence',
+        'Good morning',
+        'Good afternoon',
+        'Good evening',
+        'Message OpenHuman',
+      ];
       const authDeadline = Date.now() + 10_000;
       let authed = false;
       while (Date.now() < authDeadline) {
@@ -227,7 +236,8 @@ describe('7.4 Chat Interface — UI flow', () => {
 
     // Session may be lost after navigation — re-auth and try again
     if (!chatVisible) {
-      const onLogin = (await textExists("Sign in! Let's Cook")) || (await textExists('Continue with email'));
+      const onLogin =
+        (await textExists("Sign in! Let's Cook")) || (await textExists('Continue with email'));
       if (onLogin) {
         stepLog('Session lost after nav to Chat — re-authenticating');
         await triggerAuthDeepLinkBypass('e2e-chat-ui-retry');
@@ -292,9 +302,7 @@ describe('7.4 Chat Interface — UI flow', () => {
     // Type the message using macos: keys (native keyboard input)
     const message = 'Hello, AlphaHuman';
     try {
-      await browser.execute('macos: keys', {
-        keys: message.split('').map(ch => ({ key: ch })),
-      });
+      await browser.execute('macos: keys', { keys: message.split('').map(ch => ({ key: ch })) });
       stepLog('Typed message via macos: keys');
     } catch (keysErr) {
       stepLog('macos: keys failed, trying browser.keys fallback', keysErr);
@@ -314,9 +322,7 @@ describe('7.4 Chat Interface — UI flow', () => {
     // Press Enter to send the message
     stepLog('pressing Enter to send');
     try {
-      await browser.execute('macos: keys', {
-        keys: [{ key: 'Return' }],
-      });
+      await browser.execute('macos: keys', { keys: [{ key: 'Return' }] });
     } catch {
       try {
         await browser.keys(['Enter']);

@@ -100,7 +100,10 @@ describe('Automation & Scheduling', () => {
   });
 
   it('6.2.1 — Cron Expression Validation: invalid cron recurrence is rejected', async () => {
-    if (!methods.has('openhuman.subconscious_tasks_add') || !methods.has('openhuman.subconscious_tasks_update')) {
+    if (
+      !methods.has('openhuman.subconscious_tasks_add') ||
+      !methods.has('openhuman.subconscious_tasks_update')
+    ) {
       await expectUnavailable('openhuman.subconscious_tasks_update', {
         task_id: 'missing-task',
         recurrence: 'cron:not-a-valid-expression',

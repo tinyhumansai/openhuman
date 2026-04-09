@@ -142,7 +142,9 @@ export async function navigateViaHash(hash) {
         await browser.pause(1_500);
         const settingsSub = await clickFirstMatch(builtInLabels, 12_000);
         if (!settingsSub) {
-          throw new Error(`Mac2: could not find ${builtInLabels.join(' / ')} in Skills or Settings`);
+          throw new Error(
+            `Mac2: could not find ${builtInLabels.join(' / ')} in Skills or Settings`
+          );
         }
         await browser.pause(2_000);
         console.log(`[E2E] Mac2 navigated to ${hash} via Settings → ${settingsSub}`);
@@ -343,7 +345,7 @@ export async function navigateToConversations() {
 export const ONBOARDING_OVERLAY_TEXTS = [
   'Skip',
   'Welcome On Board',
-  'Let\'s Start',
+  "Let's Start",
   'referral code',
   'Skip for now',
   'Screen & Accessibility',
@@ -421,8 +423,7 @@ export async function walkOnboarding(logPrefix = '[E2E]') {
 
   // Step 1: ReferralApplyStep — may be auto-skipped; click "Skip for now" if visible
   {
-    const isReferral =
-      (await textExists('referral code')) || (await textExists('Skip for now'));
+    const isReferral = (await textExists('referral code')) || (await textExists('Skip for now'));
     if (isReferral) {
       const clicked = await clickFirstMatch(['Skip for now', 'Continue'], 10_000);
       if (clicked) {

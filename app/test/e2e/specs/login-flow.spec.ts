@@ -288,8 +288,7 @@ describe('Login flow — complete with mock data', function () {
 
     // Step 1: ReferralApplyStep — click "Skip for now" (may be auto-skipped)
     {
-      const isReferral =
-        (await textExists('referral code')) || (await textExists('Skip for now'));
+      const isReferral = (await textExists('referral code')) || (await textExists('Skip for now'));
       if (isReferral) {
         const clicked = await clickFirstMatch(['Skip for now', 'Continue'], 10_000);
         if (clicked) {

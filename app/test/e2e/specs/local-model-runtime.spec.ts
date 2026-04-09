@@ -136,9 +136,9 @@ describe('3. Local AI Runtime (Ollama)', function () {
     expect(typeof statusPayload.chat_model_id).toBe('string');
     expect(typeof (assetsPayload.chat as Record<string, unknown>)?.id).toBe('string');
     expect(Array.isArray(diagnosticsPayload.installed_models)).toBe(true);
-    expect(
-      typeof (diagnosticsPayload.expected as Record<string, unknown>)?.chat_model
-    ).toBe('string');
+    expect(typeof (diagnosticsPayload.expected as Record<string, unknown>)?.chat_model).toBe(
+      'string'
+    );
   });
 
   it('3.1.2 Model Download', async () => {

@@ -16,7 +16,12 @@ import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/ap
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { fetchCoreRpcMethods } from '../helpers/core-schema';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
-import { textExists, dumpAccessibilityTree, waitForWindowVisible, waitForWebView } from '../helpers/element-helpers';
+import {
+  dumpAccessibilityTree,
+  textExists,
+  waitForWebView,
+  waitForWindowVisible,
+} from '../helpers/element-helpers';
 import {
   dismissLocalAISnackbarIfVisible,
   navigateToSettings,
@@ -78,7 +83,8 @@ async function rpcOk(method: string, params: Record<string, unknown> = {}) {
 async function rpcOkOrPermission(method: string, params: Record<string, unknown> = {}) {
   const result = await callOpenhumanRpc(method, params);
   if (!result.ok) {
-    const acceptable = looksLikePermissionError(result.error) || looksLikeNotImplemented(result.error);
+    const acceptable =
+      looksLikePermissionError(result.error) || looksLikeNotImplemented(result.error);
     if (!acceptable) {
       console.log(`${LOG_PREFIX} unexpected error for ${method}:`, result.error);
     }
@@ -137,7 +143,11 @@ describe('Permissions & System Access', function () {
   after(async function () {
     this.timeout(30_000);
     resetMockBehavior();
-    try { await stopMockServer(); } catch { /* non-fatal */ }
+    try {
+      await stopMockServer();
+    } catch {
+      /* non-fatal */
+    }
   });
 
   beforeEach(() => {
@@ -170,7 +180,11 @@ describe('Permissions & System Access', function () {
       const result = await rpcOkOrPermission('openhuman.screen_intelligence_status', {});
       if (result.ok) {
         const text = JSON.stringify(result.result || {}).toLowerCase();
-        expect(text.includes('input_monitoring') || text.includes('input monitoring') || text.includes('permissions')).toBe(true);
+        expect(
+          text.includes('input_monitoring') ||
+            text.includes('input monitoring') ||
+            text.includes('permissions')
+        ).toBe(true);
       }
       console.log(`${LOG_PREFIX} 2.1.2 PASSED`);
     });
@@ -181,7 +195,11 @@ describe('Permissions & System Access', function () {
       const result = await rpcOkOrPermission('openhuman.screen_intelligence_status', {});
       if (result.ok) {
         const text = JSON.stringify(result.result || {}).toLowerCase();
-        expect(text.includes('screen_recording') || text.includes('screen recording') || text.includes('permissions')).toBe(true);
+        expect(
+          text.includes('screen_recording') ||
+            text.includes('screen recording') ||
+            text.includes('permissions')
+        ).toBe(true);
       }
       console.log(`${LOG_PREFIX} 2.1.3 PASSED`);
     });
@@ -211,7 +229,8 @@ describe('Permissions & System Access', function () {
     });
 
     it('2.2.2 — Permission Re-Request Flow: request_permission endpoint invocable', async () => {
-      if (!requireMethod(methods, 'openhuman.screen_intelligence_request_permission', '2.2.2')) return;
+      if (!requireMethod(methods, 'openhuman.screen_intelligence_request_permission', '2.2.2'))
+        return;
 
       const result = await rpcOkOrPermission('openhuman.screen_intelligence_request_permission', {
         permission: 'accessibility',
@@ -221,7 +240,8 @@ describe('Permissions & System Access', function () {
     });
 
     it('2.2.3 — Restart & Refresh Sync: refresh_permissions works repeatedly', async () => {
-      if (!requireMethod(methods, 'openhuman.screen_intelligence_refresh_permissions', '2.2.3')) return;
+      if (!requireMethod(methods, 'openhuman.screen_intelligence_refresh_permissions', '2.2.3'))
+        return;
 
       // Call twice to verify idempotency
       const r1 = await rpcOkOrPermission('openhuman.screen_intelligence_refresh_permissions', {});
@@ -264,5 +284,4 @@ describe('Permissions & System Access', function () {
       console.log(`${LOG_PREFIX} 2.x.1: Screen Intelligence in settings: ${hasScreenIntel}`);
     });
   });
-
 });

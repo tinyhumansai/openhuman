@@ -103,12 +103,7 @@ async function scrollElementIntoViewMac2(el: ChainablePromiseElement): Promise<v
       const deltaY = isBelow ? -300 : 300;
 
       try {
-        await browser.execute('macos: scroll', {
-          x: scrollX,
-          y: scrollY,
-          deltaX: 0,
-          deltaY,
-        });
+        await browser.execute('macos: scroll', { x: scrollX, y: scrollY, deltaX: 0, deltaY });
       } catch {
         break; // macos: scroll failed — stop
       }
