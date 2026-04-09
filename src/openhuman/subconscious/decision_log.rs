@@ -1,7 +1,7 @@
 //! Decision log for tracking what the subconscious has already surfaced.
 //! Prevents re-escalating the same state changes across ticks.
 
-use super::types::{Decision, TickOutput};
+use super::types::TickDecision;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -11,7 +11,7 @@ const RECORD_TTL_SECS: f64 = 24.0 * 60.0 * 60.0;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionRecord {
     pub tick_at: f64,
-    pub decision: Decision,
+    pub decision: TickDecision,
     pub source_doc_ids: Vec<String>,
     pub reason: String,
     pub acknowledged: bool,
@@ -30,26 +30,22 @@ impl DecisionLog {
         }
     }
 
-    /// Check if any of the given doc IDs have already been surfaced
-    /// in a non-expired, unacknowledged record.
     pub fn was_already_surfaced(&self, doc_ids: &[String]) -> bool {
         let now = now_secs();
         self.records.iter().any(|r| {
             !r.acknowledged
                 && r.expires_at > now
-                && r.decision != Decision::Noop
+                && r.decision != TickDecision::Noop
                 && r.source_doc_ids.iter().any(|id| doc_ids.contains(id))
         })
     }
 
-    /// Filter out doc IDs that have already been surfaced.
-    /// Returns only the new/unseen doc IDs.
     pub fn filter_unsurfaced(&self, doc_ids: &[String]) -> Vec<String> {
         let surfaced: HashSet<&str> = self
             .records
             .iter()
             .filter(|r| {
-                !r.acknowledged && r.expires_at > now_secs() && r.decision != Decision::Noop
+                !r.acknowledged && r.expires_at > now_secs() && r.decision != TickDecision::Noop
             })
             .flat_map(|r| r.source_doc_ids.iter().map(|s| s.as_str()))
             .collect();
@@ -61,19 +57,23 @@ impl DecisionLog {
             .collect()
     }
 
-    /// Record a tick decision.
-    pub fn record(&mut self, tick_at: f64, output: &TickOutput, source_doc_ids: Vec<String>) {
+    pub fn record(
+        &mut self,
+        tick_at: f64,
+        decision: TickDecision,
+        reason: &str,
+        source_doc_ids: Vec<String>,
+    ) {
         self.records.push(DecisionRecord {
             tick_at,
-            decision: output.decision.clone(),
+            decision,
             source_doc_ids,
-            reason: output.reason.clone(),
+            reason: reason.to_string(),
             acknowledged: false,
             expires_at: tick_at + RECORD_TTL_SECS,
         });
     }
 
-    /// Mark all records matching any of the given doc IDs as acknowledged.
     pub fn mark_acknowledged(&mut self, doc_ids: &[String]) {
         for record in &mut self.records {
             if record.source_doc_ids.iter().any(|id| doc_ids.contains(id)) {
@@ -82,29 +82,24 @@ impl DecisionLog {
         }
     }
 
-    /// Remove expired records.
     pub fn prune_expired(&mut self) {
         let now = now_secs();
         self.records.retain(|r| r.expires_at > now);
     }
 
-    /// Number of active (non-expired) records.
     pub fn active_count(&self) -> usize {
         let now = now_secs();
         self.records.iter().filter(|r| r.expires_at > now).count()
     }
 
-    /// All records (including expired, for debugging).
     pub fn records(&self) -> &[DecisionRecord] {
         &self.records
     }
 
-    /// Serialize to JSON for storage in memory.
     pub fn to_json(&self) -> Result<String, String> {
         serde_json::to_string(self).map_err(|e| format!("serialize decision log: {e}"))
     }
 
-    /// Deserialize from JSON.
     pub fn from_json(json: &str) -> Result<Self, String> {
         serde_json::from_str(json).map_err(|e| format!("deserialize decision log: {e}"))
     }
@@ -120,15 +115,6 @@ fn now_secs() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::subconscious::types::{Decision, TickOutput};
-
-    fn tick_output(decision: Decision, reason: &str) -> TickOutput {
-        TickOutput {
-            decision,
-            reason: reason.to_string(),
-            actions: vec![],
-        }
-    }
 
     fn now() -> f64 {
         now_secs()
@@ -145,7 +131,8 @@ mod tests {
         let mut log = DecisionLog::new();
         log.record(
             now(),
-            &tick_output(Decision::Escalate, "deadline"),
+            TickDecision::Escalate,
+            "deadline",
             vec!["doc-1".into()],
         );
         assert!(log.was_already_surfaced(&["doc-1".into()]));
@@ -155,11 +142,7 @@ mod tests {
     #[test]
     fn noop_decisions_are_not_surfaced() {
         let mut log = DecisionLog::new();
-        log.record(
-            now(),
-            &tick_output(Decision::Noop, "nothing"),
-            vec!["doc-1".into()],
-        );
+        log.record(now(), TickDecision::Noop, "nothing", vec!["doc-1".into()]);
         assert!(!log.was_already_surfaced(&["doc-1".into()]));
     }
 
@@ -168,7 +151,8 @@ mod tests {
         let mut log = DecisionLog::new();
         log.record(
             now(),
-            &tick_output(Decision::Escalate, "deadline"),
+            TickDecision::Escalate,
+            "deadline",
             vec!["doc-1".into()],
         );
         log.mark_acknowledged(&["doc-1".into()]);
@@ -181,7 +165,8 @@ mod tests {
         let old_time = now() - RECORD_TTL_SECS - 1.0;
         log.record(
             old_time,
-            &tick_output(Decision::Escalate, "old"),
+            TickDecision::Escalate,
+            "old",
             vec!["doc-1".into()],
         );
         assert!(!log.was_already_surfaced(&["doc-1".into()]));
@@ -193,14 +178,11 @@ mod tests {
         let old_time = now() - RECORD_TTL_SECS - 1.0;
         log.record(
             old_time,
-            &tick_output(Decision::Escalate, "old"),
+            TickDecision::Escalate,
+            "old",
             vec!["doc-1".into()],
         );
-        log.record(
-            now(),
-            &tick_output(Decision::Act, "new"),
-            vec!["doc-2".into()],
-        );
+        log.record(now(), TickDecision::Act, "new", vec!["doc-2".into()]);
         assert_eq!(log.records().len(), 2);
         log.prune_expired();
         assert_eq!(log.records().len(), 1);
@@ -210,11 +192,7 @@ mod tests {
     #[test]
     fn filter_unsurfaced_returns_new_docs() {
         let mut log = DecisionLog::new();
-        log.record(
-            now(),
-            &tick_output(Decision::Escalate, "seen"),
-            vec!["doc-1".into()],
-        );
+        log.record(now(), TickDecision::Escalate, "seen", vec!["doc-1".into()]);
         let unsurfaced = log.filter_unsurfaced(&["doc-1".into(), "doc-2".into(), "doc-3".into()]);
         assert_eq!(unsurfaced, vec!["doc-2".to_string(), "doc-3".to_string()]);
     }
@@ -222,11 +200,7 @@ mod tests {
     #[test]
     fn roundtrip_json() {
         let mut log = DecisionLog::new();
-        log.record(
-            now(),
-            &tick_output(Decision::Escalate, "test"),
-            vec!["doc-1".into()],
-        );
+        log.record(now(), TickDecision::Escalate, "test", vec!["doc-1".into()]);
         let json = log.to_json().unwrap();
         let restored = DecisionLog::from_json(&json).unwrap();
         assert_eq!(restored.records().len(), 1);

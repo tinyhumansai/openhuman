@@ -7,7 +7,7 @@ mod terminal;
 mod text;
 mod types;
 
-pub use engine::{global_engine, AutocompleteEngine, AUTOCOMPLETE_ENGINE};
+pub use engine::{global_engine, start_if_enabled, AutocompleteEngine, AUTOCOMPLETE_ENGINE};
 pub use types::{
     AutocompleteAcceptParams, AutocompleteAcceptResult, AutocompleteCurrentParams,
     AutocompleteCurrentResult, AutocompleteDebugFocusResult, AutocompleteSetStyleParams,

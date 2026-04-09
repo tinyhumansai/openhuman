@@ -1,6 +1,5 @@
 use crate::openhuman::config::HeartbeatConfig;
 use crate::openhuman::subconscious::global::get_or_init_engine;
-use crate::openhuman::subconscious::types::Decision;
 use anyhow::Result;
 use std::path::Path;
 use tokio::time::{self, Duration};
@@ -40,10 +39,10 @@ impl HeartbeatEngine {
             }
         );
 
-        let mut interval = time::interval(Duration::from_secs(u64::from(interval_mins) * 60));
+        let sleep_secs = u64::from(interval_mins) * 60;
 
         loop {
-            interval.tick().await;
+            time::sleep(Duration::from_secs(sleep_secs)).await;
 
             if self.config.inference_enabled {
                 // Get the shared global engine (same instance as RPC handlers)
@@ -64,21 +63,12 @@ impl HeartbeatEngine {
                 };
 
                 match engine.tick().await {
-                    Ok(result) => match result.output.decision {
-                        Decision::Noop => {
-                            info!("[heartbeat] tick: noop — {}", result.output.reason);
-                        }
-                        Decision::Act => {
-                            info!(
-                                "[heartbeat] tick: act — {} ({} actions)",
-                                result.output.reason,
-                                result.output.actions.len()
-                            );
-                        }
-                        Decision::Escalate => {
-                            info!("[heartbeat] tick: escalate — {}", result.output.reason);
-                        }
-                    },
+                    Ok(result) => {
+                        info!(
+                            "[heartbeat] tick: executed={} escalated={} duration={}ms",
+                            result.executed, result.escalated, result.duration_ms
+                        );
+                    }
                     Err(e) => {
                         warn!("[heartbeat] subconscious tick error: {e}");
                     }
@@ -124,14 +114,12 @@ impl HeartbeatEngine {
     pub async fn ensure_heartbeat_file(workspace_dir: &Path) -> Result<()> {
         let path = workspace_dir.join("HEARTBEAT.md");
         if !path.exists() {
-            let default = "# Periodic Tasks\n\
+            let default = "# Subconscious Instructions\n\
                            #\n\
-                           # The subconscious loop checks these tasks periodically against\n\
+                           # The subconscious loop evaluates pending tasks periodically against\n\
                            # your workspace state (memory, skills, email, etc.)\n\
-                           # Add or remove tasks — one per line starting with `- `\n\n\
-                           - Check for new emails that need attention\n\
-                           - Review upcoming deadlines and calendar events\n\
-                           - Monitor connected skills for errors or disconnections\n";
+                           # Tasks are managed in the Subconscious UI — this file provides\n\
+                           # additional context and instructions for task evaluation.\n";
             tokio::fs::write(&path, default).await?;
         }
         Ok(())
@@ -188,9 +176,10 @@ mod tests {
         let path = dir.join("HEARTBEAT.md");
         assert!(path.exists());
         let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains("Subconscious Instructions"));
+        // Instructions only — no task lines
         let tasks = HeartbeatEngine::parse_tasks(&content);
-        assert_eq!(tasks.len(), 3);
-        assert!(tasks.iter().any(|t| t.contains("email")));
+        assert_eq!(tasks.len(), 0);
 
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -214,7 +203,11 @@ mod tests {
 
     #[tokio::test]
     async fn run_returns_immediately_when_disabled() {
-        let engine = HeartbeatEngine::new(HeartbeatConfig::default(), std::env::temp_dir());
+        let config = HeartbeatConfig {
+            enabled: false,
+            ..HeartbeatConfig::default()
+        };
+        let engine = HeartbeatEngine::new(config, std::env::temp_dir());
         let result = engine.run().await;
         assert!(result.is_ok());
     }

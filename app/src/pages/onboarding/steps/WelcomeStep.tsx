@@ -5,6 +5,9 @@ import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface WelcomeStepProps {
   onNext: () => void;
+  nextDisabled?: boolean;
+  nextLoading?: boolean;
+  nextLoadingLabel?: string;
 }
 
 const TOTAL_SLIDES = 3;
@@ -63,7 +66,12 @@ const AutomationSlide = () => (
 /* ------------------------------------------------------------------ */
 /*  WelcomeStep — auto-advancing carousel, button goes to next step    */
 /* ------------------------------------------------------------------ */
-const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
+const WelcomeStep = ({
+  onNext,
+  nextDisabled = false,
+  nextLoading = false,
+  nextLoadingLabel,
+}: WelcomeStepProps) => {
   const [slide, setSlide] = useState(0);
 
   useEffect(() => {
@@ -83,7 +91,13 @@ const WelcomeStep = ({ onNext }: WelcomeStepProps) => {
       <div className="mt-8 mb-6 flex justify-center">
         <ProgressIndicator currentStep={slide} totalSteps={TOTAL_SLIDES} />
       </div>
-      <OnboardingNextButton label="Let Start" onClick={onNext} />
+      <OnboardingNextButton
+        label="Let's Start"
+        onClick={onNext}
+        disabled={nextDisabled}
+        loading={nextLoading}
+        loadingLabel={nextLoadingLabel}
+      />
     </div>
   );
 };

@@ -11,6 +11,7 @@ import { socketService } from './socketService';
 
 export interface ChatToolCallEvent {
   thread_id: string;
+  request_id?: string;
   tool_name: string;
   skill_id: string;
   args: Record<string, unknown>;
@@ -19,6 +20,7 @@ export interface ChatToolCallEvent {
 
 export interface ChatToolResultEvent {
   thread_id: string;
+  request_id?: string;
   tool_name: string;
   skill_id: string;
   output: string;
@@ -28,6 +30,7 @@ export interface ChatToolResultEvent {
 
 export interface ChatDoneEvent {
   thread_id: string;
+  request_id?: string;
   full_response: string;
   rounds_used: number;
   total_input_tokens: number;
@@ -60,6 +63,7 @@ export function segmentText(event: ChatSegmentEvent): string {
 
 export interface ChatErrorEvent {
   thread_id: string;
+  request_id?: string;
   message: string;
   error_type: 'network' | 'timeout' | 'tool_error' | 'inference' | 'cancelled';
   round: number | null;
@@ -78,40 +82,45 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   if (!socket) return () => {};
 
   const handlers: Array<[string, (...args: unknown[]) => void]> = [];
+  // Canonical convention for web-channel events is snake_case.
+  // The core emits aliases for compatibility, but subscribing once avoids
+  // processing the same logical event twice.
+  const EVENTS = {
+    toolCall: 'tool_call',
+    toolResult: 'tool_result',
+    segment: 'chat_segment',
+    done: 'chat_done',
+    error: 'chat_error',
+  } as const;
 
   if (listeners.onToolCall) {
     const cb = (payload: unknown) => listeners.onToolCall?.(payload as ChatToolCallEvent);
-    socket.on('chat:tool_call', cb);
-    socket.on('tool_call', cb);
-    handlers.push(['chat:tool_call', cb], ['tool_call', cb]);
+    socket.on(EVENTS.toolCall, cb);
+    handlers.push([EVENTS.toolCall, cb]);
   }
 
   if (listeners.onToolResult) {
     const cb = (payload: unknown) => listeners.onToolResult?.(payload as ChatToolResultEvent);
-    socket.on('chat:tool_result', cb);
-    socket.on('tool_result', cb);
-    handlers.push(['chat:tool_result', cb], ['tool_result', cb]);
+    socket.on(EVENTS.toolResult, cb);
+    handlers.push([EVENTS.toolResult, cb]);
   }
 
   if (listeners.onSegment) {
     const cb = (payload: unknown) => listeners.onSegment?.(payload as ChatSegmentEvent);
-    socket.on('chat:segment', cb);
-    socket.on('chat_segment', cb);
-    handlers.push(['chat:segment', cb], ['chat_segment', cb]);
+    socket.on(EVENTS.segment, cb);
+    handlers.push([EVENTS.segment, cb]);
   }
 
   if (listeners.onDone) {
     const cb = (payload: unknown) => listeners.onDone?.(payload as ChatDoneEvent);
-    socket.on('chat:done', cb);
-    socket.on('chat_done', cb);
-    handlers.push(['chat:done', cb], ['chat_done', cb]);
+    socket.on(EVENTS.done, cb);
+    handlers.push([EVENTS.done, cb]);
   }
 
   if (listeners.onError) {
     const cb = (payload: unknown) => listeners.onError?.(payload as ChatErrorEvent);
-    socket.on('chat:error', cb);
-    socket.on('chat_error', cb);
-    handlers.push(['chat:error', cb], ['chat_error', cb]);
+    socket.on(EVENTS.error, cb);
+    handlers.push([EVENTS.error, cb]);
   }
 
   return () => {

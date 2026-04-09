@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+import ReferralRewardsSection from '../components/referral/ReferralRewardsSection';
 import { useUser } from '../hooks/useUser';
 import { useAppSelector } from '../store/hooks';
 
@@ -89,6 +90,8 @@ const Rewards = () => {
   return (
     <div className="min-h-full px-4 pt-6 pb-8">
       <div className="max-w-3xl mx-auto space-y-4">
+        <ReferralRewardsSection />
+
         <div className="bg-white rounded-2xl shadow-soft border border-stone-200 p-6">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div className="space-y-2">

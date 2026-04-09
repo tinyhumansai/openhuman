@@ -129,6 +129,7 @@ export default function SkillDebugModal({ skillId, skillName, onClose }: SkillDe
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 text-stone-400 hover:text-stone-900 transition-colors rounded-lg hover:bg-stone-100">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -142,6 +143,8 @@ export default function SkillDebugModal({ skillId, skillName, onClose }: SkillDe
           {tabs.map(tab => (
             <button
               key={tab.id}
+              type="button"
+              data-testid={tab.id === 'tools' ? 'skill-debug-tab-tools' : 'skill-debug-tab-state'}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 py-2 text-xs font-medium transition-colors ${
                 activeTab === tab.id
@@ -273,6 +276,8 @@ function ToolsTab({
           <div key={tool.name} className="border border-stone-200 rounded-xl overflow-hidden">
             {/* Tool header */}
             <button
+              type="button"
+              data-testid={`skill-debug-tool-header-${tool.name}`}
               onClick={() => setExpandedTool(isExpanded ? null : tool.name)}
               className="w-full flex items-center justify-between p-3 text-left hover:bg-stone-50 transition-colors">
               <div className="min-w-0">
@@ -309,6 +314,7 @@ function ToolsTab({
                     Arguments (JSON)
                   </label>
                   <textarea
+                    data-testid={`skill-debug-tool-args-${tool.name}`}
                     value={toolArgs[tool.name] ?? '{}'}
                     onChange={e => setToolArgs({ ...toolArgs, [tool.name]: e.target.value })}
                     placeholder="{}"
@@ -319,6 +325,8 @@ function ToolsTab({
 
                 {/* Call button */}
                 <button
+                  type="button"
+                  data-testid={`skill-debug-execute-${tool.name}`}
                   onClick={() => onCallTool(tool.name)}
                   disabled={isLoading}
                   className="w-full py-2 text-xs font-medium bg-primary-50 text-primary-500 border border-primary-500/30 rounded-lg hover:bg-primary-100 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">

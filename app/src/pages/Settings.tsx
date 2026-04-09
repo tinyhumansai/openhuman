@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes } from 'react-router-dom';
 
 import AccessibilityPanel from '../components/settings/panels/AccessibilityPanel';
 import AdvancedPanel from '../components/settings/panels/AdvancedPanel';
@@ -331,6 +331,7 @@ const Settings = () => {
           <Route path="memory-data" element={<MemoryDataPanel />} />
           <Route path="memory-debug" element={<MemoryDebugPanel />} />
           <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />
+          <Route path="*" element={<Navigate to="/settings" replace />} />
         </Routes>
         <div className="border-t border-stone-100 px-4 py-3 text-center text-[11px] text-stone-400">
           Beta build - v{APP_VERSION}

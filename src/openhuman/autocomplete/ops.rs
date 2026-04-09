@@ -192,13 +192,35 @@ pub async fn autocomplete_set_style(
         result.config.accept_with_tab,
         result.config.disabled_apps.len()
     );
-    Ok(RpcOutcome::new(
-        result,
-        vec![
-            "autocomplete style settings updated".to_string(),
-            set_style_log,
-        ],
-    ))
+    let mut logs = vec![
+        "autocomplete style settings updated".to_string(),
+        set_style_log,
+    ];
+    if requested_enabled == Some(true) {
+        match autocomplete::global_engine()
+            .start(AutocompleteStartParams {
+                debounce_ms: Some(result.config.debounce_ms),
+            })
+            .await
+        {
+            Ok(start_result) => {
+                let status = autocomplete::global_engine().status().await;
+                logs.push(format!(
+                    "[autocomplete] auto_start enabled=true started={} running={} phase={} debounce={}ms",
+                    if start_result.started { "yes" } else { "no" },
+                    if status.running { "yes" } else { "no" },
+                    status.phase,
+                    status.debounce_ms
+                ));
+            }
+            Err(err) => {
+                logs.push(format!(
+                    "[autocomplete] auto_start enabled=true failed={err}"
+                ));
+            }
+        }
+    }
+    Ok(RpcOutcome::new(result, logs))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

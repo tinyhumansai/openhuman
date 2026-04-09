@@ -12,6 +12,7 @@ export interface PlanMeta {
   annualPrice: number;
   monthlyBudgetUsd: number;
   weeklyBudgetUsd: number;
+  /** USD cap per 10-hour rolling inference window; amount scales with `tier` (FREE / BASIC / PRO). */
   fiveHourCapUsd: number;
   discountPercent: number;
   storageLimitBytes: number;

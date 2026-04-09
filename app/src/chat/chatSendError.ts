@@ -9,7 +9,8 @@ export type ChatSendErrorCode =
   | 'microphone_recording'
   | 'microphone_access'
   | 'voice_playback'
-  | 'safety_timeout';
+  | 'safety_timeout'
+  | 'usage_limit_reached';
 
 export interface ChatSendError {
   code: ChatSendErrorCode;

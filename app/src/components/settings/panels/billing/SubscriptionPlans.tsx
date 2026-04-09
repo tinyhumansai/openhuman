@@ -111,7 +111,7 @@ const SubscriptionPlans = ({
                     7-day cycle: {formatUsdAmount(plan.weeklyBudgetUsd)}
                   </span>
                   <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    5-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
+                    10-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
                   </span>
                   <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
                     Discount: {plan.discountPercent}%

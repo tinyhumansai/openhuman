@@ -54,6 +54,14 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **`DEV_FORCE_ONBOARDING` was a no-op** — The old ternary had identical branches; fixed to actually force-show when the flag is set.
 - **`isOnboardedRedux` must be in useEffect deps** — When reading a selector value inside a useEffect, add it to the dependency array or the effect won't re-run when Redux state changes.
 
+## CoreStateProvider & Auth Bootstrap
+
+- **Auth session tokens are NOT in Redux persist** — They live entirely in the Rust sidecar, fetched via `fetchCoreAppSnapshot()` RPC. `PersistGate` only gates non-auth state (AI config, threads, channel connections). `CoreStateProvider` bootstrap is the critical auth path.
+- **`CoreStateProvider` premature `isBootstrapping: false` causes blank Settings** — If the initial RPC call fails (sidecar still starting), the old error handler set `isBootstrapping: false` immediately, causing `ProtectedRoute` to redirect to `/` before the 3s poll could recover. Fix (issue #413): keep `isBootstrapping: true` on initial failure, let the poll retry, give up after 5 attempts (~15s).
+- **`CoreStateProvider` is consumed by ~25 components** — Changes to its state shape or bootstrap behavior affect routes, socket, onboarding, nav, settings, and hooks. Treat it as a high-blast-radius file.
+- **Settings is a full route, not a modal** — `/settings/*` uses nested `<Routes>` in `Settings.tsx`. The `.claude/rules/15-settings-modal-system.md` doc describing a portal/modal approach is outdated. A catch-all `<Route path="*">` redirects unmatched sub-paths to `/settings`.
+- **`PersistGate loading={null}` causes flash** — Changed to `loading={<RouteLoadingScreen />}` (issue #413). `RouteLoadingScreen` accepts an optional `label` prop (defaults to "Initializing OpenHuman...") and can be rendered with no props.
+
 ## Build Blockers: macOS Tahoe + whisper-rs
 
 - **`whisper-rs` breaks `cargo build` on macOS Tahoe (Apple Silicon)** — Added in main via `whisper-rs = "0.16"` (voice feature #178). Apple clang 21+ refuses `-mcpu=native` when `--target=arm64-apple-macosx` is also set. This is NOT fixable by updating CLT.
@@ -70,6 +78,15 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **MiniSidebar.tsx retained** (not deleted) as backup. `BottomTabBar.tsx` is the active nav component.
 - **Agent message bubbles** need `bg-stone-200/80` (not `bg-stone-100`) on `#F5F5F5` background — `bg-stone-100` is nearly invisible.
 - **~55 files touched** — purely CSS class changes, zero logic/handler/state changes.
+
+## Upsell / Billing (Phase 1 — Issue #403)
+
+- **Upsell components** live in `app/src/components/upsell/` — `UpsellBanner`, `UsageLimitModal`, `GlobalUpsellBanner`, `upsellDismissState`. Shared hook: `app/src/hooks/useUsageState.ts`.
+- **Usage data sources** — `creditsApi.getTeamUsage()` returns `TeamUsage` (rolling 10h spend/cap + weekly budget/remaining). `billingApi.getCurrentPlan()` returns `CurrentPlanData` (plan tier, caps, subscription status). Both go through `callCoreCommand` (core RPC). No Redux slice — all local hook state.
+- **Module-level cache in `useUsageState`** — `_cache` variable with 60s TTL prevents duplicate API calls when multiple components mount simultaneously. New pattern; do not remove.
+- **Banner dismiss state uses localStorage** (prefix `openhuman:upsell:`), not Redux — consistent with CLAUDE.md exception for ephemeral UI state.
+- **Phased rollout** — Phase 1 = banners + limit modal + hook. Phase 2 = onboarding upsell + analytics. Phase 3 = remote config + A/B testing.
+- **"5-hour" label stragglers in Conversations.tsx** — `LimitPill` label and its hover tooltip still say "5h" / "5-hour". Commit 8c52236's "10-hour" terminology refactor missed those two spots.
 
 ## Environment
 

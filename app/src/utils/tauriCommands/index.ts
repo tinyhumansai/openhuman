@@ -8,6 +8,7 @@ export * from './core';
 export * from './memory';
 export * from './webhooks';
 export * from './conscious';
+export * from './subconscious';
 export * from './localAi';
 export * from './config';
 export * from './cron';

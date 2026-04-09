@@ -4,7 +4,10 @@ import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
-import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
+import UpsellBanner from '../components/upsell/UpsellBanner';
+import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
+import UsageLimitModal from '../components/upsell/UsageLimitModal';
+import { useUsageState } from '../hooks/useUsageState';
 import {
   chatCancel,
   type ChatSegmentEvent,
@@ -203,8 +206,18 @@ const Conversations = () => {
     selectedThreadIdRef.current = selectedThreadId;
   }, [selectedThreadId]);
 
-  const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
-  const [isLoadingBudget, setIsLoadingBudget] = useState(false);
+  const {
+    teamUsage,
+    isLoading: isLoadingBudget,
+    isAtLimit,
+    isBudgetExhausted,
+    isNearLimit,
+    isFreeTier,
+    usagePct10h,
+    usagePct7d,
+    currentTier,
+  } = useUsageState();
+  const [showLimitModal, setShowLimitModal] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textInputRef = useRef<HTMLTextAreaElement>(null);
@@ -216,6 +229,34 @@ const Conversations = () => {
   const autocompleteDebounceRef = useRef<number | null>(null);
   const autocompleteRequestSeqRef = useRef(0);
   const sendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenChatEventsRef = useRef<Map<string, number>>(new Map());
+
+  const markChatEventSeen = (key: string): boolean => {
+    const now = Date.now();
+    const cache = seenChatEventsRef.current;
+    const ttlMs = 10 * 60_000;
+    const maxEntries = 500;
+
+    if (cache.has(key)) return false;
+
+    cache.set(key, now);
+
+    // Prune old entries first.
+    for (const [existingKey, timestamp] of cache) {
+      if (now - timestamp > ttlMs) {
+        cache.delete(existingKey);
+      }
+    }
+
+    // Keep bounded memory in long sessions.
+    while (cache.size > maxEntries) {
+      const oldest = cache.keys().next().value;
+      if (!oldest) break;
+      cache.delete(oldest);
+    }
+
+    return true;
+  };
 
   const getAudioExtension = (mimeType: string): string => {
     const lower = mimeType.toLowerCase();
@@ -247,17 +288,6 @@ const Conversations = () => {
     dispatch(setSelectedThread(DEFAULT_THREAD_ID));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
-
-  useEffect(() => {
-    setIsLoadingBudget(true);
-    creditsApi
-      .getTeamUsage()
-      .then(data => setTeamUsage(data))
-      .catch(() => {
-        // Budget unavailable — silently ignore
-      })
-      .finally(() => setIsLoadingBudget(false));
-  }, []);
 
   useEffect(() => {
     if (selectedThreadId) dispatch(setLastViewed(selectedThreadId));
@@ -398,6 +428,9 @@ const Conversations = () => {
 
     const cleanup = subscribeChatEvents({
       onToolCall: (event: ChatToolCallEvent) => {
+        const eventKey = `tool_call:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}`;
+        if (!markChatEventSeen(eventKey)) return;
+
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
           return {
@@ -415,6 +448,9 @@ const Conversations = () => {
         });
       },
       onToolResult: (event: ChatToolResultEvent) => {
+        const eventKey = `tool_result:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}:${event.success}`;
+        if (!markChatEventSeen(eventKey)) return;
+
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
           if (existing.length === 0) return prev;
@@ -439,6 +475,9 @@ const Conversations = () => {
         });
       },
       onSegment: (event: ChatSegmentEvent) => {
+        const eventKey = `segment:${event.thread_id}:${event.request_id}:${event.segment_index}`;
+        if (!markChatEventSeen(eventKey)) return;
+
         // Rust delivers segments with delays already applied — just dispatch.
         if (event.reaction_emoji) {
           const pending = pendingReactionRef.current.get(event.thread_id);
@@ -456,6 +495,9 @@ const Conversations = () => {
         dispatch(addInferenceResponse({ content: segmentText(event), threadId: event.thread_id }));
       },
       onDone: event => {
+        const eventKey = `done:${event.thread_id}:${event.request_id ?? 'none'}`;
+        if (!markChatEventSeen(eventKey)) return;
+
         // Update tool timeline
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
@@ -506,6 +548,9 @@ const Conversations = () => {
         dispatch(setActiveThread(null));
       },
       onError: event => {
+        const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}:${event.message}`;
+        if (!markChatEventSeen(eventKey)) return;
+
         if (event.thread_id !== selectedThreadIdRef.current) return;
         if (sendingTimeoutRef.current) {
           clearTimeout(sendingTimeoutRef.current);
@@ -628,6 +673,13 @@ const Conversations = () => {
     const trimmed = normalized.trim();
 
     if (!trimmed || !selectedThreadId || isSending) return;
+    if (isAtLimit) {
+      setShowLimitModal(true);
+      setSendError(
+        chatSendError('usage_limit_reached', 'Usage limit reached. Upgrade or wait for reset.')
+      );
+      return;
+    }
     if (socketStatus !== 'connected') {
       setSendError(
         chatSendError(
@@ -1149,9 +1201,26 @@ const Conversations = () => {
         )}
 
         <div className="flex-shrink-0 border-t border-stone-200 px-4 py-3">
+          {isNearLimit &&
+            !isAtLimit &&
+            isFreeTier &&
+            shouldShowBanner('conversations-warning', 24 * 60 * 60 * 1000) && (
+              <div className="mb-3">
+                <UpsellBanner
+                  variant="warning"
+                  title="Approaching usage limit"
+                  message={`You've used ${Math.round(Math.max(usagePct10h, usagePct7d) * 100)}% of your inference budget. Upgrade for higher limits.`}
+                  ctaLabel="Upgrade"
+                  onCtaClick={() => navigate('/settings/billing')}
+                  dismissible
+                  onDismiss={() => dismissBanner('conversations-warning')}
+                />
+              </div>
+            )}
           {teamUsage &&
             (teamUsage.remainingUsd <= 0 ||
-              (teamUsage.fiveHourCapUsd > 0 &&
+              (!teamUsage.bypassRateLimit &&
+                teamUsage.fiveHourCapUsd > 0 &&
                 teamUsage.fiveHourSpendUsd >= teamUsage.fiveHourCapUsd)) && (
               <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
@@ -1170,7 +1239,7 @@ const Conversations = () => {
                   <p className="text-xs text-coral-600 truncate">
                     {teamUsage.remainingUsd <= 0
                       ? 'Weekly inference budget exhausted. Top up to continue.'
-                      : `5-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
+                      : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
                   </p>
                 </div>
                 {teamUsage.remainingUsd <= 0 && (
@@ -1188,14 +1257,16 @@ const Conversations = () => {
               <div className="relative group">
                 {teamUsage ? (
                   <div className="flex items-center gap-2">
-                    <LimitPill
-                      label="5h"
-                      usedPct={
-                        teamUsage.fiveHourCapUsd > 0
-                          ? Math.min(1, teamUsage.fiveHourSpendUsd / teamUsage.fiveHourCapUsd)
-                          : 0
-                      }
-                    />
+                    {!teamUsage.bypassRateLimit && (
+                      <LimitPill
+                        label="5h"
+                        usedPct={
+                          teamUsage.fiveHourCapUsd > 0
+                            ? Math.min(1, teamUsage.fiveHourSpendUsd / teamUsage.fiveHourCapUsd)
+                            : 0
+                        }
+                      />
+                    )}
                     <LimitPill
                       label="7d"
                       usedPct={
@@ -1215,18 +1286,20 @@ const Conversations = () => {
                 {teamUsage && (
                   <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
                     <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-stone-400">5-hour limit</span>
-                        <span>
-                          ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
-                          {teamUsage.fiveHourCapUsd.toFixed(2)}
-                          {teamUsage.fiveHourResetsAt && (
-                            <span className="text-stone-400 ml-1">
-                              — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
-                            </span>
-                          )}
-                        </span>
-                      </div>
+                      {!teamUsage.bypassRateLimit && (
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="text-stone-400">5-hour limit</span>
+                          <span>
+                            ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
+                            {teamUsage.fiveHourCapUsd.toFixed(2)}
+                            {teamUsage.fiveHourResetsAt && (
+                              <span className="text-stone-400 ml-1">
+                                — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between gap-4">
                         <span className="text-stone-400">Weekly limit</span>
                         <span>
@@ -1371,6 +1444,13 @@ const Conversations = () => {
           )}
         </div>
       </div>
+      <UsageLimitModal
+        open={showLimitModal}
+        onClose={() => setShowLimitModal(false)}
+        isBudgetExhausted={isBudgetExhausted}
+        resetTime={teamUsage?.fiveHourResetsAt}
+        currentTier={currentTier}
+      />
     </div>
   );
 };

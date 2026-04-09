@@ -410,7 +410,7 @@ const BillingPanel = () => {
                   7-day cycle budget: {formatUsdAmount(currentPlan.weeklyBudgetUsd)}
                 </span>
                 <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                  5-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
+                  10-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
                 </span>
                 {currentPlanMeta && (
                   <>

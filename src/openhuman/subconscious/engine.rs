@@ -1,26 +1,29 @@
-//! Subconscious loop engine — periodic background awareness.
+//! Subconscious engine — SQLite-backed task evaluation and execution loop.
 //!
-//! Replaces the old heartbeat engine with context-aware reasoning:
-//! assembles a delta-based situation report, evaluates with the local
-//! model, and decides whether to act, escalate, or do nothing.
+//! On each tick: load due tasks from SQLite → log as in_progress →
+//! evaluate with local model → execute "act" tasks → create escalations
+//! for ambiguous tasks → update log entries in place.
+//!
+//! Overlap guard: each tick gets a generation counter. If a new tick starts
+//! while the old one is in-flight, the old tick's in_progress entries are
+//! marked as cancelled and its results are discarded.
 
-use super::decision_log::DecisionLog;
-use super::prompt::build_subconscious_prompt;
+use super::executor;
+use super::prompt;
 use super::situation_report::build_situation_report;
-use super::types::{Decision, SubconsciousStatus, TickOutput, TickResult};
-use crate::openhuman::config::Config;
+use super::store;
+use super::types::{
+    EscalationPriority, EvaluationResponse, SubconsciousStatus, SubconsciousTask, TaskEvaluation,
+    TaskRecurrence, TaskSource, TickDecision, TickResult,
+};
 use crate::openhuman::memory::MemoryClientRef;
 use anyhow::Result;
+use executor::ExecutionOutcome;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
-use tokio::time::{self, Duration};
 use tracing::{debug, info, warn};
-
-/// Memory namespace for storing subconscious state (decision log, etc.).
-const SUBCONSCIOUS_NAMESPACE: &str = "subconscious";
-/// Memory key for the persisted decision log.
-const DECISION_LOG_KEY: &str = "__decision_log";
 
 pub struct SubconsciousEngine {
     workspace_dir: PathBuf,
@@ -28,69 +31,85 @@ pub struct SubconsciousEngine {
     context_budget_tokens: u32,
     enabled: bool,
     memory: Option<MemoryClientRef>,
-    state: Arc<Mutex<EngineState>>,
+    state: Mutex<EngineState>,
+    /// Monotonically increasing tick generation. A tick checks this before
+    /// writing results — if it has been bumped, the tick was superseded.
+    tick_generation: AtomicU64,
 }
 
 struct EngineState {
     last_tick_at: f64,
-    decision_log: DecisionLog,
     total_ticks: u64,
-    total_escalations: u64,
+    consecutive_failures: u64,
+    seeded: bool,
 }
 
 impl SubconsciousEngine {
-    /// Create from the top-level Config (reads config.heartbeat).
-    pub fn new(config: &Config, memory: Option<MemoryClientRef>) -> Self {
+    pub fn new(config: &crate::openhuman::config::Config, memory: Option<MemoryClientRef>) -> Self {
         Self::from_heartbeat_config(&config.heartbeat, config.workspace_dir.clone(), memory)
     }
 
-    /// Create directly from HeartbeatConfig (used by HeartbeatEngine).
     pub fn from_heartbeat_config(
         heartbeat: &crate::openhuman::config::HeartbeatConfig,
-        workspace_dir: std::path::PathBuf,
+        workspace_dir: PathBuf,
         memory: Option<MemoryClientRef>,
     ) -> Self {
+        // Seed default system tasks eagerly so they show in the UI immediately,
+        // without waiting for the first tick.
+        let seeded =
+            match store::with_connection(&workspace_dir, |conn| store::seed_default_tasks(conn)) {
+                Ok(count) => {
+                    if count > 0 {
+                        info!("[subconscious] seeded {count} tasks on init");
+                    }
+                    true
+                }
+                Err(e) => {
+                    warn!("[subconscious] seed on init failed: {e}");
+                    false
+                }
+            };
+
         Self {
             workspace_dir,
             interval_minutes: heartbeat.interval_minutes.max(5),
             context_budget_tokens: heartbeat.context_budget_tokens,
             enabled: heartbeat.enabled && heartbeat.inference_enabled,
             memory,
-            state: Arc::new(Mutex::new(EngineState {
+            state: Mutex::new(EngineState {
                 last_tick_at: 0.0,
-                decision_log: DecisionLog::new(),
                 total_ticks: 0,
-                total_escalations: 0,
-            })),
+                consecutive_failures: 0,
+                seeded,
+            }),
+            tick_generation: AtomicU64::new(0),
         }
     }
 
     /// Start the subconscious loop (runs until cancelled).
+    ///
+    /// Uses `sleep` after each tick (not `interval`) so ticks never stack up.
+    /// If a tick takes longer than the interval, the next tick starts immediately
+    /// after the previous one finishes — no overlap.
     pub async fn run(&self) -> Result<()> {
         if !self.enabled {
             info!("[subconscious] disabled, exiting");
             return Ok(());
         }
 
+        let interval_secs = u64::from(self.interval_minutes) * 60;
         info!(
             "[subconscious] started: every {} minutes, budget {} tokens",
             self.interval_minutes, self.context_budget_tokens
         );
 
-        // Load persisted decision log from memory
-        self.load_decision_log().await;
-
-        let mut interval =
-            time::interval(Duration::from_secs(u64::from(self.interval_minutes) * 60));
-
         loop {
-            interval.tick().await;
-
+            tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
             match self.tick().await {
                 Ok(result) => {
                     info!(
-                        "[subconscious] tick complete: decision={:?} reason=\"{}\" duration={}ms",
-                        result.output.decision, result.output.reason, result.duration_ms
+                        "[subconscious] tick: executed={} escalated={} duration={}ms",
+                        result.executed, result.escalated, result.duration_ms
                     );
                 }
                 Err(e) => {
@@ -100,65 +119,82 @@ impl SubconsciousEngine {
         }
     }
 
-    /// Execute a single subconscious tick. Public for manual triggering via RPC.
-    ///
-    /// The entire tick holds the state lock to prevent concurrent ticks
-    /// from duplicating work (fixes CodeRabbit #1: serialize executions).
+    /// Execute a single tick. Public for manual triggering via RPC.
     pub async fn tick(&self) -> Result<TickResult> {
         let started = std::time::Instant::now();
         let tick_at = now_secs();
 
-        // Hold the lock for the entire tick to prevent concurrent execution
+        // Bump generation — any in-flight tick with an older generation is stale.
+        let my_generation = self.tick_generation.fetch_add(1, Ordering::SeqCst) + 1;
+
         let mut state = self.state.lock().await;
 
-        // Load persisted decision log if this is the first tick (fixes #5)
-        if state.total_ticks == 0 {
-            if let Some(ref memory) = self.memory {
-                if let Ok(Some(value)) = memory
-                    .kv_get(Some(SUBCONSCIOUS_NAMESPACE), DECISION_LOG_KEY)
-                    .await
-                {
-                    if let Some(json) = value.as_str() {
-                        if let Ok(log) = DecisionLog::from_json(json) {
-                            state.decision_log = log;
-                            debug!("[subconscious] loaded persisted decision log");
-                        }
-                    }
-                }
-            }
+        // Seed default tasks on first tick (fallback if init seeding failed)
+        if !state.seeded {
+            self.seed_tasks();
+            state.seeded = true;
         }
 
-        state.decision_log.prune_expired();
+        // Cancel any stale in_progress log entries from previous ticks
+        let _ = store::with_connection(&self.workspace_dir, |conn| {
+            let cancelled = store::cancel_stale_in_progress(conn)?;
+            if cancelled > 0 {
+                info!("[subconscious] cancelled {cancelled} stale in_progress entries");
+            }
+            Ok(())
+        });
+
         let last_tick_at = state.last_tick_at;
 
-        // 1. Read HEARTBEAT.md tasks
-        let tasks = read_heartbeat_tasks(&self.workspace_dir).await;
-        if tasks.is_empty() {
-            debug!("[subconscious] HEARTBEAT.md empty or missing, skipping tick");
+        // 1. Load due tasks from SQLite
+        let due_tasks =
+            store::with_connection(&self.workspace_dir, |conn| store::due_tasks(conn, tick_at))?;
+
+        if due_tasks.is_empty() {
+            debug!("[subconscious] no due tasks");
             state.last_tick_at = tick_at;
             state.total_ticks += 1;
             return Ok(TickResult {
                 tick_at,
-                output: TickOutput {
-                    decision: Decision::Noop,
-                    reason: "No tasks in HEARTBEAT.md".to_string(),
-                    actions: vec![],
-                },
-                source_doc_ids: vec![],
+                evaluations: vec![],
+                executed: 0,
+                escalated: 0,
                 duration_ms: started.elapsed().as_millis() as u64,
-                tokens_used: 0,
             });
         }
 
-        debug!(
-            "[subconscious] {} heartbeat tasks, assembling state (last_tick={:.0})",
-            tasks.len(),
-            last_tick_at
-        );
+        debug!("[subconscious] {} due tasks", due_tasks.len());
 
-        // 2. Assemble current state (delta since last tick)
+        // 2. Insert in_progress log entries for each due task
+        let log_ids: HashMap<String, String> =
+            store::with_connection(&self.workspace_dir, |conn| {
+                let mut ids = HashMap::new();
+                for task in &due_tasks {
+                    match store::add_log_entry(
+                        conn,
+                        &task.id,
+                        tick_at,
+                        "in_progress",
+                        Some("Evaluating..."),
+                        None,
+                    ) {
+                        Ok(entry) => {
+                            ids.insert(task.id.clone(), entry.id);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "[subconscious] failed to log in_progress for '{}': {e}",
+                                task.title
+                            );
+                        }
+                    }
+                }
+                Ok(ids)
+            })?;
+
+        // 3. Build situation report
         let memory_ref = self.memory.as_ref().map(|m| m.as_ref());
-        let (report, new_doc_ids) = build_situation_report_with_doc_ids(
+        let report = build_situation_report(
             memory_ref,
             &self.workspace_dir,
             last_tick_at,
@@ -166,79 +202,123 @@ impl SubconsciousEngine {
         )
         .await;
 
-        // 3. Filter out already-surfaced doc IDs (fixes #3: dedup)
-        let unsurfaced_doc_ids = state.decision_log.filter_unsurfaced(&new_doc_ids);
-        let has_new_data = !unsurfaced_doc_ids.is_empty();
+        // 4. Load identity context
+        let identity = prompt::load_identity_context(&self.workspace_dir);
 
-        // 4. Check if there's actually new state to evaluate
-        let has_memory_changes = report.contains("new/updated");
-        let has_changes = has_new_data || has_memory_changes;
-
-        let output = if !has_changes {
-            debug!("[subconscious] no actionable changes, skipping inference");
-            TickOutput {
-                decision: Decision::Noop,
-                reason: "No new state changes since last tick.".to_string(),
-                actions: vec![],
-            }
-        } else {
-            // 5. Build task-driven prompt and call local model
-            let prompt = build_subconscious_prompt(&tasks, &report);
-            debug!(
-                "[subconscious] calling local model ({} tasks, {} new docs)",
-                tasks.len(),
-                unsurfaced_doc_ids.len()
-            );
-            // Release lock during LLM call (it's slow)
-            drop(state);
-            let result = self.evaluate_with_local_model(&prompt).await?;
-            state = self.state.lock().await;
-            result
-        };
-
-        // 6. Update state
-        state.last_tick_at = tick_at;
-        state.total_ticks += 1;
-
-        // 7. Record decision with actual doc IDs (fixes #3: dedup)
-        if output.decision != Decision::Noop {
-            state
-                .decision_log
-                .record(tick_at, &output, unsurfaced_doc_ids.clone());
-
-            if output.decision == Decision::Escalate {
-                state.total_escalations += 1;
-            }
-        }
-
-        let duration_ms = started.elapsed().as_millis() as u64;
+        // Release lock during LLM calls
         drop(state);
 
-        // 8. Persist decision log
-        self.save_decision_log().await;
+        // 5. Evaluate tasks with local model
+        let evaluations = self.evaluate_tasks(&due_tasks, &report, &identity).await;
 
-        // 9. Handle actions — always store as RecommendedAction JSON (fixes #4)
-        if !output.actions.is_empty() {
-            if let Ok(json) = serde_json::to_string(&output.actions) {
-                self.store_actions(&json).await;
+        // Check if we were superseded by a newer tick
+        if self.tick_generation.load(Ordering::SeqCst) != my_generation {
+            info!("[subconscious] tick superseded by newer tick, discarding results");
+            // Cancel our in_progress entries
+            let _ = store::with_connection(&self.workspace_dir, |conn| {
+                store::cancel_stale_in_progress(conn)
+            });
+            // Don't advance last_tick_at — next tick should re-fetch from
+            // the same point so nothing is missed.
+            let mut state = self.state.lock().await;
+            state.total_ticks += 1;
+            return Ok(TickResult {
+                tick_at,
+                evaluations: vec![],
+                executed: 0,
+                escalated: 0,
+                duration_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+
+        // 6. Check if the evaluation itself failed (all tasks defaulted to noop
+        //    due to LLM error). Individual task execution failures are tracked
+        //    per-task and don't block the tick from advancing.
+        let evaluation_failed = evaluations.iter().all(|e| {
+            e.decision == TickDecision::Noop && e.reason.starts_with("Evaluation failed:")
+        }) && !evaluations.is_empty();
+
+        // 7. Execute based on decisions, updating log entries in place
+        let mut executed = 0;
+        let mut escalated = 0;
+
+        for eval in &evaluations {
+            let task = match due_tasks.iter().find(|t| t.id == eval.task_id) {
+                Some(t) => t,
+                None => continue,
+            };
+            let log_id = log_ids.get(&task.id).map(|s| s.as_str());
+
+            match eval.decision {
+                TickDecision::Act => {
+                    self.handle_act(task, &report, &identity, tick_at, eval, log_id)
+                        .await;
+                    executed += 1;
+                }
+                TickDecision::Escalate => {
+                    self.handle_escalate(task, tick_at, eval, log_id).await;
+                    escalated += 1;
+                }
+                TickDecision::Noop => {
+                    self.handle_noop(task, tick_at, eval, log_id).await;
+                    self.advance_task_schedule(task, tick_at);
+                }
             }
         }
-        if output.decision == Decision::Escalate {
-            self.handle_escalation(&output, &report).await;
+
+        // 8. Mark any tasks that didn't get an evaluation as noop.
+        //    This happens when the LLM returns results for only a subset of tasks.
+        let evaluated_task_ids: std::collections::HashSet<&str> =
+            evaluations.iter().map(|e| e.task_id.as_str()).collect();
+        for task in &due_tasks {
+            if !evaluated_task_ids.contains(task.id.as_str()) {
+                if let Some(lid) = log_ids.get(&task.id) {
+                    let _ = store::with_connection(&self.workspace_dir, |conn| {
+                        store::update_log_entry(
+                            conn,
+                            lid,
+                            "noop",
+                            Some("No evaluation returned by model"),
+                            None,
+                        )
+                    });
+                }
+            }
+        }
+
+        // 9. Update state
+        let mut state = self.state.lock().await;
+        state.total_ticks += 1;
+        if evaluation_failed {
+            state.consecutive_failures += 1;
+            // Don't advance last_tick_at — the LLM couldn't evaluate anything,
+            // so the next tick should re-fetch from the same point.
+        } else {
+            state.consecutive_failures = 0;
+            state.last_tick_at = tick_at;
         }
 
         Ok(TickResult {
             tick_at,
-            output,
-            source_doc_ids: unsurfaced_doc_ids,
-            duration_ms,
-            tokens_used: 0,
+            evaluations,
+            executed,
+            escalated,
+            duration_ms: started.elapsed().as_millis() as u64,
         })
     }
 
     /// Get current status.
     pub async fn status(&self) -> SubconsciousStatus {
         let state = self.state.lock().await;
+        let (task_count, pending_escalations) =
+            store::with_connection(&self.workspace_dir, |conn| {
+                Ok((
+                    store::task_count(conn).unwrap_or(0),
+                    store::pending_escalation_count(conn).unwrap_or(0),
+                ))
+            })
+            .unwrap_or((0, 0));
+
         SubconsciousStatus {
             enabled: self.enabled,
             interval_minutes: self.interval_minutes,
@@ -247,299 +327,386 @@ impl SubconsciousEngine {
             } else {
                 None
             },
-            last_decision: state
-                .decision_log
-                .records()
-                .last()
-                .map(|r| r.decision.clone()),
             total_ticks: state.total_ticks,
-            total_escalations: state.total_escalations,
+            task_count,
+            pending_escalations,
+            consecutive_failures: state.consecutive_failures,
         }
     }
 
-    /// Evaluate the situation report using the local AI model (Ollama).
-    async fn evaluate_with_local_model(&self, prompt: &str) -> Result<TickOutput> {
-        let config = crate::openhuman::config::Config::load_or_init()
-            .await
-            .map_err(|e| anyhow::anyhow!("load config: {e}"))?;
-
-        let messages = vec![
-            crate::openhuman::local_ai::ops::LocalAiChatMessage {
-                role: "system".to_string(),
-                content: prompt.to_string(),
-            },
-            crate::openhuman::local_ai::ops::LocalAiChatMessage {
-                role: "user".to_string(),
-                content:
-                    "Evaluate the situation report and respond with ONLY the JSON decision object."
-                        .to_string(),
-            },
-        ];
-
-        match crate::openhuman::local_ai::ops::local_ai_chat(&config, messages, None).await {
-            Ok(outcome) => {
-                let text = outcome.value;
-                debug!("[subconscious] local model response: {text}");
-                parse_tick_output(&text)
-            }
-            Err(e) => {
-                warn!("[subconscious] local model inference failed: {e}, falling back to noop");
-                Ok(TickOutput {
-                    decision: Decision::Noop,
-                    reason: format!("Local model inference failed: {e}"),
-                    actions: vec![],
-                })
-            }
-        }
+    /// Add a new task. All tasks are evaluated on every tick — no scheduling needed.
+    pub async fn add_task(&self, title: &str, source: TaskSource) -> Result<SubconsciousTask> {
+        let task = store::with_connection(&self.workspace_dir, |conn| {
+            store::add_task(conn, title, source, TaskRecurrence::Pending)
+        })?;
+        info!("[subconscious] added task: {}", title);
+        Ok(task)
     }
 
-    /// Handle escalation — call the stronger model to resolve into concrete actions.
-    async fn handle_escalation(&self, output: &TickOutput, situation_report: &str) {
+    /// Approve an escalation — execute the task then mark approved.
+    pub async fn approve_escalation(&self, escalation_id: &str) -> Result<()> {
+        let (escalation, task) = store::with_connection(&self.workspace_dir, |conn| {
+            let esc = store::get_escalation(conn, escalation_id)?;
+            let task = store::get_task(conn, &esc.task_id)?;
+            Ok((esc, task))
+        })?;
+
         info!(
-            "[subconscious] ESCALATION: {} — calling agent for resolution",
-            output.reason
+            "[subconscious] approved escalation '{}' for task '{}'",
+            escalation.title, task.title
         );
 
-        let escalation_prompt = format!(
-            "The subconscious background loop detected something important:\n\n\
-             Reason: {}\n\n\
-             Situation report:\n{}\n\n\
-             Based on this, what concrete actions should be taken? \
-             Respond with a JSON object:\n\
-             {{\"actions\": [{{\"type\": \"notify|store_memory|run_tool\", \"description\": \"what to do\", \"priority\": \"low|medium|high\"}}]}}",
-            output.reason, situation_report
-        );
+        // Execute the task
+        let identity = prompt::load_identity_context(&self.workspace_dir);
+        let memory_ref = self.memory.as_ref().map(|m| m.as_ref());
+        let report = build_situation_report(
+            memory_ref,
+            &self.workspace_dir,
+            0.0, // fresh report for execution
+            self.context_budget_tokens,
+        )
+        .await;
+
+        let tick_at = now_secs();
+        let result = executor::execute_approved_write(&task, &report, &identity).await;
+        let (result_text, duration) = match &result {
+            Ok(r) => (r.output.clone(), Some(r.duration_ms as i64)),
+            Err(e) => (format!("Execution failed: {e}"), None),
+        };
+
+        store::with_connection(&self.workspace_dir, |conn| {
+            store::add_log_entry(conn, &task.id, tick_at, "act", Some(&result_text), duration)?;
+            store::resolve_escalation(
+                conn,
+                escalation_id,
+                &super::types::EscalationStatus::Approved,
+            )?;
+            if task.recurrence == TaskRecurrence::Once {
+                store::mark_task_completed(conn, &task.id)?;
+            } else {
+                self.advance_task_schedule_in_conn(conn, &task, tick_at);
+            }
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    /// Dismiss an escalation — log and don't execute.
+    pub async fn dismiss_escalation(&self, escalation_id: &str) -> Result<()> {
+        store::with_connection(&self.workspace_dir, |conn| {
+            let esc = store::get_escalation(conn, escalation_id)?;
+            store::add_log_entry(
+                conn,
+                &esc.task_id,
+                now_secs(),
+                "dismissed",
+                Some("Dismissed by user"),
+                None,
+            )?;
+            store::resolve_escalation(
+                conn,
+                escalation_id,
+                &super::types::EscalationStatus::Dismissed,
+            )?;
+            Ok(())
+        })
+    }
+
+    // ── Internal methods ─────────────────────────────────────────────────────
+
+    fn seed_tasks(&self) {
+        match store::with_connection(&self.workspace_dir, |conn| store::seed_default_tasks(conn)) {
+            Ok(count) => {
+                if count > 0 {
+                    info!("[subconscious] seeded {count} default tasks");
+                }
+            }
+            Err(e) => warn!("[subconscious] seed failed: {e}"),
+        }
+    }
+
+    async fn evaluate_tasks(
+        &self,
+        tasks: &[SubconsciousTask],
+        report: &str,
+        identity: &str,
+    ) -> Vec<TaskEvaluation> {
+        let prompt_text = prompt::build_evaluation_prompt(tasks, report, identity);
 
         let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(c) => c,
             Err(e) => {
-                warn!("[subconscious] escalation failed — could not load config: {e}");
-                return;
+                warn!("[subconscious] config load failed: {e}");
+                return tasks
+                    .iter()
+                    .map(|t| TaskEvaluation {
+                        task_id: t.id.clone(),
+                        decision: TickDecision::Noop,
+                        reason: format!("Config load failed: {e}"),
+                    })
+                    .collect();
             }
         };
 
-        match crate::openhuman::local_ai::ops::agent_chat_simple(
-            &config,
-            &escalation_prompt,
-            config.heartbeat.escalation_model.clone(),
-            Some(0.3),
-        )
-        .await
-        {
-            Ok(outcome) => {
-                info!("[subconscious] escalation resolved");
-                // Normalize agent response to RecommendedAction format (fixes #4)
-                let actions = normalize_escalation_response(&outcome.value, &output.reason);
-                if let Ok(json) = serde_json::to_string(&actions) {
-                    self.store_actions(&json).await;
-                }
+        let messages = vec![
+            crate::openhuman::local_ai::ops::LocalAiChatMessage {
+                role: "system".to_string(),
+                content: prompt_text,
+            },
+            crate::openhuman::local_ai::ops::LocalAiChatMessage {
+                role: "user".to_string(),
+                content: "Evaluate the due tasks. Reply with JSON only.".to_string(),
+            },
+        ];
+
+        match crate::openhuman::local_ai::ops::local_ai_chat(&config, messages, None).await {
+            Ok(outcome) => parse_evaluations(&outcome.value, tasks),
+            Err(e) => {
+                warn!("[subconscious] evaluation failed: {e}");
+                tasks
+                    .iter()
+                    .map(|t| TaskEvaluation {
+                        task_id: t.id.clone(),
+                        decision: TickDecision::Noop,
+                        reason: format!("Evaluation failed: {e}"),
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    /// Handle an "act" decision. Individual execution failures are logged
+    /// per-task but don't block the tick from advancing.
+    async fn handle_act(
+        &self,
+        task: &SubconsciousTask,
+        report: &str,
+        identity: &str,
+        tick_at: f64,
+        eval: &TaskEvaluation,
+        log_id: Option<&str>,
+    ) {
+        info!(
+            "[subconscious] executing task '{}': {}",
+            task.title, eval.reason
+        );
+
+        let result = executor::execute_task(task, report, identity).await;
+
+        match &result {
+            Ok(ExecutionOutcome::Completed(r)) => {
+                let _ = store::with_connection(&self.workspace_dir, |conn| {
+                    let duration = Some(r.duration_ms as i64);
+                    if let Some(lid) = log_id {
+                        store::update_log_entry(conn, lid, "act", Some(&r.output), duration)?;
+                    } else {
+                        store::add_log_entry(
+                            conn,
+                            &task.id,
+                            tick_at,
+                            "act",
+                            Some(&r.output),
+                            duration,
+                        )?;
+                    }
+                    if task.recurrence == TaskRecurrence::Once {
+                        store::mark_task_completed(conn, &task.id)?;
+                        info!("[subconscious] one-off task '{}' completed", task.title);
+                    } else {
+                        self.advance_task_schedule_in_conn(conn, task, tick_at);
+                    }
+                    Ok(())
+                });
+            }
+            Ok(ExecutionOutcome::UnapprovedWrite {
+                recommendation,
+                duration_ms,
+            }) => {
+                // agentic-v1 wants to take a write action the user didn't ask for.
+                // Create an escalation so the user can approve or dismiss.
+                info!(
+                    "[subconscious] unapproved write for '{}': {}",
+                    task.title, recommendation
+                );
+                let _ = store::with_connection(&self.workspace_dir, |conn| {
+                    let duration = Some(*duration_ms as i64);
+                    let effective_log_id = if let Some(lid) = log_id {
+                        store::update_log_entry(
+                            conn,
+                            lid,
+                            "escalate",
+                            Some(recommendation),
+                            duration,
+                        )?;
+                        lid.to_string()
+                    } else {
+                        let entry = store::add_log_entry(
+                            conn,
+                            &task.id,
+                            tick_at,
+                            "escalate",
+                            Some(recommendation),
+                            duration,
+                        )?;
+                        entry.id
+                    };
+                    store::add_escalation(
+                        conn,
+                        &task.id,
+                        Some(&effective_log_id),
+                        &task.title,
+                        recommendation,
+                        &EscalationPriority::Important,
+                    )?;
+                    Ok(())
+                });
             }
             Err(e) => {
-                warn!("[subconscious] escalation agent call failed: {e}");
-                // Fall back: store the original actions from local model
-                if let Ok(json) = serde_json::to_string(&output.actions) {
-                    self.store_actions(&json).await;
-                }
+                let msg = format!("Execution failed: {e}");
+                let _ = store::with_connection(&self.workspace_dir, |conn| {
+                    if let Some(lid) = log_id {
+                        store::update_log_entry(conn, lid, "failed", Some(&msg), None)?;
+                    } else {
+                        store::add_log_entry(conn, &task.id, tick_at, "failed", Some(&msg), None)?;
+                    }
+                    Ok(())
+                });
             }
         }
     }
 
-    /// Store action results in the subconscious memory namespace for the UI to consume.
-    async fn store_actions(&self, content: &str) {
-        if let Some(ref memory) = self.memory {
-            // Use millisecond precision + random suffix to avoid key collisions (fixes #7)
-            let timestamp_ms = (now_secs() * 1000.0) as u64;
-            let suffix = rand_suffix();
-            let key = format!("actions:{timestamp_ms}:{suffix}");
-            let value = serde_json::Value::String(content.to_string());
-            if let Err(e) = memory
-                .kv_set(Some(SUBCONSCIOUS_NAMESPACE), &key, &value)
-                .await
-            {
-                warn!("[subconscious] failed to store actions: {e}");
+    async fn handle_escalate(
+        &self,
+        task: &SubconsciousTask,
+        tick_at: f64,
+        eval: &TaskEvaluation,
+        log_id: Option<&str>,
+    ) {
+        info!(
+            "[subconscious] escalating task '{}': {}",
+            task.title, eval.reason
+        );
+
+        let _ = store::with_connection(&self.workspace_dir, |conn| {
+            let effective_log_id = if let Some(lid) = log_id {
+                store::update_log_entry(conn, lid, "escalate", Some(&eval.reason), None)?;
+                lid.to_string()
             } else {
-                debug!("[subconscious] actions stored as {key}");
-            }
-        }
+                let entry = store::add_log_entry(
+                    conn,
+                    &task.id,
+                    tick_at,
+                    "escalate",
+                    Some(&eval.reason),
+                    None,
+                )?;
+                entry.id
+            };
+            store::add_escalation(
+                conn,
+                &task.id,
+                Some(&effective_log_id),
+                &task.title,
+                &eval.reason,
+                &EscalationPriority::Important,
+            )?;
+            Ok(())
+        });
     }
 
-    /// Load decision log from memory.
-    async fn load_decision_log(&self) {
-        if let Some(ref memory) = self.memory {
-            match memory
-                .kv_get(Some(SUBCONSCIOUS_NAMESPACE), DECISION_LOG_KEY)
-                .await
-            {
-                Ok(Some(value)) => {
-                    if let Some(json) = value.as_str() {
-                        match DecisionLog::from_json(json) {
-                            Ok(log) => {
-                                let mut state = self.state.lock().await;
-                                state.decision_log = log;
-                                debug!("[subconscious] loaded decision log from memory");
-                            }
-                            Err(e) => {
-                                warn!("[subconscious] failed to parse decision log: {e}");
-                            }
-                        }
-                    }
-                }
-                Ok(None) => {
-                    debug!("[subconscious] no persisted decision log found");
-                }
-                Err(e) => {
-                    warn!("[subconscious] failed to load decision log: {e}");
-                }
+    async fn handle_noop(
+        &self,
+        task: &SubconsciousTask,
+        tick_at: f64,
+        eval: &TaskEvaluation,
+        log_id: Option<&str>,
+    ) {
+        debug!("[subconscious] noop for '{}': {}", task.title, eval.reason);
+        let _ = store::with_connection(&self.workspace_dir, |conn| {
+            if let Some(lid) = log_id {
+                store::update_log_entry(conn, lid, "noop", Some(&eval.reason), None)?;
+            } else {
+                store::add_log_entry(conn, &task.id, tick_at, "noop", Some(&eval.reason), None)?;
             }
-        }
+            Ok(())
+        });
     }
 
-    /// Save decision log to memory.
-    async fn save_decision_log(&self) {
-        if let Some(ref memory) = self.memory {
-            let state = self.state.lock().await;
-            match state.decision_log.to_json() {
-                Ok(json) => {
-                    let value = serde_json::Value::String(json);
-                    if let Err(e) = memory
-                        .kv_set(Some(SUBCONSCIOUS_NAMESPACE), DECISION_LOG_KEY, &value)
-                        .await
-                    {
-                        warn!("[subconscious] failed to save decision log: {e}");
-                    }
-                }
-                Err(e) => {
-                    warn!("[subconscious] failed to serialize decision log: {e}");
-                }
-            }
+    fn advance_task_schedule(&self, task: &SubconsciousTask, tick_at: f64) {
+        let _ = store::with_connection(&self.workspace_dir, |conn| {
+            self.advance_task_schedule_in_conn(conn, task, tick_at);
+            Ok(())
+        });
+    }
+
+    fn advance_task_schedule_in_conn(
+        &self,
+        conn: &rusqlite::Connection,
+        task: &SubconsciousTask,
+        tick_at: f64,
+    ) {
+        if let TaskRecurrence::Cron(ref expr) = task.recurrence {
+            let next = store::compute_next_run(expr);
+            let _ = store::update_task_run_times(conn, &task.id, tick_at, next);
+        } else if task.recurrence == TaskRecurrence::Pending {
+            // Pending tasks run on every tick until classified
+            let next = tick_at + (f64::from(self.interval_minutes) * 60.0);
+            let _ = store::update_task_run_times(conn, &task.id, tick_at, Some(next));
         }
     }
 }
 
-/// Parse the local model's JSON response into a TickOutput.
-fn parse_tick_output(text: &str) -> Result<TickOutput> {
-    // Try direct JSON parse first
-    if let Ok(output) = serde_json::from_str::<TickOutput>(text) {
-        return Ok(output);
-    }
+/// Parse the local model's evaluation response into per-task decisions.
+fn parse_evaluations(text: &str, tasks: &[SubconsciousTask]) -> Vec<TaskEvaluation> {
+    let json_text = extract_json(text);
 
-    // Try extracting JSON from markdown code blocks
-    let trimmed = text.trim();
-    if let Some(json_start) = trimmed.find('{') {
-        if let Some(json_end) = trimmed.rfind('}') {
-            let json_slice = &trimmed[json_start..=json_end];
-            if let Ok(output) = serde_json::from_str::<TickOutput>(json_slice) {
-                return Ok(output);
-            }
+    // Try parsing as EvaluationResponse
+    if let Ok(response) = serde_json::from_str::<EvaluationResponse>(json_text) {
+        if !response.evaluations.is_empty() {
+            return response.evaluations;
         }
     }
 
-    warn!("[subconscious] could not parse model output as JSON, defaulting to noop");
-    Ok(TickOutput {
-        decision: Decision::Noop,
-        reason: format!("Unparseable model output: {}", &text[..text.len().min(100)]),
-        actions: vec![],
-    })
-}
-
-/// Normalize the agent's escalation response into RecommendedAction format.
-/// Ensures consistent schema regardless of what the agent returns.
-fn normalize_escalation_response(
-    agent_response: &str,
-    reason: &str,
-) -> Vec<super::types::RecommendedAction> {
-    // Try parsing as JSON with an actions array
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(agent_response) {
-        if let Some(actions) = value.get("actions").and_then(|a| a.as_array()) {
-            let mut result = Vec::new();
-            for action in actions {
-                if let Ok(ra) =
-                    serde_json::from_value::<super::types::RecommendedAction>(action.clone())
-                {
-                    result.push(ra);
-                }
-            }
-            if !result.is_empty() {
-                return result;
-            }
+    // Try parsing as a bare array of evaluations
+    if let Ok(evals) = serde_json::from_str::<Vec<TaskEvaluation>>(json_text) {
+        if !evals.is_empty() {
+            return evals;
         }
     }
 
-    // Fallback: wrap the raw response as a single notify action
-    vec![super::types::RecommendedAction {
-        action_type: super::types::ActionType::EscalateToAgent,
-        description: format!(
-            "Escalation resolved: {}",
-            &agent_response[..agent_response.len().min(300)]
-        ),
-        priority: super::types::Priority::High,
-        task: Some(reason.to_string()),
-    }]
-}
-
-/// Generate a short random suffix for KV key uniqueness.
-fn rand_suffix() -> u32 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    std::time::SystemTime::now().hash(&mut hasher);
-    std::thread::current().id().hash(&mut hasher);
-    (hasher.finish() % 10000) as u32
-}
-
-/// Wrapper around build_situation_report that also returns new doc IDs.
-async fn build_situation_report_with_doc_ids(
-    memory: Option<&super::super::memory::MemoryClient>,
-    workspace_dir: &std::path::Path,
-    last_tick_at: f64,
-    token_budget: u32,
-) -> (String, Vec<String>) {
-    let report = build_situation_report(memory, workspace_dir, last_tick_at, token_budget).await;
-
-    // Extract doc IDs from memory if available
-    let mut doc_ids = Vec::new();
-    if let Some(client) = memory {
-        if let Ok(docs) = client.list_documents(None).await {
-            let is_cold_start = last_tick_at <= 0.0;
-            if let Some(arr) = docs
-                .as_array()
-                .or_else(|| docs.get("documents").and_then(|v| v.as_array()))
-            {
-                for doc in arr {
-                    let updated_at = doc
-                        .get("updated_at")
-                        .or_else(|| doc.get("updatedAt"))
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.0);
-                    if is_cold_start || updated_at > last_tick_at {
-                        if let Some(id) = doc
-                            .get("document_id")
-                            .or_else(|| doc.get("documentId"))
-                            .and_then(|v| v.as_str())
-                        {
-                            doc_ids.push(id.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    (report, doc_ids)
-}
-
-/// Read tasks from HEARTBEAT.md in the workspace.
-async fn read_heartbeat_tasks(workspace_dir: &std::path::Path) -> Vec<String> {
-    let path = workspace_dir.join("HEARTBEAT.md");
-    let content = match tokio::fs::read_to_string(&path).await {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    content
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("- ").map(ToString::to_string))
-        .filter(|s| !s.is_empty())
+    warn!("[subconscious] could not parse evaluation response, defaulting all to noop");
+    tasks
+        .iter()
+        .map(|t| TaskEvaluation {
+            task_id: t.id.clone(),
+            decision: TickDecision::Noop,
+            reason: "Unparseable evaluation response".to_string(),
+        })
         .collect()
+}
+
+fn extract_json(text: &str) -> &str {
+    let trimmed = text.trim();
+    let obj_start = trimmed.find('{');
+    let arr_start = trimmed.find('[');
+    let start = match (obj_start, arr_start) {
+        (Some(o), Some(a)) => o.min(a),
+        (Some(o), None) => o,
+        (None, Some(a)) => a,
+        (None, None) => return trimmed,
+    };
+    let end = if trimmed.as_bytes().get(start) == Some(&b'[') {
+        trimmed.rfind(']').map(|i| i + 1)
+    } else {
+        trimmed.rfind('}').map(|i| i + 1)
+    };
+    let end = end.unwrap_or(trimmed.len());
+    if start < end {
+        &trimmed[start..end]
+    } else {
+        trimmed
+    }
 }
 
 fn now_secs() -> f64 {
@@ -553,38 +720,79 @@ fn now_secs() -> f64 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_valid_noop() {
-        let output = parse_tick_output(
-            r#"{"decision": "noop", "reason": "Nothing changed.", "actions": []}"#,
-        )
-        .unwrap();
-        assert_eq!(output.decision, Decision::Noop);
+    fn test_tasks() -> Vec<SubconsciousTask> {
+        vec![
+            SubconsciousTask {
+                id: "t1".into(),
+                title: "Check email".into(),
+                source: TaskSource::User,
+                recurrence: TaskRecurrence::Cron("0 8 * * *".into()),
+                enabled: true,
+                last_run_at: None,
+                next_run_at: None,
+                completed: false,
+                created_at: 0.0,
+            },
+            SubconsciousTask {
+                id: "t2".into(),
+                title: "Monitor skills".into(),
+                source: TaskSource::System,
+                recurrence: TaskRecurrence::Pending,
+                enabled: true,
+                last_run_at: None,
+                next_run_at: None,
+                completed: false,
+                created_at: 0.0,
+            },
+        ]
     }
 
     #[test]
-    fn parse_valid_escalate() {
-        let output = parse_tick_output(
-            r#"{"decision": "escalate", "reason": "Deadline moved to tomorrow", "actions": [{"type": "escalate_to_agent", "description": "Notify about deadline change", "priority": "high"}]}"#,
-        )
-        .unwrap();
-        assert_eq!(output.decision, Decision::Escalate);
-        assert_eq!(output.actions.len(), 1);
+    fn parse_evaluation_response() {
+        let json = r#"{"evaluations": [
+            {"task_id": "t1", "decision": "act", "reason": "3 new urgent emails"},
+            {"task_id": "t2", "decision": "noop", "reason": "All skills healthy"}
+        ]}"#;
+        let evals = parse_evaluations(json, &test_tasks());
+        assert_eq!(evals.len(), 2);
+        assert_eq!(evals[0].decision, TickDecision::Act);
+        assert_eq!(evals[1].decision, TickDecision::Noop);
     }
 
     #[test]
-    fn parse_json_in_markdown_block() {
-        let output = parse_tick_output(
-            "```json\n{\"decision\": \"act\", \"reason\": \"Store to memory\", \"actions\": []}\n```",
-        )
-        .unwrap();
-        assert_eq!(output.decision, Decision::Act);
+    fn parse_evaluation_bare_array() {
+        let json = r#"[
+            {"task_id": "t1", "decision": "escalate", "reason": "Deadline conflict"}
+        ]"#;
+        let evals = parse_evaluations(json, &test_tasks());
+        assert_eq!(evals.len(), 1);
+        assert_eq!(evals[0].decision, TickDecision::Escalate);
     }
 
     #[test]
-    fn parse_garbage_falls_back_to_noop() {
-        let output = parse_tick_output("This is not JSON at all").unwrap();
-        assert_eq!(output.decision, Decision::Noop);
-        assert!(output.reason.contains("Unparseable"));
+    fn parse_evaluation_in_markdown() {
+        let json = "```json\n{\"evaluations\": [{\"task_id\": \"t1\", \"decision\": \"act\", \"reason\": \"Found items\"}]}\n```";
+        let evals = parse_evaluations(json, &test_tasks());
+        assert_eq!(evals.len(), 1);
+        assert_eq!(evals[0].decision, TickDecision::Act);
+    }
+
+    #[test]
+    fn parse_evaluation_garbage_falls_back_to_noop() {
+        let evals = parse_evaluations("Not JSON at all", &test_tasks());
+        assert_eq!(evals.len(), 2);
+        assert!(evals.iter().all(|e| e.decision == TickDecision::Noop));
+    }
+
+    #[test]
+    fn extract_json_object() {
+        assert_eq!(extract_json(r#"{"key": "val"}"#), r#"{"key": "val"}"#);
+    }
+
+    #[test]
+    fn extract_json_from_text() {
+        let input = "Here's the result: {\"evaluations\": []} done.";
+        assert!(extract_json(input).starts_with('{'));
+        assert!(extract_json(input).ends_with('}'));
     }
 }

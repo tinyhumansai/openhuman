@@ -63,6 +63,7 @@ const LocalModelPanel = () => {
   const [downloads, setDownloads] = useState<LocalAiDownloadsProgress | null>(null);
   const [statusError, setStatusError] = useState<string>('');
   const [isTriggeringDownload, setIsTriggeringDownload] = useState(false);
+  const [bootstrapMessage, setBootstrapMessage] = useState<string>('');
   const [assetDownloadBusy, setAssetDownloadBusy] = useState<Record<string, boolean>>({});
 
   const [summaryInput, setSummaryInput] = useState('');
@@ -199,10 +200,16 @@ const LocalModelPanel = () => {
   const triggerDownload = async (force: boolean) => {
     setIsTriggeringDownload(true);
     setStatusError('');
+    setBootstrapMessage('');
     try {
       await openhumanLocalAiDownload(force);
       await openhumanLocalAiDownloadAllAssets(force);
-      await loadStatus();
+      const freshStatus = await openhumanLocalAiStatus();
+      setStatus(freshStatus.result);
+      if (freshStatus.result?.state === 'ready') {
+        setBootstrapMessage(force ? 'Re-bootstrap complete' : 'Models verified');
+      }
+      setTimeout(() => setBootstrapMessage(''), 3000);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Failed to trigger local model bootstrap';
@@ -674,18 +681,43 @@ const LocalModelPanel = () => {
                 </div>
 
                 <div className="flex items-center gap-2 pt-1">
-                  <button
-                    onClick={() => void triggerDownload(false)}
-                    disabled={isTriggeringDownload}
-                    className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
-                    {isTriggeringDownload ? 'Triggering...' : 'Bootstrap / Resume'}
-                  </button>
+                  {status?.state === 'ready' ? (
+                    <span className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md bg-green-50 text-green-700 border border-green-200 font-medium">
+                      <svg
+                        className="h-3 w-3"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      Running
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => void triggerDownload(false)}
+                      disabled={isTriggeringDownload}
+                      className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
+                      {isTriggeringDownload
+                        ? 'Triggering...'
+                        : status?.state === 'degraded'
+                          ? 'Retry Bootstrap'
+                          : 'Bootstrap / Resume'}
+                    </button>
+                  )}
                   <button
                     onClick={() => void triggerDownload(true)}
                     disabled={isTriggeringDownload}
                     className="px-3 py-1.5 text-xs rounded-md border border-stone-200 hover:border-stone-300 disabled:opacity-60 text-stone-600">
-                    Force Re-bootstrap
+                    {isTriggeringDownload ? 'Working...' : 'Force Re-bootstrap'}
                   </button>
+                  {bootstrapMessage && (
+                    <span className="text-xs text-green-600">{bootstrapMessage}</span>
+                  )}
                 </div>
               </div>
             </section>

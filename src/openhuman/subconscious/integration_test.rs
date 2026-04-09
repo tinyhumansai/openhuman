@@ -1,279 +1,225 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use serde_json::json;
-    use tempfile::TempDir;
-
-    use crate::openhuman::memory::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::{
-        MemoryIngestionConfig, MemoryIngestionRequest, NamespaceDocumentInput, UnifiedMemory,
-    };
     use crate::openhuman::subconscious::decision_log::DecisionLog;
-    use crate::openhuman::subconscious::situation_report::build_situation_report;
-    use crate::openhuman::subconscious::types::Decision;
+    use crate::openhuman::subconscious::store;
+    use crate::openhuman::subconscious::types::{
+        EscalationPriority, EscalationStatus, TaskRecurrence, TaskSource, TickDecision,
+    };
 
-    /// Find the largest byte index ≤ `max_bytes` that is a valid char boundary.
-    fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> usize {
-        let mut end = s.len().min(max_bytes);
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        end
+    #[test]
+    fn sqlite_task_lifecycle_one_off() {
+        let dir = tempfile::tempdir().unwrap();
+        store::with_connection(dir.path(), |conn| {
+            // Add a one-off task
+            let task = store::add_task(
+                conn,
+                "Remind about meeting",
+                TaskSource::User,
+                TaskRecurrence::Once,
+            )?;
+            assert!(!task.completed);
+            assert_eq!(task.recurrence, TaskRecurrence::Once);
+
+            // Should be due immediately
+            let due = store::due_tasks(conn, 9999999999.0)?;
+            assert_eq!(due.len(), 1);
+
+            // Execute and complete
+            store::add_log_entry(
+                conn,
+                &task.id,
+                1000.0,
+                "act",
+                Some("Reminded user"),
+                Some(50),
+            )?;
+            store::mark_task_completed(conn, &task.id)?;
+
+            // Should no longer be due
+            let due = store::due_tasks(conn, 9999999999.0)?;
+            assert_eq!(due.len(), 0);
+
+            // Task still exists but completed
+            let t = store::get_task(conn, &task.id)?;
+            assert!(t.completed);
+
+            Ok(())
+        })
+        .unwrap();
     }
 
-    fn fixture(path: &str) -> String {
-        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        std::fs::read_to_string(
-            base.join("tests")
-                .join("fixtures")
-                .join("subconscious")
-                .join(path),
-        )
-        .expect("fixture should load")
+    #[test]
+    fn sqlite_task_lifecycle_recurrent() {
+        let dir = tempfile::tempdir().unwrap();
+        store::with_connection(dir.path(), |conn| {
+            let task = store::add_task(
+                conn,
+                "Check email",
+                TaskSource::User,
+                TaskRecurrence::Cron("0 8 * * *".into()),
+            )?;
+
+            // Execute and set next run
+            let now = 1000.0;
+            let next = 2000.0;
+            store::add_log_entry(
+                conn,
+                &task.id,
+                now,
+                "act",
+                Some("Checked 3 emails"),
+                Some(200),
+            )?;
+            store::update_task_run_times(conn, &task.id, now, Some(next))?;
+
+            // Not due yet (before next_run_at)
+            let due = store::due_tasks(conn, 1500.0)?;
+            assert_eq!(due.len(), 0);
+
+            // Due after next_run_at
+            let due = store::due_tasks(conn, 2500.0)?;
+            assert_eq!(due.len(), 1);
+
+            // Task should NOT be completed
+            let t = store::get_task(conn, &task.id)?;
+            assert!(!t.completed);
+
+            Ok(())
+        })
+        .unwrap();
     }
 
-    fn ci_safe_config() -> MemoryIngestionConfig {
-        MemoryIngestionConfig {
-            model_name: "__test_no_model__".to_string(),
-            ..MemoryIngestionConfig::default()
-        }
+    #[test]
+    fn escalation_approve_dismiss_flow() {
+        let dir = tempfile::tempdir().unwrap();
+        store::with_connection(dir.path(), |conn| {
+            let task = store::add_task(
+                conn,
+                "Review deadline",
+                TaskSource::User,
+                TaskRecurrence::Once,
+            )?;
+
+            // Create escalation
+            let esc = store::add_escalation(
+                conn,
+                &task.id,
+                None,
+                "Deadline conflict",
+                "Two deadlines on the same day",
+                &EscalationPriority::Important,
+            )?;
+            assert_eq!(esc.status, EscalationStatus::Pending);
+            assert_eq!(store::pending_escalation_count(conn)?, 1);
+
+            // Approve
+            store::resolve_escalation(conn, &esc.id, &EscalationStatus::Approved)?;
+            let resolved = store::get_escalation(conn, &esc.id)?;
+            assert_eq!(resolved.status, EscalationStatus::Approved);
+            assert!(resolved.resolved_at.is_some());
+            assert_eq!(store::pending_escalation_count(conn)?, 0);
+
+            // Create another and dismiss
+            let esc2 = store::add_escalation(
+                conn,
+                &task.id,
+                None,
+                "Budget warning",
+                "Monthly spend at 90%",
+                &EscalationPriority::Normal,
+            )?;
+            store::resolve_escalation(conn, &esc2.id, &EscalationStatus::Dismissed)?;
+            let dismissed = store::get_escalation(conn, &esc2.id)?;
+            assert_eq!(dismissed.status, EscalationStatus::Dismissed);
+
+            Ok(())
+        })
+        .unwrap();
     }
 
-    async fn ingest(
-        memory: &UnifiedMemory,
-        namespace: &str,
-        key: &str,
-        title: &str,
-        content: &str,
-    ) -> String {
-        let result = memory
-            .ingest_document(MemoryIngestionRequest {
-                document: NamespaceDocumentInput {
-                    namespace: namespace.to_string(),
-                    key: key.to_string(),
-                    title: title.to_string(),
-                    content: content.to_string(),
-                    source_type: "test".to_string(),
-                    priority: "high".to_string(),
-                    tags: Vec::new(),
-                    metadata: json!({}),
-                    category: "core".to_string(),
-                    session_id: None,
-                    document_id: None,
-                },
-                config: ci_safe_config(),
-            })
-            .await
-            .unwrap();
-        result.document_id
+    #[test]
+    fn execution_log_tracks_history() {
+        let dir = tempfile::tempdir().unwrap();
+        store::with_connection(dir.path(), |conn| {
+            let task = store::add_task(
+                conn,
+                "Check health",
+                TaskSource::System,
+                TaskRecurrence::Pending,
+            )?;
+
+            store::add_log_entry(conn, &task.id, 1000.0, "noop", Some("All healthy"), None)?;
+            store::add_log_entry(
+                conn,
+                &task.id,
+                2000.0,
+                "act",
+                Some("Restarted skill"),
+                Some(500),
+            )?;
+            store::add_log_entry(conn, &task.id, 3000.0, "noop", Some("All healthy"), None)?;
+
+            let entries = store::list_log_entries(conn, Some(&task.id), 10)?;
+            assert_eq!(entries.len(), 3);
+            // Most recent first
+            assert_eq!(entries[0].tick_at, 3000.0);
+            assert_eq!(entries[1].decision, "act");
+
+            // Global log
+            let all = store::list_log_entries(conn, None, 2)?;
+            assert_eq!(all.len(), 2); // limited to 2
+
+            Ok(())
+        })
+        .unwrap();
     }
 
-    /// Full two-tick integration test:
-    /// 1. Ingest tick1 data → build report → verify it contains the data
-    /// 2. Record a decision in the log
-    /// 3. Ingest tick2 data → build report → verify delta-only (not old data)
-    /// 4. Verify decision log deduplication
-    #[tokio::test]
-    async fn two_tick_lifecycle() {
-        let tmp = TempDir::new().unwrap();
-        let workspace = tmp.path();
-        let memory = UnifiedMemory::new(workspace, Arc::new(NoopEmbedding), None).unwrap();
-        let client =
-            crate::openhuman::memory::MemoryClient::from_workspace_dir(workspace.to_path_buf())
-                .unwrap();
-
-        // Write HEARTBEAT.md
-        std::fs::write(workspace.join("HEARTBEAT.md"), fixture("heartbeat.md")).unwrap();
-
-        // ============================================================
-        // TICK 1: Ingest initial data
-        // ============================================================
-        let tick1_time = std::time::SystemTime::now()
+    #[test]
+    fn decision_log_dedup_still_works() {
+        let mut log = DecisionLog::new();
+        let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs_f64();
 
-        let gmail_doc_id = ingest(
-            &memory,
-            "skill-gmail",
-            "tick1-deadline-email",
-            "API contract deadline reminder",
-            &fixture("tick1_gmail.txt"),
-        )
-        .await;
-
-        let _notion_doc_id = ingest(
-            &memory,
-            "skill-notion",
-            "tick1-tracker",
-            "Q1 Delivery Tracker",
-            &fixture("tick1_notion.txt"),
-        )
-        .await;
-
-        // Build situation report for tick 1 (cold start: last_tick_at = 0)
-        let report1 = build_situation_report(
-            Some(&client),
-            workspace,
-            0.0, // cold start
-            40_000,
-        )
-        .await;
-
-        println!("=== TICK 1 REPORT ===");
-        println!("{}", &report1[..truncate_at_char_boundary(&report1, 2000)]);
-        println!("=====================\n");
-
-        // Verify tick 1 report contains ingested data
-        assert!(
-            report1.contains("Memory Documents"),
-            "Report should have memory docs section"
-        );
-        assert!(
-            report1.contains("skill-gmail") || report1.contains("deadline"),
-            "Report should mention gmail data"
-        );
-        assert!(
-            report1.contains("Pending Tasks"),
-            "Report should have tasks section"
-        );
-        assert!(
-            report1.contains("Check for deadline changes"),
-            "Report should include HEARTBEAT.md tasks"
+        log.record(
+            now,
+            TickDecision::Escalate,
+            "deadline email",
+            vec!["doc-1".into()],
         );
 
-        // Simulate tick 1 decision: escalate the deadline
-        let mut decision_log = DecisionLog::new();
-        let tick1_output = crate::openhuman::subconscious::types::TickOutput {
-            decision: Decision::Escalate,
-            reason: "Deadline reminder for API contract (April 3)".to_string(),
-            actions: vec![],
-        };
-        decision_log.record(tick1_time, &tick1_output, vec![gmail_doc_id.clone()]);
+        // doc-1 should be filtered as already surfaced
+        let unsurfaced = log.filter_unsurfaced(&["doc-1".into(), "doc-2".into()]);
+        assert!(!unsurfaced.contains(&"doc-1".to_string()));
+        assert!(unsurfaced.contains(&"doc-2".to_string()));
 
-        println!(
-            "Decision log after tick 1: {} active records",
-            decision_log.active_count()
-        );
-        assert_eq!(decision_log.active_count(), 1);
-        assert!(decision_log.was_already_surfaced(&[gmail_doc_id.clone()]));
-        assert!(!decision_log.was_already_surfaced(&["nonexistent".to_string()]));
+        // Acknowledge doc-1
+        log.mark_acknowledged(&["doc-1".into()]);
+        assert!(!log.was_already_surfaced(&["doc-1".into()]));
+    }
 
-        // ============================================================
-        // TICK 2: Ingest new data (state change)
-        // ============================================================
-        let tick2_time = tick1_time + 1.0; // 1 second later (simulated)
+    #[test]
+    fn seed_then_query_tasks() {
+        let dir = tempfile::tempdir().unwrap();
 
-        let gmail2_doc_id = ingest(
-            &memory,
-            "skill-gmail",
-            "tick2-deadline-moved",
-            "URGENT: API contract deadline moved to tomorrow",
-            &fixture("tick2_gmail.txt"),
-        )
-        .await;
+        store::with_connection(dir.path(), |conn| {
+            let count = store::seed_default_tasks(conn)?;
+            assert_eq!(count, 3);
 
-        let notion2_doc_id = ingest(
-            &memory,
-            "skill-notion",
-            "tick2-tracker-updated",
-            "Q1 Delivery Tracker (updated)",
-            &fixture("tick2_notion.txt"),
-        )
-        .await;
+            let tasks = store::list_tasks(conn, true)?;
+            assert_eq!(tasks.len(), 3);
+            assert!(tasks.iter().all(|t| t.source == TaskSource::System));
+            assert!(tasks
+                .iter()
+                .all(|t| t.recurrence == TaskRecurrence::Pending));
 
-        // Build situation report for tick 2 (delta since tick 1)
-        let report2 = build_situation_report(
-            Some(&client),
-            workspace,
-            tick1_time, // delta since tick 1
-            40_000,
-        )
-        .await;
+            // All should be due (no next_run_at set)
+            let due = store::due_tasks(conn, 9999999999.0)?;
+            assert_eq!(due.len(), 3);
 
-        println!("=== TICK 2 REPORT ===");
-        println!("{}", &report2[..truncate_at_char_boundary(&report2, 2000)]);
-        println!("=====================\n");
-
-        // Verify tick 2 report contains NEW data
-        assert!(
-            report2.contains("new/updated"),
-            "Report should show new/updated docs"
-        );
-
-        // Verify deduplication: old gmail doc should be filtered
-        let all_new_doc_ids = vec![
-            gmail_doc_id.clone(),
-            gmail2_doc_id.clone(),
-            notion2_doc_id.clone(),
-        ];
-        let unsurfaced = decision_log.filter_unsurfaced(&all_new_doc_ids);
-        println!("Unsurfaced doc IDs: {:?}", unsurfaced);
-        assert!(
-            !unsurfaced.contains(&gmail_doc_id),
-            "Old deadline email should be filtered out (already surfaced)"
-        );
-        assert!(
-            unsurfaced.contains(&gmail2_doc_id),
-            "New deadline-moved email should NOT be filtered"
-        );
-        assert!(
-            unsurfaced.contains(&notion2_doc_id),
-            "Updated notion tracker should NOT be filtered"
-        );
-
-        // Record tick 2 decision
-        let tick2_output = crate::openhuman::subconscious::types::TickOutput {
-            decision: Decision::Escalate,
-            reason: "Deadline moved to tomorrow — urgent".to_string(),
-            actions: vec![],
-        };
-        decision_log.record(tick2_time, &tick2_output, vec![gmail2_doc_id.clone()]);
-
-        println!(
-            "Decision log after tick 2: {} active records",
-            decision_log.active_count()
-        );
-        assert_eq!(decision_log.active_count(), 2);
-
-        // ============================================================
-        // TICK 3: No new data
-        // ============================================================
-        let report3 = build_situation_report(
-            Some(&client),
-            workspace,
-            tick2_time, // delta since tick 2
-            40_000,
-        )
-        .await;
-
-        println!("=== TICK 3 REPORT ===");
-        println!("{}", &report3[..truncate_at_char_boundary(&report3, 2000)]);
-        println!("=====================\n");
-
-        // Tick 3 should show no changes
-        let has_changes = !report3.contains("No changes since last tick");
-        // Note: on cold data with fixed timestamps, all docs may appear
-        // "old" relative to tick2_time. The key test is that the decision
-        // log correctly filters previously surfaced items.
-
-        println!("Tick 3 has changes: {}", has_changes);
-
-        // Verify JSON roundtrip of decision log
-        let json = decision_log.to_json().unwrap();
-        let restored = DecisionLog::from_json(&json).unwrap();
-        assert_eq!(restored.active_count(), 2);
-        assert!(restored.was_already_surfaced(&[gmail_doc_id.clone()]));
-        assert!(restored.was_already_surfaced(&[gmail2_doc_id.clone()]));
-
-        // Verify acknowledgment
-        decision_log.mark_acknowledged(&[gmail_doc_id.clone()]);
-        assert!(
-            !decision_log.was_already_surfaced(&[gmail_doc_id]),
-            "Acknowledged docs should no longer be surfaced"
-        );
-
-        println!("=== ALL TESTS PASSED ===");
+            Ok(())
+        })
+        .unwrap();
     }
 }

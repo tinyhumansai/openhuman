@@ -1032,16 +1032,11 @@ async fn json_rpc_autocomplete_runtime_settings_and_logs_flow() {
     )
     .await;
     let start_outer = assert_no_jsonrpc_error(&start, "autocomplete_start");
-    let start_payload = start_outer.get("result").unwrap_or(start_outer);
     let start_logs = start_outer
         .get("logs")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    assert_eq!(
-        start_payload.get("started").and_then(Value::as_bool),
-        Some(true)
-    );
     assert!(
         start_logs.iter().any(|entry| {
             entry

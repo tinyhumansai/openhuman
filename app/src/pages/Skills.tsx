@@ -282,10 +282,13 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
           <>
             {/* Sync */}
             <button
+              type="button"
               onClick={isSyncing ? undefined : handleSync}
               disabled={isSyncing}
               className="w-7 h-7 flex items-center justify-center rounded-lg text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors disabled:opacity-40"
-              title="Sync">
+              title="Sync"
+              aria-label={`Sync ${skill.name}`}
+              data-testid={`skill-sync-button-${skill.id}`}>
               <svg
                 className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
                 fill="none"
@@ -301,6 +304,7 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
             </button>
             {/* Settings */}
             <button
+              type="button"
               onClick={e => {
                 e.stopPropagation();
                 onSetup();
@@ -324,6 +328,8 @@ function SkillCard({ skill, onSetup }: SkillCardProps) {
             </button>
             {/* Debug */}
             <button
+              type="button"
+              data-testid={`skill-debug-button-${skill.id}`}
               onClick={e => {
                 e.stopPropagation();
                 setDebugOpen(true);

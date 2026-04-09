@@ -943,6 +943,48 @@ pub fn global_engine() -> Arc<AutocompleteEngine> {
     AUTOCOMPLETE_ENGINE.clone()
 }
 
+/// Start the embedded global autocomplete engine when config enables it.
+///
+/// Intended for core process startup. The engine reuses the process-global
+/// singleton so RPC status/stop calls continue to operate on the same instance.
+pub async fn start_if_enabled(app_config: &Config) {
+    if !app_config.autocomplete.enabled {
+        log::info!("[autocomplete] disabled in config, skipping embedded startup");
+        return;
+    }
+
+    let status = global_engine().status().await;
+    if status.running {
+        log::info!(
+            "[autocomplete] embedded engine already running (phase={} debounce={}ms)",
+            status.phase,
+            status.debounce_ms
+        );
+        return;
+    }
+
+    match global_engine()
+        .start(AutocompleteStartParams {
+            debounce_ms: Some(app_config.autocomplete.debounce_ms),
+        })
+        .await
+    {
+        Ok(result) => {
+            let latest = global_engine().status().await;
+            log::info!(
+                "[autocomplete] startup requested (started={} running={} phase={} debounce={}ms)",
+                result.started,
+                latest.running,
+                latest.phase,
+                latest.debounce_ms
+            );
+        }
+        Err(err) => {
+            log::warn!("[autocomplete] startup failed: {err}");
+        }
+    }
+}
+
 fn detect_tab_artifact_suffix(expected_context: &str, current_context: &str) -> usize {
     if expected_context.is_empty() || current_context.is_empty() {
         return 0;

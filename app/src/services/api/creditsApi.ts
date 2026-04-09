@@ -12,16 +12,24 @@ export interface TeamUsage {
   dailyUsage: number;
   totalInputTokensThisCycle: number;
   totalOutputTokensThisCycle: number;
-  /** 5-hour rolling window: amount spent (USD) */
+  /**
+   * Rolling inference window: USD spent in the last 10 hours (server-enforced window).
+   * JSON field name is historical (`fiveHour*`).
+   */
   fiveHourSpendUsd: number;
-  /** 5-hour rolling window: cap for the user's plan (USD) */
+  /**
+   * Max USD allowed in that 10-hour rolling window for the current subscription tier
+   * (FREE / BASIC / PRO). Backend sets the amount; the window length is fixed server-side.
+   */
   fiveHourCapUsd: number;
-  /** ISO timestamp when the oldest 5-hour window entry expires (null if window is empty) */
+  /** ISO timestamp when the oldest rolling-window entry expires (null if window is empty) */
   fiveHourResetsAt: string | null;
   /** ISO timestamp when the current weekly cycle started */
   cycleStartDate: string;
   /** ISO timestamp when the current weekly cycle ends */
   cycleEndsAt: string;
+  /** When true, the 10-hour rolling window rate limit is not enforced for this user (test/internal accounts) */
+  bypassRateLimit?: boolean;
 }
 
 export interface TopUpResult {

@@ -699,6 +699,22 @@ globalThis.__platform = {
   },
 };
 
+/**
+ * Base URL for OAuth proxy and webhook API calls.
+ * Uses BACKEND_URL, then VITE_BACKEND_URL, then production default.
+ * Trailing slashes are stripped.
+ */
+globalThis.__resolveBackendBaseUrl = () => {
+  let raw = (__platform.env('BACKEND_URL') || __platform.env('VITE_BACKEND_URL') || '').trim();
+  if (!raw) {
+    return 'https://api.tinyhumans.ai';
+  }
+  while (raw.length > 0 && raw.charAt(raw.length - 1) === '/') {
+    raw = raw.slice(0, -1);
+  }
+  return raw;
+};
+
 // High-level wrappers for skills (QuickJS bridge)
 globalThis.db = {
   exec: function (sql, params) {
@@ -734,6 +750,13 @@ globalThis.platform = {
   },
   env: function (key) {
     return __platform.env(key);
+  },
+  /**
+   * Desktop-style notification hook. The QuickJS host has no system tray UI here;
+   * avoid logging title/body (may contain PII); shim exists so sync flows do not throw "not a function".
+   */
+  notify: function (_title, _body) {
+    console.log('[platform.notify] notification requested');
   },
 };
 
@@ -847,18 +870,18 @@ globalThis.data = {
           body: JSON.stringify({ error: 'No OAuth credential. Complete OAuth setup first.' }),
         };
       }
-      var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-      var jwtToken = __ops.get_session_token() || '';
-      var cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
-      var credentialId = globalThis.__oauthCredential.credentialId;
-      var clientKey = globalThis.__oauthClientKey || null;
+      const backendUrl = globalThis.__resolveBackendBaseUrl();
+      const jwtToken = __ops.get_session_token() || '';
+      const cleanPath = path.charAt(0) === '/' ? path.slice(1) : path;
+      const credentialId = globalThis.__oauthCredential.credentialId;
+      const clientKey = globalThis.__oauthClientKey || null;
 
       // Use encrypted proxy when client key share is available
-      var proxyUrl;
+      let proxyUrl;
       if (clientKey) {
-        proxyUrl = backendUrl + '/proxy/encrypted/' + credentialId + '/' + cleanPath;
+        proxyUrl = `${backendUrl}/proxy/encrypted/${credentialId}/${cleanPath}`;
       } else {
-        proxyUrl = backendUrl + '/proxy/by-id/' + credentialId + '/' + cleanPath;
+        proxyUrl = `${backendUrl}/proxy/by-id/${credentialId}/${cleanPath}`;
       }
 
       var method = (options && options.method) || 'GET';
@@ -906,16 +929,13 @@ globalThis.data = {
     revoke: function () {
       if (__oauthCredential) {
         try {
-          var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-          var jwtToken = __ops.get_session_token() || '';
-          var revokeOpts = {
+          const backendUrl = globalThis.__resolveBackendBaseUrl();
+          const jwtToken = __ops.get_session_token() || '';
+          const revokeOpts = {
             method: 'DELETE',
-            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwtToken },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwtToken}` },
           };
-          net.fetch(
-            backendUrl + '/auth/integrations/' + __oauthCredential.credentialId,
-            revokeOpts
-          );
+          net.fetch(`${backendUrl}/auth/integrations/${__oauthCredential.credentialId}`, revokeOpts);
         } catch (e) {
           /* best effort */
         }
@@ -1142,10 +1162,10 @@ globalThis.webhook = {
    * @returns {Promise<{id: string, uuid: string, webhookUrl: string}>}
    */
   createTunnel: async function (name, description) {
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-    var jwtToken = __ops.get_session_token() || '';
+    const backendUrl = globalThis.__resolveBackendBaseUrl();
+    const jwtToken = __ops.get_session_token() || '';
 
-    var result = await net.fetch(backendUrl + '/webhooks/core', {
+    var result = await net.fetch(`${backendUrl}/webhooks/core`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1204,10 +1224,10 @@ globalThis.webhook = {
     }
 
     // Delete from backend first
-    var backendUrl = __platform.env('BACKEND_URL') || 'https://api.tinyhumans.ai';
-    var jwtToken = __ops.get_session_token() || '';
+    const backendUrl = globalThis.__resolveBackendBaseUrl();
+    const jwtToken = __ops.get_session_token() || '';
 
-    var result = await net.fetch(backendUrl + '/webhooks/core/' + registration.backend_tunnel_id, {
+    var result = await net.fetch(`${backendUrl}/webhooks/core/${registration.backend_tunnel_id}`, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer ' + jwtToken },
       timeout: 10000,
