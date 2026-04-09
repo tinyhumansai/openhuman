@@ -73,15 +73,15 @@ describe('OAuthProviderButton (Twitter) — rendering', () => {
     expect(container.querySelector('svg')).toBeInTheDocument();
   });
 
-  it('has black background styling', () => {
+  it('has neutral light background styling', () => {
     renderTwitterButton();
-    expect(screen.getByRole('button', { name: /twitter/i })).toHaveClass('bg-black');
+    expect(screen.getByRole('button', { name: /twitter/i })).toHaveClass('bg-white');
   });
 
-  it('has white text', () => {
+  it('has dark text', () => {
     const { container } = renderTwitterButton();
     const label = container.querySelector('span');
-    expect(label).toHaveClass('text-white');
+    expect(label).toHaveClass('text-gray-900');
   });
 });
 
