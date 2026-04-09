@@ -1,7 +1,5 @@
 import {
-  currentMonitor,
   getCurrentWindow,
-  LogicalPosition,
   LogicalSize,
 } from '@tauri-apps/api/window';
 import { useEffect, useMemo, useState } from 'react';
@@ -58,26 +56,6 @@ export default function OverlayApp() {
       console.warn('[overlay] failed to set overlay max size', error);
     });
 
-    void currentMonitor()
-      .then(monitor => {
-        if (!monitor) {
-          return;
-        }
-
-        const scaleFactor = monitor.scaleFactor || 1;
-        const workAreaWidth = monitor.workArea.size.width / scaleFactor;
-        const workAreaHeight = monitor.workArea.size.height / scaleFactor;
-        const workAreaX = monitor.workArea.position.x / scaleFactor;
-        const workAreaY = monitor.workArea.position.y / scaleFactor;
-        const margin = 20;
-        const x = workAreaX + workAreaWidth - OVERLAY_WIDTH - margin;
-        const y = workAreaY + workAreaHeight - OVERLAY_HEIGHT - margin;
-
-        return appWindow.setPosition(new LogicalPosition(x, y));
-      })
-      .catch(error => {
-        console.warn('[overlay] failed to position overlay window', error);
-      });
   }, [appWindow]);
 
   useEffect(() => {

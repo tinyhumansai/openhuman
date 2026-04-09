@@ -86,9 +86,9 @@ export default function RotatingTetrahedronCanvas({
     const fillMaterial = new THREE.MeshLambertMaterial({
       color: fillColor,
       transparent: true,
-      opacity: inverted ? 0.92 : 0.72,
+      opacity: inverted ? 0.58 : 0.72,
       emissive: emissiveColor,
-      emissiveIntensity: inverted ? 0.7 : 0.35,
+      emissiveIntensity: inverted ? 0.4 : 0.35,
     });
     const fillMesh = new THREE.Mesh(geometry, fillMaterial);
 

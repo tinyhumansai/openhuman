@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -61,6 +61,28 @@ fn overlay_parent_rpc_url() -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+fn pin_overlay_bottom_right(window: &WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        log::warn!("[overlay] could not resolve current monitor for positioning");
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        log::warn!("[overlay] could not resolve overlay size for positioning");
+        return;
+    };
+
+    let margin = 20i32;
+    let work_area = monitor.work_area();
+    let x = work_area.position.x + work_area.size.width as i32 - size.width as i32 - margin;
+    let y = work_area.position.y + work_area.size.height as i32 - size.height as i32 - margin;
+
+    if let Err(err) = window.set_position(PhysicalPosition::new(x, y)) {
+        log::warn!("[overlay] failed to pin overlay bottom-right: {err}");
+    } else {
+        log::info!("[overlay] pinned overlay bottom-right at {},{}", x, y);
+    }
 }
 
 /// Resolve the core binary, preferring the staged sidecar.
@@ -436,6 +458,7 @@ pub fn run() {
             }
 
             if let Some(window) = app.get_webview_window("overlay") {
+                pin_overlay_bottom_right(&window);
                 if let Err(err) = window.show() {
                     log::warn!("[overlay] failed to show overlay on startup: {err}");
                 } else {
