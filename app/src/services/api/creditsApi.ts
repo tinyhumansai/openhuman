@@ -114,16 +114,71 @@ export interface UpdateCardPayload {
 // ── Coupon types ────────────────────────────────────────────────────────────
 
 export interface CouponRedeemResult {
-  success: boolean;
-  data: { code: string; amountUsd: number };
+  couponCode: string;
+  amountUsd: number;
+  pending: boolean;
 }
 
 export interface RedeemedCoupon {
   code: string;
   amountUsd: number;
-  redeemedAt: string;
+  redeemedAt: string | null;
   activationType: string;
   fulfilled: boolean;
+  fulfilledAt: string | null;
+  activationCondition: string | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function asStringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+export function normalizeCouponRedeemResult(raw: unknown): CouponRedeemResult {
+  const record = asRecord(raw) ?? {};
+  return {
+    couponCode:
+      (typeof record.couponCode === 'string' && record.couponCode.trim()) ||
+      (typeof record.code === 'string' && record.code.trim()) ||
+      '',
+    amountUsd: asNumber(record.amountUsd ?? record.amount_usd),
+    pending: Boolean(record.pending),
+  };
+}
+
+export function normalizeRedeemedCoupon(raw: unknown): RedeemedCoupon {
+  const record = asRecord(raw) ?? {};
+  return {
+    code:
+      (typeof record.code === 'string' && record.code.trim()) ||
+      (typeof record.couponCode === 'string' && record.couponCode.trim()) ||
+      '',
+    amountUsd: asNumber(record.amountUsd ?? record.amount_usd),
+    redeemedAt: asStringOrNull(record.redeemedAt ?? record.redeemed_at),
+    activationType:
+      (typeof record.activationType === 'string' && record.activationType.trim()) ||
+      (typeof record.activation_type === 'string' && record.activation_type.trim()) ||
+      'IMMEDIATE',
+    fulfilled: Boolean(record.fulfilled),
+    fulfilledAt: asStringOrNull(record.fulfilledAt ?? record.fulfilled_at),
+    activationCondition: asStringOrNull(
+      record.activationCondition ?? record.activation_condition
+    ),
+  };
 }
 
 /**
@@ -231,7 +286,8 @@ export const creditsApi = {
    * POST /coupons/redeem
    */
   redeemCoupon: async (code: string): Promise<CouponRedeemResult> => {
-    return await callCoreCommand<CouponRedeemResult>('openhuman.billing_redeem_coupon', { code });
+    const result = await callCoreCommand<unknown>('openhuman.billing_redeem_coupon', { code });
+    return normalizeCouponRedeemResult(result);
   },
 
   /**
@@ -239,6 +295,7 @@ export const creditsApi = {
    * GET /coupons/me
    */
   getUserCoupons: async (): Promise<RedeemedCoupon[]> => {
-    return await callCoreCommand<RedeemedCoupon[]>('openhuman.billing_get_coupons');
+    const coupons = await callCoreCommand<unknown[]>('openhuman.billing_get_coupons');
+    return Array.isArray(coupons) ? coupons.map(normalizeRedeemedCoupon) : [];
   },
 };

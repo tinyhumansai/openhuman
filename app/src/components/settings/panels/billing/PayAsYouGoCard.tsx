@@ -37,11 +37,10 @@ const PayAsYouGoCard = ({
     try {
       log('[coupon] redeeming code=%s', code);
       const result = await creditsApi.redeemCoupon(code);
-      const amount = result?.data?.amountUsd;
       setCouponSuccess(
-        amount != null
-          ? `Coupon redeemed! $${amount.toFixed(2)} added to your credits.`
-          : 'Coupon redeemed successfully!'
+        result.pending
+          ? `Coupon accepted. $${result.amountUsd.toFixed(2)} will be added after the required action.`
+          : `Coupon redeemed! $${result.amountUsd.toFixed(2)} added to your credits.`
       );
       setCouponCode('');
       onBalanceRefresh();
