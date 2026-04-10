@@ -344,6 +344,53 @@ export async function clickText(
 }
 
 /**
+ * Built-in skill card order on the Skills page.  The BUILT_IN_SKILLS array
+ * in Skills.tsx renders cards in this fixed order, so the Nth "Settings"
+ * button inside the Built-in group corresponds to the Nth skill here.
+ */
+const BUILTIN_SKILL_ORDER = ['screen-intelligence', 'text-autocomplete', 'voice-stt'];
+
+/**
+ * Wait for a built-in skill's CTA button and click it.
+ *
+ * - tauri-driver: CSS `[data-testid="skill-cta-{skillId}"]`
+ * - Mac2: WKWebView doesn't expose data-testid or aria-label in its
+ *   accessibility tree.  Instead we find all visible "Settings" buttons
+ *   and click the one at the correct index (cards render in fixed order).
+ */
+export async function clickByTestId(
+  testId: string,
+  timeout: number = 15_000
+): Promise<ChainablePromiseElement> {
+  if (isTauriDriver()) {
+    const el = await browser.$(`[data-testid="${testId}"]`);
+    await el.waitForExist({ timeout, timeoutMsg: `Element [data-testid="${testId}"] not found within ${timeout}ms` });
+    await clickAtElement(el);
+    return el;
+  }
+
+  // Mac2 path: find the Nth "Settings" button by card order.
+  const skillId = testId.replace(/^skill-cta-/, '');
+  const index = BUILTIN_SKILL_ORDER.indexOf(skillId);
+
+  const literal = xpathStringLiteral('Settings');
+  const xpath =
+    `//XCUIElementTypeButton[contains(@label, ${literal}) or ` +
+    `contains(@title, ${literal})]`;
+
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const buttons = await browser.$$(xpath);
+    if (buttons.length > index) {
+      await clickAtElement(buttons[index]);
+      return buttons[index];
+    }
+    await browser.pause(500);
+  }
+  throw new Error(`Built-in skill CTA "${testId}" (index ${index}) not found within ${timeout}ms — fewer than ${index + 1} "Settings" buttons visible`);
+}
+
+/**
  * Wait for a button containing `text` to appear, then click it.
  */
 export async function clickButton(

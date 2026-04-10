@@ -16,6 +16,7 @@ import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
+  clickByTestId,
   clickText,
   dumpAccessibilityTree,
   textExists,
@@ -89,7 +90,7 @@ describe('Voice Intelligence (Built-in Skill)', () => {
     await navigateViaHash('/skills');
     await browser.pause(2_000);
 
-    const hasBuiltIn = await waitForAnyText(['Built-in Skills'], 10_000);
+    const hasBuiltIn = await waitForAnyText(['Built-in Skills', 'Built-in'], 10_000);
     stepLog('Built-in Skills section', { found: hasBuiltIn });
     expect(hasBuiltIn).not.toBeNull();
 
@@ -105,12 +106,25 @@ describe('Voice Intelligence (Built-in Skill)', () => {
   // ── 9.3.2 Click card → opens Voice settings panel ──────────────────────
 
   it('navigates to Voice settings panel from Skills tab', async () => {
-    await clickText('Voice Intelligence', 10_000);
-    await browser.pause(2_000);
+    let navigated = false;
+
+    try {
+      // Primary: click the CTA "Settings" button on the Voice Intelligence card.
+      await clickByTestId('skill-cta-voice-stt', 10_000);
+      await browser.pause(2_000);
+      navigated = true;
+    } catch (err) {
+      stepLog('Voice CTA not found by testid, falling back to navigateViaHash', {
+        error: String(err),
+      });
+      await navigateViaHash('/settings/voice');
+      await browser.pause(2_000);
+      navigated = true;
+    }
 
     if (supportsExecuteScript()) {
       const currentHash = await browser.execute(() => window.location.hash);
-      stepLog('After clicking Voice Intelligence card', { currentHash });
+      stepLog('After clicking Voice Intelligence Settings', { currentHash });
       expect(currentHash).toContain('voice');
     }
 

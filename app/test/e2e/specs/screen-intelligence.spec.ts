@@ -17,6 +17,7 @@ import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
+  clickByTestId,
   clickText,
   dumpAccessibilityTree,
   hasAppChrome,
@@ -31,7 +32,7 @@ import {
   navigateViaHash,
   waitForHomePage,
 } from '../helpers/shared-flows';
-import { clearRequestLog, startMockServer, stopMockServer } from '../mock-server';
+import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
 
 const LOG_PREFIX = '[ScreenIntelligenceE2E]';
 
@@ -89,21 +90,69 @@ describe('Screen Intelligence', () => {
 
   it('navigates to Screen Intelligence from the Skills page built-in card', async () => {
     await dismissLocalAISnackbarIfVisible(LOG_PREFIX);
-    await navigateViaHash('/skills');
-    await browser.pause(2_000);
+    let navigated = false;
+    let lastError: unknown = null;
 
-    const hasBuiltIn = await waitForAnyText(['Built-in Skills', 'Screen Intelligence'], 10_000);
-    stepLog('Skills page built-in section', { found: hasBuiltIn });
-    expect(hasBuiltIn).not.toBeNull();
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await navigateViaHash('/skills');
+      await browser.pause(2_000);
 
-    // Click the Screen Intelligence card → /settings/screen-intelligence
-    await clickText('Screen Intelligence', 10_000);
-    await browser.pause(2_000);
+      const hasBuiltIn = await waitForAnyText(['Built-in Skills', 'Built-in', 'Screen Intelligence'], 15_000);
+      stepLog(`Skills page built-in section (attempt ${attempt})`, { found: hasBuiltIn });
+      expect(hasBuiltIn).not.toBeNull();
 
-    if (supportsExecuteScript()) {
-      const currentHash = await browser.execute(() => window.location.hash);
-      stepLog('After clicking Screen Intelligence card', { currentHash });
-      expect(currentHash).toContain('screen-intelligence');
+      try {
+        // Primary path: CTA "Settings" button on the Screen Intelligence card.
+        await clickByTestId('skill-cta-screen-intelligence', 12_000);
+        await browser.pause(2_000);
+        navigated = true;
+      } catch (err) {
+        lastError = err;
+        stepLog(`Screen Intelligence CTA not found by testid (attempt ${attempt})`, {
+          error: String(err),
+        });
+
+        // Mac2 fallback: if testid is not exposed, click the first visible "Settings" button.
+        if (await textExists('Settings')) {
+          await clickText('Settings', 8_000);
+          await browser.pause(2_000);
+          navigated = true;
+          stepLog(`Fallback navigation via visible "Settings" button (attempt ${attempt})`);
+        }
+      }
+
+      if (!navigated) {
+        continue;
+      }
+
+      const onScreenIntelPage = await waitForAnyText(
+        ['Screen Intelligence Policy', 'Permissions', 'Screen Intelligence'],
+        10_000
+      );
+      if (onScreenIntelPage) {
+        if (supportsExecuteScript()) {
+          const currentHash = await browser.execute(() => window.location.hash);
+          stepLog('After opening Screen Intelligence settings', { currentHash });
+          expect(currentHash).toContain('screen-intelligence');
+        }
+        break;
+      }
+
+      navigated = false;
+      stepLog(`Navigation did not land on Screen Intelligence (attempt ${attempt})`);
+    }
+
+    if (!navigated) {
+      const tree = await dumpAccessibilityTree();
+      const requests = getRequestLog();
+      stepLog('Failed to open Screen Intelligence from Skills. Tree:', tree.slice(0, 4000));
+      stepLog('Failed to open Screen Intelligence from Skills. Recent requests:', requests.slice(-20));
+      throw new Error(
+        `Failed to open Screen Intelligence from Skills card\n` +
+          `Last error: ${String(lastError)}\n` +
+          `Accessibility tree (truncated):\n${tree.slice(0, 4000)}\n` +
+          `Recent request log (${requests.length} total):\n${JSON.stringify(requests.slice(-20), null, 2)}`
+      );
     }
   });
 

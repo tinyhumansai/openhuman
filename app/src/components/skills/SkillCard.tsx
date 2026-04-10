@@ -40,6 +40,8 @@ export interface UnifiedSkillCardProps {
   };
   syncSummaryText?: string;
   ctaDisabled?: boolean;
+  /** Used to generate data-testid on the CTA button: `skill-cta-{skillId}` */
+  skillId?: string;
 }
 
 const CTA_STYLES: Record<string, string> = {
@@ -62,6 +64,7 @@ export function UnifiedSkillCard({
   syncProgress,
   syncSummaryText,
   ctaDisabled,
+  skillId,
 }: UnifiedSkillCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -167,6 +170,8 @@ export function UnifiedSkillCard({
         <button
           type="button"
           disabled={ctaDisabled}
+          data-testid={skillId ? `skill-cta-${skillId}` : undefined}
+          aria-label={skillId ? `${ctaLabel} ${skillId}` : undefined}
           onClick={e => {
             e.stopPropagation();
             onCtaClick();

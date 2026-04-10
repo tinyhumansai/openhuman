@@ -375,6 +375,7 @@ export default function Skills() {
                         return (
                           <UnifiedSkillCard
                             key={item.id}
+                            skillId={item.id}
                             icon={item.icon}
                             title={item.name}
                             description={item.description}
