@@ -58,24 +58,9 @@ impl Tool for SpawnSubagentTool {
     }
 
     fn description(&self) -> &str {
-        "Spawn a specialised sub-agent to handle a focused sub-task. \
-         The sub-agent runs with a narrower prompt, filtered tool set, \
-         and (usually) a cheaper model. \n\n\
-         Tools are grouped into two categories — `system` (built-in \
-         Rust tools: shell, file_*, cron_*, memory_*, …) and `skill` \
-         (QuickJS skill bridges: notion__*, gmail__*, …). Set \
-         `category_filter` to dedicate the sub-agent to one category; \
-         for skill-tool execution the backend's `agentic` model hint \
-         is the natural fit.\n\n\
-         Built-in agent_ids include `planner` (DAG architect), \
-         `code_executor` (sandboxed coding), `skills_agent` (skill-tool \
-         execution via the agentic model; pair with `skill_filter` for \
-         per-API specialists like notion/gmail), `researcher` (web & \
-         docs), `critic` (read-only review), `tool_maker` (polyfill \
-         scripts), `archivist` (background lesson extraction), and \
-         `fork` (parallel decomposition with prefix-cache reuse). \
-         Custom sub-agents defined under `<workspace>/agents/*.toml` \
-         are also accepted by id."
+        "Delegate a task to a specialised sub-agent. \
+         See the Delegation Guide in the system prompt for \
+         available agent_ids and when to use each."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -280,20 +265,24 @@ impl Tool for SpawnSubagentTool {
 /// Validate that the requested skill_filter matches a currently-loaded
 /// skill in the global skill runtime, if a runtime is available. When
 /// no runtime is available (e.g. tests, CLI), this is a no-op.
+///
+/// Public alias for use by `orchestrator_tools`.
+pub fn validate_skill_filter_public(skill_id: &str) -> Result<(), String> {
+    validate_skill_filter(skill_id)
+}
+
 fn validate_skill_filter(skill_id: &str) -> Result<(), String> {
     let Some(engine) = crate::openhuman::skills::qjs_engine::global_engine() else {
         // No runtime registered — skip validation.
         return Ok(());
     };
+    // `engine.all_tools()` returns `(skill_id, ToolDefinition)` pairs
+    // where `skill_id` is the skill prefix (e.g. "gmail", "notion")
+    // and `ToolDefinition.name` is the raw tool name (e.g. "get-emails").
     let mut known: Vec<String> = engine
         .all_tools()
         .into_iter()
-        .filter_map(|(_, def)| {
-            // Tool names are `{skill}__{tool}`; pull just the prefix.
-            def.name
-                .split_once("__")
-                .map(|(prefix, _)| prefix.to_string())
-        })
+        .map(|(skill_id, _)| skill_id)
         .collect();
     known.sort();
     known.dedup();

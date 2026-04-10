@@ -24,6 +24,7 @@ pub mod memory_forget;
 pub mod memory_recall;
 pub mod memory_store;
 pub mod ops;
+pub mod orchestrator_tools;
 pub mod proxy_config;
 pub mod pushover;
 pub mod read_diff;

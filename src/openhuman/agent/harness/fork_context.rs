@@ -75,6 +75,11 @@ pub struct ParentExecutionContext {
     /// skills catalog inherit this list.
     pub skills: Arc<Vec<Skill>>,
 
+    /// Memory context loaded for the current turn. Auto-injected into
+    /// subagent prompts so they have access to conversation history and
+    /// skill sync data without running their own memory queries.
+    pub memory_context: Option<String>,
+
     /// Parent's event-bus session id (for tracing & DomainEvents).
     pub session_id: String,
 
@@ -301,6 +306,7 @@ mod tests {
             agent_config: AgentConfig::default(),
             identity_config: IdentityConfig::default(),
             skills: Arc::new(vec![]),
+            memory_context: None,
             session_id: "test-session".into(),
             channel: "test-channel".into(),
         }

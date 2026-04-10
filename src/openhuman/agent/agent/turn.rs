@@ -42,6 +42,9 @@ impl Agent {
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
         let turn_started = std::time::Instant::now();
         log::info!(
+            "[agent] turn started — awaiting user message processing"
+        );
+        log::info!(
             "[agent_loop] turn start message_chars={} history_len={} max_tool_iterations={}",
             user_message.chars().count(),
             self.history.len(),
@@ -55,6 +58,7 @@ impl Agent {
             // would just burn memory-store reads on data we throw away.
             let learned = self.fetch_learned_context().await;
             let system_prompt = self.build_system_prompt(learned)?;
+            log::info!("[agent] system prompt built — initialising conversation history");
             log::info!(
                 "[agent_loop] system prompt built chars={}",
                 system_prompt.chars().count()
@@ -87,6 +91,7 @@ impl Agent {
                 .await;
         }
 
+        log::info!("[agent] loading memory context for user message");
         let context = self
             .memory_loader
             .load_context(self.memory.as_ref(), user_message)
@@ -94,8 +99,15 @@ impl Agent {
             .unwrap_or_default();
 
         let enriched = if context.is_empty() {
+            log::info!("[agent] no memory context found — using raw user message");
+            self.last_memory_context = None;
             user_message.to_string()
         } else {
+            log::info!(
+                "[agent] memory context loaded — enriching user message context_chars={}",
+                context.chars().count()
+            );
+            self.last_memory_context = Some(context.clone());
             format!("{context}{user_message}")
         };
 
@@ -189,6 +201,12 @@ impl Agent {
 
                 let messages = self.tool_dispatcher.to_provider_messages(&self.history);
                 log::info!(
+                    "[agent] iteration {}/{} — sending request to provider model={}",
+                    iteration + 1,
+                    self.config.max_tool_iterations,
+                    effective_model
+                );
+                log::info!(
                     "[agent_loop] provider request i={} messages={} send_tool_specs={}",
                     iteration + 1,
                     messages.len(),
@@ -201,7 +219,7 @@ impl Agent {
                         ChatRequest {
                             messages: &messages,
                             tools: if self.tool_dispatcher.should_send_tool_specs() {
-                                Some(self.tool_specs.as_slice())
+                                Some(self.visible_tool_specs.as_slice())
                             } else {
                                 None
                             },
@@ -235,6 +253,11 @@ impl Agent {
                 let (text, calls) = self.tool_dispatcher.parse_response(&response);
                 let calls = Self::with_fallback_tool_call_ids(calls, iteration);
                 log::info!(
+                    "[agent] provider responded — parsed tool_calls={} text_chars={}",
+                    calls.len(),
+                    text.chars().count()
+                );
+                log::info!(
                     "[agent_loop] parsed response i={} parsed_text_chars={} parsed_tool_calls={}",
                     iteration + 1,
                     text.chars().count(),
@@ -246,6 +269,10 @@ impl Agent {
                     } else {
                         text
                     };
+                    log::info!(
+                        "[agent] no tool calls — returning final response after {} iteration(s)",
+                        iteration + 1
+                    );
                     log::info!(
                         "[agent_loop] final response i={} final_chars={}",
                         iteration + 1,
@@ -310,6 +337,11 @@ impl Agent {
                 }
                 let tool_names: Vec<&str> = calls.iter().map(|call| call.name.as_str()).collect();
                 log::info!(
+                    "[agent] dispatching {} tool(s): {:?}",
+                    calls.len(),
+                    tool_names
+                );
+                log::info!(
                     "[agent_loop] executing tools i={} names={:?}",
                     iteration + 1,
                     tool_names
@@ -338,6 +370,20 @@ impl Agent {
                     iteration + 1,
                     results.len()
                 );
+                for r in &results {
+                    let preview = truncate_with_ellipsis(&r.output, 300);
+                    log::info!(
+                        "[agent] tool response name={} success={} output_chars={}\n{}",
+                        r.name,
+                        r.success,
+                        r.output.chars().count(),
+                        preview
+                    );
+                }
+                log::info!(
+                    "[agent] all tools complete for iteration {} — looping back to provider",
+                    iteration + 1
+                );
                 let formatted = self.tool_dispatcher.format_results(&results);
                 self.history.push(formatted);
                 self.trim_history();
@@ -348,6 +394,10 @@ impl Agent {
                 );
             }
 
+            log::warn!(
+                "[agent] exceeded max tool iterations ({}) — aborting turn",
+                self.config.max_tool_iterations
+            );
             log::warn!(
                 "[agent_loop] exceeded maximum tool iterations max={}",
                 self.config.max_tool_iterations
@@ -399,6 +449,7 @@ impl Agent {
             tool_name: call.name.clone(),
             session_id: self.event_session_id().to_string(),
         });
+        log::info!("[agent] executing tool: {}", call.name);
         log::info!("[agent_loop] tool start name={}", call.name);
 
         // Special-case `spawn_subagent { mode: "fork", … }`: stash a
@@ -467,6 +518,17 @@ impl Agent {
             elapsed_ms,
         });
         log::info!(
+            "[agent] tool completed: {} success={} elapsed_ms={}",
+            call.name,
+            success,
+            elapsed_ms
+        );
+        log::debug!(
+            "[agent] tool output for {}: {}",
+            call.name,
+            truncate_with_ellipsis(&result, 500)
+        );
+        log::info!(
             "[agent_loop] tool finish name={} elapsed_ms={} output_chars={} success={}",
             call.name,
             elapsed_ms,
@@ -527,6 +589,7 @@ impl Agent {
             agent_config: self.config.clone(),
             identity_config: self.identity_config.clone(),
             skills: Arc::new(self.skills.clone()),
+            memory_context: self.last_memory_context.clone(),
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
         }
@@ -667,6 +730,7 @@ impl Agent {
             identity_config: Some(&self.identity_config),
             dispatcher_instructions: &instructions,
             learned,
+            visible_tool_names: &self.visible_tool_names,
         };
         self.prompt_builder.build(&ctx)
     }

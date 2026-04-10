@@ -23,8 +23,21 @@ use std::sync::Arc;
 /// system to maintain context across turns.
 pub struct Agent {
     pub(super) provider: Arc<dyn Provider>,
+    /// Full tool registry. Sub-agents pull from this via
+    /// [`ParentExecutionContext::all_tools`].
     pub(super) tools: Arc<Vec<Box<dyn Tool>>>,
+    /// Full tool specs — sub-agents receive these via
+    /// [`ParentExecutionContext::all_tool_specs`].
     pub(super) tool_specs: Arc<Vec<ToolSpec>>,
+    /// Tool specs filtered by `visible_tool_names`. These are the specs
+    /// actually sent to the provider in the main agent's chat requests.
+    /// When `visible_tool_names` is empty this equals `tool_specs`.
+    pub(super) visible_tool_specs: Arc<Vec<ToolSpec>>,
+    /// When non-empty, only these tool names are visible in the main
+    /// agent's prompt and callable by the main agent. Sub-agents ignore
+    /// this filter — they apply per-definition whitelists in the runner.
+    /// Empty = no filter (all tools visible, backward compat).
+    pub(super) visible_tool_names: std::collections::HashSet<String>,
     pub(super) memory: Arc<dyn Memory>,
     pub(super) prompt_builder: SystemPromptBuilder,
     pub(super) tool_dispatcher: Box<dyn ToolDispatcher>,
@@ -36,6 +49,9 @@ pub struct Agent {
     pub(super) identity_config: crate::openhuman::config::IdentityConfig,
     pub(super) skills: Vec<crate::openhuman::skills::Skill>,
     pub(super) auto_save: bool,
+    /// Last memory context loaded for the current turn. Stored so it can
+    /// be forwarded to subagents via `ParentExecutionContext`.
+    pub(super) last_memory_context: Option<String>,
     pub(super) history: Vec<ConversationMessage>,
     pub(super) classification_config: crate::openhuman::config::QueryClassificationConfig,
     pub(super) available_hints: Vec<String>,
@@ -57,6 +73,8 @@ pub struct Agent {
 pub struct AgentBuilder {
     pub(super) provider: Option<Arc<dyn Provider>>,
     pub(super) tools: Option<Vec<Box<dyn Tool>>>,
+    /// When set, restricts which tools the main agent sees/calls.
+    pub(super) visible_tool_names: Option<std::collections::HashSet<String>>,
     pub(super) memory: Option<Arc<dyn Memory>>,
     pub(super) prompt_builder: Option<SystemPromptBuilder>,
     pub(super) tool_dispatcher: Option<Box<dyn ToolDispatcher>>,

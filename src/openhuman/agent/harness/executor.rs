@@ -564,7 +564,7 @@ fn resolve_model(archetype: AgentArchetype, config: &OrchestratorConfig) -> Stri
             return model.clone();
         }
     }
-    format!("hint:{}", archetype.default_model_hint())
+    format!("{}-v1", archetype.default_model_hint())
 }
 
 /// Resolve temperature for an archetype.
@@ -624,11 +624,11 @@ mod tests {
         let config = OrchestratorConfig::default();
         assert_eq!(
             resolve_model(AgentArchetype::CodeExecutor, &config),
-            "hint:coding"
+            "coding-v1"
         );
         assert_eq!(
             resolve_model(AgentArchetype::Orchestrator, &config),
-            "hint:reasoning"
+            "reasoning-v1"
         );
     }
 }

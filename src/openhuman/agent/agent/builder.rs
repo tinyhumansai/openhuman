@@ -28,6 +28,7 @@ impl AgentBuilder {
         Self {
             provider: None,
             tools: None,
+            visible_tool_names: None,
             memory: None,
             prompt_builder: None,
             tool_dispatcher: None,
@@ -68,6 +69,14 @@ impl AgentBuilder {
     /// Sets the available tools for the agent.
     pub fn tools(mut self, tools: Vec<Box<dyn Tool>>) -> Self {
         self.tools = Some(tools);
+        self
+    }
+
+    /// Restricts which tools the main agent can see and call directly.
+    /// Tools not in this set are still available to sub-agents via the
+    /// runner. Pass `None` (default) to make all tools visible.
+    pub fn visible_tool_names(mut self, names: std::collections::HashSet<String>) -> Self {
+        self.visible_tool_names = Some(names);
         self
     }
 
@@ -198,12 +207,38 @@ impl AgentBuilder {
             .ok_or_else(|| anyhow::anyhow!("tools are required"))?;
         let tool_specs: Vec<ToolSpec> = tools.iter().map(|tool| tool.spec()).collect();
 
+        let visible_names = self.visible_tool_names.unwrap_or_default();
+
+        // Build the filtered spec list that the main agent sends to the
+        // provider. When the filter is empty every tool is visible
+        // (backward compat). When populated, only allowlisted tools
+        // appear in the function-calling schema so the LLM literally
+        // cannot call skill tools directly — it must use spawn_subagent.
+        let visible_tool_specs: Vec<ToolSpec> = if visible_names.is_empty() {
+            tool_specs.clone()
+        } else {
+            tool_specs
+                .iter()
+                .filter(|spec| visible_names.contains(&spec.name))
+                .cloned()
+                .collect()
+        };
+
+        log::info!(
+            "[agent] tool spec filter: total={} visible={} (filter_active={})",
+            tool_specs.len(),
+            visible_tool_specs.len(),
+            !visible_names.is_empty()
+        );
+
         Ok(Agent {
             provider: self
                 .provider
                 .ok_or_else(|| anyhow::anyhow!("provider is required"))?,
             tools: Arc::new(tools),
             tool_specs: Arc::new(tool_specs),
+            visible_tool_specs: Arc::new(visible_tool_specs),
+            visible_tool_names: visible_names,
             memory: self
                 .memory
                 .ok_or_else(|| anyhow::anyhow!("memory is required"))?,
@@ -227,6 +262,7 @@ impl AgentBuilder {
             identity_config: self.identity_config.unwrap_or_default(),
             skills: self.skills.unwrap_or_default(),
             auto_save: self.auto_save.unwrap_or(false),
+            last_memory_context: None,
             history: Vec::new(),
             classification_config: self.classification_config.unwrap_or_default(),
             available_hints: self.available_hints.unwrap_or_default(),
@@ -405,9 +441,22 @@ impl Agent {
             }
         }
 
+        // Generate the orchestrator's tool set: one tool per skill +
+        // one tool per archetype (research, run_code, etc.) + spawn_subagent
+        // as a fallback. These are the only tools the LLM sees in its
+        // function-calling schema. Sub-agents still access the full `tools`
+        // registry via ParentExecutionContext.
+        let orchestrator_tools = tools::orchestrator_tools::collect_orchestrator_tools();
+        let visible: std::collections::HashSet<String> = orchestrator_tools
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+        tools.extend(orchestrator_tools);
+
         Agent::builder()
             .provider(provider)
             .tools(tools)
+            .visible_tool_names(visible)
             .memory(memory)
             .tool_dispatcher(tool_dispatcher)
             .memory_loader(Box::new(

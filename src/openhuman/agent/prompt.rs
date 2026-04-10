@@ -4,6 +4,7 @@ use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
 use chrono::Local;
+use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
 
@@ -29,6 +30,10 @@ pub struct PromptContext<'a> {
     pub dispatcher_instructions: &'a str,
     /// Pre-fetched learned context (empty when learning is disabled).
     pub learned: LearnedContextData,
+    /// When non-empty, only tools in this set are rendered in the prompt.
+    /// Skills section is omitted when a filter is active (the main agent
+    /// delegates skill work to sub-agents).
+    pub visible_tool_names: &'a std::collections::HashSet<String>,
 }
 
 pub trait PromptSection: Send + Sync {
@@ -191,16 +196,34 @@ impl PromptSection for IdentitySection {
                 "The following workspace files define your identity, behavior, and context.\n\n",
             );
         }
-        for file in [
-            "AGENTS.md",
-            "SOUL.md",
-            "TOOLS.md",
-            "IDENTITY.md",
-            "USER.md",
-            "HEARTBEAT.md",
-            "BOOTSTRAP.md",
-            "MEMORY.md",
-        ] {
+        // When the visible-tool filter is active the main agent is a pure
+        // orchestrator: it routes via spawn_subagent, synthesises results,
+        // and talks to the user. It does NOT need tool docs (TOOLS.md),
+        // periodic-task config (HEARTBEAT.md), or the memory-layer protocol
+        // / integration quirks reference (MEMORY.md) — subagents handle
+        // those concerns with their own schemas and prompts.
+        let is_orchestrator = !ctx.visible_tool_names.is_empty();
+        let files: &[&str] = if is_orchestrator {
+            &[
+                "AGENTS.md",
+                "SOUL.md",
+                "IDENTITY.md",
+                "USER.md",
+                "BOOTSTRAP.md",
+            ]
+        } else {
+            &[
+                "AGENTS.md",
+                "SOUL.md",
+                "TOOLS.md",
+                "IDENTITY.md",
+                "USER.md",
+                "HEARTBEAT.md",
+                "BOOTSTRAP.md",
+                "MEMORY.md",
+            ]
+        };
+        for file in files {
             inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
         }
 
@@ -215,7 +238,12 @@ impl PromptSection for ToolsSection {
 
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
         let mut out = String::from("## Tools\n\n");
+        let has_filter = !ctx.visible_tool_names.is_empty();
         for tool in ctx.tools {
+            // Skip tools not in the visible set when a filter is active.
+            if has_filter && !ctx.visible_tool_names.contains(tool.name()) {
+                continue;
+            }
             let _ = writeln!(
                 out,
                 "- **{}**: {}\n  Parameters: `{}`",
@@ -248,7 +276,9 @@ impl PromptSection for SkillsSection {
     }
 
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
-        if ctx.skills.is_empty() {
+        // When a visible-tool filter is active the main agent delegates
+        // all skill work to sub-agents — skip the skills catalog.
+        if ctx.skills.is_empty() || !ctx.visible_tool_names.is_empty() {
             return Ok(String::new());
         }
 
@@ -324,14 +354,58 @@ fn is_dynamic_section(name: &str) -> bool {
     matches!(name, "workspace" | "datetime" | "runtime")
 }
 
-fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &str) {
-    let path = workspace_dir.join(filename);
-    if !path.exists() {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&path, default_workspace_file_content(filename));
+/// Ensure the workspace file is up-to-date with the compiled-in default.
+///
+/// On first install the file doesn't exist → write it. On subsequent runs
+/// we store a hash of the compiled-in content in a sidecar file
+/// (`.{filename}.builtin-hash`). If the hash changes (code was updated),
+/// the disk file is overwritten so prompt improvements ship automatically.
+/// User edits between code releases are preserved — we only overwrite when
+/// the built-in default itself changes.
+fn sync_workspace_file(workspace_dir: &Path, filename: &str) {
+    let default_content = default_workspace_file_content(filename);
+    if default_content.is_empty() {
+        return;
     }
+
+    let path = workspace_dir.join(filename);
+    let hash_path = workspace_dir.join(format!(".{filename}.builtin-hash"));
+
+    // Compute a simple hash of the current compiled-in content.
+    let current_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        default_content.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+
+    // Read the last-written hash (if any).
+    let stored_hash = std::fs::read_to_string(&hash_path).unwrap_or_default();
+
+    if stored_hash.trim() == current_hash && path.exists() {
+        // Built-in hasn't changed and file exists — nothing to do.
+        return;
+    }
+
+    // Either first install, or the compiled-in default changed → write it.
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::write(&path, default_content) {
+        log::warn!(
+            "[agent:prompt] failed to write workspace file {filename}: {e}"
+        );
+        return;
+    }
+    let _ = std::fs::write(&hash_path, &current_hash);
+    log::info!(
+        "[agent:prompt] updated workspace file {filename} (builtin content changed)"
+    );
+}
+
+fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &str) {
+    sync_workspace_file(workspace_dir, filename);
+    let path = workspace_dir.join(filename);
 
     match std::fs::read_to_string(&path) {
         Ok(content) => {
@@ -387,6 +461,9 @@ mod tests {
     use super::*;
     use crate::openhuman::tools::traits::Tool;
     use async_trait::async_trait;
+    use std::sync::LazyLock;
+
+    static NO_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
 
     struct TestTool;
 
@@ -417,11 +494,24 @@ mod tests {
         let workspace =
             std::env::temp_dir().join(format!("openhuman_prompt_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
+        // Write AGENTS.md AND a hash file matching the *compiled-in*
+        // default so sync_workspace_file believes it's already current
+        // and doesn't overwrite our test content.
         std::fs::write(
             workspace.join("AGENTS.md"),
             "Always respond with: AGENTS_MD_LOADED",
         )
         .unwrap();
+        {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            default_workspace_file_content("AGENTS.md").hash(&mut hasher);
+            std::fs::write(
+                workspace.join(".AGENTS.md.builtin-hash"),
+                format!("{:016x}", hasher.finish()),
+            )
+            .unwrap();
+        }
 
         let identity_config = crate::openhuman::config::IdentityConfig {
             format: "aieos".into(),
@@ -438,6 +528,7 @@ mod tests {
             identity_config: Some(&identity_config),
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
         };
 
         let section = IdentitySection;
@@ -466,6 +557,7 @@ mod tests {
             identity_config: None,
             dispatcher_instructions: "instr",
             learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
         };
         let prompt = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
         assert!(prompt.contains("## Tools"));
@@ -488,6 +580,7 @@ mod tests {
             identity_config: None,
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
         };
 
         let section = IdentitySection;
@@ -510,7 +603,7 @@ mod tests {
         }
         let agents = std::fs::read_to_string(workspace.join("AGENTS.md")).unwrap();
         assert!(
-            agents.starts_with("# OpenHuman Agents"),
+            agents.starts_with("# OpenHuman Orchestrator"),
             "AGENTS.md should be seeded from src/openhuman/agent/prompts/AGENTS.md"
         );
 
@@ -528,6 +621,7 @@ mod tests {
             identity_config: None,
             dispatcher_instructions: "instr",
             learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
         };
 
         let rendered = DateTimeSection.build(&ctx).unwrap();

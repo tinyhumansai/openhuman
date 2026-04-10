@@ -240,10 +240,19 @@ async fn run_typed_mode(
     );
 
     // ── Build the user message (with optional context prefix) ──────────
-    let user_message = if let Some(ctx) = options.context.as_deref() {
-        format!("[Context]\n{ctx}\n\n{task_prompt}")
-    } else {
+    // Merge explicit context from the orchestrator with the parent's
+    // auto-loaded memory context so the subagent has full visibility.
+    let mut context_parts: Vec<&str> = Vec::new();
+    if let Some(ref mem_ctx) = parent.memory_context {
+        context_parts.push(mem_ctx);
+    }
+    if let Some(ref ctx) = options.context {
+        context_parts.push(ctx);
+    }
+    let user_message = if context_parts.is_empty() {
         task_prompt.to_string()
+    } else {
+        format!("[Context]\n{}\n\n{task_prompt}", context_parts.join("\n\n"))
     };
 
     let mut history: Vec<ChatMessage> = vec![
@@ -1021,6 +1030,7 @@ mod tests {
             agent_config: crate::openhuman::config::AgentConfig::default(),
             identity_config: crate::openhuman::config::IdentityConfig::default(),
             skills: Arc::new(vec![]),
+            memory_context: None,
             session_id: "test-session".into(),
             channel: "test".into(),
         }

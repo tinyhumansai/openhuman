@@ -194,11 +194,17 @@ pub enum ModelSpec {
 impl ModelSpec {
     /// Resolve this spec into the model name string the provider expects.
     /// `parent_model` is the model the parent agent is using right now.
+    ///
+    /// Hints are resolved to `{hint}-v1` (e.g. `"agentic"` → `"agentic-v1"`)
+    /// which matches the backend's standard model naming convention. When
+    /// a `RouterProvider` is present its route table takes priority over
+    /// this default; when no router is configured (empty `model_routes`)
+    /// the resolved name goes directly to the backend.
     pub fn resolve(&self, parent_model: &str) -> String {
         match self {
             Self::Inherit => parent_model.to_string(),
             Self::Exact(name) => name.clone(),
-            Self::Hint(hint) => format!("hint:{hint}"),
+            Self::Hint(hint) => format!("{hint}-v1"),
         }
     }
 }
@@ -461,9 +467,9 @@ mod tests {
     }
 
     #[test]
-    fn model_spec_resolve_hint_prefixes_router_marker() {
+    fn model_spec_resolve_hint_appends_v1() {
         let spec = ModelSpec::Hint("coding".into());
-        assert_eq!(spec.resolve("parent-model"), "hint:coding");
+        assert_eq!(spec.resolve("parent-model"), "coding-v1");
     }
 
     #[test]
