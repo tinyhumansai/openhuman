@@ -148,18 +148,53 @@ class SkillManager {
   /**
    * Start the setup flow for a skill. Returns the first step, or null if
    * the skill doesn't implement setup/start (e.g. OAuth-only skills).
+   *
+   * OAuth-based skills never instantiate a frontend `SkillRuntime` — they
+   * live only in the Rust core (see `shared.tsx` "no need to start the
+   * QuickJS runtime first"). For those we fall back to the core RPC
+   * `openhuman.skills_setup_start`, mirroring the fallback pattern in
+   * `notifyOAuthComplete`. If the core errors (e.g. the skill doesn't
+   * implement `onSetupStart` at all, which is common for pure OAuth
+   * skills), we treat it as "no more setup steps" — the wizard interprets
+   * that as success and shows the "Connected!" screen.
    */
   async startSetup(skillId: string): Promise<SetupStep | null> {
     console.log("[SkillManager] startSetup", skillId);
     const runtime = this.runtimes.get(skillId);
-    if (!runtime) {
-      console.log("[SkillManager] runtime not found", skillId);
-      throw new Error(`Skill ${skillId} runtime not found`);
+    if (runtime) {
+      emitSkillStateChange(skillId);
+      console.log("[SkillManager] setup started (local runtime)", skillId);
+      return runtime.setupStart();
     }
 
-    emitSkillStateChange(skillId);
-    console.log("[SkillManager] setup started", skillId);
-    return runtime.setupStart();
+    // No frontend runtime — dispatch via core RPC pass-through.
+    try {
+      const result = (await callCoreRpc({
+        method: "openhuman.skills_setup_start",
+        params: { skill_id: skillId },
+      })) as { step?: SetupStep } | null;
+      emitSkillStateChange(skillId);
+      console.log(
+        "[SkillManager] setup started (core RPC fallback)",
+        skillId,
+        result,
+      );
+      if (!result || !result.step) {
+        return null;
+      }
+      return result.step;
+    } catch (err) {
+      // Pure OAuth skills with no onSetupStart handler end up here — that
+      // is not an error, it means OAuth completion alone is the entire
+      // setup flow. Return null so the wizard shows the success screen.
+      console.log(
+        "[SkillManager] setup_start core fallback failed — assuming no setup steps",
+        skillId,
+        err,
+      );
+      emitSkillStateChange(skillId);
+      return null;
+    }
   }
 
   /**

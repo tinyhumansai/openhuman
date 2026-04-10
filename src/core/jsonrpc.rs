@@ -28,29 +28,40 @@ use crate::core::types::{AppState, RpcError, RpcFailure, RpcRequest, RpcSuccess}
 /// JSON-RPC 2.0 compliant success or failure response.
 pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
     let id = req.id.clone();
-    match invoke_method(state, req.method.as_str(), req.params).await {
-        Ok(value) => (
-            StatusCode::OK,
-            Json(RpcSuccess {
-                jsonrpc: "2.0",
-                id,
-                result: value,
-            }),
-        )
-            .into_response(),
-        Err(message) => (
-            StatusCode::OK,
-            Json(RpcFailure {
-                jsonrpc: "2.0",
-                id,
-                error: RpcError {
-                    code: -32000,
-                    message,
-                    data: None,
-                },
-            }),
-        )
-            .into_response(),
+    let method = req.method.clone();
+    let started = std::time::Instant::now();
+    let result = invoke_method(state, method.as_str(), req.params).await;
+    let ms = started.elapsed().as_millis();
+
+    match result {
+        Ok(value) => {
+            tracing::info!("[rpc] {} -> ok ({}ms)", method, ms);
+            (
+                StatusCode::OK,
+                Json(RpcSuccess {
+                    jsonrpc: "2.0",
+                    id,
+                    result: value,
+                }),
+            )
+                .into_response()
+        }
+        Err(message) => {
+            tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            (
+                StatusCode::OK,
+                Json(RpcFailure {
+                    jsonrpc: "2.0",
+                    id,
+                    error: RpcError {
+                        code: -32000,
+                        message,
+                        data: None,
+                    },
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -374,6 +385,9 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
 }
 
 /// Middleware for logging incoming HTTP requests.
+///
+/// The `/rpc` path is logged inside [`rpc_handler`] instead (with the
+/// JSON-RPC method name), so we skip it here to avoid a redundant line.
 async fn http_request_log_middleware(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
@@ -382,16 +396,18 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
 
     let response = next.run(req).await;
 
-    let status = response.status().as_u16();
-    let ms = started.elapsed().as_millis();
-    log::info!(
-        "[http] {} {}{} -> {} ({}ms)",
-        method,
-        path,
-        if query_len > 0 { "?…" } else { "" },
-        status,
-        ms
-    );
+    if path != "/rpc" {
+        let status = response.status().as_u16();
+        let ms = started.elapsed().as_millis();
+        tracing::info!(
+            "[http] {} {}{} -> {} ({}ms)",
+            method,
+            path,
+            if query_len > 0 { "?…" } else { "" },
+            status,
+            ms
+        );
+    }
 
     response
 }

@@ -641,11 +641,6 @@ impl Config {
             if !scope_raw.trim().is_empty() {
                 if let Some(scope) = parse_proxy_scope(&scope_raw) {
                     self.proxy.scope = scope;
-                } else {
-                    tracing::warn!(
-                        scope = %scope_raw,
-                        "Ignoring invalid OPENHUMAN_PROXY_SCOPE (valid: environment|openhuman|services)"
-                    );
                 }
             }
         }
