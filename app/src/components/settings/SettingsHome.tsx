@@ -78,54 +78,42 @@ const SettingsHome = () => {
   const groupedMenuItems = [
     {
       id: 'account',
-      title: 'Account & Security',
-      description: 'Recovery phrase, team management, and linked account access',
+      title: 'Account & Billing',
+      description: 'Recovery phrase, team, connections, billing, and privacy',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5v14" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+          />
         </svg>
       ),
       onClick: () => navigateToSettings('account'),
       dangerous: false,
     },
     {
-      id: 'billing',
-      title: 'Billing & Usage',
-      description: 'Subscription plan, pay-as-you-go credits, and payment methods',
+      id: 'features',
+      title: 'Features',
+      description: 'Screen awareness, autocomplete, voice, messaging, and tools',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
             strokeWidth={2}
-            d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3 3v8a3 3 0 003 3z"
+            d="M13 10V3L4 14h7v7l9-11h-7z"
           />
         </svg>
       ),
-      onClick: () => navigateToSettings('billing'),
+      onClick: () => navigateToSettings('features'),
       dangerous: false,
     },
     {
-      id: 'automation',
-      title: 'Automation & Channels',
-      description: 'Accessibility, screen intelligence, messaging, autocomplete, and cron jobs',
-      icon: (
-        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 5h18v12H3zM8 21h8m-4-4v4"
-          />
-        </svg>
-      ),
-      onClick: () => navigateToSettings('automation'),
-      dangerous: false,
-    },
-    {
-      id: 'ai-tools',
-      title: 'AI & Skills',
-      description: 'Local model runtime, AI configuration, and skills behavior',
+      id: 'ai-models',
+      title: 'AI & Models',
+      description: 'Local AI model setup and downloads',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -136,13 +124,13 @@ const SettingsHome = () => {
           />
         </svg>
       ),
-      onClick: () => navigateToSettings('ai-tools'),
+      onClick: () => navigateToSettings('ai-models'),
       dangerous: false,
     },
     {
       id: 'developer-options',
       title: 'Developer Options',
-      description: 'Diagnostic tools, console access, webhooks, and memory inspection',
+      description: 'Diagnostics, debug panels, webhooks, and memory inspection',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
