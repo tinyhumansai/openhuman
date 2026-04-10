@@ -4,39 +4,31 @@
  */
 import { vi } from 'vitest';
 
+/** Shared offline-shaped fields for skill status hook mocks (avoid drift across hooks). */
+const offlineStatusBase = {
+  connectionStatus: 'offline' as const,
+  statusDot: 'bg-stone-400',
+  statusLabel: 'Offline',
+  statusColor: 'text-stone-500',
+  ctaLabel: 'Enable',
+  ctaVariant: 'sage' as const,
+};
+
 vi.mock('../features/screen-intelligence/useScreenIntelligenceSkillStatus', () => ({
   useScreenIntelligenceSkillStatus: () => ({
-    connectionStatus: 'offline',
-    statusDot: 'bg-stone-400',
-    statusLabel: 'Offline',
-    statusColor: 'text-stone-500',
-    ctaLabel: 'Enable',
-    ctaVariant: 'sage',
+    ...offlineStatusBase,
     allPermissionsGranted: false,
     platformUnsupported: false,
   }),
 }));
 
 vi.mock('../features/autocomplete/useAutocompleteSkillStatus', () => ({
-  useAutocompleteSkillStatus: () => ({
-    connectionStatus: 'offline',
-    statusDot: 'bg-stone-400',
-    statusLabel: 'Offline',
-    statusColor: 'text-stone-500',
-    ctaLabel: 'Enable',
-    ctaVariant: 'sage',
-    platformUnsupported: false,
-  }),
+  useAutocompleteSkillStatus: () => ({ ...offlineStatusBase, platformUnsupported: false }),
 }));
 
 vi.mock('../features/voice/useVoiceSkillStatus', () => ({
   useVoiceSkillStatus: () => ({
-    connectionStatus: 'offline',
-    statusDot: 'bg-stone-400',
-    statusLabel: 'Offline',
-    statusColor: 'text-stone-500',
-    ctaLabel: 'Enable',
-    ctaVariant: 'sage',
+    ...offlineStatusBase,
     sttModelMissing: false,
     voiceStatus: null,
     serverStatus: null,

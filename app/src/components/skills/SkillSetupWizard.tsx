@@ -28,7 +28,7 @@ const SKILL_RUNNING_WAIT_MS = 10_000;
 const SKILL_RUNNING_POLL_MS = 250;
 
 /** Poll `skills_status` until the lifecycle reports `running` (or throw on error / timeout). */
-async function waitForSkillRunning(skillId: string): Promise<void> {
+const waitForSkillRunning = async (skillId: string): Promise<void> => {
   const deadline = Date.now() + SKILL_RUNNING_WAIT_MS;
   while (Date.now() < deadline) {
     const snapshot = await getSkillSnapshot(skillId);
@@ -41,7 +41,7 @@ async function waitForSkillRunning(skillId: string): Promise<void> {
     });
   }
   throw new Error("Timed out waiting for skill to start");
-}
+};
 
 interface SkillSetupWizardProps {
   skillId: string;
@@ -78,6 +78,13 @@ export default function SkillSetupWizard({
   const [state, setState] = useState<WizardState>({ phase: "loading" });
   /** Ensures managed OAuth auto-advance runs once per browser-login attempt. */
   const managedOAuthAdvancedRef = useRef(false);
+  /** Ensures legacy OAuth persistence + complete runs once per connected transition. */
+  const legacyOAuthAdvancedRef = useRef(false);
+
+  useEffect(() => {
+    managedOAuthAdvancedRef.current = false;
+    legacyOAuthAdvancedRef.current = false;
+  }, [skillId]);
 
   // Watch skill snapshot for OAuth/managed completion
   const snap = useSkillSnapshot(skillId);
@@ -241,14 +248,25 @@ export default function SkillSetupWizard({
       (state.phase === "oauth" || state.phase === "oauth_waiting") &&
       isConnected
     ) {
-      setSetupComplete(skillId, true).catch(() => {});
-      setTimeout(() => {
-        setState({
-          phase: "complete",
-          message:
-            "Successfully connected! You can close this window.",
-        });
-      }, 0);
+      if (legacyOAuthAdvancedRef.current) return;
+      legacyOAuthAdvancedRef.current = true;
+      void (async () => {
+        try {
+          await setSetupComplete(skillId, true);
+          setState({
+            phase: "complete",
+            message:
+              "Successfully connected! You can close this window.",
+          });
+        } catch (e) {
+          console.warn("[SkillSetupWizard] legacy OAuth setSetupComplete:", e);
+          legacyOAuthAdvancedRef.current = false;
+          setState({
+            phase: "error",
+            message: "Failed to save setup state.",
+          });
+        }
+      })();
     }
   }, [isConnected, state.phase, skillId]);
 
