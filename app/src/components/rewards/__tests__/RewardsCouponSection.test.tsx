@@ -70,10 +70,7 @@ describe('RewardsCouponSection', () => {
   });
 
   it('shows backend redemption errors without clearing the existing state', async () => {
-    mocks.mockCreditsApi.getBalance.mockResolvedValue({
-      promotionBalanceUsd: 3,
-      teamTopupUsd: 0,
-    });
+    mocks.mockCreditsApi.getBalance.mockResolvedValue({ promotionBalanceUsd: 3, teamTopupUsd: 0 });
     mocks.mockCreditsApi.getUserCoupons.mockResolvedValue([]);
     mocks.mockCreditsApi.redeemCoupon.mockRejectedValueOnce({
       error: 'This coupon has already been used.',

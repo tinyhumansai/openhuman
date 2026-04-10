@@ -116,34 +116,34 @@ async function resolveCoreSocketUrl(): Promise<string> {
 // ── Bubble chip with typewriter animation ────────────────────────────────
 
 function OverlayBubbleChip({ bubble }: { bubble: OverlayBubble }) {
+  // Reset the typewriter on every new bubble identity via `key` at the
+  // call site — that avoids a cascading setState inside this effect.
   const [displayedText, setDisplayedText] = useState('');
   const indexRef = useRef(0);
 
   useEffect(() => {
     if (!bubble.text) {
-      indexRef.current = 0;
-      setDisplayedText('');
-      return;
+      return () => {
+        indexRef.current = 0;
+      };
     }
 
-    indexRef.current = 0;
-    setDisplayedText('');
-
-    const timeoutId = window.setInterval(
+    const intervalId = window.setInterval(
       () => {
         indexRef.current += 1;
         setDisplayedText(bubble.text.slice(0, indexRef.current));
         if (indexRef.current >= bubble.text.length) {
-          window.clearInterval(timeoutId);
+          window.clearInterval(intervalId);
         }
       },
       bubble.compact ? 28 : 32
     );
 
     return () => {
-      window.clearInterval(timeoutId);
+      window.clearInterval(intervalId);
+      indexRef.current = 0;
     };
-  }, [bubble.compact, bubble.id, bubble.text]);
+  }, [bubble.compact, bubble.text]);
 
   return (
     <div
@@ -398,7 +398,8 @@ export default function OverlayApp() {
           className={`flex flex-col items-end gap-2 transition-all duration-200 ${status === 'active' ? 'max-w-[184px] opacity-100' : 'max-w-0 opacity-0'}`}>
           {bubbles.map(b => (
             <div key={b.id} className="animate-[overlay-bubble-in_220ms_ease-out]">
-              <OverlayBubbleChip bubble={b} />
+              {/* key on the chip itself remounts the typewriter for each new bubble */}
+              <OverlayBubbleChip key={b.id} bubble={b} />
             </div>
           ))}
         </div>
