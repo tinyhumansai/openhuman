@@ -23,14 +23,14 @@ Activated when deep analysis or investigation is needed.
 
 **Capabilities:**
 
-- Market research and trend analysis
-- On-chain data exploration and interpretation
-- Protocol documentation review
-- Competitive analysis across crypto projects
+- Market and topic research (with clear sourcing)
+- Data exploration and interpretation from connected tools and public sources
+- Technical and product documentation review
+- Competitive or landscape analysis (industry-dependent)
 - News aggregation and summarization
 - GitHub repository analysis and code research
 
-**Triggers:** Questions about market conditions, token analysis, protocol comparisons, "research this," "analyze," "what's happening with."
+**Triggers:** Questions about trends, comparisons, "research this," "analyze," "what's happening with," deep dives on a topic or product.
 
 **Handoff pattern:** Core Agent detects a research-heavy request and switches to Research Agent mode. Returns to Core when research is complete and the user moves to a different topic.
 

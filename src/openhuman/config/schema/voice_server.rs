@@ -6,17 +6,13 @@ use serde::{Deserialize, Serialize};
 /// Activation mode for the voice server hotkey.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum VoiceActivationMode {
     /// Single press toggles recording on/off.
     Tap,
     /// Hold to record, release to stop.
+    #[default]
     Push,
-}
-
-impl Default for VoiceActivationMode {
-    fn default() -> Self {
-        Self::Push
-    }
 }
 
 /// Configuration for the voice dictation server.

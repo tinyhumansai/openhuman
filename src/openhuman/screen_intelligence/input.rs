@@ -1,4 +1,4 @@
-//! Input actions and autocomplete — keyboard/mouse automation + predictive text.
+//! Input actions and autocomplete helpers for the screen intelligence session.
 
 use super::helpers::{generate_suggestions, truncate_tail, validate_input_action};
 use super::limits::{MAX_CONTEXT_CHARS, MAX_SUGGESTION_CHARS};
@@ -31,14 +31,6 @@ impl AccessibilityEngine {
                 accepted: false,
                 blocked: true,
                 reason: Some("session is not active".to_string()),
-            });
-        }
-
-        if !state.features.device_control {
-            return Ok(InputActionResult {
-                accepted: false,
-                blocked: true,
-                reason: Some("device control is disabled".to_string()),
             });
         }
 
@@ -82,7 +74,7 @@ impl AccessibilityEngine {
     ) -> Result<AutocompleteSuggestResult, String> {
         let state = self.inner.lock().await;
 
-        if !state.features.predictive_input {
+        if !state.config.autocomplete_enabled {
             return Ok(AutocompleteSuggestResult {
                 suggestions: Vec::new(),
             });
@@ -113,7 +105,7 @@ impl AccessibilityEngine {
         }
 
         let mut state = self.inner.lock().await;
-        if !state.features.predictive_input {
+        if !state.config.autocomplete_enabled {
             return Ok(AutocompleteCommitResult { committed: false });
         }
         if !state.autocomplete_context.is_empty() {

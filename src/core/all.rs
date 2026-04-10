@@ -1,3 +1,9 @@
+//! Registry and dispatch logic for all OpenHuman controllers.
+//!
+//! This module serves as the central hub for registering domain-specific
+//! controllers (e.g., memory, skills, config) and providing a unified
+//! interface for both the CLI and RPC layers to invoke them.
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
@@ -6,23 +12,37 @@ use serde_json::{Map, Value};
 
 use crate::core::ControllerSchema;
 
+/// A pinned, boxed future returned by a controller handler.
 pub type ControllerFuture = Pin<Box<dyn Future<Output = Result<Value, String>> + Send + 'static>>;
+
+/// A function pointer type for controller handlers.
+///
+/// Handlers take a map of parameters and return a [`ControllerFuture`].
 pub type ControllerHandler = fn(Map<String, Value>) -> ControllerFuture;
 
+/// A registered controller combining its schema and handler function.
 #[derive(Clone)]
 pub struct RegisteredController {
+    /// The schema defining the controller's identity and parameters.
     pub schema: ControllerSchema,
+    /// The actual function that executes the controller's logic.
     pub handler: ControllerHandler,
 }
 
 impl RegisteredController {
+    /// Returns the canonical RPC method name for this controller (e.g., `openhuman.memory_doc_put`).
     pub fn rpc_method_name(&self) -> String {
         rpc_method_name(&self.schema)
     }
 }
 
+/// The global static registry of all controllers, initialized once on first access.
 static REGISTRY: OnceLock<Vec<RegisteredController>> = OnceLock::new();
 
+/// Returns a reference to the global controller registry.
+///
+/// This function initializes the registry if it hasn't been already,
+/// performing validation to ensure no duplicates or missing handlers exist.
 fn registry() -> &'static [RegisteredController] {
     REGISTRY
         .get_or_init(|| {
@@ -36,6 +56,7 @@ fn registry() -> &'static [RegisteredController] {
         .as_slice()
 }
 
+/// Aggregates all controller implementations from across the codebase.
 fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
     controllers.extend(crate::openhuman::about_app::all_about_app_registered_controllers());
@@ -79,6 +100,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers
 }
 
+/// Aggregates all controller schemas from across the codebase.
 fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());
@@ -119,19 +141,25 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas
 }
 
+/// Returns a vector of all currently registered controllers.
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     registry().to_vec()
 }
 
+/// Returns a vector of all currently declared controller schemas.
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     let _ = registry();
     build_declared_controller_schemas()
 }
 
+/// Generates a standardized RPC method name from a controller schema.
 pub fn rpc_method_name(schema: &ControllerSchema) -> String {
     format!("openhuman.{}_{}", schema.namespace, schema.function)
 }
 
+/// Returns a human-readable description for a given namespace.
+///
+/// This is used for CLI help output.
 pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     match namespace {
         "about_app" => Some("Catalog the app's user-facing capabilities and where to find them."),
@@ -171,6 +199,7 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
     }
 }
 
+/// Looks up an RPC method name based on namespace and function.
 pub fn rpc_method_from_parts(namespace: &str, function: &str) -> Option<String> {
     registry()
         .iter()
@@ -178,6 +207,7 @@ pub fn rpc_method_from_parts(namespace: &str, function: &str) -> Option<String> 
         .map(|r| r.rpc_method_name())
 }
 
+/// Retrieves the schema for a specific RPC method.
 pub fn schema_for_rpc_method(method: &str) -> Option<ControllerSchema> {
     registry()
         .iter()
@@ -185,6 +215,11 @@ pub fn schema_for_rpc_method(method: &str) -> Option<ControllerSchema> {
         .map(|r| r.schema.clone())
 }
 
+/// Validates that the provided parameters match the requirements of the controller schema.
+///
+/// # Errors
+///
+/// Returns an error message if required parameters are missing or if unknown parameters are provided.
 pub fn validate_params(
     schema: &ControllerSchema,
     params: &Map<String, Value>,
@@ -210,6 +245,9 @@ pub fn validate_params(
     Ok(())
 }
 
+/// Attempts to invoke a registered RPC method by name.
+///
+/// Returns `None` if the method is not found in the registry.
 pub async fn try_invoke_registered_rpc(
     method: &str,
     params: Map<String, Value>,
@@ -222,6 +260,14 @@ pub async fn try_invoke_registered_rpc(
     None
 }
 
+/// Validates the consistency of the controller registry.
+///
+/// Ensures that:
+/// - There are no duplicate controllers or RPC methods.
+/// - Every declared schema has a registered handler.
+/// - Every registered handler has a declared schema.
+/// - Namespaces and functions are not empty.
+/// - Required input names are unique within a controller.
 fn validate_registry(
     registered: &[RegisteredController],
     declared: &[ControllerSchema],

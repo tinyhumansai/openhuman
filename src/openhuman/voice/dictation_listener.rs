@@ -39,8 +39,29 @@ pub fn subscribe_dictation_events() -> broadcast::Receiver<DictationEvent> {
     DICTATION_BUS.subscribe()
 }
 
-fn publish_dictation_event(event: DictationEvent) {
+pub fn publish_dictation_event(event: DictationEvent) {
     let _ = DICTATION_BUS.send(event);
+}
+
+// ── Transcription result broadcast ───────────────────────────────────
+
+static TRANSCRIPTION_BUS: Lazy<broadcast::Sender<String>> = Lazy::new(|| {
+    let (tx, _rx) = broadcast::channel(64);
+    tx
+});
+
+/// Subscribe to transcription results (used by the Socket.IO bridge).
+pub fn subscribe_transcription_results() -> broadcast::Receiver<String> {
+    TRANSCRIPTION_BUS.subscribe()
+}
+
+/// Broadcast a completed transcription to frontend clients.
+pub fn publish_transcription(text: String) {
+    log::debug!(
+        "{LOG_PREFIX} publishing transcription: {} chars",
+        text.len()
+    );
+    let _ = TRANSCRIPTION_BUS.send(text);
 }
 
 // ── Listener lifecycle ────────────────────────────────────────────────

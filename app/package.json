@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.51.19",
+  "version": "0.52.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -43,10 +43,11 @@
     "format": "prettier --write . && yarn rust:format",
     "format:check": "prettier --check . && yarn rust:format:check",
     "lint": "eslint . --ext .ts,.tsx",
-    "lint:fix": "eslint . --ext .ts,.tsx --fix"
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "knip": "knip --config knip.json",
+    "knip:production": "knip --config knip.json --production"
   },
   "dependencies": {
-    "@heroicons/react": "^2.2.0",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
     "@reduxjs/toolkit": "^2.11.2",
@@ -105,6 +106,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "husky": "^9.1.7",
     "jsdom": "^28.0.0",
+    "knip": "^6.3.1",
     "postcss": "^8.5.6",
     "prettier": "^3.8.1",
     "tailwindcss": "^3.4.19",

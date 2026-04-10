@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.51.19"
+version = "0.52.0"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -40,6 +40,9 @@ semver = "1"
 log = "0.4"
 env_logger = "0.11"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = "0.3.2"
+objc2-core-graphics = "0.3.2"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

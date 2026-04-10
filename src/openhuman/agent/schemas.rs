@@ -37,6 +37,9 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("repl_session_reset"),
         schemas("repl_session_end"),
         schemas("server_status"),
+        schemas("list_definitions"),
+        schemas("get_definition"),
+        schemas("reload_definitions"),
     ]
 }
 
@@ -65,6 +68,18 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("server_status"),
             handler: handle_server_status,
+        },
+        RegisteredController {
+            schema: schemas("list_definitions"),
+            handler: handle_list_definitions,
+        },
+        RegisteredController {
+            schema: schemas("get_definition"),
+            handler: handle_get_definition,
+        },
+        RegisteredController {
+            schema: schemas("reload_definitions"),
+            handler: handle_reload_definitions,
         },
     ]
 }
@@ -124,6 +139,30 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Return core runtime URL and status for agent calls.",
             inputs: vec![],
             outputs: vec![json_output("status", "Agent server status payload.")],
+        },
+        "list_definitions" => ControllerSchema {
+            namespace: "agent",
+            function: "list_definitions",
+            description: "List all sub-agent definitions in the global registry \
+                          (built-ins + custom TOML files under <workspace>/agents/).",
+            inputs: vec![],
+            outputs: vec![json_output("definitions", "Array of AgentDefinition.")],
+        },
+        "get_definition" => ControllerSchema {
+            namespace: "agent",
+            function: "get_definition",
+            description: "Fetch a single sub-agent definition by id.",
+            inputs: vec![required_string("id", "Definition id (e.g. code_executor).")],
+            outputs: vec![json_output("definition", "AgentDefinition payload.")],
+        },
+        "reload_definitions" => ControllerSchema {
+            namespace: "agent",
+            function: "reload_definitions",
+            description: "Reload custom sub-agent definitions from disk. \
+                          NOTE: only takes effect on next process restart in v1 \
+                          since the global registry is OnceLock-backed.",
+            inputs: vec![],
+            outputs: vec![json_output("status", "Reload status payload.")],
         },
         _ => ControllerSchema {
             namespace: "agent",
@@ -206,6 +245,49 @@ fn handle_repl_session_end(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_server_status(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::agent_server_status()) })
+}
+
+fn handle_list_definitions(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        let registry = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()
+            .ok_or_else(|| "AgentDefinitionRegistry not initialised".to_string())?;
+        let defs: Vec<&crate::openhuman::agent::harness::AgentDefinition> = registry.list();
+        Ok(serde_json::json!({ "definitions": defs }))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct GetDefinitionParams {
+    id: String,
+}
+
+fn handle_get_definition(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<GetDefinitionParams>(params)?;
+        let registry = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()
+            .ok_or_else(|| "AgentDefinitionRegistry not initialised".to_string())?;
+        match registry.get(p.id.trim()) {
+            Some(def) => Ok(serde_json::json!({ "definition": def })),
+            None => Err(format!("definition '{}' not found", p.id)),
+        }
+    })
+}
+
+fn handle_reload_definitions(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        // The global registry is OnceLock-backed so live reload is a
+        // no-op in v1. Reply with a status payload that explains this
+        // and tells the caller how to refresh.
+        let already_loaded =
+            crate::openhuman::agent::harness::AgentDefinitionRegistry::global().is_some();
+        Ok(serde_json::json!({
+            "status": "noop",
+            "registry_initialised": already_loaded,
+            "note": "Sub-agent definitions are loaded once at process startup. \
+                     Restart the core process to pick up new TOML files under \
+                     <workspace>/agents/.",
+        }))
+    })
 }
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {

@@ -393,8 +393,6 @@ fn run_start_session(args: &[String]) -> Result<()> {
             consent: true,
             ttl_secs: Some(opts.ttl_secs),
             screen_monitoring: Some(true),
-            device_control: Some(false),
-            predictive_input: Some(false),
         };
 
         match engine.start_session(params).await {
@@ -515,13 +513,13 @@ fn run_doctor(args: &[String]) -> Result<()> {
 
         let platform_ok = summary["platform_supported"].as_bool().unwrap_or(false);
         let screen_ok = summary["screen_capture_ready"].as_bool().unwrap_or(false);
-        let control_ok = summary["device_control_ready"].as_bool().unwrap_or(false);
+        let control_ok = summary["accessibility_ready"].as_bool().unwrap_or(false);
         let input_ok = summary["input_monitoring_ready"].as_bool().unwrap_or(false);
         let overall_ok = summary["overall_ready"].as_bool().unwrap_or(false);
 
         eprintln!("  {} Platform supported", check(platform_ok));
         eprintln!("  {} Screen recording", check(screen_ok));
-        eprintln!("  {} Accessibility (device control)", check(control_ok));
+        eprintln!("  {} Accessibility automation", check(control_ok));
         eprintln!("  {} Input monitoring", check(input_ok));
         eprintln!();
 

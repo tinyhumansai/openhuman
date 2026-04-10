@@ -239,15 +239,6 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::ComingSoon,
     },
     Capability {
-        id: "skills.browser_access_policy",
-        name: "Configure Browser Access Policy",
-        domain: "skills",
-        category: CapabilityCategory::Skills,
-        description: "Control whether browser-based tools can visit only the allowlist or any public domain.",
-        how_to: "Settings > Developer Options > Skills > Browser Access",
-        status: CapabilityStatus::Beta,
-    },
-    Capability {
         id: "local_ai.download_model",
         name: "Download Local Models",
         domain: "local_ai",

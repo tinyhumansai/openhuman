@@ -30,7 +30,7 @@ struct ActiveWorkspaceState {
 }
 
 fn default_config_dir() -> Result<PathBuf> {
-    Ok(default_root_openhuman_dir()?)
+    default_root_openhuman_dir()
 }
 
 /// Returns the root openhuman directory (`~/.openhuman`), independent of any
@@ -450,7 +450,7 @@ impl Config {
             migrate_legacy_autocomplete_disabled_apps(&mut config);
             config.apply_env_overrides();
 
-            tracing::info!(
+            tracing::debug!(
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
                 source = resolution_source.as_str(),
@@ -472,7 +472,7 @@ impl Config {
 
             config.apply_env_overrides();
 
-            tracing::info!(
+            tracing::debug!(
                 path = %config.config_path.display(),
                 workspace = %config.workspace_dir.display(),
                 source = resolution_source.as_str(),
@@ -638,13 +638,14 @@ impl Config {
         }
 
         if let Ok(scope_raw) = std::env::var("OPENHUMAN_PROXY_SCOPE") {
-            if let Some(scope) = parse_proxy_scope(&scope_raw) {
-                self.proxy.scope = scope;
-            } else {
-                tracing::warn!(
-                    scope = %scope_raw,
-                    "Ignoring invalid OPENHUMAN_PROXY_SCOPE (valid: environment|openhuman|services)"
-                );
+            let trimmed = scope_raw.trim();
+            if !trimmed.is_empty() {
+                match parse_proxy_scope(trimmed) {
+                    Some(scope) => self.proxy.scope = scope,
+                    None => {
+                        tracing::warn!("Invalid OPENHUMAN_PROXY_SCOPE value {:?} ignored", trimmed);
+                    }
+                }
             }
         }
 
@@ -837,15 +838,6 @@ impl Config {
         if let Ok(val) = std::env::var("OPENHUMAN_DICTATION_STREAMING_INTERVAL_MS") {
             if let Ok(ms) = val.trim().parse::<u64>() {
                 self.dictation.streaming_interval_ms = ms;
-            }
-        }
-
-        if let Ok(flag) = std::env::var("OPENHUMAN_OVERLAY_ENABLED") {
-            let normalized = flag.trim().to_ascii_lowercase();
-            match normalized.as_str() {
-                "1" | "true" | "yes" | "on" => self.overlay_enabled = true,
-                "0" | "false" | "no" | "off" => self.overlay_enabled = false,
-                _ => {}
             }
         }
 

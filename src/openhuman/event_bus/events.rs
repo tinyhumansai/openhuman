@@ -24,6 +24,37 @@ pub enum DomainEvent {
         message: String,
         recoverable: bool,
     },
+    /// A sub-agent was dispatched via `spawn_subagent`.
+    SubagentSpawned {
+        /// Parent agent's session id.
+        parent_session: String,
+        /// Sub-agent definition id (e.g. `researcher`, `notion_specialist`, `fork`).
+        agent_id: String,
+        /// Spawn mode — `"typed"` or `"fork"`.
+        mode: String,
+        /// Per-spawn task id (UUID).
+        task_id: String,
+        /// Length of the prompt the parent passed in.
+        prompt_chars: usize,
+    },
+    /// A sub-agent finished successfully.
+    SubagentCompleted {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        elapsed_ms: u64,
+        output_chars: usize,
+        iterations: usize,
+    },
+    /// A sub-agent failed (max iterations, provider error, missing
+    /// definition, etc.). The error string is suitable for logging
+    /// and surfacing to the parent model.
+    SubagentFailed {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        error: String,
+    },
 
     // ── Memory ──────────────────────────────────────────────────────────
     /// A memory entry was stored.
@@ -178,8 +209,16 @@ pub enum DomainEvent {
     SystemStartup { component: String },
     /// A system component is shutting down.
     SystemShutdown { component: String },
+    /// A restart of the current core process was requested.
+    SystemRestartRequested { source: String, reason: String },
     /// A component's health status changed.
-    HealthChanged { component: String, healthy: bool },
+    HealthChanged {
+        component: String,
+        healthy: bool,
+        message: Option<String>,
+    },
+    /// A component restart was observed.
+    HealthRestarted { component: String },
 }
 
 impl DomainEvent {
@@ -188,7 +227,10 @@ impl DomainEvent {
         match self {
             Self::AgentTurnStarted { .. }
             | Self::AgentTurnCompleted { .. }
-            | Self::AgentError { .. } => "agent",
+            | Self::AgentError { .. }
+            | Self::SubagentSpawned { .. }
+            | Self::SubagentCompleted { .. }
+            | Self::SubagentFailed { .. } => "agent",
 
             Self::MemoryStored { .. } | Self::MemoryRecalled { .. } => "memory",
 
@@ -223,7 +265,9 @@ impl DomainEvent {
 
             Self::SystemStartup { .. }
             | Self::SystemShutdown { .. }
-            | Self::HealthChanged { .. } => "system",
+            | Self::SystemRestartRequested { .. }
+            | Self::HealthChanged { .. }
+            | Self::HealthRestarted { .. } => "system",
         }
     }
 }
@@ -256,6 +300,36 @@ mod tests {
                     session_id: "s".into(),
                     message: "e".into(),
                     recoverable: false,
+                },
+                "agent",
+            ),
+            (
+                DomainEvent::SubagentSpawned {
+                    parent_session: "s".into(),
+                    agent_id: "researcher".into(),
+                    mode: "typed".into(),
+                    task_id: "task-1".into(),
+                    prompt_chars: 42,
+                },
+                "agent",
+            ),
+            (
+                DomainEvent::SubagentCompleted {
+                    parent_session: "s".into(),
+                    task_id: "task-1".into(),
+                    agent_id: "researcher".into(),
+                    elapsed_ms: 123,
+                    output_chars: 100,
+                    iterations: 2,
+                },
+                "agent",
+            ),
+            (
+                DomainEvent::SubagentFailed {
+                    parent_session: "s".into(),
+                    task_id: "task-1".into(),
+                    agent_id: "researcher".into(),
+                    error: "boom".into(),
                 },
                 "agent",
             ),
@@ -504,9 +578,23 @@ mod tests {
                 "system",
             ),
             (
+                DomainEvent::SystemRestartRequested {
+                    source: "rpc".into(),
+                    reason: "test".into(),
+                },
+                "system",
+            ),
+            (
                 DomainEvent::HealthChanged {
                     component: "c".into(),
                     healthy: true,
+                    message: None,
+                },
+                "system",
+            ),
+            (
+                DomainEvent::HealthRestarted {
+                    component: "c".into(),
                 },
                 "system",
             ),

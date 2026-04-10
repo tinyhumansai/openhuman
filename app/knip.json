@@ -1,0 +1,27 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/main.tsx", "test/e2e/specs/**/*.spec.ts"],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "test/**/*.{ts,tsx}",
+    "test/e2e/globals.d.ts",
+    "*.config.{js,ts}"
+  ],
+  "ignoreDependencies": [
+    "@tauri-apps/cli",
+    "@testing-library/dom",
+    "@wdio/appium-service",
+    "@wdio/cli",
+    "@wdio/local-runner",
+    "@wdio/mocha-framework",
+    "@wdio/spec-reporter",
+    "buffer",
+    "eslint",
+    "husky",
+    "os-browserify",
+    "prettier",
+    "process",
+    "util"
+  ],
+  "ignoreBinaries": ["eslint", "knip", "open", "prettier", "tauri", "tsc", "vite", "vitest"]
+}

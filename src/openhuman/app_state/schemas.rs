@@ -47,7 +47,7 @@ pub fn app_state_schemas(function: &str) -> ControllerSchema {
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "Auth, current user, core config flags, and locally persisted app state.",
+                comment: "Auth, current user, local app state, and compact runtime status for the React shell.",
                 required: true,
             }],
         },

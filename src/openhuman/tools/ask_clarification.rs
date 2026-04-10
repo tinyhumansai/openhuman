@@ -10,6 +10,12 @@ use serde_json::json;
 /// event channel and waits for a response before continuing.
 pub struct AskClarificationTool;
 
+impl Default for AskClarificationTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AskClarificationTool {
     pub fn new() -> Self {
         Self

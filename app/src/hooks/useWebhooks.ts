@@ -1,20 +1,10 @@
 import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import type { Tunnel, TunnelRegistration, WebhookActivityEntry } from '../features/webhooks/types';
 import { useCoreState } from '../providers/CoreStateProvider';
 import { tunnelsApi } from '../services/api/tunnelsApi';
 import { getCoreHttpBaseUrl } from '../services/coreRpcClient';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
-import {
-  addActivity,
-  addTunnel,
-  removeTunnel,
-  setError,
-  setLoading,
-  setRegistrations,
-  setTunnels,
-  type WebhookActivityEntry,
-} from '../store/webhooksSlice';
 import {
   openhumanWebhooksListLogs,
   openhumanWebhooksListRegistrations,
@@ -47,11 +37,12 @@ function logToActivity(entry: WebhookDebugLogEntry): WebhookActivityEntry {
  */
 export function useWebhooks() {
   const { snapshot } = useCoreState();
-  const dispatch = useAppDispatch();
-  const { tunnels, registrations, activity, loading, error } = useAppSelector(
-    state => state.webhooks
-  );
   const token = snapshot.sessionToken;
+  const [tunnels, setTunnels] = useState<Tunnel[]>([]);
+  const [registrations, setRegistrations] = useState<TunnelRegistration[]>([]);
+  const [activity, setActivity] = useState<WebhookActivityEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [coreConnected, setCoreConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -62,13 +53,11 @@ export function useWebhooks() {
         openhumanWebhooksListRegistrations(),
         openhumanWebhooksListLogs(100),
       ]);
-      dispatch(setRegistrations(regsResponse.result.result.registrations));
+      setRegistrations(regsResponse.result.result.registrations);
 
       // Seed activity from debug logs
       const logs = logsResponse.result.result.logs;
-      for (const entry of logs.reverse()) {
-        dispatch(addActivity(logToActivity(entry)));
-      }
+      setActivity(logs.reverse().map(logToActivity));
       log(
         'Loaded %d registrations, %d logs from core',
         regsResponse.result.result.registrations.length,
@@ -80,21 +69,24 @@ export function useWebhooks() {
         err instanceof Error ? err.message : err
       );
     }
-  }, [dispatch]);
+  }, []);
 
   // ── Fetch tunnels from backend API ───────────────────────────────────────
   const fetchTunnels = useCallback(async () => {
-    dispatch(setLoading(true));
+    setLoading(true);
+    setError(null);
     try {
       const data = await tunnelsApi.getTunnels();
-      dispatch(setTunnels(data));
+      setTunnels(data);
       log('Fetched %d tunnels', data.length);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to fetch tunnels';
-      dispatch(setError(msg));
+      setError(msg);
       log('Error fetching tunnels: %s', msg);
+    } finally {
+      setLoading(false);
     }
-  }, [dispatch]);
+  }, []);
 
   // ── Subscribe to SSE for real-time webhook events ────────────────────────
   useEffect(() => {
@@ -147,36 +139,18 @@ export function useWebhooks() {
   }, [token, fetchTunnels, loadCoreData]);
 
   // ── CRUD actions ─────────────────────────────────────────────────────────
-  const createTunnel = useCallback(
-    async (name: string, description?: string) => {
-      try {
-        const tunnel = await tunnelsApi.createTunnel({ name, description });
-        dispatch(addTunnel(tunnel));
-        log('Created tunnel: %s (%s)', tunnel.name, tunnel.uuid);
-        return tunnel;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to create tunnel';
-        dispatch(setError(msg));
-        throw err;
-      }
-    },
-    [dispatch]
-  );
+  const createTunnel = useCallback(async (name: string, description?: string) => {
+    const tunnel = await tunnelsApi.createTunnel({ name, description });
+    setTunnels(current => [...current, tunnel]);
+    log('Created tunnel: %s (%s)', tunnel.name, tunnel.uuid);
+    return tunnel;
+  }, []);
 
-  const deleteTunnel = useCallback(
-    async (id: string) => {
-      try {
-        await tunnelsApi.deleteTunnel(id);
-        dispatch(removeTunnel(id));
-        log('Deleted tunnel: %s', id);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to delete tunnel';
-        dispatch(setError(msg));
-        throw err;
-      }
-    },
-    [dispatch]
-  );
+  const deleteTunnel = useCallback(async (id: string) => {
+    await tunnelsApi.deleteTunnel(id);
+    setTunnels(current => current.filter(tunnel => tunnel.id !== id));
+    log('Deleted tunnel: %s', id);
+  }, []);
 
   const refreshTunnels = useCallback(async () => {
     await fetchTunnels();
@@ -192,31 +166,28 @@ export function useWebhooks() {
           tunnelName,
           backendTunnelId
         );
-        dispatch(setRegistrations(response.result.result.registrations));
+        setRegistrations(response.result.result.registrations);
         log('Registered echo for tunnel %s', tunnelUuid);
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to register echo';
-        dispatch(setError(msg));
+        setError(msg);
         throw err;
       }
     },
-    [dispatch]
+    []
   );
 
-  const unregisterEcho = useCallback(
-    async (tunnelUuid: string) => {
-      try {
-        const response = await openhumanWebhooksUnregisterEcho(tunnelUuid);
-        dispatch(setRegistrations(response.result.result.registrations));
-        log('Unregistered echo for tunnel %s', tunnelUuid);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to unregister echo';
-        dispatch(setError(msg));
-        throw err;
-      }
-    },
-    [dispatch]
-  );
+  const unregisterEcho = useCallback(async (tunnelUuid: string) => {
+    try {
+      const response = await openhumanWebhooksUnregisterEcho(tunnelUuid);
+      setRegistrations(response.result.result.registrations);
+      log('Unregistered echo for tunnel %s', tunnelUuid);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to unregister echo';
+      setError(msg);
+      throw err;
+    }
+  }, []);
 
   return {
     tunnels,

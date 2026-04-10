@@ -117,6 +117,7 @@ class SocketService {
   private socket: Socket | null = null;
   private token: string | null = null;
   private mcpTransport: SocketIOMCPTransportImpl | null = null;
+  private pendingListeners: Array<{ event: string; callback: (...args: unknown[]) => void }> = [];
 
   /**
    * Connect to the socket server with authentication.
@@ -169,6 +170,16 @@ class SocketService {
     };
 
     this.socket = io(backendUrl, socketOptions);
+
+    // Flush any listeners that were registered before the socket existed.
+    if (this.pendingListeners.length > 0) {
+      socketLog('Flushing pending listeners', { count: this.pendingListeners.length });
+      for (const { event, callback } of this.pendingListeners) {
+        this.socket.on(event, callback);
+      }
+      this.pendingListeners = [];
+    }
+
     this.socket.onAny((event, ...args) => {
       const firstArg = args.length > 0 ? args[0] : undefined;
       socketLog(
@@ -310,12 +321,15 @@ class SocketService {
    * Listen to an event from the server
    */
   on(event: string, callback: (...args: unknown[]) => void): void {
+    const wrappedCallback = (...args: unknown[]) => {
+      socketLog('Received event', { event, argsCount: args.length, hasData: args.length > 0 });
+      callback(...args);
+    };
     if (this.socket) {
-      const wrappedCallback = (...args: unknown[]) => {
-        socketLog('Received event', { event, argsCount: args.length, hasData: args.length > 0 });
-        callback(...args);
-      };
       this.socket.on(event, wrappedCallback);
+    } else {
+      socketLog('Socket not ready, queuing listener', { event });
+      this.pendingListeners.push({ event, callback: wrappedCallback });
     }
   }
 
@@ -336,16 +350,19 @@ class SocketService {
    * Listen to an event once
    */
   once(event: string, callback: (...args: unknown[]) => void): void {
+    const wrappedCallback = (...args: unknown[]) => {
+      socketLog('Received event (once)', {
+        event,
+        argsCount: args.length,
+        hasData: args.length > 0,
+      });
+      callback(...args);
+    };
     if (this.socket) {
-      const wrappedCallback = (...args: unknown[]) => {
-        socketLog('Received event (once)', {
-          event,
-          argsCount: args.length,
-          hasData: args.length > 0,
-        });
-        callback(...args);
-      };
       this.socket.once(event, wrappedCallback);
+    } else {
+      socketLog('Socket not ready, queuing once listener', { event });
+      this.pendingListeners.push({ event, callback: wrappedCallback });
     }
   }
 }

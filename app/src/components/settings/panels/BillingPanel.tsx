@@ -18,7 +18,7 @@ import AutoRechargeSection from './billing/AutoRechargeSection';
 import InferenceBudget from './billing/InferenceBudget';
 import PayAsYouGoCard from './billing/PayAsYouGoCard';
 import SubscriptionPlans from './billing/SubscriptionPlans';
-import { buildPlanId, formatStorageLimit, formatUsdAmount, getPlanMeta } from './billingHelpers';
+import { buildPlanId, formatUsdAmount, getPlanMeta } from './billingHelpers';
 
 const log = createDebug('openhuman:billing-panel');
 
@@ -399,27 +399,31 @@ const BillingPanel = () => {
               </p>
             )}
             <p className="text-xs text-stone-500">
-              Your subscription includes premium usage each cycle. Pay-as-you-go credits cover
-              overage after the included budget is consumed.
+              {currentTier === 'FREE'
+                ? 'Free accounts do not include recurring monthly credits. New accounts may receive a one-time signup credit, and any additional usage is covered by pay-as-you-go credits.'
+                : 'Your subscription includes premium usage each cycle. Pay-as-you-go credits cover overage after the included budget is consumed.'}
             </p>
             {currentPlan && (
               <div className="mt-2 flex flex-wrap gap-1.5">
-                <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                  Included monthly value: {formatUsdAmount(currentPlan.monthlyBudgetUsd)}
-                </span>
-                <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                  7-day cycle budget: {formatUsdAmount(currentPlan.weeklyBudgetUsd)}
-                </span>
-                <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                  10-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
-                </span>
+                {currentPlan.monthlyBudgetUsd > 0 && (
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    Included monthly value: {formatUsdAmount(currentPlan.monthlyBudgetUsd)}
+                  </span>
+                )}
+                {currentPlan.weeklyBudgetUsd > 0 && (
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    7-day cycle budget: {formatUsdAmount(currentPlan.weeklyBudgetUsd)}
+                  </span>
+                )}
+                {currentPlan.fiveHourCapUsd > 0 && (
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    10-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
+                  </span>
+                )}
                 {currentPlanMeta && (
                   <>
                     <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
                       Premium-usage discount: {currentPlanMeta.discountPercent}%
-                    </span>
-                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                      Storage: {formatStorageLimit(currentPlanMeta.storageLimitBytes)}
                     </span>
                   </>
                 )}
@@ -440,7 +444,7 @@ const BillingPanel = () => {
           <div className="flex items-center gap-3 py-2">
             <div className="flex-1 h-px bg-stone-200" />
             <span className="text-xs text-stone-400 whitespace-nowrap">
-              Or subscribe for included usage + discounts
+              Or subscribe for recurring included usage + discounts
             </span>
             <div className="flex-1 h-px bg-stone-200" />
           </div>

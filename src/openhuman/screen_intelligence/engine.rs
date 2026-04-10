@@ -8,14 +8,14 @@
 use crate::openhuman::config::ScreenIntelligenceConfig;
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::capture::now_ms;
 use super::helpers::push_ephemeral_frame;
-use super::state::{AccessibilityEngine, EngineState, SessionRuntime};
+use super::state::{AccessibilityEngine, SessionRuntime};
 use super::types::{
     AccessibilityStatus, AppContextInfo, CaptureFrame, CaptureImageRefResult, CaptureNowResult,
-    CaptureTestResult, SessionStatus, StartSessionParams,
+    CaptureTestResult, CoreProcessStatus, SessionStatus, StartSessionParams,
 };
 use crate::openhuman::accessibility::{
     capture_screen_image_ref_for_context, detect_permissions, foreground_context,
@@ -25,9 +25,6 @@ use crate::openhuman::accessibility::{
 use crate::openhuman::accessibility::{
     open_macos_privacy_pane, request_accessibility_access, request_screen_recording_access,
 };
-
-// Re-export for backward compat.
-pub use super::state::{global_engine, AccessibilityEngine as _AccessibilityEngineAlias};
 
 impl AccessibilityEngine {
     // ── Config ───────────────────────────────────────────────────────
@@ -39,7 +36,6 @@ impl AccessibilityEngine {
         {
             let mut state = self.inner.lock().await;
             state.config = config.clone();
-            state.features.predictive_input = state.config.autocomplete_enabled;
         }
 
         if config.enabled {
@@ -73,7 +69,6 @@ impl AccessibilityEngine {
 
                 let now = now_ms();
                 state.features.screen_monitoring = true;
-                state.features.predictive_input = state.config.autocomplete_enabled;
                 state.session = Some(new_session_runtime(&state.config, now, i64::MAX, 0));
                 state.last_event = Some("screen_intelligence_enabled".to_string());
                 state.last_error = None;
@@ -126,10 +121,6 @@ impl AccessibilityEngine {
             let now = now_ms();
             let expires_at_ms = now + (ttl_secs as i64 * 1000);
             state.features.screen_monitoring = screen_monitoring_requested;
-            state.features.device_control = params.device_control.unwrap_or(true);
-            state.features.predictive_input = params
-                .predictive_input
-                .unwrap_or(state.config.autocomplete_enabled);
 
             state.session = Some(new_session_runtime(
                 &state.config,
@@ -343,6 +334,10 @@ impl AccessibilityEngine {
             permission_check_process_path: std::env::current_exe()
                 .ok()
                 .map(|p| p.display().to_string()),
+            core_process: Some(CoreProcessStatus {
+                pid: std::process::id(),
+                started_at_ms: core_process_started_at_ms(),
+            }),
         }
     }
 
@@ -553,6 +548,11 @@ impl AccessibilityEngine {
     }
 }
 
+fn core_process_started_at_ms() -> i64 {
+    static CORE_PROCESS_STARTED_AT_MS: OnceLock<i64> = OnceLock::new();
+    *CORE_PROCESS_STARTED_AT_MS.get_or_init(now_ms)
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn new_session_runtime(
@@ -589,6 +589,7 @@ fn new_session_runtime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::screen_intelligence::state::EngineState;
     use tokio::sync::Mutex;
     use tokio::time::Duration;
 

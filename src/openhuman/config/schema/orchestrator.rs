@@ -42,12 +42,21 @@ pub struct OrchestratorConfig {
     /// Maximum retry attempts for a failed DAG task node.
     #[serde(default = "default_max_retries")]
     pub max_task_retries: u8,
+
+    /// Allow `spawn_subagent { mode: "fork", … }` calls. Fork mode replays
+    /// the parent's exact rendered prompt + tool schemas + message prefix
+    /// so the inference backend's automatic prefix caching kicks in.
+    /// Defaults to true; flip to false to force every sub-agent into
+    /// typed mode (e.g. on backends that don't benefit from prefix
+    /// caching, or while debugging).
+    #[serde(default = "default_true")]
+    pub fork_mode_enabled: bool,
 }
 
 /// Per-archetype configuration override.
 ///
 /// Any field left `None` uses the archetype's built-in default.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ArchetypeConfig {
     /// Model name or hint override (e.g. "coding-v1", "local:phi3").
     #[serde(default)]
@@ -101,19 +110,7 @@ impl Default for OrchestratorConfig {
             self_healing_enabled: default_true(),
             max_dag_tasks: default_max_dag_tasks(),
             max_task_retries: default_max_retries(),
-        }
-    }
-}
-
-impl Default for ArchetypeConfig {
-    fn default() -> Self {
-        Self {
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            max_tool_iterations: None,
-            timeout_secs: None,
-            sandbox: None,
+            fork_mode_enabled: default_true(),
         }
     }
 }

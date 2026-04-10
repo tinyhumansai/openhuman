@@ -20,6 +20,16 @@ const PayAsYouGoCard = ({
   onTopUp,
   onBalanceRefresh,
 }: PayAsYouGoCardProps) => {
+  // Backend `GET /payments/credits/balance` returns
+  //   { promotionBalanceUsd, teamTopupUsd }
+  // `promotionBalanceUsd` lives on the user document
+  // (`IUserUsage.promotionBalanceUsd`) and unifies signup bonus, coupons,
+  // and referral rewards. `teamTopupUsd` is the team-level paid top-up pool.
+  // Together they make the pay-as-you-go spendable balance.
+  const promoCredits = creditBalance?.promotionBalanceUsd ?? 0;
+  const teamTopupCredits = creditBalance?.teamTopupUsd ?? 0;
+  const availableCredits = promoCredits + teamTopupCredits;
+
   // Coupon state (local — no need to share with other sections)
   const [couponCode, setCouponCode] = useState('');
   const [couponLoading, setCouponLoading] = useState(false);
@@ -37,11 +47,10 @@ const PayAsYouGoCard = ({
     try {
       log('[coupon] redeeming code=%s', code);
       const result = await creditsApi.redeemCoupon(code);
-      const amount = result?.data?.amountUsd;
       setCouponSuccess(
-        amount != null
-          ? `Coupon redeemed! $${amount.toFixed(2)} added to your credits.`
-          : 'Coupon redeemed successfully!'
+        result.pending
+          ? `Coupon accepted. $${result.amountUsd.toFixed(2)} will be added after the required action.`
+          : `Coupon redeemed! $${result.amountUsd.toFixed(2)} added to your credits.`
       );
       setCouponCode('');
       onBalanceRefresh();
@@ -64,44 +73,21 @@ const PayAsYouGoCard = ({
       {/* Balance display */}
       {creditBalance ? (
         <div className="space-y-1.5 mb-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-stone-400">General credits</span>
-            <span className="text-xs font-medium text-stone-900">
-              ${creditBalance.balanceUsd.toFixed(2)}
+          <div className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-2.5 py-2">
+            <span className="text-xs text-stone-500">Available credits</span>
+            <span className="text-sm font-semibold text-stone-900">
+              ${availableCredits.toFixed(2)}
             </span>
           </div>
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-stone-400">Top-up credits</span>
-              <span className="text-xs font-medium text-stone-900">
-                ${creditBalance.topUpBalanceUsd.toFixed(2)}
-                {creditBalance.topUpBaselineUsd != null && creditBalance.topUpBaselineUsd > 0 && (
-                  <span className="text-stone-500 font-normal">
-                    {' '}
-                    / ${creditBalance.topUpBaselineUsd.toFixed(2)}
-                  </span>
-                )}
-              </span>
-            </div>
-            {creditBalance.topUpBaselineUsd != null && creditBalance.topUpBaselineUsd > 0 && (
-              <div className="h-1 bg-stone-700/60 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    creditBalance.topUpBalanceUsd <= 0
-                      ? 'bg-coral-500'
-                      : creditBalance.topUpBalanceUsd / creditBalance.topUpBaselineUsd < 0.2
-                        ? 'bg-amber-500'
-                        : 'bg-primary-500'
-                  }`}
-                  style={{
-                    width: `${Math.min(
-                      100,
-                      (creditBalance.topUpBalanceUsd / creditBalance.topUpBaselineUsd) * 100
-                    )}%`,
-                  }}
-                />
-              </div>
-            )}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-stone-400">Signup + promo credits</span>
+            <span className="text-xs font-medium text-stone-900">${promoCredits.toFixed(2)}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-stone-400">Team top-up credits</span>
+            <span className="text-xs font-medium text-stone-900">
+              ${teamTopupCredits.toFixed(2)}
+            </span>
           </div>
         </div>
       ) : isLoadingCredits ? (
@@ -114,8 +100,8 @@ const PayAsYouGoCard = ({
       )}
 
       <p className="mb-3 text-[11px] text-stone-500">
-        No subscription needed — buy credits as you need them. If you have a subscription, your
-        included budget is consumed first.
+        No subscription needed. Free users spend from any signup or promo credit first, then from
+        top-ups. Paid plans still consume included budget before pay-as-you-go credits.
       </p>
 
       {/* Top-up buttons */}

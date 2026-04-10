@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
@@ -13,7 +13,6 @@ import { installSkill } from '../lib/skills/skillsApi';
 import { useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
 import { IS_DEV } from '../utils/config';
-import { openhumanGetRuntimeFlags, openhumanSetBrowserAllowAll } from '../utils/tauriCommands';
 
 const CHANNEL_ICONS: Record<string, string> = {
   telegram: '\u2708\uFE0F',
@@ -131,57 +130,6 @@ interface SkillItem {
   channelStatus?: ChannelConnectionStatus;
   // For third-party
   skill?: SkillListEntry;
-}
-
-// ─── Browser Access Toggle ─────────────────────────────────────────────────────
-
-function BrowserAccessToggle() {
-  const [browserAllowAll, setBrowserAllowAll] = useState(false);
-  const [browserBusy, setBrowserBusy] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await openhumanGetRuntimeFlags();
-        setBrowserAllowAll(res.result.browser_allow_all);
-      } catch {
-        // Silently ignore — toggle defaults to false
-      }
-    })();
-  }, []);
-
-  const handleToggle = async () => {
-    const next = !browserAllowAll;
-    setBrowserBusy(true);
-    try {
-      const res = await openhumanSetBrowserAllowAll(next);
-      setBrowserAllowAll(res.result.browser_allow_all);
-    } catch {
-      // silently ignore
-    } finally {
-      setBrowserBusy(false);
-    }
-  };
-
-  return (
-    <div className="flex items-center justify-between p-3 rounded-xl border border-stone-200 bg-white mb-4">
-      <div>
-        <h3 className="text-sm font-medium text-stone-900">Browser Access</h3>
-        <p className="text-xs text-stone-500">Allow the browser tool to visit any public domain</p>
-      </div>
-      <label className="flex items-center gap-2">
-        <div
-          role="switch"
-          aria-checked={browserAllowAll}
-          onClick={browserBusy ? undefined : handleToggle}
-          className={`w-9 h-5 rounded-full transition-colors relative ${browserBusy ? 'opacity-50 cursor-wait' : 'cursor-pointer'} ${browserAllowAll ? 'bg-sage-500' : 'bg-stone-200'}`}>
-          <div
-            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${browserAllowAll ? 'translate-x-4' : 'translate-x-0.5'}`}
-          />
-        </div>
-      </label>
-    </div>
-  );
 }
 
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
@@ -343,8 +291,6 @@ export default function Skills() {
       <div className="min-h-full flex flex-col">
         <div className="flex-1 flex items-start justify-center p-4 pt-6">
           <div className="max-w-lg w-full space-y-4">
-            <BrowserAccessToggle />
-
             <SkillSearchBar value={searchQuery} onChange={setSearchQuery} />
 
             <SkillCategoryFilter

@@ -9,6 +9,12 @@ use async_trait::async_trait;
 /// Subscribes to tree summarizer events and logs activity.
 pub struct TreeSummarizerEventSubscriber;
 
+impl Default for TreeSummarizerEventSubscriber {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeSummarizerEventSubscriber {
     pub fn new() -> Self {
         Self

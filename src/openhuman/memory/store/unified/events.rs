@@ -197,7 +197,7 @@ pub fn events_for_segment(
          ORDER BY created_at ASC",
     )?;
     let rows = stmt
-        .query_map(params![segment_id], |row| row_to_event(row))?
+        .query_map(params![segment_id], row_to_event)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -318,7 +318,7 @@ pub fn extract_events_heuristic(text: &str) -> Vec<(EventType, String)> {
 
     // Split into sentences (rough heuristic).
     let sentences: Vec<&str> = text
-        .split(|c: char| c == '.' || c == '!' || c == '?' || c == '\n')
+        .split(['.', '!', '?', '\n'])
         .map(str::trim)
         .filter(|s| s.len() > 5)
         .collect();

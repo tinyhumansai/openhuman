@@ -7,6 +7,7 @@
 use std::time::Duration;
 
 use crate::openhuman::config::UpdateConfig;
+use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::update::core as update_core;
 
 /// Minimum allowed interval to avoid hammering the GitHub API.
@@ -19,6 +20,12 @@ pub async fn run(config: UpdateConfig) {
         log::info!("[update:scheduler] auto-update checks disabled by config");
         return;
     }
+
+    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    crate::openhuman::health::bus::register_health_subscriber();
+    publish_global(DomainEvent::SystemStartup {
+        component: "update_checker".to_string(),
+    });
 
     let interval_mins = config.interval_minutes.max(MIN_INTERVAL_MINUTES);
     let interval = Duration::from_secs(u64::from(interval_mins) * 60);
@@ -49,19 +56,26 @@ async fn tick() {
                     info.latest_version,
                     info.download_url.as_deref().unwrap_or("(no asset)")
                 );
-                crate::openhuman::health::mark_component_ok("update_checker");
             } else {
                 log::info!(
                     "[update:scheduler] up to date (current: {}, latest: {})",
                     info.current_version,
                     info.latest_version
                 );
-                crate::openhuman::health::mark_component_ok("update_checker");
             }
+            publish_global(DomainEvent::HealthChanged {
+                component: "update_checker".to_string(),
+                healthy: true,
+                message: None,
+            });
         }
         Err(e) => {
             log::warn!("[update:scheduler] update check failed: {e}");
-            crate::openhuman::health::mark_component_error("update_checker", &e);
+            publish_global(DomainEvent::HealthChanged {
+                component: "update_checker".to_string(),
+                healthy: false,
+                message: Some(e.to_string()),
+            });
         }
     }
 }

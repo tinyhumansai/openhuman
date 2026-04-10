@@ -15,7 +15,6 @@ export interface PlanMeta {
   /** USD cap per 10-hour rolling inference window; amount scales with `tier` (FREE / BASIC / PRO). */
   fiveHourCapUsd: number;
   discountPercent: number;
-  storageLimitBytes: number;
   features: PlanFeature[];
 }
 
@@ -25,14 +24,14 @@ export const PLANS: PlanMeta[] = [
     name: 'Free',
     monthlyPrice: 0,
     annualPrice: 0,
-    monthlyBudgetUsd: 1,
-    weeklyBudgetUsd: 0.5,
-    fiveHourCapUsd: 0.15,
+    monthlyBudgetUsd: 0,
+    weeklyBudgetUsd: 0,
+    fiveHourCapUsd: 0,
     discountPercent: 0,
-    storageLimitBytes: 100 * 1024 * 1024,
     features: [
       { text: 'Base access to integrations and inference', included: true },
-      { text: 'Pay-as-you-go top-ups when included usage runs out', included: true },
+      { text: 'One-time signup credits when available', included: true },
+      { text: 'Pay-as-you-go top-ups when credits run out', included: true },
       { text: 'No subscription discount on premium usage', included: true },
     ],
   },
@@ -45,7 +44,6 @@ export const PLANS: PlanMeta[] = [
     weeklyBudgetUsd: 10,
     fiveHourCapUsd: 3,
     discountPercent: 20,
-    storageLimitBytes: 10 * 1024 * 1024 * 1024,
     features: [
       { text: 'Higher included premium usage every billing cycle', included: true },
       {
@@ -64,7 +62,6 @@ export const PLANS: PlanMeta[] = [
     weeklyBudgetUsd: 100,
     fiveHourCapUsd: 30,
     discountPercent: 40,
-    storageLimitBytes: 200 * 1024 * 1024 * 1024,
     features: [
       { text: 'Largest included premium usage allocation', included: true },
       { text: '40% premium-usage discount across integrations and inference', included: true },
@@ -112,12 +109,4 @@ export function getPlanMeta(tier: PlanTier): PlanMeta | undefined {
 export function formatUsdAmount(amount: number): string {
   if (Number.isInteger(amount)) return `$${amount}`;
   return `$${amount.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}`;
-}
-
-export function formatStorageLimit(bytes: number): string {
-  const gb = 1024 * 1024 * 1024;
-  const mb = 1024 * 1024;
-
-  if (bytes >= gb) return `${Math.round(bytes / gb)} GB`;
-  return `${Math.round(bytes / mb)} MB`;
 }

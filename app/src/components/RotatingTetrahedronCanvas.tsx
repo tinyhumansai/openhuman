@@ -4,6 +4,10 @@ import * as THREE from 'three';
 import { useEffect, useRef, useState } from 'react';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 
+interface RotatingTetrahedronCanvasProps {
+  inverted?: boolean;
+}
+
 /** Start from a regular tetrahedron and lightly truncate each corner to create small blunted edges. */
 function bluntedTetrahedronPoints(scale: number, bluntness = 0.12): THREE.Vector3[] {
   const tetra = [
@@ -25,9 +29,33 @@ function bluntedTetrahedronPoints(scale: number, bluntness = 0.12): THREE.Vector
   return points;
 }
 
-export default function RotatingTetrahedronCanvas() {
+export default function RotatingTetrahedronCanvas({
+  inverted = false,
+}: RotatingTetrahedronCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fillMaterialRef = useRef<THREE.MeshLambertMaterial | null>(null);
+  const edgeMaterialRef = useRef<THREE.LineBasicMaterial | null>(null);
+  const speedRef = useRef(2);
   const [webglFailed, setWebglFailed] = useState(false);
+
+  useEffect(() => {
+    const fillMaterial = fillMaterialRef.current;
+    const edgeMaterial = edgeMaterialRef.current;
+    if (!fillMaterial || !edgeMaterial) {
+      return;
+    }
+
+    fillMaterial.color.set(inverted ? '#0f172a' : '#dbeafe');
+    fillMaterial.opacity = inverted ? 0.1 : 0.72;
+    fillMaterial.emissive.set(inverted ? '#020617' : '#334155');
+    fillMaterial.emissiveIntensity = inverted ? 0.4 : 0.35;
+    fillMaterial.needsUpdate = true;
+
+    edgeMaterial.color.set(inverted ? '#f8fafc' : '#f8fafc');
+    edgeMaterial.needsUpdate = true;
+
+    speedRef.current = inverted ? 20 : 2;
+  }, [inverted]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -75,16 +103,18 @@ export default function RotatingTetrahedronCanvas() {
 
     const geometry = new ConvexGeometry(bluntedTetrahedronPoints(0.98, 0.11));
     const fillMaterial = new THREE.MeshLambertMaterial({
-      color: '#8e86e9',
+      color: inverted ? '#0f172a' : '#dbeafe',
       transparent: true,
-      opacity: 0.2,
-      emissive: '#0c1208',
-      emissiveIntensity: 1,
+      opacity: inverted ? 0.58 : 0.72,
+      emissive: inverted ? '#020617' : '#334155',
+      emissiveIntensity: inverted ? 0.4 : 0.35,
     });
+    fillMaterialRef.current = fillMaterial;
     const fillMesh = new THREE.Mesh(geometry, fillMaterial);
 
     const edgeGeometry = new THREE.EdgesGeometry(geometry);
-    const edgeMaterial = new THREE.LineBasicMaterial({ color: '#868ee9' });
+    const edgeMaterial = new THREE.LineBasicMaterial({ color: inverted ? '#020617' : '#f8fafc' });
+    edgeMaterialRef.current = edgeMaterial;
 
     const edges = new THREE.LineSegments(edgeGeometry, edgeMaterial);
     fillMesh.rotation.x = 0.35;
@@ -118,8 +148,9 @@ export default function RotatingTetrahedronCanvas() {
     if (canvas.parentElement) observer.observe(canvas.parentElement);
     resize();
 
-    const speed = 2;
+    speedRef.current = inverted ? 7 : 2;
     const animate = () => {
+      const speed = speedRef.current;
       fillMesh.rotation.y += 0.0038 * speed;
       fillMesh.rotation.x += 0.0002 * speed;
       edges.rotation.y += 0.0038 * speed;
@@ -138,8 +169,11 @@ export default function RotatingTetrahedronCanvas() {
       geometry.dispose();
       fillMaterial.dispose();
       edgeMaterial.dispose();
+      fillMaterialRef.current = null;
+      edgeMaterialRef.current = null;
       renderer.dispose();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Scene created once; inverted changes handled by separate effect.
   }, []);
 
   if (webglFailed) {

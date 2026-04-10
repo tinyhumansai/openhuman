@@ -11,18 +11,14 @@ pub type TaskId = String;
 /// Current execution status of a DAG task node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TaskStatus {
+    #[default]
     Pending,
     Running,
     Completed,
     Failed,
     Cancelled,
-}
-
-impl Default for TaskStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 /// Request sent from the orchestrator to spawn a sub-agent.

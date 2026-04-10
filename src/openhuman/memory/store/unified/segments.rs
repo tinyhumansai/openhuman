@@ -285,7 +285,7 @@ pub fn open_segment_for_session(
              ORDER BY created_at DESC
              LIMIT 1",
             params![session_id],
-            |row| row_to_segment(row),
+            row_to_segment,
         )
         .optional()?;
     Ok(row)
@@ -308,7 +308,7 @@ pub fn segments_by_namespace(
          LIMIT ?2",
     )?;
     let rows = stmt
-        .query_map(params![namespace, limit as i64], |row| row_to_segment(row))?
+        .query_map(params![namespace, limit as i64], row_to_segment)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -327,7 +327,7 @@ pub fn segment_get(
              FROM conversation_segments
              WHERE segment_id = ?1",
             params![segment_id],
-            |row| row_to_segment(row),
+            row_to_segment,
         )
         .optional()?;
     Ok(row)
@@ -349,7 +349,7 @@ pub fn segments_pending_summary(
          LIMIT ?1",
     )?;
     let rows = stmt
-        .query_map(params![limit as i64], |row| row_to_segment(row))?
+        .query_map(params![limit as i64], row_to_segment)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }

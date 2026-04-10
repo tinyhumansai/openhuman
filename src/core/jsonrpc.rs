@@ -28,29 +28,40 @@ use crate::core::types::{AppState, RpcError, RpcFailure, RpcRequest, RpcSuccess}
 /// JSON-RPC 2.0 compliant success or failure response.
 pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
     let id = req.id.clone();
-    match invoke_method(state, req.method.as_str(), req.params).await {
-        Ok(value) => (
-            StatusCode::OK,
-            Json(RpcSuccess {
-                jsonrpc: "2.0",
-                id,
-                result: value,
-            }),
-        )
-            .into_response(),
-        Err(message) => (
-            StatusCode::OK,
-            Json(RpcFailure {
-                jsonrpc: "2.0",
-                id,
-                error: RpcError {
-                    code: -32000,
-                    message,
-                    data: None,
-                },
-            }),
-        )
-            .into_response(),
+    let method = req.method.clone();
+    let started = std::time::Instant::now();
+    let result = invoke_method(state, method.as_str(), req.params).await;
+    let ms = started.elapsed().as_millis();
+
+    match result {
+        Ok(value) => {
+            tracing::info!("[rpc] {} -> ok ({}ms)", method, ms);
+            (
+                StatusCode::OK,
+                Json(RpcSuccess {
+                    jsonrpc: "2.0",
+                    id,
+                    result: value,
+                }),
+            )
+                .into_response()
+        }
+        Err(message) => {
+            tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            (
+                StatusCode::OK,
+                Json(RpcFailure {
+                    jsonrpc: "2.0",
+                    id,
+                    error: RpcError {
+                        code: -32000,
+                        message,
+                        data: None,
+                    },
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -374,6 +385,9 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
 }
 
 /// Middleware for logging incoming HTTP requests.
+///
+/// The `/rpc` path is logged inside [`rpc_handler`] instead (with the
+/// JSON-RPC method name), so we skip it here to avoid a redundant line.
 async fn http_request_log_middleware(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
@@ -382,16 +396,18 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
 
     let response = next.run(req).await;
 
-    let status = response.status().as_u16();
-    let ms = started.elapsed().as_millis();
-    log::info!(
-        "[http] {} {}{} -> {} ({}ms)",
-        method,
-        path,
-        if query_len > 0 { "?…" } else { "" },
-        status,
-        ms
-    );
+    if path != "/rpc" {
+        let status = response.status().as_u16();
+        let ms = started.elapsed().as_millis();
+        tracing::info!(
+            "[http] {} {}{} -> {} ({}ms)",
+            method,
+            path,
+            if query_len > 0 { "?…" } else { "" },
+            status,
+            ms
+        );
+    }
 
     response
 }
@@ -574,8 +590,7 @@ pub async fn run_server(
     run_server_inner(host, port, socketio_enabled, false).await
 }
 
-/// Like [`run_server`] but marks the instance as embedded — the overlay will
-/// **not** be auto-spawned, preventing recursive overlay launches.
+/// Like [`run_server`] but marks the instance as embedded.
 pub async fn run_server_embedded(
     host: Option<&str>,
     port: Option<u16>,
@@ -585,9 +600,6 @@ pub async fn run_server_embedded(
 }
 
 /// Internal server entrypoint.
-///
-/// When `embedded_core` is `true` the server skips auto-spawning the overlay
-/// (useful when the overlay itself hosts an embedded core to avoid recursion).
 async fn run_server_inner(
     host: Option<&str>,
     port: Option<u16>,
@@ -654,30 +666,7 @@ async fn run_server_inner(
         log::info!("[rpc:socketio] disabled (--jsonrpc-only)");
     }
 
-    // Derive the real bound address from the listener so ephemeral port 0,
-    // wildcard binds, and IPv6 are handled correctly.
-    let bound_addr = listener.local_addr()?;
-    let parent_core_rpc_url = {
-        let (h, p) = (bound_addr.ip(), bound_addr.port());
-        let effective_ip = if h.is_unspecified() {
-            if h.is_ipv6() {
-                std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
-            } else {
-                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
-            }
-        } else {
-            h
-        };
-        if effective_ip.is_ipv6() {
-            format!("http://[{effective_ip}]:{p}/rpc")
-        } else {
-            format!("http://{effective_ip}:{p}/rpc")
-        }
-    };
-    log::debug!("[core] parent_core_rpc_url = {parent_core_rpc_url}");
-
     // Optional background bootstrap for local AI services.
-    let is_embedded = embedded_core;
     tokio::spawn(async move {
         match crate::openhuman::config::Config::load_or_init().await {
             Ok(config) => {
@@ -686,23 +675,41 @@ async fn run_server_inner(
                     service.bootstrap(&config).await;
                 }
 
-                // Launch the overlay Tauri app (transparent debug/voice panel) as a child process.
-                // Skip when running as an embedded core inside the overlay itself.
-                if is_embedded {
-                    log::info!("[overlay] embedded core — skipping overlay auto-spawn");
-                } else if config.overlay_enabled {
-                    crate::openhuman::overlay::spawn_overlay(parent_core_rpc_url.as_str());
+                if embedded_core {
+                    log::debug!("[core] embedded core startup");
                 } else {
-                    log::info!("[overlay] overlay disabled by config (overlay_enabled = false)");
+                    log::debug!("[core] desktop core startup");
                 }
 
-                // Start the global dictation hotkey listener (rdev-based, core-side).
+                // Start the voice server (records + transcribes) and/or the
+                // dictation hotkey listener (broadcasts hotkey events to
+                // Socket.IO). Both use rdev::listen() which only supports
+                // one instance per process on macOS — so when the voice
+                // server is active it owns the single listener and forwards
+                // hotkey events to the dictation bus itself.
                 crate::openhuman::voice::server::start_if_enabled(&config).await;
-                crate::openhuman::voice::dictation_listener::start_if_enabled(&config).await;
+                if !config.voice_server.auto_start {
+                    crate::openhuman::voice::dictation_listener::start_if_enabled(&config).await;
+                }
 
                 // Initialize screen intelligence engine if enabled in config.
                 crate::openhuman::screen_intelligence::server::start_if_enabled(&config).await;
                 crate::openhuman::autocomplete::start_if_enabled(&config).await;
+
+                // Register autocomplete shutdown hook so the engine (and its
+                // Swift overlay helper) are stopped cleanly on process exit.
+                crate::core::shutdown::register(|| async {
+                    let engine = crate::openhuman::autocomplete::global_engine();
+                    let status = engine.status().await;
+                    if status.running {
+                        log::info!(
+                            "[core] stopping autocomplete engine (phase={})",
+                            status.phase
+                        );
+                        engine.stop(None).await;
+                        log::info!("[core] autocomplete engine stopped");
+                    }
+                });
 
                 // Subconscious engine + heartbeat bootstrap is now gated on
                 // login so seed_default_tasks() runs against the per-user
@@ -736,7 +743,7 @@ async fn run_server_inner(
                 }
             }
             Err(err) => {
-                log::warn!("[core] config load failed, skipping local-ai and overlay: {err}");
+                log::warn!("[core] config load failed, skipping local-ai startup: {err}");
             }
         }
     });
@@ -784,32 +791,73 @@ async fn run_server_inner(
         log::info!("[channels] OPENHUMAN_DISABLE_CHANNEL_LISTENERS set — skipping start_channels");
     }
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(crate::core::shutdown::signal())
+        .await?;
     Ok(())
+}
+
+/// Registers all long-lived domain event-bus subscribers exactly once.
+///
+/// Guarded by `std::sync::Once` so repeated calls (e.g. jsonrpc + repl paths
+/// both invoking `bootstrap_skill_runtime`) are safe and idempotent.
+fn register_domain_subscribers() {
+    use std::sync::{Arc, Once};
+
+    static REGISTERED: Once = Once::new();
+    REGISTERED.call_once(|| {
+        // Leak the SubscriptionHandle so the background tasks live for the
+        // entire process — SubscriptionHandle::drop aborts the task.
+        if let Some(handle) = crate::openhuman::event_bus::subscribe_global(Arc::new(
+            crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
+        )) {
+            std::mem::forget(handle);
+        } else {
+            log::warn!("[event_bus] failed to register webhook subscriber — bus not initialized");
+        }
+
+        if let Some(handle) = crate::openhuman::event_bus::subscribe_global(Arc::new(
+            crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
+        )) {
+            std::mem::forget(handle);
+        } else {
+            log::warn!("[event_bus] failed to register channel subscriber — bus not initialized");
+        }
+
+        crate::openhuman::health::bus::register_health_subscriber();
+        crate::openhuman::skills::bus::register_skill_cleanup_subscriber();
+
+        // Restart requests go through a subscriber so every trigger path shares
+        // the same respawn logic.
+        crate::openhuman::service::bus::register_restart_subscriber();
+
+        log::info!(
+            "[event_bus] webhook, channel, health, skill, and restart subscribers registered"
+        );
+    });
 }
 
 /// Initializes the QuickJS skill runtime, socket manager, and registers them
 /// globally so RPC handlers (`openhuman.skills_*`, `openhuman.socket_*`) can
 /// reach them.
 pub async fn bootstrap_skill_runtime() {
+    use crate::openhuman::skills::paths::resolve_runtime_paths;
     use crate::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
 
-    // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
-    let base_dir = std::env::var("OPENHUMAN_WORKSPACE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".openhuman")
-        });
+    // Resolve per-user scoped paths via Config so `skills_data` lives under
+    // `~/.openhuman/users/{user_id}/skills_data` when an active user is set,
+    // matching how config, workspace, and auth are scoped.
+    let paths = resolve_runtime_paths().await;
+    let skills_data_dir = paths.skills_data_dir.clone();
+    let workspace_dir = paths.workspace_dir.clone();
 
-    let skills_data_dir = base_dir.join("skills_data");
     if let Err(e) = std::fs::create_dir_all(&skills_data_dir) {
-        log::error!("[runtime] Failed to create skills data dir: {e}");
+        log::error!(
+            "[runtime] Failed to create skills data dir {}: {e}",
+            skills_data_dir.display()
+        );
         return;
     }
 
@@ -821,26 +869,31 @@ pub async fn bootstrap_skill_runtime() {
         }
     };
 
-    // Point the engine at the workspace directory for user-installed skills.
-    let workspace_dir = base_dir.join("workspace");
+    // Point the engine at the (also scoped) workspace directory for
+    // user-installed skills.
     let _ = std::fs::create_dir_all(&workspace_dir);
-    engine.set_workspace_dir(workspace_dir);
+    engine.set_workspace_dir(workspace_dir.clone());
 
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
-    let bus =
-        crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
     // Register domain subscribers for cross-module event handling.
-    // Leak the handles so the background tasks live for the entire process —
-    // SubscriptionHandle::drop aborts the task, and bootstrap_skill_runtime()
-    // returns immediately after setup.
-    std::mem::forget(bus.subscribe(Arc::new(
-        crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
-    )));
-    std::mem::forget(bus.subscribe(Arc::new(
-        crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
-    )));
-    log::info!("[event_bus] webhook and channel subscribers registered");
+    // Uses a Once guard so repeated calls to bootstrap_skill_runtime() (e.g.
+    // from both jsonrpc and repl paths) cannot double-subscribe.
+    register_domain_subscribers();
+
+    // --- Sub-agent definition registry bootstrap ---
+    // Loads built-in archetype definitions plus any custom TOML files
+    // under `<workspace>/agents/*.toml`. Idempotent — safe to call from
+    // both jsonrpc and repl paths. Uses the per-user scoped workspace_dir.
+    if let Err(err) =
+        crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&workspace_dir)
+    {
+        log::warn!(
+            "[runtime] AgentDefinitionRegistry::init_global failed: {err} — \
+             spawn_subagent will be unavailable until restart"
+        );
+    }
 
     // --- Socket manager bootstrap ---
     let socket_mgr = Arc::new(SocketManager::new());

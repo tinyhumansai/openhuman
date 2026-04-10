@@ -196,11 +196,20 @@ fn record_on_thread(
     let device_name = device.name().unwrap_or_else(|_| "<unknown>".into());
     info!("{LOG_PREFIX} using input device: {device_name}");
 
-    let supported_configs = device
-        .supported_input_configs()
-        .map_err(|e| format!("failed to query input configs: {e}"))?;
-
-    let config = find_best_config(supported_configs)?;
+    let config = match device.supported_input_configs() {
+        Ok(supported) => find_best_config(supported).unwrap_or_else(|e| {
+            warn!("{LOG_PREFIX} find_best_config failed ({e}), falling back to default");
+            device
+                .default_input_config()
+                .expect("no default input config available")
+        }),
+        Err(e) => {
+            warn!("{LOG_PREFIX} failed to query input configs ({e}), using default");
+            device
+                .default_input_config()
+                .map_err(|e2| format!("no default input config: {e2}"))?
+        }
+    };
     let source_sample_rate = config.sample_rate().0;
     let source_channels = config.channels() as usize;
 
@@ -294,11 +303,77 @@ fn record_on_thread(
         }
     };
 
-    let stream = match stream {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = setup_tx.send(Err(e.clone()));
-            return Err(e);
+    // If the preferred config failed, retry with the device's default config.
+    let (stream, source_sample_rate, _source_channels) = match stream {
+        Ok(s) => (s, source_sample_rate, source_channels),
+        Err(ref preferred_err) => {
+            warn!(
+                "{LOG_PREFIX} preferred config failed ({preferred_err}), retrying with default config"
+            );
+            match device.default_input_config() {
+                Ok(default_cfg) => {
+                    let sr = default_cfg.sample_rate().0;
+                    let ch = default_cfg.channels() as usize;
+                    let fmt = default_cfg.sample_format();
+                    info!("{LOG_PREFIX} fallback config: rate={sr} channels={ch} format={fmt:?}");
+                    let sc: StreamConfig = default_cfg.into();
+                    let gate = Arc::new(parking_lot::Mutex::new(SilenceGate::new(sr)));
+                    let sw = samples.clone();
+                    let rt = peak_rms.clone();
+                    let fallback_stream = match fmt {
+                        SampleFormat::F32 => device
+                            .build_input_stream(
+                                &sc,
+                                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                                    let mono = to_mono(data, ch);
+                                    update_peak_rms(&rt, &mono);
+                                    let gated = gate.lock().process(&mono);
+                                    if !gated.is_empty() {
+                                        sw.lock().extend_from_slice(&gated);
+                                    }
+                                },
+                                |err| error!("{LOG_PREFIX} audio stream error: {err}"),
+                                None,
+                            )
+                            .map_err(|e| format!("fallback f32 stream failed: {e}")),
+                        SampleFormat::I16 => device
+                            .build_input_stream(
+                                &sc,
+                                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                                    let floats: Vec<f32> =
+                                        data.iter().map(|&s| s as f32 / 32768.0).collect();
+                                    let mono = to_mono(&floats, ch);
+                                    update_peak_rms(&rt, &mono);
+                                    let gated = gate.lock().process(&mono);
+                                    if !gated.is_empty() {
+                                        sw.lock().extend_from_slice(&gated);
+                                    }
+                                },
+                                |err| error!("{LOG_PREFIX} audio stream error: {err}"),
+                                None,
+                            )
+                            .map_err(|e| format!("fallback i16 stream failed: {e}")),
+                        _ => Err(format!("unsupported fallback format: {fmt:?}")),
+                    };
+                    match fallback_stream {
+                        Ok(s) => (s, sr, ch),
+                        Err(e2) => {
+                            let msg = format!(
+                                "both preferred ({preferred_err}) and fallback ({e2}) configs failed"
+                            );
+                            let _ = setup_tx.send(Err(msg.clone()));
+                            return Err(msg);
+                        }
+                    }
+                }
+                Err(e2) => {
+                    let msg = format!(
+                        "preferred config failed ({preferred_err}) and no default available ({e2})"
+                    );
+                    let _ = setup_tx.send(Err(msg.clone()));
+                    return Err(msg);
+                }
+            }
         }
     };
 

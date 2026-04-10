@@ -493,8 +493,6 @@ async fn session_lifecycle_transitions_and_ttl_expiry() {
             consent: true,
             ttl_secs: Some(1),
             screen_monitoring: Some(true),
-            device_control: Some(true),
-            predictive_input: Some(true),
         })
         .await;
 
@@ -535,8 +533,6 @@ async fn panic_stop_behavior_stops_session() {
             consent: true,
             ttl_secs: Some(60),
             screen_monitoring: Some(true),
-            device_control: Some(true),
-            predictive_input: Some(true),
         })
         .await;
 
@@ -580,8 +576,6 @@ async fn capture_scheduler_adds_baseline_frames() {
             consent: true,
             ttl_secs: Some(2),
             screen_monitoring: Some(true),
-            device_control: Some(true),
-            predictive_input: Some(true),
         })
         .await;
 

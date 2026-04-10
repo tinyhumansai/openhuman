@@ -1,20 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window (desktop only)",
-  "platforms": [
-    "linux",
-    "macOS",
-    "windows"
-  ],
-  "windows": [
-    "main"
-  ],
+  "description": "Capability for the main and overlay windows (desktop only)",
+  "platforms": ["linux", "macOS", "windows"],
+  "windows": ["main", "overlay"],
   "permissions": [
     "core:default",
+    "core:window:default",
+    "core:window:allow-hide",
     "core:window:allow-show",
     "core:window:allow-set-focus",
     "core:window:allow-unminimize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-always-on-top",
+    "core:event:default",
     "deep-link:default",
     "opener:default",
     "allow-core-process"

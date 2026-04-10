@@ -6,6 +6,11 @@
  * the global hotkey is pressed. The hotkey listener runs in the core
  * process (via rdev), not in the Tauri shell.
  *
+ * Dictation events are received over a **dedicated** Socket.IO
+ * connection to the core process that does not require authentication.
+ * This ensures dictation works regardless of whether the user is
+ * logged in.
+ *
  * Consumers receive:
  *   - `dictationEnabled`: whether dictation is configured on
  *   - `hotkeyRegistered`: true once the core confirms the hotkey is active
@@ -13,10 +18,27 @@
  *   - `activationMode`: "toggle" or "push"
  *   - `hotkey`: the configured hotkey string
  */
-import { useEffect, useState } from 'react';
+import { invoke, isTauri } from '@tauri-apps/api/core';
+import { useEffect, useRef, useState } from 'react';
+import { io, Socket } from 'socket.io-client';
 
 import { callCoreRpc } from '../services/coreRpcClient';
-import { socketService } from '../services/socketService';
+import { CORE_RPC_URL } from '../utils/config';
+
+/** Resolve the core process base URL (without /rpc suffix) for Socket.IO. */
+async function resolveCoreSocketUrl(): Promise<string> {
+  let rpcUrl = CORE_RPC_URL;
+  if (isTauri()) {
+    try {
+      const url = await invoke<string>('core_rpc_url');
+      if (url) rpcUrl = String(url);
+    } catch {
+      // fall through to default
+    }
+  }
+  const trimmed = rpcUrl.trim().replace(/\/+$/, '');
+  return trimmed.endsWith('/rpc') ? trimmed.slice(0, -4) : trimmed;
+}
 
 interface DictationSettings {
   enabled: boolean;
@@ -46,6 +68,7 @@ export function useDictationHotkey(): DictationHotkeyState {
   const [toggleCount, setToggleCount] = useState(0);
   const [activationMode, setActivationMode] = useState('toggle');
   const [hotkey, setHotkey] = useState('');
+  const socketRef = useRef<Socket | null>(null);
 
   // Fetch config from core RPC on mount.
   useEffect(() => {
@@ -92,19 +115,69 @@ export function useDictationHotkey(): DictationHotkeyState {
     };
   }, []);
 
-  // Listen for hotkey events from the core via Socket.IO.
+  // Open a dedicated Socket.IO connection to the core for dictation
+  // events. This is independent of the main socketService (which
+  // requires auth) so dictation works even when not logged in.
   useEffect(() => {
-    const handleToggle = () => {
-      console.debug('[dictation] hotkey toggle event received via socket');
-      setToggleCount(c => c + 1);
+    let socket: Socket | null = null;
+    let disposed = false;
+
+    const connect = async () => {
+      try {
+        const baseUrl = await resolveCoreSocketUrl();
+        if (disposed) return;
+
+        socket = io(baseUrl, {
+          path: '/socket.io/',
+          transports: ['websocket', 'polling'],
+          reconnection: true,
+          reconnectionDelay: 2000,
+          reconnectionAttempts: Infinity,
+          forceNew: true,
+        });
+        socketRef.current = socket;
+
+        socket.on('connect', () => {
+          console.debug('[dictation] dedicated socket connected', socket?.id);
+        });
+
+        socket.on('connect_error', (err: Error) => {
+          console.debug('[dictation] socket connect error:', err.message);
+        });
+
+        // Hotkey toggle events.
+        const handleToggle = () => {
+          console.debug('[dictation] hotkey toggle event received');
+          setToggleCount(c => c + 1);
+        };
+        socket.on('dictation:toggle', handleToggle);
+        socket.on('dictation_toggle', handleToggle);
+
+        // Transcription results — dispatch the custom DOM event that
+        // Conversations.tsx uses to insert text into the chat input.
+        socket.on('dictation:transcription', (data: { text?: string }) => {
+          const text = data?.text?.trim();
+          if (!text) return;
+          console.debug(`[dictation] transcription received: ${text.length} chars — "${text}"`);
+
+          window.dispatchEvent(new CustomEvent('dictation://insert-text', { detail: { text } }));
+        });
+
+        socket.connect();
+      } catch (err) {
+        console.warn('[dictation] failed to open dedicated socket', err);
+      }
     };
 
-    socketService.on('dictation:toggle', handleToggle);
-    socketService.on('dictation_toggle', handleToggle);
+    void connect();
 
     return () => {
-      socketService.off('dictation:toggle', handleToggle);
-      socketService.off('dictation_toggle', handleToggle);
+      disposed = true;
+      if (socket) {
+        socket.disconnect();
+        socket = null;
+      }
+      socketRef.current = null;
     };
   }, []);
 

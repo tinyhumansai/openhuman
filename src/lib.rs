@@ -26,5 +26,6 @@ pub use openhuman::memory::{MemoryClient, MemoryState};
 ///
 /// Returns an error if command execution fails.
 pub fn run_core_from_args(args: &[String]) -> anyhow::Result<()> {
+    openhuman::service::apply_startup_restart_delay_from_env();
     core::cli::run_from_cli_args(args)
 }

@@ -27,7 +27,9 @@ describe('PLANS', () => {
     expect(free.monthlyPrice).toBe(0);
     expect(free.annualPrice).toBe(0);
     expect(free.discountPercent).toBe(0);
-    expect(free.weeklyBudgetUsd).toBe(0.5);
+    expect(free.monthlyBudgetUsd).toBe(0);
+    expect(free.weeklyBudgetUsd).toBe(0);
+    expect(free.fiveHourCapUsd).toBe(0);
   });
 
   it('should have BASIC plan aligned with backend config', () => {
@@ -141,7 +143,6 @@ describe('displayPrice', () => {
       weeklyBudgetUsd: 25,
       fiveHourCapUsd: 7.5,
       discountPercent: 30,
-      storageLimitBytes: 50 * 1024 * 1024 * 1024,
       features: [],
     };
     expect(displayPrice(custom, 'monthly')).toBe('$50');
@@ -187,7 +188,6 @@ describe('annualSavings', () => {
       weeklyBudgetUsd: 5,
       fiveHourCapUsd: 1.5,
       discountPercent: 20,
-      storageLimitBytes: 1024,
       features: [],
     };
     expect(annualSavings(noSavings, 'annual')).toBeNull();
@@ -203,7 +203,6 @@ describe('annualSavings', () => {
       weeklyBudgetUsd: 50,
       fiveHourCapUsd: 15,
       discountPercent: 40,
-      storageLimitBytes: 1024,
       features: [],
     };
     expect(annualSavings(bigDiscount, 'annual')).toBe(50);

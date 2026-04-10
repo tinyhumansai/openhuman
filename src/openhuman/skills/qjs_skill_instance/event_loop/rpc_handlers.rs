@@ -440,7 +440,21 @@ pub(crate) async fn handle_sync(
 
     match start_result {
         Ok(ref status) if status == "no_handler" => {
-            Err("Skill does not implement onSync".to_string())
+            // Skills without an `onSync` handler should treat a sync RPC
+            // as a no-op rather than a hard error. Plenty of skills don't
+            // need a periodic sync (e.g. `server-ping`, utility skills),
+            // and the cron driver fires `skills_sync` against every skill
+            // on its schedule — raising here would turn a blanket sweep
+            // into a cascade of RPC errors in logs/dashboards.
+            log::debug!(
+                "[skill:{}] sync no-op: skill does not implement onSync",
+                skill_id_owned
+            );
+            Ok(serde_json::json!({
+                "status": "no_handler",
+                "skipped": true,
+                "reason": "Skill does not implement onSync"
+            }))
         }
         Ok(ref status) => {
             log::info!(

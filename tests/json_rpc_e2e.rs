@@ -892,6 +892,67 @@ async fn json_rpc_screen_intelligence_status_returns_stable_shape() {
 }
 
 #[tokio::test]
+async fn json_rpc_app_state_snapshot_returns_runtime_shape() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let snapshot = post_json_rpc(&rpc_base, 1004, "openhuman.app_state_snapshot", json!({})).await;
+    let result = assert_no_jsonrpc_error(&snapshot, "app_state_snapshot");
+    let body = result.get("result").unwrap_or(result);
+
+    assert!(
+        body.get("auth").and_then(Value::as_object).is_some(),
+        "expected auth object: {body}"
+    );
+    assert!(
+        body.get("localState").and_then(Value::as_object).is_some(),
+        "expected localState object: {body}"
+    );
+
+    let runtime = body.get("runtime").expect("expected runtime object");
+    assert!(
+        runtime
+            .get("screenIntelligence")
+            .and_then(Value::as_object)
+            .is_some(),
+        "expected runtime.screenIntelligence object: {runtime}"
+    );
+    assert!(
+        runtime.get("localAi").and_then(Value::as_object).is_some(),
+        "expected runtime.localAi object: {runtime}"
+    );
+    assert!(
+        runtime
+            .get("autocomplete")
+            .and_then(Value::as_object)
+            .is_some(),
+        "expected runtime.autocomplete object: {runtime}"
+    );
+    assert!(
+        runtime.get("service").and_then(Value::as_object).is_some(),
+        "expected runtime.service object: {runtime}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_screen_intelligence_vision_recent_returns_empty_without_session() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

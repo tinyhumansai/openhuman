@@ -3,7 +3,6 @@ import {
   annualSavings,
   isUpgrade as checkIsUpgrade,
   displayPrice,
-  formatStorageLimit,
   formatUsdAmount,
   PLANS,
 } from '../billingHelpers';
@@ -104,20 +103,23 @@ const SubscriptionPlans = ({
                   )}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    Included monthly value: {formatUsdAmount(plan.monthlyBudgetUsd)}
-                  </span>
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    7-day cycle: {formatUsdAmount(plan.weeklyBudgetUsd)}
-                  </span>
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    10-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
-                  </span>
+                  {plan.monthlyBudgetUsd > 0 && (
+                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                      Included monthly value: {formatUsdAmount(plan.monthlyBudgetUsd)}
+                    </span>
+                  )}
+                  {plan.weeklyBudgetUsd > 0 && (
+                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                      7-day cycle: {formatUsdAmount(plan.weeklyBudgetUsd)}
+                    </span>
+                  )}
+                  {plan.fiveHourCapUsd > 0 && (
+                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                      10-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
+                    </span>
+                  )}
                   <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
                     Discount: {plan.discountPercent}%
-                  </span>
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    Storage: {formatStorageLimit(plan.storageLimitBytes)}
                   </span>
                 </div>
               </div>

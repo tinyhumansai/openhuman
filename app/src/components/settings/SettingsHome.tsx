@@ -79,13 +79,30 @@ const SettingsHome = () => {
     {
       id: 'account',
       title: 'Account & Security',
-      description: 'Billing, recovery phrase, team management, and linked account access',
+      description: 'Recovery phrase, team management, and linked account access',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5v14" />
         </svg>
       ),
       onClick: () => navigateToSettings('account'),
+      dangerous: false,
+    },
+    {
+      id: 'billing',
+      title: 'Billing & Usage',
+      description: 'Subscription plan, pay-as-you-go credits, and payment methods',
+      icon: (
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3 3v8a3 3 0 003 3z"
+          />
+        </svg>
+      ),
+      onClick: () => navigateToSettings('billing'),
       dangerous: false,
     },
     {

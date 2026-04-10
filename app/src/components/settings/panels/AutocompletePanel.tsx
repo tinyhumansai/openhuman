@@ -22,7 +22,7 @@ import AppFilterSection from './autocomplete/AppFilterSection';
 import CompletionStyleSection from './autocomplete/CompletionStyleSection';
 
 const DEFAULT_CONFIG: AutocompleteConfig = {
-  enabled: true,
+  enabled: false,
   debounce_ms: 120,
   max_chars: 384,
   style_preset: 'balanced',

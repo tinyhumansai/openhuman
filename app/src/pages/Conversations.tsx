@@ -1218,10 +1218,10 @@ const Conversations = () => {
               </div>
             )}
           {teamUsage &&
-            (teamUsage.remainingUsd <= 0 ||
-              (!teamUsage.bypassRateLimit &&
+            ((teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0) ||
+              (!teamUsage.bypassCycleLimit &&
                 teamUsage.fiveHourCapUsd > 0 &&
-                teamUsage.fiveHourSpendUsd >= teamUsage.fiveHourCapUsd)) && (
+                teamUsage.cycleLimit5hr >= teamUsage.fiveHourCapUsd)) && (
               <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <svg
@@ -1237,12 +1237,12 @@ const Conversations = () => {
                     />
                   </svg>
                   <p className="text-xs text-coral-600 truncate">
-                    {teamUsage.remainingUsd <= 0
-                      ? 'Weekly inference budget exhausted. Top up to continue.'
+                    {teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
+                      ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
                       : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
                   </p>
                 </div>
-                {teamUsage.remainingUsd <= 0 && (
+                {teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0 && (
                   <button
                     onClick={() => navigate('/settings/billing')}
                     className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
@@ -1257,12 +1257,12 @@ const Conversations = () => {
               <div className="relative group">
                 {teamUsage ? (
                   <div className="flex items-center gap-2">
-                    {!teamUsage.bypassRateLimit && (
+                    {!teamUsage.bypassCycleLimit && (
                       <LimitPill
                         label="5h"
                         usedPct={
                           teamUsage.fiveHourCapUsd > 0
-                            ? Math.min(1, teamUsage.fiveHourSpendUsd / teamUsage.fiveHourCapUsd)
+                            ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
                             : 0
                         }
                       />
@@ -1286,11 +1286,11 @@ const Conversations = () => {
                 {teamUsage && (
                   <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
                     <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
-                      {!teamUsage.bypassRateLimit && (
+                      {!teamUsage.bypassCycleLimit && (
                         <div className="flex items-center justify-between gap-4">
                           <span className="text-stone-400">5-hour limit</span>
                           <span>
-                            ${teamUsage.fiveHourSpendUsd.toFixed(2)} / $
+                            ${teamUsage.cycleLimit5hr.toFixed(2)} / $
                             {teamUsage.fiveHourCapUsd.toFixed(2)}
                             {teamUsage.fiveHourResetsAt && (
                               <span className="text-stone-400 ml-1">
@@ -1448,7 +1448,7 @@ const Conversations = () => {
         open={showLimitModal}
         onClose={() => setShowLimitModal(false)}
         isBudgetExhausted={isBudgetExhausted}
-        resetTime={teamUsage?.fiveHourResetsAt}
+        resetTime={isBudgetExhausted ? teamUsage?.cycleEndsAt : teamUsage?.fiveHourResetsAt}
         currentTier={currentTier}
       />
     </div>

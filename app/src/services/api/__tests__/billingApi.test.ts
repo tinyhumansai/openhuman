@@ -7,6 +7,7 @@ vi.mock('../../coreCommandClient', () => ({
 }));
 
 const { billingApi } = await import('../billingApi');
+const { creditsApi } = await import('../creditsApi');
 
 describe('billingApi', () => {
   beforeEach(() => {
@@ -43,9 +44,9 @@ describe('billingApi', () => {
         hasActiveSubscription: false,
         planExpiry: null,
         subscription: null,
-        monthlyBudgetUsd: 1,
-        weeklyBudgetUsd: 0.5,
-        fiveHourCapUsd: 0.15,
+        monthlyBudgetUsd: 0,
+        weeklyBudgetUsd: 0,
+        fiveHourCapUsd: 0,
       };
       mockCallCoreCommand.mockResolvedValue(planData);
 
@@ -54,7 +55,7 @@ describe('billingApi', () => {
       expect(result.plan).toBe('FREE');
       expect(result.hasActiveSubscription).toBe(false);
       expect(result.subscription).toBeNull();
-      expect(result.weeklyBudgetUsd).toBe(0.5);
+      expect(result.weeklyBudgetUsd).toBe(0);
     });
 
     it('should propagate errors', async () => {
@@ -197,5 +198,20 @@ describe('billingApi', () => {
         'Crypto payments are only available for annual plans'
       );
     });
+  });
+});
+
+describe('creditsApi.getBalance', () => {
+  beforeEach(() => {
+    mockCallCoreCommand.mockReset();
+  });
+
+  it('normalizes missing numeric fields so billing UI does not crash', async () => {
+    mockCallCoreCommand.mockResolvedValue({ teamTopupUsd: 3 });
+
+    const result = await creditsApi.getBalance();
+
+    expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_get_balance');
+    expect(result).toEqual({ promotionBalanceUsd: 0, teamTopupUsd: 3 });
   });
 });

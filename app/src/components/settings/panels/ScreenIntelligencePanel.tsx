@@ -1,16 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type ComponentProps, useEffect, useMemo, useRef, useState } from 'react';
 
 import ScreenIntelligenceDebugPanel from '../../../components/intelligence/ScreenIntelligenceDebugPanel';
-import {
-  fetchAccessibilityStatus,
-  fetchAccessibilityVisionRecent,
-} from '../../../store/accessibilitySlice';
-import { useAppDispatch, useAppSelector } from '../../../store/hooks';
+import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
 import { isTauri, openhumanUpdateScreenIntelligenceSettings } from '../../../utils/tauriCommands';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import PermissionsSection from './screen-intelligence/PermissionsSection';
-import SessionAndVisionSection from './screen-intelligence/SessionAndVisionSection';
 
 const formatRemaining = (remainingMs: number | null): string => {
   if (remainingMs === null || remainingMs <= 0) {
@@ -25,7 +20,11 @@ const formatRemaining = (remainingMs: number | null): string => {
   return `${mins}:${secs}`;
 };
 
-const DebugSection = () => {
+const DebugSection = ({
+  state,
+}: {
+  state: ComponentProps<typeof ScreenIntelligenceDebugPanel>['state'];
+}) => {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -37,16 +36,16 @@ const DebugSection = () => {
         <span>Debug & Diagnostics</span>
         <span className="text-xs text-stone-400">{isOpen ? 'Collapse' : 'Expand'}</span>
       </button>
-      {isOpen && <ScreenIntelligenceDebugPanel />}
+      {isOpen && <ScreenIntelligenceDebugPanel state={state} />}
     </section>
   );
 };
 
 const ScreenIntelligencePanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
-  const dispatch = useAppDispatch();
   const {
     status,
+    lastRestartSummary,
     isLoading,
     isRequestingPermissions,
     isRestartingCore,
@@ -56,12 +55,18 @@ const ScreenIntelligencePanel = () => {
     isFlushingVision,
     recentVisionSummaries,
     lastError,
-  } = useAppSelector(state => state.accessibility);
-  const [featureOverrides, setFeatureOverrides] = useState<{
-    screen_monitoring?: boolean;
-    device_control?: boolean;
-    predictive_input?: boolean;
-  }>({});
+    refreshStatus,
+    refreshVision,
+    startSession,
+    stopSession,
+    flushVision,
+    requestPermission,
+    refreshPermissionsWithRestart,
+    runCaptureTest,
+    captureTestResult,
+    isCaptureTestRunning,
+  } = useScreenIntelligenceState({ loadVision: true, visionLimit: 10, pollMs: 2000 });
+  const [featureOverrides, setFeatureOverrides] = useState<{ screen_monitoring?: boolean }>({});
   const [enabled, setEnabled] = useState<boolean>(false);
   const [policyMode, setPolicyMode] = useState<'all_except_blacklist' | 'whitelist_only'>(
     'all_except_blacklist'
@@ -74,29 +79,21 @@ const ScreenIntelligencePanel = () => {
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
 
-  useEffect(() => {
-    void dispatch(fetchAccessibilityStatus());
-  }, [dispatch]);
-
-  useEffect(() => {
-    if (!status?.session.active) {
-      return;
-    }
-    const intervalId = window.setInterval(() => {
-      void dispatch(fetchAccessibilityStatus());
-      void dispatch(fetchAccessibilityVisionRecent(10));
-    }, 1000);
-    return () => window.clearInterval(intervalId);
-  }, [dispatch, status?.session.active]);
-
-  useEffect(() => {
-    void dispatch(fetchAccessibilityVisionRecent(10));
-  }, [dispatch]);
-
+  // CoreStateProvider polls every 2s (CoreStateProvider.tsx POLL_MS), producing a
+  // new `status` object reference on every tick even when the underlying config is
+  // unchanged. Keying this effect on `status?.config` identity would therefore
+  // clobber in-progress user edits every 2 seconds. Compare the serialized value
+  // instead, so we only re-sync when the server config has actually changed.
+  const lastSyncedConfigSigRef = useRef<string | null>(null);
   useEffect(() => {
     if (!status?.config) {
       return;
     }
+    const sig = JSON.stringify(status.config);
+    if (lastSyncedConfigSigRef.current === sig) {
+      return;
+    }
+    lastSyncedConfigSigRef.current = sig;
     setEnabled(status.config.enabled ?? false);
     setPolicyMode(
       status.config.policy_mode === 'whitelist_only' ? 'whitelist_only' : 'all_except_blacklist'
@@ -110,9 +107,6 @@ const ScreenIntelligencePanel = () => {
 
   const screenMonitoring =
     featureOverrides.screen_monitoring ?? status?.features.screen_monitoring ?? true;
-  const deviceControl = featureOverrides.device_control ?? status?.features.device_control ?? true;
-  const predictiveInput =
-    featureOverrides.predictive_input ?? status?.features.predictive_input ?? true;
 
   const remaining = useMemo(
     () => formatRemaining(status?.session.remaining_ms ?? null),
@@ -154,7 +148,7 @@ const ScreenIntelligencePanel = () => {
           .map(v => v.trim())
           .filter(Boolean),
       });
-      await dispatch(fetchAccessibilityStatus());
+      await refreshStatus();
     } catch (error) {
       setConfigError(error instanceof Error ? error.message : 'Failed to save screen intelligence');
     } finally {
@@ -177,10 +171,14 @@ const ScreenIntelligencePanel = () => {
           accessibility={status?.permissions.accessibility ?? 'unknown'}
           inputMonitoring={status?.permissions.input_monitoring ?? 'unknown'}
           anyPermissionDenied={anyPermissionDenied ?? false}
+          lastRestartSummary={lastRestartSummary}
           permissionCheckProcessPath={status?.permission_check_process_path}
           isRequestingPermissions={isRequestingPermissions}
           isRestartingCore={isRestartingCore}
           isLoading={isLoading}
+          requestPermission={requestPermission}
+          refreshPermissionsWithRestart={refreshPermissionsWithRestart}
+          refreshStatus={refreshStatus}
         />
 
         <section className="space-y-3">
@@ -296,53 +294,100 @@ const ScreenIntelligencePanel = () => {
               }
             />
           </label>
-
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Device Control</span>
-            <input
-              type="checkbox"
-              checked={deviceControl}
-              onChange={event =>
-                setFeatureOverrides(current => ({
-                  ...current,
-                  device_control: event.target.checked,
-                }))
-              }
-            />
-          </label>
-
-          <label className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2">
-            <span className="text-sm text-stone-700">Predictive Input</span>
-            <input
-              type="checkbox"
-              checked={predictiveInput}
-              onChange={event =>
-                setFeatureOverrides(current => ({
-                  ...current,
-                  predictive_input: event.target.checked,
-                }))
-              }
-            />
-          </label>
         </section>
 
-        <SessionAndVisionSection
-          status={status}
-          isStartingSession={isStartingSession}
-          isStoppingSession={isStoppingSession}
-          isFlushingVision={isFlushingVision}
-          isLoadingVision={isLoadingVision}
-          startDisabled={startDisabled}
-          stopDisabled={stopDisabled}
-          remaining={remaining}
-          screenMonitoring={screenMonitoring}
-          deviceControl={deviceControl}
-          predictiveInput={predictiveInput}
-          recentVisionSummaries={recentVisionSummaries}
+        <section className="space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900">Session</h3>
+          <div className="text-sm text-stone-600 space-y-1">
+            <div>Status: {status?.session.active ? 'Active' : 'Stopped'}</div>
+            <div>Remaining: {remaining}</div>
+            <div>Frames (ephemeral): {status?.session.frames_in_memory ?? 0}</div>
+            <div>Panic stop: {status?.session.panic_hotkey ?? 'Cmd+Shift+.'}</div>
+            <div>Vision: {status?.session.vision_state ?? 'idle'}</div>
+            <div>Vision queue: {status?.session.vision_queue_depth ?? 0}</div>
+            <div>
+              Last vision:{' '}
+              {status?.session.last_vision_at_ms
+                ? new Date(status.session.last_vision_at_ms).toLocaleTimeString()
+                : 'n/a'}
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                void startSession({
+                  consent: true,
+                  ttl_secs: status?.config.session_ttl_secs ?? 300,
+                  screen_monitoring: screenMonitoring,
+                })
+              }
+              disabled={startDisabled}
+              className="rounded-lg border border-green-400 bg-green-50 px-3 py-2 text-sm text-green-700 disabled:opacity-50">
+              {isStartingSession ? 'Starting…' : 'Start Session'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void stopSession('manual_stop')}
+              disabled={stopDisabled}
+              className="rounded-lg border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-700 disabled:opacity-50">
+              {isStoppingSession ? 'Stopping…' : 'Stop Session'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void flushVision()}
+              disabled={isFlushingVision || !status?.session.active}
+              className="rounded-lg border border-primary-400 bg-primary-50 px-3 py-2 text-sm text-primary-700 disabled:opacity-50">
+              {isFlushingVision ? 'Analyzing…' : 'Analyze Now'}
+            </button>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-stone-900">Vision Summaries</h3>
+            <button
+              type="button"
+              onClick={() => void refreshVision(10)}
+              disabled={isLoadingVision}
+              className="rounded-lg border border-stone-200 bg-stone-50 px-3 py-1.5 text-xs text-stone-600 disabled:opacity-50">
+              {isLoadingVision ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
+
+          {recentVisionSummaries.length === 0 ? (
+            <div className="text-xs text-stone-500">No summaries yet.</div>
+          ) : (
+            <div className="space-y-2">
+              {recentVisionSummaries.map(summary => (
+                <div
+                  key={summary.id}
+                  className="rounded-xl border border-stone-200 bg-white p-3 text-xs text-stone-200">
+                  <div className="text-stone-500">
+                    {new Date(summary.captured_at_ms).toLocaleTimeString()} ·{' '}
+                    {summary.app_name ?? 'Unknown App'}
+                    {summary.window_title ? ` · ${summary.window_title}` : ''}
+                  </div>
+                  <div className="mt-1 text-stone-800">{summary.actionable_notes}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <DebugSection
+          state={{
+            status,
+            recentVisionSummaries,
+            lastError,
+            captureTestResult,
+            isCaptureTestRunning,
+            refreshStatus,
+            refreshVision,
+            runCaptureTest,
+          }}
         />
-
-        <DebugSection />
-
         {status !== null && !status.platform_supported && (
           <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700">
             Screen Intelligence V1 is currently supported on macOS only.

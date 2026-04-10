@@ -185,7 +185,7 @@ pub fn register<'js>(
     }
 
     {
-        let ws = ws_state.clone();
+        let _ws = ws_state.clone();
         ops.set(
             "ws_recv",
             Function::new(ctx.clone(), move |_id: u32| {

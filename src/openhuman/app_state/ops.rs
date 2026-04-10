@@ -13,9 +13,13 @@ use tempfile::NamedTempFile;
 
 use crate::api::config::effective_api_url;
 use crate::api::jwt::{bearer_authorization_value, get_session_token};
+use crate::openhuman::autocomplete::AutocompleteStatus;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::build_session_state;
+use crate::openhuman::local_ai::LocalAiStatus;
+use crate::openhuman::screen_intelligence::AccessibilityStatus;
+use crate::openhuman::service::{ServiceState, ServiceStatus};
 use crate::rpc::RpcOutcome;
 
 const LOG_PREFIX: &str = "[app_state]";
@@ -61,6 +65,16 @@ pub struct AppStateSnapshot {
     pub onboarding_completed: bool,
     pub analytics_enabled: bool,
     pub local_state: StoredAppState,
+    pub runtime: RuntimeSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSnapshot {
+    pub screen_intelligence: AccessibilityStatus,
+    pub local_ai: LocalAiStatus,
+    pub autocomplete: AutocompleteStatus,
+    pub service: ServiceStatus,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -256,23 +270,74 @@ async fn fetch_current_user(config: &Config, token: &str) -> Result<Option<Value
     Ok(Some(user))
 }
 
+async fn build_runtime_snapshot(config: &Config) -> RuntimeSnapshot {
+    let screen_intelligence = {
+        let _ = crate::openhuman::screen_intelligence::global_engine()
+            .apply_config(config.screen_intelligence.clone())
+            .await;
+        crate::openhuman::screen_intelligence::global_engine()
+            .status()
+            .await
+    };
+
+    let local_ai = match crate::openhuman::local_ai::rpc::local_ai_status(config).await {
+        Ok(outcome) => outcome.value,
+        Err(error) => {
+            warn!("{LOG_PREFIX} local_ai status failed during snapshot: {error}");
+            crate::openhuman::local_ai::LocalAiStatus::disabled(config)
+        }
+    };
+
+    let autocomplete = crate::openhuman::autocomplete::global_engine()
+        .status()
+        .await;
+
+    let service = match crate::openhuman::service::status(config) {
+        Ok(status) => status,
+        Err(error) => {
+            let message = error.to_string();
+            warn!("{LOG_PREFIX} service status failed during snapshot: {message}");
+            ServiceStatus {
+                state: ServiceState::Unknown(message.clone()),
+                unit_path: None,
+                label: "OpenHuman".to_string(),
+                details: Some(message),
+            }
+        }
+    };
+
+    RuntimeSnapshot {
+        screen_intelligence,
+        local_ai,
+        autocomplete,
+        service,
+    }
+}
+
 pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let config = config_rpc::load_config_with_timeout().await?;
     let auth = build_session_state(&config)?;
     let session_token = get_session_token(&config)?;
-    let current_user = if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
-        fetch_current_user(&config, &token).await?
-    } else {
-        None
-    };
+    let current_user = auth.user.clone().or(
+        if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
+            fetch_current_user(&config, &token).await?
+        } else {
+            None
+        },
+    );
     let local_state = load_stored_app_state(&config)?;
+    let runtime = build_runtime_snapshot(&config).await;
 
     debug!(
-        "{LOG_PREFIX} snapshot auth={} onboarding={} analytics={} wallet_present={}",
+        "{LOG_PREFIX} snapshot auth={} onboarding={} analytics={} wallet_present={} si_active={} local_ai_state={} autocomplete_phase={} service_state={:?}",
         auth.is_authenticated,
         config.onboarding_completed,
         config.observability.analytics_enabled,
-        local_state.primary_wallet_address.is_some()
+        local_state.primary_wallet_address.is_some(),
+        runtime.screen_intelligence.session.active,
+        runtime.local_ai.state,
+        runtime.autocomplete.phase,
+        runtime.service.state
     );
 
     Ok(RpcOutcome::new(
@@ -283,6 +348,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             onboarding_completed: config.onboarding_completed,
             analytics_enabled: config.observability.analytics_enabled,
             local_state,
+            runtime,
         },
         vec!["core app state snapshot fetched".to_string()],
     ))

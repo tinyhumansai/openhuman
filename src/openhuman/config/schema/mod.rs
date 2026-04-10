@@ -8,7 +8,6 @@ mod autocomplete;
 mod autonomy;
 mod channels;
 mod defaults;
-pub(crate) use defaults::default_true;
 mod dictation;
 mod hardware;
 mod heartbeat_cron;

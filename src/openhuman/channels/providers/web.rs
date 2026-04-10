@@ -51,6 +51,14 @@ fn key_for(client_id: &str, thread_id: &str) -> String {
     format!("{client_id}::{thread_id}")
 }
 
+fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
+    json!({
+        "client_id": client_id,
+        "thread_id": thread_id,
+    })
+    .to_string()
+}
+
 pub async fn start_chat(
     client_id: &str,
     thread_id: &str,
@@ -245,7 +253,13 @@ async fn run_chat_task(
         {
             entry.agent
         }
-        Some(_) | None => build_session_agent(&config, model_override.clone(), temperature)?,
+        Some(_) | None => build_session_agent(
+            &config,
+            client_id,
+            thread_id,
+            model_override.clone(),
+            temperature,
+        )?,
     };
 
     let history_before = agent.history().len();
@@ -379,6 +393,8 @@ fn normalize_model_override(model_override: Option<String>) -> Option<String> {
 
 fn build_session_agent(
     config: &Config,
+    client_id: &str,
+    thread_id: &str,
     model_override: Option<String>,
     temperature: Option<f64>,
 ) -> Result<Agent, String> {
@@ -390,7 +406,12 @@ fn build_session_agent(
         effective.default_temperature = temp;
     }
 
-    Agent::from_config(&effective).map_err(|e| e.to_string())
+    Agent::from_config(&effective)
+        .map(|mut agent| {
+            agent.set_event_context(event_session_id_for(client_id, thread_id), "web_channel");
+            agent
+        })
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]

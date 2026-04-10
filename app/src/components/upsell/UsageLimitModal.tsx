@@ -43,7 +43,7 @@ export default function UsageLimitModal({
   if (!open) return null;
 
   const bodyText = isBudgetExhausted
-    ? 'Your weekly inference budget is exhausted. Upgrade your plan or top up credits to continue.'
+    ? `You've hit your weekly limit.${resetTime ? ` It resets ${formatResetTime(resetTime)}.` : ''} Upgrade your plan or top up credits to avoid limits.`
     : `You've hit your 10-hour inference rate limit.${resetTime ? ` It resets ${formatResetTime(resetTime)}.` : ''} Upgrade for higher limits.`;
 
   return (
@@ -78,9 +78,11 @@ export default function UsageLimitModal({
               <li className="text-xs text-stone-600">
                 ${nextPlan.fiveHourCapUsd.toFixed(2)} per 10-hour window
               </li>
-              <li className="text-xs text-stone-600">
-                ${nextPlan.weeklyBudgetUsd}/week included inference
-              </li>
+              {nextPlan.weeklyBudgetUsd > 0 && (
+                <li className="text-xs text-stone-600">
+                  ${nextPlan.weeklyBudgetUsd}/week included inference
+                </li>
+              )}
             </ul>
           </div>
         )}

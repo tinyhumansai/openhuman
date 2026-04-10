@@ -24,7 +24,7 @@ pub struct AutocompleteConfig {
 }
 
 fn default_enabled() -> bool {
-    true
+    false
 }
 
 fn default_debounce_ms() -> u64 {

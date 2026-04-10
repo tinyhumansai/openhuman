@@ -56,6 +56,54 @@ impl SystemPromptBuilder {
         }
     }
 
+    /// Build a narrow prompt for a sub-agent.
+    ///
+    /// The sub-agent's archetype prompt is registered as a dedicated
+    /// section that always renders first. The remaining sections respect
+    /// the `omit_*` flags from the [`crate::openhuman::agent::harness::definition::AgentDefinition`]:
+    /// `omit_identity` skips the project-context dump, `omit_safety_preamble`
+    /// skips the safety rules, and so on. The `WorkspaceSection` is always
+    /// included so the sub-agent knows its working directory.
+    ///
+    /// `archetype_prompt_text` is the already-loaded body of the
+    /// `system_prompt` source on the definition (the runner resolves
+    /// inline vs file before calling this).
+    ///
+    /// # KV cache stability
+    ///
+    /// `DateTimeSection` is intentionally **not** included here.
+    /// Repeat spawns of the same sub-agent definition must produce
+    /// byte-identical system prompts so the inference backend's
+    /// automatic prefix cache can reuse the prefill from the previous
+    /// run. Injecting `Local::now()` into the prompt would defeat that
+    /// goal — if a sub-agent genuinely needs the current time it
+    /// should receive it via the user message, not the system prompt.
+    pub fn for_subagent(
+        archetype_prompt_text: String,
+        omit_identity: bool,
+        omit_safety_preamble: bool,
+        omit_skills_catalog: bool,
+    ) -> Self {
+        let mut sections: Vec<Box<dyn PromptSection>> =
+            vec![Box::new(ArchetypePromptSection::new(archetype_prompt_text))];
+
+        if !omit_identity {
+            sections.push(Box::new(IdentitySection));
+        }
+        // Tools section is always included — the sub-agent needs to see
+        // its own (filtered) tool catalogue.
+        sections.push(Box::new(ToolsSection));
+        if !omit_safety_preamble {
+            sections.push(Box::new(SafetySection));
+        }
+        if !omit_skills_catalog {
+            sections.push(Box::new(SkillsSection));
+        }
+        sections.push(Box::new(WorkspaceSection));
+
+        Self { sections }
+    }
+
     pub fn add_section(mut self, section: Box<dyn PromptSection>) -> Self {
         self.sections.push(section);
         self
@@ -80,6 +128,32 @@ impl SystemPromptBuilder {
             output.push_str("\n\n");
         }
         Ok(output)
+    }
+}
+
+/// Sub-agent role prompt — pre-loaded text from an
+/// [`crate::openhuman::agent::harness::definition::AgentDefinition`]'s
+/// `system_prompt` field. Always rendered first when present.
+pub struct ArchetypePromptSection {
+    body: String,
+}
+
+impl ArchetypePromptSection {
+    pub fn new(body: String) -> Self {
+        Self { body }
+    }
+}
+
+impl PromptSection for ArchetypePromptSection {
+    fn name(&self) -> &str {
+        "archetype_prompt"
+    }
+
+    fn build(&self, _ctx: &PromptContext<'_>) -> Result<String> {
+        if self.body.trim().is_empty() {
+            return Ok(String::new());
+        }
+        Ok(self.body.clone())
     }
 }
 

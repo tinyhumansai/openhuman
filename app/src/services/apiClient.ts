@@ -104,7 +104,10 @@ class ApiClient {
       }
 
       // Handle abort/timeout specifically
-      if (error instanceof DOMException && error.name === 'AbortError') {
+      if (
+        (error instanceof DOMException && error.name === 'AbortError') ||
+        (error instanceof Error && error.name === 'AbortError')
+      ) {
         throw { success: false, error: `Request timed out after ${timeout / 1000}s` } as ApiError;
       }
 

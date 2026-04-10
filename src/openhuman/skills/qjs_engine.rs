@@ -519,8 +519,6 @@ impl RuntimeEngine {
     /// and the webhook router, and updates its status.
     pub async fn stop_skill(&self, skill_id: &str) -> Result<(), String> {
         self.registry.stop_skill(skill_id).await?;
-        self.cron_scheduler.unregister_all_for_skill(skill_id);
-        self.webhook_router.unregister_skill(skill_id);
         self.emit_status_change(skill_id);
         publish_global(DomainEvent::SkillStopped {
             skill_id: skill_id.to_string(),

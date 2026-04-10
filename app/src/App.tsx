@@ -37,6 +37,7 @@ function App() {
                     <MeshGradient />
                     <div className="app-dotted-canvas relative z-10 flex-1 flex flex-col overflow-hidden">
                       <div className="flex-1 overflow-y-auto pb-16">
+                        <GlobalUpsellBanner />
                         <AppRoutes />
                       </div>
                       <BottomTabBar />
@@ -45,7 +46,6 @@ function App() {
                   <OnboardingOverlay />
                   <DictationHotkeyManager />
                   <LocalAIDownloadSnackbar />
-                  <GlobalUpsellBanner />
                 </ServiceBlockingGate>
               </Router>
             </SocketProvider>

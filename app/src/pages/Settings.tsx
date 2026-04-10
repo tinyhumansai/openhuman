@@ -28,22 +28,6 @@ import { APP_VERSION } from '../utils/config';
 
 const accountSettingsItems = [
   {
-    id: 'billing',
-    title: 'Billing & Usage',
-    description: 'Manage your subscription, credits, and payment methods',
-    route: 'billing',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3 3v8a3 3 0 003 3z"
-        />
-      </svg>
-    ),
-  },
-  {
     id: 'recovery-phrase',
     title: 'Recovery Phrase',
     description: 'Manage your BIP39 recovery phrase for encryption and wallet access',
@@ -260,7 +244,7 @@ const Settings = () => {
             element={
               <SettingsSectionPage
                 title="Account & Security"
-                description="Billing, recovery, team access, and linked account settings."
+                description="Recovery, team access, and linked account settings."
                 items={accountSettingsItems}
               />
             }

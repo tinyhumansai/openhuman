@@ -310,12 +310,13 @@ async function handleRequest(req, res) {
       data: {
         cycleBudgetUsd: 10,
         remainingUsd: 10,
-        dailyUsage: 0,
-        totalInputTokensThisCycle: 0,
-        totalOutputTokensThisCycle: 0,
-        spentThisCycleUsd: 0,
-        spentTodayUsd: 0,
+        cycleLimit5hr: 0,
+        cycleLimit7day: 0,
+        fiveHourCapUsd: 5,
+        fiveHourResetsAt: null,
         cycleStartDate: new Date().toISOString(),
+        cycleEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        bypassCycleLimit: false,
       },
     });
     return;

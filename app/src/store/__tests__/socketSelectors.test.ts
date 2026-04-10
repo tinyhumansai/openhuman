@@ -21,6 +21,7 @@ function makeCoreState(token: string | null): CoreState {
       onboardingCompleted: false,
       analyticsEnabled: false,
       localState: { encryptionKey: null, primaryWalletAddress: null, onboardingTasks: null },
+      runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
     },
     teams: [],
     teamMembersById: {},

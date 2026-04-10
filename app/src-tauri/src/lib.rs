@@ -9,12 +9,17 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWindow,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[cfg(any(windows, target_os = "linux"))]
 use tauri_plugin_deep_link::DeepLinkExt;
+
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+#[cfg(target_os = "macos")]
+use objc2_core_graphics::CGShieldingWindowLevel;
 
 /// Tracks the currently registered dictation hotkey string so we can unregister it later.
 struct DictationHotkeyState(Mutex<Vec<String>>);
@@ -51,6 +56,64 @@ fn expand_dictation_shortcuts(shortcut: &str) -> Vec<String> {
 fn core_rpc_url() -> String {
     std::env::var("OPENHUMAN_CORE_RPC_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:7788/rpc".to_string())
+}
+
+#[tauri::command]
+fn overlay_parent_rpc_url() -> Option<String> {
+    let url = std::env::var("OPENHUMAN_CORE_RPC_URL").ok()?;
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn pin_overlay_bottom_right(window: &WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        log::warn!("[overlay] could not resolve current monitor for positioning");
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        log::warn!("[overlay] could not resolve overlay size for positioning");
+        return;
+    };
+
+    let margin = 20i32;
+    let x = monitor.position().x + monitor.size().width as i32 - size.width as i32 - margin;
+    let y = monitor.position().y + monitor.size().height as i32 - size.height as i32 - margin;
+
+    if let Err(err) = window.set_position(PhysicalPosition::new(x, y)) {
+        log::warn!("[overlay] failed to pin overlay bottom-right: {err}");
+    } else {
+        log::info!("[overlay] pinned overlay bottom-right at {},{}", x, y);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn configure_overlay_window_macos(window: &WebviewWindow) {
+    if let Err(err) = window.set_always_on_top(true) {
+        log::warn!("[overlay] failed to set always-on-top: {err}");
+    }
+    if let Err(err) = window.set_visible_on_all_workspaces(true) {
+        log::warn!("[overlay] failed to set visible-on-all-workspaces: {err}");
+    }
+
+    match window.ns_window() {
+        Ok(ns_window) => unsafe {
+            let window: &NSWindow = &*ns_window.cast();
+            let mut behavior = window.collectionBehavior();
+            behavior.insert(NSWindowCollectionBehavior::FullScreenAuxiliary);
+            behavior.insert(NSWindowCollectionBehavior::CanJoinAllSpaces);
+            window.setCollectionBehavior(behavior);
+            window.setLevel((CGShieldingWindowLevel() + 1) as isize);
+            log::info!(
+                "[overlay] macOS overlay configured for all spaces/fullscreen auxiliary at shielding+1 level"
+            );
+        },
+        Err(err) => {
+            log::warn!("[overlay] failed to access native NSWindow handle: {err}");
+        }
+    }
 }
 
 /// Resolve the core binary, preferring the staged sidecar.
@@ -410,6 +473,24 @@ pub fn run() {
                 }
             }
 
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(window) = app.get_webview_window("overlay") {
+                    configure_overlay_window_macos(&window);
+                } else {
+                    log::warn!("[overlay] overlay window not found during setup");
+                }
+            }
+
+            if let Some(window) = app.get_webview_window("overlay") {
+                pin_overlay_bottom_right(&window);
+                if let Err(err) = window.show() {
+                    log::warn!("[overlay] failed to show overlay on startup: {err}");
+                } else {
+                    log::info!("[overlay] overlay shown on startup");
+                }
+            }
+
             if let Err(err) = setup_tray(app.handle()) {
                 log::error!("[tray] failed to setup tray icon: {err}");
             }
@@ -418,6 +499,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             core_rpc_url,
+            overlay_parent_rpc_url,
             check_core_update,
             apply_core_update,
             restart_core_process,

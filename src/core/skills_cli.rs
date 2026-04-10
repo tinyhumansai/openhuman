@@ -109,27 +109,25 @@ async fn bootstrap_skills_runtime(
         log::info!("[skills-cli] SKILLS_LOCAL_DIR = {:?}", canonical);
     }
 
-    // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
-    let base_dir = std::env::var("OPENHUMAN_WORKSPACE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".openhuman")
-        });
+    // Resolve per-user scoped paths via Config so `skills_data` honours
+    // `active_user.toml` and lives under `~/.openhuman/users/{user_id}/skills_data`
+    // for authenticated users. See `openhuman::skills::paths`.
+    let paths = crate::openhuman::skills::paths::resolve_runtime_paths().await;
+    let skills_data_dir = paths.skills_data_dir.clone();
+    let workspace_dir = paths.workspace_dir.clone();
 
-    let skills_data_dir = base_dir.join("skills_data");
-    std::fs::create_dir_all(&skills_data_dir)
-        .map_err(|e| anyhow::anyhow!("failed to create skills data dir: {e}"))?;
+    std::fs::create_dir_all(&skills_data_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to create skills data dir {}: {e}",
+            skills_data_dir.display()
+        )
+    })?;
 
     let engine = RuntimeEngine::new(skills_data_dir)
         .map_err(|e| anyhow::anyhow!("failed to create RuntimeEngine: {e}"))?;
     let engine = Arc::new(engine);
 
-    // Point at workspace directory for user-installed skills.
-    let workspace_dir = base_dir.join("workspace");
+    // Point at the (also scoped) workspace directory for user-installed skills.
     let _ = std::fs::create_dir_all(&workspace_dir);
     engine.set_workspace_dir(workspace_dir);
 
@@ -236,7 +234,7 @@ fn run_skills_list(args: &[String]) -> Result<()> {
         if manifests.is_empty() {
             println!("No skills found.");
         } else {
-            println!("{:<20} {:<10} {}", "ID", "VERSION", "NAME");
+            println!("{:<20} {:<10} NAME", "ID", "VERSION");
             println!("{}", "-".repeat(60));
             for m in &manifests {
                 println!(

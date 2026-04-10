@@ -74,7 +74,7 @@ export function useUsageState(): UsageState {
 
   const usagePct10h =
     teamUsage && teamUsage.fiveHourCapUsd > 0
-      ? Math.min(1, teamUsage.fiveHourSpendUsd / teamUsage.fiveHourCapUsd)
+      ? Math.min(1, teamUsage.cycleLimit5hr / teamUsage.fiveHourCapUsd)
       : 0;
 
   const usagePct7d =
@@ -82,13 +82,15 @@ export function useUsageState(): UsageState {
       ? Math.min(1, (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) / teamUsage.cycleBudgetUsd)
       : 0;
 
-  const isBudgetExhausted = teamUsage ? teamUsage.remainingUsd <= 0 : false;
+  const isBudgetExhausted = teamUsage
+    ? teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
+    : false;
 
   const isRateLimited =
     teamUsage !== null &&
-    !teamUsage.bypassRateLimit &&
+    !teamUsage.bypassCycleLimit &&
     teamUsage.fiveHourCapUsd > 0 &&
-    teamUsage.fiveHourSpendUsd >= teamUsage.fiveHourCapUsd;
+    teamUsage.cycleLimit5hr >= teamUsage.fiveHourCapUsd;
 
   const isAtLimit = isBudgetExhausted || isRateLimited;
 

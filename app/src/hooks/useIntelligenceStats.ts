@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { callCoreRpc } from '../services/coreRpcClient';
-import type { AIStatus } from '../store/aiSlice';
-import { useAppSelector } from '../store/hooks';
 import { aiListMemoryFiles, type GraphRelation, memoryGraphQuery } from '../utils/tauriCommands';
+
+export type AIStatus = 'idle' | 'initializing' | 'ready' | 'error';
+
+const POLL_MS = 5000;
 
 interface SessionEntry {
   sessionId: string;
@@ -46,7 +48,7 @@ function entityCountsFromRelations(relations: GraphRelation[]): Record<string, n
 }
 
 export function useIntelligenceStats(): IntelligenceStats {
-  const aiStatus = useAppSelector(state => state.ai.status);
+  const [aiStatus, setAiStatus] = useState<AIStatus>('idle');
   const [sessions, setSessions] = useState<SessionStats | null>(null);
   const [memoryFiles, setMemoryFiles] = useState<number | null>(null);
   const [entities, setEntities] = useState<Record<string, number> | null>(null);
@@ -54,7 +56,9 @@ export function useIntelligenceStats(): IntelligenceStats {
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchStats = useCallback(async () => {
+    setAiStatus('initializing');
     setIsLoading(true);
+    let hasSuccess = false;
 
     // Fetch local stats (Tauri invoke)
     try {
@@ -68,6 +72,7 @@ export function useIntelligenceStats(): IntelligenceStats {
         compactions: entries.reduce((sum, e) => sum + (e.compactionCount || 0), 0),
         memoryFlushes: entries.filter(e => e.memoryFlushAt).length,
       });
+      hasSuccess = true;
     } catch {
       setSessions(null);
     }
@@ -75,6 +80,7 @@ export function useIntelligenceStats(): IntelligenceStats {
     try {
       const files = await aiListMemoryFiles('memory');
       setMemoryFiles(files.length);
+      hasSuccess = true;
     } catch {
       setMemoryFiles(null);
     }
@@ -90,17 +96,26 @@ export function useIntelligenceStats(): IntelligenceStats {
         setEntities(null);
         setEntityError(false);
       }
+      hasSuccess = true;
     } catch {
       setEntities(null);
       setEntityError(true);
     }
 
+    setAiStatus(hasSuccess ? 'ready' : 'error');
     setIsLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchStats();
-  }, [fetchStats, aiStatus]);
+    void fetchStats();
+    const intervalId = window.setInterval(() => {
+      void fetchStats();
+    }, POLL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [fetchStats]);
 
   return { sessions, memoryFiles, entities, entityError, aiStatus, isLoading, refetch: fetchStats };
 }

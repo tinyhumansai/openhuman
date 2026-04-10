@@ -12,13 +12,9 @@ import { useCallback, useEffect, useRef } from 'react';
 import {
   incrementConnectionAttempts,
   resetConnectionAttempts,
-  selectDaemonConnectionAttempts,
-  selectDaemonStatus,
-  selectIsDaemonAutoStartEnabled,
-  selectIsDaemonRecovering,
   setIsRecovering,
-} from '../store/daemonSlice';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
+  useDaemonUserState,
+} from '../features/daemon/store';
 import { isTauri } from '../utils/tauriCommands';
 import { useDaemonHealth } from './useDaemonHealth';
 
@@ -29,14 +25,14 @@ const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 const AUTO_START_DELAY_MS = 3000; // 3 seconds after app start
 
 export const useDaemonLifecycle = (userId?: string) => {
-  const dispatch = useAppDispatch();
   const daemonHealth = useDaemonHealth(userId);
+  const daemonState = useDaemonUserState(userId);
 
-  // Selectors
-  const status = useAppSelector(state => selectDaemonStatus(state, userId));
-  const isAutoStartEnabled = useAppSelector(state => selectIsDaemonAutoStartEnabled(state, userId));
-  const connectionAttempts = useAppSelector(state => selectDaemonConnectionAttempts(state, userId));
-  const isRecovering = useAppSelector(state => selectIsDaemonRecovering(state, userId));
+  const status = daemonState.status;
+  const isAutoStartEnabled = daemonState.autoStartEnabled;
+  const connectionAttempts = daemonState.connectionAttempts;
+  const isRecovering = daemonState.isRecovering;
+  const uid = userId || '__pending__';
 
   // Refs for cleanup
   const autoStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,32 +56,24 @@ export const useDaemonLifecycle = (userId?: string) => {
       console.log('[DaemonLifecycle] Attempting auto-start of daemon');
 
       try {
-        dispatch(setIsRecovering({ userId: userId || '__pending__', isRecovering: true }));
+        setIsRecovering(uid, true);
         const result = await daemonHealth.startDaemon();
 
         if (result?.result && result.result.state === 'Running') {
           console.log('[DaemonLifecycle] Auto-start successful');
-          dispatch(resetConnectionAttempts({ userId: userId || '__pending__' }));
+          resetConnectionAttempts(uid);
         } else {
           console.warn('[DaemonLifecycle] Auto-start failed:', result);
-          dispatch(incrementConnectionAttempts({ userId: userId || '__pending__' }));
+          incrementConnectionAttempts(uid);
         }
       } catch (error) {
         console.error('[DaemonLifecycle] Auto-start error:', error);
-        dispatch(incrementConnectionAttempts({ userId: userId || '__pending__' }));
+        incrementConnectionAttempts(uid);
       } finally {
-        dispatch(setIsRecovering({ userId: userId || '__pending__', isRecovering: false }));
+        setIsRecovering(uid, false);
       }
     }
-  }, [
-    isAutoStartEnabled,
-    status,
-    isRecovering,
-    connectionAttempts,
-    userId,
-    dispatch,
-    daemonHealth,
-  ]);
+  }, [isAutoStartEnabled, status, isRecovering, connectionAttempts, uid, daemonHealth]);
 
   // Retry connection with exponential backoff
   const scheduleRetry = useCallback(() => {
@@ -118,14 +106,14 @@ export const useDaemonLifecycle = (userId?: string) => {
       if (!isMountedRef.current) return;
 
       try {
-        dispatch(setIsRecovering({ userId: userId || '__pending__', isRecovering: true }));
-        dispatch(incrementConnectionAttempts({ userId: userId || '__pending__' }));
+        setIsRecovering(uid, true);
+        incrementConnectionAttempts(uid);
 
         const result = await daemonHealth.startDaemon();
 
         if (result?.result && result.result.state === 'Running') {
           console.log('[DaemonLifecycle] Retry successful');
-          dispatch(resetConnectionAttempts({ userId: userId || '__pending__' }));
+          resetConnectionAttempts(uid);
         } else {
           console.warn('[DaemonLifecycle] Retry failed:', result);
           // Will trigger another retry via useEffect
@@ -134,18 +122,10 @@ export const useDaemonLifecycle = (userId?: string) => {
         console.error('[DaemonLifecycle] Retry error:', error);
         // Will trigger another retry via useEffect
       } finally {
-        dispatch(setIsRecovering({ userId: userId || '__pending__', isRecovering: false }));
+        setIsRecovering(uid, false);
       }
     }, retryDelay);
-  }, [
-    connectionAttempts,
-    status,
-    isRecovering,
-    calculateRetryDelay,
-    userId,
-    dispatch,
-    daemonHealth,
-  ]);
+  }, [connectionAttempts, status, isRecovering, calculateRetryDelay, uid, daemonHealth]);
 
   // Handle visibility change (background/foreground)
   const handleVisibilityChange = useCallback(() => {
@@ -231,7 +211,7 @@ export const useDaemonLifecycle = (userId?: string) => {
   useEffect(() => {
     if (status === 'running' && connectionAttempts > 0) {
       console.log('[DaemonLifecycle] Daemon healthy - resetting connection attempts');
-      dispatch(resetConnectionAttempts({ userId: userId || '__pending__' }));
+      resetConnectionAttempts(uid);
 
       // Clear retry timeout if running
       if (retryTimeoutRef.current) {
@@ -239,7 +219,7 @@ export const useDaemonLifecycle = (userId?: string) => {
         retryTimeoutRef.current = null;
       }
     }
-  }, [status, connectionAttempts, userId, dispatch]);
+  }, [status, connectionAttempts, uid]);
 
   // Return lifecycle state and controls
   return {
@@ -252,7 +232,7 @@ export const useDaemonLifecycle = (userId?: string) => {
     // Actions
     attemptAutoStart,
     resetRetries: () => {
-      dispatch(resetConnectionAttempts({ userId: userId || '__pending__' }));
+      resetConnectionAttempts(uid);
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;

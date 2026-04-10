@@ -1,3 +1,4 @@
+pub mod bus;
 mod core;
 pub mod ops;
 mod schemas;

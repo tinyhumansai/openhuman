@@ -128,8 +128,6 @@ impl SiServer {
             consent: true,
             ttl_secs: Some(self.config.ttl_secs),
             screen_monitoring: Some(true),
-            device_control: Some(false),
-            predictive_input: Some(false),
         };
 
         match self.engine.start_session(params).await {

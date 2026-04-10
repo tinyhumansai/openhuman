@@ -12,6 +12,12 @@ use serde_json::json;
 /// sending replies back to the originating channel via the backend REST API.
 pub struct ChannelInboundSubscriber;
 
+impl Default for ChannelInboundSubscriber {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChannelInboundSubscriber {
     pub fn new() -> Self {
         Self
