@@ -100,11 +100,12 @@ pub fn apply_tool_result_budget(content: String, budget_bytes: usize) -> (String
         "\n\n[… {dropped_bytes} bytes truncated by tool_result_budget — re-run with a narrower query to see the rest …]"
     );
 
+    let final_bytes = out.len();
     (
-        out.clone(),
+        out,
         BudgetOutcome {
             original_bytes,
-            final_bytes: out.len(),
+            final_bytes,
             truncated: true,
         },
     )

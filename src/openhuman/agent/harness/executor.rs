@@ -406,7 +406,16 @@ fn apply_archetype_overrides(
         definition.sandbox_mode = match sb {
             "sandboxed" => super::definition::SandboxMode::Sandboxed,
             "read_only" => super::definition::SandboxMode::ReadOnly,
-            _ => super::definition::SandboxMode::None,
+            "none" | "" => super::definition::SandboxMode::None,
+            other => {
+                tracing::warn!(
+                    archetype = %archetype,
+                    definition_id = %definition.id,
+                    value = %other,
+                    "[orchestrator] unknown sandbox override — falling back to SandboxMode::None. Expected one of: sandboxed, read_only, none"
+                );
+                super::definition::SandboxMode::None
+            }
         };
     }
     if let Some(prompt_override) = over.system_prompt.as_ref() {

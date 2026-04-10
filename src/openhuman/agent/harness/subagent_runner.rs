@@ -29,7 +29,6 @@
 
 use super::definition::{AgentDefinition, PromptSource, ToolScope};
 use super::fork_context::{current_fork, current_parent, ForkContext, ParentExecutionContext};
-use crate::openhuman::agent::prompt::SystemPromptBuilder;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 use std::collections::HashSet;
@@ -224,33 +223,20 @@ async fn run_typed_mode(
     );
 
     // ── Build the narrow system prompt ─────────────────────────────────
-    let prompt_builder = SystemPromptBuilder::for_subagent(
-        archetype_prompt_body,
-        definition.omit_identity,
-        definition.omit_safety_preamble,
-        definition.omit_skills_catalog,
-    );
-    // We pass an empty tools slice and identity_config=None so the prompt
-    // builder can produce a reproducible string. The ToolsSection still
-    // renders our filtered tools because we pass them through PromptContext.
-    let tools_for_prompt: Vec<&Box<dyn Tool>> = allowed_indices
-        .iter()
-        .map(|&i| &parent.all_tools[i])
-        .collect();
-    // PromptContext expects a slice of Box<dyn Tool>; we can't construct
-    // one from a slice of references without cloning. Build a thin
-    // wrapper Vec by cloning Arcs would be ideal — but Box isn't Clone.
-    // Workaround: render the prompt manually here using a tiny inline
-    // composer that mirrors what SystemPromptBuilder would produce.
-    let _ = tools_for_prompt;
-
+    //
+    // We compose the prompt inline rather than routing through
+    // `SystemPromptBuilder::for_subagent` because the builder requires
+    // a slice of `Box<dyn Tool>` and we only have indices into the
+    // parent's vec (Box isn't Clone, so we can't build an owning
+    // filtered slice cheaply). `render_subagent_system_prompt` mirrors
+    // the builder's output for the narrow case.
     let system_prompt = render_subagent_system_prompt(
-        &prompt_builder,
         &parent.workspace_dir,
         &model,
         &allowed_indices,
         &parent.all_tools,
         definition,
+        &archetype_prompt_body,
     );
 
     // ── Build the user message (with optional context prefix) ──────────
@@ -618,10 +604,17 @@ fn load_prompt_source(
 /// `Box<dyn Tool>` and we already have indices into the parent's vec
 /// (which would force an awkward Vec<&Box<dyn Tool>> intermediate).
 ///
+/// `archetype_body` is the already-loaded archetype markdown — for
+/// `PromptSource::Inline` this is the inline string, for
+/// `PromptSource::File` this is the file contents loaded by
+/// [`load_prompt_source`]. The caller resolves the source exactly
+/// once and hands the body in, so this renderer works uniformly for
+/// both definition shapes.
+///
 /// # KV cache stability
 ///
 /// The rendered bytes MUST be a pure function of:
-/// - the `definition` (archetype role prompt)
+/// - the `archetype_body` (archetype role prompt)
 /// - the filtered tool set (names, descriptions, schemas)
 /// - the workspace directory
 /// - the resolved model name
@@ -634,28 +627,25 @@ fn load_prompt_source(
 /// Time-of-day information, if a sub-agent needs it, belongs in the user
 /// message — not the system prompt.
 fn render_subagent_system_prompt(
-    _builder: &SystemPromptBuilder,
     workspace_dir: &std::path::Path,
     model_name: &str,
     allowed_indices: &[usize],
     parent_tools: &[Box<dyn Tool>],
     definition: &AgentDefinition,
+    archetype_body: &str,
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
+    let _ = definition; // reserved for future per-definition rendering flags
 
-    // 1. Archetype role prompt (already loaded into definition source).
-    if let PromptSource::Inline(body) = &definition.system_prompt {
-        if !body.trim().is_empty() {
-            out.push_str(body.trim_end());
-            out.push_str("\n\n");
-        }
+    // 1. Archetype role prompt. Works for both `PromptSource::Inline`
+    //    and `PromptSource::File` because the caller preloaded the
+    //    body via `load_prompt_source`.
+    let trimmed = archetype_body.trim();
+    if !trimmed.is_empty() {
+        out.push_str(trimmed);
+        out.push_str("\n\n");
     }
-    // (For File sources we load above and write into the prompt via the
-    // builder's archetype section. To keep this rendering self-contained
-    // and avoid double-loading, we don't repeat that here — the file
-    // body is injected by the caller before invoking the runner via the
-    // SystemPromptBuilder for_subagent() variant.)
 
     // 2. Filtered tool catalogue. Indices are taken in ascending order
     //    from `allowed_indices`, which itself preserves `parent_tools`

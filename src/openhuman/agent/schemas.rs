@@ -252,8 +252,7 @@ fn handle_list_definitions(_params: Map<String, Value>) -> ControllerFuture {
         let registry = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()
             .ok_or_else(|| "AgentDefinitionRegistry not initialised".to_string())?;
         let defs: Vec<&crate::openhuman::agent::harness::AgentDefinition> = registry.list();
-        serde_json::to_value(serde_json::json!({ "definitions": defs }))
-            .map_err(|e| format!("serialise: {e}"))
+        Ok(serde_json::json!({ "definitions": defs }))
     })
 }
 
@@ -268,8 +267,7 @@ fn handle_get_definition(params: Map<String, Value>) -> ControllerFuture {
         let registry = crate::openhuman::agent::harness::AgentDefinitionRegistry::global()
             .ok_or_else(|| "AgentDefinitionRegistry not initialised".to_string())?;
         match registry.get(p.id.trim()) {
-            Some(def) => serde_json::to_value(serde_json::json!({ "definition": def }))
-                .map_err(|e| format!("serialise: {e}")),
+            Some(def) => Ok(serde_json::json!({ "definition": def })),
             None => Err(format!("definition '{}' not found", p.id)),
         }
     })

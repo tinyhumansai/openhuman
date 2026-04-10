@@ -172,6 +172,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::memory::{MemoryCategory, MemoryEntry};
+    use crate::openhuman::providers::{ChatRequest, ChatResponse};
+    use async_trait::async_trait;
 
     #[tokio::test]
     async fn parent_context_returns_none_outside_scope() {
@@ -202,5 +205,121 @@ mod tests {
 
         // And it disappears once the scope ends.
         assert!(current_fork().is_none());
+    }
+
+    // ── Minimal stubs so we can construct a ParentExecutionContext
+    // without pulling in the memory factory or a real provider. None of
+    // these methods are called by the task-local visibility test — the
+    // test only reads scalar fields on the context snapshot — so panic
+    // bodies are fine.
+
+    struct StubProvider;
+
+    #[async_trait]
+    impl Provider for StubProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            unimplemented!("StubProvider::chat_with_system is not called in this test")
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            unimplemented!("StubProvider::chat is not called in this test")
+        }
+    }
+
+    struct StubMemory;
+
+    #[async_trait]
+    impl crate::openhuman::memory::Memory for StubMemory {
+        fn name(&self) -> &str {
+            "stub"
+        }
+
+        async fn store(
+            &self,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(vec![])
+        }
+
+        async fn get(&self, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+            Ok(None)
+        }
+
+        async fn list(
+            &self,
+            _category: Option<&MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(vec![])
+        }
+
+        async fn forget(&self, _key: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(0)
+        }
+
+        async fn health_check(&self) -> bool {
+            true
+        }
+    }
+
+    fn stub_parent_context() -> ParentExecutionContext {
+        ParentExecutionContext {
+            provider: Arc::new(StubProvider),
+            all_tools: Arc::new(vec![]),
+            all_tool_specs: Arc::new(vec![]),
+            model_name: "stub-model".into(),
+            temperature: 0.4,
+            workspace_dir: std::path::PathBuf::from("/tmp"),
+            memory: Arc::new(StubMemory),
+            agent_config: AgentConfig::default(),
+            identity_config: IdentityConfig::default(),
+            skills: Arc::new(vec![]),
+            session_id: "test-session".into(),
+            channel: "test-channel".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn parent_context_visible_inside_scope() {
+        let ctx = stub_parent_context();
+
+        with_parent_context(ctx, async {
+            let p = current_parent().expect("parent context should be visible");
+            assert_eq!(p.model_name, "stub-model");
+            assert_eq!(p.session_id, "test-session");
+            assert_eq!(p.channel, "test-channel");
+            assert!((p.temperature - 0.4).abs() < f64::EPSILON);
+        })
+        .await;
+
+        // And it disappears once the scope ends.
+        assert!(current_parent().is_none());
     }
 }

@@ -4,9 +4,11 @@
 //! allowed tool set, runtime limits, and which sections of the parent system
 //! prompt to omit. Built-in definitions are derived from
 //! [`super::archetypes::AgentArchetype`] in
-//! [`super::builtin_definitions`]; users can ship custom definitions as YAML
-//! files under `$OPENHUMAN_WORKSPACE/agents/*.yaml` (or
-//! `~/.openhuman/agents/*.yaml`) which override built-ins on id collision.
+//! [`super::builtin_definitions`]; users can ship custom definitions as TOML
+//! files under `$OPENHUMAN_WORKSPACE/agents/*.toml` (with a fallback to
+//! `~/.openhuman/agents/*.toml` for user-global specialists) which override
+//! built-ins on id collision. See [`super::definition_loader`] for the
+//! directory scan + TOML parsing contract.
 //!
 //! Sub-agents are dispatched at runtime by the `spawn_subagent` tool, which
 //! looks up an [`AgentDefinition`] by id in the global
@@ -28,7 +30,7 @@ use std::path::PathBuf;
 /// A fully specified sub-agent: what it knows, what it can do, how to prompt it.
 ///
 /// Built-ins live in [`super::builtin_definitions`]; custom ones load from
-/// YAML at startup. The [`AgentDefinitionRegistry`] merges them and is the
+/// TOML at startup. The [`AgentDefinitionRegistry`] merges them and is the
 /// single source of truth that `SpawnSubagentTool` queries.
 ///
 /// All `omit_*` flags default to `true` for sub-agents — sub-agents are
@@ -51,7 +53,7 @@ pub struct AgentDefinition {
     pub display_name: Option<String>,
 
     // ── prompt ──────────────────────────────────────────────────────────
-    /// Source of the sub-agent's core system prompt. Inline for YAML-defined
+    /// Source of the sub-agent's core system prompt. Inline for TOML-defined
     /// agents, or a path to a file under `agent/prompts/` for built-ins.
     pub system_prompt: PromptSource,
 
@@ -139,7 +141,7 @@ pub struct AgentDefinition {
 
     // ── source bookkeeping ──────────────────────────────────────────────
     /// Where this definition came from. Filled in by the loader/builder;
-    /// not deserialised from YAML.
+    /// not deserialised from TOML.
     #[serde(skip)]
     pub source: DefinitionSource,
 }
@@ -163,7 +165,7 @@ impl AgentDefinition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptSource {
-    /// Inline prompt string (custom YAML-defined agents).
+    /// Inline prompt string (custom TOML-defined agents).
     Inline(String),
     /// Relative path under the workspace's `prompts/` directory or under
     /// `src/openhuman/agent/prompts/` for built-ins. Resolved by the runner
@@ -284,7 +286,7 @@ use std::sync::OnceLock;
 ///
 /// One singleton instance is initialised at startup via
 /// [`AgentDefinitionRegistry::init_global`]. Built-ins are registered
-/// unconditionally; custom YAML definitions (if a workspace is provided)
+/// unconditionally; custom TOML definitions (if a workspace is provided)
 /// are loaded next and override built-ins on `id` collision.
 #[derive(Debug, Default)]
 pub struct AgentDefinitionRegistry {
@@ -297,7 +299,7 @@ static GLOBAL: OnceLock<AgentDefinitionRegistry> = OnceLock::new();
 
 impl AgentDefinitionRegistry {
     /// Build a registry containing only the built-in definitions
-    /// (no YAML loading). Useful for tests.
+    /// (no TOML loading). Useful for tests.
     pub fn builtins_only() -> Self {
         let mut reg = Self::default();
         for def in super::builtin_definitions::all() {
@@ -306,9 +308,11 @@ impl AgentDefinitionRegistry {
         reg
     }
 
-    /// Build a registry containing built-ins plus any custom YAML
-    /// definitions found under `<workspace>/agents/*.yaml` (and the
-    /// `~/.openhuman/agents/*.yaml` fallback).
+    /// Build a registry containing built-ins plus any custom TOML
+    /// definitions found under `<workspace>/agents/*.toml` (and the
+    /// `~/.openhuman/agents/*.toml` fallback). Custom definitions
+    /// override built-ins on `id` collision. Files that fail to parse
+    /// are logged and skipped rather than aborting startup.
     pub fn load(workspace: &Path) -> Result<Self> {
         let mut reg = Self::builtins_only();
         let custom = super::definition_loader::load_from_workspace(workspace)?;

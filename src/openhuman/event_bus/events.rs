@@ -303,6 +303,36 @@ mod tests {
                 },
                 "agent",
             ),
+            (
+                DomainEvent::SubagentSpawned {
+                    parent_session: "s".into(),
+                    agent_id: "researcher".into(),
+                    mode: "typed".into(),
+                    task_id: "task-1".into(),
+                    prompt_chars: 42,
+                },
+                "agent",
+            ),
+            (
+                DomainEvent::SubagentCompleted {
+                    parent_session: "s".into(),
+                    task_id: "task-1".into(),
+                    agent_id: "researcher".into(),
+                    elapsed_ms: 123,
+                    output_chars: 100,
+                    iterations: 2,
+                },
+                "agent",
+            ),
+            (
+                DomainEvent::SubagentFailed {
+                    parent_session: "s".into(),
+                    task_id: "task-1".into(),
+                    agent_id: "researcher".into(),
+                    error: "boom".into(),
+                },
+                "agent",
+            ),
             // Memory
             (
                 DomainEvent::MemoryStored {

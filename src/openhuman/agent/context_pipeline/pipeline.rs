@@ -153,6 +153,11 @@ impl ContextPipeline {
                 if self.config.microcompact_enabled {
                     let stats = microcompact(history, self.config.microcompact_keep_recent);
                     if stats.envelopes_cleared > 0 {
+                        // A successful reduction should reset the guard's
+                        // circuit breaker so a previous string of
+                        // autocompaction failures doesn't leave the
+                        // breaker tripped after we've just freed tokens.
+                        self.guard.record_compaction_success();
                         tracing::info!(
                             envelopes_cleared = stats.envelopes_cleared,
                             entries_cleared = stats.entries_cleared,

@@ -716,14 +716,12 @@ impl Agent {
         let parent_ctx = self.build_parent_execution_context();
         let extraction_prompt = context_pipeline::ARCHIVIST_EXTRACTION_PROMPT.to_string();
 
-        // Mark in-flight. We optimistically flip to complete to avoid
-        // needing a channel back from the background task; this means
-        // a failed extraction is retried after the next threshold
-        // crossing rather than immediately. Acceptable for an
-        // idempotent librarian task.
-        self.context_pipeline
-            .session_memory
-            .mark_extraction_started();
+        // Optimistically flip the extraction state to "complete" right
+        // away: we don't need a channel back from the background task
+        // because a failed extraction is idempotent — it will just be
+        // retried after the next threshold crossing. `mark_extraction_complete`
+        // also clears the `extraction_in_progress` flag, so calling it
+        // alone covers both bookkeeping steps.
         self.context_pipeline
             .session_memory
             .mark_extraction_complete();

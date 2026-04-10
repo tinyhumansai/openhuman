@@ -285,7 +285,7 @@ fn validate_skill_filter(skill_id: &str) -> Result<(), String> {
         // No runtime registered — skip validation.
         return Ok(());
     };
-    let known: Vec<String> = engine
+    let mut known: Vec<String> = engine
         .all_tools()
         .into_iter()
         .filter_map(|(_, def)| {
@@ -295,15 +295,14 @@ fn validate_skill_filter(skill_id: &str) -> Result<(), String> {
                 .map(|(prefix, _)| prefix.to_string())
         })
         .collect();
-    let mut unique = known.clone();
-    unique.sort();
-    unique.dedup();
-    if unique.iter().any(|s| s == skill_id) {
+    known.sort();
+    known.dedup();
+    if known.iter().any(|s| s == skill_id) {
         Ok(())
     } else {
         Err(format!(
             "skill_filter '{skill_id}' does not match any installed skill. Available: {}",
-            unique.join(", ")
+            known.join(", ")
         ))
     }
 }
