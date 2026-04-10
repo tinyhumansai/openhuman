@@ -19,7 +19,14 @@ use crate::openhuman::memory::ingestion_queue::{self, IngestionJob, IngestionQue
 use crate::openhuman::memory::store::types::{
     NamespaceDocumentInput, NamespaceMemoryHit, NamespaceRetrievalContext,
 };
+use crate::openhuman::memory::store::unified::profile::{self, FacetType, ProfileFacet};
 use crate::openhuman::memory::store::unified::UnifiedMemory;
+
+/// Canonical namespace for everything we know about the owner of this
+/// OpenHuman instance. Skills, the discovery agent, and the learning hook
+/// all read and write here so the system prompt has a single source of
+/// truth for "who is the user".
+pub const OWNER_NAMESPACE: &str = "owner";
 
 /// Reference-counted handle to a `MemoryClient`.
 pub type MemoryClientRef = Arc<MemoryClient>;
@@ -178,6 +185,136 @@ impl MemoryClient {
         });
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Owner identity helpers
+    //
+    // These back the `memory.updateOwner` skill host function and the
+    // owner-discovery agent. Both write paths funnel through here so that
+    // structured facts always land in the `user_profile` table and rich
+    // documents always land in the dedicated `owner` namespace.
+    // ========================================================================
+
+    /// Upsert a single structured fact about the owner into the
+    /// `user_profile` SQLite table.
+    ///
+    /// `origin` is a grep-friendly provenance tag that is appended to the
+    /// `source_segment_ids` column so we can later tell which skill or agent
+    /// asserted the fact (e.g. `"skill-owner-gmail"`, `"discovery-apify"`).
+    ///
+    /// Default confidence when the caller does not supply one is `0.8` —
+    /// high enough to beat loose conversation-derived guesses but low
+    /// enough that a later, higher-confidence write can override it.
+    pub fn profile_upsert_owner(
+        &self,
+        facet_type: FacetType,
+        key: &str,
+        value: &str,
+        confidence: Option<f64>,
+        origin: &str,
+    ) -> Result<(), String> {
+        if key.trim().is_empty() {
+            return Err("profile_upsert_owner: key must be non-empty".to_string());
+        }
+        if value.trim().is_empty() {
+            return Err("profile_upsert_owner: value must be non-empty".to_string());
+        }
+
+        let facet_id = format!("owner.{}.{}", facet_type.as_str(), key);
+        let confidence = confidence.unwrap_or(0.8).clamp(0.0, 1.0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+
+        profile::profile_upsert(
+            &self.inner.conn,
+            &facet_id,
+            &facet_type,
+            key,
+            value,
+            confidence,
+            Some(origin),
+            now,
+        )
+        .map_err(|e| format!("profile_upsert_owner: {e}"))?;
+
+        log::debug!(
+            "[owner] upsert facet type={} key={} origin={} confidence={:.2}",
+            facet_type.as_str(),
+            key,
+            origin,
+            confidence
+        );
+        Ok(())
+    }
+
+    /// Load every profile facet currently stored — used by context assembly
+    /// to populate the `## Owner` / `## User Profile` sections of the system
+    /// prompt.
+    pub fn profile_load_all(&self) -> Result<Vec<ProfileFacet>, String> {
+        profile::profile_load_all(&self.inner.conn).map_err(|e| format!("profile_load_all: {e}"))
+    }
+
+    /// Store a rich document about the owner in the dedicated `owner`
+    /// namespace. Used for content that doesn't fit the flat
+    /// `key = value` shape of the profile table — bios, email signature
+    /// blocks, discovery-agent summaries, etc.
+    ///
+    /// `origin` is stored in the document's `metadata.origin` field so
+    /// downstream inspectors can tell where the blob came from.
+    pub async fn store_owner_doc(
+        &self,
+        title: &str,
+        content: &str,
+        source_type: Option<String>,
+        origin: &str,
+    ) -> Result<String, String> {
+        if title.trim().is_empty() {
+            return Err("store_owner_doc: title must be non-empty".to_string());
+        }
+        if content.trim().is_empty() {
+            return Err("store_owner_doc: content must be non-empty".to_string());
+        }
+
+        let source_type = source_type.unwrap_or_else(|| "doc".to_string());
+        // Deterministic key so re-pushing the same title overwrites rather
+        // than duplicating (e.g. a skill re-running OAuth for the same
+        // integration should update, not spam, its bio document).
+        let key = format!("{}.{}", origin, slugify(title));
+
+        let input = NamespaceDocumentInput {
+            namespace: OWNER_NAMESPACE.to_string(),
+            key: key.clone(),
+            title: title.to_string(),
+            content: content.to_string(),
+            source_type,
+            priority: "high".to_string(),
+            tags: vec!["owner".to_string()],
+            metadata: json!({ "origin": origin }),
+            category: "owner".to_string(),
+            session_id: None,
+            document_id: None,
+        };
+
+        let doc_id = self.put_doc(input).await?;
+        log::debug!(
+            "[owner] stored doc title='{}' origin={} key={} id={}",
+            title,
+            origin,
+            key,
+            doc_id
+        );
+        Ok(doc_id)
+    }
+
+    /// Recall the raw documents currently stored in the `owner` namespace.
+    ///
+    /// Used by the context assembler to render a `## Owner` section and by
+    /// the discovery agent to avoid re-researching known facts.
+    pub async fn recall_owner_docs(&self, max_chunks: u32) -> Result<Option<String>, String> {
+        self.recall_namespace(OWNER_NAMESPACE, max_chunks).await
     }
 
     /// List documents in a namespace (or all namespaces if `None`).
@@ -367,5 +504,43 @@ impl MemoryClient {
             }
             None => self.inner.graph_query_all(subject, predicate).await,
         }
+    }
+}
+
+/// Turn a free-form title into a deterministic, filesystem-safe key
+/// segment. Used when composing owner-document keys so re-pushing the same
+/// title updates the existing document rather than duplicating it.
+fn slugify(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut last_was_dash = false;
+    for c in input.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash && !out.is_empty() {
+            out.push('-');
+            last_was_dash = true;
+        }
+    }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        out.push_str("untitled");
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugify_handles_common_cases() {
+        assert_eq!(slugify("Gmail signature bio"), "gmail-signature-bio");
+        assert_eq!(slugify("  Spaces   collapse "), "spaces-collapse");
+        assert_eq!(slugify("Weird!!!Chars???"), "weird-chars");
+        assert_eq!(slugify(""), "untitled");
+        assert_eq!(slugify("---"), "untitled");
     }
 }

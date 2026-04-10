@@ -32,9 +32,16 @@ CREATE INDEX IF NOT EXISTS idx_profile_type
 "#;
 
 /// Profile facet types.
+///
+/// `Identity` is reserved for hard facts about the owner — name, email,
+/// timezone, company, location — typically pushed by skills via
+/// `memory.updateOwner` or discovered by the owner-discovery agent. It
+/// renders first in the system prompt so the model greets the user
+/// correctly from turn zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FacetType {
+    Identity,
     Preference,
     Skill,
     Role,
@@ -45,6 +52,7 @@ pub enum FacetType {
 impl FacetType {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Identity => "identity",
             Self::Preference => "preference",
             Self::Skill => "skill",
             Self::Role => "role",
@@ -55,11 +63,26 @@ impl FacetType {
 
     pub fn from_str(s: &str) -> Self {
         match s {
+            "identity" => Self::Identity,
             "skill" => Self::Skill,
             "role" => Self::Role,
             "personality" => Self::Personality,
             "context" => Self::Context,
             _ => Self::Preference,
+        }
+    }
+
+    /// Sort order for rendering — lower values appear first in the system
+    /// prompt. Identity leads so the model knows who it's talking to before
+    /// preferences/skills/etc.
+    fn render_order(&self) -> u8 {
+        match self {
+            Self::Identity => 0,
+            Self::Role => 1,
+            Self::Preference => 2,
+            Self::Skill => 3,
+            Self::Personality => 4,
+            Self::Context => 5,
         }
     }
 }
@@ -214,30 +237,35 @@ pub fn profile_facets_by_type(
 }
 
 /// Render profile facets as a markdown section for context assembly.
+///
+/// Sections are emitted in `FacetType::render_order()` order so `Identity`
+/// leads, then `Role`, `Preference`, `Skill`, `Personality`, `Context`.
 pub fn render_profile_context(facets: &[ProfileFacet]) -> String {
     if facets.is_empty() {
         return String::new();
     }
 
-    let mut sections: std::collections::BTreeMap<String, Vec<String>> =
+    // Keyed by (render_order, type_label) so the sort is stable and we don't
+    // have to re-derive the label from the order byte.
+    let mut sections: std::collections::BTreeMap<(u8, &'static str), Vec<String>> =
         std::collections::BTreeMap::new();
 
     for facet in facets {
-        let section = facet.facet_type.as_str().to_string();
+        let key = (facet.facet_type.render_order(), facet.facet_type.as_str());
         let evidence = if facet.evidence_count > 1 {
             format!(" (confirmed {}x)", facet.evidence_count)
         } else {
             String::new()
         };
         sections
-            .entry(section)
+            .entry(key)
             .or_default()
             .push(format!("- {}: {}{}", facet.key, facet.value, evidence));
     }
 
     let mut parts = Vec::new();
-    for (section, items) in &sections {
-        parts.push(format!("### {}\n{}", capitalize(section), items.join("\n")));
+    for ((_, label), items) in &sections {
+        parts.push(format!("### {}\n{}", capitalize(label), items.join("\n")));
     }
 
     parts.join("\n\n")
@@ -608,5 +636,108 @@ mod tests {
             pref_pos, role_pos,
             "Preference and Role sections should be at different positions"
         );
+    }
+
+    #[test]
+    fn identity_facet_round_trips() {
+        let conn = setup_db();
+        profile_upsert(
+            &conn,
+            "owner.identity.full_name",
+            &FacetType::Identity,
+            "full_name",
+            "Ada Lovelace",
+            0.95,
+            Some("skill-owner-gmail"),
+            2000.0,
+        )
+        .unwrap();
+
+        let facets = profile_facets_by_type(&conn, &FacetType::Identity).unwrap();
+        assert_eq!(facets.len(), 1);
+        assert_eq!(facets[0].key, "full_name");
+        assert_eq!(facets[0].value, "Ada Lovelace");
+        assert_eq!(facets[0].facet_type, FacetType::Identity);
+    }
+
+    #[test]
+    fn identity_renders_first_and_under_identity_heading() {
+        let conn = setup_db();
+
+        // Insert in non-priority order to prove sort by render_order.
+        profile_upsert(
+            &conn,
+            "f-ctx",
+            &FacetType::Context,
+            "situation",
+            "building openhuman",
+            0.7,
+            None,
+            1000.0,
+        )
+        .unwrap();
+        profile_upsert(
+            &conn,
+            "f-pref",
+            &FacetType::Preference,
+            "theme",
+            "dark",
+            0.8,
+            None,
+            1001.0,
+        )
+        .unwrap();
+        profile_upsert(
+            &conn,
+            "f-id",
+            &FacetType::Identity,
+            "full_name",
+            "Ada Lovelace",
+            0.95,
+            None,
+            1002.0,
+        )
+        .unwrap();
+        profile_upsert(
+            &conn,
+            "f-role",
+            &FacetType::Role,
+            "title",
+            "Principal Engineer",
+            0.9,
+            None,
+            1003.0,
+        )
+        .unwrap();
+
+        let facets = profile_load_all(&conn).unwrap();
+        let rendered = render_profile_context(&facets);
+
+        assert!(
+            rendered.contains("### Identity"),
+            "should have an Identity heading"
+        );
+        assert!(
+            rendered.contains("full_name: Ada Lovelace"),
+            "identity facet should render"
+        );
+
+        // Identity should appear before Role, Role before Preference, etc.
+        let idx_identity = rendered.find("### Identity").unwrap();
+        let idx_role = rendered.find("### Role").unwrap();
+        let idx_pref = rendered.find("### Preference").unwrap();
+        let idx_context = rendered.find("### Context").unwrap();
+        assert!(idx_identity < idx_role, "Identity must render before Role");
+        assert!(idx_role < idx_pref, "Role must render before Preference");
+        assert!(
+            idx_pref < idx_context,
+            "Preference must render before Context"
+        );
+    }
+
+    #[test]
+    fn facet_type_from_str_recognizes_identity() {
+        assert_eq!(FacetType::from_str("identity"), FacetType::Identity);
+        assert_eq!(FacetType::Identity.as_str(), "identity");
     }
 }

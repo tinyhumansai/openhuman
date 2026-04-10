@@ -800,6 +800,52 @@ globalThis.memory = {
     __ops.memory_insert(JSON.stringify(metadata));
     return true;
   },
+
+  /**
+   * Push identity facts and/or a rich document about the owner of this
+   * OpenHuman instance. Facts land in the structured user_profile table;
+   * the optional document lands in the dedicated `owner` memory namespace.
+   * Both surface in every future inference turn's system prompt.
+   *
+   * @param {object} payload
+   * @param {Array<{type: string, key: string, value: string, confidence?: number}>} [payload.facts]
+   *        Structured facts about the owner. `type` is one of `"identity"`,
+   *        `"preference"`, `"skill"`, `"role"`, `"personality"`, `"context"`.
+   *        Use `"identity"` for hard biographical facts (full name, timezone,
+   *        company, email).
+   * @param {{title: string, content: string, sourceType?: string}} [payload.document]
+   *        Optional rich blob — e.g. a bio pulled from a Gmail signature
+   *        or a Notion "About me" page.
+   * @returns {boolean}
+   * @example
+   *   memory.updateOwner({
+   *     facts: [
+   *       { type: "identity", key: "full_name", value: "Ada Lovelace" },
+   *       { type: "identity", key: "company",   value: "Analytical Engines" },
+   *       { type: "role",     key: "title",     value: "Principal Engineer" },
+   *     ],
+   *     document: {
+   *       title: "Gmail signature",
+   *       content: "Ada Lovelace — Principal Engineer, Analytical Engines",
+   *     },
+   *   });
+   */
+  updateOwner: function (payload) {
+    if (!payload || typeof payload !== "object") {
+      throw new Error("memory.updateOwner requires an object payload");
+    }
+    if (
+      (!payload.facts || !payload.facts.length) &&
+      !payload.document
+    ) {
+      throw new Error(
+        "memory.updateOwner requires at least one fact or a document"
+      );
+    }
+
+    __ops.memory_update_owner(JSON.stringify(payload));
+    return true;
+  },
 };
 
 // ============================================================================
