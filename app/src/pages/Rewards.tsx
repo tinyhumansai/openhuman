@@ -4,8 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import ReferralRewardsSection from '../components/referral/ReferralRewardsSection';
 import { useUser } from '../hooks/useUser';
 import { useAppSelector } from '../store/hooks';
-
-const DISCORD_INVITE_URL = 'https://discord.com/invite/k23Kn8nK';
+import { DISCORD_INVITE_URL } from '../utils/links';
 
 interface RewardRole {
   id: string;
