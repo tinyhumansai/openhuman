@@ -17,6 +17,7 @@
 //! runtime — it is pure data so the model can be unit-tested in isolation
 //! and serialised straight from disk.
 
+use crate::openhuman::tools::ToolCategory;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -91,6 +92,22 @@ pub struct AgentDefinition {
     /// (Notion, Gmail, …) without enum variants. Overridable per-spawn.
     #[serde(default)]
     pub skill_filter: Option<String>,
+
+    /// If set, the resolved tool list is restricted to tools whose
+    /// [`crate::openhuman::tools::Tool::category`] matches this value.
+    /// This is the *primary* mechanism the orchestrator uses to spawn
+    /// dedicated tool-execution sub-agents:
+    /// - `Some(Skill)` → sub-agent only sees skill-bridge tools
+    ///   (Notion, Gmail, Telegram, …). Pair with `ModelSpec::Hint("agentic")`
+    ///   to route to the backend's agentic model.
+    /// - `Some(System)` → sub-agent only sees built-in Rust tools.
+    /// - `None` (default) → no category restriction; `tools` /
+    ///   `disallowed_tools` / `skill_filter` still apply.
+    ///
+    /// Category filtering happens *before* the `tools`/`disallowed_tools`
+    /// scope check, so a `Named` scope is a stricter-intersection override.
+    #[serde(default)]
+    pub category_filter: Option<ToolCategory>,
 
     // ── runtime limits ──────────────────────────────────────────────────
     /// Maximum tool-call iterations per spawn. Sub-agents default to a
@@ -392,6 +409,7 @@ mod tests {
             tools: ToolScope::Wildcard,
             disallowed_tools: vec![],
             skill_filter: None,
+            category_filter: None,
             max_iterations: 8,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,

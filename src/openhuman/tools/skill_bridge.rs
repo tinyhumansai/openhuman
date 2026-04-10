@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::openhuman::skills::qjs_engine::RuntimeEngine;
 use crate::openhuman::skills::types::ToolDefinition;
-use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 /// A `Tool` implementation that delegates execution to a running QuickJS skill instance.
 ///
@@ -69,6 +69,12 @@ impl Tool for SkillToolBridge {
     fn permission_level(&self) -> PermissionLevel {
         // Skill tools interact with external services; treat as write-level.
         PermissionLevel::Write
+    }
+
+    fn category(&self) -> ToolCategory {
+        // All skill-bridge tools are in the `Skill` category so sub-agent
+        // definitions with `category_filter: Some(Skill)` pick them up.
+        ToolCategory::Skill
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

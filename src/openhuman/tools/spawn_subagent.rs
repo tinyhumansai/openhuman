@@ -22,7 +22,7 @@
 //! definition by passing `skill_filter: "<skill_id>"`, which restricts
 //! the resolved tool list to tools whose names start with `{skill}__`.
 
-use super::traits::{PermissionLevel, Tool, ToolResult};
+use super::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
@@ -60,11 +60,19 @@ impl Tool for SpawnSubagentTool {
     fn description(&self) -> &str {
         "Spawn a specialised sub-agent to handle a focused sub-task. \
          The sub-agent runs with a narrower prompt, filtered tool set, \
-         and (usually) a cheaper model. Built-in agent_ids include \
-         `code_executor` (sandboxed coding), `skills_agent` (skill tool \
-         specialist; pair with `skill_filter` for per-API specialists \
-         like notion/gmail), `researcher` (web & docs), `critic` \
-         (read-only review), `tool_maker` (polyfill scripts), and \
+         and (usually) a cheaper model. \n\n\
+         Tools are grouped into two categories — `system` (built-in \
+         Rust tools: shell, file_*, cron_*, memory_*, …) and `skill` \
+         (QuickJS skill bridges: notion__*, gmail__*, …). Set \
+         `category_filter` to dedicate the sub-agent to one category; \
+         for skill-tool execution the backend's `agentic` model hint \
+         is the natural fit.\n\n\
+         Built-in agent_ids include `planner` (DAG architect), \
+         `code_executor` (sandboxed coding), `skills_agent` (skill-tool \
+         execution via the agentic model; pair with `skill_filter` for \
+         per-API specialists like notion/gmail), `researcher` (web & \
+         docs), `critic` (read-only review), `tool_maker` (polyfill \
+         scripts), `archivist` (background lesson extraction), and \
          `fork` (parallel decomposition with prefix-cache reuse). \
          Custom sub-agents defined under `<workspace>/agents/*.toml` \
          are also accepted by id."
@@ -113,6 +121,11 @@ impl Tool for SpawnSubagentTool {
                     "type": "string",
                     "description": "Optional skill id (e.g. `notion`, `gmail`) — when set, the sub-agent's tool list is restricted to tools named `{skill}__*`. Pair with `agent_id: skills_agent` for an API specialist."
                 },
+                "category_filter": {
+                    "type": "string",
+                    "enum": ["system", "skill"],
+                    "description": "Optional tool-category restriction. `skill` scopes the sub-agent to QuickJS skill-bridge tools (Notion, Gmail, Telegram, …); `system` scopes it to built-in Rust tools (shell, file_*, memory_*, …). Overrides the definition's `category_filter` for this single spawn."
+                },
                 "mode": {
                     "type": "string",
                     "enum": ["typed", "fork"],
@@ -152,6 +165,17 @@ impl Tool for SpawnSubagentTool {
             .get("skill_filter")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+
+        let category_filter_override = match args.get("category_filter").and_then(|v| v.as_str()) {
+            Some("system") => Some(ToolCategory::System),
+            Some("skill") => Some(ToolCategory::Skill),
+            Some(other) => {
+                return Ok(ToolResult::error(format!(
+                    "spawn_subagent: unknown category_filter '{other}' (expected 'system' or 'skill')"
+                )));
+            }
+            None => None,
+        };
 
         let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("typed");
 
@@ -218,6 +242,7 @@ impl Tool for SpawnSubagentTool {
         // ── Run the sub-agent ──────────────────────────────────────────
         let options = SubagentRunOptions {
             skill_filter_override,
+            category_filter_override,
             context,
             task_id: Some(task_id.clone()),
         };

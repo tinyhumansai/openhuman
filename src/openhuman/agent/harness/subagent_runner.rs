@@ -31,7 +31,7 @@ use super::definition::{AgentDefinition, PromptSource, ToolScope};
 use super::fork_context::{current_fork, current_parent, ForkContext, ParentExecutionContext};
 use crate::openhuman::agent::prompt::SystemPromptBuilder;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
-use crate::openhuman::tools::{Tool, ToolSpec};
+use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -49,6 +49,12 @@ pub struct SubagentRunOptions {
     /// resolved tool list is further restricted to tools whose name
     /// starts with `{skill}__`. Overrides `definition.skill_filter`.
     pub skill_filter_override: Option<String>,
+
+    /// Optional category override. When set, replaces
+    /// `definition.category_filter` for this single spawn. Useful when
+    /// the parent wants to reuse a generic definition but scope it to
+    /// skill or system tools for this specific call.
+    pub category_filter_override: Option<ToolCategory>,
 
     /// Optional context blob the parent wants to inject before the
     /// task prompt. Rendered as a `[Context]\n…\n` prefix.
@@ -186,6 +192,9 @@ async fn run_typed_mode(
     let temperature = definition.temperature;
 
     // ── Filter tools per definition + per-spawn override ───────────────
+    let category_filter = options
+        .category_filter_override
+        .or(definition.category_filter);
     let allowed_indices = filter_tool_indices(
         &parent.all_tools,
         &definition.tools,
@@ -194,6 +203,7 @@ async fn run_typed_mode(
             .skill_filter_override
             .as_deref()
             .or(definition.skill_filter.as_deref()),
+        category_filter,
     );
 
     let filtered_specs: Vec<ToolSpec> = allowed_indices
@@ -506,11 +516,18 @@ fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
 /// Returns indices into `parent_tools` for the tools the sub-agent may
 /// invoke. Index-based filtering avoids cloning `Box<dyn Tool>` (which
 /// isn't Clone) and lets us reuse the parent's existing instances.
+///
+/// Filters are applied in this order (shorter-circuit first):
+/// 1. `disallowed` — explicit deny list.
+/// 2. `category_filter` — restrict to `System` or `Skill` category.
+/// 3. `skill_filter` — restrict to tools named `{skill}__*`.
+/// 4. `scope` — `Wildcard` (everything remaining) or `Named` allowlist.
 fn filter_tool_indices(
     parent_tools: &[Box<dyn Tool>],
     scope: &ToolScope,
     disallowed: &[String],
     skill_filter: Option<&str>,
+    category_filter: Option<ToolCategory>,
 ) -> Vec<usize> {
     let disallow_set: HashSet<&str> = disallowed.iter().map(|s| s.as_str()).collect();
     let skill_prefix = skill_filter.map(|s| format!("{s}__"));
@@ -522,6 +539,11 @@ fn filter_tool_indices(
             let name = tool.name();
             if disallow_set.contains(name) {
                 return false;
+            }
+            if let Some(required) = category_filter {
+                if tool.category() != required {
+                    return false;
+                }
             }
             if let Some(prefix) = skill_prefix.as_deref() {
                 if !name.starts_with(prefix) {
@@ -691,6 +713,7 @@ mod tests {
             tools: ToolScope::Named(names.iter().map(|s| s.to_string()).collect()),
             disallowed_tools: vec![],
             skill_filter: None,
+            category_filter: None,
             max_iterations: 5,
             timeout_secs: None,
             sandbox_mode: super::super::definition::SandboxMode::None,
@@ -735,7 +758,7 @@ mod tests {
     fn filter_named_scope_keeps_only_named() {
         let parent: Vec<Box<dyn Tool>> = vec![stub("alpha"), stub("beta"), stub("gamma")];
         let def = make_def_named_tools(&["alpha", "gamma"]);
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
+        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None, None);
         let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
         assert_eq!(names, vec!["alpha", "gamma"]);
     }
@@ -746,7 +769,7 @@ mod tests {
         let mut def = make_def_named_tools(&[]);
         def.tools = ToolScope::Wildcard;
         def.disallowed_tools = vec!["beta".into()];
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None);
+        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, None, None);
         let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
         assert_eq!(names, vec!["alpha", "gamma"]);
     }
@@ -761,7 +784,13 @@ mod tests {
         ];
         let mut def = make_def_named_tools(&[]);
         def.tools = ToolScope::Wildcard;
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
+        let idx = filter_tool_indices(
+            &parent,
+            &def.tools,
+            &def.disallowed_tools,
+            Some("notion"),
+            None,
+        );
         let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
         assert_eq!(names, vec!["notion__search", "notion__read"]);
     }
@@ -776,9 +805,117 @@ mod tests {
             stub("gmail__send"),
         ];
         let def = make_def_named_tools(&["notion__search", "gmail__send"]);
-        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
+        let idx = filter_tool_indices(
+            &parent,
+            &def.tools,
+            &def.disallowed_tools,
+            Some("notion"),
+            None,
+        );
         let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
         assert_eq!(names, vec!["notion__search"]);
+    }
+
+    /// A stub tool that claims to be a skill-category tool, so we can
+    /// exercise `filter_tool_indices` / `category_filter` without
+    /// needing the real skill-bridge runtime.
+    struct SkillStubTool {
+        name: &'static str,
+    }
+
+    #[async_trait]
+    impl Tool for SkillStubTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "skill stub"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult::success("ok"))
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::Write
+        }
+        fn category(&self) -> ToolCategory {
+            ToolCategory::Skill
+        }
+    }
+
+    fn skill_stub(name: &'static str) -> Box<dyn Tool> {
+        Box::new(SkillStubTool { name })
+    }
+
+    #[test]
+    fn filter_category_skill_keeps_only_skill_tools() {
+        let parent: Vec<Box<dyn Tool>> = vec![
+            stub("file_read"),
+            stub("shell"),
+            skill_stub("notion__search"),
+            skill_stub("gmail__send"),
+        ];
+        let def = make_def_named_tools(&[]); // Named([])
+                                             // Wildcard + Skill category → only skill-category tools.
+        let mut def = def;
+        def.tools = ToolScope::Wildcard;
+        let idx = filter_tool_indices(
+            &parent,
+            &def.tools,
+            &def.disallowed_tools,
+            None,
+            Some(ToolCategory::Skill),
+        );
+        let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
+        assert_eq!(names, vec!["notion__search", "gmail__send"]);
+    }
+
+    #[test]
+    fn filter_category_system_excludes_skill_tools() {
+        let parent: Vec<Box<dyn Tool>> = vec![
+            stub("file_read"),
+            skill_stub("notion__search"),
+            stub("shell"),
+        ];
+        let mut def = make_def_named_tools(&[]);
+        def.tools = ToolScope::Wildcard;
+        let idx = filter_tool_indices(
+            &parent,
+            &def.tools,
+            &def.disallowed_tools,
+            None,
+            Some(ToolCategory::System),
+        );
+        let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
+        assert_eq!(names, vec!["file_read", "shell"]);
+    }
+
+    #[test]
+    fn filter_category_and_skill_filter_compose() {
+        // Category=Skill AND skill_filter=notion → only notion__* tools
+        // that are also Skill-category.
+        let parent: Vec<Box<dyn Tool>> = vec![
+            skill_stub("notion__search"),
+            skill_stub("notion__read"),
+            skill_stub("gmail__send"),
+            stub("file_read"),
+            // A pathological system-category tool with a "notion__"
+            // name prefix — the category filter should still exclude it.
+            stub("notion__fake"),
+        ];
+        let mut def = make_def_named_tools(&[]);
+        def.tools = ToolScope::Wildcard;
+        let idx = filter_tool_indices(
+            &parent,
+            &def.tools,
+            &def.disallowed_tools,
+            Some("notion"),
+            Some(ToolCategory::Skill),
+        );
+        let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
+        assert_eq!(names, vec!["notion__search", "notion__read"]);
     }
 
     #[test]
@@ -953,6 +1090,7 @@ mod tests {
                 "summarise X",
                 SubagentRunOptions {
                     skill_filter_override: None,
+                    category_filter_override: None,
                     context: None,
                     task_id: Some("t1".into()),
                 },
@@ -1026,6 +1164,7 @@ mod tests {
                 "lookup",
                 SubagentRunOptions {
                     skill_filter_override: Some("notion".into()),
+                    category_filter_override: None,
                     context: None,
                     task_id: None,
                 },

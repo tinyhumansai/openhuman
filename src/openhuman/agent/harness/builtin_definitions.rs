@@ -46,8 +46,16 @@ pub fn from_archetype(arch: AgentArchetype) -> AgentDefinition {
 
     // SkillsAgent's default skill filter is None — meaning "all skill tools".
     // Per-API specialists (Notion, Gmail, …) are layered on top by setting
-    // `skill_filter` either in YAML (custom definition) or as a per-spawn arg.
+    // `skill_filter` either in a custom TOML definition or as a per-spawn arg.
     let skill_filter = None;
+
+    // Category filter: the SkillsAgent archetype is *only* allowed to use
+    // skill-bridged tools. Every other archetype is free to use system
+    // tools (their tool whitelists further narrow the actual set).
+    let category_filter = match arch {
+        AgentArchetype::SkillsAgent => Some(crate::openhuman::tools::ToolCategory::Skill),
+        _ => None,
+    };
 
     // Sub-agents always run with the cheaper, narrower archetype model
     // hint. Use `ModelSpec::Inherit` if you want them to share the parent's
@@ -81,6 +89,7 @@ pub fn from_archetype(arch: AgentArchetype) -> AgentDefinition {
         tools,
         disallowed_tools: vec![],
         skill_filter,
+        category_filter,
         max_iterations: arch.default_max_iterations(),
         timeout_secs: None,
         sandbox_mode,
@@ -105,7 +114,6 @@ pub fn fork_definition() -> AgentDefinition {
             .into(),
         display_name: Some("Fork".into()),
         // Prompt source is irrelevant — the runner reads from ForkContext.
-        // We still set a placeholder so YAML round-trips work.
         system_prompt: PromptSource::Inline(String::new()),
         // Fork preserves bytes — DO NOT strip anything from the parent's prompt.
         omit_identity: false,
@@ -121,6 +129,7 @@ pub fn fork_definition() -> AgentDefinition {
         tools: ToolScope::Wildcard,
         disallowed_tools: vec![],
         skill_filter: None,
+        category_filter: None,
         // Fork inherits the parent's max iterations from the runtime.
         max_iterations: 15,
         timeout_secs: None,

@@ -16,6 +16,42 @@ pub enum ToolScope {
     CliRpcOnly,
 }
 
+/// Category of a tool — used by the sub-agent runner to scope which
+/// tools a given sub-agent is allowed to see.
+///
+/// The distinction matters because:
+///
+/// - **System tools** are built-in Rust implementations (shell, file_read,
+///   file_write, cron_*, memory_*, …) that run inside the core process
+///   with direct host access.
+/// - **Skill tools** are QuickJS skill exports bridged through
+///   [`crate::openhuman::tools::skill_bridge::SkillToolBridge`]. They
+///   talk to external services (Notion, Gmail, Telegram, …) via
+///   user-installed skill packages.
+///
+/// The orchestrator uses this category to spawn dedicated tool-execution
+/// sub-agents: one scoped to `Skill` for service integrations (running
+/// with the backend's `agentic` model hint), and others scoped to
+/// `System` for code/file/host work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCategory {
+    /// Built-in Rust tools with direct host access.
+    #[default]
+    System,
+    /// QuickJS skill tools bridged from the runtime engine.
+    Skill,
+}
+
+impl std::fmt::Display for ToolCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::System => write!(f, "system"),
+            Self::Skill => write!(f, "skill"),
+        }
+    }
+}
+
 /// Permission level required to execute a tool.
 ///
 /// Channels can set a maximum permission level to restrict which tools
@@ -83,6 +119,17 @@ pub trait Tool: Send + Sync {
     /// Override to restrict (e.g. `CliRpcOnly` for phone calls).
     fn scope(&self) -> ToolScope {
         ToolScope::All
+    }
+
+    /// Category of this tool — `System` for built-in Rust tools (default)
+    /// or `Skill` for tools bridged from the QuickJS skill runtime.
+    ///
+    /// The sub-agent runner uses this to filter the parent's tool
+    /// registry when a sub-agent definition sets `category_filter`.
+    /// Skill-bridged tools override this to return
+    /// [`ToolCategory::Skill`].
+    fn category(&self) -> ToolCategory {
+        ToolCategory::System
     }
 
     /// Get the full spec for LLM registration

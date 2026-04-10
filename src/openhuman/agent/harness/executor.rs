@@ -304,6 +304,7 @@ async fn execute_level(
 
             let options = super::subagent_runner::SubagentRunOptions {
                 skill_filter_override: None,
+                category_filter_override: None,
                 context: context_blob,
                 task_id: Some(tid.clone()),
             };
