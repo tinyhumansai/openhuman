@@ -15,8 +15,8 @@ mod identity_cost;
 mod learning;
 mod load;
 pub use load::{
-    clear_active_user, default_root_openhuman_dir, read_active_user_id, user_openhuman_dir,
-    write_active_user_id,
+    clear_active_user, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,
+    user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
 };
 mod local_ai;
 mod observability;
