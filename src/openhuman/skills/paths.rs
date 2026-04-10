@@ -132,11 +132,34 @@ fn legacy_unscoped_paths() -> SkillsRuntimePaths {
 mod tests {
     use super::*;
 
+    /// RAII guard that restores `OPENHUMAN_WORKSPACE` on drop so tests
+    /// remain panic-safe and don't pollute sibling tests that read the
+    /// same env var.
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     #[test]
     fn legacy_fallback_uses_env_workspace_when_set() {
-        // Save & restore to avoid polluting other tests that read the env var.
-        let previous = std::env::var("OPENHUMAN_WORKSPACE").ok();
-        std::env::set_var("OPENHUMAN_WORKSPACE", "/tmp/openhuman-test-paths");
+        let _guard = EnvGuard::set("OPENHUMAN_WORKSPACE", "/tmp/openhuman-test-paths");
         let paths = legacy_unscoped_paths();
         assert_eq!(
             paths.skills_data_dir,
@@ -146,9 +169,5 @@ mod tests {
             paths.workspace_dir,
             PathBuf::from("/tmp/openhuman-test-paths/workspace")
         );
-        match previous {
-            Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
-            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
-        }
     }
 }

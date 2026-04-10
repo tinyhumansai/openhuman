@@ -168,6 +168,15 @@ class SkillManager {
     }
 
     // No frontend runtime — dispatch via core RPC pass-through.
+    //
+    // The core side returns `null` (not an error) when the skill has no
+    // `onSetupStart` handler — see `handle_js_call` in
+    // `src/openhuman/skills/qjs_skill_instance/js_handlers.rs`, which
+    // falls through to `return "null"` when the function is missing.
+    // So any exception thrown here is a *real* failure (skill not
+    // running, RPC transport error, JS exception in the handler, …)
+    // and must be propagated so the caller can surface it to the user
+    // instead of silently pretending setup succeeded.
     try {
       const result = (await callCoreRpc({
         method: "openhuman.skills_setup_start",
@@ -184,16 +193,13 @@ class SkillManager {
       }
       return result.step;
     } catch (err) {
-      // Pure OAuth skills with no onSetupStart handler end up here — that
-      // is not an error, it means OAuth completion alone is the entire
-      // setup flow. Return null so the wizard shows the success screen.
-      console.log(
-        "[SkillManager] setup_start core fallback failed — assuming no setup steps",
+      console.warn(
+        "[SkillManager] setup_start core fallback failed",
         skillId,
         err,
       );
       emitSkillStateChange(skillId);
-      return null;
+      throw err;
     }
   }
 

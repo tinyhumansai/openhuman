@@ -31,18 +31,29 @@ export default function SkillSetupModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const snap = useSkillSnapshot(skillId);
   const setupComplete = snap?.setup_complete ?? false;
-  // Lock the mode in at mount time. If we opened the modal while the skill
-  // was not yet set up, we stay in the setup wizard for the whole session
-  // even after OAuth flips `setup_complete` to true — that way the wizard's
-  // own "complete" phase shows a success screen instead of being yanked
-  // out from under the user and replaced by the management panel.
+  // Lock the mode in once we have a concrete snapshot — `useSkillSnapshot`
+  // returns `null` on the first render while it fetches, so reading
+  // `setup_complete` at mount time would always see `false` and wrongly
+  // default an already-connected skill into the setup wizard.
+  //
+  // We keep `sessionMode` stable after the first resolution so that an
+  // OAuth flow that flips `setup_complete` to true mid-wizard does not
+  // yank the user out of the wizard's own "complete" success screen.
   // The user can still switch modes explicitly via `setMode` below
   // (e.g. SkillManagementPanel's "Reconfigure" button).
-  const [sessionMode, setSessionMode] = useState<"manage" | "setup">(() =>
-    !hasSetup || setupComplete ? "manage" : "setup",
+  const [sessionMode, setSessionMode] = useState<"manage" | "setup" | null>(
+    () => (!hasSetup ? "manage" : null),
   );
-  const mode = sessionMode;
+
+  useEffect(() => {
+    if (sessionMode !== null) return;
+    // Wait for the first concrete snapshot before deciding.
+    if (snap === null) return;
+    setSessionMode(setupComplete ? "manage" : "setup");
+  }, [sessionMode, snap, setupComplete]);
+
   const setMode = (m: "manage" | "setup") => setSessionMode(m);
+  const mode = sessionMode;
 
   // Handle escape key
   useEffect(() => {
@@ -76,7 +87,11 @@ export default function SkillSetupModal({
   };
 
   const headerTitle =
-    mode === "manage" ? `Manage ${skillName}` : `Connect ${skillName}`;
+    mode === null
+      ? skillName
+      : mode === "manage"
+        ? `Manage ${skillName}`
+        : `Connect ${skillName}`;
 
   const modalContent = (
     <div
@@ -147,7 +162,11 @@ export default function SkillSetupModal({
 
         {/* Content */}
         <div className="p-4">
-          {mode === "manage" ? (
+          {mode === null ? (
+            <div className="flex items-center justify-center py-8 text-sm text-stone-400">
+              Loading…
+            </div>
+          ) : mode === "manage" ? (
             <SkillManagementPanel
               skillId={skillId}
               onClose={onClose}

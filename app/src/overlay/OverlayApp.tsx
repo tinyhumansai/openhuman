@@ -258,7 +258,9 @@ export default function OverlayApp() {
       setBubble({
         id: payload?.id ?? `attention-${Date.now()}`,
         text: `"${message}"`,
-        tone: payload?.tone ?? 'accent',
+        // Match the Rust-side `OverlayAttentionTone::default()` (Neutral)
+        // so missing/legacy payloads render as the neutral slate bubble.
+        tone: payload?.tone ?? 'neutral',
       });
       scheduleDismiss(ttl);
     },
@@ -297,17 +299,13 @@ export default function OverlayApp() {
           console.debug('[overlay] socket disconnected:', reason);
         });
 
-        // Dictation hotkey (push or toggle mode, same event shape).
+        // Core emits each event under both colon and underscore forms
+        // (see `emit_with_aliases` in `src/core/socketio.rs`). Subscribe
+        // only to the canonical colon-delimited form so each signal fires
+        // the handler exactly once.
         socket.on('dictation:toggle', handleDictationToggle);
-        socket.on('dictation_toggle', handleDictationToggle);
-
-        // Final transcription → briefly reflect in the overlay.
         socket.on('dictation:transcription', handleDictationTranscription);
-        socket.on('dictation_transcription', handleDictationTranscription);
-
-        // Attention messages from the core (subconscious, heartbeat, …).
         socket.on('overlay:attention', handleAttention);
-        socket.on('overlay_attention', handleAttention);
 
         socket.connect();
       } catch (err) {

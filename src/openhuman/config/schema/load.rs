@@ -638,9 +638,16 @@ impl Config {
         }
 
         if let Ok(scope_raw) = std::env::var("OPENHUMAN_PROXY_SCOPE") {
-            if !scope_raw.trim().is_empty() {
-                if let Some(scope) = parse_proxy_scope(&scope_raw) {
-                    self.proxy.scope = scope;
+            let trimmed = scope_raw.trim();
+            if !trimmed.is_empty() {
+                match parse_proxy_scope(trimmed) {
+                    Some(scope) => self.proxy.scope = scope,
+                    None => {
+                        tracing::warn!(
+                            "Invalid OPENHUMAN_PROXY_SCOPE value {:?} ignored",
+                            trimmed
+                        );
+                    }
                 }
             }
         }
