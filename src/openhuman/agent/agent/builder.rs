@@ -354,9 +354,12 @@ impl Agent {
         let mut post_turn_hooks: Vec<Arc<dyn crate::openhuman::agent::hooks::PostTurnHook>> =
             Vec::new();
         if config.learning.enabled {
-            let full_config = Arc::new(config.clone());
-
             if config.learning.reflection_enabled {
+                // Only the reflection hook needs an owned snapshot of the
+                // full config, so create the `Arc` lazily inside this
+                // branch instead of paying for the clone whenever
+                // `learning.enabled` is true.
+                let full_config = Arc::new(config.clone());
                 // For cloud reflection, wrap the provider in an Arc.
                 // For local, no provider needed.
                 let reflection_provider: Option<Arc<dyn crate::openhuman::providers::Provider>> =
