@@ -636,7 +636,7 @@ async fn handle_message(
         }
         SkillMessage::Stop { reply } => {
             // Clean up lifecycle and clear credentials from the runtime
-            let _ = call_lifecycle(rt, ctx, "stop").await;
+            let _ = call_lifecycle(rt, ctx, "stop", None).await;
 
             let clear_code = r#"(function() {
                 if (typeof globalThis.oauth !== 'undefined' && globalThis.oauth.__setCredential) {

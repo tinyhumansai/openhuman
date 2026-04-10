@@ -11,17 +11,19 @@ use tokio::sync::mpsc;
 
 use crate::openhuman::{memory::MemoryClientRef, skills::quickjs_libs::qjs_ops};
 
+use super::super::instance::build_start_credentials_arg;
+use super::super::js_handlers::{call_lifecycle, handle_js_call, handle_js_void_call};
 use super::{persist_state_to_memory, MemoryWriteJob};
-use crate::openhuman::skills::qjs_skill_instance::js_handlers::{
-    handle_js_call, handle_js_void_call,
-};
 
 /// Handle `oauth/complete` RPC.
 ///
 /// 1. Injects the new OAuth credential into the JS runtime.
 /// 2. Persists the credential to `{data_dir}/oauth_credential.json`.
 /// 3. Injects and persists the `clientKeyShare` if present.
-/// 4. Invokes the `onOAuthComplete` lifecycle handler in JS.
+/// 4. Invokes `start({ oauth, auth })` in JS so the skill activates.
+///
+/// There is no separate `onOAuthComplete` JS hook anymore — `start()` is the
+/// single entry point that receives credentials and owns activation.
 pub(crate) async fn handle_oauth_complete(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
@@ -97,8 +99,21 @@ pub(crate) async fn handle_oauth_complete(
         }
     }
 
-    let params_str = serde_json::to_string(&params).unwrap_or_else(|_| "{}".to_string());
-    handle_js_call(rt, ctx, "onOAuthComplete", &params_str).await
+    // Invoke start({ oauth, auth }) so the skill picks up the new credential
+    // and activates (registers cron, etc.). start() is the single entry point
+    // for "this skill is now connected"; there is no separate onOAuthComplete
+    // hook — the skill just reads args.oauth in start() to grab metadata like
+    // credentialId / accountLabel.
+    let start_args = build_start_credentials_arg(data_dir);
+    if let Err(e) = call_lifecycle(rt, ctx, "start", Some(&start_args)).await {
+        log::warn!(
+            "[skill:{}] start(creds) after oauth/complete failed: {e}",
+            skill_id
+        );
+        return Err(e);
+    }
+
+    Ok(serde_json::json!({ "ok": true }))
 }
 
 /// Handle `oauth/revoked` RPC.
@@ -283,6 +298,18 @@ pub(crate) async fn handle_auth_complete(
         .unwrap_or_else(|_| "null".to_string());
         let oauth_path = data_dir.join("oauth_credential.json");
         let _ = std::fs::write(&oauth_path, &oauth_cred_json);
+    }
+
+    // Validation passed and credentials are persisted — re-call start() so the
+    // skill picks up the new credentials and registers cron etc. start() is
+    // expected to be idempotent (re-registering an existing cron is a no-op
+    // because skills unregister before they register).
+    let start_args = build_start_credentials_arg(data_dir);
+    if let Err(e) = call_lifecycle(rt, ctx, "start", Some(&start_args)).await {
+        log::warn!(
+            "[skill:{}] start(creds) after auth/complete failed: {e}",
+            skill_id
+        );
     }
 
     result

@@ -22,6 +22,32 @@ use super::js_helpers::{
 };
 use super::types::{BridgeDeps, QjsSkillInstance, SkillState};
 
+/// Read persisted oauth/auth credentials from a skill's data directory and
+/// produce a JS expression suitable for `start({ oauth, auth })`.
+///
+/// This is the canonical shape passed to `start()`: a single object with
+/// `oauth` and `auth` keys, each either an object or `null`. Skills can read
+/// either field directly or rely on the runtime bridges that have already
+/// been populated by the `restore_*_credential` helpers.
+pub(crate) fn build_start_credentials_arg(data_dir: &std::path::Path) -> String {
+    fn read_json(path: &std::path::Path) -> serde_json::Value {
+        match std::fs::read_to_string(path) {
+            Ok(s) if !s.trim().is_empty() => {
+                serde_json::from_str(&s).unwrap_or(serde_json::Value::Null)
+            }
+            _ => serde_json::Value::Null,
+        }
+    }
+
+    let oauth = read_json(&data_dir.join("oauth_credential.json"));
+    let auth = read_json(&data_dir.join("auth_credential.json"));
+    let arg = serde_json::json!({
+        "oauth": oauth,
+        "auth": auth,
+    });
+    serde_json::to_string(&arg).unwrap_or_else(|_| "{\"oauth\":null,\"auth\":null}".to_string())
+}
+
 impl QjsSkillInstance {
     /// Create a new QuickJS skill instance.
     ///
@@ -212,7 +238,7 @@ impl QjsSkillInstance {
             restore_client_key(&ctx, &config.skill_id, &data_dir).await;
 
             // Trigger the `init()` lifecycle callback in the JS skill
-            if let Err(e) = call_lifecycle(&rt, &ctx, "init").await {
+            if let Err(e) = call_lifecycle(&rt, &ctx, "init", None).await {
                 let mut s = state.write();
                 s.status = SkillStatus::Error;
                 s.error = Some(format!("init() failed: {e}"));
@@ -223,8 +249,22 @@ impl QjsSkillInstance {
             // Execute any microtasks or pending promises scheduled during init()
             drive_jobs(&rt).await;
 
+            // Build the credential bag passed to `start(creds)`. We read the
+            // persisted credential files from disk so the skill receives the
+            // canonical view that matches what the bridges (`oauth`, `auth`)
+            // already see in JS land. If no creds are stored we still pass an
+            // explicit `{ oauth: null, auth: null }` so start() always has a
+            // well-defined shape — that is the whole point of this contract.
+            let start_args = build_start_credentials_arg(&data_dir);
+            log::info!(
+                "[skill:{}] Calling start() with credentials (oauth={}, auth={})",
+                config.skill_id,
+                !start_args.contains("\"oauth\":null"),
+                !start_args.contains("\"auth\":null"),
+            );
+
             // Trigger the `start()` lifecycle callback
-            if let Err(e) = call_lifecycle(&rt, &ctx, "start").await {
+            if let Err(e) = call_lifecycle(&rt, &ctx, "start", Some(&start_args)).await {
                 let mut s = state.write();
                 s.status = SkillStatus::Error;
                 s.error = Some(format!("start() failed: {e}"));

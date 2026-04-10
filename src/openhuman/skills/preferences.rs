@@ -1,8 +1,10 @@
 //! Persistent skill preferences management.
 //!
-//! This module manages user-defined preferences for skills, such as whether a skill
-//! is enabled and whether its initial setup has been completed. Preferences are
-//! persisted to a JSON file on disk, ensuring they survive application restarts.
+//! This module manages user-defined preferences for skills. The only thing it
+//! tracks today is whether a skill's setup process (e.g. OAuth) has been
+//! completed. Setup completion is the single source of truth for "should this
+//! skill be running": there is no separate `enabled` toggle. Preferences are
+//! persisted to a JSON file on disk so they survive application restarts.
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -10,11 +12,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Represents the user's persistent preferences for a single skill.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SkillPreference {
-    /// Whether the skill is currently enabled by the user.
-    pub enabled: bool,
     /// Whether the skill's required setup process (e.g., OAuth) has been completed.
+    /// A skill with `setup_complete = true` is automatically started by the runtime.
     #[serde(default)]
     pub setup_complete: bool,
 }
@@ -44,6 +45,8 @@ impl PreferencesStore {
     /// Loads preferences from the persistent file on disk into the in-memory cache.
     ///
     /// If the file is missing or contains invalid JSON, the cache is initialized as empty.
+    /// Legacy entries that still carry an `enabled` field are silently ignored — only
+    /// `setup_complete` is read.
     fn load(&self) {
         if let Ok(content) = std::fs::read_to_string(&self.path) {
             if let Ok(prefs) = serde_json::from_str::<HashMap<String, SkillPreference>>(&content) {
@@ -67,58 +70,30 @@ impl PreferencesStore {
         }
     }
 
-    /// Retrieves the preference for a skill, returning a default object if no preference exists.
-    fn get_or_default(&self, skill_id: &str) -> SkillPreference {
-        self.cache
-            .read()
-            .get(skill_id)
-            .cloned()
-            .unwrap_or(SkillPreference {
-                enabled: false,
-                setup_complete: false,
-            })
-    }
-
     /// Updates the preference for a skill using the provided closure and persists the change.
     fn update<F: FnOnce(&mut SkillPreference)>(&self, skill_id: &str, f: F) {
         let mut cache = self.cache.write();
         let pref = cache
             .entry(skill_id.to_string())
-            .or_insert(SkillPreference {
-                enabled: false,
-                setup_complete: false,
-            });
+            .or_insert(SkillPreference::default());
         f(pref);
         drop(cache); // Explicitly release lock before saving to avoid potential deadlocks
         self.save();
     }
 
-    /// Returns whether a skill is explicitly enabled by the user.
-    ///
-    /// Returns `None` if no preference has been set for this skill.
-    pub fn is_enabled(&self, skill_id: &str) -> Option<bool> {
-        self.cache.read().get(skill_id).map(|p| p.enabled)
-    }
-
-    /// Sets the enabled preference for a skill and persists it to disk.
-    pub fn set_enabled(&self, skill_id: &str, enabled: bool) {
-        self.update(skill_id, |p| p.enabled = enabled);
-    }
-
     /// Checks if a skill's setup process has been recorded as complete.
     pub fn is_setup_complete(&self, skill_id: &str) -> bool {
-        self.get_or_default(skill_id).setup_complete
+        self.cache
+            .read()
+            .get(skill_id)
+            .map(|p| p.setup_complete)
+            .unwrap_or(false)
     }
 
     /// Marks a skill's setup as complete (or incomplete) and persists the state.
-    ///
-    /// If marked as complete, the skill is also automatically marked as `enabled`.
     pub fn set_setup_complete(&self, skill_id: &str, complete: bool) {
         self.update(skill_id, |p| {
             p.setup_complete = complete;
-            if complete {
-                p.enabled = true;
-            }
         });
         log::info!(
             "[preferences] setup_complete for '{}' set to {}",
@@ -136,15 +111,12 @@ impl PreferencesStore {
     ///
     /// Priority order:
     /// 1. If `setup_complete` is true, the skill should start.
-    /// 2. If an explicit `enabled` preference exists, use it.
-    /// 3. Otherwise, fall back to the `auto_start` value from the skill's manifest.
+    /// 2. Otherwise, fall back to the `auto_start` value from the skill's manifest.
     pub fn resolve_should_start(&self, skill_id: &str, manifest_auto_start: bool) -> bool {
-        let pref = self.cache.read().get(skill_id).cloned();
-        match pref {
-            Some(p) if p.setup_complete => true,
-            Some(p) => p.enabled,
-            None => manifest_auto_start,
+        if self.is_setup_complete(skill_id) {
+            return true;
         }
+        manifest_auto_start
     }
 }
 
@@ -159,21 +131,13 @@ mod tests {
     }
 
     #[test]
-    fn enable_disable_roundtrip() {
+    fn setup_complete_roundtrip() {
         let (store, _dir) = temp_store();
-        assert_eq!(store.is_enabled("my-skill"), None);
-        store.set_enabled("my-skill", true);
-        assert_eq!(store.is_enabled("my-skill"), Some(true));
-        store.set_enabled("my-skill", false);
-        assert_eq!(store.is_enabled("my-skill"), Some(false));
-    }
-
-    #[test]
-    fn setup_complete_also_enables() {
-        let (store, _dir) = temp_store();
+        assert!(!store.is_setup_complete("s1"));
         store.set_setup_complete("s1", true);
         assert!(store.is_setup_complete("s1"));
-        assert_eq!(store.is_enabled("s1"), Some(true));
+        store.set_setup_complete("s1", false);
+        assert!(!store.is_setup_complete("s1"));
     }
 
     #[test]
@@ -182,12 +146,10 @@ mod tests {
         let path = dir.path().to_path_buf();
         {
             let store = PreferencesStore::new(&path);
-            store.set_enabled("x", true);
             store.set_setup_complete("x", true);
         }
         // Reload from disk
         let store2 = PreferencesStore::new(&path);
-        assert_eq!(store2.is_enabled("x"), Some(true));
         assert!(store2.is_setup_complete("x"));
     }
 
@@ -195,7 +157,6 @@ mod tests {
     fn missing_file_returns_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let store = PreferencesStore::new(&dir.path().to_path_buf());
-        assert_eq!(store.is_enabled("nonexistent"), None);
         assert!(!store.is_setup_complete("nonexistent"));
     }
 
@@ -205,24 +166,15 @@ mod tests {
         let file = dir.path().join("skill-preferences.json");
         std::fs::write(&file, "not valid json {{{}").unwrap();
         let store = PreferencesStore::new(&dir.path().to_path_buf());
-        assert_eq!(store.is_enabled("any"), None);
+        assert!(!store.is_setup_complete("any"));
     }
 
     #[test]
-    fn resolve_should_start_setup_complete_overrides() {
+    fn resolve_should_start_setup_complete_overrides_manifest() {
         let (store, _dir) = temp_store();
         store.set_setup_complete("s1", true);
         // Even if manifest says false, setup_complete wins
         assert!(store.resolve_should_start("s1", false));
-    }
-
-    #[test]
-    fn resolve_should_start_falls_back_to_enabled() {
-        let (store, _dir) = temp_store();
-        store.set_enabled("s1", true);
-        assert!(store.resolve_should_start("s1", false));
-        store.set_enabled("s1", false);
-        assert!(!store.resolve_should_start("s1", true));
     }
 
     #[test]
@@ -235,11 +187,11 @@ mod tests {
     #[test]
     fn get_all_returns_complete_map() {
         let (store, _dir) = temp_store();
-        store.set_enabled("a", true);
-        store.set_enabled("b", false);
+        store.set_setup_complete("a", true);
+        store.set_setup_complete("b", false);
         let all = store.get_all();
         assert_eq!(all.len(), 2);
-        assert!(all["a"].enabled);
-        assert!(!all["b"].enabled);
+        assert!(all["a"].setup_complete);
+        assert!(!all["b"].setup_complete);
     }
 }

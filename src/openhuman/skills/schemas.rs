@@ -893,35 +893,47 @@ fn handle_skills_data_stats(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-/// RPC handler to enable a skill in user preferences and start it.
+/// RPC handler to enable a skill: marks setup_complete and starts it.
+///
+/// Skills no longer have a separate `enabled` toggle — the only state is
+/// "setup is complete" (driven by oauth/auth completion). This handler exists
+/// as a back-compat shim for the frontend; it sets `setup_complete = true`
+/// and starts the skill in one shot.
 fn handle_skills_enable(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
         let engine = require_engine()?;
-        engine.enable_skill(&p.skill_id).await?;
+        engine.preferences().set_setup_complete(&p.skill_id, true);
+        engine.start_skill(&p.skill_id).await?;
         Ok(serde_json::json!({ "ok": true }))
     })
 }
 
-/// RPC handler to disable a skill in user preferences and stop it.
+/// RPC handler to disable a skill: clears setup_complete and stops it.
 fn handle_skills_disable(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
         let engine = require_engine()?;
-        engine.disable_skill(&p.skill_id).await?;
+        engine.preferences().set_setup_complete(&p.skill_id, false);
+        if engine.get_skill_state(&p.skill_id).is_some() {
+            engine.stop_skill(&p.skill_id).await?;
+        }
         Ok(serde_json::json!({ "ok": true }))
     })
 }
 
-/// RPC handler to check if a skill is currently enabled in user preferences.
+/// RPC handler to check if a skill should currently be running.
+///
+/// Reports `setup_complete` so the frontend's existing "enabled" UI keeps
+/// working without learning a new term.
 fn handle_skills_is_enabled(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let p: SkillIdParams =
             serde_json::from_value(Value::Object(params)).map_err(|e| e.to_string())?;
         let engine = require_engine()?;
-        let enabled = engine.is_skill_enabled(&p.skill_id);
+        let enabled = engine.preferences().is_setup_complete(&p.skill_id);
         Ok(serde_json::json!({ "enabled": enabled }))
     })
 }

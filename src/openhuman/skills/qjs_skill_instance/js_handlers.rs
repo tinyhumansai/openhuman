@@ -16,12 +16,21 @@ use super::js_helpers::{drive_jobs, format_js_exception};
 /// Handles both synchronous and asynchronous (Promise-returning) lifecycle
 /// methods like `init`, `start`, and `stop`. If the JS function returns a Promise,
 /// this handler will poll for completion for up to 30 seconds.
+///
+/// `args_json` is a JavaScript expression injected as the first argument when
+/// calling the lifecycle function. Pass `None` to call the function with no
+/// arguments. Use this to forward credentials into `start(creds)`.
 pub(crate) async fn call_lifecycle(
     rt: &rquickjs::AsyncRuntime,
     ctx: &rquickjs::AsyncContext,
     name: &str,
+    args_json: Option<&str>,
 ) -> Result<(), String> {
     let name = name.to_string();
+    // Default to no argument so existing call sites (init, stop) keep their
+    // current behavior. When args_json is supplied it must already be a valid
+    // JS expression (e.g. JSON or `null`).
+    let args_expr = args_json.unwrap_or("").to_string();
 
     // First, try to initiate the call in the JS context
     let is_promise = ctx
@@ -35,7 +44,7 @@ pub(crate) async fn call_lifecycle(
                     : (globalThis.__skill || globalThis);
                 var fn = skill.{name} || globalThis.{name};
                 if (typeof fn === 'function') {{
-                    var result = fn.call(skill);
+                    var result = fn.call(skill, {args_expr});
                     if (result && typeof result.then === 'function') {{
                         // Function returned a Promise, set up global tracking flags
                         globalThis.__pendingLifecycleDone = false;
