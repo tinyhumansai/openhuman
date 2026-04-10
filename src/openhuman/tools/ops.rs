@@ -75,6 +75,13 @@ pub fn all_tools_with_runtime(
         Box::new(ShellTool::new(security.clone(), runtime)),
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security.clone())),
+        // Sub-agent dispatch — lets the parent agent delegate focused
+        // sub-tasks (research, code execution, API specialists, …) by
+        // calling `spawn_subagent { agent_id, prompt, … }`. The runner
+        // builds a narrow Agent from an `AgentDefinition` lookup and
+        // returns a single text result. See
+        // `agent::harness::subagent_runner` for the dispatch path.
+        Box::new(SpawnSubagentTool::new()),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),

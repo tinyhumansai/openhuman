@@ -32,9 +32,9 @@ use std::sync::Arc;
 /// executes tools based on model requests, and interacts with the memory system
 /// to maintain context across turns.
 pub struct Agent {
-    provider: Box<dyn Provider>,
-    tools: Vec<Box<dyn Tool>>,
-    tool_specs: Vec<ToolSpec>,
+    provider: Arc<dyn Provider>,
+    tools: Arc<Vec<Box<dyn Tool>>>,
+    tool_specs: Arc<Vec<ToolSpec>>,
     memory: Arc<dyn Memory>,
     prompt_builder: SystemPromptBuilder,
     tool_dispatcher: Box<dyn ToolDispatcher>,
@@ -57,7 +57,7 @@ pub struct Agent {
 
 /// A builder for creating `Agent` instances with custom configuration.
 pub struct AgentBuilder {
-    provider: Option<Box<dyn Provider>>,
+    provider: Option<Arc<dyn Provider>>,
     tools: Option<Vec<Box<dyn Tool>>>,
     memory: Option<Arc<dyn Memory>>,
     prompt_builder: Option<SystemPromptBuilder>,
@@ -111,7 +111,18 @@ impl AgentBuilder {
     }
 
     /// Sets the AI provider for the agent.
+    ///
+    /// Accepts a `Box<dyn Provider>` for backward compatibility but stores
+    /// the provider as an `Arc` internally so sub-agents spawned from this
+    /// agent (via `spawn_subagent`) can share the same instance.
     pub fn provider(mut self, provider: Box<dyn Provider>) -> Self {
+        self.provider = Some(Arc::from(provider));
+        self
+    }
+
+    /// Sets the AI provider from an existing `Arc`. Use this when sharing
+    /// a provider instance across multiple agents.
+    pub fn provider_arc(mut self, provider: Arc<dyn Provider>) -> Self {
         self.provider = Some(provider);
         self
     }
@@ -233,14 +244,14 @@ impl AgentBuilder {
         let tools = self
             .tools
             .ok_or_else(|| anyhow::anyhow!("tools are required"))?;
-        let tool_specs = tools.iter().map(|tool| tool.spec()).collect();
+        let tool_specs: Vec<ToolSpec> = tools.iter().map(|tool| tool.spec()).collect();
 
         Ok(Agent {
             provider: self
                 .provider
                 .ok_or_else(|| anyhow::anyhow!("provider is required"))?,
-            tools,
-            tool_specs,
+            tools: Arc::new(tools),
+            tool_specs: Arc::new(tool_specs),
             memory: self
                 .memory
                 .ok_or_else(|| anyhow::anyhow!("memory is required"))?,
@@ -404,6 +415,74 @@ impl Agent {
     /// Returns a new `AgentBuilder`.
     pub fn builder() -> AgentBuilder {
         AgentBuilder::new()
+    }
+
+    /// Borrow the agent's provider as an `Arc`. Used by the sub-agent
+    /// runner to share the parent's provider instance with spawned
+    /// sub-agents (so they share connection pools, retry budgets, and
+    /// rate-limit state).
+    pub fn provider_arc(&self) -> Arc<dyn Provider> {
+        Arc::clone(&self.provider)
+    }
+
+    /// Borrow the agent's tools as a slice. Used by the sub-agent runner
+    /// to filter the parent's tool registry per-archetype.
+    pub fn tools(&self) -> &[Box<dyn Tool>] {
+        self.tools.as_slice()
+    }
+
+    /// Clone the agent's tools `Arc` for sharing with sub-agents.
+    pub fn tools_arc(&self) -> Arc<Vec<Box<dyn Tool>>> {
+        Arc::clone(&self.tools)
+    }
+
+    /// Borrow the agent's tool specs (pre-serialised). Captured at
+    /// turn-start so sub-agents can pass byte-identical schemas to the
+    /// provider for prefix-cache reuse.
+    pub fn tool_specs(&self) -> &[ToolSpec] {
+        self.tool_specs.as_slice()
+    }
+
+    /// Clone the agent's tool specs `Arc` for sharing with sub-agents.
+    pub fn tool_specs_arc(&self) -> Arc<Vec<ToolSpec>> {
+        Arc::clone(&self.tool_specs)
+    }
+
+    /// Borrow the agent's memory backing store as an `Arc`.
+    pub fn memory_arc(&self) -> Arc<dyn Memory> {
+        Arc::clone(&self.memory)
+    }
+
+    /// The agent's working directory.
+    pub fn workspace_dir(&self) -> &std::path::Path {
+        &self.workspace_dir
+    }
+
+    /// The agent's currently-configured model name (before per-turn
+    /// auto-classification).
+    pub fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    /// The agent's currently-configured temperature.
+    pub fn temperature(&self) -> f64 {
+        self.temperature
+    }
+
+    /// The agent's loaded skills, if any.
+    pub fn skills(&self) -> &[crate::openhuman::skills::Skill] {
+        &self.skills
+    }
+
+    /// The agent's identity config (used by sub-agent prompt building
+    /// when `omit_identity = false`).
+    pub fn identity_config(&self) -> &crate::openhuman::config::IdentityConfig {
+        &self.identity_config
+    }
+
+    /// The agent's runtime config snapshot.
+    pub fn agent_config(&self) -> &crate::openhuman::config::AgentConfig {
+        &self.config
     }
 
     /// Returns the current conversation history.
@@ -691,11 +770,12 @@ impl Agent {
         &self,
         learned: crate::openhuman::agent::prompt::LearnedContextData,
     ) -> Result<String> {
-        let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
+        let tools_slice: &[Box<dyn Tool>] = self.tools.as_slice();
+        let instructions = self.tool_dispatcher.prompt_instructions(tools_slice);
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
             model_name: &self.model_name,
-            tools: &self.tools,
+            tools: tools_slice,
             skills: &self.skills,
             identity_config: Some(&self.identity_config),
             dispatcher_instructions: &instructions,
@@ -745,9 +825,35 @@ impl Agent {
             session_id: self.event_session_id().to_string(),
         });
         log::info!("[agent_loop] tool start name={}", call.name);
+
+        // Special-case `spawn_subagent { mode: "fork", … }`: stash a
+        // ForkContext task-local so the sub-agent runner can replay the
+        // parent's exact rendered prompt + tool schemas + message prefix
+        // for backend prefix-cache reuse. The branch is taken before
+        // executing the tool so the task-local is visible inside
+        // `tool.execute(...)`.
+        let fork_context_for_call = if call.name == "spawn_subagent"
+            && call
+                .arguments
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.eq_ignore_ascii_case("fork"))
+                .unwrap_or(false)
+        {
+            Some(self.build_fork_context(call))
+        } else {
+            None
+        };
+
         let (result, success) =
             if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-                match tool.execute(call.arguments.clone()).await {
+                let exec = tool.execute(call.arguments.clone());
+                let outcome = if let Some(fork_ctx) = fork_context_for_call {
+                    super::harness::with_fork_context(fork_ctx, exec).await
+                } else {
+                    exec.await
+                };
+                match outcome {
                     Ok(r) => {
                         if !r.is_error {
                             (r.output(), true)
@@ -808,6 +914,59 @@ impl Agent {
             records.push(record);
         }
         (results, records)
+    }
+
+    /// Snapshot the parent's runtime so spawned sub-agents can read
+    /// it via the [`super::harness::PARENT_CONTEXT`] task-local.
+    fn build_parent_execution_context(&self) -> super::harness::ParentExecutionContext {
+        super::harness::ParentExecutionContext {
+            provider: Arc::clone(&self.provider),
+            all_tools: Arc::clone(&self.tools),
+            all_tool_specs: Arc::clone(&self.tool_specs),
+            model_name: self.model_name.clone(),
+            temperature: self.temperature,
+            workspace_dir: self.workspace_dir.clone(),
+            memory: Arc::clone(&self.memory),
+            agent_config: self.config.clone(),
+            identity_config: self.identity_config.clone(),
+            skills: Arc::new(self.skills.clone()),
+            session_id: self.event_session_id().to_string(),
+            channel: self.event_channel().to_string(),
+        }
+    }
+
+    /// Build a [`super::harness::ForkContext`] capturing the parent's
+    /// rendered system prompt + tool schemas + message prefix at the
+    /// moment a `spawn_subagent { mode: "fork", … }` call fires.
+    ///
+    /// The system prompt is pulled from `history[0]` (the agent always
+    /// stores its rendered system prompt as the first message). The
+    /// message prefix is the entire current history rendered through
+    /// the dispatcher — the *same* sequence the parent's next call
+    /// would send, except the new fork directive replaces the parent's
+    /// next continuation.
+    fn build_fork_context(&self, call: &ParsedToolCall) -> super::harness::ForkContext {
+        let messages = self.tool_dispatcher.to_provider_messages(&self.history);
+        let system_prompt: String = messages
+            .first()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+
+        let fork_task_prompt = call
+            .arguments
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        super::harness::ForkContext {
+            system_prompt: Arc::new(system_prompt),
+            tool_specs: Arc::clone(&self.tool_specs),
+            message_prefix: Arc::new(messages),
+            cache_boundary: None,
+            fork_task_prompt,
+        }
     }
 
     /// Classifies the user message to determine if a specific model hint should be used.
@@ -884,9 +1043,17 @@ impl Agent {
         let effective_model = self.classify_model(user_message);
         log::info!("[agent_loop] model selected model={}", effective_model);
 
+        // Snapshot the parent's runtime once per turn so any
+        // `spawn_subagent` invocation that fires inside this turn can
+        // read it via the PARENT_CONTEXT task-local. We override the
+        // model field with the post-classification effective model.
+        let mut parent_context = self.build_parent_execution_context();
+        parent_context.model_name = effective_model.clone();
+
         // Collect tool call records across all iterations for post-turn hooks
         let mut all_tool_records: Vec<ToolCallRecord> = Vec::new();
 
+        let turn_body = async {
         for iteration in 0..self.config.max_tool_iterations {
             log::info!(
                 "[agent_loop] iteration start i={} history_len={}",
@@ -907,7 +1074,7 @@ impl Agent {
                     ChatRequest {
                         messages: &messages,
                         tools: if self.tool_dispatcher.should_send_tool_specs() {
-                            Some(&self.tool_specs)
+                            Some(self.tool_specs.as_slice())
                         } else {
                             None
                         },
@@ -1043,6 +1210,13 @@ impl Agent {
             "Agent exceeded maximum tool iterations ({})",
             self.config.max_tool_iterations
         )
+        }; // end of `turn_body` async block
+
+        // Run the turn body inside the parent-execution-context scope so
+        // that any `spawn_subagent` tool call fired during the loop can
+        // read the parent's provider, tools, model, and workspace via
+        // the PARENT_CONTEXT task-local.
+        super::harness::with_parent_context(parent_context, turn_body).await
     }
 
     /// Runs a single turn with the given message and returns the response.
