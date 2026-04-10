@@ -218,8 +218,10 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         log::debug!("[socketio] web_channel bridge stopped");
     });
 
-    // Clone for the transcription bridge spawned below.
+    // Clone for the transcription and overlay bridges spawned below; the
+    // dictation task takes ownership of `io` itself.
     let io_transcription = io.clone();
+    let io_overlay = io.clone();
 
     // Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -244,6 +246,41 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] dictation bridge stopped");
+    });
+
+    // Overlay attention events → broadcast to the overlay window.
+    //
+    // Any core-side caller (subconscious loop, heartbeat, screen intelligence, …)
+    // can publish an `OverlayAttentionEvent` via
+    // `openhuman::overlay::publish_attention(...)` and it will be forwarded
+    // to all Socket.IO clients here. The overlay window listens on a dedicated
+    // unauthenticated socket (see `OverlayApp.tsx`) and renders the bubble.
+    tokio::spawn(async move {
+        let mut rx = crate::openhuman::overlay::subscribe_attention_events();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} overlay attention events due to lag",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+
+            if let Ok(payload) = serde_json::to_value(&event) {
+                log::debug!(
+                    "[socketio] broadcast overlay:attention source={:?} message_bytes={}",
+                    event.source,
+                    event.message.len()
+                );
+                let _ = io_overlay.emit("overlay:attention", &payload);
+                let _ = io_overlay.emit("overlay_attention", &payload);
+            }
+        }
+        log::debug!("[socketio] overlay attention bridge stopped");
     });
 
     // Transcription results → broadcast to all connected clients.

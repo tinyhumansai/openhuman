@@ -189,8 +189,9 @@ const handleOAuthDeepLink = async (parsed: URL) => {
     }
 
     // 3. Notify the running skill of the OAuth credential, mark setup_complete,
-    //    and activate (list tools, sync to backend).
-    //    The Rust runtime automatically triggers an initial sync after auth succeeds.
+    //    activate (list tools, sync tools to backend), and kick an initial sync.
+    //    The initial sync is driven by SkillManager.notifyOAuthComplete — the
+    //    Rust core no longer auto-syncs on oauth/complete (removed in 840b1d3c).
     try {
       await skillManager.notifyOAuthComplete(skillId, integrationId, undefined, { clientKeyShare });
       console.log(`[DeepLink] OAuth complete sent to skill '${skillId}'`);

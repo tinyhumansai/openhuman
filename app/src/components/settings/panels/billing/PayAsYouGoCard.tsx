@@ -20,10 +20,15 @@ const PayAsYouGoCard = ({
   onTopUp,
   onBalanceRefresh,
 }: PayAsYouGoCardProps) => {
-  const promoCredits = creditBalance?.balanceUsd ?? 0;
-  const topUpCredits = creditBalance?.topUpBalanceUsd ?? 0;
-  const topUpBaseline = creditBalance?.topUpBaselineUsd ?? null;
-  const availableCredits = promoCredits + topUpCredits;
+  // Backend `GET /payments/credits/balance` returns
+  //   { promotionBalanceUsd, teamTopupUsd }
+  // `promotionBalanceUsd` lives on the user document
+  // (`IUserUsage.promotionBalanceUsd`) and unifies signup bonus, coupons,
+  // and referral rewards. `teamTopupUsd` is the team-level paid top-up pool.
+  // Together they make the pay-as-you-go spendable balance.
+  const promoCredits = creditBalance?.promotionBalanceUsd ?? 0;
+  const teamTopupCredits = creditBalance?.teamTopupUsd ?? 0;
+  const availableCredits = promoCredits + teamTopupCredits;
 
   // Coupon state (local — no need to share with other sections)
   const [couponCode, setCouponCode] = useState('');
@@ -78,30 +83,11 @@ const PayAsYouGoCard = ({
             <span className="text-xs text-stone-400">Signup + promo credits</span>
             <span className="text-xs font-medium text-stone-900">${promoCredits.toFixed(2)}</span>
           </div>
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-stone-400">Top-up credits</span>
-              <span className="text-xs font-medium text-stone-900">
-                ${topUpCredits.toFixed(2)}
-                {topUpBaseline != null && topUpBaseline > 0 && (
-                  <span className="text-stone-500 font-normal"> / ${topUpBaseline.toFixed(2)}</span>
-                )}
-              </span>
-            </div>
-            {topUpBaseline != null && topUpBaseline > 0 && (
-              <div className="h-1 bg-stone-700/60 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    topUpCredits <= 0
-                      ? 'bg-coral-500'
-                      : topUpCredits / topUpBaseline < 0.2
-                        ? 'bg-amber-500'
-                        : 'bg-primary-500'
-                  }`}
-                  style={{ width: `${Math.min(100, (topUpCredits / topUpBaseline) * 100)}%` }}
-                />
-              </div>
-            )}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-stone-400">Team top-up credits</span>
+            <span className="text-xs font-medium text-stone-900">
+              ${teamTopupCredits.toFixed(2)}
+            </span>
           </div>
         </div>
       ) : isLoadingCredits ? (

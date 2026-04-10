@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,6 +7,23 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
+
+/// Propagate ANSI color hints to the spawned core child.
+///
+/// Core's tracing formatter auto-detects color via `stderr.is_terminal()`,
+/// but when core runs as a grandchild under `yarn tauri dev` the inherited
+/// stderr may not register as a TTY even though the ultimate terminal
+/// supports ANSI. If the Tauri process itself is attached to a TTY we
+/// forward `FORCE_COLOR=1` so core emits colored log lines; `NO_COLOR`
+/// (user opt-out) always wins and short-circuits the propagation.
+fn apply_core_color_env(cmd: &mut Command) {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return;
+    }
+    if std::io::stderr().is_terminal() {
+        cmd.env("FORCE_COLOR", "1");
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoreRunMode {
@@ -119,6 +137,7 @@ impl CoreProcessHandle {
                             .arg(self.port.to_string());
                         cmd
                     };
+                    apply_core_color_env(&mut cmd);
                     let child = cmd
                         .spawn()
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;
@@ -156,6 +175,7 @@ impl CoreProcessHandle {
                         cmd
                     };
 
+                    apply_core_color_env(&mut cmd);
                     let child = cmd
                         .spawn()
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;

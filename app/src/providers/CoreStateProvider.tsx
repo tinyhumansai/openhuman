@@ -272,24 +272,34 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const setAnalyticsEnabled = useCallback(
     async (enabled: boolean) => {
       await openhumanUpdateAnalyticsSettings({ enabled });
+      // Optimistic local commit for instant UI feedback, then re-pull the
+      // authoritative snapshot so the frontend cache matches the core.
       commitState(previous => ({
         ...previous,
         snapshot: { ...previous.snapshot, analyticsEnabled: enabled },
       }));
       syncAnalyticsConsent(enabled);
+      await refresh().catch(err => {
+        log('refresh failed after setAnalyticsEnabled: %O', sanitizeError(err));
+      });
     },
-    [commitState]
+    [commitState, refresh]
   );
 
   const setOnboardingCompletedFlag = useCallback(
     async (value: boolean) => {
       await setOnboardingCompleted(value);
+      // Optimistic local commit for instant UI feedback, then re-pull the
+      // authoritative snapshot so the frontend cache matches the core.
       commitState(previous => ({
         ...previous,
         snapshot: { ...previous.snapshot, onboardingCompleted: value },
       }));
+      await refresh().catch(err => {
+        log('refresh failed after setOnboardingCompletedFlag: %O', sanitizeError(err));
+      });
     },
-    [commitState]
+    [commitState, refresh]
   );
 
   const updateLocalState = useCallback(
@@ -318,7 +328,13 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   );
 
   const clearSession = useCallback(async () => {
+    // Bump the snapshot request counter before doing anything else so that
+    // any snapshot poll already in flight when the user clicked logout is
+    // invalidated on return — otherwise its stale "authenticated" result
+    // would clobber our cleared state a few hundred ms after logout.
+    snapshotRequestIdRef.current += 1;
     await tauriLogout();
+    // Optimistic local clear for instant UI response.
     commitState(previous => ({
       ...previous,
       teams: [],
@@ -333,7 +349,14 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
       },
     }));
     memoryTokenRef.current = null;
-  }, [commitState]);
+    // Re-pull the authoritative snapshot from the core so the frontend
+    // cache matches whatever the core now reports. This mirrors the pattern
+    // used by storeSessionToken and ensures any downstream consumer reading
+    // from the snapshot sees the post-logout state immediately.
+    await refresh().catch(err => {
+      log('refresh failed after clearSession: %O', sanitizeError(err));
+    });
+  }, [commitState, refresh]);
 
   const value = useMemo<CoreStateContextValue>(
     () => ({

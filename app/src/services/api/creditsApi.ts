@@ -1,9 +1,24 @@
 import { callCoreCommand } from '../coreCommandClient';
 
+/**
+ * Credit balance payload returned by `GET /payments/credits/balance`.
+ *
+ * Mirrors the backend shape defined in
+ * `backend-1/src/services/user/balanceService.ts` → `getCreditBalance(userId)`,
+ * which in turn derives from `IUser.usage.promotionBalanceUsd` on the user
+ * model and the team-level top-up ledger.
+ */
 export interface CreditBalance {
-  balanceUsd: number;
-  topUpBalanceUsd: number;
-  topUpBaselineUsd: number | null;
+  /**
+   * Promotional credit balance on the user document (signup bonus, coupons,
+   * referral rewards). Corresponds to `IUserUsage.promotionBalanceUsd`.
+   */
+  promotionBalanceUsd: number;
+  /**
+   * Team-level top-up balance (paid credits that cover overage once the
+   * included cycle budget is exhausted). Returned by `getTeamTopup(userId)`.
+   */
+  teamTopupUsd: number;
 }
 
 export interface TeamUsage {
@@ -185,18 +200,12 @@ function normalizeUsd(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function normalizeNullableUsd(value: unknown): number | null {
-  if (value == null) return null;
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
 function normalizeCreditBalance(payload: unknown): CreditBalance {
-  const raw = payload && typeof payload === 'object' ? (payload as Partial<CreditBalance>) : {};
+  const raw = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
 
   return {
-    balanceUsd: normalizeUsd(raw.balanceUsd),
-    topUpBalanceUsd: normalizeUsd(raw.topUpBalanceUsd),
-    topUpBaselineUsd: normalizeNullableUsd(raw.topUpBaselineUsd),
+    promotionBalanceUsd: normalizeUsd(raw.promotionBalanceUsd),
+    teamTopupUsd: normalizeUsd(raw.teamTopupUsd),
   };
 }
 

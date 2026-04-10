@@ -224,6 +224,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Whether tab key applies suggestion.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "overlay_ttl_ms",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Overlay time-to-live in milliseconds (clamped to 300-10000).",
+                    required: false,
+                },
             ],
             outputs: vec![FieldSchema {
                 name: "result",

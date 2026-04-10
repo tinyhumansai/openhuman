@@ -155,8 +155,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'ai-tools':
         return [settingsCrumb];
 
-      // Leaf panels under account
+      // Top-level billing leaf (promoted out of Account & Security)
       case 'billing':
+        return [settingsCrumb];
+
+      // Leaf panels under account
       case 'recovery-phrase':
       case 'team':
       case 'connections':

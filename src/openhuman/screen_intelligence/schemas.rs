@@ -142,15 +142,21 @@ pub fn schemas(function: &str) -> ControllerSchema {
             description: "Start screen intelligence session.",
             inputs: vec![
                 FieldSchema {
-                    name: "sample_interval_ms",
+                    name: "consent",
+                    ty: TypeSchema::Bool,
+                    comment: "Explicit user consent to start the accessibility session.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "ttl_secs",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Capture interval in milliseconds.",
+                    comment: "Session time-to-live in seconds.",
                     required: false,
                 },
                 FieldSchema {
-                    name: "capture_policy",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Capture policy mode.",
+                    name: "screen_monitoring",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "Whether screen recording capture should be enabled for this session.",
                     required: false,
                 },
             ],

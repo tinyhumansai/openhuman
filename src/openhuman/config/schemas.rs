@@ -283,6 +283,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
                 optional_bool("vision_enabled", "Enable vision analysis."),
                 optional_bool("autocomplete_enabled", "Enable autocomplete integration."),
+                optional_bool(
+                    "use_vision_model",
+                    "Use a vision LLM for screenshot analysis (false = OCR + text LLM).",
+                ),
                 optional_bool("keep_screenshots", "Keep screenshots on disk after vision processing."),
                 FieldSchema {
                     name: "allowlist",
