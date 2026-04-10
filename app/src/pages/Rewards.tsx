@@ -58,8 +58,6 @@ const Rewards = () => {
     let cancelled = false;
 
     const loadRewards = async () => {
-      setIsLoading(true);
-      setError(null);
       try {
         const result = await rewardsApi.getMyRewards();
         if (!cancelled) {
@@ -96,10 +94,10 @@ const Rewards = () => {
   }, []);
 
   const rewardRoles: RewardsAchievement[] = snapshot?.achievements ?? [];
-  const unlockedCount = snapshot?.summary.unlockedCount ?? 0;
-  const totalCount = snapshot?.summary.totalCount ?? 0;
+  const unlocked = snapshot?.summary.unlockedCount ?? rewardRoles.filter(role => role.unlocked).length;
+  const total = snapshot?.summary.totalCount ?? rewardRoles.length;
   const inviteUrl = snapshot?.discord.inviteUrl ?? DISCORD_INVITE_URL;
-  const progressWidth = totalCount > 0 ? (unlockedCount / totalCount) * 100 : 0;
+  const progressWidth = total > 0 ? (unlocked / total) * 100 : 0;
 
   return (
     <div className="min-h-full px-4 pt-6 pb-8">
@@ -153,7 +151,7 @@ const Rewards = () => {
               Progress
             </div>
             <div className="mt-3 text-3xl font-semibold text-stone-900">
-              {isLoading ? '...' : `${unlockedCount}/${totalCount || rewardRoles.length || 0}`}
+              {isLoading ? '...' : `${unlocked}/${total}`}
             </div>
             <p className="mt-2 text-sm text-stone-600">
               {snapshot

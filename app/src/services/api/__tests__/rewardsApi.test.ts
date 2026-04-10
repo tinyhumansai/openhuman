@@ -54,13 +54,16 @@ describe('normalizeRewardsSnapshot', () => {
     const snapshot = normalizeRewardsSnapshot({
       discord: { membershipStatus: 'weird' },
       summary: { plan: 'strange', unlockedCount: '2' },
-      achievements: [{ id: 'POWER_10M', discordRoleStatus: 'mystery' }],
+      achievements: [
+        { id: 'POWER_10M', discordRoleStatus: 'mystery', creditAmountUsd: 'not-a-number' },
+      ],
     });
 
     expect(snapshot.discord.membershipStatus).toBe('unavailable');
     expect(snapshot.summary.plan).toBe('FREE');
     expect(snapshot.summary.unlockedCount).toBe(2);
     expect(snapshot.achievements[0].discordRoleStatus).toBe('unavailable');
+    expect(snapshot.achievements[0].creditAmountUsd).toBeNull();
   });
 });
 
@@ -101,5 +104,18 @@ describe('rewardsApi', () => {
     expect(apiClient.get).toHaveBeenCalledWith('/rewards/me');
     expect(snapshot.discord.membershipStatus).toBe('not_linked');
     expect(snapshot.summary.totalCount).toBe(8);
+  });
+
+  it('throws the backend error when /rewards/me reports failure', async () => {
+    const { apiClient } = await import('../../apiClient');
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      success: false,
+      data: null,
+      error: 'Rewards service unavailable',
+    });
+
+    await expect(rewardsApi.getMyRewards()).rejects.toMatchObject({
+      error: 'Rewards service unavailable',
+    });
   });
 });

@@ -21,8 +21,23 @@ function asStringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
+function asFiniteNumberOrNull(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
 function normalizeAchievement(value: unknown): RewardsAchievement {
   const raw = asRecord(value) ?? {};
+  const creditAmountUsd = asFiniteNumberOrNull(raw.creditAmountUsd);
+
   return {
     id: typeof raw.id === 'string' ? raw.id : '',
     title: typeof raw.title === 'string' ? raw.title : 'Achievement',
@@ -40,7 +55,7 @@ function normalizeAchievement(value: unknown): RewardsAchievement {
       raw.discordRoleStatus === 'unavailable'
         ? raw.discordRoleStatus
         : 'unavailable',
-    creditAmountUsd: raw.creditAmountUsd == null ? null : asNumber(raw.creditAmountUsd),
+    creditAmountUsd: creditAmountUsd == null ? null : asNumber(creditAmountUsd),
   };
 }
 
@@ -92,6 +107,13 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
 export const rewardsApi = {
   async getMyRewards(): Promise<RewardsSnapshot> {
     const response = await apiClient.get<ApiResponse<unknown>>('/rewards/me');
+    if (!response.success) {
+      throw {
+        success: false,
+        error: response.error ?? response.message ?? 'Unable to load rewards',
+      };
+    }
+
     console.debug('[rewards] loaded backend snapshot', {
       achievementCount: Array.isArray((response.data as { achievements?: unknown[] })?.achievements)
         ? (response.data as { achievements: unknown[] }).achievements.length
