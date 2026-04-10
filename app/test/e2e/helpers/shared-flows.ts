@@ -174,7 +174,7 @@ export async function navigateViaHash(hash) {
         // Order: [section group, then item within that section]
         // Settings home → section page → specific panel
         const SETTINGS_SUB_ROUTES: Record<string, string[]> = {
-          '/settings/billing': ['Account & Security', 'Billing & Usage'],
+          '/settings/billing': ['Billing & Usage'],
           '/settings/recovery-phrase': ['Account & Security', 'Recovery Phrase'],
           '/settings/team': ['Account & Security', 'Team'],
           '/settings/connections': ['Account & Security', 'Connections'],

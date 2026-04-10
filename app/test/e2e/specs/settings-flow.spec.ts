@@ -201,6 +201,19 @@ describe('11. Settings & Configuration', () => {
     });
 
     it('11.3.2 — Skill Enable/Disable: Skills page shows built-in skills', async () => {
+      // `beforeEach` lands us on the Settings home page, which renders an
+      // "AI & Skills" menu item (SettingsHome.tsx). On Mac2, `navigateToSkills`
+      // translates to `clickText('Skills', ...)`, which matches the substring
+      // "Skills" inside "AI & Skills" and silently navigates to
+      // /settings/ai-tools instead of /skills. That section page has no
+      // built-in skill cards, so the subsequent text assertion fails.
+      //
+      // Escape the settings context by hopping through /home first (home has
+      // no "Skills"-containing text), then navigate to /skills where the
+      // only "Skills" element is the intended sidebar button.
+      await navigateViaHash('/home');
+      await browser.pause(2_000);
+
       await navigateToSkills();
       await browser.pause(3_000);
       await expectAnyText(

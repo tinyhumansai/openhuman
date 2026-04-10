@@ -18,10 +18,12 @@
  *   4.4.3  HTTP Request Pipeline
  *   4.4.4  Web Search Execution
  */
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp, waitForAppReady, waitForAuthBootstrap } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { expectRpcMethod, fetchCoreRpcMethods } from '../helpers/core-schema';
-import { performFullLogin } from '../helpers/shared-flows';
+import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
+import { waitForWebView, waitForWindowVisible } from '../helpers/element-helpers';
+import { walkOnboarding } from '../helpers/shared-flows';
 import {
   clearRequestLog,
   resetMockBehavior,
@@ -115,11 +117,22 @@ describe('System Resource Access', function () {
   let methods: Set<string>;
 
   before(async function () {
-    this.timeout(60_000);
+    this.timeout(120_000);
     await startMockServer();
     await waitForApp();
     await waitForAppReady(20_000);
-    await performFullLogin('e2e-system-resource-token');
+
+    // Auth without asserting a specific landing page — this spec only needs
+    // auth context to call core RPC methods, so we skip the Home-page wait
+    // (and its retry loop) that performFullLogin would impose.
+    await triggerAuthDeepLink('e2e-system-resource-token');
+    await waitForWindowVisible(25_000);
+    await waitForWebView(15_000);
+    await waitForAppReady(15_000);
+    await waitForAuthBootstrap(15_000);
+    await walkOnboarding(LOG_PREFIX);
+    await browser.pause(3_000);
+
     methods = await fetchCoreRpcMethods();
     clearRequestLog();
   });

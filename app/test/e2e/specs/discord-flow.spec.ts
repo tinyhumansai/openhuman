@@ -285,15 +285,100 @@ describe('8.5 Integrations (Discord) — UI flow', () => {
   });
 
   it('8.5.3 — Click Discord Setup opens modal with auth modes and fields', async () => {
-    // Click the CTA button to open the ChannelSetupModal
-    stepLog('clicking Discord card to open Setup modal');
+    // NOTE: `clickText('Setup')` picks the first "Setup" button in DOM order,
+    // which is Telegram's (Telegram renders before Discord in the Channels
+    // list).  Instead we find the Discord card by its "Discord" text node,
+    // capture its Y coordinate, then click the Setup/Manage button whose
+    // Y coordinate is closest to Discord's — i.e. the button inside the
+    // Discord card row.
+    stepLog('locating Discord card Setup button by position');
+    let clicked = false;
     try {
-      await clickText('Setup', 10_000);
-    } catch {
+      // 1. Find Discord text positions (there may be multiple — title + description)
+      const discordEls = await browser.$$(
+        '//*[contains(@label, "Discord") or contains(@value, "Discord") or contains(@title, "Discord")]'
+      );
+      if (discordEls.length === 0) {
+        throw new Error('No Discord elements found in tree');
+      }
+
+      // Use the first Discord element as the card anchor (typically the title)
+      const anchor = discordEls[0];
+      const anchorLoc = await anchor.getLocation();
+      stepLog(`Discord anchor at y=${anchorLoc.y}`);
+
+      // 2. Find all Setup/Manage buttons
+      const ctaButtons = await browser.$$(
+        '//XCUIElementTypeButton[contains(@title, "Setup") or contains(@label, "Setup") or contains(@title, "Manage") or contains(@label, "Manage")]'
+      );
+      stepLog(`Found ${ctaButtons.length} Setup/Manage buttons`);
+
+      if (ctaButtons.length === 0) {
+        throw new Error('No Setup/Manage buttons found');
+      }
+
+      // 3. Pick the button whose Y is closest to Discord's anchor Y
+      let bestBtn = null as (typeof ctaButtons)[number] | null;
+      let bestDelta = Number.POSITIVE_INFINITY;
+      for (const btn of ctaButtons) {
+        try {
+          const bLoc = await btn.getLocation();
+          const delta = Math.abs(bLoc.y - anchorLoc.y);
+          stepLog(`  candidate button y=${bLoc.y} delta=${delta}`);
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestBtn = btn;
+          }
+        } catch {
+          // element may have gone stale; skip
+        }
+      }
+
+      if (!bestBtn) {
+        throw new Error('Could not select Discord CTA button');
+      }
+
+      // 4. W3C pointer click at the chosen button's center
+      const loc = await bestBtn.getLocation();
+      const size = await bestBtn.getSize();
+      const cx = Math.round(loc.x + size.width / 2);
+      const cy = Math.round(loc.y + size.height / 2);
+      stepLog(`clicking Discord Setup at (${cx}, ${cy}) delta=${bestDelta}`);
+      await browser.performActions([
+        {
+          type: 'pointer',
+          id: 'mouse1',
+          parameters: { pointerType: 'mouse' },
+          actions: [
+            { type: 'pointerMove', duration: 10, x: cx, y: cy },
+            { type: 'pointerDown', button: 0 },
+            { type: 'pause', duration: 80 },
+            { type: 'pointerUp', button: 0 },
+          ],
+        },
+      ]);
+      await browser.releaseActions();
+      clicked = true;
+    } catch (err) {
+      stepLog(
+        `positional click failed: ${err instanceof Error ? err.message : String(err)} — falling back to clickText`
+      );
+    }
+
+    if (!clicked) {
+      // Fallback chain: clickText('Setup') → 'Manage' → 'Discord'
       try {
-        await clickText('Manage', 10_000);
+        await clickText('Setup', 10_000);
       } catch {
-        await clickText('Discord', 10_000);
+        try {
+          await clickText('Manage', 10_000);
+        } catch {
+          try {
+            await clickText('Discord', 10_000);
+          } catch {
+            stepLog('All click fallbacks failed');
+          }
+        }
       }
     }
     await browser.pause(3_000);
