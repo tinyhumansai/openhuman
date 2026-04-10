@@ -1,4 +1,4 @@
-import { type ComponentProps, useEffect, useMemo, useState } from 'react';
+import { type ComponentProps, useEffect, useMemo, useRef, useState } from 'react';
 
 import ScreenIntelligenceDebugPanel from '../../../components/intelligence/ScreenIntelligenceDebugPanel';
 import { useScreenIntelligenceState } from '../../../features/screen-intelligence/useScreenIntelligenceState';
@@ -79,10 +79,21 @@ const ScreenIntelligencePanel = () => {
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
 
+  // CoreStateProvider polls every 2s (CoreStateProvider.tsx POLL_MS), producing a
+  // new `status` object reference on every tick even when the underlying config is
+  // unchanged. Keying this effect on `status?.config` identity would therefore
+  // clobber in-progress user edits every 2 seconds. Compare the serialized value
+  // instead, so we only re-sync when the server config has actually changed.
+  const lastSyncedConfigSigRef = useRef<string | null>(null);
   useEffect(() => {
     if (!status?.config) {
       return;
     }
+    const sig = JSON.stringify(status.config);
+    if (lastSyncedConfigSigRef.current === sig) {
+      return;
+    }
+    lastSyncedConfigSigRef.current = sig;
     setEnabled(status.config.enabled ?? false);
     setPolicyMode(
       status.config.policy_mode === 'whitelist_only' ? 'whitelist_only' : 'all_except_blacklist'
