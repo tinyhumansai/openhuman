@@ -794,24 +794,23 @@ fn register_domain_subscribers() {
 /// globally so RPC handlers (`openhuman.skills_*`, `openhuman.socket_*`) can
 /// reach them.
 pub async fn bootstrap_skill_runtime() {
+    use crate::openhuman::skills::paths::resolve_runtime_paths;
     use crate::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
 
-    // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
-    let base_dir = std::env::var("OPENHUMAN_WORKSPACE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".openhuman")
-        });
+    // Resolve per-user scoped paths via Config so `skills_data` lives under
+    // `~/.openhuman/users/{user_id}/skills_data` when an active user is set,
+    // matching how config, workspace, and auth are scoped.
+    let paths = resolve_runtime_paths().await;
+    let skills_data_dir = paths.skills_data_dir.clone();
+    let workspace_dir = paths.workspace_dir.clone();
 
-    let skills_data_dir = base_dir.join("skills_data");
     if let Err(e) = std::fs::create_dir_all(&skills_data_dir) {
-        log::error!("[runtime] Failed to create skills data dir: {e}");
+        log::error!(
+            "[runtime] Failed to create skills data dir {}: {e}",
+            skills_data_dir.display()
+        );
         return;
     }
 
@@ -823,10 +822,10 @@ pub async fn bootstrap_skill_runtime() {
         }
     };
 
-    // Point the engine at the workspace directory for user-installed skills.
-    let workspace_dir = base_dir.join("workspace");
+    // Point the engine at the (also scoped) workspace directory for
+    // user-installed skills.
     let _ = std::fs::create_dir_all(&workspace_dir);
-    engine.set_workspace_dir(workspace_dir);
+    engine.set_workspace_dir(workspace_dir.clone());
 
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
@@ -839,10 +838,10 @@ pub async fn bootstrap_skill_runtime() {
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
     // under `<workspace>/agents/*.toml`. Idempotent — safe to call from
-    // both jsonrpc and repl paths.
-    if let Err(err) = crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(
-        &base_dir.join("workspace"),
-    ) {
+    // both jsonrpc and repl paths. Uses the per-user scoped workspace_dir.
+    if let Err(err) =
+        crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&workspace_dir)
+    {
         log::warn!(
             "[runtime] AgentDefinitionRegistry::init_global failed: {err} — \
              spawn_subagent will be unavailable until restart"
