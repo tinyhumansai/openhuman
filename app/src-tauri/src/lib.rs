@@ -17,7 +17,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPopUpMenuWindowLevel, NSWindow, NSWindowCollectionBehavior};
+use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+#[cfg(target_os = "macos")]
+use objc2_core_graphics::CGShieldingWindowLevel;
 
 /// Tracks the currently registered dictation hotkey string so we can unregister it later.
 struct DictationHotkeyState(Mutex<Vec<String>>);
@@ -103,9 +105,9 @@ fn configure_overlay_window_macos(window: &WebviewWindow) {
             behavior.insert(NSWindowCollectionBehavior::FullScreenAuxiliary);
             behavior.insert(NSWindowCollectionBehavior::CanJoinAllSpaces);
             window.setCollectionBehavior(behavior);
-            window.setLevel(NSPopUpMenuWindowLevel);
+            window.setLevel((CGShieldingWindowLevel() + 1) as isize);
             log::info!(
-                "[overlay] macOS overlay configured for all spaces/fullscreen auxiliary at popup-menu level"
+                "[overlay] macOS overlay configured for all spaces/fullscreen auxiliary at shielding+1 level"
             );
         },
         Err(err) => {
