@@ -20,8 +20,9 @@ import {
   removePersistedClientKey,
   revokeAuth as rpcRevokeAuth,
   removePersistedAuthCredential,
+  SkillStartResult,
+  AuthCompleteParams
 } from "./skillsApi";
-import type { AuthCompleteParams, SkillStartResult } from "./skillsApi";
 import { syncToolsToBackend } from "./sync";
 import type {
   SkillManifest,
