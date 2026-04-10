@@ -854,7 +854,7 @@ impl Agent {
             None
         };
 
-        let (result, success) =
+        let (raw_result, success) =
             if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
                 let exec = tool.execute(call.arguments.clone());
                 let outcome = if let Some(fork_ctx) = fork_context_for_call {
@@ -875,6 +875,24 @@ impl Agent {
             } else {
                 (format!("Unknown tool: {}", call.name), false)
             };
+
+        // Context pipeline stage 1: apply the per-result byte budget
+        // *inline* before the result enters history. This is the only
+        // cache-safe reduction stage — the truncated body has never
+        // been sent to the backend so it creates no cache invalidation.
+        let budget_bytes = self.config.tool_result_budget_bytes;
+        let (result, budget_outcome) =
+            super::context_pipeline::apply_tool_result_budget(raw_result, budget_bytes);
+        if budget_outcome.truncated {
+            log::info!(
+                "[agent_loop] tool_result_budget applied name={} original_bytes={} final_bytes={} dropped_bytes={}",
+                call.name,
+                budget_outcome.original_bytes,
+                budget_outcome.final_bytes,
+                budget_outcome.original_bytes - budget_outcome.final_bytes
+            );
+        }
+
         let elapsed_ms = started.elapsed().as_millis() as u64;
         publish_global(DomainEvent::ToolExecutionCompleted {
             tool_name: call.name.clone(),
@@ -1084,6 +1102,11 @@ impl Agent {
         let mut parent_context = self.build_parent_execution_context();
         parent_context.model_name = effective_model.clone();
 
+        // Bump the session-memory turn counter. Used later by
+        // `should_extract_session_memory` to decide whether to spawn a
+        // background archivist fork at end-of-turn.
+        self.context_pipeline.tick_turn();
+
         // Collect tool call records across all iterations for post-turn hooks
         let mut all_tool_records: Vec<ToolCallRecord> = Vec::new();
 
@@ -1094,6 +1117,56 @@ impl Agent {
                     iteration + 1,
                     self.history.len()
                 );
+
+                // Context pipeline stages 3 & 4: run the reduction
+                // chain before every provider hit. Microcompact fires
+                // when the guard reports we're above the soft threshold
+                // and there are older tool results to clear; otherwise
+                // we log an autocompaction signal (openhuman's
+                // compactor lives in `loop_/history.rs` and operates on
+                // the `ChatMessage` shape, so for now the
+                // `ConversationMessage`-shaped Agent path lets the
+                // signal bubble up as telemetry until a native
+                // summariser lands).
+                let outcome = self
+                    .context_pipeline
+                    .run_before_call(&mut self.history);
+                match &outcome {
+                    super::context_pipeline::PipelineOutcome::NoOp => {}
+                    super::context_pipeline::PipelineOutcome::Microcompacted(stats) => {
+                        log::info!(
+                            "[agent_loop] context_pipeline microcompact i={} envelopes={} entries={} bytes_freed={}",
+                            iteration + 1,
+                            stats.envelopes_cleared,
+                            stats.entries_cleared,
+                            stats.bytes_freed
+                        );
+                    }
+                    super::context_pipeline::PipelineOutcome::AutocompactionRequested {
+                        utilisation_pct,
+                    } => {
+                        log::warn!(
+                            "[agent_loop] context_pipeline autocompaction requested i={} utilisation_pct={}",
+                            iteration + 1,
+                            utilisation_pct
+                        );
+                    }
+                    super::context_pipeline::PipelineOutcome::ContextExhausted {
+                        utilisation_pct,
+                        reason,
+                    } => {
+                        log::error!(
+                            "[agent_loop] context_pipeline context exhausted i={} utilisation_pct={} reason={}",
+                            iteration + 1,
+                            utilisation_pct,
+                            reason
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Context window exhausted ({utilisation_pct}% full): {reason}"
+                        ));
+                    }
+                }
+
                 let messages = self.tool_dispatcher.to_provider_messages(&self.history);
                 log::info!(
                     "[agent_loop] provider request i={} messages={} send_tool_specs={}",
