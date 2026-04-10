@@ -385,16 +385,6 @@ class SkillManager {
       }
     }
 
-    // Kick off an initial sync in the background — do not await: deep-link and
-    // OAuth UI must not block on a long first sync (Gmail/Notion can take minutes).
-    console.log(`[SkillManager] kicking background sync after OAuth for '${skillId}'`);
-    void this.triggerSync(skillId).catch((syncErr) => {
-      console.warn(
-        `[SkillManager] initial post-OAuth sync failed for '${skillId}':`,
-        syncErr,
-      );
-    });
-
     emitSkillStateChange(skillId);
   }
 

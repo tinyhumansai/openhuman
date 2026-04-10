@@ -193,7 +193,7 @@ export default function SkillSetupWizard({
         setState({
           phase: "complete",
           message:
-            "Successfully connected! Initial sync runs in the background — you can close this window.",
+            "Successfully connected! You can close this window.",
         });
         void (async () => {
           try {
@@ -223,7 +223,7 @@ export default function SkillSetupWizard({
         setState({
           phase: "complete",
           message:
-            "Successfully connected! Initial sync runs in the background — you can close this window.",
+            "Successfully connected! You can close this window.",
         });
       }, 0);
     }
