@@ -199,33 +199,14 @@ jobs:
           mkdir -p ~/.local/share/applications
           export RUST_BACKTRACE=1
           cd app
-          # Core specs — must pass on Linux CI
-          FAILED=0
-          for spec in \
-            test/e2e/specs/login-flow.spec.ts \
-            test/e2e/specs/smoke.spec.ts \
-            test/e2e/specs/navigation.spec.ts \
-            test/e2e/specs/telegram-flow.spec.ts; do
-            SPEC_NAME=$(basename "$spec" .spec.ts)
-            echo "=== Running $SPEC_NAME ==="
-            bash scripts/e2e-run-spec.sh "$spec" "$SPEC_NAME" || {
-              echo "FAILED: $SPEC_NAME"
-              cat /tmp/tauri-driver-e2e-${SPEC_NAME}.log 2>/dev/null || true
-              FAILED=1
-            }
-          done
-          # Extended specs (auth, billing, gmail, notion, payments) are skipped
-          # on Linux CI — webkit2gtk text matching differences cause Settings
-          # page navigation timeouts. Full suite runs on macOS locally.
-          if [ "$FAILED" -eq 1 ]; then
-            echo "Core E2E specs failed"
-            exit 1
-          fi
-          echo "Core E2E specs passed"
+          bash scripts/e2e-run-all-flows.sh
 
   e2e-macos:
     name: E2E (macOS / Appium)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true'
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_macos_e2e == 'true')
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
@@ -277,32 +258,17 @@ jobs:
       - name: Build E2E app bundle
         run: yarn workspace openhuman-app test:e2e:build
 
-      - name: Run E2E core specs
+      - name: Run E2E specs
         run: |
           cd app
-          FAILED=0
-          for spec in \
-            test/e2e/specs/login-flow.spec.ts \
-            test/e2e/specs/smoke.spec.ts \
-            test/e2e/specs/navigation.spec.ts \
-            test/e2e/specs/telegram-flow.spec.ts; do
-            SPEC_NAME=$(basename "$spec" .spec.ts)
-            echo "=== Running $SPEC_NAME ==="
-            bash scripts/e2e-run-spec.sh "$spec" "$SPEC_NAME" || {
-              echo "FAILED: $SPEC_NAME"
-              cat /tmp/appium-e2e-${SPEC_NAME}.log 2>/dev/null || true
-              FAILED=1
-            }
-          done
-          if [ "$FAILED" -eq 1 ]; then
-            echo "E2E specs failed on macOS"
-            exit 1
-          fi
-          echo "macOS E2E specs passed"
+          bash scripts/e2e-run-all-flows.sh
 
   e2e-windows:
     name: E2E (Windows / tauri-driver)
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.run_windows_e2e == 'true'
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.run_windows_e2e == 'true')
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -378,22 +344,4 @@ jobs:
         run: |
           export RUST_BACKTRACE=1
           cd app
-          FAILED=0
-          for spec in \
-            test/e2e/specs/login-flow.spec.ts \
-            test/e2e/specs/smoke.spec.ts \
-            test/e2e/specs/navigation.spec.ts \
-            test/e2e/specs/telegram-flow.spec.ts; do
-            SPEC_NAME=$(basename "$spec" .spec.ts)
-            echo "=== Running $SPEC_NAME ==="
-            bash scripts/e2e-run-spec.sh "$spec" "$SPEC_NAME" || {
-              echo "FAILED: $SPEC_NAME"
-              cat /tmp/tauri-driver-e2e-${SPEC_NAME}.log 2>/dev/null || true
-              FAILED=1
-            }
-          done
-          if [ "$FAILED" -eq 1 ]; then
-            echo "E2E specs failed on Windows"
-            exit 1
-          fi
-          echo "Windows E2E specs passed"
+          bash scripts/e2e-run-all-flows.sh

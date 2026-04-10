@@ -19,8 +19,13 @@ export async function callOpenhumanRpcWebView<T = unknown>(
   return browser.execute(
     async (m: string, p: Record<string, unknown>) => {
       try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const rpcUrl = await invoke<string>('core_rpc_url');
+        // Use the global __TAURI__ bridge instead of dynamic import —
+        // tauri-driver's execute/sync cannot resolve bare ESM specifiers.
+        const invoke = (window as any).__TAURI__?.core?.invoke;
+        if (!invoke) {
+          return { ok: false, error: '__TAURI__ bridge not available' };
+        }
+        const rpcUrl = await invoke('core_rpc_url');
         const id = Math.floor(Math.random() * 1e9);
         const res = await fetch(rpcUrl, {
           method: 'POST',
