@@ -758,9 +758,7 @@ fn handle_skills_status(params: Map<String, Value>) -> ControllerFuture {
             // Still return persisted prefs — especially `setup_complete` after OAuth —
             // so the UI is not stuck waiting for a snapshot that would only exist once
             // the runtime has the skill registered.
-            let setup_complete = engine
-                .preferences()
-                .is_setup_complete(&p.skill_id);
+            let setup_complete = engine.preferences().is_setup_complete(&p.skill_id);
             let status = SkillStatus::Pending;
             let state = HashMap::new();
             let connection_status = derive_connection_status(status, setup_complete, &state);
