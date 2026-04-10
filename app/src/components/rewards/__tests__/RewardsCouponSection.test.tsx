@@ -6,24 +6,16 @@ import RewardsCouponSection from '../RewardsCouponSection';
 const mocks = vi.hoisted(() => ({
   mockUseCoreState: vi.fn(),
   mockUseUser: vi.fn(),
-  mockCreditsApi: {
-    getBalance: vi.fn(),
-    getUserCoupons: vi.fn(),
-    redeemCoupon: vi.fn(),
-  },
+  mockCreditsApi: { getBalance: vi.fn(), getUserCoupons: vi.fn(), redeemCoupon: vi.fn() },
 }));
 
 vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => mocks.mockUseCoreState(),
 }));
 
-vi.mock('../../../hooks/useUser', () => ({
-  useUser: () => mocks.mockUseUser(),
-}));
+vi.mock('../../../hooks/useUser', () => ({ useUser: () => mocks.mockUseUser() }));
 
-vi.mock('../../../services/api/creditsApi', () => ({
-  creditsApi: mocks.mockCreditsApi,
-}));
+vi.mock('../../../services/api/creditsApi', () => ({ creditsApi: mocks.mockCreditsApi }));
 
 describe('RewardsCouponSection', () => {
   const refetch = vi.fn();
@@ -36,16 +28,8 @@ describe('RewardsCouponSection', () => {
 
   it('loads balances and refreshes history after a successful redemption', async () => {
     mocks.mockCreditsApi.getBalance
-      .mockResolvedValueOnce({
-        balanceUsd: 3,
-        topUpBalanceUsd: 1,
-        topUpBaselineUsd: null,
-      })
-      .mockResolvedValueOnce({
-        balanceUsd: 8,
-        topUpBalanceUsd: 1,
-        topUpBaselineUsd: null,
-      });
+      .mockResolvedValueOnce({ balanceUsd: 3, topUpBalanceUsd: 1, topUpBaselineUsd: null })
+      .mockResolvedValueOnce({ balanceUsd: 8, topUpBalanceUsd: 1, topUpBaselineUsd: null });
     mocks.mockCreditsApi.getUserCoupons
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
@@ -70,12 +54,12 @@ describe('RewardsCouponSection', () => {
     expect(await screen.findByText('$3.00')).toBeInTheDocument();
     expect(screen.getByText('No reward codes redeemed yet.')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText('Promo code'), {
-      target: { value: 'aprl-2026' },
-    });
+    fireEvent.change(screen.getByPlaceholderText('Promo code'), { target: { value: 'aprl-2026' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply code' }));
 
-    expect(await screen.findByText('APRL-2026 redeemed. $5.00 was added to your credits.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('APRL-2026 redeemed. $5.00 was added to your credits.')
+    ).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText('$8.00')).toBeInTheDocument();
@@ -100,9 +84,7 @@ describe('RewardsCouponSection', () => {
 
     expect(await screen.findByText('$3.00')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByPlaceholderText('Promo code'), {
-      target: { value: 'used-code' },
-    });
+    fireEvent.change(screen.getByPlaceholderText('Promo code'), { target: { value: 'used-code' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply code' }));
 
     expect(await screen.findByText('This coupon has already been used.')).toBeInTheDocument();

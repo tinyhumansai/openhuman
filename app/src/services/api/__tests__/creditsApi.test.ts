@@ -16,16 +16,8 @@ describe('creditsApi coupon helpers', () => {
 
   it('normalizes redeem payloads from backend data shape', () => {
     expect(
-      normalizeCouponRedeemResult({
-        couponCode: 'SAVE-2026',
-        amount_usd: '4.5',
-        pending: 0,
-      })
-    ).toEqual({
-      couponCode: 'SAVE-2026',
-      amountUsd: 4.5,
-      pending: false,
-    });
+      normalizeCouponRedeemResult({ couponCode: 'SAVE-2026', amount_usd: '4.5', pending: 0 })
+    ).toEqual({ couponCode: 'SAVE-2026', amountUsd: 4.5, pending: false });
   });
 
   it('normalizes redeemed coupon rows', () => {

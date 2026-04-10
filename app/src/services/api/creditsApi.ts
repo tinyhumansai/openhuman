@@ -175,9 +175,7 @@ export function normalizeRedeemedCoupon(raw: unknown): RedeemedCoupon {
       'IMMEDIATE',
     fulfilled: Boolean(record.fulfilled),
     fulfilledAt: asStringOrNull(record.fulfilledAt ?? record.fulfilled_at),
-    activationCondition: asStringOrNull(
-      record.activationCondition ?? record.activation_condition
-    ),
+    activationCondition: asStringOrNull(record.activationCondition ?? record.activation_condition),
   };
 }
 

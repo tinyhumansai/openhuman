@@ -116,7 +116,12 @@ const RewardsCouponSection = () => {
       setSubmitSuccess(successMessage(result));
       setCouponCode('');
       await Promise.all([loadCouponState(), refetch()]);
-      log('[redeem] completed code=%s pending=%s amount=%s', result.couponCode, result.pending, result.amountUsd);
+      log(
+        '[redeem] completed code=%s pending=%s amount=%s',
+        result.couponCode,
+        result.pending,
+        result.amountUsd
+      );
     } catch (error) {
       const message =
         error && typeof error === 'object' && 'error' in error
@@ -255,7 +260,9 @@ const RewardsCouponSection = () => {
               </thead>
               <tbody className="divide-y divide-stone-100">
                 {redeemedCoupons.map(coupon => (
-                  <tr key={`${coupon.code}-${coupon.redeemedAt ?? coupon.activationType}`} className="bg-white">
+                  <tr
+                    key={`${coupon.code}-${coupon.redeemedAt ?? coupon.activationType}`}
+                    className="bg-white">
                     <td className="px-3 py-2 font-mono text-stone-800">{coupon.code}</td>
                     <td className="px-3 py-2 text-stone-700">{formatUsd(coupon.amountUsd)}</td>
                     <td className="px-3 py-2">
