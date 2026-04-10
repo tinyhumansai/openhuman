@@ -17,7 +17,6 @@ import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
   clickByTestId,
-  clickText,
   dumpAccessibilityTree,
   textExists,
   waitForWebView,
@@ -106,20 +105,16 @@ describe('Voice Intelligence (Built-in Skill)', () => {
   // ── 9.3.2 Click card → opens Voice settings panel ──────────────────────
 
   it('navigates to Voice settings panel from Skills tab', async () => {
-    let navigated = false;
-
     try {
       // Primary: click the CTA "Settings" button on the Voice Intelligence card.
       await clickByTestId('skill-cta-voice-stt', 10_000);
       await browser.pause(2_000);
-      navigated = true;
     } catch (err) {
       stepLog('Voice CTA not found by testid, falling back to navigateViaHash', {
         error: String(err),
       });
       await navigateViaHash('/settings/voice');
       await browser.pause(2_000);
-      navigated = true;
     }
 
     if (supportsExecuteScript()) {

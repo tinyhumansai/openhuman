@@ -23,7 +23,6 @@ import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
   clickByTestId,
-  clickText,
   dumpAccessibilityTree,
   textExists,
   waitForWebView,
@@ -163,20 +162,16 @@ describe('Skill execution & Text Auto-Complete (Built-in Skill)', () => {
   // ── 9.2.3 Text Auto-Complete card → /settings/autocomplete ──────────────
 
   it('navigates to Autocomplete settings from the Skills tab', async () => {
-    let navigated = false;
-
     try {
       // Primary: click the CTA "Settings" button on the Text Auto-Complete card.
       await clickByTestId('skill-cta-text-autocomplete', 10_000);
       await browser.pause(2_000);
-      navigated = true;
     } catch (err) {
       stepLog('Autocomplete CTA not found by testid, falling back to navigateViaHash', {
         error: String(err),
       });
       await navigateViaHash('/settings/autocomplete');
       await browser.pause(2_000);
-      navigated = true;
     }
 
     if (supportsExecuteScript()) {
