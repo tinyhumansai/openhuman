@@ -16,6 +16,8 @@ export interface PlanMeta {
   fiveHourCapUsd: number;
   discountPercent: number;
   features: PlanFeature[];
+  recommended?: boolean;
+  tagline?: string;
 }
 
 export const PLANS: PlanMeta[] = [
@@ -28,11 +30,12 @@ export const PLANS: PlanMeta[] = [
     weeklyBudgetUsd: 0,
     fiveHourCapUsd: 0,
     discountPercent: 0,
+    tagline: 'Get started at no cost',
     features: [
-      { text: 'Base access to integrations and inference', included: true },
+      { text: 'Access to all integrations and inference', included: true },
       { text: 'One-time signup credits when available', included: true },
-      { text: 'Pay-as-you-go top-ups when credits run out', included: true },
-      { text: 'No subscription discount on premium usage', included: true },
+      { text: 'Pay-as-you-go top-ups', included: true },
+      { text: 'No subscription discount', included: false },
     ],
   },
   {
@@ -44,13 +47,12 @@ export const PLANS: PlanMeta[] = [
     weeklyBudgetUsd: 10,
     fiveHourCapUsd: 3,
     discountPercent: 20,
+    recommended: true,
+    tagline: 'Best value for most users',
     features: [
-      { text: 'Higher included premium usage every billing cycle', included: true },
-      {
-        text: '20% premium-usage discount across integrations, bandwidth, and inference',
-        included: true,
-      },
-      { text: 'Pay-as-you-go top-ups for overflow usage', included: true },
+      { text: '$20/mo in premium usage included', included: true },
+      { text: '20% discount on all premium usage', included: true },
+      { text: 'Pay-as-you-go top-ups for overflow', included: true },
     ],
   },
   {
@@ -62,10 +64,11 @@ export const PLANS: PlanMeta[] = [
     weeklyBudgetUsd: 100,
     fiveHourCapUsd: 30,
     discountPercent: 40,
+    tagline: 'For power users and teams',
     features: [
-      { text: 'Largest included premium usage allocation', included: true },
-      { text: '40% premium-usage discount across integrations and inference', included: true },
-      { text: 'Best fit for heavy bandwidth and agent workloads', included: true },
+      { text: '$200/mo in premium usage included', included: true },
+      { text: '40% discount on all premium usage', included: true },
+      { text: 'Best fit for heavy bandwidth and agents', included: true },
     ],
   },
 ];

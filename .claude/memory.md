@@ -87,6 +87,8 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Banner dismiss state uses localStorage** (prefix `openhuman:upsell:`), not Redux — consistent with CLAUDE.md exception for ephemeral UI state.
 - **Phased rollout** — Phase 1 = banners + limit modal + hook. Phase 2 = onboarding upsell + analytics. Phase 3 = remote config + A/B testing.
 - **"5-hour" label stragglers in Conversations.tsx** — `LimitPill` label and its hover tooltip still say "5h" / "5-hour". Commit 8c52236's "10-hour" terminology refactor missed those two spots.
+- **`getTeamUsage()` now normalizes via `normalizeTeamUsage()`** — Added in issue #482. The Rust sidecar passes backend JSON through opaquely (`src/openhuman/team/ops.rs`), so the TS client must normalize field names and types. Pattern matches existing `normalizeCreditBalance()` in the same file. Any new billing API that returns raw backend data should follow the same normalize-at-the-client pattern.
+- **Two separate `TeamUsage` types exist** — `creditsApi.ts:24` (billing: cycle budget, limits) and `types/team.ts:11` (team model: daily token limit). Different import paths, no collision, but confusing.
 
 ## Settings & Skills Reorganization (Issue #396)
 

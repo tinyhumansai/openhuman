@@ -298,10 +298,44 @@ pub async fn check_and_update_core(
         MINIMUM_CORE_VERSION
     );
 
-    // Step 2: Fetch latest release from GitHub.
+    let below_app_minimum = is_outdated(&running_version, MINIMUM_CORE_VERSION);
+    if below_app_minimum {
+        log::warn!(
+            "[core-update] sidecar is OLDER than this app build (running {running_version}, need >= {min}). \
+UI features (e.g. channel connect) may not match RPC until the core is updated.",
+            min = MINIMUM_CORE_VERSION
+        );
+    }
+
+    // Step 2: Fetch latest release from GitHub (needed to download a replacement binary).
     emit_event(&app, "core-update:status", "checking");
 
-    let release = fetch_latest_release().await?;
+    let release = match fetch_latest_release().await {
+        Ok(r) => r,
+        Err(e) => {
+            if force {
+                log::warn!("[core-update] could not fetch latest release: {e}");
+                return Err(e);
+            }
+            if below_app_minimum {
+                log::error!(
+                    "[core-update] cannot auto-update core (GitHub unreachable): {e}\n\
+→ Stop any other `openhuman` / OpenHuman using RPC port {}.\n\
+→ From repo root: `cargo build --manifest-path Cargo.toml --bin openhuman` then `cd app && yarn core:stage`, restart the app.\n\
+→ Or fix network access to https://api.github.com (VPN/DNS/firewall).",
+                    handle.port()
+                );
+                emit_event(&app, "core-update:status", "error");
+                return Err(e);
+            }
+            log::warn!(
+                "[core-update] could not fetch latest release (non-fatal; core meets minimum): {e}"
+            );
+            emit_event(&app, "core-update:status", "up_to_date");
+            return Ok(());
+        }
+    };
+
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
     log::info!("[core-update] latest release: {latest_version}");
 

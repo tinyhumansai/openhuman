@@ -34,6 +34,7 @@ import {
 import type { ThreadMessage } from '../types/thread';
 import {
   isTauri,
+  notifyOverlaySttState,
   openhumanAutocompleteAccept,
   openhumanAutocompleteCurrent,
   openhumanLocalAiAnalyzeSentiment,
@@ -762,6 +763,7 @@ const Conversations = () => {
     const chunks = audioChunksRef.current;
     audioChunksRef.current = [];
     if (chunks.length === 0) {
+      notifyOverlaySttState('cancelled');
       setVoiceStatus('No audio captured. Try again.');
       return;
     }
@@ -784,13 +786,16 @@ const Conversations = () => {
       const transcript = result.text.trim();
 
       if (!transcript) {
+        notifyOverlaySttState('cancelled');
         setVoiceStatus('No speech detected. Try again.');
         return;
       }
 
+      notifyOverlaySttState('transcription_done', transcript);
       setVoiceStatus(`Heard: ${transcript}`);
       await handleSendMessage(transcript);
     } catch (err) {
+      notifyOverlaySttState('error');
       const message = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('voice_transcription', `Voice transcription failed: ${message}`));
       setVoiceStatus(null);
@@ -839,6 +844,7 @@ const Conversations = () => {
         }
       };
       recorder.onerror = () => {
+        notifyOverlaySttState('error');
         setIsRecording(false);
         mediaStreamRef.current?.getTracks().forEach(track => track.stop());
         mediaStreamRef.current = null;
@@ -853,7 +859,9 @@ const Conversations = () => {
       setSendError(null);
       setIsRecording(true);
       recorder.start();
+      notifyOverlaySttState('recording_started');
     } catch (err) {
+      notifyOverlaySttState('error');
       const message = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('microphone_access', `Microphone access failed: ${message}`));
       setVoiceStatus(null);
@@ -1238,7 +1246,7 @@ const Conversations = () => {
                   </svg>
                   <p className="text-xs text-coral-600 truncate">
                     {teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
-                      ? 'Included weekly inference budget exhausted. Top up to continue.'
+                      ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
                       : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
                   </p>
                 </div>
@@ -1290,8 +1298,8 @@ const Conversations = () => {
                         <div className="flex items-center justify-between gap-4">
                           <span className="text-stone-400">5-hour limit</span>
                           <span>
-                            ${teamUsage.cycleLimit5hr.toFixed(2)} / $
-                            {teamUsage.fiveHourCapUsd.toFixed(2)}
+                            ${(teamUsage.cycleLimit5hr ?? 0).toFixed(2)} / $
+                            {(teamUsage.fiveHourCapUsd ?? 0).toFixed(2)}
                             {teamUsage.fiveHourResetsAt && (
                               <span className="text-stone-400 ml-1">
                                 — resets {formatResetTime(teamUsage.fiveHourResetsAt)}
@@ -1303,8 +1311,8 @@ const Conversations = () => {
                       <div className="flex items-center justify-between gap-4">
                         <span className="text-stone-400">Weekly limit</span>
                         <span>
-                          ${teamUsage.remainingUsd.toFixed(2)} / $
-                          {teamUsage.cycleBudgetUsd.toFixed(2)} left
+                          ${(teamUsage.remainingUsd ?? 0).toFixed(2)} / $
+                          {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)} left
                           {teamUsage.cycleEndsAt && (
                             <span className="text-stone-400 ml-1">
                               — resets {formatResetTime(teamUsage.cycleEndsAt)}
@@ -1448,7 +1456,7 @@ const Conversations = () => {
         open={showLimitModal}
         onClose={() => setShowLimitModal(false)}
         isBudgetExhausted={isBudgetExhausted}
-        resetTime={teamUsage?.fiveHourResetsAt}
+        resetTime={isBudgetExhausted ? teamUsage?.cycleEndsAt : teamUsage?.fiveHourResetsAt}
         currentTier={currentTier}
       />
     </div>

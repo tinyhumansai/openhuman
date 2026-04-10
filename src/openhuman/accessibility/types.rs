@@ -65,6 +65,7 @@ pub struct PermissionStatus {
     pub screen_recording: PermissionState,
     pub accessibility: PermissionState,
     pub input_monitoring: PermissionState,
+    pub microphone: PermissionState,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,6 +74,7 @@ pub enum PermissionKind {
     ScreenRecording,
     Accessibility,
     InputMonitoring,
+    Microphone,
 }
 
 #[cfg(test)]

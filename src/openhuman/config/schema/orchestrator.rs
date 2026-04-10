@@ -42,6 +42,15 @@ pub struct OrchestratorConfig {
     /// Maximum retry attempts for a failed DAG task node.
     #[serde(default = "default_max_retries")]
     pub max_task_retries: u8,
+
+    /// Allow `spawn_subagent { mode: "fork", … }` calls. Fork mode replays
+    /// the parent's exact rendered prompt + tool schemas + message prefix
+    /// so the inference backend's automatic prefix caching kicks in.
+    /// Defaults to true; flip to false to force every sub-agent into
+    /// typed mode (e.g. on backends that don't benefit from prefix
+    /// caching, or while debugging).
+    #[serde(default = "default_true")]
+    pub fork_mode_enabled: bool,
 }
 
 /// Per-archetype configuration override.
@@ -101,6 +110,7 @@ impl Default for OrchestratorConfig {
             self_healing_enabled: default_true(),
             max_dag_tasks: default_max_dag_tasks(),
             max_task_retries: default_max_retries(),
+            fork_mode_enabled: default_true(),
         }
     }
 }

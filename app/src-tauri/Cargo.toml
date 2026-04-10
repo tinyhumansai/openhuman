@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.52.0"
+version = "0.52.2"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"
@@ -39,6 +39,9 @@ semver = "1"
 
 log = "0.4"
 env_logger = "0.11"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", default-features = false, features = ["signal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = "0.3.2"

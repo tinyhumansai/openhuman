@@ -28,29 +28,40 @@ use crate::core::types::{AppState, RpcError, RpcFailure, RpcRequest, RpcSuccess}
 /// JSON-RPC 2.0 compliant success or failure response.
 pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
     let id = req.id.clone();
-    match invoke_method(state, req.method.as_str(), req.params).await {
-        Ok(value) => (
-            StatusCode::OK,
-            Json(RpcSuccess {
-                jsonrpc: "2.0",
-                id,
-                result: value,
-            }),
-        )
-            .into_response(),
-        Err(message) => (
-            StatusCode::OK,
-            Json(RpcFailure {
-                jsonrpc: "2.0",
-                id,
-                error: RpcError {
-                    code: -32000,
-                    message,
-                    data: None,
-                },
-            }),
-        )
-            .into_response(),
+    let method = req.method.clone();
+    let started = std::time::Instant::now();
+    let result = invoke_method(state, method.as_str(), req.params).await;
+    let ms = started.elapsed().as_millis();
+
+    match result {
+        Ok(value) => {
+            tracing::info!("[rpc] {} -> ok ({}ms)", method, ms);
+            (
+                StatusCode::OK,
+                Json(RpcSuccess {
+                    jsonrpc: "2.0",
+                    id,
+                    result: value,
+                }),
+            )
+                .into_response()
+        }
+        Err(message) => {
+            tracing::info!("[rpc] {} -> err ({}ms): {}", method, ms, message);
+            (
+                StatusCode::OK,
+                Json(RpcFailure {
+                    jsonrpc: "2.0",
+                    id,
+                    error: RpcError {
+                        code: -32000,
+                        message,
+                        data: None,
+                    },
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -374,6 +385,9 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
 }
 
 /// Middleware for logging incoming HTTP requests.
+///
+/// The `/rpc` path is logged inside [`rpc_handler`] instead (with the
+/// JSON-RPC method name), so we skip it here to avoid a redundant line.
 async fn http_request_log_middleware(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
@@ -382,16 +396,18 @@ async fn http_request_log_middleware(req: Request, next: Next) -> Response {
 
     let response = next.run(req).await;
 
-    let status = response.status().as_u16();
-    let ms = started.elapsed().as_millis();
-    log::info!(
-        "[http] {} {}{} -> {} ({}ms)",
-        method,
-        path,
-        if query_len > 0 { "?…" } else { "" },
-        status,
-        ms
-    );
+    if path != "/rpc" {
+        let status = response.status().as_u16();
+        let ms = started.elapsed().as_millis();
+        tracing::info!(
+            "[http] {} {}{} -> {} ({}ms)",
+            method,
+            path,
+            if query_len > 0 { "?…" } else { "" },
+            status,
+            ms
+        );
+    }
 
     response
 }
@@ -744,6 +760,37 @@ async fn run_server_inner(
         }
     });
 
+    // Realtime channel listeners (Telegram getUpdates, Discord gateway, etc.) live in
+    // `start_channels`. Without this task, `openhuman run` would only expose RPC while
+    // inbound bot messages are never polled.
+    if std::env::var("OPENHUMAN_DISABLE_CHANNEL_LISTENERS")
+        .ok()
+        .filter(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .is_none()
+    {
+        tokio::spawn(async move {
+            let config = match crate::openhuman::config::Config::load_or_init().await {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("[channels] could not load config for listeners: {e}");
+                    return;
+                }
+            };
+            if !config.channels_config.has_listening_integrations() {
+                log::debug!(
+                    "[channels] no channel integrations configured; not spawning listeners"
+                );
+                return;
+            }
+            log::info!("[channels] spawning in-process realtime listeners (Telegram, Discord, …)");
+            if let Err(e) = crate::openhuman::channels::start_channels(config).await {
+                log::error!("[channels] start_channels ended with error: {e}");
+            }
+        });
+    } else {
+        log::info!("[channels] OPENHUMAN_DISABLE_CHANNEL_LISTENERS set — skipping start_channels");
+    }
+
     axum::serve(listener, app)
         .with_graceful_shutdown(crate::core::shutdown::signal())
         .await?;
@@ -795,24 +842,23 @@ fn register_domain_subscribers() {
 /// globally so RPC handlers (`openhuman.skills_*`, `openhuman.socket_*`) can
 /// reach them.
 pub async fn bootstrap_skill_runtime() {
+    use crate::openhuman::skills::paths::resolve_runtime_paths;
     use crate::openhuman::skills::qjs_engine::{set_global_engine, RuntimeEngine};
     use crate::openhuman::socket::{set_global_socket_manager, SocketManager};
     use std::sync::Arc;
 
-    // Resolve the base directory (~/.openhuman or $OPENHUMAN_WORKSPACE).
-    let base_dir = std::env::var("OPENHUMAN_WORKSPACE")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".openhuman")
-        });
+    // Resolve per-user scoped paths via Config so `skills_data` lives under
+    // `~/.openhuman/users/{user_id}/skills_data` when an active user is set,
+    // matching how config, workspace, and auth are scoped.
+    let paths = resolve_runtime_paths().await;
+    let skills_data_dir = paths.skills_data_dir.clone();
+    let workspace_dir = paths.workspace_dir.clone();
 
-    let skills_data_dir = base_dir.join("skills_data");
     if let Err(e) = std::fs::create_dir_all(&skills_data_dir) {
-        log::error!("[runtime] Failed to create skills data dir: {e}");
+        log::error!(
+            "[runtime] Failed to create skills data dir {}: {e}",
+            skills_data_dir.display()
+        );
         return;
     }
 
@@ -824,10 +870,10 @@ pub async fn bootstrap_skill_runtime() {
         }
     };
 
-    // Point the engine at the workspace directory for user-installed skills.
-    let workspace_dir = base_dir.join("workspace");
+    // Point the engine at the (also scoped) workspace directory for
+    // user-installed skills.
     let _ = std::fs::create_dir_all(&workspace_dir);
-    engine.set_workspace_dir(workspace_dir);
+    engine.set_workspace_dir(workspace_dir.clone());
 
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
@@ -836,6 +882,19 @@ pub async fn bootstrap_skill_runtime() {
     // Uses a Once guard so repeated calls to bootstrap_skill_runtime() (e.g.
     // from both jsonrpc and repl paths) cannot double-subscribe.
     register_domain_subscribers();
+
+    // --- Sub-agent definition registry bootstrap ---
+    // Loads built-in archetype definitions plus any custom TOML files
+    // under `<workspace>/agents/*.toml`. Idempotent — safe to call from
+    // both jsonrpc and repl paths. Uses the per-user scoped workspace_dir.
+    if let Err(err) =
+        crate::openhuman::agent::harness::AgentDefinitionRegistry::init_global(&workspace_dir)
+    {
+        log::warn!(
+            "[runtime] AgentDefinitionRegistry::init_global failed: {err} — \
+             spawn_subagent will be unavailable until restart"
+        );
+    }
 
     // --- Socket manager bootstrap ---
     let socket_mgr = Arc::new(SocketManager::new());

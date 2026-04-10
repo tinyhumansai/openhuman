@@ -75,6 +75,13 @@ pub fn all_tools_with_runtime(
         Box::new(ShellTool::new(security.clone(), runtime)),
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security.clone())),
+        // Sub-agent dispatch — lets the parent agent delegate focused
+        // sub-tasks (research, code execution, API specialists, …) by
+        // calling `spawn_subagent { agent_id, prompt, … }`. The runner
+        // builds a narrow Agent from an `AgentDefinition` lookup and
+        // returns a single text result. See
+        // `agent::harness::subagent_runner` for the dispatch path.
+        Box::new(SpawnSubagentTool::new()),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),
@@ -236,6 +243,23 @@ pub fn all_tools_with_runtime(
     tools
 }
 
+/// Legacy allowlist — no longer the primary source of truth for
+/// orchestrator tool visibility. The `from_config` builder now uses
+/// `orchestrator_tools::collect_orchestrator_tools()` to generate
+/// the visible tool set dynamically. Kept for backward compatibility
+/// with callers that reference this constant.
+pub const MAIN_AGENT_TOOL_ALLOWLIST: &[&str] = &["spawn_subagent"];
+
+/// Filter a full tool registry down to only the tools the main agent
+/// should see. Sub-agents receive the unfiltered registry via
+/// `ParentExecutionContext::all_tools` and apply their own per-definition
+/// whitelist in the subagent runner.
+pub fn main_agent_tools(all: Vec<Box<dyn Tool>>) -> Vec<Box<dyn Tool>> {
+    all.into_iter()
+        .filter(|t| MAIN_AGENT_TOOL_ALLOWLIST.contains(&t.name()))
+        .collect()
+}
+
 /// Hardware peripheral tools — always empty (boards removed); config kept for compatibility.
 pub async fn create_peripheral_tools(
     _config: &crate::openhuman::config::PeripheralsConfig,
@@ -262,6 +286,50 @@ mod tests {
         let security = Arc::new(SecurityPolicy::default());
         let tools = default_tools(security);
         assert_eq!(tools.len(), 3);
+    }
+
+    #[test]
+    fn all_tools_includes_spawn_subagent() {
+        // Regression guard: the `spawn_subagent` tool must be present
+        // in the default registry so parent agents can delegate to
+        // sub-agents at runtime. If this test fails, the dispatch path
+        // in `agent::harness::subagent_runner` becomes unreachable.
+        let tmp = TempDir::new().unwrap();
+        let security = Arc::new(SecurityPolicy::default());
+        let mem_cfg = MemoryConfig {
+            backend: "markdown".into(),
+            ..MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> =
+            Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path(), None).unwrap());
+
+        let browser = BrowserConfig {
+            enabled: false,
+            allowed_domains: vec![],
+            session_name: None,
+            ..BrowserConfig::default()
+        };
+        let http = crate::openhuman::config::HttpRequestConfig::default();
+        let cfg = test_config(&tmp);
+
+        let tools = all_tools(
+            Arc::new(Config::default()),
+            &security,
+            mem,
+            None,
+            None,
+            &browser,
+            &http,
+            tmp.path(),
+            &HashMap::new(),
+            None,
+            &cfg,
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"spawn_subagent"),
+            "spawn_subagent must be registered in the default tool list; got: {names:?}"
+        );
     }
 
     #[test]

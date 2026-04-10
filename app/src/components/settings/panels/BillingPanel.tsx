@@ -88,21 +88,34 @@ const BillingPanel = () => {
   // Fetch current plan, credits balance, and team usage on mount
   useEffect(() => {
     setIsLoadingCredits(true);
-    Promise.all([billingApi.getCurrentPlan(), creditsApi.getBalance(), creditsApi.getTeamUsage()])
-      .then(([plan, balance, usage]) => {
-        log(
-          '[load] plan=%s active=%s weeklyBudget=%s',
-          plan.plan,
-          plan.hasActiveSubscription,
-          plan.weeklyBudgetUsd
-        );
-        setCurrentPlan(plan);
-        setCreditBalance(balance);
-        setTeamUsage(usage);
-      })
-      .catch(error => {
-        log('[load] failed: %O', error);
-        console.error(error);
+    Promise.allSettled([
+      billingApi.getCurrentPlan(),
+      creditsApi.getBalance(),
+      creditsApi.getTeamUsage(),
+    ])
+      .then(([planResult, balanceResult, usageResult]) => {
+        if (planResult.status === 'fulfilled') {
+          const plan = planResult.value;
+          log(
+            '[load] plan=%s active=%s weeklyBudget=%s',
+            plan.plan,
+            plan.hasActiveSubscription,
+            plan.weeklyBudgetUsd
+          );
+          setCurrentPlan(plan);
+        } else {
+          log('[load] getCurrentPlan failed: %O', planResult.reason);
+        }
+        if (balanceResult.status === 'fulfilled') {
+          setCreditBalance(balanceResult.value);
+        } else {
+          log('[load] getBalance failed: %O', balanceResult.reason);
+        }
+        if (usageResult.status === 'fulfilled') {
+          setTeamUsage(usageResult.value);
+        } else {
+          log('[load] getTeamUsage failed: %O', usageResult.reason);
+        }
       })
       .finally(() => setIsLoadingCredits(false));
   }, []);
@@ -400,8 +413,8 @@ const BillingPanel = () => {
             )}
             <p className="text-xs text-stone-500">
               {currentTier === 'FREE'
-                ? 'Free accounts do not include recurring monthly credits. New accounts may receive a one-time signup credit, and any additional usage is covered by pay-as-you-go credits.'
-                : 'Your subscription includes premium usage each cycle. Pay-as-you-go credits cover overage after the included budget is consumed.'}
+                ? 'Free accounts use pay-as-you-go credits. New accounts may receive a one-time signup credit.'
+                : 'Your subscription includes premium usage each cycle. Top-ups cover any overage.'}
             </p>
             {currentPlan && (
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -420,12 +433,10 @@ const BillingPanel = () => {
                     10-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
                   </span>
                 )}
-                {currentPlanMeta && (
-                  <>
-                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                      Premium-usage discount: {currentPlanMeta.discountPercent}%
-                    </span>
-                  </>
+                {currentPlanMeta && currentPlanMeta.discountPercent > 0 && (
+                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
+                    Premium-usage discount: {currentPlanMeta.discountPercent}%
+                  </span>
                 )}
               </div>
             )}
@@ -444,7 +455,7 @@ const BillingPanel = () => {
           <div className="flex items-center gap-3 py-2">
             <div className="flex-1 h-px bg-stone-200" />
             <span className="text-xs text-stone-400 whitespace-nowrap">
-              Or subscribe for recurring included usage + discounts
+              Or subscribe for included usage + discounts
             </span>
             <div className="flex-1 h-px bg-stone-200" />
           </div>
@@ -493,52 +504,6 @@ const BillingPanel = () => {
             onDeleteCard={handleDeleteCard}
             onAddCard={handleAddCard}
           />
-
-          {/* ── Why upgrade? ───────────────────────────────────── */}
-          <div className="pt-2">
-            <div className="rounded-xl bg-gradient-to-br from-primary-500/10 to-sage-500/10 border border-primary-500/20 p-4">
-              <h3 className="text-sm font-semibold text-stone-900 mb-2">Why upgrade?</h3>
-              <ul className="space-y-1.5 text-xs text-stone-600">
-                <li className="flex items-start gap-2">
-                  <svg
-                    className="w-4 h-4 text-sage-400 flex-shrink-0 mt-0.5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                  <span>
-                    Higher tiers increase your premium-usage discount and included usage every cycle
-                  </span>
-                </li>
-                {currentTier === 'FREE' && (
-                  <li className="flex items-start gap-2">
-                    <svg
-                      className="w-4 h-4 text-sage-400 flex-shrink-0 mt-0.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24">
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M5 13l4 4L19 7"
-                      />
-                    </svg>
-                    <span>
-                      Annual billing lowers the effective monthly price, and top-ups let you keep
-                      going when usage spikes
-                    </span>
-                  </li>
-                )}
-              </ul>
-            </div>
-          </div>
         </div>
       </div>
     </div>

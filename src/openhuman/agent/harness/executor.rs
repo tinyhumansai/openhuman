@@ -232,6 +232,22 @@ async fn plan_tasks(
 }
 
 /// Execute all tasks in a single DAG level concurrently.
+///
+/// Each task is dispatched through the unified
+/// [`super::subagent_runner::run_subagent`] helper, which:
+/// - Looks up the built-in [`super::definition::AgentDefinition`] for
+///   the node's archetype.
+/// - Resolves model + tool filtering + narrow prompt construction.
+/// - Runs the sub-agent's inner tool-call loop using the parent's
+///   provider via the [`super::fork_context::PARENT_CONTEXT`] task-local
+///   that the orchestrator sets up earlier in
+///   [`super::subagent_runner`].
+///
+/// Per-archetype overrides from
+/// [`crate::openhuman::config::OrchestratorConfig::archetypes`] (model,
+/// temperature, max_tool_iterations, timeout_secs, sandbox) are layered
+/// on top of the built-in definition before dispatch.
+#[allow(clippy::too_many_arguments)]
 async fn execute_level(
     dag: &TaskDag,
     task_ids: &[String],
@@ -239,7 +255,7 @@ async fn execute_level(
     _config: &Config,
     _provider: &dyn Provider,
     _memory: Arc<dyn Memory>,
-    session_id: &str,
+    _session_id: &str,
     semaphore: Arc<tokio::sync::Semaphore>,
 ) -> Vec<SubAgentResult> {
     let mut join_set: JoinSet<SubAgentResult> = JoinSet::new();
@@ -254,9 +270,7 @@ async fn execute_level(
         let description = node.description.clone();
         let acceptance = node.acceptance_criteria.clone();
         let tid = task_id.clone();
-        let _sid = session_id.to_string();
-        let model = resolve_model(archetype, orch_config);
-        let _temperature = resolve_temperature(archetype, orch_config);
+        let semaphore_clone = semaphore.clone();
         let timeout = resolve_timeout(archetype, orch_config);
 
         // Collect context from completed dependencies.
@@ -270,24 +284,16 @@ async fn execute_level(
             })
             .collect();
 
-        let _prompt = if dep_context.is_empty() {
-            format!("Task: {description}\n\nAcceptance criteria: {acceptance}")
-        } else {
-            format!(
-                "Context from prior tasks:\n{dep_context}\n\
-                 Task: {description}\n\nAcceptance criteria: {acceptance}"
-            )
-        };
+        // Build the sub-agent prompt with the task description and
+        // acceptance criteria; dependency context (if any) flows
+        // through the runner's `SubagentRunOptions::context` field.
+        let prompt = format!("Task: {description}\n\nAcceptance criteria: {acceptance}");
+        let context_blob = (!dep_context.is_empty()).then_some(dep_context);
 
-        // Each sub-agent runs as a single-shot provider call for now.
-        // Phase 3 will upgrade this to full tool-loop sub-agents.
-        let _system_prompt = format!(
-            "You are the {archetype} agent. Complete the assigned task precisely.\n\
-             Do not deviate from the task description. Be concise."
-        );
-        let model_clone = model.clone();
-        let _timeout = timeout;
-        let semaphore_clone = semaphore.clone();
+        // Resolve the built-in definition for this archetype, layered
+        // with any per-archetype config overrides.
+        let mut definition = super::builtin_definitions::from_archetype(archetype);
+        apply_archetype_overrides(&mut definition, archetype, orch_config);
 
         join_set.spawn(async move {
             let _permit = semaphore_clone
@@ -296,25 +302,65 @@ async fn execute_level(
                 .expect("semaphore closed");
             let start = Instant::now();
 
-            // For now, sub-agents use a simple prompt (no tool loop).
-            // This will be upgraded when archetype-specific tool subsets are wired.
-            let result_text = format!(
-                "[placeholder — no execution] {archetype} sub-agent would execute here\n\
-                 Task: {description}\nModel: {model_clone}\nTimeout: {timeout:?}"
-            );
+            let options = super::subagent_runner::SubagentRunOptions {
+                skill_filter_override: None,
+                category_filter_override: None,
+                context: context_blob,
+                task_id: Some(tid.clone()),
+            };
+
+            let outcome_fut = super::subagent_runner::run_subagent(&definition, &prompt, options);
+            let outcome = match tokio::time::timeout(timeout, outcome_fut).await {
+                Ok(Ok(out)) => out,
+                Ok(Err(err)) => {
+                    tracing::warn!(
+                        task_id = %tid,
+                        archetype = %archetype,
+                        error = %err,
+                        "[orchestrator] sub-agent failed"
+                    );
+                    return SubAgentResult {
+                        task_id: tid,
+                        success: false,
+                        output: format!("sub-agent failed: {err}"),
+                        artifacts: Vec::new(),
+                        cost_microdollars: 0,
+                        duration: start.elapsed(),
+                    };
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        task_id = %tid,
+                        archetype = %archetype,
+                        timeout_secs = timeout.as_secs(),
+                        "[orchestrator] sub-agent timed out"
+                    );
+                    return SubAgentResult {
+                        task_id: tid,
+                        success: false,
+                        output: format!("sub-agent timed out after {} seconds", timeout.as_secs()),
+                        artifacts: Vec::new(),
+                        cost_microdollars: 0,
+                        duration: start.elapsed(),
+                    };
+                }
+            };
 
             tracing::debug!(
-                "[orchestrator] sub-agent {archetype} placeholder task {tid} in {:?}",
-                start.elapsed()
+                task_id = %outcome.task_id,
+                archetype = %archetype,
+                iterations = outcome.iterations,
+                output_chars = outcome.output.chars().count(),
+                "[orchestrator] sub-agent completed"
             );
 
             SubAgentResult {
-                task_id: tid,
-                success: false,
-                output: result_text,
+                task_id: outcome.task_id,
+                success: true,
+                output: outcome.output,
                 artifacts: Vec::new(),
                 cost_microdollars: 0,
-                duration: start.elapsed(),
+                duration: outcome.elapsed,
             }
         });
     }
@@ -329,6 +375,52 @@ async fn execute_level(
         }
     }
     results
+}
+
+/// Apply per-archetype config overrides on top of a built-in
+/// [`super::definition::AgentDefinition`].
+fn apply_archetype_overrides(
+    definition: &mut super::definition::AgentDefinition,
+    archetype: AgentArchetype,
+    orch_config: &OrchestratorConfig,
+) {
+    let key = archetype.to_string();
+    let Some(over) = orch_config.archetypes.get(&key) else {
+        return;
+    };
+    if let Some(model) = over.model.as_ref() {
+        // The override is a raw model name — store as Exact so the
+        // runner uses it verbatim regardless of the parent's model.
+        definition.model = super::definition::ModelSpec::Exact(model.clone());
+    }
+    if let Some(temperature) = over.temperature {
+        definition.temperature = temperature;
+    }
+    if let Some(max_iter) = over.max_tool_iterations {
+        definition.max_iterations = max_iter;
+    }
+    if let Some(secs) = over.timeout_secs {
+        definition.timeout_secs = Some(secs);
+    }
+    if let Some(sb) = over.sandbox.as_deref() {
+        definition.sandbox_mode = match sb {
+            "sandboxed" => super::definition::SandboxMode::Sandboxed,
+            "read_only" => super::definition::SandboxMode::ReadOnly,
+            "none" | "" => super::definition::SandboxMode::None,
+            other => {
+                tracing::warn!(
+                    archetype = %archetype,
+                    definition_id = %definition.id,
+                    value = %other,
+                    "[orchestrator] unknown sandbox override — falling back to SandboxMode::None. Expected one of: sandboxed, read_only, none"
+                );
+                super::definition::SandboxMode::None
+            }
+        };
+    }
+    if let Some(prompt_override) = over.system_prompt.as_ref() {
+        definition.system_prompt = super::definition::PromptSource::Inline(prompt_override.clone());
+    }
 }
 
 /// The Orchestrator reviews results from a completed level and decides next action.
@@ -472,7 +564,7 @@ fn resolve_model(archetype: AgentArchetype, config: &OrchestratorConfig) -> Stri
             return model.clone();
         }
     }
-    format!("hint:{}", archetype.default_model_hint())
+    format!("{}-v1", archetype.default_model_hint())
 }
 
 /// Resolve temperature for an archetype.
@@ -532,11 +624,11 @@ mod tests {
         let config = OrchestratorConfig::default();
         assert_eq!(
             resolve_model(AgentArchetype::CodeExecutor, &config),
-            "hint:coding"
+            "coding-v1"
         );
         assert_eq!(
             resolve_model(AgentArchetype::Orchestrator, &config),
-            "hint:reasoning"
+            "reasoning-v1"
         );
     }
 }

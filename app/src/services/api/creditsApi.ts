@@ -1,9 +1,24 @@
 import { callCoreCommand } from '../coreCommandClient';
 
+/**
+ * Credit balance payload returned by `GET /payments/credits/balance`.
+ *
+ * Mirrors the backend shape defined in
+ * `backend-1/src/services/user/balanceService.ts` → `getCreditBalance(userId)`,
+ * which in turn derives from `IUser.usage.promotionBalanceUsd` on the user
+ * model and the team-level top-up ledger.
+ */
 export interface CreditBalance {
-  balanceUsd: number;
-  topUpBalanceUsd: number;
-  topUpBaselineUsd: number | null;
+  /**
+   * Promotional credit balance on the user document (signup bonus, coupons,
+   * referral rewards). Corresponds to `IUserUsage.promotionBalanceUsd`.
+   */
+  promotionBalanceUsd: number;
+  /**
+   * Team-level top-up balance (paid credits that cover overage once the
+   * included cycle budget is exhausted). Returned by `getTeamTopup(userId)`.
+   */
+  teamTopupUsd: number;
 }
 
 export interface TeamUsage {
@@ -185,18 +200,41 @@ function normalizeUsd(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function normalizeNullableUsd(value: unknown): number | null {
-  if (value == null) return null;
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
 function normalizeCreditBalance(payload: unknown): CreditBalance {
-  const raw = payload && typeof payload === 'object' ? (payload as Partial<CreditBalance>) : {};
+  const raw = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
 
   return {
-    balanceUsd: normalizeUsd(raw.balanceUsd),
-    topUpBalanceUsd: normalizeUsd(raw.topUpBalanceUsd),
-    topUpBaselineUsd: normalizeNullableUsd(raw.topUpBaselineUsd),
+    promotionBalanceUsd: normalizeUsd(raw.promotionBalanceUsd),
+    teamTopupUsd: normalizeUsd(raw.teamTopupUsd),
+  };
+}
+
+export function normalizeTeamUsage(payload: unknown): TeamUsage {
+  const raw = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
+  return {
+    remainingUsd: normalizeUsd(raw.remainingUsd ?? raw.remaining_usd),
+    cycleBudgetUsd: normalizeUsd(raw.cycleBudgetUsd ?? raw.cycle_budget_usd),
+    cycleLimit5hr: normalizeUsd(
+      raw.cycleLimit5hr ?? raw.fiveHourSpendUsd ?? raw.five_hour_spend_usd
+    ),
+    cycleLimit7day: normalizeUsd(raw.cycleLimit7day ?? raw.cycle_limit_7day),
+    fiveHourCapUsd: normalizeUsd(raw.fiveHourCapUsd ?? raw.five_hour_cap_usd),
+    fiveHourResetsAt: asStringOrNull(raw.fiveHourResetsAt ?? raw.five_hour_resets_at),
+    cycleStartDate:
+      typeof raw.cycleStartDate === 'string'
+        ? raw.cycleStartDate
+        : typeof raw.cycle_start_date === 'string'
+          ? raw.cycle_start_date
+          : new Date().toISOString(),
+    cycleEndsAt:
+      typeof raw.cycleEndsAt === 'string'
+        ? raw.cycleEndsAt
+        : typeof raw.cycle_ends_at === 'string'
+          ? raw.cycle_ends_at
+          : new Date().toISOString(),
+    bypassCycleLimit: Boolean(
+      raw.bypassCycleLimit ?? raw.bypassRateLimit ?? raw.bypass_cycle_limit
+    ),
   };
 }
 
@@ -218,7 +256,8 @@ export const creditsApi = {
    * GET /teams/me/usage
    */
   getTeamUsage: async (): Promise<TeamUsage> => {
-    return await callCoreCommand<TeamUsage>('openhuman.team_get_usage');
+    const result = await callCoreCommand<TeamUsage>('openhuman.team_get_usage');
+    return normalizeTeamUsage(result);
   },
 
   /**

@@ -199,4 +199,25 @@ mod tests {
     fn subscribe_returns_receiver() {
         let _rx = subscribe_dictation_events();
     }
+
+    #[test]
+    fn publish_dictation_event_reaches_subscriber() {
+        let mut rx = subscribe_dictation_events();
+        publish_dictation_event(DictationEvent {
+            event_type: "pressed".to_string(),
+            hotkey: "chat_button".to_string(),
+            activation_mode: "toggle".to_string(),
+        });
+        let evt = rx.try_recv().expect("should receive dictation event");
+        assert_eq!(evt.event_type, "pressed");
+        assert_eq!(evt.hotkey, "chat_button");
+    }
+
+    #[test]
+    fn publish_transcription_reaches_subscriber() {
+        let mut rx = subscribe_transcription_results();
+        publish_transcription("hello world".to_string());
+        let text = rx.try_recv().expect("should receive transcription");
+        assert_eq!(text, "hello world");
+    }
 }

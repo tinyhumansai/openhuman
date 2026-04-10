@@ -183,6 +183,7 @@ pub async fn connect_channel(
             .ok_or_else(|| "missing required bot_token".to_string())?
             .to_string();
         let allowed_users = parse_allowed_users(creds_map.get("allowed_users"));
+        let allowed_users_count = allowed_users.len();
 
         let mut persisted = config.clone();
         let (stream_mode, draft_update_interval_ms, mention_only) =
@@ -208,6 +209,13 @@ pub async fn connect_channel(
             .save()
             .await
             .map_err(|e| format!("failed to persist telegram config.toml: {e}"))?;
+
+        tracing::info!(
+            target: "openhuman::channels",
+            allowed_users_count,
+            mention_only,
+            "[telegram] connect_channel: wrote channels_config.telegram; restart core for listener to load token"
+        );
     }
 
     Ok(RpcOutcome::single_log(

@@ -44,6 +44,24 @@ struct TtsParams {
     output_path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OverlaySttState {
+    RecordingStarted,
+    TranscriptionDone,
+    Cancelled,
+    Error,
+}
+
+#[derive(Debug, Deserialize)]
+struct OverlaySttNotifyParams {
+    /// Voice state transition.
+    state: OverlaySttState,
+    /// Transcribed text (required when state is "transcription_done").
+    #[serde(default)]
+    text: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Schema + registry exports
 // ---------------------------------------------------------------------------
@@ -57,6 +75,7 @@ pub fn all_voice_controller_schemas() -> Vec<ControllerSchema> {
         voice_schemas("voice_server_start"),
         voice_schemas("voice_server_stop"),
         voice_schemas("voice_server_status"),
+        voice_schemas("overlay_stt_notify"),
     ]
 }
 
@@ -89,6 +108,10 @@ pub fn all_voice_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: voice_schemas("voice_server_status"),
             handler: handle_voice_server_status,
+        },
+        RegisteredController {
+            schema: voice_schemas("overlay_stt_notify"),
+            handler: handle_overlay_stt_notify,
         },
     ]
 }
@@ -182,6 +205,23 @@ pub fn voice_schemas(function: &str) -> ControllerSchema {
             description: "Get the current voice dictation server status.",
             inputs: vec![],
             outputs: vec![json_output("status", "Current voice server status.")],
+        },
+        "overlay_stt_notify" => ControllerSchema {
+            namespace: "voice",
+            function: "overlay_stt_notify",
+            description:
+                "Notify the overlay of a voice/STT state change from the chat prompt button.",
+            inputs: vec![
+                required_string(
+                    "state",
+                    "State transition: recording_started, transcription_done, cancelled, error.",
+                ),
+                optional_string(
+                    "text",
+                    "Transcribed text (when state is transcription_done).",
+                ),
+            ],
+            outputs: vec![json_output("result", "Notification acknowledgement.")],
         },
         _ => ControllerSchema {
             namespace: "voice",
@@ -375,6 +415,52 @@ fn handle_voice_server_status(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_overlay_stt_notify(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let p = deserialize_params::<OverlaySttNotifyParams>(params)?;
+        log::debug!(
+            "[overlay_stt_notify] state={:?}, has_text={}, text_len={}",
+            p.state,
+            p.text.is_some(),
+            p.text.as_deref().map_or(0, |t| t.len())
+        );
+
+        use crate::openhuman::voice::dictation_listener::{
+            publish_dictation_event, publish_transcription, DictationEvent,
+        };
+
+        match p.state {
+            OverlaySttState::RecordingStarted => {
+                publish_dictation_event(DictationEvent {
+                    event_type: "pressed".to_string(),
+                    hotkey: "chat_button".to_string(),
+                    activation_mode: "toggle".to_string(),
+                });
+            }
+            OverlaySttState::TranscriptionDone => {
+                let text = p.text.ok_or_else(|| {
+                    "invalid params: `text` is required for transcription_done".to_string()
+                })?;
+                publish_transcription(text);
+                publish_dictation_event(DictationEvent {
+                    event_type: "released".to_string(),
+                    hotkey: "chat_button".to_string(),
+                    activation_mode: "toggle".to_string(),
+                });
+            }
+            OverlaySttState::Cancelled | OverlaySttState::Error => {
+                publish_dictation_event(DictationEvent {
+                    event_type: "released".to_string(),
+                    hotkey: "chat_button".to_string(),
+                    activation_mode: "toggle".to_string(),
+                });
+            }
+        }
+
+        Ok(serde_json::json!({ "ok": true }))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -446,6 +532,10 @@ mod tests {
         let s = voice_schemas("voice_tts");
         assert_eq!(s.namespace, "voice");
         assert_eq!(s.function, "tts");
+
+        let s = voice_schemas("overlay_stt_notify");
+        assert_eq!(s.namespace, "voice");
+        assert_eq!(s.function, "overlay_stt_notify");
     }
 
     #[test]

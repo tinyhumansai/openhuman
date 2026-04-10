@@ -36,7 +36,10 @@ pub use permissions::{
     detect_screen_recording_permission, open_macos_privacy_pane, request_accessibility_access,
     request_screen_recording_access,
 };
-pub use permissions::{detect_permissions, permission_to_str};
+pub use permissions::{
+    detect_microphone_permission, detect_permissions, microphone_denied_message, permission_to_str,
+    request_microphone_access,
+};
 pub use terminal::{
     extract_terminal_input_context, is_terminal_app, is_text_role, looks_like_terminal_buffer,
 };

@@ -30,6 +30,27 @@ fn default_channel_message_timeout_secs() -> u64 {
     300
 }
 
+impl ChannelsConfig {
+    /// Whether [`crate::openhuman::channels::start_channels`] has any integrations to listen on.
+    /// Used to avoid spawning the channel runtime when only RPC/outbound paths are needed.
+    pub fn has_listening_integrations(&self) -> bool {
+        self.telegram.is_some()
+            || self.discord.is_some()
+            || self.slack.is_some()
+            || self.mattermost.is_some()
+            || self.imessage.is_some()
+            || self.signal.is_some()
+            || self.linq.is_some()
+            || self.email.is_some()
+            || self.irc.is_some()
+            || self.lark.is_some()
+            || self.dingtalk.is_some()
+            || self.qq.is_some()
+            || self.matrix.is_some()
+            || self.whatsapp.is_some()
+    }
+}
+
 impl Default for ChannelsConfig {
     fn default() -> Self {
         Self {

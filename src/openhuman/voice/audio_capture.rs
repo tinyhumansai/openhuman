@@ -188,6 +188,38 @@ fn record_on_thread(
     stop_flag: Arc<AtomicBool>,
     setup_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) -> Result<RecordingResult, String> {
+    // --- Cross-platform microphone permission pre-check ---
+    use crate::openhuman::accessibility::{
+        detect_microphone_permission, microphone_denied_message, request_microphone_access,
+        PermissionState,
+    };
+
+    let mic_perm = detect_microphone_permission();
+    debug!("{LOG_PREFIX} microphone permission state: {mic_perm:?}");
+
+    match mic_perm {
+        PermissionState::Unknown => {
+            info!("{LOG_PREFIX} microphone permission not yet determined — requesting access");
+            request_microphone_access();
+            // Re-check after request (macOS may have shown a prompt).
+            let updated = detect_microphone_permission();
+            debug!("{LOG_PREFIX} microphone permission after request: {updated:?}");
+            if matches!(updated, PermissionState::Denied | PermissionState::Unknown) {
+                let msg = microphone_denied_message();
+                error!("{LOG_PREFIX} {msg}");
+                let _ = setup_tx.send(Err(msg.clone()));
+                return Err(msg);
+            }
+        }
+        PermissionState::Denied => {
+            let msg = microphone_denied_message();
+            error!("{LOG_PREFIX} {msg}");
+            let _ = setup_tx.send(Err(msg.clone()));
+            return Err(msg);
+        }
+        _ => {} // Granted or Unsupported — proceed normally.
+    }
+
     let host = cpal::default_host();
     let device = host
         .default_input_device()

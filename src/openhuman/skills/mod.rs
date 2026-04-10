@@ -11,6 +11,7 @@ pub mod bus;
 pub mod cron_scheduler;
 pub mod manifest;
 pub mod ops;
+pub mod paths;
 pub mod ping_scheduler;
 pub mod preferences;
 pub mod qjs_engine;

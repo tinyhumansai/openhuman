@@ -45,7 +45,7 @@ impl std::fmt::Display for AgentArchetype {
 }
 
 impl AgentArchetype {
-    /// Model hint passed to `RouterProvider` (prefixed with `"hint:"` at call site).
+    /// Model hint resolved to `{hint}-v1` at call site (e.g. `"agentic"` → `"agentic-v1"`).
     pub fn default_model_hint(&self) -> &'static str {
         match self {
             Self::Orchestrator => "reasoning",
@@ -54,8 +54,7 @@ impl AgentArchetype {
             Self::SkillsAgent => "agentic",
             Self::ToolMaker => "coding",
             Self::Researcher => "agentic",
-            Self::Critic => "reasoning",
-            // Archivist uses the cheapest available model (local preferred).
+            Self::Critic => "agentic",
             Self::Archivist => "local",
         }
     }

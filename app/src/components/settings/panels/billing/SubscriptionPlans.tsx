@@ -1,11 +1,5 @@
 import type { PlanTier } from '../../../../types/api';
-import {
-  annualSavings,
-  isUpgrade as checkIsUpgrade,
-  displayPrice,
-  formatUsdAmount,
-  PLANS,
-} from '../billingHelpers';
+import { annualSavings, isUpgrade as checkIsUpgrade, displayPrice, PLANS } from '../billingHelpers';
 
 interface SubscriptionPlansProps {
   currentTier: PlanTier;
@@ -32,7 +26,7 @@ const SubscriptionPlans = ({
 }: SubscriptionPlansProps) => (
   <>
     {/* Interval toggle */}
-    <div className="flex items-center justify-center gap-2 px-4">
+    <div className="flex items-center justify-center gap-2">
       <button
         onClick={() => {
           if (paymentMethod !== 'crypto') setBillingInterval('monthly');
@@ -57,7 +51,7 @@ const SubscriptionPlans = ({
     </div>
 
     {/* Plan tier cards */}
-    <div className="space-y-2 px-4">
+    <div className="space-y-3">
       {PLANS.map(plan => {
         const isCurrent = plan.tier === currentTier;
         const isUpgrade = checkIsUpgrade(plan.tier, currentTier);
@@ -67,76 +61,105 @@ const SubscriptionPlans = ({
         return (
           <div
             key={plan.tier}
-            className={`rounded-2xl border p-3 transition-all ${
-              isCurrent ? 'border-primary-500/40 bg-primary-500/5' : 'border-stone-200 bg-white'
+            className={`relative rounded-2xl border p-4 transition-all ${
+              plan.recommended
+                ? 'border-primary-500 bg-primary-500/5 shadow-sm'
+                : isCurrent
+                  ? 'border-primary-500/40 bg-primary-500/5'
+                  : 'border-stone-200 bg-white'
             }`}>
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h4 className="text-sm font-semibold text-stone-900">{plan.name}</h4>
-                  {plan.features.map(f => (
-                    <span key={f.text} className="text-xs text-stone-600">
-                      <span className="text-stone-500 mx-1">&bull;</span>
-                      {f.text}
-                    </span>
-                  ))}
-                  {isCurrent && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-primary-500/20 text-primary-400 border border-primary-500/30">
-                      Current
-                    </span>
-                  )}
-                  {savings && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-sage-500/20 text-sage-400 border border-sage-500/30">
-                      Save {savings}%
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 flex items-baseline gap-1">
-                  <span className="text-xl font-bold text-stone-900">
+            {/* Popular badge */}
+            {plan.recommended && (
+              <span className="absolute -top-2.5 left-4 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide rounded-full bg-primary-500 text-white">
+                Popular
+              </span>
+            )}
+
+            {/* Header: name + tagline on left, price on right */}
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-stone-900">{plan.name}</h4>
+                {plan.tagline && <p className="text-xs text-stone-400 mt-0.5">{plan.tagline}</p>}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <div className="flex items-baseline gap-0.5 justify-end">
+                  <span className="text-2xl font-bold text-stone-900">
                     {displayPrice(plan, billingInterval)}
                   </span>
                   {plan.tier !== 'FREE' && <span className="text-xs text-stone-400">/mo</span>}
-                  {plan.tier !== 'FREE' && billingInterval === 'annual' && (
-                    <span className="text-xs text-stone-500 ml-1">
-                      (billed ${plan.annualPrice}/yr)
-                    </span>
-                  )}
                 </div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {plan.monthlyBudgetUsd > 0 && (
-                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                      Included monthly value: {formatUsdAmount(plan.monthlyBudgetUsd)}
-                    </span>
-                  )}
-                  {plan.weeklyBudgetUsd > 0 && (
-                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                      7-day cycle: {formatUsdAmount(plan.weeklyBudgetUsd)}
-                    </span>
-                  )}
-                  {plan.fiveHourCapUsd > 0 && (
-                    <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                      10-hour cap: {formatUsdAmount(plan.fiveHourCapUsd)}
-                    </span>
-                  )}
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    Discount: {plan.discountPercent}%
+                {plan.tier !== 'FREE' && billingInterval === 'annual' && (
+                  <p className="text-[11px] text-stone-400 mt-0.5">billed ${plan.annualPrice}/yr</p>
+                )}
+                {savings && (
+                  <span className="inline-block mt-1 px-2 py-0.5 text-[10px] font-medium rounded-full bg-sage-500/20 text-sage-500 border border-sage-500/30">
+                    Save {savings}%
                   </span>
-                </div>
+                )}
               </div>
+            </div>
 
-              {/* Action button */}
-              {isUpgrade && (
+            {/* Divider */}
+            <div className="h-px bg-stone-100 my-3" />
+
+            {/* Feature list */}
+            <ul className="space-y-2">
+              {plan.features.map(f => (
+                <li key={f.text} className="flex items-start gap-2">
+                  {f.included ? (
+                    <svg
+                      className="w-4 h-4 text-sage-500 flex-shrink-0 mt-0.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                  ) : (
+                    <svg
+                      className="w-4 h-4 text-stone-300 flex-shrink-0 mt-0.5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  )}
+                  <span className={`text-xs ${f.included ? 'text-stone-600' : 'text-stone-400'}`}>
+                    {f.text}
+                  </span>
+                </li>
+              ))}
+            </ul>
+
+            {/* CTA */}
+            <div className="mt-4">
+              {isCurrent ? (
+                <div className="w-full py-2 text-center text-xs font-medium rounded-lg border border-primary-500/30 bg-primary-500/10 text-primary-500">
+                  Current Plan
+                </div>
+              ) : isUpgrade ? (
                 <button
                   onClick={() => onUpgrade(plan.tier)}
                   disabled={isPurchasing}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors flex-shrink-0 ${
+                  className={`w-full py-2 text-xs font-medium rounded-lg transition-colors ${
                     isPurchasing
-                      ? 'bg-stone-700/40 text-stone-500 cursor-not-allowed'
-                      : 'bg-primary-500 hover:bg-primary-600 text-white'
+                      ? 'bg-stone-200 text-stone-400 cursor-not-allowed'
+                      : plan.recommended
+                        ? 'bg-primary-500 hover:bg-primary-600 text-white'
+                        : 'bg-stone-900 hover:bg-stone-800 text-white'
                   }`}>
                   {isThisPurchasing ? 'Waiting...' : 'Upgrade'}
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
         );
@@ -145,7 +168,7 @@ const SubscriptionPlans = ({
 
     {/* Payment confirmed banner */}
     {paymentConfirmed && (
-      <div className="rounded-xl bg-sage-500/10 border border-sage-500/20 p-3 mx-4">
+      <div className="rounded-xl bg-sage-500/10 border border-sage-500/20 p-3">
         <div className="flex items-center gap-2">
           <svg
             className="w-4 h-4 text-sage-400 flex-shrink-0"
@@ -163,7 +186,7 @@ const SubscriptionPlans = ({
 
     {/* Purchasing overlay message */}
     {isPurchasing && (
-      <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3 mx-4">
+      <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 p-3">
         <div className="flex items-center gap-2">
           <svg className="w-4 h-4 text-amber-400 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle
@@ -188,7 +211,7 @@ const SubscriptionPlans = ({
     )}
 
     {/* Pay with crypto toggle */}
-    <div className="flex items-center justify-between rounded-xl bg-stone-50 border border-stone-200 p-3 mx-4">
+    <div className="flex items-center justify-between rounded-xl bg-stone-50 border border-stone-200 p-3">
       <div>
         <p className="text-xs font-medium text-stone-900">Pay with Crypto</p>
         <p className="text-[11px] text-stone-400 mt-0.5">

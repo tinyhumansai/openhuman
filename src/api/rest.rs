@@ -691,21 +691,107 @@ pub fn decrypt_handoff_blob(b64_ciphertext: &str, key_str: &str) -> Result<Strin
     String::from_utf8(plain).context("handoff plaintext is not UTF-8")
 }
 
+/// Decode the shared encryption key into 32 raw AES bytes.
+///
+/// Accepts, in order of preference:
+/// 1. base64url without padding — the current backend format (e.g.
+///    a 43-char alphanumeric string using `-` / `_`). This must be tried
+///    BEFORE standard base64 because `-`/`_` are invalid in the standard
+///    alphabet and would fail cleanly, whereas a standard-base64 string
+///    never contains `-`/`_` so base64url_no_pad will still decode it
+///    correctly as long as there's no padding.
+/// 2. base64url with padding.
+/// 3. Standard base64 with padding (legacy backend format).
+/// 4. Standard base64 without padding.
+/// 5. A raw 32-byte ASCII key (len == 32, used as-is).
+///
+/// NOTE: the key is only decoded locally for AES-GCM key material in
+/// `decrypt_handoff_blob`. The key sent back to the backend (in the
+/// `{ key: ... }` POST body of `fetch_integration_tokens_handoff`) is the
+/// original string — never re-encoded — so base64url keys stay base64url
+/// on the wire.
 fn key_bytes_from_string(key: &str) -> Result<Vec<u8>> {
-    if key.len() == 44 {
-        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(key) {
-            if decoded.len() == 32 {
-                return Ok(decoded);
+    let trimmed = key.trim();
+
+    // Raw 32-byte ASCII key
+    if trimmed.len() == 32
+        && !trimmed.contains(|c: char| c == '+' || c == '/' || c == '-' || c == '_' || c == '=')
+    {
+        return Ok(trimmed.as_bytes().to_vec());
+    }
+
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+
+    // `base64::Engine` has generic methods and therefore isn't
+    // dyn-compatible, so we unroll the attempts instead of looping over
+    // a slice of trait objects.
+    macro_rules! try_decode {
+        ($engine:expr) => {
+            if let Ok(decoded) = $engine.decode(trimmed) {
+                if decoded.len() == 32 {
+                    return Ok(decoded);
+                }
             }
-        }
+        };
     }
-    if key.len() == 32 {
-        return Ok(key.as_bytes().to_vec());
+    try_decode!(URL_SAFE_NO_PAD);
+    try_decode!(URL_SAFE);
+    try_decode!(STANDARD);
+    try_decode!(STANDARD_NO_PAD);
+
+    anyhow::bail!(
+        "encryption key must decode to 32 raw bytes (raw, base64, or base64url accepted; got len={})",
+        trimmed.len()
+    );
+}
+
+#[cfg(test)]
+mod key_bytes_from_string_tests {
+    use super::key_bytes_from_string;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+    use base64::Engine;
+
+    #[test]
+    fn decodes_base64url_no_pad() {
+        // A 32-byte key that, when base64url-encoded, contains both `-` and `_`.
+        let raw = [
+            0xff_u8, 0xfb, 0xef, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa,
+            0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+            0x0a, 0x0b, 0x0c, 0x0d,
+        ];
+        let url_key = URL_SAFE_NO_PAD.encode(raw);
+        assert!(url_key.contains('-') || url_key.contains('_'));
+        let decoded = key_bytes_from_string(&url_key).unwrap();
+        assert_eq!(decoded, raw);
     }
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(key) {
-        if decoded.len() == 32 {
-            return Ok(decoded);
-        }
+
+    #[test]
+    fn decodes_standard_base64() {
+        let raw = [0x41_u8; 32];
+        let std_key = STANDARD.encode(raw);
+        let decoded = key_bytes_from_string(&std_key).unwrap();
+        assert_eq!(decoded, raw);
     }
-    anyhow::bail!("encryption key must be 32 raw bytes or 44-char base64 (decoded to 32 bytes)");
+
+    #[test]
+    fn decodes_raw_32_byte_key() {
+        let raw = "abcdefghijklmnopqrstuvwxyz012345";
+        assert_eq!(raw.len(), 32);
+        let decoded = key_bytes_from_string(raw).unwrap();
+        assert_eq!(decoded, raw.as_bytes());
+    }
+
+    #[test]
+    fn trims_whitespace() {
+        let raw = [0x42_u8; 32];
+        let url_key = format!("  {}\n", URL_SAFE_NO_PAD.encode(raw));
+        let decoded = key_bytes_from_string(&url_key).unwrap();
+        assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn rejects_wrong_length() {
+        let err = key_bytes_from_string("tooshort").unwrap_err();
+        assert!(err.to_string().contains("must decode to 32 raw bytes"));
+    }
 }

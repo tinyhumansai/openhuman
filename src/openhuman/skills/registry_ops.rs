@@ -61,8 +61,11 @@ pub async fn registry_fetch(
 
     log::info!("[registry] fetching registry from {url}");
 
+    // Use rustls explicitly so we never fall back to native-tls (which can hang
+    // on macOS under the Hardened Runtime when the system keychain is restricted).
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .use_rustls_tls()
         .build()
         .map_err(|e| format!("failed to create HTTP client: {e}"))?;
 
@@ -150,8 +153,13 @@ async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
         return read_local_file(url);
     }
 
+    log::debug!("[registry] fetch_url_bytes: connecting to {url}");
+
+    // Use rustls explicitly so we never fall back to native-tls (which can hang
+    // on macOS under the Hardened Runtime when the system keychain is restricted).
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .use_rustls_tls()
         .build()
         .map_err(|e| format!("failed to create HTTP client: {e}"))?;
 
@@ -159,16 +167,26 @@ async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("failed to fetch {url}: {e}"))?;
+        .map_err(|e| format!("[registry] network error fetching {url}: {e}"))?;
 
     if !resp.status().is_success() {
-        return Err(format!("fetch {url} failed with status {}", resp.status()));
+        return Err(format!(
+            "[registry] fetch {url} returned HTTP {}",
+            resp.status()
+        ));
     }
 
-    resp.bytes()
+    let bytes = resp
+        .bytes()
         .await
         .map(|b| b.to_vec())
-        .map_err(|e| format!("failed to read response from {url}: {e}"))
+        .map_err(|e| format!("[registry] failed to read response body from {url}: {e}"))?;
+
+    log::debug!(
+        "[registry] fetch_url_bytes: {} bytes from {url}",
+        bytes.len()
+    );
+    Ok(bytes)
 }
 
 /// Install a skill from the registry or local directory.
@@ -177,6 +195,11 @@ async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
 /// directory (e.g. `$SKILLS_LOCAL_DIR/<skill_id>/`) instead of downloading.
 /// This also works when registry entry URLs are local file paths.
 pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), String> {
+    log::info!(
+        "[registry] skills_install: starting — skill_id={skill_id} workspace={}",
+        workspace_dir.display()
+    );
+
     // --- Fast path: SKILLS_LOCAL_DIR copies directly from local dev directory ---
     // This allows developers to work on skills locally and see changes reflected instantly
     // in the app without having to publish to a registry.
@@ -199,7 +222,9 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
     }
 
     // --- Standard path: fetch from registry (remote or local URLs) ---
+    log::debug!("[registry] skills_install: fetching registry for '{skill_id}'");
     let registry = registry_fetch(workspace_dir, false).await?;
+    log::debug!("[registry] skills_install: registry fetched, looking up '{skill_id}'");
 
     let entry = registry
         .skills
@@ -210,22 +235,37 @@ pub async fn skill_install(workspace_dir: &Path, skill_id: &str) -> Result<(), S
         .ok_or_else(|| format!("skill '{skill_id}' not found in registry"))?
         .clone();
 
+    log::debug!(
+        "[registry] skills_install: found entry '{skill_id}' v{} manifest={} bundle={}",
+        entry.version,
+        entry.manifest_url,
+        entry.download_url
+    );
+
     let skill_dir = workspace_dir.join("skills").join(skill_id);
     std::fs::create_dir_all(&skill_dir).map_err(|e| format!("failed to create skill dir: {e}"))?;
 
     // Fetch manifest (local or remote)
     log::info!(
-        "[registry] fetching manifest for '{skill_id}' from {}",
+        "[registry] skills_install: fetching manifest for '{skill_id}' from {}",
         entry.manifest_url
     );
     let manifest_bytes = fetch_url_bytes(&entry.manifest_url).await?;
+    log::debug!(
+        "[registry] skills_install: manifest fetched ({} bytes)",
+        manifest_bytes.len()
+    );
 
     // Fetch JS bundle (local or remote)
     log::info!(
-        "[registry] fetching JS bundle for '{skill_id}' from {}",
+        "[registry] skills_install: fetching JS bundle for '{skill_id}' from {}",
         entry.download_url
     );
     let js_bytes = fetch_url_bytes(&entry.download_url).await?;
+    log::debug!(
+        "[registry] skills_install: JS bundle fetched ({} bytes)",
+        js_bytes.len()
+    );
 
     // Verify checksum if present to ensure integrity of the downloaded bundle
     if let Some(expected) = &entry.checksum_sha256 {

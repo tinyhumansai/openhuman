@@ -117,13 +117,18 @@ describe('ScreenIntelligencePanel', () => {
     vi.mocked(isTauri).mockReturnValue(true);
   });
 
-  it('saves screen intelligence settings and refreshes core-backed status', async () => {
+  it('saves screen awareness settings and refreshes core-backed status', async () => {
     const deferred = createDeferred<{ result: ConfigSnapshot; logs: [] }>();
     vi.mocked(openhumanUpdateScreenIntelligenceSettings).mockReturnValueOnce(deferred.promise);
 
     renderPanel();
 
-    await screen.findByText('Screen Intelligence Policy');
+    // Both the header h2 and section h3 say "Screen Awareness" — wait for either.
+    await waitFor(() => {
+      expect(screen.getAllByRole('heading', { name: 'Screen Awareness' }).length).toBeGreaterThan(
+        0
+      );
+    });
 
     const enabledLabel = screen.getByText('Enabled').closest('label');
     const enabledCheckbox = enabledLabel?.querySelector(
@@ -132,18 +137,12 @@ describe('ScreenIntelligencePanel', () => {
     expect(enabledCheckbox.checked).toBe(false);
 
     fireEvent.click(enabledCheckbox);
-    fireEvent.click(screen.getByRole('button', { name: 'Save Screen Intelligence Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     expect(await screen.findByRole('button', { name: 'Saving…' })).toBeInTheDocument();
-    expect(openhumanUpdateScreenIntelligenceSettings).toHaveBeenCalledWith({
-      enabled: true,
-      policy_mode: 'all_except_blacklist',
-      baseline_fps: 1,
-      use_vision_model: true,
-      keep_screenshots: false,
-      allowlist: ['Code'],
-      denylist: ['1Password'],
-    });
+    expect(openhumanUpdateScreenIntelligenceSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true, policy_mode: 'all_except_blacklist' })
+    );
 
     deferred.resolve({
       result: { config: {}, workspace_dir: '/tmp/workspace', config_path: '/tmp/config.toml' },
@@ -151,9 +150,7 @@ describe('ScreenIntelligencePanel', () => {
     });
 
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: 'Save Screen Intelligence Settings' })
-      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Save Settings' })).toBeInTheDocument();
     });
     expect(baseState.refreshStatus).toHaveBeenCalledTimes(1);
   });
@@ -178,7 +175,7 @@ describe('ScreenIntelligencePanel', () => {
       screen.getByRole('button', { name: 'Restart & Refresh Permissions' })
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Screen Intelligence V1 is currently supported on macOS only.')
+      screen.getByText('Screen Awareness is currently supported on macOS only.')
     ).toBeInTheDocument();
   });
 

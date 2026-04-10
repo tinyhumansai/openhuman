@@ -4,8 +4,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 export type SettingsRoute =
   | 'home'
   | 'account'
-  | 'automation'
-  | 'ai-tools'
+  | 'features'
+  | 'ai-models'
   | 'connections'
   | 'messaging'
   | 'cron-jobs'
@@ -17,15 +17,19 @@ export type SettingsRoute =
   | 'team-members'
   | 'team-invites'
   | 'developer-options'
-  | 'accessibility'
   | 'ai'
   | 'local-model'
   | 'voice'
+  | 'tools'
   | 'memory-data'
   | 'memory-debug'
   | 'recovery-phrase'
   | 'webhooks-debug'
-  | 'agent-chat';
+  | 'agent-chat'
+  | 'screen-awareness-debug'
+  | 'autocomplete-debug'
+  | 'voice-debug'
+  | 'local-model-debug';
 
 export interface BreadcrumbItem {
   label: string;
@@ -69,20 +73,24 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/team/invites')) return 'team-invites';
     if (path.includes('/settings/team')) return 'team';
     if (path.includes('/settings/account')) return 'account';
-    if (path.includes('/settings/automation')) return 'automation';
-    if (path.includes('/settings/ai-tools')) return 'ai-tools';
+    if (path.includes('/settings/features')) return 'features';
+    if (path.includes('/settings/ai-models')) return 'ai-models';
     if (path.includes('/settings/connections')) return 'connections';
     if (path.includes('/settings/messaging')) return 'messaging';
     if (path.includes('/settings/cron-jobs')) return 'cron-jobs';
+    if (path.includes('/settings/screen-awareness-debug')) return 'screen-awareness-debug';
     if (path.includes('/settings/screen-intelligence')) return 'screen-intelligence';
+    if (path.includes('/settings/autocomplete-debug')) return 'autocomplete-debug';
     if (path.includes('/settings/autocomplete')) return 'autocomplete';
     if (path.includes('/settings/privacy')) return 'privacy';
     if (path.includes('/settings/billing')) return 'billing';
     if (path.includes('/settings/developer-options')) return 'developer-options';
-    if (path.includes('/settings/accessibility')) return 'accessibility';
     if (path.includes('/settings/ai')) return 'ai';
+    if (path.includes('/settings/local-model-debug')) return 'local-model-debug';
     if (path.includes('/settings/local-model')) return 'local-model';
+    if (path.includes('/settings/voice-debug')) return 'voice-debug';
     if (path.includes('/settings/voice')) return 'voice';
+    if (path.includes('/settings/tools')) return 'tools';
     if (path.includes('/settings/memory-data')) return 'memory-data';
     if (path.includes('/settings/memory-debug')) return 'memory-debug';
     if (path.includes('/settings/webhooks-debug')) return 'webhooks-debug';
@@ -126,18 +134,18 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
   const settingsCrumb: BreadcrumbItem = { label: 'Settings', onClick: () => navigate('/settings') };
 
   const accountCrumb: BreadcrumbItem = {
-    label: 'Account & Security',
+    label: 'Account & Billing',
     onClick: () => navigate('/settings/account'),
   };
 
-  const automationCrumb: BreadcrumbItem = {
-    label: 'Automation & Channels',
-    onClick: () => navigate('/settings/automation'),
+  const featuresCrumb: BreadcrumbItem = {
+    label: 'Features',
+    onClick: () => navigate('/settings/features'),
   };
 
-  const aiToolsCrumb: BreadcrumbItem = {
-    label: 'AI & Skills',
-    onClick: () => navigate('/settings/ai-tools'),
+  const aiModelsCrumb: BreadcrumbItem = {
+    label: 'AI & Models',
+    onClick: () => navigate('/settings/ai-models'),
   };
 
   const teamCrumb: BreadcrumbItem = { label: 'Team', onClick: () => navigate('/settings/team') };
@@ -151,30 +159,29 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     switch (currentRoute) {
       // Section pages
       case 'account':
-      case 'automation':
-      case 'ai-tools':
+      case 'features':
+      case 'ai-models':
         return [settingsCrumb];
 
-      // Leaf panels under account
-      case 'billing':
+      // Leaf panels under account & billing
       case 'recovery-phrase':
       case 'team':
       case 'connections':
+      case 'billing':
+      case 'privacy':
         return [settingsCrumb, accountCrumb];
 
-      // Leaf panels under automation
-      case 'accessibility':
+      // Leaf panels under features
       case 'screen-intelligence':
       case 'autocomplete':
-      case 'messaging':
-      case 'cron-jobs':
-        return [settingsCrumb, automationCrumb];
-
-      // Leaf panels under ai-tools
       case 'voice':
+      case 'messaging':
+      case 'tools':
+        return [settingsCrumb, featuresCrumb];
+
+      // Leaf panels under AI & Models
       case 'local-model':
-      case 'ai':
-        return [settingsCrumb, aiToolsCrumb];
+        return [settingsCrumb, aiModelsCrumb];
 
       // Team sub-pages
       case 'team-members':
@@ -182,14 +189,19 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
         return [settingsCrumb, accountCrumb, teamCrumb];
 
       // Developer sub-pages
+      case 'ai':
+      case 'agent-chat':
+      case 'cron-jobs':
+      case 'screen-awareness-debug':
+      case 'autocomplete-debug':
+      case 'voice-debug':
+      case 'local-model-debug':
       case 'webhooks-debug':
       case 'memory-data':
       case 'memory-debug':
         return [settingsCrumb, developerCrumb];
 
-      // Other leaf pages
-      case 'privacy':
-      case 'agent-chat':
+      // Developer options section page
       case 'developer-options':
         return [settingsCrumb];
 

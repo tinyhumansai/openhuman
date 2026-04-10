@@ -354,6 +354,22 @@ impl TelegramChannel {
         format!("https://api.telegram.org/bot{}/{method}", self.bot_token)
     }
 
+    /// Clears Bot API webhook mode so `getUpdates` long polling can run.
+    async fn delete_webhook_for_long_polling(&self) -> bool {
+        let url = self.api_url("deleteWebhook");
+        let body = serde_json::json!({ "drop_pending_updates": false });
+        tracing::info!(
+            "[telegram] deleteWebhook: enabling getUpdates polling (drop_pending_updates=false)"
+        );
+        match self.http_client().post(&url).json(&body).send().await {
+            Ok(resp) => Self::telegram_api_ok(resp).await,
+            Err(e) => {
+                tracing::warn!(error = %e, "[telegram] deleteWebhook HTTP request failed");
+                false
+            }
+        }
+    }
+
     async fn fetch_bot_username(&self) -> anyhow::Result<String> {
         let resp = self.http_client().get(self.api_url("getMe")).send().await?;
 
@@ -664,6 +680,12 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         }
 
         if !self.is_any_user_allowed(identities.iter().copied()) {
+            tracing::debug!(
+                username = %username,
+                sender_id = sender_id.as_deref().unwrap_or("none"),
+                message_len = text.len(),
+                "[telegram] dropped message: sender not in allowed_users (unauthorized handler may reply)"
+            );
             return None;
         }
 
@@ -1833,10 +1855,22 @@ impl Channel for TelegramChannel {
                     .unwrap_or("unknown Telegram API error");
 
                 if error_code == 409 {
-                    tracing::warn!(
-                        "Telegram polling conflict (409): {description}. \
+                    let webhook_blocks_polling = description.to_lowercase().contains("webhook");
+                    if webhook_blocks_polling {
+                        tracing::warn!(
+                            "[telegram] getUpdates conflict (409): webhook is active; calling deleteWebhook"
+                        );
+                        if self.delete_webhook_for_long_polling().await {
+                            tracing::info!("[telegram] deleteWebhook ok; retrying getUpdates");
+                            continue;
+                        }
+                        tracing::warn!("[telegram] deleteWebhook did not succeed; backing off");
+                    } else {
+                        tracing::warn!(
+                            "Telegram polling conflict (409): {description}. \
 Ensure only one `openhuman` process is using this bot token."
-                    );
+                        );
+                    }
                     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 } else {
                     tracing::warn!(

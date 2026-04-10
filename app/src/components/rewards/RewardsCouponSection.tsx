@@ -163,18 +163,18 @@ const RewardsCouponSection = () => {
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-stone-400">
-            General credits
+            Promo credits
           </div>
           <div className="mt-2 text-2xl font-semibold text-stone-900">
-            {creditBalance ? formatUsd(creditBalance.balanceUsd) : loading ? '…' : '—'}
+            {creditBalance ? formatUsd(creditBalance.promotionBalanceUsd) : loading ? '…' : '—'}
           </div>
         </div>
         <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">
           <div className="text-xs font-medium uppercase tracking-wide text-stone-400">
-            Top-up credits
+            Team top-up
           </div>
           <div className="mt-2 text-2xl font-semibold text-stone-900">
-            {creditBalance ? formatUsd(creditBalance.topUpBalanceUsd) : loading ? '…' : '—'}
+            {creditBalance ? formatUsd(creditBalance.teamTopupUsd) : loading ? '…' : '—'}
           </div>
         </div>
         <div className="rounded-xl border border-stone-200 bg-stone-50 p-4">

@@ -9,17 +9,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../test/test-utils';
 import Skills from '../Skills';
 
-vi.mock('../../utils/tauriCommands', async () => {
-  const actual = await vi.importActual<Record<string, unknown>>('../../utils/tauriCommands');
-  return {
-    ...actual,
-    openhumanGetRuntimeFlags: vi.fn().mockResolvedValue({ result: { browser_allow_all: false } }),
-    openhumanSetBrowserAllowAll: vi
-      .fn()
-      .mockResolvedValue({ result: { browser_allow_all: false } }),
-  };
-});
-
 const notionRegistryEntry = {
   id: 'notion',
   name: 'Notion',

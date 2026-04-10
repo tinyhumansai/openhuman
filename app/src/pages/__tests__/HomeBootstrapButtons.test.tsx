@@ -19,6 +19,7 @@ vi.mock('../../utils/localAiBootstrap', () => ({
 vi.mock('../../utils/tauriCommands', () => ({
   isTauri: vi.fn(() => true),
   openhumanLocalAiStatus: vi.fn(),
+  openhumanLocalAiAssetsStatus: vi.fn().mockResolvedValue({ result: null, logs: [] }),
 }));
 
 describe('Home bootstrap button states', () => {

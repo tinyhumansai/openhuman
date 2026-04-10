@@ -148,18 +148,59 @@ class SkillManager {
   /**
    * Start the setup flow for a skill. Returns the first step, or null if
    * the skill doesn't implement setup/start (e.g. OAuth-only skills).
+   *
+   * OAuth-based skills never instantiate a frontend `SkillRuntime` — they
+   * live only in the Rust core (see `shared.tsx` "no need to start the
+   * QuickJS runtime first"). For those we fall back to the core RPC
+   * `openhuman.skills_setup_start`, mirroring the fallback pattern in
+   * `notifyOAuthComplete`. If the core errors (e.g. the skill doesn't
+   * implement `onSetupStart` at all, which is common for pure OAuth
+   * skills), we treat it as "no more setup steps" — the wizard interprets
+   * that as success and shows the "Connected!" screen.
    */
   async startSetup(skillId: string): Promise<SetupStep | null> {
     console.log("[SkillManager] startSetup", skillId);
     const runtime = this.runtimes.get(skillId);
-    if (!runtime) {
-      console.log("[SkillManager] runtime not found", skillId);
-      throw new Error(`Skill ${skillId} runtime not found`);
+    if (runtime) {
+      emitSkillStateChange(skillId);
+      console.log("[SkillManager] setup started (local runtime)", skillId);
+      return runtime.setupStart();
     }
 
-    emitSkillStateChange(skillId);
-    console.log("[SkillManager] setup started", skillId);
-    return runtime.setupStart();
+    // No frontend runtime — dispatch via core RPC pass-through.
+    //
+    // The core side returns `null` (not an error) when the skill has no
+    // `onSetupStart` handler — see `handle_js_call` in
+    // `src/openhuman/skills/qjs_skill_instance/js_handlers.rs`, which
+    // falls through to `return "null"` when the function is missing.
+    // So any exception thrown here is a *real* failure (skill not
+    // running, RPC transport error, JS exception in the handler, …)
+    // and must be propagated so the caller can surface it to the user
+    // instead of silently pretending setup succeeded.
+    try {
+      const result = (await callCoreRpc({
+        method: "openhuman.skills_setup_start",
+        params: { skill_id: skillId },
+      })) as { step?: SetupStep } | null;
+      emitSkillStateChange(skillId);
+      console.log(
+        "[SkillManager] setup started (core RPC fallback)",
+        skillId,
+        result,
+      );
+      if (!result || !result.step) {
+        return null;
+      }
+      return result.step;
+    } catch (err) {
+      console.warn(
+        "[SkillManager] setup_start core fallback failed",
+        skillId,
+        err,
+      );
+      emitSkillStateChange(skillId);
+      throw err;
+    }
   }
 
   /**
@@ -342,6 +383,22 @@ class SkillManager {
         // Skill may not be running in the core either — that's OK,
         // setup_complete is already persisted above
       }
+    }
+
+    // Kick off an initial sync so the user sees fresh data immediately
+    // after connecting, rather than waiting for the next cron tick.
+    // The Rust core no longer auto-triggers sync on oauth/complete
+    // (removed in commit 840b1d3c), so the frontend drives it here.
+    // Fire-and-forget: any failure is logged but must not block the
+    // OAuth completion flow.
+    try {
+      console.log(`[SkillManager] kicking initial sync after OAuth for '${skillId}'`);
+      await this.triggerSync(skillId);
+    } catch (syncErr) {
+      console.warn(
+        `[SkillManager] initial post-OAuth sync failed for '${skillId}':`,
+        syncErr,
+      );
     }
 
     emitSkillStateChange(skillId);

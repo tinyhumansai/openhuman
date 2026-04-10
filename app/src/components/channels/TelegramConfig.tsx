@@ -17,6 +17,7 @@ import type {
   ChannelDefinition,
 } from '../../types/channels';
 import { openUrl } from '../../utils/openUrl';
+import { restartCoreProcess } from '../../utils/tauriCommands/core';
 import ChannelFieldInput from './ChannelFieldInput';
 import ChannelStatusBadge from './ChannelStatusBadge';
 
@@ -242,16 +243,35 @@ const TelegramConfig = ({ definition }: TelegramConfigProps) => {
         }
 
         // Credential-based connection succeeded.
-        dispatch(
-          upsertChannelConnection({
-            channel: 'telegram',
-            authMode: spec.mode,
-            patch: { status: 'connected', lastError: undefined, capabilities: ['read', 'write'] },
-          })
-        );
-
         if (result.restart_required) {
-          setError(result.message ?? 'Restart the service to activate the channel.');
+          log('restart required after connect — restarting core process');
+          try {
+            await restartCoreProcess();
+            log('core process restarted successfully');
+            dispatch(
+              upsertChannelConnection({
+                channel: 'telegram',
+                authMode: spec.mode,
+                patch: {
+                  status: 'connected',
+                  lastError: undefined,
+                  capabilities: ['read', 'write'],
+                },
+              })
+            );
+          } catch (restartErr) {
+            const msg = restartErr instanceof Error ? restartErr.message : String(restartErr);
+            log('core restart failed: %s', msg);
+            setError('Channel saved. Restart the app to activate it.');
+          }
+        } else {
+          dispatch(
+            upsertChannelConnection({
+              channel: 'telegram',
+              authMode: spec.mode,
+              patch: { status: 'connected', lastError: undefined, capabilities: ['read', 'write'] },
+            })
+          );
         }
       });
     },

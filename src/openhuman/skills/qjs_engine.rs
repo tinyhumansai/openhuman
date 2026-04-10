@@ -675,27 +675,6 @@ impl RuntimeEngine {
         }
     }
 
-    /// Enable a skill and start it.
-    pub async fn enable_skill(&self, skill_id: &str) -> Result<(), String> {
-        self.preferences.set_enabled(skill_id, true);
-        self.start_skill(skill_id).await?;
-        Ok(())
-    }
-
-    /// Disable a skill and stop it if it's running.
-    pub async fn disable_skill(&self, skill_id: &str) -> Result<(), String> {
-        self.preferences.set_enabled(skill_id, false);
-        if self.registry.has_skill(skill_id) {
-            self.stop_skill(skill_id).await?;
-        }
-        Ok(())
-    }
-
-    /// Check whether a skill is enabled in user preferences.
-    pub fn is_skill_enabled(&self, skill_id: &str) -> bool {
-        self.preferences.is_enabled(skill_id).unwrap_or(false)
-    }
-
     /// Get all stored skill preferences.
     pub fn get_preferences(
         &self,

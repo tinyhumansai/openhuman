@@ -147,7 +147,22 @@ pub fn init_for_cli_run(verbose: bool, default_scope: CliLogDefault) {
             }
         });
 
-        let use_color = io::stderr().is_terminal();
+        // Color resolution order (standard conventions):
+        //   1. `NO_COLOR` (any value) → force off.
+        //   2. `FORCE_COLOR` or `CLICOLOR_FORCE` → force on. Useful when the
+        //      core runs as a child of the Tauri shell under `yarn tauri dev`,
+        //      where the grandchild's stderr may not be detected as a TTY even
+        //      though the ultimate terminal supports ANSI.
+        //   3. Fall back to TTY detection on stderr.
+        let use_color = if std::env::var_os("NO_COLOR").is_some() {
+            false
+        } else if std::env::var_os("FORCE_COLOR").is_some()
+            || std::env::var_os("CLICOLOR_FORCE").is_some()
+        {
+            true
+        } else {
+            io::stderr().is_terminal()
+        };
         let file_constraints = parse_log_file_constraints();
 
         let fmt_layer = tracing_subscriber::fmt::layer()

@@ -17,6 +17,7 @@ use super::types::{
     AccessibilityStatus, AppContextInfo, CaptureFrame, CaptureImageRefResult, CaptureNowResult,
     CaptureTestResult, CoreProcessStatus, SessionStatus, StartSessionParams,
 };
+use crate::openhuman::accessibility::request_microphone_access;
 use crate::openhuman::accessibility::{
     capture_screen_image_ref_for_context, detect_permissions, foreground_context,
     permission_to_str, AppContext, PermissionKind, PermissionState, PermissionStatus,
@@ -202,6 +203,7 @@ impl AccessibilityEngine {
                 screen_recording: PermissionState::Unsupported,
                 accessibility: PermissionState::Unsupported,
                 input_monitoring: PermissionState::Unsupported,
+                microphone: PermissionState::Unsupported,
             });
         }
 
@@ -220,27 +222,32 @@ impl AccessibilityEngine {
         &self,
         permission: PermissionKind,
     ) -> Result<PermissionStatus, String> {
-        if !cfg!(target_os = "macos") {
+        // Microphone permission is cross-platform; other permissions are macOS-only.
+        if matches!(permission, PermissionKind::Microphone) {
+            request_microphone_access();
+        } else if !cfg!(target_os = "macos") {
             return Ok(PermissionStatus {
                 screen_recording: PermissionState::Unsupported,
                 accessibility: PermissionState::Unsupported,
                 input_monitoring: PermissionState::Unsupported,
+                microphone: PermissionState::Unsupported,
             });
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            match permission {
-                PermissionKind::ScreenRecording => {
-                    request_screen_recording_access();
-                    open_macos_privacy_pane("Privacy_ScreenCapture");
-                }
-                PermissionKind::Accessibility => {
-                    request_accessibility_access();
-                    open_macos_privacy_pane("Privacy_Accessibility");
-                }
-                PermissionKind::InputMonitoring => {
-                    open_macos_privacy_pane("Privacy_ListenEvent");
+        } else {
+            #[cfg(target_os = "macos")]
+            {
+                match permission {
+                    PermissionKind::ScreenRecording => {
+                        request_screen_recording_access();
+                        open_macos_privacy_pane("Privacy_ScreenCapture");
+                    }
+                    PermissionKind::Accessibility => {
+                        request_accessibility_access();
+                        open_macos_privacy_pane("Privacy_Accessibility");
+                    }
+                    PermissionKind::InputMonitoring => {
+                        open_macos_privacy_pane("Privacy_ListenEvent");
+                    }
+                    PermissionKind::Microphone => unreachable!(),
                 }
             }
         }

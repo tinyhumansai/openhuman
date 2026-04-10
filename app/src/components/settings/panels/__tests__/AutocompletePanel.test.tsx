@@ -1,19 +1,13 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
 import {
   type AutocompleteConfig,
-  type AutocompleteCurrentParams,
   type AutocompleteStatus,
   type CommandResponse,
   type ConfigSnapshot,
   isTauri,
-  openhumanAutocompleteAccept,
-  openhumanAutocompleteClearHistory,
-  openhumanAutocompleteCurrent,
-  openhumanAutocompleteDebugFocus,
-  openhumanAutocompleteHistory,
   openhumanAutocompleteSetStyle,
   openhumanAutocompleteStart,
   openhumanAutocompleteStatus,
@@ -52,7 +46,7 @@ const cloneStatus = (status: AutocompleteStatus): AutocompleteStatus => ({
   suggestion: status.suggestion ? { ...status.suggestion } : null,
 });
 
-describe('AutocompletePanel', () => {
+describe('AutocompletePanel (simplified)', () => {
   let runtime: RuntimeHarness;
 
   beforeEach(() => {
@@ -87,24 +81,12 @@ describe('AutocompletePanel', () => {
 
     vi.mocked(openhumanAutocompleteStatus).mockImplementation(async () => ({
       result: cloneStatus(runtime.status),
-      logs: [
-        `[autocomplete] status running=${runtime.status.running ? 'yes' : 'no'} phase=${runtime.status.phase}`,
-      ],
+      logs: [],
     }));
 
     vi.mocked(openhumanGetConfig).mockImplementation(async () =>
       makeConfigSnapshot(runtime.config)
     );
-
-    vi.mocked(openhumanAutocompleteHistory).mockResolvedValue({
-      result: { entries: [] },
-      logs: ['[autocomplete] history entries=0'],
-    });
-
-    vi.mocked(openhumanAutocompleteClearHistory).mockResolvedValue({
-      result: { cleared: 0 },
-      logs: ['[autocomplete] history cleared=0'],
-    });
 
     vi.mocked(openhumanAutocompleteSetStyle).mockImplementation(async params => {
       runtime.config = {
@@ -115,181 +97,125 @@ describe('AutocompletePanel', () => {
         disabled_apps: params.disabled_apps ?? runtime.config.disabled_apps,
       };
       runtime.status.enabled = runtime.config.enabled;
-      runtime.status.debounce_ms = runtime.config.debounce_ms;
-      if (!runtime.config.enabled) {
-        runtime.status.running = false;
-        runtime.status.phase = 'disabled';
-        runtime.status.suggestion = null;
-      }
-      return {
-        result: { config: { ...runtime.config } },
-        logs: [
-          `[autocomplete] set_style enabled=${String(runtime.config.enabled)} debounce=${String(runtime.config.debounce_ms)} max_chars=${String(runtime.config.max_chars)} accept_with_tab=${String(runtime.config.accept_with_tab)}`,
-        ],
-      };
+      return { result: { config: { ...runtime.config } }, logs: [] };
     });
 
-    vi.mocked(openhumanAutocompleteStart).mockImplementation(async params => {
+    vi.mocked(openhumanAutocompleteStart).mockImplementation(async () => {
       if (!runtime.config.enabled) {
-        return { result: { started: false }, logs: ['[autocomplete] start blocked: disabled'] };
+        return { result: { started: false }, logs: [] };
       }
       runtime.status.running = true;
       runtime.status.phase = 'idle';
-      runtime.status.debounce_ms = params?.debounce_ms ?? runtime.config.debounce_ms;
-      runtime.status.updated_at_ms = Date.now();
-      return {
-        result: { started: true },
-        logs: [`[autocomplete] start running=yes debounce=${String(runtime.status.debounce_ms)}`],
-      };
+      return { result: { started: true }, logs: [] };
     });
 
     vi.mocked(openhumanAutocompleteStop).mockImplementation(async () => {
       runtime.status.running = false;
       runtime.status.phase = 'idle';
       runtime.status.suggestion = null;
-      runtime.status.updated_at_ms = Date.now();
-      return { result: { stopped: true }, logs: ['[autocomplete] stop running=no'] };
-    });
-
-    vi.mocked(openhumanAutocompleteCurrent).mockImplementation(
-      async (params?: AutocompleteCurrentParams) => {
-        const context = params?.context?.trim() ?? '';
-        const suggestion = context ? 'completion draft' : '';
-        runtime.status.app_name = 'OpenHuman';
-        runtime.status.phase = suggestion ? 'ready' : 'idle';
-        runtime.status.suggestion = suggestion ? { value: suggestion, confidence: 0.74 } : null;
-        runtime.status.updated_at_ms = Date.now();
-        return {
-          result: {
-            app_name: runtime.status.app_name,
-            context,
-            suggestion: runtime.status.suggestion,
-          },
-          logs: [
-            `[autocomplete] current context_chars=${String(context.length)} suggestion=${suggestion ? 'yes' : 'no'}`,
-          ],
-        };
-      }
-    );
-
-    vi.mocked(openhumanAutocompleteAccept).mockImplementation(async params => {
-      const value = params?.suggestion ?? runtime.status.suggestion?.value ?? '';
-      if (!value) {
-        return {
-          result: {
-            accepted: false,
-            applied: false,
-            value: null,
-            reason: 'no suggestion available',
-          },
-          logs: ['[autocomplete] accept no-op'],
-        };
-      }
-      runtime.status.phase = 'idle';
-      runtime.status.suggestion = null;
-      runtime.status.updated_at_ms = Date.now();
-      return {
-        result: { accepted: true, applied: true, value, reason: null },
-        logs: [`[autocomplete] accept applied value_chars=${String(value.length)}`],
-      };
-    });
-
-    vi.mocked(openhumanAutocompleteDebugFocus).mockResolvedValue({
-      result: {
-        app_name: 'OpenHuman',
-        role: 'TextArea',
-        context: 'draft context',
-        selected_text: null,
-        raw_error: null,
-      },
-      logs: ['[autocomplete] debug focus'],
+      return { result: { stopped: true }, logs: [] };
     });
   });
 
-  it('runs start → suggest → accept flow and reflects status, settings, and logs', async () => {
+  it('shows user-facing settings and can save style preset changes', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    await screen.findByText('Inline Autocomplete');
+    await screen.findByText('Autocomplete');
+
+    // Verify user-facing controls are present
+    expect(screen.getByText('Enabled')).toBeInTheDocument();
+    expect(screen.getByText('Accept With Tab')).toBeInTheDocument();
+    expect(screen.getByText('Style Preset')).toBeInTheDocument();
+
+    // Verify runtime status section shows
     await waitFor(() => {
-      expect(screen.getByText('Phase: idle')).toBeInTheDocument();
+      expect(screen.getByText('Running: no')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Platform supported: yes')).toBeInTheDocument();
-    expect(screen.getByText('Running: no')).toBeInTheDocument();
-    expect(screen.getByText('Debounce: 120ms')).toBeInTheDocument();
+    // Change style preset and save
+    const presetRow = screen.getByText('Style Preset').closest('label');
+    const presetSelect = presetRow?.querySelector('select') as HTMLSelectElement;
+    fireEvent.change(presetSelect, { target: { value: 'concise' } });
 
-    const debounceRow = screen.getByText('Debounce (ms)').closest('label');
-    const debounceInput = debounceRow?.querySelector('input') as HTMLInputElement;
-    fireEvent.change(debounceInput, { target: { value: '220' } });
-
-    const maxCharsRow = screen.getByText('Max Chars').closest('label');
-    const maxCharsInput = maxCharsRow?.querySelector('input') as HTMLInputElement;
-    fireEvent.change(maxCharsInput, { target: { value: '256' } });
-
-    const acceptWithTabRow = screen.getByText('Accept With Tab').closest('label');
-    const acceptWithTabInput = acceptWithTabRow?.querySelector('input') as HTMLInputElement;
-    fireEvent.click(acceptWithTabInput);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save Autocomplete Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     await waitFor(() => {
       expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
-        expect.objectContaining({ debounce_ms: 220, max_chars: 256, accept_with_tab: false })
+        expect.objectContaining({ style_preset: 'concise', accept_with_tab: true })
       );
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+    expect(await screen.findByText('Autocomplete settings saved.')).toBeInTheDocument();
+  });
 
+  it('can start and stop the autocomplete runtime', async () => {
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+
+    await screen.findByText('Autocomplete');
+
+    // Wait for status to load
+    await waitFor(() => {
+      expect(screen.getByText('Running: no')).toBeInTheDocument();
+    });
+
+    // Start
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }));
     await waitFor(() => {
       expect(openhumanAutocompleteStart).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect(screen.getByText('Running: yes')).toBeInTheDocument();
-      expect(screen.getByText('Debounce: 220ms')).toBeInTheDocument();
+      expect(screen.getByText('Autocomplete started.')).toBeInTheDocument();
     });
 
-    const contextLabel = screen.getByText('Context Override (optional)');
-    const contextInput = contextLabel.parentElement?.querySelector(
-      'textarea'
-    ) as HTMLTextAreaElement;
-    fireEvent.change(contextInput, { target: { value: 'Please review this change' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Get Suggestion' }));
-
+    // Stop
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await waitFor(() => {
-      expect(openhumanAutocompleteCurrent).toHaveBeenCalledWith({
-        context: 'Please review this change',
-      });
+      expect(openhumanAutocompleteStop).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect(screen.getByText('Current suggestion: completion draft')).toBeInTheDocument();
+      expect(screen.getByText('Autocomplete stopped.')).toBeInTheDocument();
+    });
+  });
+
+  it('preserves advanced settings when saving from the simplified panel', async () => {
+    runtime.config.debounce_ms = 500;
+    runtime.config.max_chars = 800;
+    runtime.config.overlay_ttl_ms = 2000;
+
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+
+    await screen.findByText('Autocomplete');
+
+    // Wait for config to load
+    await waitFor(() => {
+      expect(screen.getByText('Running: no')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Accept Suggestion' }));
+    // Toggle enabled off and save
+    const enabledLabel = screen.getByText('Enabled').closest('label');
+    const enabledCheckbox = enabledLabel?.querySelector(
+      'input[type="checkbox"]'
+    ) as HTMLInputElement;
+    fireEvent.click(enabledCheckbox);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
 
     await waitFor(() => {
-      expect(openhumanAutocompleteAccept).toHaveBeenCalledWith({
-        suggestion: 'completion draft',
-        skip_apply: true,
-      });
+      expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enabled: false,
+          debounce_ms: 500,
+          max_chars: 800,
+          overlay_ttl_ms: 2000,
+        })
+      );
     });
-    await waitFor(() => {
-      expect(screen.getByText('Current suggestion: none')).toBeInTheDocument();
-      expect(screen.getByText('Accepted: completion draft')).toBeInTheDocument();
-    });
+  });
 
-    const logsSection = screen.getByText('Live Logs').closest('section');
-    expect(logsSection).not.toBeNull();
-    const logsScope = within(logsSection as HTMLElement);
-    const logsOutput = (logsSection as HTMLElement).querySelector('pre') as HTMLElement;
+  it('shows the Advanced settings link', async () => {
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
-    expect(logsOutput.textContent).toContain('[autocomplete] start');
-    expect(logsOutput.textContent).toContain('[autocomplete] current');
-    expect(logsOutput.textContent).toContain('phase idle -> ready');
-    expect(logsOutput.textContent).toContain('phase ready -> idle');
-
-    fireEvent.click(logsScope.getByRole('button', { name: 'Clear' }));
-    await waitFor(() => {
-      expect(logsOutput.textContent).toContain('No logs yet.');
-    });
+    await screen.findByText('Autocomplete');
+    expect(screen.getByText('Advanced settings')).toBeInTheDocument();
   });
 });

@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -6,6 +7,23 @@ use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{timeout, Duration};
+
+/// Propagate ANSI color hints to the spawned core child.
+///
+/// Core's tracing formatter auto-detects color via `stderr.is_terminal()`,
+/// but when core runs as a grandchild under `yarn tauri dev` the inherited
+/// stderr may not register as a TTY even though the ultimate terminal
+/// supports ANSI. If the Tauri process itself is attached to a TTY we
+/// forward `FORCE_COLOR=1` so core emits colored log lines; `NO_COLOR`
+/// (user opt-out) always wins and short-circuits the propagation.
+fn apply_core_color_env(cmd: &mut Command) {
+    if std::env::var_os("NO_COLOR").is_some() {
+        return;
+    }
+    if std::io::stderr().is_terminal() {
+        cmd.env("FORCE_COLOR", "1");
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoreRunMode {
@@ -90,6 +108,10 @@ impl CoreProcessHandle {
                 "[core] found existing core rpc endpoint at {}",
                 self.rpc_url()
             );
+            log::warn!(
+                "[core] reusing port {} — if channel/Telegram behavior mismatches the app, another stale `openhuman` core may be attached; check [core-update] logs for version skew.",
+                self.port
+            );
             return Ok(());
         }
 
@@ -119,6 +141,7 @@ impl CoreProcessHandle {
                             .arg(self.port.to_string());
                         cmd
                     };
+                    apply_core_color_env(&mut cmd);
                     let child = cmd
                         .spawn()
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;
@@ -156,6 +179,7 @@ impl CoreProcessHandle {
                         cmd
                     };
 
+                    apply_core_color_env(&mut cmd);
                     let child = cmd
                         .spawn()
                         .map_err(|e| format!("failed to spawn core process: {e}"))?;
@@ -290,32 +314,97 @@ impl CoreProcessHandle {
 
     /// Stop the core process this handle spawned (child or in-process task). Safe to call if
     /// nothing was spawned or core was already external.
+    ///
+    /// On Unix, sends SIGTERM first so the core process can run its graceful
+    /// shutdown hooks (e.g. stopping the autocomplete engine and its Swift
+    /// overlay helper). Falls back to SIGKILL after a timeout.
     pub async fn shutdown(&self) {
         let mut child_guard = self.child.lock().await;
         if let Some(mut child) = child_guard.take() {
             log::info!("[core] terminating child core process on app shutdown");
-            if let Err(e) = child.kill().await {
-                log::warn!("[core] failed to kill child core process: {e}");
+
+            let exited = self.try_graceful_terminate(&child).await;
+
+            if !exited {
+                log::info!("[core] graceful shutdown timed out, sending SIGKILL");
+                if let Err(e) = child.kill().await {
+                    log::warn!("[core] failed to kill child core process: {e}");
+                }
             }
+
             // Wait for the process to exit so the RPC listen socket is released before restart
             // checks the port (otherwise we can spuriously hit "port still in use").
             match timeout(Duration::from_secs(12), child.wait()).await {
                 Ok(Ok(status)) => {
-                    log::debug!("[core] child core process reaped after kill: {status}");
+                    log::debug!("[core] child core process reaped after shutdown: {status}");
                 }
                 Ok(Err(e)) => {
-                    log::warn!("[core] wait on child core process after kill: {e}");
+                    log::warn!("[core] wait on child core process after shutdown: {e}");
                 }
                 Err(_) => {
-                    log::warn!(
-                        "[core] timed out waiting for child core process to exit after kill (12s)"
-                    );
+                    log::warn!("[core] timed out waiting for child core process to exit (12s)");
                 }
             }
         }
         let mut task_guard = self.task.lock().await;
         if let Some(task) = task_guard.take() {
             task.abort();
+        }
+    }
+
+    /// Send SIGTERM to the child and wait up to 5 seconds for it to exit.
+    /// Returns `true` if the process exited gracefully, `false` if it's still
+    /// alive (caller should escalate to SIGKILL).
+    async fn try_graceful_terminate(&self, child: &Child) -> bool {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{self, Signal};
+            use nix::unistd::Pid;
+
+            let Some(pid) = child.id() else {
+                log::debug!("[core] child has no PID (already exited?)");
+                return true;
+            };
+
+            log::info!("[core] sending SIGTERM to core process (pid={pid})");
+            if let Err(e) = signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
+                log::warn!("[core] failed to send SIGTERM: {e}");
+                return false;
+            }
+
+            // Poll for exit for up to 5 seconds.
+            const GRACE_PERIOD: Duration = Duration::from_secs(5);
+            const POLL_INTERVAL: Duration = Duration::from_millis(100);
+            let start = tokio::time::Instant::now();
+
+            while start.elapsed() < GRACE_PERIOD {
+                // Check if process is still alive (signal 0 = existence check).
+                match signal::kill(Pid::from_raw(pid as i32), None) {
+                    Err(nix::errno::Errno::ESRCH) => {
+                        log::info!(
+                            "[core] core process exited gracefully after SIGTERM ({}ms)",
+                            start.elapsed().as_millis()
+                        );
+                        return true;
+                    }
+                    _ => {}
+                }
+                tokio::time::sleep(POLL_INTERVAL).await;
+            }
+
+            log::warn!(
+                "[core] core process still alive after {}s grace period",
+                GRACE_PERIOD.as_secs()
+            );
+            false
+        }
+
+        #[cfg(not(unix))]
+        {
+            // On non-Unix platforms, there is no SIGTERM equivalent; the caller
+            // will use `child.kill()` directly.
+            let _ = child;
+            false
         }
     }
 }
