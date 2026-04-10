@@ -1238,7 +1238,7 @@ const Conversations = () => {
                   </svg>
                   <p className="text-xs text-coral-600 truncate">
                     {teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
-                      ? 'Included weekly inference budget exhausted. Top up to continue.'
+                      ? "You've hit your weekly limit. Top up to continue."
                       : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
                   </p>
                 </div>
