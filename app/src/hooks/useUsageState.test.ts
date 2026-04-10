@@ -5,15 +5,11 @@ const mockGetCurrentPlan = vi.fn();
 const mockGetTeamUsage = vi.fn();
 
 vi.mock('../services/api/billingApi', () => ({
-  billingApi: {
-    getCurrentPlan: () => mockGetCurrentPlan(),
-  },
+  billingApi: { getCurrentPlan: () => mockGetCurrentPlan() },
 }));
 
 vi.mock('../services/api/creditsApi', () => ({
-  creditsApi: {
-    getTeamUsage: () => mockGetTeamUsage(),
-  },
+  creditsApi: { getTeamUsage: () => mockGetTeamUsage() },
 }));
 
 describe('useUsageState', () => {

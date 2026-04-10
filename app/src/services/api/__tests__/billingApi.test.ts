@@ -207,17 +207,11 @@ describe('creditsApi.getBalance', () => {
   });
 
   it('normalizes missing numeric fields so billing UI does not crash', async () => {
-    mockCallCoreCommand.mockResolvedValue({
-      topUpBalanceUsd: 3,
-    });
+    mockCallCoreCommand.mockResolvedValue({ topUpBalanceUsd: 3 });
 
     const result = await creditsApi.getBalance();
 
     expect(mockCallCoreCommand).toHaveBeenCalledWith('openhuman.billing_get_balance');
-    expect(result).toEqual({
-      balanceUsd: 0,
-      topUpBalanceUsd: 3,
-      topUpBaselineUsd: null,
-    });
+    expect(result).toEqual({ balanceUsd: 0, topUpBalanceUsd: 3, topUpBaselineUsd: null });
   });
 });

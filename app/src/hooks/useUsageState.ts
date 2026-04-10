@@ -82,7 +82,9 @@ export function useUsageState(): UsageState {
       ? Math.min(1, (teamUsage.cycleBudgetUsd - teamUsage.remainingUsd) / teamUsage.cycleBudgetUsd)
       : 0;
 
-  const isBudgetExhausted = teamUsage ? teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0 : false;
+  const isBudgetExhausted = teamUsage
+    ? teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
+    : false;
 
   const isRateLimited =
     teamUsage !== null &&

@@ -71,7 +71,9 @@ const PayAsYouGoCard = ({
         <div className="space-y-1.5 mb-3">
           <div className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-2.5 py-2">
             <span className="text-xs text-stone-500">Available credits</span>
-            <span className="text-sm font-semibold text-stone-900">${availableCredits.toFixed(2)}</span>
+            <span className="text-sm font-semibold text-stone-900">
+              ${availableCredits.toFixed(2)}
+            </span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs text-stone-400">Signup + promo credits</span>
@@ -83,10 +85,7 @@ const PayAsYouGoCard = ({
               <span className="text-xs font-medium text-stone-900">
                 ${topUpCredits.toFixed(2)}
                 {topUpBaseline != null && topUpBaseline > 0 && (
-                  <span className="text-stone-500 font-normal">
-                    {' '}
-                    / ${topUpBaseline.toFixed(2)}
-                  </span>
+                  <span className="text-stone-500 font-normal"> / ${topUpBaseline.toFixed(2)}</span>
                 )}
               </span>
             </div>
@@ -100,9 +99,7 @@ const PayAsYouGoCard = ({
                         ? 'bg-amber-500'
                         : 'bg-primary-500'
                   }`}
-                  style={{
-                    width: `${Math.min(100, (topUpCredits / topUpBaseline) * 100)}%`,
-                  }}
+                  style={{ width: `${Math.min(100, (topUpCredits / topUpBaseline) * 100)}%` }}
                 />
               </div>
             )}

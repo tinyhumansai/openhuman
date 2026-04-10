@@ -49,8 +49,8 @@ const InferenceBudget = ({ teamUsage, isLoadingCredits }: InferenceBudgetProps) 
           </div>
           {teamUsage.remainingUsd <= 0 && (
             <p className="text-[11px] text-coral-400 mt-1.5">
-              Included subscription usage is exhausted. Top up credits to continue using AI
-              features without waiting for the next cycle.
+              Included subscription usage is exhausted. Top up credits to continue using AI features
+              without waiting for the next cycle.
             </p>
           )}
         </>
