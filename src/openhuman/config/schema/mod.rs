@@ -10,14 +10,13 @@ mod channels;
 mod context;
 mod defaults;
 mod dictation;
-mod hardware;
 mod heartbeat_cron;
 mod identity_cost;
 mod learning;
 mod load;
 pub use load::{
-    clear_active_user, default_root_openhuman_dir, read_active_user_id, user_openhuman_dir,
-    write_active_user_id,
+    clear_active_user, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,
+    user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
 };
 mod local_ai;
 mod observability;
@@ -41,7 +40,6 @@ pub use channels::{
 };
 pub use context::ContextConfig;
 pub use dictation::{DictationActivationMode, DictationConfig};
-pub use hardware::{HardwareConfig, HardwareTransport};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{CostConfig, ModelPricing, PeripheralBoardConfig, PeripheralsConfig};
 pub use learning::{LearningConfig, ReflectionSource};

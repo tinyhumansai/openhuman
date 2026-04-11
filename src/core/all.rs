@@ -61,6 +61,7 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
     controllers.extend(crate::openhuman::about_app::all_about_app_registered_controllers());
     controllers.extend(crate::openhuman::app_state::all_app_state_registered_controllers());
+    controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
@@ -105,6 +106,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());
     schemas.extend(crate::openhuman::app_state::all_app_state_controller_schemas());
+    schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
@@ -167,6 +169,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "auth" => Some("Manage app session and provider credentials."),
         "autocomplete" => Some("Inline autocomplete engine controls and style settings."),
         "channels" => Some("Channel definitions, connections, and lifecycle management."),
+        "composio" => Some(
+            "Composio OAuth integrations proxied via the backend — toolkits, connections, tools, and actions."
+        ),
         "config" => Some("Read and update persisted runtime configuration."),
         "cron" => Some("Manage scheduled jobs and run history."),
         "decrypt" => Some("Decrypt secure values managed by secret storage."),

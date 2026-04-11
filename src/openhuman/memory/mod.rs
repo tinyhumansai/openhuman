@@ -6,6 +6,7 @@
 //! a unified memory interface for AI agents.
 
 pub mod chunker;
+pub mod conversations;
 pub mod embeddings;
 pub mod global;
 pub mod ingestion;

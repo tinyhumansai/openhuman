@@ -90,6 +90,108 @@ pub struct MemoryInitResponse {
     pub memory_dir: String,
 }
 
+/// Summary information for a workspace-backed conversation thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationThreadSummary {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<i64>,
+    pub is_active: bool,
+    pub message_count: usize,
+    pub last_message_at: String,
+    pub created_at: String,
+}
+
+/// A single persisted conversation message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationMessageRecord {
+    pub id: String,
+    pub content: String,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    #[serde(default)]
+    pub extra_metadata: serde_json::Value,
+    pub sender: String,
+    pub created_at: String,
+}
+
+/// Request to create or update a thread in workspace storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpsertConversationThreadRequest {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+}
+
+/// Response payload for thread list operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationThreadsListResponse {
+    pub threads: Vec<ConversationThreadSummary>,
+    pub count: usize,
+}
+
+/// Request to fetch messages for a specific thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationMessagesRequest {
+    pub thread_id: String,
+}
+
+/// Response payload for message list operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationMessagesResponse {
+    pub messages: Vec<ConversationMessageRecord>,
+    pub count: usize,
+}
+
+/// Request to append a message to a thread.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppendConversationMessageRequest {
+    pub thread_id: String,
+    pub message: ConversationMessageRecord,
+}
+
+/// Request to patch a persisted message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateConversationMessageRequest {
+    pub thread_id: String,
+    pub message_id: String,
+    #[serde(default)]
+    pub extra_metadata: Option<serde_json::Value>,
+}
+
+/// Request to delete a thread and its message log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteConversationThreadRequest {
+    pub thread_id: String,
+    pub deleted_at: String,
+}
+
+/// Response payload for single-thread deletion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteConversationThreadResponse {
+    pub deleted: bool,
+}
+
+/// Response payload for purging all workspace-backed conversations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgeConversationThreadsResponse {
+    pub messages_deleted: usize,
+    pub agent_threads_deleted: usize,
+    pub agent_messages_deleted: usize,
+}
+
 /// Request payload for `openhuman.list_documents`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

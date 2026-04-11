@@ -7,7 +7,7 @@ pub mod providers;
 pub mod traits;
 
 mod commands;
-mod context;
+pub(crate) mod context;
 mod routes;
 mod runtime;
 

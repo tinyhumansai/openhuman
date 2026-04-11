@@ -240,10 +240,21 @@ async fn resolve_runtime_config_dirs(
         ));
     }
 
-    // 4. Default.
+    // 4. Default: no login yet. Encapsulate config/memory/state under the
+    //    pre-login user directory so everything is user-scoped from the very
+    //    first init. On first real login, this directory is migrated to the
+    //    authenticated user id (see `credentials::ops::store_session`).
+    let user_dir = pre_login_user_dir(default_openhuman_dir);
+    let user_workspace = user_dir.join("workspace");
+    tracing::debug!(
+        user_id = %PRE_LOGIN_USER_ID,
+        user_dir = %user_dir.display(),
+        default_workspace_dir = %default_workspace_dir.display(),
+        "Config dirs resolved to pre-login user directory (no active user, no workspace marker)"
+    );
     Ok((
-        default_openhuman_dir.to_path_buf(),
-        default_workspace_dir.to_path_buf(),
+        user_dir,
+        user_workspace,
         ConfigResolutionSource::DefaultConfigDir,
     ))
 }
@@ -334,6 +345,21 @@ pub fn user_openhuman_dir(default_openhuman_dir: &Path, user_id: &str) -> PathBu
     default_openhuman_dir.join("users").join(user_id)
 }
 
+/// Stable id used to scope the openhuman directory before any user has
+/// logged in.  All memory, state, config, sessions and workspace files
+/// created on first init land under `{root}/users/{PRE_LOGIN_USER_ID}`
+/// so nothing is ever written directly at the root `.openhuman` path.
+///
+/// On first successful login, this directory is migrated into the real
+/// user-scoped directory (see `credentials::ops::store_session`).
+pub const PRE_LOGIN_USER_ID: &str = "local";
+
+/// Returns the pre-login (unauthenticated) user directory:
+/// `{default_openhuman_dir}/users/local`.
+pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
+    user_openhuman_dir(default_openhuman_dir, PRE_LOGIN_USER_ID)
+}
+
 fn migrate_legacy_autocomplete_disabled_apps(config: &mut Config) {
     // Legacy defaults blocked both terminal and code, which prevented Codex/CLI usage.
     // Migrate only the exact legacy default so custom user preferences remain untouched.
@@ -376,6 +402,29 @@ impl Config {
             resolve_runtime_config_dirs(&default_openhuman_dir, &default_workspace_dir).await?;
 
         let config_path = openhuman_dir.join("config.toml");
+
+        // Pre-login path: no active user, no workspace marker, no env override,
+        // and no existing config.toml on disk.  Return an in-memory default
+        // config without creating any directories or writing any files — disk
+        // state is deferred until the first successful login in
+        // `credentials::ops::store_session`, which writes `active_user.toml`
+        // and triggers a reload that materializes the user-scoped directory.
+        if resolution_source == ConfigResolutionSource::DefaultConfigDir && !config_path.exists() {
+            let mut config = Config::default();
+            config.config_path = config_path.clone();
+            config.workspace_dir = workspace_dir.clone();
+            config.apply_env_overrides();
+
+            tracing::debug!(
+                path = %config.config_path.display(),
+                workspace = %config.workspace_dir.display(),
+                source = resolution_source.as_str(),
+                initialized = false,
+                persisted = false,
+                "Config loaded (pre-login, in-memory only — no dirs or files written)"
+            );
+            return Ok(config);
+        }
 
         fs::create_dir_all(&openhuman_dir)
             .await
@@ -1089,12 +1138,14 @@ mod tests {
         let root = tmp.path();
         let default_workspace = root.join("workspace");
 
-        // No active user → uses default.
+        // No active user → falls back to the pre-login user directory so
+        // memory/state/config are still encapsulated under users/.
         let (oh_dir, ws_dir, source) = resolve_runtime_config_dirs(root, &default_workspace)
             .await
             .unwrap();
-        assert_eq!(oh_dir, root);
-        assert_eq!(ws_dir, default_workspace);
+        let expected_pre_login_dir = root.join("users").join(PRE_LOGIN_USER_ID);
+        assert_eq!(oh_dir, expected_pre_login_dir);
+        assert_eq!(ws_dir, expected_pre_login_dir.join("workspace"));
         assert_eq!(source, ConfigResolutionSource::DefaultConfigDir);
 
         // With active user → scopes to user dir.
@@ -1106,5 +1157,15 @@ mod tests {
         assert_eq!(oh_dir, expected_user_dir);
         assert_eq!(ws_dir, expected_user_dir.join("workspace"));
         assert_eq!(source, ConfigResolutionSource::ActiveUser);
+    }
+
+    #[test]
+    fn pre_login_user_dir_is_under_users_tree() {
+        let root = PathBuf::from("/home/test/.openhuman");
+        let dir = pre_login_user_dir(&root);
+        assert_eq!(
+            dir,
+            PathBuf::from("/home/test/.openhuman/users").join(PRE_LOGIN_USER_ID)
+        );
     }
 }

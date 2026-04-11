@@ -285,4 +285,11 @@ pub struct IntegrationsConfig {
     /// Parallel web search & content extraction integration.
     #[serde(default)]
     pub parallel: IntegrationToggle,
+
+    /// Composio 1000+ app integrations proxied via the backend
+    /// (`/agent-integrations/composio/*`). When enabled, agents can
+    /// list toolkits, authorize OAuth connections, list/execute actions,
+    /// and receive trigger events over the Socket.IO bridge.
+    #[serde(default)]
+    pub composio: IntegrationToggle,
 }

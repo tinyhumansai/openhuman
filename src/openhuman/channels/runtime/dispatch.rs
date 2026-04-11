@@ -205,7 +205,9 @@ pub(crate) async fn process_channel_message(
 
     publish_global(DomainEvent::ChannelMessageReceived {
         channel: msg.channel.clone(),
+        message_id: msg.id.clone(),
         sender: msg.sender.clone(),
+        reply_target: msg.reply_target.clone(),
         content: msg.content.clone(),
         thread_ts: msg.thread_ts.clone(),
     });
@@ -503,8 +505,11 @@ pub(crate) async fn process_channel_message(
 
                 publish_global(DomainEvent::ChannelMessageProcessed {
                     channel: msg.channel.clone(),
+                    message_id: msg.id.clone(),
                     sender: msg.sender.clone(),
+                    reply_target: msg.reply_target.clone(),
                     content: msg.content.clone(),
+                    thread_ts: msg.thread_ts.clone(),
                     response: error_text.to_string(),
                     elapsed_ms: started_at.elapsed().as_millis() as u64,
                     success: false,
@@ -572,8 +577,11 @@ pub(crate) async fn process_channel_message(
 
     publish_global(DomainEvent::ChannelMessageProcessed {
         channel: msg.channel.clone(),
+        message_id: msg.id.clone(),
         sender: msg.sender.clone(),
+        reply_target: msg.reply_target.clone(),
         content: msg.content.clone(),
+        thread_ts: msg.thread_ts.clone(),
         response: response_text,
         elapsed_ms: started_at.elapsed().as_millis() as u64,
         success,

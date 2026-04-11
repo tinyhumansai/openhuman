@@ -12,7 +12,7 @@ export * from './subconscious';
 export * from './localAi';
 export * from './config';
 export * from './cron';
-export * from './hardware';
+export * from './service';
 export * from './accessibility';
 export * from './autocomplete';
 export * from './skills';

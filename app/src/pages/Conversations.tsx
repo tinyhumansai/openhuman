@@ -24,9 +24,11 @@ import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
   addMessageLocal,
-  addReaction,
   createThreadLocal,
   fetchSuggestedQuestions,
+  loadThreadMessages,
+  loadThreads,
+  persistReaction,
   setActiveThread,
   setLastViewed,
   setSelectedThread,
@@ -160,7 +162,6 @@ const Conversations = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const {
-    threads,
     selectedThreadId,
     messages,
     isLoadingMessages,
@@ -273,25 +274,28 @@ const Conversations = () => {
     typeof navigator.mediaDevices.getUserMedia === 'function';
 
   useEffect(() => {
-    const defaultThread = threads.find(t => t.id === DEFAULT_THREAD_ID);
-
-    if (!defaultThread) {
-      dispatch(
-        createThreadLocal({
-          id: DEFAULT_THREAD_ID,
-          title: DEFAULT_THREAD_TITLE,
-          createdAt: new Date().toISOString(),
-        })
-      );
-    }
-
-    // Always set selected thread to ensure messages view is synced from persisted storage
-    dispatch(setSelectedThread(DEFAULT_THREAD_ID));
+    void dispatch(loadThreads());
+    void dispatch(
+      createThreadLocal({
+        id: DEFAULT_THREAD_ID,
+        title: DEFAULT_THREAD_TITLE,
+        createdAt: new Date().toISOString(),
+      })
+    ).then(() => {
+      dispatch(setSelectedThread(DEFAULT_THREAD_ID));
+      void dispatch(loadThreadMessages(DEFAULT_THREAD_ID));
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
 
   useEffect(() => {
     if (selectedThreadId) dispatch(setLastViewed(selectedThreadId));
+  }, [selectedThreadId, dispatch]);
+
+  useEffect(() => {
+    if (selectedThreadId) {
+      void dispatch(loadThreadMessages(selectedThreadId));
+    }
   }, [selectedThreadId, dispatch]);
 
   useEffect(() => {
@@ -483,8 +487,8 @@ const Conversations = () => {
         if (event.reaction_emoji) {
           const pending = pendingReactionRef.current.get(event.thread_id);
           if (pending) {
-            dispatch(
-              addReaction({
+            void dispatch(
+              persistReaction({
                 threadId: pending.threadId,
                 messageId: pending.msgId,
                 emoji: event.reaction_emoji,
@@ -519,8 +523,8 @@ const Conversations = () => {
         if (event.reaction_emoji) {
           const pending = pendingReactionRef.current.get(event.thread_id);
           if (pending) {
-            dispatch(
-              addReaction({
+            void dispatch(
+              persistReaction({
                 threadId: pending.threadId,
                 messageId: pending.msgId,
                 emoji: event.reaction_emoji,
@@ -633,7 +637,7 @@ const Conversations = () => {
         if (!gifUrl) return;
 
         console.debug('[conversations:gif] sending gif:', picked.title || picked.id);
-        dispatch(addInferenceResponse({ content: gifUrl, threadId }));
+        void dispatch(addInferenceResponse({ content: gifUrl, threadId, type: 'gif' }));
       })
       .catch(err => {
         console.debug('[conversations:gif] failed:', err);
@@ -706,7 +710,7 @@ const Conversations = () => {
       createdAt: new Date().toISOString(),
     };
 
-    dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
+    void dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
     pendingReactionRef.current.set(sendingThreadId, {
       msgId: userMessage.id,
       content: trimmed,
@@ -1083,8 +1087,8 @@ const Conversations = () => {
                               key={emoji}
                               onClick={() =>
                                 selectedThreadId &&
-                                dispatch(
-                                  addReaction({
+                                void dispatch(
+                                  persistReaction({
                                     threadId: selectedThreadId,
                                     messageId: msg.id,
                                     emoji,
@@ -1104,8 +1108,8 @@ const Conversations = () => {
                                     key={emoji}
                                     onClick={() => {
                                       if (selectedThreadId) {
-                                        dispatch(
-                                          addReaction({
+                                        void dispatch(
+                                          persistReaction({
                                             threadId: selectedThreadId,
                                             messageId: msg.id,
                                             emoji,

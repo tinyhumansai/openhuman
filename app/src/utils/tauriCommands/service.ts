@@ -1,29 +1,12 @@
 /**
- * Hardware and service management commands.
+ * Service and daemon management commands.
  */
 import { invoke } from '@tauri-apps/api/core';
 
 import { callCoreRpc } from '../../services/coreRpcClient';
 import { CommandResponse, isTauri, parseServiceCliOutput } from './common';
 
-export type HardwareTransport = 'Native' | 'Serial' | 'Probe' | 'None';
 export type ServiceState = 'Running' | 'Stopped' | 'NotInstalled' | { Unknown: string };
-
-export interface DiscoveredDevice {
-  name: string;
-  detail?: string | null;
-  device_path?: string | null;
-  transport: HardwareTransport;
-}
-
-export interface HardwareIntrospect {
-  path: string;
-  vid?: number | null;
-  pid?: number | null;
-  board_name?: string | null;
-  architecture?: string | null;
-  memory_map_note: string;
-}
 
 export interface ServiceStatus {
   state: ServiceState;
@@ -45,27 +28,6 @@ export interface RestartStatus {
   accepted: boolean;
   source: string;
   reason: string;
-}
-
-export async function openhumanHardwareDiscover(): Promise<CommandResponse<DiscoveredDevice[]>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await callCoreRpc<CommandResponse<DiscoveredDevice[]>>({
-    method: 'openhuman.hardware_discover',
-  });
-}
-
-export async function openhumanHardwareIntrospect(
-  path: string
-): Promise<CommandResponse<HardwareIntrospect>> {
-  if (!isTauri()) {
-    throw new Error('Not running in Tauri');
-  }
-  return await callCoreRpc<CommandResponse<HardwareIntrospect>>({
-    method: 'openhuman.hardware_introspect',
-    params: { path },
-  });
 }
 
 export async function openhumanServiceInstall(): Promise<CommandResponse<ServiceStatus>> {

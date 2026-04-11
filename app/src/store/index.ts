@@ -17,15 +17,6 @@ import channelConnectionsReducer from './channelConnectionsSlice';
 import socketReducer from './socketSlice';
 import threadReducer from './threadSlice';
 
-// Persist config for thread data and UI prefs (includes threads and messages)
-// Note: activeThreadId is intentionally excluded as it's transient state
-const threadPersistConfig = {
-  key: 'thread',
-  storage,
-  whitelist: ['panelWidth', 'lastViewedAt', 'threads', 'messagesByThreadId', 'selectedThreadId'],
-};
-
-const persistedThreadReducer = persistReducer(threadPersistConfig, threadReducer);
 const channelConnectionsPersistConfig = {
   key: 'channelConnections',
   storage,
@@ -39,7 +30,7 @@ const persistedChannelConnectionsReducer = persistReducer(
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
-    thread: persistedThreadReducer,
+    thread: threadReducer,
     channelConnections: persistedChannelConnectionsReducer,
   },
   middleware: getDefaultMiddleware => {
