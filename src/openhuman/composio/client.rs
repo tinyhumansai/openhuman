@@ -164,9 +164,15 @@ impl ComposioClient {
         // we'd need to clone or expose the existing `reqwest::Client`
         // from `IntegrationClient`, which we intentionally avoid so the
         // public surface of that type doesn't widen for one caller.
+        //
+        // Mirror the TLS settings of the shared client
+        // (`use_rustls_tls + http1_only`) so this path has the same
+        // connection behaviour as the other backend calls.
         let http_client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .http1_only()
             .timeout(std::time::Duration::from_secs(60))
-            .connect_timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(15))
             .build()?;
 
         let resp = http_client

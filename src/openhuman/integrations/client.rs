@@ -1,6 +1,7 @@
 //! Shared HTTP client for all integration tools.
 
 use super::types::{BackendResponse, IntegrationPricing};
+use std::error::Error as _;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,9 +16,19 @@ pub struct IntegrationClient {
 
 impl IntegrationClient {
     pub fn new(backend_url: String, auth_token: String) -> Self {
+        // Match the TLS config used by `BackendOAuthClient` in
+        // `src/api/rest.rs`: force rustls + HTTP/1.1 so we get the same
+        // consistent cross-platform behaviour every other backend-proxied
+        // domain (billing, team, webhooks, referral, …) already relies
+        // on. The default builder picks up native-tls on macOS, which
+        // has historically failed on staging TLS handshakes while
+        // rustls succeeds — so the integrations client was the odd one
+        // out with raw "error sending request" failures.
         let http_client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .http1_only()
             .timeout(Duration::from_secs(60))
-            .connect_timeout(Duration::from_secs(10))
+            .connect_timeout(Duration::from_secs(15))
             .build()
             .expect("failed to build integration HTTP client");
 
@@ -45,7 +56,22 @@ impl IntegrationClient {
             .header("Content-Type", "application/json")
             .json(body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                // Log the full error source chain so the caller gets
+                // something useful instead of reqwest's top-level
+                // "error sending request for url (…)" which hides the
+                // real cause (DNS / TLS / connect / timeout).
+                let mut chain = format!("{e}");
+                let mut src: Option<&(dyn std::error::Error + 'static)> = e.source();
+                while let Some(s) = src {
+                    chain.push_str(" → ");
+                    chain.push_str(&s.to_string());
+                    src = s.source();
+                }
+                tracing::warn!("[integrations] POST {} failed: {}", url, chain);
+                anyhow::anyhow!("POST {} failed: {}", url, chain)
+            })?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -80,7 +106,18 @@ impl IntegrationClient {
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .send()
-            .await?;
+            .await
+            .map_err(|e| {
+                let mut chain = format!("{e}");
+                let mut src: Option<&(dyn std::error::Error + 'static)> = e.source();
+                while let Some(s) = src {
+                    chain.push_str(" → ");
+                    chain.push_str(&s.to_string());
+                    src = s.source();
+                }
+                tracing::warn!("[integrations] GET {} failed: {}", url, chain);
+                anyhow::anyhow!("GET {} failed: {}", url, chain)
+            })?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -129,15 +166,19 @@ impl IntegrationClient {
 }
 
 /// Helper: build an `Arc<IntegrationClient>` from the root config, or
-/// `None` if the user isn't signed in (no `config.api_key`).
+/// `None` if the user isn't signed in yet.
 ///
 /// Both the backend URL and the auth token come from **core defaults**:
 ///
 /// - backend URL → [`crate::api::config::effective_api_url`] applied to
 ///   `config.api_url` (which itself falls back to the `BACKEND_URL` /
 ///   `VITE_BACKEND_URL` env vars and finally the hosted default).
-/// - auth token → `config.api_key` (the same JWT every other part of
-///   the app authenticates with).
+/// - auth token → [`crate::api::jwt::get_session_token`], i.e. the
+///   app-session JWT written by `auth_store_session` — the same token
+///   that billing, team, webhooks, referral, memory, etc. all use.
+///   As a last-ditch fallback we also honour `config.api_key` so
+///   non-interactive sidecar deployments that set `OPENHUMAN_API_KEY`
+///   still work.
 ///
 /// There are no per-feature toggles for the shared client itself —
 /// callers that need a kill switch (e.g. twilio, google_places,
@@ -146,24 +187,46 @@ pub fn build_client(
     config: &crate::openhuman::config::Config,
 ) -> Option<Arc<IntegrationClient>> {
     let backend_url = crate::api::config::effective_api_url(&config.api_url);
-    let auth_token = config
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned);
+
+    // Primary: app-session JWT from the auth profile store.
+    let session_token = match crate::api::jwt::get_session_token(config) {
+        Ok(Some(tok)) => {
+            let trimmed = tok.trim().to_string();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("[integrations] failed to read session token: {e}");
+            None
+        }
+    };
+
+    // Fallback: config.api_key for headless / CI deployments.
+    let auth_token = session_token.or_else(|| {
+        config
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    });
 
     match auth_token {
         Some(token) => {
             tracing::debug!(
                 backend_url = %backend_url,
-                "[integrations] client built from core defaults"
+                "[integrations] client built (session token resolved)"
             );
             Some(Arc::new(IntegrationClient::new(backend_url, token)))
         }
         None => {
             tracing::warn!(
-                "[integrations] no auth token available — set config.api_key (sign in)"
+                "[integrations] no auth token available — user is not signed in \
+                 (no app-session JWT and no config.api_key fallback)"
             );
             None
         }
