@@ -6,7 +6,7 @@ use tempfile::TempDir;
 fn prompt_contains_all_sections() {
     let ws = make_workspace();
     let tools = vec![("shell", "Run commands"), ("file_read", "Read files")];
-    let prompt = build_system_prompt(ws.path(), "test-model", &tools, &[], None);
+    let prompt = build_system_prompt(ws.path(), "test-model", &tools, &[], None, Some("Discord"));
 
     // Section headers
     assert!(prompt.contains("## Tools"), "missing Tools section");
@@ -30,7 +30,7 @@ fn prompt_injects_tools() {
         ("shell", "Run commands"),
         ("memory_recall", "Search memory"),
     ];
-    let prompt = build_system_prompt(ws.path(), "gpt-4o", &tools, &[], None);
+    let prompt = build_system_prompt(ws.path(), "gpt-4o", &tools, &[], None, Some("Discord"));
 
     assert!(prompt.contains("**shell**"));
     assert!(prompt.contains("Run commands"));
@@ -40,7 +40,7 @@ fn prompt_injects_tools() {
 #[test]
 fn prompt_injects_safety() {
     let ws = make_workspace();
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
 
     assert!(prompt.contains("Do not exfiltrate private data"));
     assert!(prompt.contains("Do not run destructive commands"));
@@ -50,7 +50,7 @@ fn prompt_injects_safety() {
 #[test]
 fn prompt_injects_workspace_files() {
     let ws = make_workspace();
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
 
     assert!(prompt.contains("### SOUL.md"), "missing SOUL.md header");
     assert!(prompt.contains("Be helpful"), "missing SOUL content");
@@ -77,7 +77,7 @@ fn prompt_injects_workspace_files() {
 fn prompt_missing_file_markers() {
     let tmp = TempDir::new().unwrap();
     // Empty workspace — bundled identity files missing should emit markers.
-    let prompt = build_system_prompt(tmp.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(tmp.path(), "model", &[], &[], None, Some("Discord"));
 
     assert!(prompt.contains("[File not found: SOUL.md]"));
     assert!(prompt.contains("[File not found: IDENTITY.md]"));
@@ -98,7 +98,7 @@ fn prompt_memory_only_if_exists() {
     std::fs::write(tmp.path().join("IDENTITY.md"), "# Identity").unwrap();
     std::fs::write(tmp.path().join("USER.md"), "# User").unwrap();
 
-    let prompt = build_system_prompt(tmp.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(tmp.path(), "model", &[], &[], None, Some("Discord"));
     assert!(
         !prompt.contains("### MEMORY.md"),
         "MEMORY.md should not appear when missing"
@@ -106,7 +106,7 @@ fn prompt_memory_only_if_exists() {
 
     // Create MEMORY.md — should appear.
     std::fs::write(tmp.path().join("MEMORY.md"), "# Memory\nLearned bits.").unwrap();
-    let prompt2 = build_system_prompt(tmp.path(), "model", &[], &[], None);
+    let prompt2 = build_system_prompt(tmp.path(), "model", &[], &[], None, Some("Discord"));
     assert!(
         prompt2.contains("### MEMORY.md"),
         "MEMORY.md should appear when present"
@@ -126,7 +126,7 @@ fn prompt_no_daily_memory_injection() {
     )
     .unwrap();
 
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
 
     // Daily notes should NOT be in the system prompt (on-demand via tools)
     assert!(
@@ -142,7 +142,14 @@ fn prompt_no_daily_memory_injection() {
 #[test]
 fn prompt_runtime_metadata() {
     let ws = make_workspace();
-    let prompt = build_system_prompt(ws.path(), "claude-sonnet-4", &[], &[], None);
+    let prompt = build_system_prompt(
+        ws.path(),
+        "claude-sonnet-4",
+        &[],
+        &[],
+        None,
+        Some("Discord"),
+    );
 
     assert!(prompt.contains("Model: claude-sonnet-4"));
     assert!(prompt.contains(&format!("OS: {}", std::env::consts::OS)));
@@ -163,7 +170,7 @@ fn prompt_skills_compact_list() {
         location: None,
     }];
 
-    let prompt = build_system_prompt(ws.path(), "model", &[], &skills, None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &skills, None, Some("Discord"));
 
     assert!(prompt.contains("<available_skills>"), "missing skills XML");
     assert!(prompt.contains("<name>code-review</name>"));
@@ -184,7 +191,7 @@ fn prompt_truncation() {
     let big_content = "x".repeat(BOOTSTRAP_MAX_CHARS + 1000);
     std::fs::write(ws.path().join("SOUL.md"), &big_content).unwrap();
 
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
 
     assert!(
         prompt.contains("truncated at"),
@@ -201,7 +208,7 @@ fn prompt_empty_files_skipped() {
     let ws = make_workspace();
     std::fs::write(ws.path().join("USER.md"), "").unwrap();
 
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
 
     // Empty file should not produce a header
     assert!(
@@ -230,7 +237,7 @@ fn channel_log_truncation_is_utf8_safe_for_multibyte_text() {
 #[test]
 fn prompt_contains_channel_capabilities() {
     let ws = make_workspace();
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
 
     assert!(
         prompt.contains("## Channel Capabilities"),
@@ -249,7 +256,7 @@ fn prompt_contains_channel_capabilities() {
 #[test]
 fn prompt_workspace_path() {
     let ws = make_workspace();
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
     let workspace_path = ws.path().display().to_string();
 
     assert!(

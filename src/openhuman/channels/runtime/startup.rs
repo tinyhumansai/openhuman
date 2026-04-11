@@ -189,12 +189,19 @@ pub async fn start_channels(config: Config) -> Result<()> {
     } else {
         None
     };
+    // `channel_name = None` on startup: the channel runtime wires up
+    // multiple providers in parallel, so there's no single platform to
+    // name here. The capability block falls back to a platform-agnostic
+    // "messaging bot" phrasing. Per-channel renderers that want a
+    // named capabilities section can call `build_system_prompt` with
+    // `Some(name)` directly.
     let mut system_prompt = build_system_prompt(
         &workspace,
         &model,
         &tool_descs,
         &skills,
         bootstrap_max_chars,
+        None,
     );
     system_prompt.push_str(&build_tool_instructions(tools_registry.as_ref()));
 

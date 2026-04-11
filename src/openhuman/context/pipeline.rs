@@ -37,6 +37,15 @@ use super::guard::{ContextCheckResult, ContextGuard};
 use super::microcompact::{microcompact, MicrocompactStats, DEFAULT_KEEP_RECENT_TOOL_RESULTS};
 use super::session_memory::{SessionMemoryConfig, SessionMemoryState};
 use crate::openhuman::providers::{ConversationMessage, UsageInfo};
+use std::sync::{Arc, Mutex};
+
+/// Shared handle to a [`SessionMemoryState`] so both the synchronous
+/// pipeline path and a detached background archivist task can inspect
+/// and mutate the same extraction bookkeeping without fighting over
+/// `&mut self`. The pipeline clones this `Arc` into every task it
+/// spawns — the `Mutex` lock is only held for microsecond-scale state
+/// flips, so contention is negligible in practice.
+pub type SessionMemoryHandle = Arc<Mutex<SessionMemoryState>>;
 
 /// Pipeline configuration. Defaults are tuned for an `agentic-v1`
 /// 128k-context run.
@@ -100,11 +109,16 @@ pub enum PipelineOutcome {
 /// Stateful orchestrator. Owns a [`ContextGuard`] and a
 /// [`SessionMemoryState`] so a single instance can live on the `Agent`
 /// across turns without threading state through every call site.
+///
+/// `session_memory` is wrapped in a shared handle so a detached
+/// archivist task spawned from `turn.rs` can mark the extraction as
+/// complete or failed after the pipeline's synchronous path has
+/// already released its borrow on `self`.
 #[derive(Debug)]
 pub struct ContextPipeline {
     pub config: ContextPipelineConfig,
     pub guard: ContextGuard,
-    pub session_memory: SessionMemoryState,
+    pub session_memory: SessionMemoryHandle,
 }
 
 impl Default for ContextPipeline {
@@ -118,7 +132,7 @@ impl ContextPipeline {
         Self {
             config,
             guard: ContextGuard::new(),
-            session_memory: SessionMemoryState::default(),
+            session_memory: Arc::new(Mutex::new(SessionMemoryState::default())),
         }
     }
 
@@ -126,26 +140,51 @@ impl ContextPipeline {
     /// session-memory state.
     pub fn record_usage(&mut self, usage: &UsageInfo) {
         self.guard.update_usage(usage);
-        self.session_memory
-            .record_usage(usage.input_tokens + usage.output_tokens);
+        let total = usage.input_tokens + usage.output_tokens;
+        if let Ok(mut sm) = self.session_memory.lock() {
+            sm.record_usage(total);
+        }
     }
 
     /// Bump the session-memory turn counter. Called once per user turn.
     pub fn tick_turn(&mut self) {
-        self.session_memory.tick_turn();
+        if let Ok(mut sm) = self.session_memory.lock() {
+            sm.tick_turn();
+        }
     }
 
     /// Accumulate a turn's tool-call count into the session-memory
     /// state. Called once per user turn after tool dispatch settles.
     pub fn record_tool_calls(&mut self, n: usize) {
-        self.session_memory.record_tool_calls(n);
+        if let Ok(mut sm) = self.session_memory.lock() {
+            sm.record_tool_calls(n);
+        }
     }
 
     /// Should the caller spawn a background session-memory extraction
     /// this turn?
     pub fn should_extract_session_memory(&self) -> bool {
         self.session_memory
-            .should_extract(&self.config.session_memory)
+            .lock()
+            .map(|sm| sm.should_extract(&self.config.session_memory))
+            .unwrap_or(false)
+    }
+
+    /// Read-only snapshot of the session-memory bookkeeping for
+    /// observability / [`crate::openhuman::context::ContextStats`].
+    pub fn session_memory_snapshot(&self) -> SessionMemoryState {
+        self.session_memory
+            .lock()
+            .map(|sm| sm.clone())
+            .unwrap_or_default()
+    }
+
+    /// Share a clone of the session-memory handle. The caller takes
+    /// ownership of the `Arc` and can move it into a detached
+    /// background task to update the extraction state when the task
+    /// finishes. See `turn.rs::spawn_session_memory_extraction`.
+    pub fn session_memory_handle(&self) -> SessionMemoryHandle {
+        Arc::clone(&self.session_memory)
     }
 
     /// Run the reduction chain against `history` in place. Safe to call

@@ -232,13 +232,25 @@ async fn run_typed_mode(
     // requires a slice of `Box<dyn Tool>` and we only have indices
     // into the parent's vec (Box isn't Clone, so we can't build an
     // owning filtered slice cheaply).
-    let _ = definition; // reserved for future per-definition rendering flags
+    //
+    // Per-definition omit_* flags are threaded through via
+    // `SubagentRenderOptions` — previously the narrow renderer
+    // hard-coded all three as "omit", which silently downgraded
+    // definitions like `code_executor` / `tool_maker` / `skills_agent`
+    // that set `omit_safety_preamble = false`.
+    let render_options =
+        crate::openhuman::context::prompt::SubagentRenderOptions::from_definition_flags(
+            definition.omit_identity,
+            definition.omit_safety_preamble,
+            definition.omit_skills_catalog,
+        );
     let system_prompt = crate::openhuman::context::prompt::render_subagent_system_prompt(
         &parent.workspace_dir,
         &model,
         &allowed_indices,
         &parent.all_tools,
         &archetype_prompt_body,
+        render_options,
     );
 
     // ── Build the user message (with optional context prefix) ──────────

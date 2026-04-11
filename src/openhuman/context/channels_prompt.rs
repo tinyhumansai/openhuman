@@ -72,6 +72,7 @@ pub fn build_system_prompt(
     tools: &[(&str, &str)],
     skills: &[crate::openhuman::skills::Skill],
     bootstrap_max_chars: Option<usize>,
+    channel_name: Option<&str>,
 ) -> String {
     use std::fmt::Write;
     let mut prompt = String::with_capacity(8192);
@@ -164,11 +165,34 @@ pub fn build_system_prompt(
     );
 
     // ── 8. Channel Capabilities ─────────────────────────────────────
+    //
+    // This block used to hardcode "Discord", which was misleading on
+    // Telegram/Slack/Signal runtimes even though the mechanical wiring
+    // was identical. We now take an optional `channel_name` and render
+    // it into the capability bullets when set, otherwise fall back to a
+    // platform-agnostic "messaging bot" phrasing. Keep the remaining
+    // bullets intact — they're genuinely channel-neutral.
     prompt.push_str("## Channel Capabilities\n\n");
-    prompt.push_str(
-        "- You are running as a Discord bot. You CAN and do send messages to Discord channels.\n",
-    );
-    prompt.push_str("- When someone messages you on Discord, your response is automatically sent back to Discord.\n");
+    match channel_name {
+        Some(name) => {
+            let _ = writeln!(
+                prompt,
+                "- You are running as a {name} bot. You CAN and do send messages to {name}."
+            );
+            let _ = writeln!(
+                prompt,
+                "- When someone messages you on {name}, your response is automatically sent back to {name}."
+            );
+        }
+        None => {
+            prompt.push_str(
+                "- You are running as a messaging bot. You CAN and do send messages to the connected platform.\n",
+            );
+            prompt.push_str(
+                "- When someone messages you, your response is automatically sent back to the same platform.\n",
+            );
+        }
+    }
     prompt.push_str("- You do NOT need to ask permission to respond — just respond directly.\n");
     prompt.push_str("- NEVER repeat, describe, or echo credentials, tokens, API keys, or secrets in your responses.\n");
     prompt.push_str("- If a tool output contains credentials, they have already been redacted — do not mention them.\n\n");

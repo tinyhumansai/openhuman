@@ -380,22 +380,74 @@ fn is_dynamic_section(name: &str) -> bool {
     matches!(name, "workspace" | "datetime" | "runtime")
 }
 
+/// Per-definition rendering flags passed into
+/// [`render_subagent_system_prompt`]. Mirrors the `omit_*` fields on
+/// [`crate::openhuman::agent::harness::definition::AgentDefinition`] so
+/// the runner can thread each definition's preferences through without
+/// growing the function signature.
+///
+/// KV-cache-stable as long as the flags are read from a definition that
+/// does not change mid-session.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SubagentRenderOptions {
+    /// When `false`, include the standard `## Safety` block. Mirrors
+    /// `AgentDefinition::omit_safety_preamble`. Defaults to `false`
+    /// (omit) because the narrow sub-agent renderer historically
+    /// skipped this section entirely.
+    pub include_safety_preamble: bool,
+    /// When `false`, skip the identity/project-context dump. Mirrors
+    /// `AgentDefinition::omit_identity`. Defaults to `false`; setting
+    /// this to `true` is uncommon because sub-agents usually run
+    /// narrow and the identity block pushes too many tokens.
+    pub include_identity: bool,
+    /// When `false`, skip the skills catalogue. Mirrors
+    /// `AgentDefinition::omit_skills_catalog`. Defaults to `false`
+    /// for the same reason as `include_identity`.
+    pub include_skills_catalog: bool,
+}
+
+impl SubagentRenderOptions {
+    /// Build the narrow default (every section off) — matches the
+    /// historical behaviour of the purpose-built renderer before the
+    /// flags were threaded through.
+    pub fn narrow() -> Self {
+        Self::default()
+    }
+
+    /// Construct from the per-definition flags, inverting them into the
+    /// positive-sense `include_*` shape used by the renderer.
+    pub fn from_definition_flags(
+        omit_identity: bool,
+        omit_safety_preamble: bool,
+        omit_skills_catalog: bool,
+    ) -> Self {
+        Self {
+            include_identity: !omit_identity,
+            include_safety_preamble: !omit_safety_preamble,
+            include_skills_catalog: !omit_skills_catalog,
+        }
+    }
+}
+
 /// Render a narrow, KV-cache-stable system prompt for a typed sub-agent.
 ///
 /// This is a purpose-built alternative to
 /// [`SystemPromptBuilder::for_subagent`] for call sites that only have
 /// indices into the parent's `&[Box<dyn Tool>]` vec (so they can't
 /// cheaply build a filtered owning slice for `ToolsSection`). The
-/// output mirrors what `for_subagent` would emit with
-/// `omit_identity = omit_safety_preamble = omit_skills_catalog = true`,
-/// plus a sub-agent-specific calling-convention preamble and a
-/// model-only runtime banner.
+/// output mirrors what `for_subagent` would emit with the matching
+/// `omit_*` flags, plus a sub-agent-specific calling-convention
+/// preamble and a model-only runtime banner.
 ///
 /// `archetype_body` is the already-loaded archetype markdown — for
 /// `PromptSource::Inline` this is the inline string, for
 /// `PromptSource::File` this is the file contents loaded by the caller.
 /// Callers resolve the source exactly once and hand the body in, so
 /// this renderer works uniformly for both definition shapes.
+///
+/// `options` carries the per-definition rendering flags (safety, etc.)
+/// inverted into positive-sense `include_*` form.
+/// [`SubagentRenderOptions::narrow`] preserves the historical behaviour.
 ///
 /// # KV cache stability
 ///
@@ -404,6 +456,7 @@ fn is_dynamic_section(name: &str) -> bool {
 /// - the filtered tool set (names, descriptions, schemas)
 /// - the workspace directory
 /// - the resolved model name
+/// - the `options` (all static per definition)
 ///
 /// Anything that varies across invocations at the *same* call site
 /// (e.g. `chrono::Local::now()`, hostnames, pids, turn counters) is
@@ -418,6 +471,7 @@ pub fn render_subagent_system_prompt(
     allowed_indices: &[usize],
     parent_tools: &[Box<dyn Tool>],
     archetype_body: &str,
+    options: SubagentRenderOptions,
 ) -> String {
     let mut out = String::new();
 
@@ -428,6 +482,21 @@ pub fn render_subagent_system_prompt(
     if !trimmed.is_empty() {
         out.push_str(trimmed);
         out.push_str("\n\n");
+    }
+
+    // 1b. Optional identity block. Off by default; turned on when the
+    //     definition sets `omit_identity = false`. Renders the same
+    //     OpenClaw bootstrap files the main agent loads, keeping the
+    //     byte layout stable across repeat spawns of the same
+    //     definition within a session.
+    if options.include_identity {
+        out.push_str("## Project Context\n\n");
+        out.push_str(
+            "The following workspace files define your identity, behavior, and context.\n\n",
+        );
+        for file in &["SOUL.md", "IDENTITY.md", "USER.md"] {
+            inject_workspace_file(&mut out, workspace_dir, file);
+        }
     }
 
     // 2. Filtered tool catalogue. Indices are taken in ascending order
@@ -465,6 +534,31 @@ pub fn render_subagent_system_prompt(
                  final answer when you have one — the parent agent will weave it back into the \
                  user-visible response.\n\n",
     );
+
+    // 3b. Optional safety preamble. Definitions that do work with real
+    //     side-effects (code_executor, tool_maker, skills_agent) set
+    //     `omit_safety_preamble = false` so the narrow renderer used to
+    //     silently drop that instruction — we now honour the flag.
+    //     Byte-identical to `SafetySection::build`.
+    if options.include_safety_preamble {
+        out.push_str(
+            "## Safety\n\n- Do not exfiltrate private data.\n- Do not run destructive commands without asking.\n- Do not bypass oversight or approval mechanisms.\n- Prefer `trash` over `rm`.\n- When in doubt, ask before acting externally.\n\n",
+        );
+    }
+
+    // 3c. Optional skills catalogue. Off by default because sub-agents
+    //     usually skip skills entirely. Kept here so a custom
+    //     definition can opt in without falling back to the general
+    //     builder. The renderer intentionally takes no `skills` slice
+    //     — the caller would have to extend this helper before
+    //     enabling this flag for real, which keeps the common (narrow)
+    //     path free of extra arguments.
+    if options.include_skills_catalog {
+        out.push_str("## Available Skills\n\n");
+        out.push_str(
+            "Skills are loaded on demand. Use `read` on the skill path to get full instructions.\n\n",
+        );
+    }
 
     // 4. Workspace so the model knows where it is. Intentionally stable:
     //    no datetime, no hostname, no pid — see the KV-cache note above.

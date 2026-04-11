@@ -949,8 +949,7 @@ impl Config {
         // Effective pair after applying whichever overrides parsed
         // cleanly, falling back to the current live values for any
         // unset side.
-        let effective_compaction =
-            new_compaction.unwrap_or(self.context.compaction_trigger_pct);
+        let effective_compaction = new_compaction.unwrap_or(self.context.compaction_trigger_pct);
         let effective_hard_limit = new_hard_limit.unwrap_or(self.context.hard_limit_pct);
 
         if effective_compaction < effective_hard_limit {
