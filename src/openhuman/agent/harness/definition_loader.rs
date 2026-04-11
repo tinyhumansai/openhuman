@@ -269,8 +269,10 @@ wildcard = {}
         );
 
         let reg = super::super::definition::AgentDefinitionRegistry::load(ws.path()).unwrap();
-        // Still 9 — same id replaced built-in in place.
-        assert_eq!(reg.len(), 9);
+        // Still 10 (9 built-ins + the synthetic `fork`) — same id
+        // replaced the built-in `code_executor` in place, so the
+        // registry size doesn't grow when the custom TOML collides.
+        assert_eq!(reg.len(), 10);
         let def = reg.get("code_executor").unwrap();
         assert_eq!(def.when_to_use, "CUSTOM OVERRIDE");
         assert!(matches!(def.source, DefinitionSource::File(_)));
