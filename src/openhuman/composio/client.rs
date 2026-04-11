@@ -164,9 +164,15 @@ impl ComposioClient {
         // we'd need to clone or expose the existing `reqwest::Client`
         // from `IntegrationClient`, which we intentionally avoid so the
         // public surface of that type doesn't widen for one caller.
+        //
+        // Mirror the TLS settings of the shared client
+        // (`use_rustls_tls + http1_only`) so this path has the same
+        // connection behaviour as the other backend calls.
         let http_client = reqwest::Client::builder()
+            .use_rustls_tls()
+            .http1_only()
             .timeout(std::time::Duration::from_secs(60))
-            .connect_timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(15))
             .build()?;
 
         let resp = http_client
@@ -200,21 +206,14 @@ impl ComposioClient {
     }
 }
 
-/// Build a [`ComposioClient`] from the integrations config. Returns
-/// `None` when either the integrations master switch is off, the
-/// composio sub-toggle is off, or the backend URL / auth token are
-/// missing.
-pub fn build_composio_client(
-    config: &crate::openhuman::config::IntegrationsConfig,
-) -> Option<ComposioClient> {
-    if !config.enabled {
-        tracing::debug!("[composio] integrations master switch off — skipping");
-        return None;
-    }
-    if !config.composio.enabled {
-        tracing::debug!("[composio] composio toggle off — skipping");
-        return None;
-    }
+/// Build a [`ComposioClient`] from the root config.
+///
+/// Composio is **always enabled** — there are no configuration flags
+/// gating it. The backend URL and auth token come from the shared
+/// core defaults (`config.api_url` / `config.api_key`) via
+/// [`crate::openhuman::integrations::build_client`]. The only reason
+/// this returns `None` is that the user isn't signed in yet.
+pub fn build_composio_client(config: &crate::openhuman::config::Config) -> Option<ComposioClient> {
     let inner = crate::openhuman::integrations::build_client(config)?;
     Some(ComposioClient::new(inner))
 }

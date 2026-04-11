@@ -21,23 +21,46 @@ import type {
   ComposioToolsResponse,
 } from './types';
 
+/**
+ * Every `composio_*` op on the Rust side returns an `RpcOutcome` with a
+ * user-visible log line attached. `RpcOutcome::into_cli_compatible_json`
+ * (see `src/rpc/mod.rs`) therefore wraps the payload as
+ * `{ "result": <flat shape>, "logs": [...] }` before handing it to the
+ * JSON-RPC layer. This helper peels that envelope back off so every
+ * caller in this file can work with the flat shapes declared in
+ * `./types`. Responses without logs pass through unchanged.
+ */
+function unwrapCliEnvelope<T>(value: unknown): T {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    'result' in (value as Record<string, unknown>) &&
+    'logs' in (value as Record<string, unknown>) &&
+    Array.isArray((value as { logs: unknown }).logs)
+  ) {
+    return (value as { result: T }).result;
+  }
+  return value as T;
+}
+
 // ── Read operations ───────────────────────────────────────────────
 
 export async function listToolkits(): Promise<ComposioToolkitsResponse> {
-  return callCoreRpc<ComposioToolkitsResponse>({ method: 'openhuman.composio_list_toolkits' });
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_toolkits' });
+  return unwrapCliEnvelope<ComposioToolkitsResponse>(raw);
 }
 
 export async function listConnections(): Promise<ComposioConnectionsResponse> {
-  return callCoreRpc<ComposioConnectionsResponse>({
-    method: 'openhuman.composio_list_connections',
-  });
+  const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_connections' });
+  return unwrapCliEnvelope<ComposioConnectionsResponse>(raw);
 }
 
 export async function listTools(toolkits?: string[]): Promise<ComposioToolsResponse> {
-  return callCoreRpc<ComposioToolsResponse>({
+  const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_list_tools',
     params: toolkits && toolkits.length > 0 ? { toolkits } : {},
   });
+  return unwrapCliEnvelope<ComposioToolsResponse>(raw);
 }
 
 // ── Write operations ──────────────────────────────────────────────
@@ -48,10 +71,11 @@ export async function listTools(toolkits?: string[]): Promise<ComposioToolsRespo
  * The core publishes a `ComposioConnectionCreated` event on success.
  */
 export async function authorize(toolkit: string): Promise<ComposioAuthorizeResponse> {
-  return callCoreRpc<ComposioAuthorizeResponse>({
+  const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_authorize',
     params: { toolkit },
   });
+  return unwrapCliEnvelope<ComposioAuthorizeResponse>(raw);
 }
 
 /**
@@ -59,10 +83,11 @@ export async function authorize(toolkit: string): Promise<ComposioAuthorizeRespo
  * before forwarding to Composio.
  */
 export async function deleteConnection(connectionId: string): Promise<ComposioDeleteResponse> {
-  return callCoreRpc<ComposioDeleteResponse>({
+  const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_delete_connection',
     params: { connection_id: connectionId },
   });
+  return unwrapCliEnvelope<ComposioDeleteResponse>(raw);
 }
 
 /**
@@ -74,8 +99,9 @@ export async function execute(
   tool: string,
   args?: Record<string, unknown>
 ): Promise<ComposioExecuteResponse> {
-  return callCoreRpc<ComposioExecuteResponse>({
+  const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_execute',
     params: { tool, arguments: args ?? {} },
   });
+  return unwrapCliEnvelope<ComposioExecuteResponse>(raw);
 }

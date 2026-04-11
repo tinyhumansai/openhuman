@@ -70,6 +70,8 @@ const CATALOG: Record<string, Omit<ComposioToolkitMeta, 'slug'>> = {
   },
 };
 
+export const KNOWN_COMPOSIO_TOOLKITS = Object.freeze(Object.keys(CATALOG));
+
 export function composioToolkitMeta(slug: string): ComposioToolkitMeta {
   const key = slug.toLowerCase();
   const hit = CATALOG[key];

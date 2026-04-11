@@ -1,6 +1,6 @@
 id = "skills_agent"
 display_name = "Skills Agent"
-when_to_use = "Skill tool specialist — executes installed QuickJS skill tools (Notion, Gmail, …). Use when the task should be completed via a user-installed skill rather than raw HTTP/file I/O. Pair with a `skill_filter` argument to scope to a single skill."
+when_to_use = "Service integration specialist — executes skill-category tools that reach external SaaS. This covers Composio (1000+ OAuth integrations: Gmail, Notion, GitHub, Slack, …) as well as any installed QuickJS skill tools. Use when the task should be completed via a managed integration rather than raw HTTP/file I/O. Pair with a `skill_filter` argument to scope to a single QuickJS skill when applicable."
 temperature = 0.4
 max_iterations = 10
 sandbox_mode = "none"

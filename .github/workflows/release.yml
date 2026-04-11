@@ -3,9 +3,18 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
+      build_target:
+        description: Build target environment
+        required: true
+        type: choice
+        default: production
+        options:
+          - production
+          - staging
       release_type:
         description: Version increment type
-        required: true
+        required: false
+        default: patch
         type: choice
         options:
           - patch
@@ -17,13 +26,13 @@ permissions:
   packages: write
 
 concurrency:
-  group: release-main
+  group: release-${{ github.event.inputs.build_target || 'production' }}-main
   cancel-in-progress: false
 
 # ---------------------------------------------------------------------------
 # Job dependency graph
 #
-#   prepare-release
+#   prepare-build
 #        │
 #        ├─── create-release
 #        │         │
@@ -46,14 +55,17 @@ jobs:
   # =========================================================================
   # Phase 1: Version bump, commit, tag
   # =========================================================================
-  prepare-release:
-    name: Prepare release commit and tag
+  prepare-build:
+    name: Prepare build context
     runs-on: ubuntu-latest
     environment: Production
     outputs:
-      version: ${{ steps.bump.outputs.version }}
-      tag: ${{ steps.bump.outputs.tag }}
-      sha: ${{ steps.push.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      build_ref: ${{ steps.resolve.outputs.build_ref }}
+      release_enabled: ${{ steps.resolve.outputs.release_enabled }}
+      base_url: ${{ steps.resolve.outputs.base_url }}
     steps:
       - name: Enforce main branch
         if: github.ref != 'refs/heads/main'
@@ -62,18 +74,27 @@ jobs:
           exit 1
 
       - name: Generate GitHub App token
+        if: inputs.build_target == 'production'
         id: app-token
         uses: tibdex/github-app-token@v1
         with:
           app_id: ${{ secrets.XGITHUB_APP_ID }}
           private_key: ${{ secrets.XGITHUB_APP_PRIVATE_KEY }}
 
-      - name: Checkout main
+      - name: Checkout main for production release
+        if: inputs.build_target == 'production'
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
+
+      - name: Checkout main for staging build
+        if: inputs.build_target == 'staging'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -81,6 +102,7 @@ jobs:
           node-version: 24.x
 
       - name: Configure Git
+        if: inputs.build_target == 'production'
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -92,13 +114,16 @@ jobs:
           git pull origin main --ff-only
 
       - name: Compute next version and sync release files
+        if: inputs.build_target == 'production'
         id: bump
         run: node scripts/release/bump-version.js "${{ inputs.release_type }}"
 
       - name: Verify release version sync
+        if: inputs.build_target == 'production'
         run: node scripts/release/verify-version-sync.js "${{ steps.bump.outputs.version }}"
 
       - name: Ensure tag does not already exist
+        if: inputs.build_target == 'production'
         env:
           TAG: ${{ steps.bump.outputs.tag }}
         run: |
@@ -113,6 +138,7 @@ jobs:
           fi
 
       - name: Commit, push and tag
+        if: inputs.build_target == 'production'
         id: push
         env:
           VERSION: ${{ steps.bump.outputs.version }}
@@ -127,6 +153,33 @@ jobs:
 
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve build outputs
+        id: resolve
+        shell: bash
+        run: |
+          if [ "${{ inputs.build_target }}" = "production" ]; then
+            VERSION="${{ steps.bump.outputs.version }}"
+            TAG="${{ steps.bump.outputs.tag }}"
+            SHA="${{ steps.push.outputs.sha }}"
+            BUILD_REF="$TAG"
+            RELEASE_ENABLED="true"
+            BASE_URL="https://api.tinyhumans.ai/"
+          else
+            VERSION="$(node -p "require('./app/package.json').version")"
+            TAG=""
+            SHA="$(git rev-parse HEAD)"
+            BUILD_REF="$SHA"
+            RELEASE_ENABLED="false"
+            BASE_URL="https://staging-api.tinyhumans.ai/"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "build_ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
+          echo "release_enabled=$RELEASE_ENABLED" >> "$GITHUB_OUTPUT"
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+
   # =========================================================================
   # Phase 2: Create draft GitHub release
   # =========================================================================
@@ -134,7 +187,8 @@ jobs:
     name: Create GitHub release
     runs-on: ubuntu-latest
     environment: Production
-    needs: prepare-release
+    if: needs.prepare-build.outputs.release_enabled == 'true'
+    needs: prepare-build
     outputs:
       release_id: ${{ steps.create.outputs.release_id }}
       upload_url: ${{ steps.create.outputs.upload_url }}
@@ -144,9 +198,9 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = '${{ needs.prepare-release.outputs.tag }}';
-            const version = '${{ needs.prepare-release.outputs.version }}';
-            const target = '${{ needs.prepare-release.outputs.sha }}';
+            const tag = '${{ needs.prepare-build.outputs.tag }}';
+            const version = '${{ needs.prepare-build.outputs.version }}';
+            const target = '${{ needs.prepare-build.outputs.sha }}';
 
             const { owner, repo } = context.repo;
 
@@ -179,7 +233,12 @@ jobs:
   # =========================================================================
   build-desktop:
     name: "Desktop: ${{ matrix.settings.artifact_suffix }}"
-    needs: [prepare-release, create-release]
+    needs: [prepare-build, create-release]
+    if: >-
+      always()
+      && needs.prepare-build.result == 'success'
+      && (needs.prepare-build.outputs.release_enabled != 'true'
+          || needs.create-release.result == 'success')
     runs-on: ${{ matrix.settings.platform }}
     environment: Production
     strategy:
@@ -205,10 +264,10 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Checkout tag
+      - name: Checkout build ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-release.outputs.tag }}
+          ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
           submodules: true
 
@@ -291,7 +350,7 @@ jobs:
         id: config-overrides
         uses: actions/github-script@v7
         env:
-          BASE_URL: ${{ vars.BASE_URL }}
+          BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
           UPDATER_PUBLIC_KEY: ${{ secrets.UPDATER_PUBLIC_KEY || vars.UPDATER_PUBLIC_KEY }}
           UPDATER_ENDPOINT: ${{ vars.UPDATER_ENDPOINT }}
           UPDATER_REPO: tinyhumansai/openhuman
@@ -309,7 +368,7 @@ jobs:
         run: yarn build
         env:
           NODE_ENV: production
-          VITE_BACKEND_URL: ${{ vars.BASE_URL }}
+          VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
           VITE_DEBUG: ${{ vars.VITE_DEBUG }}
           # OAuth guardrails (#365): block openhuman://oauth/success on outdated desktop builds.
@@ -383,6 +442,7 @@ jobs:
           CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
 
       - name: Build, package and upload to release
+        if: needs.prepare-build.outputs.release_enabled == 'true'
         uses: tauri-apps/tauri-action@v0.6.2
         id: tauri-build
         env:
@@ -391,7 +451,8 @@ jobs:
           # Signing + notarization are handled in a dedicated step afterwards
           # where we sign everything with hardened runtime + entitlements
           # (required by Apple notarization).
-          BASE_URL: ${{ vars.BASE_URL }}
+          BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
+          VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
@@ -407,6 +468,23 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           owner: tinyhumansai
           repo: openhuman
+
+      - name: Build and package staging artifacts
+        if: needs.prepare-build.outputs.release_enabled != 'true'
+        shell: bash
+        env:
+          BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
+          VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
+          WITH_UPDATER: "true"
+          VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
+          VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
+        run: |
+          yarn --cwd app tauri build \
+            -c '${{ steps.config-overrides.outputs.json }}' \
+            ${{ matrix.settings.args }}
 
       - name: Locate macOS .app bundle
         if: matrix.settings.platform == 'macos-latest'
@@ -471,7 +549,7 @@ jobs:
             "${{ steps.locate-app.outputs.bundle_dir }}"
 
       - name: Re-upload notarized macOS artifacts to release
-        if: matrix.settings.platform == 'macos-latest'
+        if: matrix.settings.platform == 'macos-latest' && needs.prepare-build.outputs.release_enabled == 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -480,7 +558,7 @@ jobs:
           bash scripts/release/upload-macos-artifacts.sh \
             "${{ steps.locate-app.outputs.app_path }}" \
             "${{ steps.locate-app.outputs.bundle_dir }}" \
-            "${{ needs.prepare-release.outputs.version }}" \
+            "${{ needs.prepare-build.outputs.version }}" \
             "${{ matrix.settings.target }}"
 
       - name: Verify macOS app bundle sidecar layout
@@ -511,7 +589,7 @@ jobs:
           xcrun stapler validate "$APP_PATH" || echo "WARNING: Staple validation failed"
 
       - name: Package CLI tarball and upload to release (unix)
-        if: matrix.settings.platform != 'windows-latest'
+        if: matrix.settings.platform != 'windows-latest' && needs.prepare-build.outputs.release_enabled == 'true'
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -533,16 +611,16 @@ jobs:
 
           bash scripts/release/package-cli-tarball.sh \
             "$BIN" \
-            "${{ needs.prepare-release.outputs.version }}" \
+            "${{ needs.prepare-build.outputs.version }}" \
             "${{ matrix.settings.target }}"
 
       - name: Package CLI zip and upload to release (windows)
-        if: matrix.settings.platform == 'windows-latest'
+        if: matrix.settings.platform == 'windows-latest' && needs.prepare-build.outputs.release_enabled == 'true'
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $Version = "${{ needs.prepare-release.outputs.version }}"
+          $Version = "${{ needs.prepare-build.outputs.version }}"
           $Target = "${{ matrix.settings.target }}"
           $BinPath = "${{ steps.cli-paths.outputs.cli_path }}"
           $ZipName = "openhuman-core-${Version}-${Target}.zip"
@@ -559,6 +637,15 @@ jobs:
           gh release upload "v${Version}" $ZipName "${ZipName}.sha256" --repo tinyhumansai/openhuman --clobber
           Write-Host "[package-cli] Uploaded $ZipName to v${Version}"
 
+      - name: Upload staging desktop bundles
+        if: needs.prepare-build.outputs.release_enabled != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-bundles-${{ matrix.settings.platform }}-${{ matrix.settings.artifact_suffix }}
+          path: |
+            app/src-tauri/target/${{ matrix.settings.target }}/release/bundle/**
+            target/${{ matrix.settings.target }}/release/bundle/**
+
       - name: Upload standalone CLI artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -571,17 +658,22 @@ jobs:
   # =========================================================================
   build-docker:
     name: "Docker: build and push"
-    needs: [prepare-release, create-release]
+    needs: [prepare-build, create-release]
+    if: >-
+      always()
+      && needs.prepare-build.result == 'success'
+      && (needs.prepare-build.outputs.release_enabled != 'true'
+          || needs.create-release.result == 'success')
     runs-on: ubuntu-latest
     environment: Production
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: tinyhumansai/openhuman-core
     steps:
-      - name: Checkout tag
+      - name: Checkout build ref
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.prepare-release.outputs.tag }}
+          ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
 
       - name: Set up Docker Buildx
@@ -619,8 +711,11 @@ jobs:
     name: Publish draft release
     runs-on: ubuntu-latest
     environment: Production
-    needs: [prepare-release, create-release, build-desktop, build-docker]
-    if: needs.build-desktop.result == 'success' && needs.build-docker.result == 'success'
+    needs: [prepare-build, create-release, build-desktop, build-docker]
+    if: >-
+      needs.prepare-build.outputs.release_enabled == 'true'
+      && needs.build-desktop.result == 'success'
+      && needs.build-docker.result == 'success'
     steps:
       - name: Validate required installer assets exist
         uses: actions/github-script@v7
@@ -698,9 +793,10 @@ jobs:
     name: Remove release and tag if build failed
     runs-on: ubuntu-latest
     environment: Production
-    needs: [prepare-release, create-release, build-desktop, build-docker]
+    needs: [prepare-build, create-release, build-desktop, build-docker]
     if: >-
       always()
+      && needs.prepare-build.outputs.release_enabled == 'true'
       && needs.create-release.result == 'success'
       && (needs.build-desktop.result == 'failure' || needs.build-desktop.result == 'cancelled'
           || needs.build-docker.result == 'failure' || needs.build-docker.result == 'cancelled')
@@ -731,7 +827,7 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const tag = '${{ needs.prepare-release.outputs.tag }}';
+            const tag = '${{ needs.prepare-build.outputs.tag }}';
 
             try {
               await github.rest.git.deleteRef({ owner, repo, ref: `tags/${tag}` });
@@ -747,7 +843,7 @@ jobs:
       - name: Delete staging Docker image
         continue-on-error: true
         env:
-          TAG: ${{ needs.prepare-release.outputs.tag }}
+          TAG: ${{ needs.prepare-build.outputs.tag }}
         run: |
           PACKAGE="openhuman-core"
           STAGING_TAG="staging-${TAG}"

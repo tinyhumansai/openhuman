@@ -868,6 +868,90 @@ mod tests {
         assert_eq!(names, vec!["notion__search", "notion__read"]);
     }
 
+    /// End-to-end verification that a sub-agent with
+    /// `category_filter = "skill"` (like the built-in `skills_agent`) sees
+    /// the real Composio tools alongside any other `Skill`-category tools
+    /// and does **not** see `System`-category tools.
+    ///
+    /// This is the regression test for "skills subagent has access to
+    /// composio tools": if any of the composio tool impls forgets to
+    /// override `category()` and falls back to the default `System`, it
+    /// gets filtered out here and this test fails.
+    #[test]
+    fn skills_subagent_filter_admits_composio_tools() {
+        use crate::openhuman::composio::client::ComposioClient;
+        use crate::openhuman::composio::tools::{
+            ComposioAuthorizeTool, ComposioExecuteTool, ComposioListConnectionsTool,
+            ComposioListToolkitsTool, ComposioListToolsTool,
+        };
+        use crate::openhuman::integrations::IntegrationClient;
+        use std::sync::Arc;
+
+        // Build a throwaway composio client. The filter only touches
+        // `Tool::name()` and `Tool::category()`, so no HTTP calls happen.
+        let inner =
+            IntegrationClient::new("http://127.0.0.1:0".to_string(), "test-token".to_string());
+        let client = ComposioClient::new(Arc::new(inner));
+
+        // Parent registry = the five real Composio tools + a couple of
+        // plain system-category stubs. We expect exactly the composio
+        // tools to survive the skills sub-agent's category filter.
+        let parent: Vec<Box<dyn Tool>> = vec![
+            Box::new(ComposioListToolkitsTool::new(client.clone())),
+            Box::new(ComposioListConnectionsTool::new(client.clone())),
+            Box::new(ComposioAuthorizeTool::new(client.clone())),
+            Box::new(ComposioListToolsTool::new(client.clone())),
+            Box::new(ComposioExecuteTool::new(client)),
+            stub("file_read"),
+            stub("shell"),
+        ];
+
+        // Mirror the skills_agent definition: wildcard tool scope,
+        // category_filter = Skill, no skill_filter.
+        let mut def = make_def_named_tools(&[]);
+        def.tools = ToolScope::Wildcard;
+        let idx = filter_tool_indices(
+            &parent,
+            &def.tools,
+            &def.disallowed_tools,
+            None,
+            Some(ToolCategory::Skill),
+        );
+
+        let surviving: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
+
+        // All five composio tools must be present.
+        for expected in &[
+            "composio_list_toolkits",
+            "composio_list_connections",
+            "composio_authorize",
+            "composio_list_tools",
+            "composio_execute",
+        ] {
+            assert!(
+                surviving.contains(expected),
+                "skills sub-agent filter dropped composio tool `{}` — \
+                 did someone remove the `category()` override? \
+                 surviving = {:?}",
+                expected,
+                surviving,
+            );
+        }
+
+        // System-category tools must be filtered out.
+        assert!(!surviving.contains(&"file_read"));
+        assert!(!surviving.contains(&"shell"));
+
+        // And we should see exactly 5 survivors, no more, no less.
+        assert_eq!(
+            surviving.len(),
+            5,
+            "expected exactly 5 composio tools to pass the skills filter, \
+             got {:?}",
+            surviving,
+        );
+    }
+
     #[test]
     fn subagent_mode_as_str_roundtrip() {
         assert_eq!(SubagentMode::Typed.as_str(), "typed");

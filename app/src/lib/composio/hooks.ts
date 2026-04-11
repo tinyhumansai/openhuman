@@ -16,29 +16,26 @@ export interface UseComposioIntegrationsResult {
   error: string | null;
   /** Force a refetch of toolkits + connections. */
   refresh: () => Promise<void>;
-  /** True when composio is disabled on the core side. */
-  disabled: boolean;
 }
 
 /**
  * Fetches the Composio toolkit allowlist and current connections.
  *
- * On mount it does one request of each, then re-fetches connections on
- * a `pollIntervalMs` loop so the UI reacts to OAuth completions without
+ * Composio is always enabled on the core side — it's proxied through
+ * our backend, uses the same JWT as every other core RPC call, and has
+ * no client-side feature toggle. So the only failure modes here are
+ * network/backend errors, which get surfaced via `error`.
+ *
+ * On mount we do one request of each, then re-fetch connections on a
+ * `pollIntervalMs` loop so the UI reacts to OAuth completions without
  * the user having to manually refresh. Toolkits are only refetched on
  * explicit `refresh()` because the allowlist is stable.
- *
- * When the core reports that composio is disabled (feature toggle off,
- * or integrations.enabled=false) the hook short-circuits into
- * `disabled=true` and stops polling — callers can use that to show an
- * "integrations disabled" hint instead of a spinner.
  */
 export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioIntegrationsResult {
   const [toolkits, setToolkits] = useState<string[]>([]);
   const [connections, setConnections] = useState<ComposioConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [disabled, setDisabled] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -49,27 +46,37 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
   }, []);
 
   const refresh = useCallback(async () => {
+    let nextError: string | null = null;
     try {
-      const [toolkitsResp, connectionsResp] = await Promise.all([
+      const [toolkitsResult, connectionsResult] = await Promise.allSettled([
         listToolkits(),
         listConnections(),
       ]);
       if (!mountedRef.current) return;
-      setToolkits(toolkitsResp.toolkits ?? []);
-      setConnections(connectionsResp.connections ?? []);
-      setDisabled(false);
-      setError(null);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      const message = err instanceof Error ? err.message : String(err);
-      // Detect the "composio disabled" error the Rust ops layer emits
-      // so we can render a distinct state rather than a red error.
-      if (/composio is disabled/i.test(message)) {
-        setDisabled(true);
-        setError(null);
+
+      if (toolkitsResult.status === 'fulfilled') {
+        setToolkits(toolkitsResult.value.toolkits ?? []);
       } else {
-        setError(message);
+        const message =
+          toolkitsResult.reason instanceof Error
+            ? toolkitsResult.reason.message
+            : String(toolkitsResult.reason);
+        console.warn('[composio] toolkit fetch failed:', message);
+        nextError = message;
       }
+
+      if (connectionsResult.status === 'fulfilled') {
+        setConnections(connectionsResult.value.connections ?? []);
+      } else {
+        const message =
+          connectionsResult.reason instanceof Error
+            ? connectionsResult.reason.message
+            : String(connectionsResult.reason);
+        console.warn('[composio] connection fetch failed:', message);
+        if (!nextError) nextError = message;
+      }
+
+      setError(nextError);
     } finally {
       if (mountedRef.current) setLoading(false);
     }
@@ -80,18 +87,20 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     void refresh();
     if (pollIntervalMs <= 0) return;
     const id = window.setInterval(() => {
-      if (disabled) return;
       void listConnections()
         .then(resp => {
           if (!mountedRef.current) return;
           setConnections(resp.connections ?? []);
         })
-        .catch(() => {
-          /* swallow — non-fatal for poll cadence */
+        .catch(err => {
+          console.warn(
+            '[composio] polling connections failed:',
+            err instanceof Error ? err.message : String(err)
+          );
         });
     }, pollIntervalMs);
     return () => window.clearInterval(id);
-  }, [refresh, pollIntervalMs, disabled]);
+  }, [refresh, pollIntervalMs]);
 
   const connectionByToolkit = useMemo(() => {
     const map = new Map<string, ComposioConnection>();
@@ -113,5 +122,5 @@ export function useComposioIntegrations(pollIntervalMs = 5_000): UseComposioInte
     return map;
   }, [connections]);
 
-  return { toolkits, connectionByToolkit, loading, error, refresh, disabled };
+  return { toolkits, connectionByToolkit, loading, error, refresh };
 }

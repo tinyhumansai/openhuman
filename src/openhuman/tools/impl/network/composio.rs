@@ -8,7 +8,7 @@
 
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{Tool, ToolCategory, ToolResult};
 use anyhow::Context;
 use async_trait::async_trait;
 use reqwest::Client;
@@ -444,6 +444,13 @@ impl Tool for ComposioTool {
             },
             "required": ["action"]
         })
+    }
+
+    fn category(&self) -> ToolCategory {
+        // Composio proxies to external SaaS (Gmail, Notion, …) — surface
+        // it in the Skill category so the skills sub-agent
+        // (`category_filter = "skill"`) can see and call it.
+        ToolCategory::Skill
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {

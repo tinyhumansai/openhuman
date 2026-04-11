@@ -24,24 +24,6 @@ use tokio_util::sync::CancellationToken;
 /// real responses while keeping terminal output readable.
 const REPLY_LOG_TRUNCATE_CHARS: usize = 200;
 
-fn channel_delivery_instructions(channel_name: &str) -> Option<&'static str> {
-    match channel_name {
-        "telegram" => Some(
-            "When responding on Telegram you may send media attachments using markers: \
-            [IMAGE:<url>], [DOCUMENT:<url>], [VIDEO:<url>], [AUDIO:<url>], [VOICE:<url>]. \
-            You may also react to the user's message by placing [REACTION:<emoji>] at the \
-            very start of your reply. The reaction replaces the automatic acknowledgment \
-            the user already saw. Choose based on actual message intent — for example: \
-            👍 agreement · ❤️ warmth/thanks · 🔥 excitement · 🤔 careful thought · \
-            🤯 surprise · 💯 strong agreement · ⚡ urgency · 👨‍💻 technical topic · \
-            🎉 celebration · 🙏 gratitude. \
-            A reaction can be combined with a reply: [REACTION:🔥] Here's what I found… \
-            Only react when it genuinely fits — skip it for neutral factual responses.",
-        ),
-        _ => None,
-    }
-}
-
 /// Returns `true` if `s` contains any of the given substrings.
 #[inline]
 fn contains_any(s: &str, words: &[&str]) -> bool {
@@ -312,10 +294,6 @@ pub(crate) async fn process_channel_message(
     let mut history = vec![ChatMessage::system(ctx.system_prompt.as_str())];
     history.append(&mut prior_turns);
     history.push(ChatMessage::user(&enriched_message));
-
-    if let Some(instructions) = channel_delivery_instructions(&msg.channel) {
-        history.push(ChatMessage::system(instructions));
-    }
 
     // Determine if this channel supports streaming draft updates
     let use_streaming = target_channel

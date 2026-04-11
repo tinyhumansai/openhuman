@@ -186,31 +186,76 @@ impl EmbeddingProvider for FastembedEmbedding {
         let state = Arc::clone(&self.state);
         let provider = self.model.clone();
 
-        let join_result = tokio::task::spawn_blocking(move || {
+        let join_result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Vec<f32>>> {
             ensure_fastembed_ort_dylib_path();
             let mut guard = state.lock();
 
             // Lazy initialization of the model on the first request.
+            //
+            // `fastembed::TextEmbedding::try_new` reaches into the `ort`
+            // crate's global environment, which uses a `std::sync::Mutex`.
+            // If any previous caller panicked while that mutex was held
+            // (common when the ONNX Runtime dylib path is wrong or a
+            // background init failed), every subsequent call panics with
+            // `"Mutex poisoned"`. Without `catch_unwind`, that panic
+            // propagates out of this `spawn_blocking` closure, kills the
+            // tokio blocking worker, and surfaces as a process-level
+            // stack trace — even though the caller only wanted an error.
+            //
+            // We trap the panic here, flip our own state to `Failed`, and
+            // return a regular `anyhow::Error` so every later call short-
+            // circuits on the cached failure without touching `ort` again.
             if matches!(*guard, FastembedState::Uninitialized) {
-                match fastembed::TextEmbedding::try_new(
-                    fastembed::InitOptions::new(
-                        fastembed::EmbeddingModel::from_str(&provider)
-                            .unwrap_or(fastembed::EmbeddingModel::BGESmallENV15),
+                let provider_for_init = provider.clone();
+                let init_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fastembed::TextEmbedding::try_new(
+                        fastembed::InitOptions::new(
+                            fastembed::EmbeddingModel::from_str(&provider_for_init)
+                                .unwrap_or(fastembed::EmbeddingModel::BGESmallENV15),
+                        )
+                        .with_show_download_progress(false),
                     )
-                    .with_show_download_progress(false),
-                ) {
-                    Ok(model) => *guard = FastembedState::Ready(model),
-                    Err(err) => {
+                }));
+
+                match init_result {
+                    Ok(Ok(model)) => *guard = FastembedState::Ready(model),
+                    Ok(Err(err)) => {
                         let message = format!("fastembed init failed for {provider}: {err}");
-                        *guard = FastembedState::Failed(message.clone());
+                        tracing::error!(target: "memory.embeddings", "[embeddings] {message}");
+                        *guard = FastembedState::Failed(message);
+                    }
+                    Err(panic_payload) => {
+                        let panic_msg = extract_panic_message(&panic_payload);
+                        let message = format!(
+                            "fastembed init panicked for {provider}: {panic_msg} — \
+                             the ONNX Runtime global environment is in a poisoned state. \
+                             Check ORT_DYLIB_PATH / ORT_LIB_LOCATION and restart the \
+                             process to retry."
+                        );
+                        tracing::error!(target: "memory.embeddings", "[embeddings] {message}");
+                        *guard = FastembedState::Failed(message);
                     }
                 }
             }
 
             match &mut *guard {
-                FastembedState::Ready(model) => model
-                    .embed(items, None)
-                    .map_err(|e| anyhow::anyhow!("fastembed embed failed: {e}")),
+                FastembedState::Ready(model) => {
+                    // Also guard the actual embed call — fastembed / ort
+                    // can panic on certain inputs or runtime errors, and
+                    // we want to surface those as regular errors too.
+                    let embed_result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            model.embed(items, None)
+                        }));
+                    match embed_result {
+                        Ok(Ok(vectors)) => Ok(vectors),
+                        Ok(Err(e)) => Err(anyhow::anyhow!("fastembed embed failed: {e}")),
+                        Err(panic_payload) => {
+                            let panic_msg = extract_panic_message(&panic_payload);
+                            Err(anyhow::anyhow!("fastembed embed panicked: {panic_msg}"))
+                        }
+                    }
+                }
                 FastembedState::Failed(message) => Err(anyhow::anyhow!(message.clone())),
                 FastembedState::Uninitialized => {
                     Err(anyhow::anyhow!("fastembed provider did not initialize"))
@@ -220,6 +265,19 @@ impl EmbeddingProvider for FastembedEmbedding {
         .await;
 
         join_result.map_err(|e| anyhow::anyhow!("fastembed task join failed: {e}"))?
+    }
+}
+
+/// Best-effort extraction of a readable message from a `catch_unwind` payload.
+/// Panics produced by `panic!("...")` downcast to `&'static str` or `String`;
+/// everything else falls back to a generic label.
+fn extract_panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = panic.downcast_ref::<&'static str>() {
+        (*s).to_string()
+    } else if let Some(s) = panic.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic payload".to_string()
     }
 }
 

@@ -202,7 +202,7 @@ pub fn all_tools_with_runtime(
     }
 
     // ── Agent integration tools (backend-proxied) ─────────────────
-    if let Some(client) = crate::openhuman::integrations::build_client(&root_config.integrations) {
+    if let Some(client) = crate::openhuman::integrations::build_client(root_config) {
         tracing::debug!("[integrations] client built successfully");
         if root_config.integrations.google_places.enabled {
             tools.push(Box::new(
@@ -239,8 +239,7 @@ pub fn all_tools_with_runtime(
         // five agent tools (list_toolkits, list_connections, authorize,
         // list_tools, execute) when the composio toggle is on. See
         // `src/openhuman/composio/tools.rs` for per-tool details.
-        let composio_tools =
-            crate::openhuman::composio::all_composio_agent_tools(&root_config.integrations);
+        let composio_tools = crate::openhuman::composio::all_composio_agent_tools(root_config);
         if !composio_tools.is_empty() {
             tracing::debug!(
                 count = composio_tools.len(),

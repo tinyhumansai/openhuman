@@ -25,12 +25,17 @@ use super::types::{
     ComposioExecuteResponse, ComposioToolkitsResponse, ComposioToolsResponse,
 };
 
-/// Resolve a [`ComposioClient`] from `config.integrations`, or return an
+/// Resolve a [`ComposioClient`] from the root config, or return an
 /// error string that the caller can surface over RPC.
+///
+/// Composio is always enabled — it is proxied through our backend and
+/// has no client-side toggle or API key. The only reason this fails is
+/// that no app-session JWT has been stored yet (i.e. the user hasn't
+/// completed sign-in / `auth_store_session`).
 fn resolve_client(config: &Config) -> OpResult<ComposioClient> {
-    build_composio_client(&config.integrations).ok_or_else(|| {
-        "composio is disabled (integrations.enabled or integrations.composio.enabled is off, \
-         or backend_url/auth_token missing)"
+    build_composio_client(config).ok_or_else(|| {
+        "composio unavailable: no backend session token. Sign in first \
+         (auth_store_session)."
             .to_string()
     })
 }
@@ -45,7 +50,7 @@ pub async fn composio_list_toolkits(
     let resp = client
         .list_toolkits()
         .await
-        .map_err(|e| format!("[composio] list_toolkits failed: {e}"))?;
+        .map_err(|e| format!("[composio] list_toolkits failed: {e:#}"))?;
     let count = resp.toolkits.len();
     Ok(RpcOutcome::new(
         resp,
@@ -63,7 +68,7 @@ pub async fn composio_list_connections(
     let resp = client
         .list_connections()
         .await
-        .map_err(|e| format!("[composio] list_connections failed: {e}"))?;
+        .map_err(|e| format!("[composio] list_connections failed: {e:#}"))?;
     let active = resp
         .connections
         .iter()
@@ -87,7 +92,7 @@ pub async fn composio_authorize(
     let resp = client
         .authorize(toolkit)
         .await
-        .map_err(|e| format!("[composio] authorize failed: {e}"))?;
+        .map_err(|e| format!("[composio] authorize failed: {e:#}"))?;
 
     // Publish an event so any interested subscribers (e.g. UI refreshers,
     // analytics) can react to the new connection handoff.
@@ -114,7 +119,7 @@ pub async fn composio_delete_connection(
     let resp = client
         .delete_connection(connection_id)
         .await
-        .map_err(|e| format!("[composio] delete_connection failed: {e}"))?;
+        .map_err(|e| format!("[composio] delete_connection failed: {e:#}"))?;
     Ok(RpcOutcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
@@ -132,7 +137,7 @@ pub async fn composio_list_tools(
     let resp = client
         .list_tools(toolkits.as_deref())
         .await
-        .map_err(|e| format!("[composio] list_tools failed: {e}"))?;
+        .map_err(|e| format!("[composio] list_tools failed: {e:#}"))?;
     let count = resp.tools.len();
     Ok(RpcOutcome::new(
         resp,
@@ -179,7 +184,7 @@ pub async fn composio_execute(
                     elapsed_ms,
                 },
             );
-            Err(format!("[composio] execute failed: {e}"))
+            Err(format!("[composio] execute failed: {e:#}"))
         }
     }
 }
