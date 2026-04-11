@@ -230,11 +230,12 @@ impl NativeRegistry {
         // so the `guard` goes out of scope at the end of the block.
         let (handler, expected_req, expected_resp, expected_req_name, expected_resp_name) = {
             let guard = unpoison(self.handlers.read());
-            let entry = guard
-                .get(method)
-                .ok_or_else(|| NativeRequestError::UnregisteredHandler {
-                    method: method.to_string(),
-                })?;
+            let entry =
+                guard
+                    .get(method)
+                    .ok_or_else(|| NativeRequestError::UnregisteredHandler {
+                        method: method.to_string(),
+                    })?;
             (
                 Arc::clone(&entry.handler),
                 entry.req_type,

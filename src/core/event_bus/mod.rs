@@ -44,9 +44,7 @@ mod subscriber;
 pub mod testing;
 mod tracing;
 
-pub use bus::{
-    global, init_global, publish_global, subscribe_global, EventBus, DEFAULT_CAPACITY,
-};
+pub use bus::{global, init_global, publish_global, subscribe_global, EventBus, DEFAULT_CAPACITY};
 pub use events::DomainEvent;
 pub use native_request::{
     init_native_registry, native_registry, register_native_global, request_native_global,

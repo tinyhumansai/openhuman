@@ -342,5 +342,4 @@ mod tests {
         sleep(Duration::from_millis(20)).await;
         assert_eq!(bus.subscriber_count(), 0);
     }
-
 }

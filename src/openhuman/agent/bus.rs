@@ -134,9 +134,7 @@ pub fn register_agent_handlers() {
             Ok(AgentTurnResponse { text })
         },
     );
-    tracing::debug!(
-        "[agent::bus] registered native handler `{AGENT_RUN_TURN_METHOD}`"
-    );
+    tracing::debug!("[agent::bus] registered native handler `{AGENT_RUN_TURN_METHOD}`");
 }
 
 // ── Shared test helpers ──────────────────────────────────────────────────
@@ -210,8 +208,7 @@ where
 /// the **real** agent turn path. For tests that want to override the
 /// handler with a stub, use [`mock_agent_run_turn`] instead.
 #[cfg(test)]
-pub async fn use_real_agent_handler(
-) -> tokio::sync::MutexGuard<'static, ()> {
+pub async fn use_real_agent_handler() -> tokio::sync::MutexGuard<'static, ()> {
     let guard = crate::core::event_bus::testing::BUS_HANDLER_LOCK
         .lock()
         .await;
@@ -288,10 +285,7 @@ mod tests {
         );
 
         let resp = registry
-            .request::<AgentTurnRequest, AgentTurnResponse>(
-                AGENT_RUN_TURN_METHOD,
-                test_request(),
-            )
+            .request::<AgentTurnRequest, AgentTurnResponse>(AGENT_RUN_TURN_METHOD, test_request())
             .await
             .expect("dispatch should succeed");
 

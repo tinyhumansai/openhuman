@@ -3,9 +3,7 @@
 use crate::core::event_bus::{
     publish_global, request_native_global, DomainEvent, NativeRequestError,
 };
-use crate::openhuman::agent::bus::{
-    AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD,
-};
+use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
 use crate::openhuman::channels::context::{
     build_memory_context, compact_sender_history, conversation_history_key,
     conversation_memory_key, is_context_window_overflow_error, ChannelRuntimeContext,
@@ -420,32 +418,29 @@ pub(crate) async fn process_channel_message(
         model = %route.model,
         "[channels::dispatch] dispatching {AGENT_RUN_TURN_METHOD} via native bus"
     );
-    let llm_result = tokio::time::timeout(
-        Duration::from_secs(ctx.message_timeout_secs),
-        async {
-            request_native_global::<AgentTurnRequest, AgentTurnResponse>(
-                AGENT_RUN_TURN_METHOD,
-                turn_request,
-            )
-            .await
-            .map(|resp| resp.text)
-            .map_err(|err| match err {
-                // Unwrap handler-returned errors so the underlying
-                // message (e.g. "Agent exceeded maximum tool iterations")
-                // flows through without being wrapped in bus-transport
-                // layer prose. The error-formatting path downstream
-                // treats this `anyhow::Error` the same way it did before
-                // the bus migration.
-                NativeRequestError::HandlerFailed { message, .. } => {
-                    anyhow::anyhow!(message)
-                }
-                // Bus-level errors (UnregisteredHandler / TypeMismatch /
-                // NotInitialized) surface with their full Display so
-                // startup wiring bugs are immediately obvious in logs.
-                other => anyhow::anyhow!("[agent.run_turn dispatch] {other}"),
-            })
-        },
-    )
+    let llm_result = tokio::time::timeout(Duration::from_secs(ctx.message_timeout_secs), async {
+        request_native_global::<AgentTurnRequest, AgentTurnResponse>(
+            AGENT_RUN_TURN_METHOD,
+            turn_request,
+        )
+        .await
+        .map(|resp| resp.text)
+        .map_err(|err| match err {
+            // Unwrap handler-returned errors so the underlying
+            // message (e.g. "Agent exceeded maximum tool iterations")
+            // flows through without being wrapped in bus-transport
+            // layer prose. The error-formatting path downstream
+            // treats this `anyhow::Error` the same way it did before
+            // the bus migration.
+            NativeRequestError::HandlerFailed { message, .. } => {
+                anyhow::anyhow!(message)
+            }
+            // Bus-level errors (UnregisteredHandler / TypeMismatch /
+            // NotInitialized) surface with their full Display so
+            // startup wiring bugs are immediately obvious in logs.
+            other => anyhow::anyhow!("[agent.run_turn dispatch] {other}"),
+        })
+    })
     .await;
 
     // Wait for draft updater to finish
