@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
@@ -195,6 +195,7 @@ export default function Skills() {
   const {
     toolkits: composioToolkits,
     connectionByToolkit: composioConnectionByToolkit,
+    error: composioError,
     refresh: refreshComposio,
   } = useComposioIntegrations();
 
@@ -212,6 +213,16 @@ export default function Skills() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<SkillCategory>('All');
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.debug('[skills][composio] hook result', {
+      toolkitCount: composioToolkits.length,
+      connectionCount: composioConnectionByToolkit.size,
+      hasError: Boolean(composioError),
+      error: composioError,
+    });
+  }, [composioToolkits, composioConnectionByToolkit, composioError]);
+
   const bestChannelStatus = (channelId: ChannelType): ChannelConnectionStatus => {
     const conns = channelConnections.connections[channelId];
     if (!conns) return 'disconnected';
@@ -226,6 +237,24 @@ export default function Skills() {
     () => channelDefs.filter(d => d.id !== 'web'),
     [channelDefs]
   );
+
+  const composioCatalogToolkits = useMemo(() => {
+    const normalizedToolkits = composioToolkits.map(slug => slug.toLowerCase());
+    const missingKnownToolkits = KNOWN_COMPOSIO_TOOLKITS.filter(
+      slug => !normalizedToolkits.includes(slug)
+    );
+    if (import.meta.env.DEV && missingKnownToolkits.length > 0) {
+      console.debug('[skills][composio] filling gaps from KNOWN_COMPOSIO_TOOLKITS', {
+        toolkitCount: composioToolkits.length,
+        connectionCount: composioConnectionByToolkit.size,
+        hasError: Boolean(composioError),
+        missingKnownToolkits,
+      });
+    }
+    return Array.from(new Set([...KNOWN_COMPOSIO_TOOLKITS, ...normalizedToolkits])).sort((a, b) =>
+      a.localeCompare(b)
+    );
+  }, [composioToolkits, composioConnectionByToolkit, composioError]);
 
   // Unified item list
   const allItems: SkillItem[] = useMemo(() => {
@@ -260,10 +289,7 @@ export default function Skills() {
     // for channels/skills so they sit flush in the grid. Each entry is
     // keyed by slug and routed through `ComposioConnectModal` for the
     // authorize/OAuth/poll flow.
-    const sortedToolkits = Array.from(
-      new Set([...KNOWN_COMPOSIO_TOOLKITS, ...composioToolkits.map(slug => slug.toLowerCase())])
-    ).sort((a, b) => a.localeCompare(b));
-    for (const slug of sortedToolkits) {
+    for (const slug of composioCatalogToolkits) {
       const meta = composioToolkitMeta(slug);
       const connection = composioConnectionByToolkit.get(meta.slug);
       items.push({
@@ -280,7 +306,12 @@ export default function Skills() {
 
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configurableChannels, channelConnections, composioToolkits, composioConnectionByToolkit]);
+  }, [
+    configurableChannels,
+    channelConnections,
+    composioCatalogToolkits,
+    composioConnectionByToolkit,
+  ]);
 
   const availableCategories: SkillCategory[] = useMemo(() => {
     const cats = new Set<SkillCategory>(['All']);
@@ -336,6 +367,25 @@ export default function Skills() {
               selected={selectedCategory}
               onChange={setSelectedCategory}
             />
+
+            {composioError && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 shadow-soft">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-amber-900">
+                      Integrations are showing stale status
+                    </h2>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-800">{composioError}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void refreshComposio()}
+                    className="flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-medium text-amber-800 transition-colors hover:bg-amber-100">
+                    Retry
+                  </button>
+                </div>
+              </div>
+            )}
 
             {filteredItems.length === 0 ? (
               <div className="py-8 text-center">
@@ -466,9 +516,11 @@ export default function Skills() {
                       if (item.kind === 'composio') {
                         const meta = item.composioToolkit!;
                         const connection = item.composioConnection;
-                        const state = deriveComposioState(connection);
-                        const ctaLabel =
-                          state === 'connected'
+                        const hasComposioError = Boolean(composioError);
+                        const state = hasComposioError ? 'error' : deriveComposioState(connection);
+                        const ctaLabel = hasComposioError
+                          ? 'Retry'
+                          : state === 'connected'
                             ? 'Manage'
                             : state === 'pending'
                               ? 'Waiting'
@@ -477,18 +529,35 @@ export default function Skills() {
                                 : 'Connect';
                         const ctaVariant: 'primary' | 'sage' | 'amber' =
                           state === 'connected' ? 'sage' : state === 'error' ? 'amber' : 'primary';
+                        const description = hasComposioError
+                          ? `${item.description} ${composioError}`
+                          : item.description;
                         return (
                           <UnifiedSkillCard
                             key={item.id}
                             icon={item.icon}
                             title={item.name}
-                            description={item.description}
-                            statusDot={composioStatusDot(connection)}
-                            statusLabel={composioStatusLabel(connection)}
-                            statusColor={composioStatusColor(connection)}
+                            description={description}
+                            statusDot={
+                              hasComposioError ? 'bg-amber-500' : composioStatusDot(connection)
+                            }
+                            statusLabel={
+                              hasComposioError
+                                ? 'Status unavailable'
+                                : composioStatusLabel(connection)
+                            }
+                            statusColor={
+                              hasComposioError ? 'text-amber-700' : composioStatusColor(connection)
+                            }
                             ctaLabel={ctaLabel}
                             ctaVariant={ctaVariant}
-                            onCtaClick={() => setComposioModalToolkit(meta)}
+                            onCtaClick={() => {
+                              if (hasComposioError) {
+                                void refreshComposio();
+                                return;
+                              }
+                              setComposioModalToolkit(meta);
+                            }}
                           />
                         );
                       }
