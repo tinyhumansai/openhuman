@@ -1,5 +1,3 @@
-import { callCoreRpc } from '../coreRpcClient';
-
 import type {
   PurgeResultData,
   Thread,
@@ -9,6 +7,7 @@ import type {
   ThreadMessagesData,
   ThreadsListData,
 } from '../../types/thread';
+import { callCoreRpc } from '../coreRpcClient';
 
 interface Envelope<T> {
   data?: T;
@@ -36,11 +35,7 @@ export const threadApi = {
   }): Promise<ThreadCreateData> => {
     const response = await callCoreRpc<Envelope<Thread>>({
       method: 'openhuman.memory_thread_upsert',
-      params: {
-        id: input.id,
-        title: input.title,
-        created_at: input.createdAt,
-      },
+      params: { id: input.id, title: input.title, created_at: input.createdAt },
     });
     const thread = unwrapEnvelope(response);
     return { id: thread.id };

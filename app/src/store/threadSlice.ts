@@ -83,13 +83,16 @@ function replaceMessagesForThread(state: ThreadState, threadId: string, messages
   }
 }
 
-export const loadThreads = createAsyncThunk('thread/loadThreads', async (_, { rejectWithValue }) => {
-  try {
-    return await threadApi.getThreads();
-  } catch (error) {
-    return rejectWithValue(error instanceof Error ? error.message : 'Failed to load threads');
+export const loadThreads = createAsyncThunk(
+  'thread/loadThreads',
+  async (_, { rejectWithValue }) => {
+    try {
+      return await threadApi.getThreads();
+    } catch (error) {
+      return rejectWithValue(error instanceof Error ? error.message : 'Failed to load threads');
+    }
   }
-});
+);
 
 export const createThreadLocal = createAsyncThunk(
   'thread/createThreadLocal',
@@ -121,10 +124,7 @@ export const loadThreadMessages = createAsyncThunk(
 
 export const addMessageLocal = createAsyncThunk(
   'thread/addMessageLocal',
-  async (
-    payload: { threadId: string; message: ThreadMessage },
-    { rejectWithValue }
-  ) => {
+  async (payload: { threadId: string; message: ThreadMessage }, { rejectWithValue }) => {
     try {
       const persisted = await threadApi.appendMessage(payload.threadId, payload.message);
       return { threadId: payload.threadId, message: persisted };
@@ -179,7 +179,8 @@ export const persistReaction = createAsyncThunk(
 
     const prev = (message.extraMetadata['myReactions'] as string[] | undefined) ?? [];
     const idx = prev.indexOf(payload.emoji);
-    const next = idx >= 0 ? prev.filter(entry => entry !== payload.emoji) : [...prev, payload.emoji];
+    const next =
+      idx >= 0 ? prev.filter(entry => entry !== payload.emoji) : [...prev, payload.emoji];
     const extraMetadata = { ...message.extraMetadata, myReactions: next };
 
     try {
