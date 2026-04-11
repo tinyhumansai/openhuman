@@ -63,7 +63,7 @@ pub struct AgentConfig {
 }
 
 fn default_tool_result_budget_bytes() -> usize {
-    crate::openhuman::agent::context_pipeline::DEFAULT_TOOL_RESULT_BUDGET_BYTES
+    crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES
 }
 
 fn default_agent_max_tool_iterations() -> usize {

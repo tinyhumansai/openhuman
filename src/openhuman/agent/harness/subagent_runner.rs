@@ -30,7 +30,9 @@
 
 use super::definition::{AgentDefinition, PromptSource, ToolScope};
 use super::fork_context::{current_fork, current_parent, ForkContext, ParentExecutionContext};
-use crate::openhuman::agent::prompt::extract_cache_boundary;
+use crate::openhuman::context::prompt::{
+    extract_cache_boundary, render_subagent_system_prompt, SubagentRenderOptions,
+};
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 use std::collections::HashSet;
@@ -226,20 +228,34 @@ async fn run_typed_mode(
 
     // ── Build the narrow system prompt ─────────────────────────────────
     //
-    // We compose the prompt inline rather than routing through
-    // `SystemPromptBuilder::for_subagent` because the builder requires
-    // a slice of `Box<dyn Tool>` and we only have indices into the
-    // parent's vec (Box isn't Clone, so we can't build an owning
-    // filtered slice cheaply). `render_subagent_system_prompt` mirrors
-    // the builder's output for the narrow case.
-    let (system_prompt, system_prompt_cache_boundary) = render_subagent_system_prompt(
+    // The renderer lives in `context::prompt` alongside the rest of
+    // the system-prompt code so all prompt assembly has one home.
+    // We still use the purpose-built narrow renderer rather than the
+    // general `SystemPromptBuilder::for_subagent` because the builder
+    // requires a slice of `Box<dyn Tool>` and we only have indices
+    // into the parent's vec (Box isn't Clone, so we can't build an
+    // owning filtered slice cheaply).
+    //
+    // Per-definition omit_* flags are threaded through via
+    // `SubagentRenderOptions` — previously the narrow renderer
+    // hard-coded all three as "omit", which silently downgraded
+    // definitions like `code_executor` / `tool_maker` / `skills_agent`
+    // that set `omit_safety_preamble = false`.
+    let render_options = SubagentRenderOptions::from_definition_flags(
+        definition.omit_identity,
+        definition.omit_safety_preamble,
+        definition.omit_skills_catalog,
+    );
+    let rendered_prompt = extract_cache_boundary(&render_subagent_system_prompt(
         &parent.workspace_dir,
         &model,
         &allowed_indices,
         &parent.all_tools,
-        definition,
         &archetype_prompt_body,
-    );
+        render_options,
+    ));
+    let system_prompt = rendered_prompt.text;
+    let system_prompt_cache_boundary = rendered_prompt.cache_boundary;
 
     // ── Build the user message (with optional context prefix) ──────────
     // Merge explicit orchestrator context with the parent's auto-loaded
@@ -618,98 +634,10 @@ fn load_prompt_source(
     }
 }
 
-/// Render the sub-agent's system prompt by hand. We avoid going through
-/// `SystemPromptBuilder::build` because that requires a slice of
-/// `Box<dyn Tool>` and we already have indices into the parent's vec
-/// (which would force an awkward Vec<&Box<dyn Tool>> intermediate).
-///
-/// `archetype_body` is the already-loaded archetype markdown — for
-/// `PromptSource::Inline` this is the inline string, for
-/// `PromptSource::File` this is the file contents loaded by
-/// [`load_prompt_source`]. The caller resolves the source exactly
-/// once and hands the body in, so this renderer works uniformly for
-/// both definition shapes.
-///
-/// # KV cache stability
-///
-/// The rendered bytes MUST be a pure function of:
-/// - the `archetype_body` (archetype role prompt)
-/// - the filtered tool set (names, descriptions, schemas)
-/// - the workspace directory
-/// - the resolved model name
-///
-/// Anything that varies across invocations at the *same* call site (e.g.
-/// `chrono::Local::now()`, hostnames, pids, turn counters) is forbidden
-/// here. Repeat spawns of the same sub-agent within a session must
-/// produce byte-identical system prompts so the inference backend's
-/// automatic prefix caching can reuse the prefill from the previous run.
-/// Time-of-day information, if a sub-agent needs it, belongs in the user
-/// message — not the system prompt.
-fn render_subagent_system_prompt(
-    workspace_dir: &std::path::Path,
-    model_name: &str,
-    allowed_indices: &[usize],
-    parent_tools: &[Box<dyn Tool>],
-    definition: &AgentDefinition,
-    archetype_body: &str,
-) -> (String, Option<usize>) {
-    use std::fmt::Write as _;
-    let mut out = String::new();
-    let _ = definition; // reserved for future per-definition rendering flags
-
-    // 1. Archetype role prompt. Works for both `PromptSource::Inline`
-    //    and `PromptSource::File` because the caller preloaded the
-    //    body via `load_prompt_source`.
-    let trimmed = archetype_body.trim();
-    if !trimmed.is_empty() {
-        out.push_str(trimmed);
-        out.push_str("\n\n");
-    }
-
-    // 2. Filtered tool catalogue. Indices are taken in ascending order
-    //    from `allowed_indices`, which itself preserves `parent_tools`
-    //    order, so the rendering is deterministic.
-    out.push_str("## Tools\n\n");
-    for &i in allowed_indices {
-        let tool = &parent_tools[i];
-        let _ = writeln!(
-            out,
-            "- **{}**: {}\n  Parameters: `{}`",
-            tool.name(),
-            tool.description(),
-            tool.parameters_schema()
-        );
-    }
-
-    // 3. Sub-agent calling-convention preamble. Mirrors the existing
-    //    NativeToolDispatcher hint that gets baked into the parent's
-    //    prompt — sub-agents need it too.
-    out.push('\n');
-    out.push_str(
-        "Use the provided tools to accomplish the task. Reply with a concise, dense \
-                 final answer when you have one — the parent agent will weave it back into the \
-                 user-visible response.\n\n",
-    );
-
-    // 4. Boundary between the static prefix (role + tool catalogue +
-    //    calling convention) and the narrower dynamic tail.
-    out.push_str("<!-- CACHE_BOUNDARY -->\n\n");
-
-    // 5. Workspace so the model knows where it is. Intentionally stable:
-    //    no datetime, no hostname, no pid — see the KV-cache note above.
-    let _ = writeln!(
-        out,
-        "## Workspace\n\nWorking directory: `{}`\n",
-        workspace_dir.display()
-    );
-
-    // 6. Runtime banner — model name only. Stable for the lifetime of
-    //    this sub-agent's definition.
-    let _ = writeln!(out, "## Runtime\n\nModel: {model_name}");
-
-    let rendered = extract_cache_boundary(&out);
-    (rendered.text, rendered.cache_boundary)
-}
+// Note: the narrow sub-agent prompt renderer lives in
+// `crate::openhuman::context::prompt::render_subagent_system_prompt`
+// so every system-prompt-building call-site — main agents, sub-agents,
+// channel runtimes — shares one module.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests

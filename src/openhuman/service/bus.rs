@@ -5,7 +5,7 @@ use std::sync::{
 
 use async_trait::async_trait;
 
-use crate::openhuman::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 
 /// Holds the single process-lifetime subscription handle so it is never
 /// double-registered and never dropped (which would abort the task).
@@ -21,7 +21,7 @@ pub fn register_restart_subscriber() {
         return;
     }
 
-    match crate::openhuman::event_bus::subscribe_global(Arc::new(RestartSubscriber)) {
+    match crate::core::event_bus::subscribe_global(Arc::new(RestartSubscriber)) {
         Some(handle) => {
             // Store the handle; OnceLock ensures at most one wins if there is a
             // race between two threads calling this function concurrently.

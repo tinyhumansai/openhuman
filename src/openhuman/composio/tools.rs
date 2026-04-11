@@ -162,8 +162,8 @@ impl Tool for ComposioAuthorizeTool {
         tracing::debug!(toolkit = %toolkit, "[composio] tool authorize.execute");
         match self.client.authorize(&toolkit).await {
             Ok(resp) => {
-                crate::openhuman::event_bus::publish_global(
-                    crate::openhuman::event_bus::DomainEvent::ComposioConnectionCreated {
+                crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::ComposioConnectionCreated {
                         toolkit: toolkit.clone(),
                         connection_id: resp.connection_id.clone(),
                         connect_url: resp.connect_url.clone(),
@@ -300,8 +300,8 @@ impl Tool for ComposioExecuteTool {
         let elapsed_ms = started.elapsed().as_millis() as u64;
         match res {
             Ok(resp) => {
-                crate::openhuman::event_bus::publish_global(
-                    crate::openhuman::event_bus::DomainEvent::ComposioActionExecuted {
+                crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: tool.clone(),
                         success: resp.successful,
                         error: resp.error.clone(),
@@ -314,8 +314,8 @@ impl Tool for ComposioExecuteTool {
                 ))
             }
             Err(e) => {
-                crate::openhuman::event_bus::publish_global(
-                    crate::openhuman::event_bus::DomainEvent::ComposioActionExecuted {
+                crate::core::event_bus::publish_global(
+                    crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                         tool: tool.clone(),
                         success: false,
                         error: Some(e.to_string()),

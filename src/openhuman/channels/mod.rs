@@ -8,7 +8,6 @@ pub mod traits;
 
 mod commands;
 pub(crate) mod context;
-mod prompt;
 mod routes;
 mod runtime;
 
@@ -59,5 +58,9 @@ pub use whatsapp_web::WhatsAppWebChannel;
 
 pub use commands::doctor_channels;
 pub use controllers::{ChannelAuthMode, ChannelDefinition};
-pub use prompt::build_system_prompt;
+// Channel system-prompt assembly lives in
+// `crate::openhuman::context::channels_prompt` alongside the rest of
+// the prompt-building code. Re-exported here for callers that used the
+// old `channels::build_system_prompt` path.
+pub use crate::openhuman::context::channels_prompt::build_system_prompt;
 pub use runtime::start_channels;

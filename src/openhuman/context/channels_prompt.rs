@@ -1,4 +1,25 @@
-//! System prompt construction for channel interactions.
+//! System prompt construction for channel runtimes.
+//!
+//! Channel runtimes (Discord, Slack, Telegram, …) need a system prompt
+//! that is shaped differently from the main agent's:
+//!
+//! - Tool descriptions come in as `(name, description)` tuples from
+//!   the channel's tool registry, not as `Box<dyn Tool>` instances.
+//! - The prompt includes channel-specific preambles (the "Your Task"
+//!   action instruction, the "Channel Capabilities" section) that the
+//!   main agent's builder doesn't emit.
+//! - The datetime block is timezone-only — channel startup happens
+//!   once per process, so we keep the prompt byte-stable within a run
+//!   to maximise prefix-cache hits on the inference backend.
+//!
+//! Because the byte layout must not drift during consolidation
+//! (channel prompts are live in production), this module keeps its
+//! bespoke [`build_system_prompt`] free function rather than routing
+//! through [`super::SystemPromptBuilder`]. The file lives here under
+//! `context/` so every system-prompt-building code path — main
+//! agents, sub-agents, channel runtimes — has a single home. See the
+//! `misty-bubbling-bunny` plan file for the roadmap toward a unified
+//! builder.
 
 use std::path::Path;
 
@@ -51,6 +72,7 @@ pub fn build_system_prompt(
     tools: &[(&str, &str)],
     skills: &[crate::openhuman::skills::Skill],
     bootstrap_max_chars: Option<usize>,
+    channel_name: Option<&str>,
 ) -> String {
     use std::fmt::Write;
     let mut prompt = String::with_capacity(8192);
@@ -143,11 +165,34 @@ pub fn build_system_prompt(
     );
 
     // ── 8. Channel Capabilities ─────────────────────────────────────
+    //
+    // This block used to hardcode "Discord", which was misleading on
+    // Telegram/Slack/Signal runtimes even though the mechanical wiring
+    // was identical. We now take an optional `channel_name` and render
+    // it into the capability bullets when set, otherwise fall back to a
+    // platform-agnostic "messaging bot" phrasing. Keep the remaining
+    // bullets intact — they're genuinely channel-neutral.
     prompt.push_str("## Channel Capabilities\n\n");
-    prompt.push_str(
-        "- You are running as a Discord bot. You CAN and do send messages to Discord channels.\n",
-    );
-    prompt.push_str("- When someone messages you on Discord, your response is automatically sent back to Discord.\n");
+    match channel_name {
+        Some(name) => {
+            let _ = writeln!(
+                prompt,
+                "- You are running as a {name} bot. You CAN and do send messages to {name}."
+            );
+            let _ = writeln!(
+                prompt,
+                "- When someone messages you on {name}, your response is automatically sent back to {name}."
+            );
+        }
+        None => {
+            prompt.push_str(
+                "- You are running as a messaging bot. You CAN and do send messages to the connected platform.\n",
+            );
+            prompt.push_str(
+                "- When someone messages you, your response is automatically sent back to the same platform.\n",
+            );
+        }
+    }
     prompt.push_str("- You do NOT need to ask permission to respond — just respond directly.\n");
     prompt.push_str("- NEVER repeat, describe, or echo credentials, tokens, API keys, or secrets in your responses.\n");
     prompt.push_str("- If a tool output contains credentials, they have already been redacted — do not mention them.\n\n");

@@ -19,10 +19,64 @@ pub struct LearnedContextData {
     pub user_profile: Vec<String>,
 }
 
+/// A lightweight tool descriptor for prompt rendering.
+///
+/// Shared shape so every call-site that builds a system prompt — main
+/// agents (which own `Box<dyn Tool>`), sub-agents, and channel runtimes
+/// (which only have `(name, description)` tuples from their tool
+/// registries) — can feed the same [`ToolsSection`] implementation
+/// instead of each writing its own. Callers adapt their own tool
+/// representation into a `Vec<PromptTool<'_>>` at the PromptContext
+/// construction site via a one-line `.iter().map(...).collect()` or via
+/// [`PromptTool::from_tools`].
+///
+/// `parameters_schema` is optional because channel runtimes don't have
+/// full JSON schemas at prompt-build time; the tools section renders
+/// the schema line only when it's present.
+#[derive(Debug, Clone)]
+pub struct PromptTool<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub parameters_schema: Option<String>,
+}
+
+impl<'a> PromptTool<'a> {
+    pub fn new(name: &'a str, description: &'a str) -> Self {
+        Self {
+            name,
+            description,
+            parameters_schema: None,
+        }
+    }
+
+    pub fn with_schema(name: &'a str, description: &'a str, parameters_schema: String) -> Self {
+        Self {
+            name,
+            description,
+            parameters_schema: Some(parameters_schema),
+        }
+    }
+
+    /// Adapt a `Box<dyn Tool>` slice into a `Vec<PromptTool<'_>>`. The
+    /// returned vector borrows names and descriptions from the original
+    /// tools, so it must not outlive them. Main-agent call-sites use
+    /// this one-liner to build the slice passed into [`PromptContext::tools`].
+    pub fn from_tools(tools: &'a [Box<dyn Tool>]) -> Vec<PromptTool<'a>> {
+        tools
+            .iter()
+            .map(|t| PromptTool {
+                name: t.name(),
+                description: t.description(),
+                parameters_schema: Some(t.parameters_schema().to_string()),
+            })
+            .collect()
+    }
+}
+
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub model_name: &'a str,
-    pub tools: &'a [Box<dyn Tool>],
+    pub tools: &'a [PromptTool<'a>],
     pub skills: &'a [Skill],
     pub dispatcher_instructions: &'a str,
     /// Pre-fetched learned context (empty when learning is disabled).
@@ -243,16 +297,18 @@ impl PromptSection for ToolsSection {
         let has_filter = !ctx.visible_tool_names.is_empty();
         for tool in ctx.tools {
             // Skip tools not in the visible set when a filter is active.
-            if has_filter && !ctx.visible_tool_names.contains(tool.name()) {
+            if has_filter && !ctx.visible_tool_names.contains(tool.name) {
                 continue;
             }
-            let _ = writeln!(
-                out,
-                "- **{}**: {}\n  Parameters: `{}`",
-                tool.name(),
-                tool.description(),
-                tool.parameters_schema()
-            );
+            if let Some(schema) = &tool.parameters_schema {
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}\n  Parameters: `{}`",
+                    tool.name, tool.description, schema
+                );
+            } else {
+                let _ = writeln!(out, "- **{}**: {}", tool.name, tool.description);
+            }
         }
         if !ctx.dispatcher_instructions.is_empty() {
             out.push('\n');
@@ -356,6 +412,201 @@ fn is_dynamic_section(name: &str) -> bool {
     matches!(name, "workspace" | "datetime" | "runtime")
 }
 
+/// Per-definition rendering flags passed into
+/// [`render_subagent_system_prompt`]. Mirrors the `omit_*` fields on
+/// [`crate::openhuman::agent::harness::definition::AgentDefinition`] so
+/// the runner can thread each definition's preferences through without
+/// growing the function signature.
+///
+/// KV-cache-stable as long as the flags are read from a definition that
+/// does not change mid-session.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SubagentRenderOptions {
+    /// When `false`, include the standard `## Safety` block. Mirrors
+    /// `AgentDefinition::omit_safety_preamble`. Defaults to `false`
+    /// (omit) because the narrow sub-agent renderer historically
+    /// skipped this section entirely.
+    pub include_safety_preamble: bool,
+    /// When `false`, skip the identity/project-context dump. Mirrors
+    /// `AgentDefinition::omit_identity`. Defaults to `false`; setting
+    /// this to `true` is uncommon because sub-agents usually run
+    /// narrow and the identity block pushes too many tokens.
+    pub include_identity: bool,
+    /// When `false`, skip the skills catalogue. Mirrors
+    /// `AgentDefinition::omit_skills_catalog`. Defaults to `false`
+    /// for the same reason as `include_identity`.
+    pub include_skills_catalog: bool,
+}
+
+impl SubagentRenderOptions {
+    /// Build the narrow default (every section off) — matches the
+    /// historical behaviour of the purpose-built renderer before the
+    /// flags were threaded through.
+    pub fn narrow() -> Self {
+        Self::default()
+    }
+
+    /// Construct from the per-definition flags, inverting them into the
+    /// positive-sense `include_*` shape used by the renderer.
+    pub fn from_definition_flags(
+        omit_identity: bool,
+        omit_safety_preamble: bool,
+        omit_skills_catalog: bool,
+    ) -> Self {
+        Self {
+            include_identity: !omit_identity,
+            include_safety_preamble: !omit_safety_preamble,
+            include_skills_catalog: !omit_skills_catalog,
+        }
+    }
+}
+
+/// Render a narrow, KV-cache-stable system prompt for a typed sub-agent.
+///
+/// This is a purpose-built alternative to
+/// [`SystemPromptBuilder::for_subagent`] for call sites that only have
+/// indices into the parent's `&[Box<dyn Tool>]` vec (so they can't
+/// cheaply build a filtered owning slice for `ToolsSection`). The
+/// output mirrors what `for_subagent` would emit with the matching
+/// `omit_*` flags, plus a sub-agent-specific calling-convention
+/// preamble and a model-only runtime banner.
+///
+/// `archetype_body` is the already-loaded archetype markdown — for
+/// `PromptSource::Inline` this is the inline string, for
+/// `PromptSource::File` this is the file contents loaded by the caller.
+/// Callers resolve the source exactly once and hand the body in, so
+/// this renderer works uniformly for both definition shapes.
+///
+/// `options` carries the per-definition rendering flags (safety, etc.)
+/// inverted into positive-sense `include_*` form.
+/// [`SubagentRenderOptions::narrow`] preserves the historical behaviour.
+///
+/// # KV cache stability
+///
+/// The rendered bytes MUST be a pure function of:
+/// - the `archetype_body` (archetype role prompt)
+/// - the filtered tool set (names, descriptions, schemas)
+/// - the workspace directory
+/// - the resolved model name
+/// - the `options` (all static per definition)
+///
+/// Anything that varies across invocations at the *same* call site
+/// (e.g. `chrono::Local::now()`, hostnames, pids, turn counters) is
+/// forbidden here. Repeat spawns of the same sub-agent within a session
+/// must produce byte-identical system prompts so the inference
+/// backend's automatic prefix caching can reuse the prefill from the
+/// previous run. Time-of-day information, if a sub-agent needs it,
+/// belongs in the user message — not the system prompt.
+pub fn render_subagent_system_prompt(
+    workspace_dir: &Path,
+    model_name: &str,
+    allowed_indices: &[usize],
+    parent_tools: &[Box<dyn Tool>],
+    archetype_body: &str,
+    options: SubagentRenderOptions,
+) -> String {
+    let mut out = String::new();
+
+    // 1. Archetype role prompt. Works for both `PromptSource::Inline`
+    //    and `PromptSource::File` because the caller preloaded the
+    //    body via `load_prompt_source`.
+    let trimmed = archetype_body.trim();
+    if !trimmed.is_empty() {
+        out.push_str(trimmed);
+        out.push_str("\n\n");
+    }
+
+    // 1b. Optional identity block. Off by default; turned on when the
+    //     definition sets `omit_identity = false`. Renders the same
+    //     OpenClaw bootstrap files the main agent loads, keeping the
+    //     byte layout stable across repeat spawns of the same
+    //     definition within a session.
+    if options.include_identity {
+        out.push_str("## Project Context\n\n");
+        out.push_str(
+            "The following workspace files define your identity, behavior, and context.\n\n",
+        );
+        for file in &["SOUL.md", "IDENTITY.md", "USER.md"] {
+            inject_workspace_file(&mut out, workspace_dir, file);
+        }
+    }
+
+    // 2. Filtered tool catalogue. Indices are taken in ascending order
+    //    from `allowed_indices`, which itself preserves `parent_tools`
+    //    order, so the rendering is deterministic. We use `.get(i)`
+    //    defensively even though the current caller (subagent_runner)
+    //    only produces in-range indices — a future caller that derives
+    //    indices from a different source must not be able to panic this
+    //    renderer with a stale index.
+    out.push_str("## Tools\n\n");
+    for &i in allowed_indices {
+        let Some(tool) = parent_tools.get(i) else {
+            tracing::warn!(
+                index = i,
+                tool_count = parent_tools.len(),
+                "[context::prompt] dropping out-of-range tool index in subagent render"
+            );
+            continue;
+        };
+        let _ = writeln!(
+            out,
+            "- **{}**: {}\n  Parameters: `{}`",
+            tool.name(),
+            tool.description(),
+            tool.parameters_schema()
+        );
+    }
+
+    // 3. Sub-agent calling-convention preamble. Mirrors the existing
+    //    NativeToolDispatcher hint that gets baked into the parent's
+    //    prompt — sub-agents need it too.
+    out.push('\n');
+    out.push_str(
+        "Use the provided tools to accomplish the task. Reply with a concise, dense \
+                 final answer when you have one — the parent agent will weave it back into the \
+                 user-visible response.\n\n",
+    );
+
+    // 3b. Optional safety preamble. Definitions that do work with real
+    //     side-effects (code_executor, tool_maker, skills_agent) set
+    //     `omit_safety_preamble = false` so the narrow renderer used to
+    //     silently drop that instruction — we now honour the flag.
+    //     Byte-identical to `SafetySection::build`.
+    if options.include_safety_preamble {
+        out.push_str(
+            "## Safety\n\n- Do not exfiltrate private data.\n- Do not run destructive commands without asking.\n- Do not bypass oversight or approval mechanisms.\n- Prefer `trash` over `rm`.\n- When in doubt, ask before acting externally.\n\n",
+        );
+    }
+
+    // 3c. Optional skills catalogue. Off by default because sub-agents
+    //     usually skip skills entirely. Kept here so a custom
+    //     definition can opt in without falling back to the general
+    //     builder. The renderer intentionally takes no `skills` slice
+    //     — the caller would have to extend this helper before
+    //     enabling this flag for real, which keeps the common (narrow)
+    //     path free of extra arguments.
+    if options.include_skills_catalog {
+        out.push_str("## Available Skills\n\n");
+        out.push_str(
+            "Skills are loaded on demand. Use `read` on the skill path to get full instructions.\n\n",
+        );
+    }
+
+    // 4. Workspace so the model knows where it is. Intentionally stable:
+    //    no datetime, no hostname, no pid — see the KV-cache note above.
+    let _ = writeln!(
+        out,
+        "## Workspace\n\nWorking directory: `{}`\n",
+        workspace_dir.display()
+    );
+
+    // 5. Runtime banner — model name only. Stable for the lifetime of
+    //    this sub-agent's definition.
+    let _ = writeln!(out, "## Runtime\n\nModel: {model_name}");
+
+    out
+}
+
 /// Ensure the workspace file is up-to-date with the compiled-in default.
 ///
 /// On first install the file doesn't exist → write it. On subsequent runs
@@ -438,10 +689,14 @@ fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &s
 }
 
 fn default_workspace_file_content(filename: &str) -> &'static str {
+    // The bundled identity files live at `src/openhuman/agent/prompts/`
+    // (owned by the `agent/` tree because they describe agent identity).
+    // This module is under `src/openhuman/context/`, so the relative path
+    // walks up one level and back into `agent/prompts/`.
     match filename {
-        "SOUL.md" => include_str!("prompts/SOUL.md"),
-        "IDENTITY.md" => include_str!("prompts/IDENTITY.md"),
-        "USER.md" => include_str!("prompts/USER.md"),
+        "SOUL.md" => include_str!("../agent/prompts/SOUL.md"),
+        "IDENTITY.md" => include_str!("../agent/prompts/IDENTITY.md"),
+        "USER.md" => include_str!("../agent/prompts/USER.md"),
         "HEARTBEAT.md" => {
             "# Periodic Tasks\n\n# Add tasks below (one per line, starting with `- `)\n"
         }
@@ -486,10 +741,11 @@ mod tests {
     #[test]
     fn prompt_builder_assembles_sections() {
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+        let prompt_tools = PromptTool::from_tools(&tools);
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
-            tools: &tools,
+            tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "instr",
             learned: LearnedContextData::default(),
@@ -512,10 +768,11 @@ mod tests {
         std::fs::create_dir_all(&workspace).unwrap();
 
         let tools: Vec<Box<dyn Tool>> = vec![];
+        let prompt_tools = PromptTool::from_tools(&tools);
         let ctx = PromptContext {
             workspace_dir: &workspace,
             model_name: "test-model",
-            tools: &tools,
+            tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
@@ -543,10 +800,11 @@ mod tests {
     #[test]
     fn datetime_section_includes_timestamp_and_timezone() {
         let tools: Vec<Box<dyn Tool>> = vec![];
+        let prompt_tools = PromptTool::from_tools(&tools);
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
-            tools: &tools,
+            tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "instr",
             learned: LearnedContextData::default(),

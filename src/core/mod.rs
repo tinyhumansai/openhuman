@@ -5,6 +5,7 @@ pub mod all;
 pub mod autocomplete_cli_adapter;
 pub mod cli;
 pub mod dispatch;
+pub mod event_bus;
 pub mod jsonrpc;
 pub mod logging;
 pub mod memory_cli;

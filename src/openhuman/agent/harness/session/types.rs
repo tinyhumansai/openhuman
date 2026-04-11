@@ -6,11 +6,11 @@
 //! `impl Agent`/`impl AgentBuilder` can see them without the whole
 //! crate gaining field access.
 
-use crate::openhuman::agent::context_pipeline::ContextPipeline;
 use crate::openhuman::agent::dispatcher::ToolDispatcher;
 use crate::openhuman::agent::hooks::PostTurnHook;
 use crate::openhuman::agent::memory_loader::MemoryLoader;
-use crate::openhuman::agent::prompt::SystemPromptBuilder;
+use crate::openhuman::context::prompt::SystemPromptBuilder;
+use crate::openhuman::context::ContextManager;
 use crate::openhuman::memory::Memory;
 use crate::openhuman::providers::{ConversationMessage, Provider};
 use crate::openhuman::tools::{Tool, ToolSpec};
@@ -39,7 +39,6 @@ pub struct Agent {
     /// Empty = no filter (all tools visible, backward compat).
     pub(super) visible_tool_names: std::collections::HashSet<String>,
     pub(super) memory: Arc<dyn Memory>,
-    pub(super) prompt_builder: SystemPromptBuilder,
     pub(super) tool_dispatcher: Box<dyn ToolDispatcher>,
     pub(super) memory_loader: Box<dyn MemoryLoader>,
     pub(super) config: crate::openhuman::config::AgentConfig,
@@ -59,14 +58,15 @@ pub struct Agent {
     pub(super) learning_enabled: bool,
     pub(super) event_session_id: String,
     pub(super) event_channel: String,
-    /// Layered context reduction pipeline (tool-result budget →
+    /// Per-session [`ContextManager`] — owns the system-prompt
+    /// builder, the layered reduction pipeline (tool-result budget →
     /// microcompact → autocompact signal → session-memory extraction
-    /// trigger). Owned by the agent so its state (token counters,
-    /// session-memory extraction deltas, compaction circuit breaker)
-    /// persists across turns. See
-    /// [`crate::openhuman::agent::context_pipeline`] for the stage
-    /// ordering and cache-safety contract.
-    pub(super) context_pipeline: ContextPipeline,
+    /// trigger), the guard's compaction circuit breaker, and the LLM
+    /// summarizer that runs when the pipeline asks for autocompaction.
+    /// Constructed once at session start so its budget counters and
+    /// session-memory deltas persist across turns. See
+    /// [`crate::openhuman::context`] for the full surface.
+    pub(super) context: ContextManager,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.
@@ -80,6 +80,10 @@ pub struct AgentBuilder {
     pub(super) tool_dispatcher: Option<Box<dyn ToolDispatcher>>,
     pub(super) memory_loader: Option<Box<dyn MemoryLoader>>,
     pub(super) config: Option<crate::openhuman::config::AgentConfig>,
+    /// Optional [`ContextConfig`] override threaded through from
+    /// `Agent::from_config`. When unset the builder falls back to
+    /// [`crate::openhuman::config::ContextConfig::default`].
+    pub(super) context_config: Option<crate::openhuman::config::ContextConfig>,
     pub(super) model_name: Option<String>,
     pub(super) temperature: Option<f64>,
     pub(super) workspace_dir: Option<std::path::PathBuf>,

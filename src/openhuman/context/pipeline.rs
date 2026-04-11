@@ -21,7 +21,7 @@
 //!    when ready. Keeping the pipeline pure (no LLM calls) means the
 //!    integration tests can exercise every stage without a provider.
 //! 5. **Session memory** — handled separately by
-//!    [`crate::openhuman::agent::context_pipeline::session_memory`].
+//!    [`crate::openhuman::context::session_memory`].
 //!
 //! # Cache contract
 //!
@@ -33,10 +33,19 @@
 //! firing resets the stable prefix to the new, smaller history so
 //! subsequent turns hit the cache again.
 
+use super::guard::{ContextCheckResult, ContextGuard};
 use super::microcompact::{microcompact, MicrocompactStats, DEFAULT_KEEP_RECENT_TOOL_RESULTS};
 use super::session_memory::{SessionMemoryConfig, SessionMemoryState};
-use crate::openhuman::agent::harness::context_guard::{ContextCheckResult, ContextGuard};
 use crate::openhuman::providers::{ConversationMessage, UsageInfo};
+use std::sync::{Arc, Mutex};
+
+/// Shared handle to a [`SessionMemoryState`] so both the synchronous
+/// pipeline path and a detached background archivist task can inspect
+/// and mutate the same extraction bookkeeping without fighting over
+/// `&mut self`. The pipeline clones this `Arc` into every task it
+/// spawns — the `Mutex` lock is only held for microsecond-scale state
+/// flips, so contention is negligible in practice.
+pub type SessionMemoryHandle = Arc<Mutex<SessionMemoryState>>;
 
 /// Pipeline configuration. Defaults are tuned for an `agentic-v1`
 /// 128k-context run.
@@ -87,6 +96,11 @@ pub enum PipelineOutcome {
         /// The last-known context utilisation as a 0..=100 percentage.
         utilisation_pct: u8,
     },
+    /// The guard is above the soft threshold but autocompaction is
+    /// disabled by config, so no summariser will run. Surfaced as a
+    /// distinct variant so the caller can log/observe the situation
+    /// instead of silently falling back to `NoOp`.
+    AutocompactionDisabled { utilisation_pct: u8 },
     /// The guard's circuit breaker is tripped and the context is still
     /// above the hard threshold — the caller should abort the turn.
     ContextExhausted { utilisation_pct: u8, reason: String },
@@ -95,11 +109,16 @@ pub enum PipelineOutcome {
 /// Stateful orchestrator. Owns a [`ContextGuard`] and a
 /// [`SessionMemoryState`] so a single instance can live on the `Agent`
 /// across turns without threading state through every call site.
+///
+/// `session_memory` is wrapped in a shared handle so a detached
+/// archivist task spawned from `turn.rs` can mark the extraction as
+/// complete or failed after the pipeline's synchronous path has
+/// already released its borrow on `self`.
 #[derive(Debug)]
 pub struct ContextPipeline {
     pub config: ContextPipelineConfig,
     pub guard: ContextGuard,
-    pub session_memory: SessionMemoryState,
+    pub session_memory: SessionMemoryHandle,
 }
 
 impl Default for ContextPipeline {
@@ -113,7 +132,7 @@ impl ContextPipeline {
         Self {
             config,
             guard: ContextGuard::new(),
-            session_memory: SessionMemoryState::default(),
+            session_memory: Arc::new(Mutex::new(SessionMemoryState::default())),
         }
     }
 
@@ -121,26 +140,51 @@ impl ContextPipeline {
     /// session-memory state.
     pub fn record_usage(&mut self, usage: &UsageInfo) {
         self.guard.update_usage(usage);
-        self.session_memory
-            .record_usage(usage.input_tokens + usage.output_tokens);
+        let total = usage.input_tokens + usage.output_tokens;
+        if let Ok(mut sm) = self.session_memory.lock() {
+            sm.record_usage(total);
+        }
     }
 
     /// Bump the session-memory turn counter. Called once per user turn.
     pub fn tick_turn(&mut self) {
-        self.session_memory.tick_turn();
+        if let Ok(mut sm) = self.session_memory.lock() {
+            sm.tick_turn();
+        }
     }
 
     /// Accumulate a turn's tool-call count into the session-memory
     /// state. Called once per user turn after tool dispatch settles.
     pub fn record_tool_calls(&mut self, n: usize) {
-        self.session_memory.record_tool_calls(n);
+        if let Ok(mut sm) = self.session_memory.lock() {
+            sm.record_tool_calls(n);
+        }
     }
 
     /// Should the caller spawn a background session-memory extraction
     /// this turn?
     pub fn should_extract_session_memory(&self) -> bool {
         self.session_memory
-            .should_extract(&self.config.session_memory)
+            .lock()
+            .map(|sm| sm.should_extract(&self.config.session_memory))
+            .unwrap_or(false)
+    }
+
+    /// Read-only snapshot of the session-memory bookkeeping for
+    /// observability / [`crate::openhuman::context::ContextStats`].
+    pub fn session_memory_snapshot(&self) -> SessionMemoryState {
+        self.session_memory
+            .lock()
+            .map(|sm| sm.clone())
+            .unwrap_or_default()
+    }
+
+    /// Share a clone of the session-memory handle. The caller takes
+    /// ownership of the `Arc` and can move it into a detached
+    /// background task to update the extraction state when the task
+    /// finishes. See `turn.rs::spawn_session_memory_extraction`.
+    pub fn session_memory_handle(&self) -> SessionMemoryHandle {
+        Arc::clone(&self.session_memory)
     }
 
     /// Run the reduction chain against `history` in place. Safe to call
@@ -171,13 +215,16 @@ impl ContextPipeline {
                 // Stage 4: if microcompact didn't free anything (no old
                 // tool results to clear), signal autocompaction to the
                 // caller. The pipeline deliberately does not issue the
-                // LLM call itself.
+                // LLM call itself. When autocompact is disabled we
+                // still surface the situation as a distinct variant so
+                // the manager can log/observe it rather than silently
+                // dropping back to `NoOp`.
+                let pct = self
+                    .guard
+                    .utilization()
+                    .map(|u| (u * 100.0).round() as u8)
+                    .unwrap_or(0);
                 if self.config.autocompact_enabled {
-                    let pct = self
-                        .guard
-                        .utilization()
-                        .map(|u| (u * 100.0).round() as u8)
-                        .unwrap_or(0);
                     tracing::info!(
                         utilisation_pct = pct,
                         "[context_pipeline] autocompaction requested"
@@ -187,7 +234,13 @@ impl ContextPipeline {
                     };
                 }
 
-                PipelineOutcome::NoOp
+                tracing::warn!(
+                    utilisation_pct = pct,
+                    "[context_pipeline] above soft threshold but autocompact disabled"
+                );
+                PipelineOutcome::AutocompactionDisabled {
+                    utilisation_pct: pct,
+                }
             }
             ContextCheckResult::ContextExhausted {
                 utilization_pct,
@@ -378,7 +431,7 @@ mod tests {
             output_tokens: 2_000,
             context_window: 100_000,
         });
-        assert_eq!(pipeline.session_memory.total_tokens, 12_000);
+        assert_eq!(pipeline.session_memory_snapshot().total_tokens, 12_000);
     }
 
     #[test]
@@ -386,7 +439,8 @@ mod tests {
         let mut pipeline = ContextPipeline::default();
         pipeline.tick_turn();
         pipeline.record_tool_calls(5);
-        assert_eq!(pipeline.session_memory.current_turn, 1);
-        assert_eq!(pipeline.session_memory.total_tool_calls, 5);
+        let snap = pipeline.session_memory_snapshot();
+        assert_eq!(snap.current_turn, 1);
+        assert_eq!(snap.total_tool_calls, 5);
     }
 }

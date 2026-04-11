@@ -7,11 +7,11 @@ use anyhow::Result;
 use std::fmt::Write as _;
 use std::io::Write as _;
 
-use super::context_guard::{ContextCheckResult, ContextGuard};
 use super::credentials::scrub_credentials;
 use super::parse::{
     build_native_assistant_history, find_tool, parse_structured_tool_calls, parse_tool_calls,
 };
+use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
 
 /// Minimum characters per chunk when relaying LLM text to a streaming draft.
 const STREAM_CHUNK_MIN_CHARS: usize = 80;
@@ -99,7 +99,7 @@ pub(crate) async fn run_tool_call_loop(
                 tracing::warn!(
                     iteration,
                     "[agent_loop] context guard: compaction needed (>{:.0}% full)",
-                    super::context_guard::COMPACTION_TRIGGER_THRESHOLD * 100.0
+                    crate::openhuman::context::guard::COMPACTION_TRIGGER_THRESHOLD * 100.0
                 );
                 // Compaction is handled by history management upstream;
                 // log and continue so the caller can act on it.

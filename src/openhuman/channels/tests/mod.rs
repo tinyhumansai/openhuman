@@ -1,4 +1,5 @@
 mod common;
+mod discord_integration;
 mod health;
 mod identity;
 mod memory;

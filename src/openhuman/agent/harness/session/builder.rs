@@ -7,14 +7,14 @@
 //! [`super::turn`]; accessors and run-helpers live in [`super::runtime`].
 
 use super::types::{Agent, AgentBuilder};
-use crate::openhuman::agent::context_pipeline::ContextPipeline;
 use crate::openhuman::agent::dispatcher::{
     NativeToolDispatcher, ToolDispatcher, XmlToolDispatcher,
 };
 use crate::openhuman::agent::host_runtime;
 use crate::openhuman::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
-use crate::openhuman::agent::prompt::SystemPromptBuilder;
-use crate::openhuman::config::Config;
+use crate::openhuman::config::{Config, ContextConfig};
+use crate::openhuman::context::prompt::SystemPromptBuilder;
+use crate::openhuman::context::{ContextManager, ProviderSummarizer};
 use crate::openhuman::memory::{self, Memory};
 use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::security::SecurityPolicy;
@@ -34,6 +34,7 @@ impl AgentBuilder {
             tool_dispatcher: None,
             memory_loader: None,
             config: None,
+            context_config: None,
             model_name: None,
             temperature: None,
             workspace_dir: None,
@@ -104,6 +105,15 @@ impl AgentBuilder {
     /// Sets the agent configuration.
     pub fn config(mut self, config: crate::openhuman::config::AgentConfig) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Sets the global context-management configuration. Threaded
+    /// into the [`ContextManager`] constructed in [`Self::build`]. If
+    /// not set the manager is constructed with
+    /// [`ContextConfig::default`].
+    pub fn context_config(mut self, context_config: ContextConfig) -> Self {
+        self.context_config = Some(context_config);
         self
     }
 
@@ -204,10 +214,37 @@ impl AgentBuilder {
             !visible_names.is_empty()
         );
 
+        // Pull the provider out of the builder once. We store it on
+        // the Agent (for normal turn chat calls) and also clone the
+        // Arc into the ProviderSummarizer so the context manager can
+        // dispatch autocompaction through the same provider.
+        let provider = self
+            .provider
+            .ok_or_else(|| anyhow::anyhow!("provider is required"))?;
+
+        let prompt_builder = self
+            .prompt_builder
+            .unwrap_or_else(SystemPromptBuilder::with_defaults);
+
+        let model_name = self
+            .model_name
+            .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into());
+
+        // Assemble the per-session ContextManager. The manager owns
+        // the prompt builder, the reduction pipeline, and the
+        // summarizer — every concern that touches "what's in the
+        // model's context window" routes through this single handle.
+        let context_config = self.context_config.unwrap_or_default();
+        let summarizer = Arc::new(ProviderSummarizer::new(provider.clone()));
+        let context = ContextManager::new(
+            &context_config,
+            summarizer,
+            model_name.clone(),
+            prompt_builder,
+        );
+
         Ok(Agent {
-            provider: self
-                .provider
-                .ok_or_else(|| anyhow::anyhow!("provider is required"))?,
+            provider,
             tools: Arc::new(tools),
             tool_specs: Arc::new(tool_specs),
             visible_tool_specs: Arc::new(visible_tool_specs),
@@ -215,9 +252,6 @@ impl AgentBuilder {
             memory: self
                 .memory
                 .ok_or_else(|| anyhow::anyhow!("memory is required"))?,
-            prompt_builder: self
-                .prompt_builder
-                .unwrap_or_else(SystemPromptBuilder::with_defaults),
             tool_dispatcher: self
                 .tool_dispatcher
                 .ok_or_else(|| anyhow::anyhow!("tool_dispatcher is required"))?,
@@ -225,9 +259,7 @@ impl AgentBuilder {
                 .memory_loader
                 .unwrap_or_else(|| Box::new(DefaultMemoryLoader::default())),
             config: self.config.unwrap_or_default(),
-            model_name: self
-                .model_name
-                .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.into()),
+            model_name,
             temperature: self.temperature.unwrap_or(0.7),
             workspace_dir: self
                 .workspace_dir
@@ -243,12 +275,7 @@ impl AgentBuilder {
                 .event_session_id
                 .unwrap_or_else(|| "standalone".to_string()),
             event_channel: self.event_channel.unwrap_or_else(|| "internal".to_string()),
-            // The context pipeline is intentionally constructed with its
-            // defaults here — its tunables (`tool_result_budget_bytes`,
-            // microcompact thresholds, session-memory knobs) are read from
-            // the per-agent `AgentConfig` at call sites, so there is no
-            // need for a separate fluent setter on the builder today.
-            context_pipeline: ContextPipeline::default(),
+            context,
         })
     }
 }
@@ -440,6 +467,7 @@ impl Agent {
             ))
             .prompt_builder(prompt_builder)
             .config(config.agent.clone())
+            .context_config(config.context.clone())
             .model_name(model_name)
             .temperature(config.default_temperature)
             .workspace_dir(config.workspace_dir.clone())
