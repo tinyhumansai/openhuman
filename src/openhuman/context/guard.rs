@@ -145,6 +145,22 @@ impl ContextGuard {
     pub fn consecutive_failures(&self) -> u8 {
         self.consecutive_compaction_failures
     }
+
+    /// Last input-token count seen on a provider response.
+    pub fn last_input_tokens(&self) -> u64 {
+        self.last_input_tokens
+    }
+
+    /// Last output-token count seen on a provider response.
+    pub fn last_output_tokens(&self) -> u64 {
+        self.last_output_tokens
+    }
+
+    /// The currently-known model context window. `0` means unknown —
+    /// the guard runs as a no-op in that case.
+    pub fn context_window(&self) -> u64 {
+        self.context_window
+    }
 }
 
 #[cfg(test)]

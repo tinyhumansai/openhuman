@@ -29,6 +29,7 @@
 //! migration lands (see plan `misty-bubbling-bunny.md`).
 
 pub mod guard;
+pub mod manager;
 pub mod microcompact;
 pub mod pipeline;
 pub mod prompt;
@@ -37,6 +38,7 @@ pub mod summarizer;
 pub mod tool_result_budget;
 
 pub use guard::{ContextCheckResult, ContextGuard};
+pub use manager::{ContextManager, ContextStats, ReductionOutcome};
 pub use microcompact::{
     microcompact, MicrocompactStats, CLEARED_PLACEHOLDER, DEFAULT_KEEP_RECENT_TOOL_RESULTS,
 };
