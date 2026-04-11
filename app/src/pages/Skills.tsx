@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
+import ComposioConnectModal from '../components/composio/ComposioConnectModal';
+import { composioToolkitMeta, type ComposioToolkitMeta } from '../components/composio/toolkitMeta';
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import ScreenIntelligenceSetupModal from '../components/skills/ScreenIntelligenceSetupModal';
 import { SKILL_ICONS, type SkillListEntry } from '../components/skills/shared';
@@ -14,6 +16,8 @@ import { useAutocompleteSkillStatus } from '../features/autocomplete/useAutocomp
 import { useScreenIntelligenceSkillStatus } from '../features/screen-intelligence/useScreenIntelligenceSkillStatus';
 import { useVoiceSkillStatus } from '../features/voice/useVoiceSkillStatus';
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
+import { useComposioIntegrations } from '../lib/composio/hooks';
+import { deriveComposioState, type ComposioConnection } from '../lib/composio/types';
 import { useAvailableSkills } from '../lib/skills/hooks';
 import { installSkill } from '../lib/skills/skillsApi';
 import { useAppSelector } from '../store/hooks';
@@ -57,6 +61,49 @@ function channelStatusColor(status: ChannelConnectionStatus): string {
     case 'connected':
       return 'text-sage-600';
     case 'connecting':
+      return 'text-amber-600';
+    case 'error':
+      return 'text-coral-600';
+    default:
+      return 'text-stone-400';
+  }
+}
+
+// ─── Composio visual mappers ─────────────────────────────────────────────
+// Reuse the same dot/label/color vocabulary as the channel cards so the
+// "Integrations" section sits visually flush with the rest of the grid.
+
+function composioStatusDot(connection: ComposioConnection | undefined): string {
+  switch (deriveComposioState(connection)) {
+    case 'connected':
+      return 'bg-sage-500';
+    case 'pending':
+      return 'bg-amber-500 animate-pulse';
+    case 'error':
+      return 'bg-coral-500';
+    default:
+      return 'bg-stone-300';
+  }
+}
+
+function composioStatusLabel(connection: ComposioConnection | undefined): string {
+  switch (deriveComposioState(connection)) {
+    case 'connected':
+      return 'Connected';
+    case 'pending':
+      return 'Connecting';
+    case 'error':
+      return 'Error';
+    default:
+      return 'Not connected';
+  }
+}
+
+function composioStatusColor(connection: ComposioConnection | undefined): string {
+  switch (deriveComposioState(connection)) {
+    case 'connected':
+      return 'text-sage-600';
+    case 'pending':
       return 'text-amber-600';
     case 'error':
       return 'text-coral-600';
@@ -127,7 +174,7 @@ interface SkillItem {
   name: string;
   description: string;
   category: SkillCategory;
-  kind: 'builtin' | 'channel' | 'third-party';
+  kind: 'builtin' | 'channel' | 'third-party' | 'composio';
   // For built-in
   route?: string;
   icon?: React.ReactNode;
@@ -136,6 +183,9 @@ interface SkillItem {
   channelStatus?: ChannelConnectionStatus;
   // For third-party
   skill?: SkillListEntry;
+  // For composio
+  composioToolkit?: ComposioToolkitMeta;
+  composioConnection?: ComposioConnection;
 }
 
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
@@ -146,12 +196,21 @@ export default function Skills() {
   const { definitions: channelDefs } = useChannelDefinitions();
   const channelConnections = useAppSelector(state => state.channelConnections);
 
+  const {
+    toolkits: composioToolkits,
+    connectionByToolkit: composioConnectionByToolkit,
+    refresh: refreshComposio,
+  } = useComposioIntegrations();
+
   const [setupModalOpen, setSetupModalOpen] = useState(false);
   const [activeSkillId, setActiveSkillId] = useState<string | null>(null);
   const [activeSkillName, setActiveSkillName] = useState('');
   const [activeSkillDescription, setActiveSkillDescription] = useState('');
   const [activeSkillHasSetup, setActiveSkillHasSetup] = useState(false);
   const [channelModalDef, setChannelModalDef] = useState<ChannelDefinition | null>(null);
+  const [composioModalToolkit, setComposioModalToolkit] = useState<ComposioToolkitMeta | null>(
+    null,
+  );
   const [installing, setInstalling] = useState<string | null>(null);
   const [screenIntelligenceModalOpen, setScreenIntelligenceModalOpen] = useState(false);
   const [autocompleteModalOpen, setAutocompleteModalOpen] = useState(false);
@@ -252,9 +311,35 @@ export default function Skills() {
       });
     }
 
+    // Composio toolkits — rendered with the same UnifiedSkillCard used
+    // for channels/skills so they sit flush in the grid. Each entry is
+    // keyed by slug and routed through `ComposioConnectModal` for the
+    // authorize/OAuth/poll flow.
+    const sortedToolkits = [...composioToolkits].sort((a, b) => a.localeCompare(b));
+    for (const slug of sortedToolkits) {
+      const meta = composioToolkitMeta(slug);
+      const connection = composioConnectionByToolkit.get(meta.slug);
+      items.push({
+        id: `composio-${meta.slug}`,
+        name: meta.name,
+        description: meta.description,
+        category: meta.category,
+        kind: 'composio',
+        icon: <span className="text-lg">{meta.icon}</span>,
+        composioToolkit: meta,
+        composioConnection: connection,
+      });
+    }
+
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skillsList, configurableChannels, channelConnections]);
+  }, [
+    skillsList,
+    configurableChannels,
+    channelConnections,
+    composioToolkits,
+    composioConnectionByToolkit,
+  ]);
 
   const availableCategories: SkillCategory[] = useMemo(() => {
     const cats = new Set<SkillCategory>(['All']);
@@ -441,6 +526,39 @@ export default function Skills() {
                           />
                         );
                       }
+                      if (item.kind === 'composio') {
+                        const meta = item.composioToolkit!;
+                        const connection = item.composioConnection;
+                        const state = deriveComposioState(connection);
+                        const ctaLabel =
+                          state === 'connected'
+                            ? 'Manage'
+                            : state === 'pending'
+                              ? 'Waiting'
+                              : state === 'error'
+                                ? 'Retry'
+                                : 'Connect';
+                        const ctaVariant: 'primary' | 'sage' | 'amber' =
+                          state === 'connected'
+                            ? 'sage'
+                            : state === 'error'
+                              ? 'amber'
+                              : 'primary';
+                        return (
+                          <UnifiedSkillCard
+                            key={item.id}
+                            icon={item.icon}
+                            title={item.name}
+                            description={item.description}
+                            statusDot={composioStatusDot(connection)}
+                            statusLabel={composioStatusLabel(connection)}
+                            statusColor={composioStatusColor(connection)}
+                            ctaLabel={ctaLabel}
+                            ctaVariant={ctaVariant}
+                            onCtaClick={() => setComposioModalToolkit(meta)}
+                          />
+                        );
+                      }
                       // third-party
                       return (
                         <ThirdPartySkillCard
@@ -489,6 +607,15 @@ export default function Skills() {
 
       {voiceModalOpen && (
         <VoiceSetupModal onClose={() => setVoiceModalOpen(false)} skillStatus={voiceStatus} />
+      )}
+
+      {composioModalToolkit && (
+        <ComposioConnectModal
+          toolkit={composioModalToolkit}
+          connection={composioConnectionByToolkit.get(composioModalToolkit.slug)}
+          onChanged={() => void refreshComposio()}
+          onClose={() => setComposioModalToolkit(null)}
+        />
       )}
     </div>
   );
