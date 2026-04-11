@@ -38,10 +38,12 @@ use crate::openhuman::agent::harness::AgentDefinitionRegistry;
 use crate::openhuman::config::MultimodalConfig;
 use crate::openhuman::providers::ChatMessage;
 
-use super::decision::{parse_triage_decision, TriageDecision};
+use crate::openhuman::config::Config;
+
+use super::decision::{parse_triage_decision, ParseError, TriageDecision};
 use super::envelope::TriggerEnvelope;
 use super::events;
-use super::routing::{resolve_provider, ResolvedProvider};
+use super::routing::{self, resolve_provider_with_config, ResolvedProvider};
 
 /// Agent definition id for the built-in triage classifier. Hard-coded
 /// so a rogue workspace TOML can't override it to point at a different
@@ -85,11 +87,85 @@ pub struct TriageRun {
 ///   *and* commit 2's remote retry was either disabled (commit 1) or
 ///   also failed.
 pub async fn run_triage(envelope: &TriggerEnvelope) -> anyhow::Result<TriageRun> {
-    let resolved = resolve_provider()
+    // Load the config once and reuse it for both the first attempt and
+    // any retry that falls back to remote. `Config::load_or_init` is
+    // relatively heavy (disk + env merge) so paying it twice would
+    // double the tail latency of a degraded-local trigger.
+    let config = Config::load_or_init()
+        .await
+        .context("loading config for triage turn")?;
+    let resolved = resolve_provider_with_config(&config)
         .await
         .context("resolving provider for triage turn")?;
-    run_triage_with_resolved(resolved, envelope).await
+
+    // First attempt. On success, publish latency + return.
+    match run_triage_with_resolved(resolved, envelope).await {
+        Ok(run) => Ok(run),
+        Err(first_err) if first_err.downcast_ref::<TurnOutcomeFailure>().is_some_and(|f| f.used_local) => {
+            // Local turn failed — mark cache degraded, rebuild a remote
+            // provider from the SAME config, and retry once. If that
+            // also fails, publish `TriggerEscalationFailed` and return.
+            tracing::warn!(
+                error = %first_err,
+                "[triage::evaluator] local attempt failed — retrying on remote"
+            );
+            routing::mark_degraded().await;
+            let remote = resolve_provider_with_config(&config)
+                .await
+                .context("rebuilding remote provider for triage retry")?;
+            debug_assert!(!remote.used_local, "mark_degraded must force remote");
+            match run_triage_with_resolved(remote, envelope).await {
+                Ok(run) => {
+                    tracing::info!(
+                        label = %envelope.display_label,
+                        "[triage::evaluator] remote retry succeeded after local failure"
+                    );
+                    Ok(run)
+                }
+                Err(second_err) => {
+                    let reason = format!("local then remote both failed: {first_err} / {second_err}");
+                    events::publish_failed(envelope, &reason);
+                    Err(anyhow!(reason))
+                }
+            }
+        }
+        Err(err) => {
+            // Remote attempt failed, or local attempt failed in a way
+            // that isn't eligible for retry (e.g. registry missing
+            // built-in — rebuilding won't help). Publish failure.
+            let reason = format!("{err}");
+            events::publish_failed(envelope, &reason);
+            Err(err)
+        }
+    }
 }
+
+/// Sentinel error wrapper the retry path looks for. We attach it to
+/// recoverable failures (handler error on local, parse failure on
+/// local) so `run_triage` can decide whether a second attempt is worth
+/// running. Unrecoverable failures (missing registry, missing built-in
+/// definition, etc.) surface as plain `anyhow::Error` and skip the
+/// retry loop.
+#[derive(Debug)]
+struct TurnOutcomeFailure {
+    used_local: bool,
+    kind: &'static str,
+    message: String,
+}
+
+impl std::fmt::Display for TurnOutcomeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "triage {} ({}): {}",
+            self.kind,
+            if self.used_local { "local" } else { "remote" },
+            self.message
+        )
+    }
+}
+
+impl std::error::Error for TurnOutcomeFailure {}
 
 /// Inner half of [`run_triage`] that takes an already-resolved
 /// [`ResolvedProvider`] instead of calling `routing::resolve_provider`.
@@ -165,33 +241,49 @@ pub async fn run_triage_with_resolved(
         used_local = used_local,
         "[triage::evaluator] dispatching {AGENT_RUN_TURN_METHOD}"
     );
-    let response = request_native_global::<AgentTurnRequest, AgentTurnResponse>(
+    let response = match request_native_global::<AgentTurnRequest, AgentTurnResponse>(
         AGENT_RUN_TURN_METHOD,
         request,
     )
     .await
-    .map_err(|err| match err {
-        NativeRequestError::HandlerFailed { message, .. } => anyhow!(message),
-        other => anyhow!("[agent.run_turn dispatch] {other}"),
-    })?;
+    {
+        Ok(r) => r,
+        Err(err) => {
+            let message = match &err {
+                NativeRequestError::HandlerFailed { message, .. } => message.clone(),
+                other => format!("[agent.run_turn dispatch] {other}"),
+            };
+            tracing::warn!(
+                error = %message,
+                used_local = used_local,
+                "[triage::evaluator] agent turn dispatch failed"
+            );
+            // Wrap in TurnOutcomeFailure so the outer `run_triage` can
+            // decide whether to retry on remote. Only local failures
+            // are retry-eligible.
+            return Err(anyhow!(TurnOutcomeFailure {
+                used_local,
+                kind: "handler",
+                message,
+            }));
+        }
+    };
 
     // ── Parse the classifier's reply ────────────────────────────────
     let decision = match parse_triage_decision(&response.text) {
         Ok(d) => d,
         Err(parse_err) => {
-            // Commit 1: no remote retry yet — commit 2 adds the
-            // retry-on-parse-failure path in routing + evaluator.
-            // For now, surface the failure so the subscriber publishes
-            // `TriggerEscalationFailed` via `apply_decision`.
             tracing::warn!(
                 error = %parse_err,
                 reply_chars = response.text.chars().count(),
+                used_local = used_local,
                 "[triage::evaluator] classifier reply did not parse"
             );
-            events::publish_failed(envelope, &format!("parser: {parse_err}"));
-            return Err(anyhow!(
-                "triage classifier reply did not parse: {parse_err}"
-            ));
+            return Err(anyhow!(TurnOutcomeFailure {
+                used_local,
+                kind: "parser",
+                message: format_parse_error(&parse_err),
+            }));
         }
     };
 
@@ -239,6 +331,19 @@ fn render_user_message(envelope: &TriggerEnvelope) -> String {
         eid = envelope.external_id,
         payload = payload_string,
     )
+}
+
+/// Format a [`ParseError`] for inclusion in a [`TurnOutcomeFailure`]
+/// message. Keeps the source-error wrapper out of the string so the
+/// retry log stays readable.
+fn format_parse_error(err: &ParseError) -> String {
+    match err {
+        ParseError::NoJsonObject => "classifier reply had no JSON object".to_string(),
+        ParseError::InvalidJson(src) => format!("classifier JSON invalid: {src}"),
+        ParseError::MissingTarget { action } => {
+            format!("action `{action}` missing required target_agent/prompt")
+        }
+    }
 }
 
 /// Pretty-print `payload` as JSON, truncate if it exceeds `max_bytes`,
