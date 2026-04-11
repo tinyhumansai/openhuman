@@ -48,8 +48,9 @@ use crate::openhuman::agent::harness::definition::{
 use crate::openhuman::agent::host_runtime::{self, RuntimeAdapter};
 use crate::openhuman::config::Config;
 use crate::openhuman::context::prompt::{
-    extract_cache_boundary, render_subagent_system_prompt, PromptContext, PromptTool,
-    SubagentRenderOptions, SystemPromptBuilder,
+    extract_cache_boundary, render_subagent_system_prompt, LearnedContextData, PromptContext,
+    PromptTool, SubagentRenderOptions, SystemPromptBuilder,
+    USER_MEMORY_PER_NAMESPACE_MAX_CHARS, USER_MEMORY_TOTAL_MAX_CHARS,
 };
 use crate::openhuman::composio::client::ComposioClient;
 use crate::openhuman::composio::tools::{
@@ -303,13 +304,37 @@ fn render_main_agent_dump(
     // Main agent dumps do not apply a visible-tool filter — every
     // tool the registry emits is candidate for rendering.
     let empty_filter: HashSet<String> = HashSet::new();
+
+    // Hydrate the same user-memory blob the runtime would inject on the
+    // first turn. The dump intentionally bypasses `Agent::fetch_learned_context`
+    // (which needs a live `Memory` backend and the `learning_enabled`
+    // flag), but the tree-summarizer side is pure filesystem reads, so
+    // we can mirror the runtime path byte-for-byte. This is what makes
+    // `openhuman agent dump-prompt --agent main` show the user memory
+    // section instead of an empty placeholder when summaries exist on
+    // disk.
+    let tree_root_summaries =
+        crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps(
+            workspace_dir,
+            USER_MEMORY_PER_NAMESPACE_MAX_CHARS,
+            USER_MEMORY_TOTAL_MAX_CHARS,
+        );
+    tracing::debug!(
+        namespace_count = tree_root_summaries.len(),
+        "[debug_dump] hydrated user memory from tree summarizer"
+    );
+    let learned = LearnedContextData {
+        tree_root_summaries,
+        ..Default::default()
+    };
+
     let ctx = PromptContext {
         workspace_dir,
         model_name,
         tools: &prompt_tools,
         skills: &[],
         dispatcher_instructions: "",
-        learned: Default::default(),
+        learned,
         visible_tool_names: &empty_filter,
     };
 

@@ -7,6 +7,7 @@ pub mod hooks;
 pub mod host_runtime;
 pub mod memory_loader;
 pub mod multimodal;
+pub mod pformat;
 mod schemas;
 pub use schemas::{
     all_controller_schemas as all_agent_controller_schemas,

@@ -8,6 +8,17 @@ use std::path::Path;
 const BOOTSTRAP_MAX_CHARS: usize = 20_000;
 const CACHE_BOUNDARY_MARKER: &str = "<!-- CACHE_BOUNDARY -->";
 
+/// Per-namespace cap when injecting tree summarizer root summaries into
+/// the prompt. ~8 000 chars ≈ 2 000 tokens — that's the floor the user
+/// asked for ("at least 2000 tokens of user memory") for a single
+/// namespace, and matches what the tree summarizer's `Day` level
+/// already enforces upstream.
+pub(crate) const USER_MEMORY_PER_NAMESPACE_MAX_CHARS: usize = 8_000;
+
+/// Hard ceiling across all namespaces, so a workspace with 30 namespaces
+/// doesn't burn the entire context window. ~32 000 chars ≈ 8 000 tokens.
+pub(crate) const USER_MEMORY_TOTAL_MAX_CHARS: usize = 32_000;
+
 /// Pre-fetched learned context data for prompt sections (avoids blocking the runtime).
 #[derive(Debug, Clone, Default)]
 pub struct LearnedContextData {
@@ -17,6 +28,17 @@ pub struct LearnedContextData {
     pub patterns: Vec<String>,
     /// Learned user profile entries.
     pub user_profile: Vec<String>,
+    /// Pre-fetched root-level summaries from the tree summarizer, one per
+    /// namespace that has a root node on disk.
+    ///
+    /// Each entry is `(namespace, body)`. The body is the markdown body of
+    /// `memory/namespaces/{ns}/tree/root.md` — already truncated to a
+    /// per-namespace cap by the fetcher so the section can render without
+    /// any further sizing logic.
+    ///
+    /// Empty when the tree summarizer has never run on this workspace
+    /// (the section then renders nothing and is dropped from the prompt).
+    pub tree_root_summaries: Vec<(String, String)>,
 }
 
 /// A lightweight tool descriptor for prompt rendering.
@@ -108,6 +130,11 @@ impl SystemPromptBuilder {
         Self {
             sections: vec![
                 Box::new(IdentitySection),
+                // User memory sits right after the identity bootstrap so the
+                // model has rich, persistent context about the user before it
+                // sees the tool catalogue. Section is empty (and skipped) when
+                // the tree summarizer has nothing on disk yet.
+                Box::new(UserMemorySection),
                 Box::new(ToolsSection),
                 Box::new(SafetySection),
                 Box::new(SkillsSection),
@@ -251,6 +278,7 @@ pub struct SkillsSection;
 pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
+pub struct UserMemorySection;
 
 impl PromptSection for IdentitySection {
     fn name(&self) -> &str {
@@ -387,6 +415,39 @@ impl PromptSection for RuntimeSection {
             std::env::consts::OS,
             ctx.model_name
         ))
+    }
+}
+
+impl PromptSection for UserMemorySection {
+    fn name(&self) -> &str {
+        "user_memory"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.learned.tree_root_summaries.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("## User Memory\n\n");
+        out.push_str(
+            "Long-term memory distilled by the tree summarizer. \
+             Each section is the root summary for a memory namespace, \
+             representing everything we've learned about that domain over time. \
+             Treat this as durable context: the model has seen these facts before, \
+             they should not need to be re-discovered.\n\n",
+        );
+
+        for (namespace, body) in &ctx.learned.tree_root_summaries {
+            let trimmed = body.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "### {namespace}\n");
+            out.push_str(trimmed);
+            out.push_str("\n\n");
+        }
+
+        Ok(out)
     }
 }
 
