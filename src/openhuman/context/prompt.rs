@@ -836,8 +836,10 @@ mod tests {
 
     #[test]
     fn render_subagent_system_prompt_includes_cache_boundary_before_workspace() {
-        let workspace =
-            std::env::temp_dir().join(format!("openhuman_prompt_subagent_{}", uuid::Uuid::new_v4()));
+        let workspace = std::env::temp_dir().join(format!(
+            "openhuman_prompt_subagent_{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(&workspace).unwrap();
 
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
