@@ -266,16 +266,16 @@ export default function Skills() {
     for (const slug of sortedToolkits) {
       const meta = composioToolkitMeta(slug);
       const connection = composioConnectionByToolkit.get(meta.slug);
-      items.push({
-        id: `composio-${meta.slug}`,
-        name: meta.name,
-        description: meta.description,
-        category: 'Other',
-        kind: 'composio',
-        icon: <span className="text-lg">{meta.icon}</span>,
-        composioToolkit: meta,
-        composioConnection: connection,
-      });
+        items.push({
+          id: `composio-${meta.slug}`,
+          name: meta.name,
+          description: meta.description,
+          category: meta.category,
+          kind: 'composio',
+          icon: <span className="text-lg">{meta.icon}</span>,
+          composioToolkit: meta,
+          composioConnection: connection,
+        });
     }
 
     return items;

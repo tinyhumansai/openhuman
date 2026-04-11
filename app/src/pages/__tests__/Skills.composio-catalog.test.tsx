@@ -29,17 +29,19 @@ vi.mock('../../lib/composio/hooks', () => ({
 }));
 
 describe('Skills page — Composio catalog fallback', () => {
-  it('shows known composio integrations in the third-party Other group when the live toolkit list is empty', () => {
+  it('shows known composio integrations in their configured category groups when the live toolkit list is empty', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    expect(screen.getByRole('heading', { name: 'Other' })).toBeInTheDocument();
-    expect(screen.queryByText('Productivity')).not.toBeInTheDocument();
-    expect(screen.queryByText('Tools & Automation')).not.toBeInTheDocument();
-    expect(screen.queryByText('Social')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Productivity' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Tools & Automation' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Social' })).toBeInTheDocument();
     expect(screen.getByText('Google Calendar')).toBeInTheDocument();
     expect(screen.getByText('Google Drive')).toBeInTheDocument();
+    expect(screen.getByText('Gmail')).toBeInTheDocument();
+    expect(screen.getByText('Notion')).toBeInTheDocument();
     expect(screen.getByText('GitHub')).toBeInTheDocument();
     expect(screen.getByText('Linear')).toBeInTheDocument();
     expect(screen.getByText('Slack')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Other' })).not.toBeInTheDocument();
   });
 });
