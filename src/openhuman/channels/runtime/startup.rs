@@ -46,6 +46,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
     let _tracing_handle = bus.subscribe(Arc::new(TracingSubscriber));
     crate::openhuman::health::bus::register_health_subscriber();
     crate::openhuman::skills::bus::register_skill_cleanup_subscriber();
+    crate::openhuman::composio::register_composio_trigger_subscriber();
     tracing::debug!("[event_bus] global singleton initialized in start_channels");
 
     // Initialise the sub-agent definition registry from this workspace.

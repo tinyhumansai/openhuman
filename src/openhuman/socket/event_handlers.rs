@@ -112,6 +112,52 @@ pub(super) fn handle_sio_event(
                 }
             }
         }
+        // Composio trigger webhook — backend emits this after HMAC-verifying
+        // an incoming Composio webhook. Publish to the event bus so the
+        // composio domain (and any future subscribers) can react.
+        "composio:trigger" => {
+            log::info!("[socket] Publishing composio:trigger to event bus");
+            let toolkit = data
+                .get("toolkit")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let trigger = data
+                .get("trigger")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let payload = data
+                .get("payload")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let metadata_id = data
+                .get("metadata")
+                .and_then(|m| m.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let metadata_uuid = data
+                .get("metadata")
+                .and_then(|m| m.get("uuid"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            if toolkit.is_empty() || trigger.is_empty() {
+                log::warn!(
+                    "[socket] composio:trigger missing toolkit/trigger; dropping event"
+                );
+            } else {
+                publish_global(DomainEvent::ComposioTriggerReceived {
+                    toolkit,
+                    trigger,
+                    metadata_id,
+                    metadata_uuid,
+                    payload,
+                });
+            }
+        }
         // Channel inbound message — publish to event bus for ChannelInboundSubscriber
         _ if event_name.ends_with(":message") => {
             log::info!(

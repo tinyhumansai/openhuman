@@ -187,6 +187,36 @@ pub enum DomainEvent {
         error: Option<String>,
     },
 
+    // ── Composio ────────────────────────────────────────────────────────
+    /// A Composio trigger webhook arrived via the backend socket.io bridge
+    /// and is ready for domain-specific dispatch.
+    ComposioTriggerReceived {
+        /// Toolkit slug, e.g. `"gmail"`.
+        toolkit: String,
+        /// Trigger slug, e.g. `"GMAIL_NEW_GMAIL_MESSAGE"`.
+        trigger: String,
+        /// Composio trigger event id (from backend metadata.id).
+        metadata_id: String,
+        /// Composio trigger UUID (from backend metadata.uuid).
+        metadata_uuid: String,
+        /// Provider-specific trigger payload.
+        payload: serde_json::Value,
+    },
+    /// A Composio connection OAuth handoff was initiated (connectUrl returned).
+    ComposioConnectionCreated {
+        toolkit: String,
+        connection_id: String,
+        connect_url: String,
+    },
+    /// A Composio action was executed (success or failure) via the backend.
+    ComposioActionExecuted {
+        tool: String,
+        success: bool,
+        error: Option<String>,
+        cost_usd: f64,
+        elapsed_ms: u64,
+    },
+
     // ── Tree Summarizer ──────────────────────────────────────────────────
     /// An hour leaf was created from buffered data.
     TreeSummarizerHourCompleted {
@@ -258,6 +288,10 @@ impl DomainEvent {
             | Self::WebhookRegistered { .. }
             | Self::WebhookUnregistered { .. }
             | Self::WebhookProcessed { .. } => "webhook",
+
+            Self::ComposioTriggerReceived { .. }
+            | Self::ComposioConnectionCreated { .. }
+            | Self::ComposioActionExecuted { .. } => "composio",
 
             Self::TreeSummarizerHourCompleted { .. }
             | Self::TreeSummarizerPropagated { .. }

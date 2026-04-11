@@ -826,13 +826,14 @@ fn register_domain_subscribers() {
 
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::skills::bus::register_skill_cleanup_subscriber();
+        crate::openhuman::composio::register_composio_trigger_subscriber();
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
         crate::openhuman::service::bus::register_restart_subscriber();
 
         log::info!(
-            "[event_bus] webhook, channel, health, skill, and restart subscribers registered"
+            "[event_bus] webhook, channel, health, skill, composio, and restart subscribers registered"
         );
     });
 }
