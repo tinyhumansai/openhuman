@@ -114,6 +114,7 @@ async fn build_memory_context_includes_recalled_entries() {
 
 #[tokio::test]
 async fn process_channel_message_restores_per_sender_history_on_follow_ups() {
+    let _bus_guard = super::common::use_real_agent_handler().await;
     let channel_impl = Arc::new(RecordingChannel::default());
     let channel: Arc<dyn Channel> = channel_impl.clone();
 

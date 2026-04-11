@@ -5,7 +5,7 @@
 //! echo target), waits for the response, and emits it back through the socket.
 //! This decouples the socket module from webhook routing logic.
 
-use crate::openhuman::event_bus::{publish_global, DomainEvent, EventHandler};
+use crate::core::event_bus::{publish_global, DomainEvent, EventHandler};
 use crate::openhuman::socket::global_socket_manager;
 use async_trait::async_trait;
 use serde_json::json;

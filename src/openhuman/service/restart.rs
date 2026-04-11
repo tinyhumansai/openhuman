@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::openhuman::event_bus::{self, DomainEvent};
+use crate::core::event_bus::{self, DomainEvent};
 use crate::rpc::RpcOutcome;
 
 const RESTART_DELAY_ENV: &str = "OPENHUMAN_RESTART_DELAY_MS";
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl crate::openhuman::event_bus::EventHandler for RestartProbe {
+    impl crate::core::event_bus::EventHandler for RestartProbe {
         fn name(&self) -> &str {
             "service::restart_probe"
         }
@@ -176,11 +176,9 @@ mod tests {
             Some(&["system"])
         }
 
-        async fn handle(&self, event: &crate::openhuman::event_bus::DomainEvent) {
-            if let crate::openhuman::event_bus::DomainEvent::SystemRestartRequested {
-                source,
-                reason,
-            } = event
+        async fn handle(&self, event: &crate::core::event_bus::DomainEvent) {
+            if let crate::core::event_bus::DomainEvent::SystemRestartRequested { source, reason } =
+                event
             {
                 let _ = self.tx.send((source.clone(), reason.clone()));
             }

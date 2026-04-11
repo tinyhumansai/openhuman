@@ -4,7 +4,7 @@
 //! by the socket transport layer. It runs the agent inference loop via the web
 //! channel provider and sends the reply back through the REST API.
 
-use crate::openhuman::event_bus::{DomainEvent, EventHandler};
+use crate::core::event_bus::{DomainEvent, EventHandler};
 use async_trait::async_trait;
 use serde_json::json;
 

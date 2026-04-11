@@ -35,7 +35,7 @@ pub fn require_engine() -> Result<Arc<RuntimeEngine>, String> {
     global_engine().ok_or_else(|| "skill runtime not initialized".to_string())
 }
 
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::memory::MemoryClientRef;
 use crate::openhuman::skills::cron_scheduler::CronScheduler;
 use crate::openhuman::skills::manifest::SkillManifest;

@@ -8,9 +8,9 @@ use super::text::{
     split_message_for_telegram, strip_tool_call_tags, TELEGRAM_BIND_COMMAND,
     TELEGRAM_MAX_MESSAGE_LENGTH,
 };
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::channels::traits::{Channel, ChannelMessage, SendMessage};
 use crate::openhuman::config::{Config, StreamMode};
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::security::pairing::PairingGuard;
 use anyhow::Context;
 use async_trait::async_trait;

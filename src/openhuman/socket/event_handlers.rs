@@ -10,7 +10,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use crate::api::models::socket::ConnectionStatus;
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::webhooks::WebhookRequest;
 
 use super::manager::{emit_server_event, emit_state_change, SharedState};

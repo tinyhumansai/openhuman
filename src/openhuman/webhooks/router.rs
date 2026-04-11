@@ -4,7 +4,7 @@ use super::types::{
     TunnelRegistration, WebhookDebugEvent, WebhookDebugLogEntry, WebhookRequest,
     WebhookResponseData,
 };
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
+use crate::core::event_bus::{publish_global, DomainEvent};
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};

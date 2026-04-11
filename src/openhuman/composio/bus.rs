@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 
-use crate::openhuman::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 
 static COMPOSIO_TRIGGER_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -26,8 +26,7 @@ pub fn register_composio_trigger_subscriber() {
     if COMPOSIO_TRIGGER_HANDLE.get().is_some() {
         return;
     }
-    match crate::openhuman::event_bus::subscribe_global(Arc::new(ComposioTriggerSubscriber::new()))
-    {
+    match crate::core::event_bus::subscribe_global(Arc::new(ComposioTriggerSubscriber::new())) {
         Some(handle) => {
             let _ = COMPOSIO_TRIGGER_HANDLE.set(handle);
             log::debug!("[event_bus] composio trigger subscriber registered");

@@ -33,7 +33,7 @@
 //! ```
 //!
 //! [`DomainEvent::ComposioTriggerReceived`]:
-//! crate::openhuman::event_bus::DomainEvent::ComposioTriggerReceived
+//! crate::core::event_bus::DomainEvent::ComposioTriggerReceived
 
 pub mod bus;
 pub mod client;

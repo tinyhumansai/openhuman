@@ -2,6 +2,7 @@
 
 use super::dispatch::run_message_dispatch_loop;
 use super::supervision::{compute_max_in_flight_messages, spawn_supervised_listener};
+use crate::core::event_bus::{self, DomainEvent, TracingSubscriber, DEFAULT_CAPACITY};
 use crate::openhuman::agent::harness::build_tool_instructions;
 use crate::openhuman::agent::host_runtime;
 use crate::openhuman::channels::context::{
@@ -30,7 +31,6 @@ use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
-use crate::openhuman::event_bus::{self, DomainEvent, TracingSubscriber, DEFAULT_CAPACITY};
 use crate::openhuman::memory::{self, Memory};
 use crate::openhuman::providers::{self, Provider};
 use crate::openhuman::security::SecurityPolicy;
@@ -50,6 +50,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
         config.workspace_dir.clone(),
     );
     crate::openhuman::composio::register_composio_trigger_subscriber();
+    // Native request handlers. Re-registering is safe (latest wins) so
+    // this is idempotent even if `bootstrap_skill_runtime` also runs.
+    // Must happen before `run_message_dispatch_loop` begins, because
+    // channel dispatch calls `request_native_global("agent.run_turn", …)`
+    // for every inbound message.
+    crate::openhuman::agent::bus::register_agent_handlers();
     tracing::debug!("[event_bus] global singleton initialized in start_channels");
 
     // Initialise the sub-agent definition registry from this workspace.

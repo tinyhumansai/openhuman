@@ -3,8 +3,13 @@
 //! The [`EventBus`] is a **singleton** — one instance handles all events for
 //! the entire application. Call [`init_global`] once at startup, then use
 //! [`publish_global`], [`subscribe_global`], and [`global`] from anywhere.
+//!
+//! For typed request/response calls between modules, see the parallel
+//! [`super::native_request`] surface — in-process Rust-typed dispatch that
+//! passes trait objects and channels through unchanged (no serialization).
 
 use super::events::DomainEvent;
+use super::native_request::init_native_registry;
 use super::subscriber::{EventHandler, FnSubscriber, SubscriptionHandle};
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
@@ -23,7 +28,14 @@ pub const DEFAULT_CAPACITY: usize = 256;
 ///
 /// Subsequent calls return the already-initialized bus without changing
 /// the capacity. Panics are impossible — `OnceLock` guarantees single init.
+///
+/// This also initializes the native request registry so that any domain
+/// can immediately register handlers and dispatch requests without worrying
+/// about startup ordering.
 pub fn init_global(capacity: usize) -> &'static EventBus {
+    // Initialize the native request registry first so handler registration
+    // is always safe from anywhere in the process once the bus is up.
+    init_native_registry();
     GLOBAL_BUS.get_or_init(|| {
         tracing::debug!(capacity, "[event_bus] initializing global singleton");
         EventBus::create(capacity)

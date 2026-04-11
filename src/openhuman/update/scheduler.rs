@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::UpdateConfig;
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::update::core as update_core;
 
 /// Minimum allowed interval to avoid hammering the GitHub API.
@@ -21,7 +21,7 @@ pub async fn run(config: UpdateConfig) {
         return;
     }
 
-    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     crate::openhuman::health::bus::register_health_subscriber();
     publish_global(DomainEvent::SystemStartup {
         component: "update_checker".to_string(),

@@ -7,6 +7,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
 
+// Note: the shared bus handler lock and the "install the real agent
+// handler for this test" helper both live in
+// `crate::openhuman::agent::bus` as `BUS_HANDLER_LOCK` (re-exported from
+// `crate::core::event_bus::testing`) and `use_real_agent_handler` so any
+// test in the workspace can drive the real `agent.run_turn` path without
+// depending on channels-specific scaffolding.
+//
+// For stub installations use `mock_agent_run_turn` (also in
+// `crate::openhuman::agent::bus`) or the generic `mock_bus_stub` in
+// `crate::core::event_bus::testing` for arbitrary bus methods.
+pub(super) use crate::openhuman::agent::bus::use_real_agent_handler;
+
 pub(super) fn make_workspace() -> TempDir {
     let tmp = TempDir::new().unwrap();
     // Create minimal workspace files — only the bundled identity prompts

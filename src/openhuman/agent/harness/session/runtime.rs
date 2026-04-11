@@ -8,9 +8,9 @@
 //! drive the model.
 
 use super::types::{Agent, AgentBuilder};
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::providers::{self, ConversationMessage, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolSpec};
