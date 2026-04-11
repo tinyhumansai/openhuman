@@ -2,13 +2,15 @@
 //!
 //! An [`AgentDefinition`] fully specifies a sub-agent: its core prompt, model,
 //! allowed tool set, runtime limits, and which sections of the parent system
-//! prompt to omit. Built-in definitions are derived from
-//! [`super::archetypes::AgentArchetype`] in
-//! [`super::builtin_definitions`]; users can ship custom definitions as TOML
-//! files under `$OPENHUMAN_WORKSPACE/agents/*.toml` (with a fallback to
-//! `~/.openhuman/agents/*.toml` for user-global specialists) which override
-//! built-ins on id collision. See [`super::definition_loader`] for the
-//! directory scan + TOML parsing contract.
+//! prompt to omit. Built-in definitions live in
+//! [`crate::openhuman::agent::agents`] — one subfolder per agent, each
+//! holding an `agent.toml` (metadata) and `prompt.md` (system prompt). A
+//! thin wrapper in [`super::builtin_definitions`] loads them and appends
+//! the synthetic `fork` definition. Users can ship custom definitions as
+//! TOML files under `$OPENHUMAN_WORKSPACE/agents/*.toml` (with a fallback
+//! to `~/.openhuman/agents/*.toml` for user-global specialists) which
+//! override built-ins on id collision. See [`super::definition_loader`]
+//! for the directory scan + TOML parsing contract.
 //!
 //! Sub-agents are dispatched at runtime by the `spawn_subagent` tool, which
 //! looks up an [`AgentDefinition`] by id in the global
@@ -55,6 +57,12 @@ pub struct AgentDefinition {
     // ── prompt ──────────────────────────────────────────────────────────
     /// Source of the sub-agent's core system prompt. Inline for TOML-defined
     /// agents, or a path to a file under `agent/prompts/` for built-ins.
+    ///
+    /// Defaults to an empty inline prompt so TOMLs that ship a sibling
+    /// `prompt.md` can omit this field and let the loader inject the
+    /// rendered body. All in-tree built-ins use that pattern — see
+    /// [`crate::openhuman::agent::agents`].
+    #[serde(default = "defaults::empty_inline_prompt")]
     pub system_prompt: PromptSource,
 
     /// Sections of the main agent's prompt to strip when this sub-agent runs.
@@ -122,8 +130,7 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub timeout_secs: Option<u64>,
 
-    /// `none` / `read_only` / `sandboxed`. Mirrors
-    /// [`super::archetypes::AgentArchetype::sandbox_mode`].
+    /// `none` / `read_only` / `sandboxed`. See [`SandboxMode`].
     #[serde(default)]
     pub sandbox_mode: SandboxMode,
 
@@ -230,9 +237,9 @@ pub enum ToolScope {
 // Sandbox mode
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Sandbox mode for a sub-agent's tool execution. Mirrors the existing
-/// [`super::archetypes::AgentArchetype::sandbox_mode`] string for now;
-/// in the future this may map directly into a `SecurityPolicy` builder.
+/// Sandbox mode for a sub-agent's tool execution. Serialises as a simple
+/// `snake_case` string in TOML (`none` / `read_only` / `sandboxed`). In
+/// the future this may map directly into a `SecurityPolicy` builder.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxMode {
@@ -254,7 +261,8 @@ pub enum SandboxMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(tag = "kind", content = "path")]
 pub enum DefinitionSource {
-    /// Built-in derived from an [`super::archetypes::AgentArchetype`].
+    /// Built-in definition shipped as part of the binary (loaded from
+    /// [`crate::openhuman::agent::agents`]).
     #[default]
     Builtin,
     /// Loaded from a TOML file at the given absolute path.
@@ -266,6 +274,8 @@ pub enum DefinitionSource {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub(crate) mod defaults {
+    use super::PromptSource;
+
     pub(crate) fn true_() -> bool {
         true
     }
@@ -276,6 +286,14 @@ pub(crate) mod defaults {
 
     pub(crate) fn max_iterations() -> usize {
         8
+    }
+
+    /// Placeholder for [`super::AgentDefinition::system_prompt`] when the
+    /// TOML omits the field. The built-in loader overwrites this with
+    /// the rendered sibling `prompt.md`; custom TOMLs that omit the
+    /// field get a no-op empty prompt (and should not).
+    pub(crate) fn empty_inline_prompt() -> PromptSource {
+        PromptSource::Inline(String::new())
     }
 }
 
