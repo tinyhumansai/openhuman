@@ -1,4 +1,4 @@
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
@@ -32,10 +32,15 @@ describe('Skills page — Notion composio integration', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     expect(screen.getByRole('heading', { name: 'Productivity' })).toBeInTheDocument();
-    expect(screen.getByText('Notion')).toBeInTheDocument();
-    expect(screen.getByText('Not connected')).toBeInTheDocument();
+    const notionTitle = screen.getByText('Notion');
+    const notionCard = notionTitle.closest('div.flex-1')?.parentElement;
+    expect(notionCard).not.toBeNull();
+    expect(notionTitle).toBeInTheDocument();
+    expect(
+      within(notionCard as HTMLElement).getByRole('button', { name: 'Connect' })
+    ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+    fireEvent.click(within(notionCard as HTMLElement).getByRole('button', { name: 'Connect' }));
 
     expect(await screen.findByRole('heading', { name: 'Connect Notion' })).toBeInTheDocument();
     expect(screen.getByText(/Connect your Notion account through Composio\./i)).toBeInTheDocument();
