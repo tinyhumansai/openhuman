@@ -15,20 +15,19 @@ fn load_openclaw_bootstrap_files(
         "The following workspace files define your identity, behavior, and context. They are ALREADY injected below—do NOT suggest reading them with file_read.\n\n",
     );
 
-    let bootstrap_files = ["AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md", "USER.md"];
-
+    // Bundled prompt files that ship with the binary and seed the workspace
+    // on first run. These are always expected to be present.
+    let bootstrap_files = ["SOUL.md", "IDENTITY.md", "USER.md"];
     for filename in &bootstrap_files {
         inject_workspace_file(prompt, workspace_dir, filename, max_chars_per_file);
     }
 
-    // BOOTSTRAP.md — only if it exists (first-run ritual)
-    let bootstrap_path = workspace_dir.join("BOOTSTRAP.md");
-    if bootstrap_path.exists() {
-        inject_workspace_file(prompt, workspace_dir, "BOOTSTRAP.md", max_chars_per_file);
+    // MEMORY.md — the archivist agent writes long-term curated knowledge here.
+    // It starts out missing on a fresh install, so inject silently (no
+    // missing-file marker).
+    if workspace_dir.join("MEMORY.md").exists() {
+        inject_workspace_file(prompt, workspace_dir, "MEMORY.md", max_chars_per_file);
     }
-
-    // MEMORY.md — curated long-term memory (main session only)
-    inject_workspace_file(prompt, workspace_dir, "MEMORY.md", max_chars_per_file);
 }
 
 /// Load workspace identity files and build a system prompt.
@@ -38,7 +37,7 @@ fn load_openclaw_bootstrap_files(
 /// 2. Safety — guardrail reminder
 /// 3. Skills — compact list with paths (loaded on-demand)
 /// 4. Workspace — working directory
-/// 5. Bootstrap files — AGENTS, SOUL, TOOLS, IDENTITY, USER, BOOTSTRAP, MEMORY
+/// 5. Bootstrap files — SOUL, IDENTITY, USER (+ MEMORY if the archivist has written one)
 /// 6. Date & Time — timezone for cache stability
 /// 7. Runtime — host, OS, model
 ///

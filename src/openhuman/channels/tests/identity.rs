@@ -14,7 +14,7 @@ fn openclaw_loads_workspace_markdown_files() {
         "missing Project Context header"
     );
 
-    // Each OpenClaw bootstrap file is inlined (content from make_workspace).
+    // Each bundled identity file is inlined (content from make_workspace).
     assert!(
         prompt.contains("Be helpful"),
         "SOUL.md content should be inlined"
@@ -27,16 +27,9 @@ fn openclaw_loads_workspace_markdown_files() {
         prompt.contains("Name: Test User"),
         "USER.md content should be inlined"
     );
-    assert!(
-        prompt.contains("Follow instructions"),
-        "AGENTS.md content should be inlined"
-    );
-    assert!(
-        prompt.contains("Use shell carefully"),
-        "TOOLS.md content should be inlined"
-    );
+    // MEMORY.md is optional (archivist-written). When present it should inline.
     assert!(
         prompt.contains("User likes Rust"),
-        "MEMORY.md content should be inlined"
+        "MEMORY.md content should be inlined when present"
     );
 }

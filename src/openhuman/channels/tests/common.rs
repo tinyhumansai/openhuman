@@ -9,7 +9,8 @@ use tempfile::TempDir;
 
 pub(super) fn make_workspace() -> TempDir {
     let tmp = TempDir::new().unwrap();
-    // Create minimal workspace files
+    // Create minimal workspace files — only the bundled identity prompts
+    // plus a MEMORY.md stand-in for what the archivist would write.
     std::fs::write(tmp.path().join("SOUL.md"), "# Soul\nBe helpful.").unwrap();
     std::fs::write(
         tmp.path().join("IDENTITY.md"),
@@ -17,12 +18,6 @@ pub(super) fn make_workspace() -> TempDir {
     )
     .unwrap();
     std::fs::write(tmp.path().join("USER.md"), "# User\nName: Test User").unwrap();
-    std::fs::write(
-        tmp.path().join("AGENTS.md"),
-        "# Agents\nFollow instructions.",
-    )
-    .unwrap();
-    std::fs::write(tmp.path().join("TOOLS.md"), "# Tools\nUse shell carefully.").unwrap();
     std::fs::write(
         tmp.path().join("HEARTBEAT.md"),
         "# Heartbeat\nCheck status.",
