@@ -108,6 +108,11 @@ pub struct ContextManager {
     /// Useful for tests and debugging; see
     /// [`ContextConfig::enabled`].
     enabled: bool,
+    /// Per-tool-result byte cap applied inline at tool-execution time.
+    /// Stored on the manager (rather than on the agent directly) so
+    /// every caller that touches "what's in the model's context window"
+    /// reads the same source of truth.
+    tool_result_budget_bytes: usize,
 }
 
 impl ContextManager {
@@ -147,7 +152,16 @@ impl ContextManager {
             summarizer_model,
             default_prompt_builder,
             enabled: config.enabled,
+            tool_result_budget_bytes: config.tool_result_budget_bytes,
         }
+    }
+
+    /// Byte budget for an individual tool result before the context
+    /// pipeline's inline truncation stage fires. Agents read this when
+    /// a tool returns to apply the cap before the result enters
+    /// history.
+    pub fn tool_result_budget_bytes(&self) -> usize {
+        self.tool_result_budget_bytes
     }
 
     // ─── Budget tracking ──────────────────────────────────────────

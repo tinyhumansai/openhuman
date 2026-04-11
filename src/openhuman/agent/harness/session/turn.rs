@@ -526,7 +526,11 @@ impl Agent {
         // *inline* before the result enters history. This is the only
         // cache-safe reduction stage — the truncated body has never
         // been sent to the backend so it creates no cache invalidation.
-        let budget_bytes = self.config.tool_result_budget_bytes;
+        // Source the budget from the context manager so it tracks the
+        // resolved `context.tool_result_budget_bytes` (including any
+        // env/config overrides) rather than the deprecated
+        // `agent.tool_result_budget_bytes` field.
+        let budget_bytes = self.context.tool_result_budget_bytes();
         let (result, budget_outcome) =
             crate::openhuman::context::apply_tool_result_budget(raw_result, budget_bytes);
         if budget_outcome.truncated {
