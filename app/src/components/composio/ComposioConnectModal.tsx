@@ -44,9 +44,14 @@ export default function ComposioConnectModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const pollTimerRef = useRef<number | null>(null);
   const pollDeadlineRef = useRef<number>(0);
+  const isPollingRef = useRef<boolean>(false);
+  const inFlightRef = useRef<boolean>(false);
 
-  const initiallyConnected = deriveComposioState(connection) === 'connected';
-  const [phase, setPhase] = useState<Phase>(initiallyConnected ? 'connected' : 'idle');
+  const initialState = deriveComposioState(connection);
+  const initiallyConnected = initialState === 'connected';
+  const [phase, setPhase] = useState<Phase>(
+    initiallyConnected ? 'connected' : initialState === 'pending' ? 'waiting' : 'idle'
+  );
   const [error, setError] = useState<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const [activeConnection, setActiveConnection] = useState<ComposioConnection | undefined>(
@@ -72,8 +77,9 @@ export default function ComposioConnectModal({
   }, []);
 
   const stopPolling = useCallback(() => {
+    isPollingRef.current = false;
     if (pollTimerRef.current != null) {
-      window.clearInterval(pollTimerRef.current);
+      window.clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
   }, []);
@@ -83,8 +89,27 @@ export default function ComposioConnectModal({
 
   const startPolling = useCallback(() => {
     stopPolling();
+    isPollingRef.current = true;
     pollDeadlineRef.current = Date.now() + POLL_TIMEOUT_MS;
+
+    const scheduleNext = () => {
+      if (!isPollingRef.current) return;
+      pollTimerRef.current = window.setTimeout(() => void tick(), POLL_INTERVAL_MS);
+    };
+
     const tick = async () => {
+      // Guard against overlapping executions: if a previous tick is still
+      // in flight or we've already stopped/deadlined, skip this round.
+      if (inFlightRef.current || !isPollingRef.current) return;
+      if (Date.now() > pollDeadlineRef.current) {
+        stopPolling();
+        setPhase('error');
+        setError(
+          'Timed out waiting for OAuth to complete. Please retry or check that the browser finished the flow.'
+        );
+        return;
+      }
+      inFlightRef.current = true;
       try {
         const resp = await listConnections();
         const hit = resp.connections.find(
@@ -110,19 +135,28 @@ export default function ComposioConnectModal({
       } catch (err) {
         // Swallow transient errors during polling — we'll retry on next tick.
         console.warn('[composio] poll failed:', err);
+      } finally {
+        inFlightRef.current = false;
       }
-      if (Date.now() > pollDeadlineRef.current) {
-        stopPolling();
-        setPhase('error');
-        setError(
-          'Timed out waiting for OAuth to complete. Please retry or check that the browser finished the flow.'
-        );
-      }
+      scheduleNext();
     };
-    // Fire once immediately, then on interval.
+
+    // Fire once immediately, then recurse via setTimeout once the previous
+    // tick resolves. Avoids overlapping async ticks entirely.
     void tick();
-    pollTimerRef.current = window.setInterval(() => void tick(), POLL_INTERVAL_MS);
   }, [onChanged, stopPolling, toolkit.slug]);
+
+  // If the modal opens while an OAuth handoff is already in flight
+  // (status = PENDING/INITIATED/…), resume polling instead of asking
+  // the user to click Connect again.
+  useEffect(() => {
+    if (initialState === 'pending') {
+      startPolling();
+    }
+    // intentionally run once on mount — startPolling has stable deps and
+    // re-running this on every identity change would restart the poller.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleConnect = useCallback(async () => {
     setPhase('authorizing');

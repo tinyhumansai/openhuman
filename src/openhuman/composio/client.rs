@@ -158,9 +158,12 @@ impl ComposioClient {
         let url = format!("{}{}", self.inner.backend_url, path);
         tracing::debug!("[composio] DELETE {}", url);
 
-        // Reuse the shared client's reqwest pool by building a fresh
-        // lightweight client here — the integration tools do the same
-        // when they need side-band request types.
+        // Build a fresh lightweight reqwest client for this DELETE.
+        // Note: this allocates a *new* connection pool — it does NOT
+        // reuse the pool inside `self.inner`. To reuse the shared pool
+        // we'd need to clone or expose the existing `reqwest::Client`
+        // from `IntegrationClient`, which we intentionally avoid so the
+        // public surface of that type doesn't widen for one caller.
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .connect_timeout(std::time::Duration::from_secs(10))

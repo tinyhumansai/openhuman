@@ -15,9 +15,8 @@ use crate::rpc::RpcOutcome;
 
 use super::client::{build_composio_client, ComposioClient};
 use super::types::{
-    ComposioAuthorizeResponse, ComposioConnection, ComposioConnectionsResponse,
-    ComposioDeleteResponse, ComposioExecuteResponse, ComposioToolSchema, ComposioToolkitsResponse,
-    ComposioToolsResponse,
+    ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioDeleteResponse,
+    ComposioExecuteResponse, ComposioToolkitsResponse, ComposioToolsResponse,
 };
 
 /// Resolve a [`ComposioClient`] from `config.integrations`, or return an
@@ -182,7 +181,3 @@ pub async fn composio_execute(
 // ── Helpers re-exported so callers can pull connection/tool types without
 // reaching into the nested types module.
 pub use super::types::{ComposioConnection as Connection, ComposioToolSchema as ToolSchemaType};
-
-// Suppress unused import warnings when only some ops are referenced.
-#[allow(dead_code)]
-fn _unused_marker(_c: ComposioConnection, _t: ComposioToolSchema) {}

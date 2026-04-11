@@ -153,7 +153,10 @@ header('1. Authentication');
 
 function getSessionTokenFromCore() {
   const coreBin = path.join(ROOT, 'target', 'debug', 'openhuman-core');
-  if (!existsSync(coreBin)) return null;
+  if (!existsSync(coreBin)) {
+    if (DEBUG) console.debug(`[debug] core binary not found at ${coreBin}`);
+    return null;
+  }
   try {
     const output = execSync(`"${coreBin}" auth get_session_token`, {
       cwd: ROOT,
@@ -163,7 +166,11 @@ function getSessionTokenFromCore() {
     });
     const match = output.match(/"token":\s*"([^"]+)"/);
     return match?.[1] || null;
-  } catch {
+  } catch (err) {
+    if (DEBUG) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.debug(`[debug] ${coreBin} auth get_session_token failed: ${msg}`);
+    }
     return null;
   }
 }

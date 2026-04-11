@@ -40,6 +40,17 @@
 
 set -euo pipefail
 
+# Track any temp files created by `call` so we can clean them up on
+# abort (Ctrl+C, error exit, etc.) — otherwise a mid-flight interrupt
+# leaves a dangling mktemp file behind.
+TMP_FILES=()
+cleanup_tmp_files() {
+    for f in "${TMP_FILES[@]}"; do
+        [ -n "$f" ] && rm -f "$f"
+    done
+}
+trap cleanup_tmp_files EXIT INT TERM
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -96,6 +107,7 @@ call() {
     local url="${BACKEND_URL}${path}"
     local tmp
     tmp="$(mktemp)"
+    TMP_FILES+=("$tmp")
     if [ -n "$body" ]; then
         RESP_CODE=$(curl -sS -X "$method" "$url" \
             -H "$AUTH_HEADER" \

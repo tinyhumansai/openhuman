@@ -113,47 +113,34 @@ pub(super) fn handle_sio_event(
             }
         }
         // Composio trigger webhook — backend emits this after HMAC-verifying
-        // an incoming Composio webhook. Publish to the event bus so the
-        // composio domain (and any future subscribers) can react.
+        // an incoming Composio webhook. Deserialize into the canonical
+        // `ComposioTriggerEvent` DTO so shape mismatches fail fast with a
+        // clear log line instead of being silently coerced to empty strings.
         "composio:trigger" => {
             log::info!("[socket] Publishing composio:trigger to event bus");
-            let toolkit = data
-                .get("toolkit")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let trigger = data
-                .get("trigger")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let payload = data
-                .get("payload")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let metadata_id = data
-                .get("metadata")
-                .and_then(|m| m.get("id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let metadata_uuid = data
-                .get("metadata")
-                .and_then(|m| m.get("uuid"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            if toolkit.is_empty() || trigger.is_empty() {
-                log::warn!("[socket] composio:trigger missing toolkit/trigger; dropping event");
-            } else {
-                publish_global(DomainEvent::ComposioTriggerReceived {
-                    toolkit,
-                    trigger,
-                    metadata_id,
-                    metadata_uuid,
-                    payload,
-                });
+            match serde_json::from_value::<crate::openhuman::composio::ComposioTriggerEvent>(
+                data.clone(),
+            ) {
+                Ok(event) => {
+                    if event.toolkit.is_empty() || event.trigger.is_empty() {
+                        log::warn!(
+                            "[socket] composio:trigger missing toolkit/trigger; dropping event"
+                        );
+                    } else {
+                        publish_global(DomainEvent::ComposioTriggerReceived {
+                            toolkit: event.toolkit,
+                            trigger: event.trigger,
+                            metadata_id: event.metadata.id,
+                            metadata_uuid: event.metadata.uuid,
+                            payload: event.payload,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[socket] failed to parse composio:trigger payload: {e}; dropping event"
+                    );
+                }
             }
         }
         // Channel inbound message — publish to event bus for ChannelInboundSubscriber

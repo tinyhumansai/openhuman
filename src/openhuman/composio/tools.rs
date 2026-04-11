@@ -21,8 +21,6 @@
 //! the right slug and supply valid arguments without a separate round
 //! trip.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -343,15 +341,14 @@ pub fn all_composio_agent_tools(
         tracing::debug!("[composio] agent tools not registered — disabled or missing credentials");
         return Vec::new();
     };
-    let client = Arc::new(client);
-    // Each tool gets its own cheap clone of the client handle.
-    let c = (*client).clone();
+    // `ComposioClient` is `Clone` (the inner `IntegrationClient` is Arc'd),
+    // so each tool gets a cheap clone of the handle directly.
     let tools: Vec<Box<dyn Tool>> = vec![
-        Box::new(ComposioListToolkitsTool::new(c.clone())),
-        Box::new(ComposioListConnectionsTool::new(c.clone())),
-        Box::new(ComposioAuthorizeTool::new(c.clone())),
-        Box::new(ComposioListToolsTool::new(c.clone())),
-        Box::new(ComposioExecuteTool::new(c)),
+        Box::new(ComposioListToolkitsTool::new(client.clone())),
+        Box::new(ComposioListConnectionsTool::new(client.clone())),
+        Box::new(ComposioAuthorizeTool::new(client.clone())),
+        Box::new(ComposioListToolsTool::new(client.clone())),
+        Box::new(ComposioExecuteTool::new(client)),
     ];
     tracing::debug!(count = tools.len(), "[composio] agent tools registered");
     tools

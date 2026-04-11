@@ -208,16 +208,16 @@ fn handle_list_connections(_params: Map<String, Value>) -> ControllerFuture {
 fn handle_authorize(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let toolkit = read_required::<String>(&params, "toolkit")?;
-        to_json(super::ops::composio_authorize(&config, toolkit.trim()).await?)
+        let toolkit = read_required_non_empty(&params, "toolkit")?;
+        to_json(super::ops::composio_authorize(&config, &toolkit).await?)
     })
 }
 
 fn handle_delete_connection(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let connection_id = read_required::<String>(&params, "connection_id")?;
-        to_json(super::ops::composio_delete_connection(&config, connection_id.trim()).await?)
+        let connection_id = read_required_non_empty(&params, "connection_id")?;
+        to_json(super::ops::composio_delete_connection(&config, &connection_id).await?)
     })
 }
 
@@ -232,9 +232,9 @@ fn handle_list_tools(params: Map<String, Value>) -> ControllerFuture {
 fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let tool = read_required::<String>(&params, "tool")?;
+        let tool = read_required_non_empty(&params, "tool")?;
         let arguments = read_optional::<Value>(&params, "arguments")?;
-        to_json(super::ops::composio_execute(&config, tool.trim(), arguments).await?)
+        to_json(super::ops::composio_execute(&config, &tool, arguments).await?)
     })
 }
 
@@ -246,6 +246,18 @@ fn read_required<T: DeserializeOwned>(params: &Map<String, Value>, key: &str) ->
         .cloned()
         .ok_or_else(|| format!("missing required param '{key}'"))?;
     serde_json::from_value(value).map_err(|e| format!("invalid '{key}': {e}"))
+}
+
+/// Read a required `String` parameter and reject blank / whitespace-only
+/// input at the RPC boundary instead of letting it reach the backend.
+/// Returns the trimmed value.
+fn read_required_non_empty(params: &Map<String, Value>, key: &str) -> Result<String, String> {
+    let raw = read_required::<String>(params, key)?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(format!("'{key}' must not be empty"));
+    }
+    Ok(trimmed.to_string())
 }
 
 fn read_optional<T: DeserializeOwned>(
