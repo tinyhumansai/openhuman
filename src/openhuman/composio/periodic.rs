@@ -20,7 +20,7 @@
 //!     the process lifetime.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::time::interval;
@@ -34,10 +34,27 @@ use super::providers::{get_provider, ProviderContext, SyncReason};
 /// past a provider's interval we might fire.
 const TICK_SECONDS: u64 = 60;
 
-/// Spawn the periodic sync background task. Idempotent guard sits at
-/// the call site (`OnceLock`-style) — we don't add an internal guard
-/// because the call site already runs once per startup path.
+/// Process-wide guard so the scheduler is only started once even
+/// when both `start_channels` and `bootstrap_skill_runtime` call into
+/// us during startup. Without this we'd end up with two parallel tick
+/// loops competing for the same connections.
+static SCHEDULER_STARTED: OnceLock<()> = OnceLock::new();
+
+/// Spawn the periodic sync background task. Idempotent: only the
+/// first call actually spawns the loop, every subsequent call is a
+/// cheap no-op (logged at `debug` so it's visible during startup
+/// tracing without spamming `info`).
 pub fn start_periodic_sync() {
+    if SCHEDULER_STARTED.get().is_some() {
+        tracing::debug!("[composio:periodic] scheduler already running, skipping start");
+        return;
+    }
+    // Race-safe: only the thread that wins `set` runs the spawn body.
+    if SCHEDULER_STARTED.set(()).is_err() {
+        tracing::debug!("[composio:periodic] scheduler already running (race), skipping start");
+        return;
+    }
+
     tokio::spawn(async move {
         tracing::info!(
             tick_seconds = TICK_SECONDS,

@@ -22,13 +22,29 @@
 //! call (sync can take seconds).
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use async_trait::async_trait;
 
 use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
 use crate::openhuman::config::rpc as config_rpc;
 
+use super::client::ComposioClient;
 use super::providers::{get_provider, ProviderContext};
+
+/// How long we'll keep polling the backend after `composio_authorize`
+/// returns a `connectUrl`, waiting for the user to actually finish the
+/// hosted OAuth flow and the connection to flip to ACTIVE/CONNECTED.
+/// One minute matches typical hosted-OAuth round-trip times and is
+/// generous enough to absorb a slow tab-switch + login + consent.
+const CONNECTION_READY_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Poll backoff schedule (start, max). We start aggressive so the
+/// fast-path (user already had the tab open) feels immediate, then
+/// back off so we don't hammer the backend during the long tail of
+/// users who actually have to log in to the upstream service.
+const CONNECTION_READY_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+const CONNECTION_READY_MAX_BACKOFF: Duration = Duration::from_secs(4);
 
 static COMPOSIO_TRIGGER_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 static COMPOSIO_CONNECTION_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
@@ -229,15 +245,14 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
         tokio::spawn(async move {
             // The OAuth handoff is asynchronous — the backend returned
             // a `connectUrl` and we published the event before the user
-            // has actually clicked through. Sleep briefly so the
-            // immediate provider sync has a chance of finding the
-            // connection in `ACTIVE` state. We use a short backoff
-            // here rather than blocking the bus dispatch loop.
+            // has actually clicked through. Resolve the config + client
+            // first, then poll the backend for the connection record
+            // until we observe ACTIVE/CONNECTED (or hit the timeout).
+            // Only then do we run the provider hook, so the very first
+            // provider call doesn't race the OAuth handshake.
             //
             // NOTE: Future improvement — listen for an explicit
-            // "connection_active" backend event instead of guessing.
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
+            // "connection_active" backend event instead of polling.
             let config = match config_rpc::load_config_with_timeout().await {
                 Ok(c) => c,
                 Err(e) => {
@@ -260,6 +275,37 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                 );
                 return;
             };
+
+            match wait_for_connection_active(&ctx.client, &connection_id).await {
+                Ok(status) => {
+                    tracing::info!(
+                        toolkit = %toolkit,
+                        connection_id = %connection_id,
+                        status = %status,
+                        "[composio:bus] connection observed active, dispatching on_connection_created"
+                    );
+                }
+                Err(WaitError::Timeout { last_status }) => {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        connection_id = %connection_id,
+                        last_status = ?last_status,
+                        timeout_secs = CONNECTION_READY_TIMEOUT.as_secs(),
+                        "[composio:bus] timed out waiting for connection to become active; aborting on_connection_created"
+                    );
+                    return;
+                }
+                Err(WaitError::Lookup { error }) => {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        connection_id = %connection_id,
+                        error = %error,
+                        "[composio:bus] backend lookup failed while waiting for connection; aborting on_connection_created"
+                    );
+                    return;
+                }
+            }
+
             if let Err(e) = provider.on_connection_created(&ctx).await {
                 tracing::warn!(
                     toolkit = %toolkit,
@@ -269,6 +315,81 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                 );
             }
         });
+    }
+}
+
+// ── Connection-readiness polling ────────────────────────────────────
+
+#[derive(Debug)]
+enum WaitError {
+    /// Polling exhausted [`CONNECTION_READY_TIMEOUT`] without observing
+    /// the connection in an active state. `last_status` is whatever the
+    /// backend last reported (e.g. `"INITIATED"`, `"PENDING"`).
+    Timeout { last_status: Option<String> },
+    /// The backend lookup itself errored — we treat that as fatal for
+    /// this dispatch (no point spinning when `list_connections` is
+    /// unreachable).
+    Lookup { error: String },
+}
+
+/// Poll the backend for `connection_id` until it appears with an
+/// `ACTIVE` or `CONNECTED` status, or until we hit
+/// [`CONNECTION_READY_TIMEOUT`]. Backoff is exponential between
+/// [`CONNECTION_READY_INITIAL_BACKOFF`] and
+/// [`CONNECTION_READY_MAX_BACKOFF`].
+///
+/// On success returns the observed status string. On timeout returns
+/// the last status we saw (helpful for "stuck in INITIATED" debugging).
+async fn wait_for_connection_active(
+    client: &ComposioClient,
+    connection_id: &str,
+) -> Result<String, WaitError> {
+    let started = std::time::Instant::now();
+    let mut backoff = CONNECTION_READY_INITIAL_BACKOFF;
+    let mut last_status: Option<String> = None;
+
+    loop {
+        match client.list_connections().await {
+            Ok(resp) => {
+                if let Some(conn) = resp.connections.into_iter().find(|c| c.id == connection_id) {
+                    if matches!(conn.status.as_str(), "ACTIVE" | "CONNECTED") {
+                        return Ok(conn.status);
+                    }
+                    last_status = Some(conn.status);
+                }
+                // Connection not found yet — backend may not have
+                // persisted it to its index. Treat the same as a
+                // not-yet-active status and retry.
+            }
+            Err(e) => {
+                // One transient lookup failure shouldn't kill the
+                // dispatch — keep polling until the timeout.
+                tracing::debug!(
+                    connection_id = %connection_id,
+                    error = %e,
+                    "[composio:bus] list_connections failed during readiness poll (will retry)"
+                );
+                last_status = last_status.or_else(|| Some(format!("lookup_error: {e}")));
+            }
+        }
+
+        if started.elapsed() >= CONNECTION_READY_TIMEOUT {
+            // If we never even got a successful lookup, propagate that
+            // as a Lookup error rather than Timeout so the caller can
+            // distinguish "user is taking forever" from "backend is
+            // down".
+            if let Some(ref status) = last_status {
+                if status.starts_with("lookup_error:") {
+                    return Err(WaitError::Lookup {
+                        error: status.clone(),
+                    });
+                }
+            }
+            return Err(WaitError::Timeout { last_status });
+        }
+
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(CONNECTION_READY_MAX_BACKOFF);
     }
 }
 

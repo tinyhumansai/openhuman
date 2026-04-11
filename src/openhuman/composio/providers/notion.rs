@@ -124,9 +124,15 @@ impl ComposioProvider for NotionProvider {
             SyncReason::ConnectionCreated => FETCH_LIMIT * 2,
             _ => FETCH_LIMIT,
         };
-        // NOTION_FETCH_DATA is a generic search/list action — we ask
-        // for both pages and databases so the agent has something to
-        // recall regardless of the user's workspace shape.
+        // NOTION_FETCH_DATA is a generic search/list action. We
+        // intentionally restrict to `object: page` and sort by
+        // `last_edited_time` descending so the sync pulls the most
+        // recently touched pages — that's what the agent's recall
+        // path benefits from most. Databases are skipped here on
+        // purpose: most users have far more pages than databases,
+        // and including databases would silently bloat the snapshot
+        // size for everyone. If we ever want to surface databases
+        // we should do it as a separate, opt-in fetch.
         let args = json!({
             "page_size": limit,
             "filter": { "value": "page", "property": "object" },

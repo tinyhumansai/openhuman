@@ -271,7 +271,7 @@ pub async fn composio_sync(
     connection_id: &str,
     reason: Option<String>,
 ) -> OpResult<RpcOutcome<SyncOutcome>> {
-    let reason = parse_sync_reason(reason.as_deref());
+    let reason = parse_sync_reason(reason.as_deref())?;
     tracing::debug!(
         connection_id = %connection_id,
         reason = reason.as_str(),
@@ -300,11 +300,53 @@ pub async fn composio_sync(
     Ok(RpcOutcome::new(outcome, vec![summary]))
 }
 
-fn parse_sync_reason(raw: Option<&str>) -> SyncReason {
-    match raw.unwrap_or("manual") {
-        "periodic" => SyncReason::Periodic,
-        "connection_created" => SyncReason::ConnectionCreated,
-        _ => SyncReason::Manual,
+/// Parse the optional `reason` parameter into a [`SyncReason`].
+///
+/// `None` and the explicit `"manual"` value both map to
+/// [`SyncReason::Manual`]. Any other unrecognized string is rejected
+/// with a clear error so a typo in a caller (UI, CLI, agent) surfaces
+/// at the RPC boundary instead of being silently coerced.
+fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
+    match raw {
+        None | Some("manual") => Ok(SyncReason::Manual),
+        Some("periodic") => Ok(SyncReason::Periodic),
+        Some("connection_created") => Ok(SyncReason::ConnectionCreated),
+        Some(other) => Err(format!(
+            "[composio] unrecognized sync reason '{other}': expected one of \
+             'manual', 'periodic', 'connection_created'"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_sync_reason_accepts_known_values() {
+        assert_eq!(parse_sync_reason(None).unwrap(), SyncReason::Manual);
+        assert_eq!(
+            parse_sync_reason(Some("manual")).unwrap(),
+            SyncReason::Manual
+        );
+        assert_eq!(
+            parse_sync_reason(Some("periodic")).unwrap(),
+            SyncReason::Periodic
+        );
+        assert_eq!(
+            parse_sync_reason(Some("connection_created")).unwrap(),
+            SyncReason::ConnectionCreated
+        );
+    }
+
+    #[test]
+    fn parse_sync_reason_rejects_unknown_values() {
+        let err = parse_sync_reason(Some("scheduled")).unwrap_err();
+        assert!(err.contains("unrecognized sync reason"));
+        assert!(err.contains("scheduled"));
+        // Typo of a real value should also fail rather than coerce.
+        assert!(parse_sync_reason(Some("Periodic")).is_err());
+        assert!(parse_sync_reason(Some("")).is_err());
     }
 }
 

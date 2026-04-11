@@ -124,9 +124,20 @@ impl ComposioProvider for GmailProvider {
             avatar_url: None,
             extras: data.clone(),
         };
+        // PII discipline: never log the actual email address. We log
+        // only non-PII indicators (presence of an email, the domain
+        // portion if any) so the trace is still useful for debugging
+        // missing-profile cases without leaking the user's identity.
+        let has_email = profile.email.is_some();
+        let email_domain = profile
+            .email
+            .as_deref()
+            .and_then(|e| e.split('@').nth(1))
+            .map(|d| d.to_string());
         tracing::info!(
             connection_id = ?profile.connection_id,
-            email = ?profile.email,
+            has_email,
+            email_domain = ?email_domain,
             "[composio:gmail] fetched user profile"
         );
         Ok(profile)

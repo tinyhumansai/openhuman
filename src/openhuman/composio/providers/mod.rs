@@ -200,10 +200,23 @@ pub trait ComposioProvider: Send + Sync {
         );
         match self.fetch_user_profile(ctx).await {
             Ok(profile) => {
+                // PII discipline: do not log raw display_name or email.
+                // We log only presence indicators and the email domain
+                // (non-PII) so the trace is debuggable without leaking
+                // the user's identity. Provider-specific impls follow
+                // the same convention.
+                let has_display_name = profile.display_name.is_some();
+                let has_email = profile.email.is_some();
+                let email_domain = profile
+                    .email
+                    .as_deref()
+                    .and_then(|e| e.split('@').nth(1))
+                    .map(|d| d.to_string());
                 tracing::info!(
                     toolkit = %toolkit,
-                    display_name = ?profile.display_name,
-                    email = ?profile.email,
+                    has_display_name,
+                    has_email,
+                    email_domain = ?email_domain,
                     "[composio:provider] user profile fetched"
                 );
             }
