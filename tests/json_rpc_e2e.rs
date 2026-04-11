@@ -542,9 +542,24 @@ default_temperature = 0.7
 encrypt = false
 "#
     );
-    std::fs::create_dir_all(openhuman_dir).expect("mkdir openhuman");
-    let path = openhuman_dir.join("config.toml");
-    std::fs::write(&path, &cfg).expect("write config");
+    fn write_config_file(config_dir: &Path, cfg: &str) {
+        std::fs::create_dir_all(config_dir).expect("mkdir openhuman");
+        let path = config_dir.join("config.toml");
+        std::fs::write(&path, cfg).expect("write config");
+    }
+
+    write_config_file(openhuman_dir, &cfg);
+
+    // Runtime config resolution is user-scoped before login, so tests that seed
+    // the root `~/.openhuman` directory also need the equivalent pre-login
+    // config under `~/.openhuman/users/local`.
+    if openhuman_dir
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(".openhuman"))
+    {
+        write_config_file(&openhuman_dir.join("users").join("local"), &cfg);
+    }
+
     let _: openhuman_core::openhuman::config::Config =
         toml::from_str(&cfg).expect("config toml must match Config schema");
 }
@@ -563,9 +578,21 @@ encrypt = false
 enabled = false
 "#
     );
-    std::fs::create_dir_all(openhuman_dir).expect("mkdir openhuman");
-    let path = openhuman_dir.join("config.toml");
-    std::fs::write(&path, &cfg).expect("write config");
+    fn write_config_file(config_dir: &Path, cfg: &str) {
+        std::fs::create_dir_all(config_dir).expect("mkdir openhuman");
+        let path = config_dir.join("config.toml");
+        std::fs::write(&path, cfg).expect("write config");
+    }
+
+    write_config_file(openhuman_dir, &cfg);
+
+    if openhuman_dir
+        .file_name()
+        .is_some_and(|name| name == std::ffi::OsStr::new(".openhuman"))
+    {
+        write_config_file(&openhuman_dir.join("users").join("local"), &cfg);
+    }
+
     let _: openhuman_core::openhuman::config::Config =
         toml::from_str(&cfg).expect("config toml must match Config schema");
 }

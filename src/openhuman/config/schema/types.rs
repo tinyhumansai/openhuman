@@ -112,9 +112,6 @@ pub struct Config {
     pub agents: HashMap<String, DelegateAgentConfig>,
 
     #[serde(default)]
-    pub hardware: HardwareConfig,
-
-    #[serde(default)]
     pub local_ai: LocalAiConfig,
 
     #[serde(default)]
@@ -178,7 +175,6 @@ impl Default for Config {
             cost: CostConfig::default(),
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
-            hardware: HardwareConfig::default(),
             local_ai: LocalAiConfig::default(),
             voice_server: VoiceServerConfig::default(),
             query_classification: QueryClassificationConfig::default(),

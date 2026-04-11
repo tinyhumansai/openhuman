@@ -77,15 +77,20 @@ pub enum DomainEvent {
     /// A message was received on a channel.
     ChannelMessageReceived {
         channel: String,
+        message_id: String,
         sender: String,
+        reply_target: String,
         content: String,
         thread_ts: Option<String>,
     },
     /// A channel message was fully processed (LLM response sent or error).
     ChannelMessageProcessed {
         channel: String,
+        message_id: String,
         sender: String,
+        reply_target: String,
         content: String,
+        thread_ts: Option<String>,
         response: String,
         elapsed_ms: u64,
         success: bool,
@@ -187,6 +192,36 @@ pub enum DomainEvent {
         error: Option<String>,
     },
 
+    // ── Composio ────────────────────────────────────────────────────────
+    /// A Composio trigger webhook arrived via the backend socket.io bridge
+    /// and is ready for domain-specific dispatch.
+    ComposioTriggerReceived {
+        /// Toolkit slug, e.g. `"gmail"`.
+        toolkit: String,
+        /// Trigger slug, e.g. `"GMAIL_NEW_GMAIL_MESSAGE"`.
+        trigger: String,
+        /// Composio trigger event id (from backend metadata.id).
+        metadata_id: String,
+        /// Composio trigger UUID (from backend metadata.uuid).
+        metadata_uuid: String,
+        /// Provider-specific trigger payload.
+        payload: serde_json::Value,
+    },
+    /// A Composio connection OAuth handoff was initiated (connectUrl returned).
+    ComposioConnectionCreated {
+        toolkit: String,
+        connection_id: String,
+        connect_url: String,
+    },
+    /// A Composio action was executed (success or failure) via the backend.
+    ComposioActionExecuted {
+        tool: String,
+        success: bool,
+        error: Option<String>,
+        cost_usd: f64,
+        elapsed_ms: u64,
+    },
+
     // ── Tree Summarizer ──────────────────────────────────────────────────
     /// An hour leaf was created from buffered data.
     TreeSummarizerHourCompleted {
@@ -258,6 +293,10 @@ impl DomainEvent {
             | Self::WebhookRegistered { .. }
             | Self::WebhookUnregistered { .. }
             | Self::WebhookProcessed { .. } => "webhook",
+
+            Self::ComposioTriggerReceived { .. }
+            | Self::ComposioConnectionCreated { .. }
+            | Self::ComposioActionExecuted { .. } => "composio",
 
             Self::TreeSummarizerHourCompleted { .. }
             | Self::TreeSummarizerPropagated { .. }
@@ -362,7 +401,9 @@ mod tests {
             (
                 DomainEvent::ChannelMessageReceived {
                     channel: "c".into(),
+                    message_id: "m1".into(),
                     sender: "s".into(),
+                    reply_target: "r".into(),
                     content: "hi".into(),
                     thread_ts: None,
                 },
@@ -371,8 +412,11 @@ mod tests {
             (
                 DomainEvent::ChannelMessageProcessed {
                     channel: "c".into(),
+                    message_id: "m1".into(),
                     sender: "s".into(),
+                    reply_target: "r".into(),
                     content: "hi".into(),
+                    thread_ts: None,
                     response: "hello".into(),
                     elapsed_ms: 0,
                     success: true,
@@ -538,6 +582,35 @@ mod tests {
                     error: None,
                 },
                 "webhook",
+            ),
+            // Composio
+            (
+                DomainEvent::ComposioTriggerReceived {
+                    toolkit: "gmail".into(),
+                    trigger: "GMAIL_NEW_GMAIL_MESSAGE".into(),
+                    metadata_id: "trig-1".into(),
+                    metadata_uuid: "uuid-1".into(),
+                    payload: serde_json::Value::Null,
+                },
+                "composio",
+            ),
+            (
+                DomainEvent::ComposioConnectionCreated {
+                    toolkit: "gmail".into(),
+                    connection_id: "conn-1".into(),
+                    connect_url: "https://backend.composio.dev/connect/abc".into(),
+                },
+                "composio",
+            ),
+            (
+                DomainEvent::ComposioActionExecuted {
+                    tool: "GMAIL_SEND_EMAIL".into(),
+                    success: true,
+                    error: None,
+                    cost_usd: 0.0,
+                    elapsed_ms: 123,
+                },
+                "composio",
             ),
             // Tree Summarizer
             (

@@ -95,9 +95,6 @@ rdev = "0.5"
 matrix-sdk = { version = "0.16", optional = true, default-features = false, features = ["e2e-encryption", "rustls-tls", "markdown"] }
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }
 serde-big-array = { version = "0.5", optional = true }
-nusb = { version = "0.2", default-features = false, optional = true }
-tokio-serial = { version = "5", default-features = false, optional = true }
-probe-rs = { version = "0.30", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 wa-rs = { version = "0.2", optional = true, default-features = false }
 wa-rs-core = { version = "0.2", optional = true, default-features = false }
@@ -115,13 +112,11 @@ rppal = { version = "0.22", optional = true }
 [features]
 sandbox-landlock = ["dep:landlock"]
 sandbox-bubblewrap = []
-hardware = ["dep:nusb", "dep:tokio-serial"]
 channel-matrix = ["dep:matrix-sdk"]
 peripheral-rpi = ["dep:rppal"]
 browser-native = ["dep:fantoccini"]
 fantoccini = ["browser-native"]
 landlock = ["sandbox-landlock"]
-probe = ["dep:probe-rs"]
 rag-pdf = ["dep:pdf-extract"]
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "serde-big-array"]
 

@@ -112,6 +112,37 @@ pub(super) fn handle_sio_event(
                 }
             }
         }
+        // Composio trigger webhook — backend emits this after HMAC-verifying
+        // an incoming Composio webhook. Deserialize into the canonical
+        // `ComposioTriggerEvent` DTO so shape mismatches fail fast with a
+        // clear log line instead of being silently coerced to empty strings.
+        "composio:trigger" => {
+            log::info!("[socket] Publishing composio:trigger to event bus");
+            match serde_json::from_value::<crate::openhuman::composio::ComposioTriggerEvent>(
+                data.clone(),
+            ) {
+                Ok(event) => {
+                    if event.toolkit.is_empty() || event.trigger.is_empty() {
+                        log::warn!(
+                            "[socket] composio:trigger missing toolkit/trigger; dropping event"
+                        );
+                    } else {
+                        publish_global(DomainEvent::ComposioTriggerReceived {
+                            toolkit: event.toolkit,
+                            trigger: event.trigger,
+                            metadata_id: event.metadata.id,
+                            metadata_uuid: event.metadata.uuid,
+                            payload: event.payload,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[socket] failed to parse composio:trigger payload: {e}; dropping event"
+                    );
+                }
+            }
+        }
         // Channel inbound message — publish to event bus for ChannelInboundSubscriber
         _ if event_name.ends_with(":message") => {
             log::info!(
