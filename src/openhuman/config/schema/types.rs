@@ -57,6 +57,13 @@ pub struct Config {
     #[serde(default)]
     pub agent: AgentConfig,
 
+    /// Global context management configuration — budget thresholds,
+    /// summarization trigger, microcompact/autocompact toggles, and the
+    /// session-memory extraction cadence. Consumed by
+    /// [`crate::openhuman::context::ContextManager`].
+    #[serde(default)]
+    pub context: ContextConfig,
+
     #[serde(default)]
     pub model_routes: Vec<ModelRouteConfig>,
 
@@ -158,6 +165,7 @@ impl Default for Config {
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             agent: AgentConfig::default(),
+            context: ContextConfig::default(),
             model_routes: Vec::new(),
             embedding_routes: Vec::new(),
             heartbeat: HeartbeatConfig::default(),

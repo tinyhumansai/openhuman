@@ -6,8 +6,8 @@
 //! picks up those events and dispatches to the appropriate channel, keeping
 //! channel construction out of the scheduler.
 
+use crate::core::event_bus::{DomainEvent, EventHandler};
 use crate::openhuman::channels::{Channel, SendMessage};
-use crate::openhuman::event_bus::{DomainEvent, EventHandler};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;

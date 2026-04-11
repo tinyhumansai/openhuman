@@ -1,9 +1,9 @@
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
     due_jobs, next_run_for_schedule, record_last_run, record_run, remove_job, reschedule_after_run,
     update_job, CronJob, CronJobPatch, DeliveryConfig, JobType, Schedule, SessionTarget,
 };
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::security::SecurityPolicy;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -19,7 +19,7 @@ const SHELL_JOB_TIMEOUT_SECS: u64 = 120;
 pub async fn run(config: Config) -> Result<()> {
     // Ensure the global event bus is initialized so cron delivery events
     // are not silently dropped. This is a no-op if already initialized.
-    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     crate::openhuman::health::bus::register_health_subscriber();
 
     let poll_secs = config.reliability.scheduler_poll_secs.max(MIN_POLL_SECONDS);
@@ -733,11 +733,11 @@ mod tests {
 
     #[tokio::test]
     async fn deliver_if_configured_publishes_event_for_announce_mode() {
-        use crate::openhuman::event_bus::{DomainEvent, EventHandler};
+        use crate::core::event_bus::{DomainEvent, EventHandler};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         // Create an isolated bus for this test.
-        let bus = crate::openhuman::event_bus::EventBus::create(16);
+        let bus = crate::core::event_bus::EventBus::create(16);
 
         let received = Arc::new(AtomicUsize::new(0));
         let received_clone = Arc::clone(&received);

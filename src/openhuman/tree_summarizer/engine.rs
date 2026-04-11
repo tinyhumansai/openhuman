@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Timelike, Utc};
 use std::collections::BTreeMap;
 
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::Config;
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::providers::traits::Provider;
 use crate::openhuman::tree_summarizer::store;
 use crate::openhuman::tree_summarizer::types::{

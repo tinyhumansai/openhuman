@@ -4,10 +4,10 @@ mod delegate;
 mod skill_delegation;
 mod spawn_subagent;
 
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::tools::traits::ToolResult;
 
 pub(crate) const ARCHETYPE_TOOLS: &[(&str, &str, &str)] = &[

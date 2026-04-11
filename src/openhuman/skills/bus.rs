@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 
-use crate::openhuman::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 
 static SKILL_CLEANUP_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -17,7 +17,7 @@ pub fn register_skill_cleanup_subscriber() {
         return;
     }
 
-    match crate::openhuman::event_bus::subscribe_global(Arc::new(SkillCleanupSubscriber)) {
+    match crate::core::event_bus::subscribe_global(Arc::new(SkillCleanupSubscriber)) {
         Some(handle) => {
             let _ = SKILL_CLEANUP_HANDLE.set(handle);
         }

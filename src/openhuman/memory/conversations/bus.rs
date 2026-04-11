@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
 
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 use crate::openhuman::channels::context::conversation_history_key;
 use crate::openhuman::channels::traits::ChannelMessage;
-use crate::openhuman::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 
 use super::{
     append_message, ensure_thread, get_messages, ConversationMessage, CreateConversationThread,
@@ -26,7 +26,7 @@ pub fn register_conversation_persistence_subscriber(workspace_dir: PathBuf) {
         return;
     }
 
-    match crate::openhuman::event_bus::subscribe_global(Arc::new(
+    match crate::core::event_bus::subscribe_global(Arc::new(
         ConversationPersistenceSubscriber::new(workspace_dir),
     )) {
         Some(handle) => {

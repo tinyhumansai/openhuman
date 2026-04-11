@@ -3,7 +3,7 @@
 //! These sections read pre-fetched data from `PromptContext.learned` — no async
 //! or blocking I/O happens during prompt building.
 
-use crate::openhuman::agent::prompt::{PromptContext, PromptSection};
+use crate::openhuman::context::prompt::{PromptContext, PromptSection};
 use anyhow::Result;
 
 /// Injects recent observations and patterns from the learning subsystem.

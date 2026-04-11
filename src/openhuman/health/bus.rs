@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 
-use crate::openhuman::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 
 static HEALTH_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -12,7 +12,7 @@ pub fn register_health_subscriber() {
         return;
     }
 
-    match crate::openhuman::event_bus::subscribe_global(Arc::new(HealthSubscriber)) {
+    match crate::core::event_bus::subscribe_global(Arc::new(HealthSubscriber)) {
         Some(handle) => {
             let _ = HEALTH_HANDLE.set(handle);
         }

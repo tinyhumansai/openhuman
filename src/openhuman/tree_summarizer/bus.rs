@@ -3,7 +3,7 @@
 //! Subscribes to `TreeSummarizer*` events and logs them for observability.
 //! Future subscribers can react to these events for cross-module workflows.
 
-use crate::openhuman::event_bus::{DomainEvent, EventHandler};
+use crate::core::event_bus::{DomainEvent, EventHandler};
 use async_trait::async_trait;
 
 /// Subscribes to tree summarizer events and logs activity.

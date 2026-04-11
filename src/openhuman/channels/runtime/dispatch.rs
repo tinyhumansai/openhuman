@@ -1,6 +1,9 @@
 //! Channel runtime loop and message processing.
 
-use crate::openhuman::agent::harness::run_tool_call_loop;
+use crate::core::event_bus::{
+    publish_global, request_native_global, DomainEvent, NativeRequestError,
+};
+use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
 use crate::openhuman::channels::context::{
     build_memory_context, compact_sender_history, conversation_history_key,
     conversation_memory_key, is_context_window_overflow_error, ChannelRuntimeContext,
@@ -11,7 +14,6 @@ use crate::openhuman::channels::routes::{
 };
 use crate::openhuman::channels::traits;
 use crate::openhuman::channels::{Channel, SendMessage};
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::providers::{self, ChatMessage};
 use crate::openhuman::util::truncate_with_ellipsis;
 use std::sync::Arc;
@@ -365,23 +367,58 @@ pub(crate) async fn process_channel_message(
         _ => None,
     };
 
-    let llm_result = tokio::time::timeout(
-        Duration::from_secs(ctx.message_timeout_secs),
-        run_tool_call_loop(
-            active_provider.as_ref(),
-            &mut history,
-            ctx.tools_registry.as_ref(),
-            route.provider.as_str(),
-            route.model.as_str(),
-            ctx.temperature,
-            true,
-            None,
-            msg.channel.as_str(),
-            &ctx.multimodal,
-            ctx.max_tool_iterations,
-            delta_tx,
-        ),
-    )
+    // Dispatch the agentic turn through the native event bus instead of
+    // calling `run_tool_call_loop` directly. The agent domain registers
+    // an `agent.run_turn` handler at startup (see
+    // `crate::openhuman::agent::bus::register_agent_handlers`); this keeps
+    // the channel layer free of direct harness imports and makes the
+    // agent side mockable in unit tests via a handler override.
+    //
+    // The agent handler owns the history vector — we `mem::take` the
+    // local one to avoid an unnecessary clone; `history` is not read
+    // again below.
+    let turn_request = AgentTurnRequest {
+        provider: Arc::clone(&active_provider),
+        history: std::mem::take(&mut history),
+        tools_registry: Arc::clone(&ctx.tools_registry),
+        provider_name: route.provider.clone(),
+        model: route.model.clone(),
+        temperature: ctx.temperature,
+        silent: true,
+        channel_name: msg.channel.clone(),
+        multimodal: ctx.multimodal.clone(),
+        max_tool_iterations: ctx.max_tool_iterations,
+        on_delta: delta_tx,
+    };
+    tracing::debug!(
+        channel = %msg.channel,
+        provider = %route.provider,
+        model = %route.model,
+        "[channels::dispatch] dispatching {AGENT_RUN_TURN_METHOD} via native bus"
+    );
+    let llm_result = tokio::time::timeout(Duration::from_secs(ctx.message_timeout_secs), async {
+        request_native_global::<AgentTurnRequest, AgentTurnResponse>(
+            AGENT_RUN_TURN_METHOD,
+            turn_request,
+        )
+        .await
+        .map(|resp| resp.text)
+        .map_err(|err| match err {
+            // Unwrap handler-returned errors so the underlying
+            // message (e.g. "Agent exceeded maximum tool iterations")
+            // flows through without being wrapped in bus-transport
+            // layer prose. The error-formatting path downstream
+            // treats this `anyhow::Error` the same way it did before
+            // the bus migration.
+            NativeRequestError::HandlerFailed { message, .. } => {
+                anyhow::anyhow!(message)
+            }
+            // Bus-level errors (UnregisteredHandler / TypeMismatch /
+            // NotInitialized) surface with their full Display so
+            // startup wiring bugs are immediately obvious in logs.
+            other => anyhow::anyhow!("[agent.run_turn dispatch] {other}"),
+        })
+    })
     .await;
 
     // Wait for draft updater to finish

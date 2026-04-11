@@ -31,11 +31,29 @@ pub const DEFAULT_MIN_TOOL_CALLS: u64 = 8;
 pub const DEFAULT_MIN_TURNS_BETWEEN: u64 = 4;
 
 /// Tunable thresholds for session-memory extraction.
-#[derive(Debug, Clone, Copy)]
+///
+/// Serializable so it can be embedded directly into the top-level
+/// [`crate::openhuman::config::ContextConfig`] config section.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SessionMemoryConfig {
+    #[serde(default = "default_min_token_growth")]
     pub min_token_growth: u64,
+    #[serde(default = "default_min_tool_calls")]
     pub min_tool_calls: u64,
+    #[serde(default = "default_min_turns_between")]
     pub min_turns_between: u64,
+}
+
+fn default_min_token_growth() -> u64 {
+    DEFAULT_MIN_TOKEN_GROWTH
+}
+
+fn default_min_tool_calls() -> u64 {
+    DEFAULT_MIN_TOOL_CALLS
+}
+
+fn default_min_turns_between() -> u64 {
+    DEFAULT_MIN_TURNS_BETWEEN
 }
 
 impl Default for SessionMemoryConfig {

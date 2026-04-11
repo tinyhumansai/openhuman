@@ -96,8 +96,8 @@ pub async fn composio_authorize(
 
     // Publish an event so any interested subscribers (e.g. UI refreshers,
     // analytics) can react to the new connection handoff.
-    crate::openhuman::event_bus::publish_global(
-        crate::openhuman::event_bus::DomainEvent::ComposioConnectionCreated {
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::ComposioConnectionCreated {
             toolkit: toolkit.to_string(),
             connection_id: resp.connection_id.clone(),
             connect_url: resp.connect_url.clone(),
@@ -160,8 +160,8 @@ pub async fn composio_execute(
 
     match result {
         Ok(resp) => {
-            crate::openhuman::event_bus::publish_global(
-                crate::openhuman::event_bus::DomainEvent::ComposioActionExecuted {
+            crate::core::event_bus::publish_global(
+                crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                     tool: tool.to_string(),
                     success: resp.successful,
                     error: resp.error.clone(),
@@ -175,8 +175,8 @@ pub async fn composio_execute(
             ))
         }
         Err(e) => {
-            crate::openhuman::event_bus::publish_global(
-                crate::openhuman::event_bus::DomainEvent::ComposioActionExecuted {
+            crate::core::event_bus::publish_global(
+                crate::core::event_bus::DomainEvent::ComposioActionExecuted {
                     tool: tool.to_string(),
                     success: false,
                     error: Some(e.to_string()),

@@ -7,6 +7,7 @@ mod agent;
 mod autocomplete;
 mod autonomy;
 mod channels;
+mod context;
 mod defaults;
 mod dictation;
 mod heartbeat_cron;
@@ -37,6 +38,7 @@ pub use channels::{
     SandboxBackend, SandboxConfig, SecurityConfig, SignalConfig, SlackConfig, StreamMode,
     TelegramConfig, WebhookConfig, WhatsAppConfig,
 };
+pub use context::ContextConfig;
 pub use dictation::{DictationActivationMode, DictationConfig};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{CostConfig, ModelPricing, PeripheralBoardConfig, PeripheralsConfig};

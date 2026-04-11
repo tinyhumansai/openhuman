@@ -808,7 +808,7 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
     REGISTERED.call_once(|| {
         // Leak the SubscriptionHandle so the background tasks live for the
         // entire process — SubscriptionHandle::drop aborts the task.
-        if let Some(handle) = crate::openhuman::event_bus::subscribe_global(Arc::new(
+        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
             crate::openhuman::webhooks::bus::WebhookRequestSubscriber::new(),
         )) {
             std::mem::forget(handle);
@@ -816,7 +816,7 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
             log::warn!("[event_bus] failed to register webhook subscriber — bus not initialized");
         }
 
-        if let Some(handle) = crate::openhuman::event_bus::subscribe_global(Arc::new(
+        if let Some(handle) = crate::core::event_bus::subscribe_global(Arc::new(
             crate::openhuman::channels::bus::ChannelInboundSubscriber::new(),
         )) {
             std::mem::forget(handle);
@@ -835,8 +835,13 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
         // the same respawn logic.
         crate::openhuman::service::bus::register_restart_subscriber();
 
+        // Native request handlers — typed in-process request/response.
+        // The agent `agent.run_turn` handler is what channel dispatch
+        // calls instead of importing `run_tool_call_loop` directly.
+        crate::openhuman::agent::bus::register_agent_handlers();
+
         log::info!(
-            "[event_bus] webhook, channel, health, skill, composio, and restart subscribers registered"
+            "[event_bus] webhook, channel, health, skill, composio, restart subscribers + agent native handlers registered"
         );
     });
 }
@@ -880,7 +885,7 @@ pub async fn bootstrap_skill_runtime() {
 
     // --- Event bus bootstrap ---
     // Ensure the global event bus is initialized (no-op if already done by start_channels).
-    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     // Register domain subscribers for cross-module event handling.
     // Uses a Once guard so repeated calls to bootstrap_skill_runtime()
     // cannot double-subscribe.

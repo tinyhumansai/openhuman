@@ -1,12 +1,12 @@
-use super::super::prompt::build_system_prompt;
 use super::common::make_workspace;
+use crate::openhuman::context::channels_prompt::build_system_prompt;
 
 /// `build_system_prompt` loads OpenClaw markdown identity files from the
 /// workspace and inlines their contents into the Project Context section.
 #[test]
 fn openclaw_loads_workspace_markdown_files() {
     let ws = make_workspace();
-    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None);
+    let prompt = build_system_prompt(ws.path(), "model", &[], &[], None, Some("Discord"));
 
     // Project Context section header is present.
     assert!(

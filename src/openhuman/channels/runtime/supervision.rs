@@ -5,7 +5,7 @@ use super::super::context::{
 };
 use super::super::traits;
 use super::super::Channel;
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
+use crate::core::event_bus::{publish_global, DomainEvent};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ pub(crate) fn spawn_supervised_listener(
 ) -> tokio::task::JoinHandle<()> {
     // This helper is used directly in tests and isolated runtime paths, so make
     // sure channel health events always have a live bus + subscriber target.
-    crate::openhuman::event_bus::init_global(crate::openhuman::event_bus::DEFAULT_CAPACITY);
+    crate::core::event_bus::init_global(crate::core::event_bus::DEFAULT_CAPACITY);
     crate::openhuman::health::bus::register_health_subscriber();
 
     tokio::spawn(async move {

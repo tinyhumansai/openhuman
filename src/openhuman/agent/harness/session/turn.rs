@@ -20,12 +20,12 @@
 //!   background archivist fork.
 
 use super::types::Agent;
-use crate::openhuman::agent::context_pipeline;
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
-use crate::openhuman::agent::prompt::{LearnedContextData, PromptContext};
-use crate::openhuman::event_bus::{publish_global, DomainEvent};
+use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
+use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage};
 use crate::openhuman::tools::Tool;
@@ -137,7 +137,7 @@ impl Agent {
         // Bump the session-memory turn counter. Used later by
         // `should_extract_session_memory` to decide whether to spawn a
         // background archivist fork at end-of-turn.
-        self.context_pipeline.tick_turn();
+        self.context.tick_turn();
 
         // Collect tool call records across all iterations for post-turn hooks
         let mut all_tool_records: Vec<ToolCallRecord> = Vec::new();
@@ -150,43 +150,61 @@ impl Agent {
                     self.history.len()
                 );
 
-                // Context pipeline stages 3 & 4: run the reduction
-                // chain before every provider hit. Microcompact fires
-                // when the guard reports we're above the soft threshold
-                // and there are older tool results to clear; otherwise
-                // we log an autocompaction signal (openhuman's
-                // compactor lives in `loop_/history.rs` and operates on
-                // the `ChatMessage` shape, so for now the
-                // `ConversationMessage`-shaped Agent path lets the
-                // signal bubble up as telemetry until a native
-                // summariser lands).
-                let outcome = self.context_pipeline.run_before_call(&mut self.history);
+                // Global context management: run the reduction chain
+                // before every provider hit. Cheap when the guard is
+                // healthy; executes the summarizer LLM call
+                // internally when the pipeline asks for autocompaction
+                // (summarization, microcompact, and the circuit
+                // breaker all live inside [`ContextManager`]).
+                let outcome = self.context.reduce_before_call(&mut self.history).await?;
                 match &outcome {
-                    context_pipeline::PipelineOutcome::NoOp => {}
-                    context_pipeline::PipelineOutcome::Microcompacted(stats) => {
+                    ReductionOutcome::NoOp => {}
+                    ReductionOutcome::Microcompacted {
+                        envelopes_cleared,
+                        entries_cleared,
+                        bytes_freed,
+                    } => {
                         log::info!(
-                            "[agent_loop] context_pipeline microcompact i={} envelopes={} entries={} bytes_freed={}",
+                            "[agent_loop] context microcompact i={} envelopes={} entries={} bytes_freed={}",
                             iteration + 1,
-                            stats.envelopes_cleared,
-                            stats.entries_cleared,
-                            stats.bytes_freed
+                            envelopes_cleared,
+                            entries_cleared,
+                            bytes_freed
                         );
                     }
-                    context_pipeline::PipelineOutcome::AutocompactionRequested {
+                    ReductionOutcome::Summarized(stats) => {
+                        log::info!(
+                            "[agent_loop] context autocompact summarized i={} messages_removed={} approx_tokens_freed={} summary_chars={}",
+                            iteration + 1,
+                            stats.messages_removed,
+                            stats.approx_tokens_freed,
+                            stats.summary_chars
+                        );
+                    }
+                    ReductionOutcome::SummarizationFailed {
                         utilisation_pct,
+                        reason,
                     } => {
                         log::warn!(
-                            "[agent_loop] context_pipeline autocompaction requested i={} utilisation_pct={}",
+                            "[agent_loop] context summarizer failed i={} utilisation_pct={} reason={}",
+                            iteration + 1,
+                            utilisation_pct,
+                            reason
+                        );
+                    }
+                    ReductionOutcome::NotAttempted { utilisation_pct } => {
+                        log::warn!(
+                            "[agent_loop] context autocompact disabled in config i={} utilisation_pct={}",
                             iteration + 1,
                             utilisation_pct
                         );
                     }
-                    context_pipeline::PipelineOutcome::ContextExhausted {
+                    ReductionOutcome::Exhausted {
                         utilisation_pct,
                         reason,
                     } => {
                         log::error!(
-                            "[agent_loop] context_pipeline context exhausted i={} utilisation_pct={} reason={}",
+                            "[agent_loop] context exhausted i={} utilisation_pct={} reason={}",
                             iteration + 1,
                             utilisation_pct,
                             reason
@@ -237,11 +255,11 @@ impl Agent {
                             resp.tool_calls.len()
                         );
                         log::debug!("[agent_loop] provider response: {resp:?}");
-                        // Feed the context pipeline (guard +
+                        // Feed the context manager (guard +
                         // session-memory token accounting). No-op when
                         // the provider doesn't return usage.
                         if let Some(ref usage) = resp.usage {
-                            self.context_pipeline.record_usage(usage);
+                            self.context.record_usage(usage);
                         }
                         resp
                     }
@@ -296,10 +314,10 @@ impl Agent {
                     // `turn_body` so the spawned task can take an owned
                     // parent context without fighting the borrow
                     // checker against `self`. We capture the decision
-                    // here and surface it via the pipeline state — the
-                    // epilogue (below) reads `should_extract_session_memory()`.
-                    self.context_pipeline
-                        .record_tool_calls(all_tool_records.len());
+                    // here and surface it via the manager's session
+                    // state — the epilogue (below) reads
+                    // `should_extract_session_memory()`.
+                    self.context.record_tool_calls(all_tool_records.len());
 
                     // Fire post-turn hooks (non-blocking)
                     if !self.post_turn_hooks.is_empty() {
@@ -429,7 +447,7 @@ impl Agent {
         // we'll just retry on the next threshold window (a few turns
         // later), which is the right amount of retry behaviour for a
         // librarian task that's idempotent across reruns.
-        if result.is_ok() && self.context_pipeline.should_extract_session_memory() {
+        if result.is_ok() && self.context.should_extract_session_memory() {
             self.spawn_session_memory_extraction();
         }
 
@@ -508,9 +526,13 @@ impl Agent {
         // *inline* before the result enters history. This is the only
         // cache-safe reduction stage — the truncated body has never
         // been sent to the backend so it creates no cache invalidation.
-        let budget_bytes = self.config.tool_result_budget_bytes;
+        // Source the budget from the context manager so it tracks the
+        // resolved `context.tool_result_budget_bytes` (including any
+        // env/config overrides) rather than the deprecated
+        // `agent.tool_result_budget_bytes` field.
+        let budget_bytes = self.context.tool_result_budget_bytes();
         let (result, budget_outcome) =
-            context_pipeline::apply_tool_result_budget(raw_result, budget_bytes);
+            crate::openhuman::context::apply_tool_result_budget(raw_result, budget_bytes);
         if budget_outcome.truncated {
             log::info!(
                 "[agent_loop] tool_result_budget applied name={} original_bytes={} final_bytes={} dropped_bytes={}",
@@ -732,16 +754,24 @@ impl Agent {
     pub(super) fn build_system_prompt(&self, learned: LearnedContextData) -> Result<String> {
         let tools_slice: &[Box<dyn Tool>] = self.tools.as_slice();
         let instructions = self.tool_dispatcher.prompt_instructions(tools_slice);
+        // Adapt the owned Box<dyn Tool> slice into the shared PromptTool
+        // shape that every prompt-building call-site uses. Temporary vec
+        // borrows from `tools_slice` and lives for the duration of the
+        // prompt build.
+        let prompt_tools = PromptTool::from_tools(tools_slice);
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
             model_name: &self.model_name,
-            tools: tools_slice,
+            tools: &prompt_tools,
             skills: &self.skills,
             dispatcher_instructions: &instructions,
             learned,
             visible_tool_names: &self.visible_tool_names,
         };
-        self.prompt_builder.build(&ctx)
+        // Route through the global context manager so every
+        // prompt-building call-site — main agent, sub-agent runner,
+        // channel runtimes — shares one builder configuration.
+        self.context.build_system_prompt(&ctx)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -771,22 +801,23 @@ impl Agent {
         // consumed by the `with_parent_context` scope above, so this is
         // a fresh snapshot.
         let parent_ctx = self.build_parent_execution_context();
-        let extraction_prompt = context_pipeline::ARCHIVIST_EXTRACTION_PROMPT.to_string();
+        let extraction_prompt = ARCHIVIST_EXTRACTION_PROMPT.to_string();
 
-        // Optimistically flip the extraction state to "complete" right
-        // away: we don't need a channel back from the background task
-        // because a failed extraction is idempotent — it will just be
-        // retried after the next threshold crossing. `mark_extraction_complete`
-        // also clears the `extraction_in_progress` flag, so calling it
-        // alone covers both bookkeeping steps.
-        self.context_pipeline
-            .session_memory
-            .mark_extraction_complete();
+        // Flip the extraction state to "in-progress" so future
+        // should_extract checks return false until the archivist
+        // finishes. We then hand a shared handle to the spawned task
+        // so it can mark the extraction complete (resets deltas) on
+        // success, or failed (keeps deltas intact for retry) on error.
+        // This replaces the old optimistic `mark_complete` that
+        // silently dropped the retry window when extractions failed.
+        let stats_snapshot = self.context.stats();
+        self.context.mark_session_memory_started();
+        let sm_handle = self.context.session_memory_handle();
 
         log::info!(
             "[session_memory] spawning background archivist extraction (turn={}, tokens={})",
-            self.context_pipeline.session_memory.current_turn,
-            self.context_pipeline.session_memory.total_tokens
+            stats_snapshot.session_memory_current_turn,
+            stats_snapshot.session_memory_total_tokens
         );
 
         tokio::spawn(async move {
@@ -794,17 +825,31 @@ impl Agent {
             let fut = harness::run_subagent(&definition, &extraction_prompt, options);
             let result = harness::with_parent_context(parent_ctx, fut).await;
             match result {
-                Ok(outcome) => tracing::info!(
-                    agent_id = %outcome.agent_id,
-                    task_id = %outcome.task_id,
-                    iterations = outcome.iterations,
-                    output_chars = outcome.output.chars().count(),
-                    "[session_memory] archivist extraction completed"
-                ),
-                Err(err) => tracing::warn!(
-                    error = %err,
-                    "[session_memory] archivist extraction failed — will retry after next threshold crossing"
-                ),
+                Ok(outcome) => {
+                    tracing::info!(
+                        agent_id = %outcome.agent_id,
+                        task_id = %outcome.task_id,
+                        iterations = outcome.iterations,
+                        output_chars = outcome.output.chars().count(),
+                        "[session_memory] archivist extraction completed"
+                    );
+                    if let Ok(mut sm) = sm_handle.lock() {
+                        sm.mark_extraction_complete();
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "[session_memory] archivist extraction failed — will retry after next threshold crossing"
+                    );
+                    // Leave the deltas intact so the next threshold
+                    // crossing schedules another attempt. Clearing
+                    // `extraction_in_progress` lets the retry
+                    // actually fire.
+                    if let Ok(mut sm) = sm_handle.lock() {
+                        sm.mark_extraction_failed();
+                    }
+                }
             }
         });
     }
