@@ -431,7 +431,7 @@ mod tests {
             output_tokens: 2_000,
             context_window: 100_000,
         });
-        assert_eq!(pipeline.session_memory.total_tokens, 12_000);
+        assert_eq!(pipeline.session_memory_snapshot().total_tokens, 12_000);
     }
 
     #[test]
@@ -439,7 +439,8 @@ mod tests {
         let mut pipeline = ContextPipeline::default();
         pipeline.tick_turn();
         pipeline.record_tool_calls(5);
-        assert_eq!(pipeline.session_memory.current_turn, 1);
-        assert_eq!(pipeline.session_memory.total_tool_calls, 5);
+        let snap = pipeline.session_memory_snapshot();
+        assert_eq!(snap.current_turn, 1);
+        assert_eq!(snap.total_tool_calls, 5);
     }
 }

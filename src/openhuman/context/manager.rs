@@ -30,7 +30,9 @@
 
 use std::sync::Arc;
 
-use super::pipeline::{ContextPipeline, ContextPipelineConfig, PipelineOutcome};
+use super::pipeline::{
+    ContextPipeline, ContextPipelineConfig, PipelineOutcome, SessionMemoryHandle,
+};
 use super::prompt::{PromptContext, SystemPromptBuilder};
 use super::session_memory::SessionMemoryConfig;
 use super::summarizer::{Summarizer, SummaryStats};
@@ -193,18 +195,35 @@ impl ContextManager {
     /// calls to [`should_extract_session_memory`] return `false` until
     /// the extraction completes).
     pub fn mark_session_memory_started(&mut self) {
-        self.pipeline.session_memory.mark_extraction_started();
+        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
+            sm.mark_extraction_started();
+        }
     }
 
     /// Mark a session-memory extraction as complete — resets deltas.
     pub fn mark_session_memory_complete(&mut self) {
-        self.pipeline.session_memory.mark_extraction_complete();
+        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
+            sm.mark_extraction_complete();
+        }
     }
 
     /// Mark a session-memory extraction as failed — keeps deltas
     /// intact so the next turn retries.
     pub fn mark_session_memory_failed(&mut self) {
-        self.pipeline.session_memory.mark_extraction_failed();
+        if let Ok(mut sm) = self.pipeline.session_memory.lock() {
+            sm.mark_extraction_failed();
+        }
+    }
+
+    /// Clone the shared session-memory handle so a detached background
+    /// task (see `turn.rs::spawn_session_memory_extraction`) can mark
+    /// the extraction complete or failed once it finishes. The
+    /// foreground path is expected to call
+    /// [`Self::mark_session_memory_started`] *before* spawning so
+    /// overlapping turns don't fire duplicate extractions while this
+    /// one is in flight.
+    pub fn session_memory_handle(&self) -> SessionMemoryHandle {
+        self.pipeline.session_memory_handle()
     }
 
     // ─── Prompt building ───────────────────────────────────────────
@@ -317,6 +336,7 @@ impl ContextManager {
             .guard
             .utilization()
             .map(|u| (u * 100.0).round() as u8);
+        let sm = self.pipeline.session_memory_snapshot();
         ContextStats {
             utilisation_pct,
             input_tokens: self.pipeline.guard.last_input_tokens(),
@@ -324,9 +344,9 @@ impl ContextManager {
             context_window: self.pipeline.guard.context_window(),
             compaction_disabled: self.pipeline.guard.is_compaction_disabled(),
             consecutive_compaction_failures: self.pipeline.guard.consecutive_failures(),
-            session_memory_total_tokens: self.pipeline.session_memory.total_tokens,
-            session_memory_current_turn: self.pipeline.session_memory.current_turn,
-            session_memory_total_tool_calls: self.pipeline.session_memory.total_tool_calls,
+            session_memory_total_tokens: sm.total_tokens,
+            session_memory_current_turn: sm.current_turn,
+            session_memory_total_tool_calls: sm.total_tool_calls,
         }
     }
 }
