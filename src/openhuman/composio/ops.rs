@@ -19,7 +19,12 @@ use crate::rpc::RpcOutcome;
 /// obvious at a glance.
 type OpResult<T> = std::result::Result<T, String>;
 
+use std::sync::Arc;
+
 use super::client::{build_composio_client, ComposioClient};
+use super::providers::{
+    get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+};
 use super::types::{
     ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioDeleteResponse,
     ComposioExecuteResponse, ComposioToolkitsResponse, ComposioToolsResponse,
@@ -186,6 +191,120 @@ pub async fn composio_execute(
             );
             Err(format!("[composio] execute failed: {e:#}"))
         }
+    }
+}
+
+// ── Provider-backed ops ─────────────────────────────────────────────
+//
+// `composio_get_user_profile` and `composio_sync` route through the
+// per-toolkit `ComposioProvider` registry instead of executing a
+// single Composio action directly. The caller passes a `connection_id`,
+// the op resolves the connection's toolkit slug from the backend, looks
+// up the provider, and dispatches to it.
+//
+// These exist because individual toolkits need to do *several*
+// `composio.execute` calls + bespoke result reshaping to produce a
+// usable user profile or sync snapshot — wrapping that in a single
+// RPC method keeps the UI/agent surface tiny and consistent across
+// toolkits.
+
+/// Look up the toolkit slug for an existing connection. Returns an
+/// error string if the connection is unknown to the backend.
+async fn resolve_toolkit_for_connection(
+    client: &ComposioClient,
+    connection_id: &str,
+) -> OpResult<String> {
+    tracing::debug!(connection_id = %connection_id, "[composio] resolve_toolkit_for_connection");
+    let resp = client
+        .list_connections()
+        .await
+        .map_err(|e| format!("[composio] list_connections failed: {e:#}"))?;
+    let conn = resp
+        .connections
+        .into_iter()
+        .find(|c| c.id == connection_id)
+        .ok_or_else(|| format!("[composio] no connection with id '{connection_id}'"))?;
+    Ok(conn.toolkit)
+}
+
+/// `openhuman.composio_get_user_profile` — fetch a normalized user
+/// profile for a connected account by dispatching to the toolkit's
+/// registered [`super::providers::ComposioProvider`].
+pub async fn composio_get_user_profile(
+    config: &Config,
+    connection_id: &str,
+) -> OpResult<RpcOutcome<ProviderUserProfile>> {
+    tracing::debug!(connection_id = %connection_id, "[composio] rpc get_user_profile");
+    let client = resolve_client(config)?;
+    let toolkit = resolve_toolkit_for_connection(&client, connection_id).await?;
+
+    let provider = get_provider(&toolkit).ok_or_else(|| {
+        format!("[composio] no native provider registered for toolkit '{toolkit}'")
+    })?;
+
+    let ctx = ProviderContext {
+        config: Arc::new(config.clone()),
+        client,
+        toolkit: toolkit.clone(),
+        connection_id: Some(connection_id.to_string()),
+    };
+
+    let profile = provider
+        .fetch_user_profile(&ctx)
+        .await
+        .map_err(|e| format!("[composio] get_user_profile({toolkit}) failed: {e}"))?;
+
+    Ok(RpcOutcome::new(
+        profile,
+        vec![format!(
+            "composio: fetched {toolkit} profile for connection {connection_id}"
+        )],
+    ))
+}
+
+/// `openhuman.composio_sync` — run a sync pass for a connected account
+/// by dispatching to the toolkit's registered provider. `reason` is
+/// `"manual"` by default; the periodic scheduler passes `"periodic"`
+/// and the OAuth event subscriber passes `"connection_created"`.
+pub async fn composio_sync(
+    config: &Config,
+    connection_id: &str,
+    reason: Option<String>,
+) -> OpResult<RpcOutcome<SyncOutcome>> {
+    let reason = parse_sync_reason(reason.as_deref());
+    tracing::debug!(
+        connection_id = %connection_id,
+        reason = reason.as_str(),
+        "[composio] rpc sync"
+    );
+    let client = resolve_client(config)?;
+    let toolkit = resolve_toolkit_for_connection(&client, connection_id).await?;
+
+    let provider = get_provider(&toolkit).ok_or_else(|| {
+        format!("[composio] no native provider registered for toolkit '{toolkit}'")
+    })?;
+
+    let ctx = ProviderContext {
+        config: Arc::new(config.clone()),
+        client,
+        toolkit: toolkit.clone(),
+        connection_id: Some(connection_id.to_string()),
+    };
+
+    let outcome = provider
+        .sync(&ctx, reason)
+        .await
+        .map_err(|e| format!("[composio] sync({toolkit}) failed: {e}"))?;
+
+    let summary = outcome.summary.clone();
+    Ok(RpcOutcome::new(outcome, vec![summary]))
+}
+
+fn parse_sync_reason(raw: Option<&str>) -> SyncReason {
+    match raw.unwrap_or("manual") {
+        "periodic" => SyncReason::Periodic,
+        "connection_created" => SyncReason::ConnectionCreated,
+        _ => SyncReason::Manual,
     }
 }
 

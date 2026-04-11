@@ -38,12 +38,20 @@
 pub mod bus;
 pub mod client;
 pub mod ops;
+pub mod periodic;
+pub mod providers;
 pub mod schemas;
 pub mod tools;
 pub mod types;
 
 pub use bus::{register_composio_trigger_subscriber, ComposioTriggerSubscriber};
 pub use client::{build_composio_client, ComposioClient};
+pub use periodic::start_periodic_sync;
+pub use providers::{
+    all_providers as all_composio_providers, get_provider as get_composio_provider,
+    init_default_providers as init_default_composio_providers, ComposioProvider, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason,
+};
 pub use schemas::{
     all_controller_schemas as all_composio_controller_schemas,
     all_registered_controllers as all_composio_registered_controllers,

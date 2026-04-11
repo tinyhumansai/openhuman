@@ -8,6 +8,8 @@
 //!   - `composio.delete_connection`   → `openhuman.composio_delete_connection`
 //!   - `composio.list_tools`          → `openhuman.composio_list_tools`
 //!   - `composio.execute`             → `openhuman.composio_execute`
+//!   - `composio.get_user_profile`    → `openhuman.composio_get_user_profile`
+//!   - `composio.sync`                → `openhuman.composio_sync`
 
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -25,6 +27,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete_connection"),
         schemas("list_tools"),
         schemas("execute"),
+        schemas("get_user_profile"),
+        schemas("sync"),
     ]
 }
 
@@ -53,6 +57,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("execute"),
             handler: handle_execute,
+        },
+        RegisteredController {
+            schema: schemas("get_user_profile"),
+            handler: handle_get_user_profile,
+        },
+        RegisteredController {
+            schema: schemas("sync"),
+            handler: handle_sync,
         },
     ]
 }
@@ -169,6 +181,55 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "get_user_profile" => ControllerSchema {
+            namespace: "composio",
+            function: "get_user_profile",
+            description:
+                "Fetch a normalized user profile for a Composio connection by dispatching to \
+                 the toolkit's native provider implementation.",
+            inputs: vec![FieldSchema {
+                name: "connection_id",
+                ty: TypeSchema::String,
+                comment: "Composio connection id (from list_connections / authorize).",
+                required: true,
+            }],
+            outputs: vec![FieldSchema {
+                name: "profile",
+                ty: TypeSchema::Json,
+                comment: "Normalized profile: { toolkit, connectionId, displayName?, email?, \
+                          username?, avatarUrl?, extras }.",
+                required: true,
+            }],
+        },
+        "sync" => ControllerSchema {
+            namespace: "composio",
+            function: "sync",
+            description:
+                "Run a sync pass for a Composio connection by dispatching to the toolkit's \
+                 native provider implementation. Persists results into the memory layer.",
+            inputs: vec![
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::String,
+                    comment: "Composio connection id (from list_connections / authorize).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "reason",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment:
+                        "Optional reason: 'manual' (default), 'periodic', 'connection_created'.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "outcome",
+                ty: TypeSchema::Json,
+                comment: "SyncOutcome: { toolkit, connectionId, reason, itemsIngested, \
+                          startedAtMs, finishedAtMs, summary, details }.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "composio",
             function: "unknown",
@@ -235,6 +296,23 @@ fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
         let tool = read_required_non_empty(&params, "tool")?;
         let arguments = read_optional::<Value>(&params, "arguments")?;
         to_json(super::ops::composio_execute(&config, &tool, arguments).await?)
+    })
+}
+
+fn handle_get_user_profile(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let connection_id = read_required_non_empty(&params, "connection_id")?;
+        to_json(super::ops::composio_get_user_profile(&config, &connection_id).await?)
+    })
+}
+
+fn handle_sync(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let connection_id = read_required_non_empty(&params, "connection_id")?;
+        let reason = read_optional::<String>(&params, "reason")?;
+        to_json(super::ops::composio_sync(&config, &connection_id, reason).await?)
     })
 }
 

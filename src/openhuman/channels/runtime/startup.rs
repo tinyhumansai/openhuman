@@ -50,6 +50,14 @@ pub async fn start_channels(config: Config) -> Result<()> {
         config.workspace_dir.clone(),
     );
     crate::openhuman::composio::register_composio_trigger_subscriber();
+    // Spawn the per-toolkit provider periodic sync scheduler. This is
+    // a thin tokio task that ticks every minute and dispatches into
+    // any provider whose `sync_interval_secs` has elapsed for an
+    // active Composio connection. Safe to call here even though
+    // `bootstrap_skill_runtime` may also start it — `start_periodic_sync`
+    // is intentionally cheap and the loop body no-ops when there are
+    // no connections.
+    crate::openhuman::composio::start_periodic_sync();
     // Native request handlers. Re-registering is safe (latest wins) so
     // this is idempotent even if `bootstrap_skill_runtime` also runs.
     // Must happen before `run_message_dispatch_loop` begins, because

@@ -830,6 +830,7 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
             workspace_dir,
         );
         crate::openhuman::composio::register_composio_trigger_subscriber();
+        crate::openhuman::composio::start_periodic_sync();
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.

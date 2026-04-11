@@ -1,45 +1,78 @@
 //! Event bus subscribers for the Composio domain.
 //!
-//! The backend emits `composio:trigger` over Socket.IO when a webhook
-//! arrives and is HMAC-verified (see
-//! `src/controllers/agentIntegrations/composio/handleWebhook.ts` in the
-//! backend repo). The socket transport layer parses that payload and
-//! publishes [`DomainEvent::ComposioTriggerReceived`], and this
-//! subscriber is what actually does something with it: log it, and in
-//! the future, route to skills / channels / cron-like delivery.
+//! There are two long-lived subscribers, both registered at startup
+//! and both routing into the per-toolkit
+//! [`super::providers::ComposioProvider`] registry:
 //!
-//! Keeping this logic behind the bus means the socket transport stays
-//! dumb, and adding new consumers (UI push, skill triggers, automation
-//! engines) is a one-line subscribe call.
+//!   * [`ComposioTriggerSubscriber`] — handles
+//!     [`DomainEvent::ComposioTriggerReceived`]. The backend HMAC-verifies
+//!     a Composio webhook, parses it, and emits `composio:trigger` over
+//!     Socket.IO; the socket transport publishes that as a domain event.
+//!     We look up the provider for the trigger's toolkit and call
+//!     `on_trigger`.
+//!
+//!   * [`ComposioConnectionCreatedSubscriber`] — handles
+//!     [`DomainEvent::ComposioConnectionCreated`]. Fired by `composio_authorize`
+//!     once the OAuth handoff has produced a `connectUrl` + `connectionId`.
+//!     We look up the provider and call `on_connection_created`, which
+//!     by default fetches the user profile and runs the initial sync.
+//!
+//! Both subscribers do their work in a `tokio::spawn`-ed task so the
+//! event bus dispatch loop is never blocked by a long-running provider
+//! call (sync can take seconds).
 
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 
-use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
+use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
+use crate::openhuman::config::rpc as config_rpc;
+
+use super::providers::{get_provider, ProviderContext};
 
 static COMPOSIO_TRIGGER_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+static COMPOSIO_CONNECTION_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
-/// Register the long-lived composio trigger subscriber on the global
-/// event bus. Idempotent.
+/// Register both long-lived composio subscribers on the global event
+/// bus, and initialise the default provider registry. Idempotent.
 pub fn register_composio_trigger_subscriber() {
-    if COMPOSIO_TRIGGER_HANDLE.get().is_some() {
-        return;
-    }
-    match crate::core::event_bus::subscribe_global(Arc::new(ComposioTriggerSubscriber::new())) {
-        Some(handle) => {
-            let _ = COMPOSIO_TRIGGER_HANDLE.set(handle);
-            log::debug!("[event_bus] composio trigger subscriber registered");
+    // Make sure the registry is populated before any event arrives —
+    // otherwise the very first webhook would no-op because the
+    // subscriber's `get_provider` lookup would miss.
+    super::providers::init_default_providers();
+
+    if COMPOSIO_TRIGGER_HANDLE.get().is_none() {
+        match subscribe_global(Arc::new(ComposioTriggerSubscriber::new())) {
+            Some(handle) => {
+                let _ = COMPOSIO_TRIGGER_HANDLE.set(handle);
+                log::debug!("[event_bus] composio trigger subscriber registered");
+            }
+            None => {
+                log::warn!(
+                    "[event_bus] failed to register composio trigger subscriber — bus not initialized"
+                );
+            }
         }
-        None => {
-            log::warn!(
-                "[event_bus] failed to register composio trigger subscriber — bus not initialized"
-            );
+    }
+
+    if COMPOSIO_CONNECTION_HANDLE.get().is_none() {
+        match subscribe_global(Arc::new(ComposioConnectionCreatedSubscriber::new())) {
+            Some(handle) => {
+                let _ = COMPOSIO_CONNECTION_HANDLE.set(handle);
+                log::debug!("[event_bus] composio connection_created subscriber registered");
+            }
+            None => {
+                log::warn!(
+                    "[event_bus] failed to register composio connection_created subscriber — bus not initialized"
+                );
+            }
         }
     }
 }
 
-/// Logs and (in future) routes `ComposioTriggerReceived` events.
+// ── Trigger subscriber ──────────────────────────────────────────────
+
+/// Routes `ComposioTriggerReceived` events to the toolkit's provider.
 pub struct ComposioTriggerSubscriber;
 
 impl ComposioTriggerSubscriber {
@@ -82,13 +115,160 @@ impl EventHandler for ComposioTriggerSubscriber {
             id = %metadata_id,
             uuid = %metadata_uuid,
             payload_bytes = payload.to_string().len(),
-            "[composio] trigger received"
+            "[composio:bus] trigger received"
         );
 
-        // TODO: route triggers into a user-configurable skill/channel/cron
-        // dispatch in the same spirit as `cron::bus::CronDeliverySubscriber`.
-        // For now we log and rely on other subscribers (e.g. a future
-        // skill bridge) to act on the event.
+        let Some(provider) = get_provider(toolkit) else {
+            tracing::debug!(
+                toolkit = %toolkit,
+                trigger = %trigger,
+                "[composio:bus] no provider registered, dropping trigger"
+            );
+            return;
+        };
+
+        let toolkit = toolkit.clone();
+        let trigger = trigger.clone();
+        let payload = payload.clone();
+
+        // Connection id isn't always carried on the trigger envelope —
+        // for now we let the provider work without one. Many providers
+        // will use it as an optional disambiguator (multi-account).
+        let connection_id = payload
+            .get("connectionId")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        tokio::spawn(async move {
+            let config = match config_rpc::load_config_with_timeout().await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        error = %e,
+                        "[composio:bus] failed to load config for trigger dispatch"
+                    );
+                    return;
+                }
+            };
+            let Some(ctx) =
+                ProviderContext::from_config(Arc::new(config), toolkit.clone(), connection_id)
+            else {
+                tracing::debug!(
+                    toolkit = %toolkit,
+                    "[composio:bus] no composio client (not signed in?), dropping trigger"
+                );
+                return;
+            };
+            if let Err(e) = provider.on_trigger(&ctx, &trigger, &payload).await {
+                tracing::warn!(
+                    toolkit = %toolkit,
+                    trigger = %trigger,
+                    error = %e,
+                    "[composio:bus] provider on_trigger failed"
+                );
+            }
+        });
+    }
+}
+
+// ── Connection-created subscriber ───────────────────────────────────
+
+/// Routes `ComposioConnectionCreated` events to the toolkit's provider.
+pub struct ComposioConnectionCreatedSubscriber;
+
+impl ComposioConnectionCreatedSubscriber {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for ComposioConnectionCreatedSubscriber {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl EventHandler for ComposioConnectionCreatedSubscriber {
+    fn name(&self) -> &str {
+        "composio::connection_created"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["composio"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        let DomainEvent::ComposioConnectionCreated {
+            toolkit,
+            connection_id,
+            connect_url: _,
+        } = event
+        else {
+            return;
+        };
+
+        tracing::info!(
+            toolkit = %toolkit,
+            connection_id = %connection_id,
+            "[composio:bus] connection_created"
+        );
+
+        let Some(provider) = get_provider(toolkit) else {
+            tracing::debug!(
+                toolkit = %toolkit,
+                "[composio:bus] no provider registered, skipping connection_created hook"
+            );
+            return;
+        };
+
+        let toolkit = toolkit.clone();
+        let connection_id = connection_id.clone();
+
+        tokio::spawn(async move {
+            // The OAuth handoff is asynchronous — the backend returned
+            // a `connectUrl` and we published the event before the user
+            // has actually clicked through. Sleep briefly so the
+            // immediate provider sync has a chance of finding the
+            // connection in `ACTIVE` state. We use a short backoff
+            // here rather than blocking the bus dispatch loop.
+            //
+            // NOTE: Future improvement — listen for an explicit
+            // "connection_active" backend event instead of guessing.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+            let config = match config_rpc::load_config_with_timeout().await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        error = %e,
+                        "[composio:bus] failed to load config for connection_created dispatch"
+                    );
+                    return;
+                }
+            };
+            let Some(ctx) = ProviderContext::from_config(
+                Arc::new(config),
+                toolkit.clone(),
+                Some(connection_id.clone()),
+            ) else {
+                tracing::debug!(
+                    toolkit = %toolkit,
+                    "[composio:bus] no composio client (not signed in?), skipping hook"
+                );
+                return;
+            };
+            if let Err(e) = provider.on_connection_created(&ctx).await {
+                tracing::warn!(
+                    toolkit = %toolkit,
+                    connection_id = %connection_id,
+                    error = %e,
+                    "[composio:bus] provider on_connection_created failed"
+                );
+            }
+        });
     }
 }
 
@@ -117,6 +297,17 @@ mod tests {
             metadata_id: "trig-1".into(),
             metadata_uuid: "uuid-1".into(),
             payload: json!({ "from": "a@b.com", "subject": "hi" }),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn handles_connection_created_event_without_panic() {
+        let sub = ComposioConnectionCreatedSubscriber::new();
+        sub.handle(&DomainEvent::ComposioConnectionCreated {
+            toolkit: "gmail".into(),
+            connection_id: "conn-1".into(),
+            connect_url: "https://composio.example/connect/abc".into(),
         })
         .await;
     }
