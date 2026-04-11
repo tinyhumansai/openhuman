@@ -101,7 +101,11 @@ pub async fn run_triage(envelope: &TriggerEnvelope) -> anyhow::Result<TriageRun>
     // First attempt. On success, publish latency + return.
     match run_triage_with_resolved(resolved, envelope).await {
         Ok(run) => Ok(run),
-        Err(first_err) if first_err.downcast_ref::<TurnOutcomeFailure>().is_some_and(|f| f.used_local) => {
+        Err(first_err)
+            if first_err
+                .downcast_ref::<TurnOutcomeFailure>()
+                .is_some_and(|f| f.used_local) =>
+        {
             // Local turn failed — mark cache degraded, rebuild a remote
             // provider from the SAME config, and retry once. If that
             // also fails, publish `TriggerEscalationFailed` and return.
@@ -123,7 +127,8 @@ pub async fn run_triage(envelope: &TriggerEnvelope) -> anyhow::Result<TriageRun>
                     Ok(run)
                 }
                 Err(second_err) => {
-                    let reason = format!("local then remote both failed: {first_err} / {second_err}");
+                    let reason =
+                        format!("local then remote both failed: {first_err} / {second_err}");
                     events::publish_failed(envelope, &reason);
                     Err(anyhow!(reason))
                 }

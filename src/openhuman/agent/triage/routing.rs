@@ -159,9 +159,7 @@ pub async fn cache_snapshot() -> Option<CacheSnapshot> {
             CacheState::Remote => "remote",
             CacheState::Degraded => "degraded",
         },
-        ttl_remaining_ms: CACHE_TTL
-            .saturating_sub(c.at.elapsed())
-            .as_millis(),
+        ttl_remaining_ms: CACHE_TTL.saturating_sub(c.at.elapsed()).as_millis(),
     })
 }
 
@@ -202,10 +200,7 @@ fn decide_fresh(config: &Config) -> CacheState {
     }
     let tier = current_tier_from_config(&config.local_ai);
     if tier_score(tier) < tier_score(ModelTier::Ram4To8Gb) {
-        tracing::debug!(
-            ?tier,
-            "[triage::routing] tier below floor — forcing remote"
-        );
+        tracing::debug!(?tier, "[triage::routing] tier below floor — forcing remote");
         return CacheState::Remote;
     }
     let service = local_ai::global(config);
@@ -363,7 +358,10 @@ mod tests {
         assert!(tier_score(ModelTier::Ram2To4Gb) < tier_score(ModelTier::Ram4To8Gb));
         assert!(tier_score(ModelTier::Ram4To8Gb) < tier_score(ModelTier::Ram8To16Gb));
         assert!(tier_score(ModelTier::Ram8To16Gb) < tier_score(ModelTier::Ram16PlusGb));
-        assert_eq!(tier_score(ModelTier::Custom), tier_score(ModelTier::Ram16PlusGb));
+        assert_eq!(
+            tier_score(ModelTier::Custom),
+            tier_score(ModelTier::Ram16PlusGb)
+        );
     }
 
     #[test]
@@ -394,7 +392,9 @@ mod tests {
     async fn mark_degraded_forces_remote_on_next_resolve() {
         clear_cache().await;
         mark_degraded().await;
-        let snap = cache_snapshot().await.expect("cache seeded by mark_degraded");
+        let snap = cache_snapshot()
+            .await
+            .expect("cache seeded by mark_degraded");
         assert_eq!(snap.state, "degraded");
         assert!(snap.ttl_remaining_ms > 0);
     }
