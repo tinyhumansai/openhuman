@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::openhuman::tools::impl::agent::dispatch_subagent;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 pub struct SkillDelegationTool {
@@ -56,7 +55,7 @@ impl Tool for SkillDelegationTool {
             )));
         }
 
-        dispatch_subagent(
+        super::dispatch_subagent(
             "skills_agent",
             &self.tool_name,
             &prompt,

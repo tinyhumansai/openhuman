@@ -5,8 +5,8 @@
 //! `--features browser-native` and selected through config.
 //! Computer-use (OS-level) actions are supported via an optional sidecar endpoint.
 
-use crate::openhuman::tools::traits::{Tool, ToolResult};
 use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use anyhow::Context;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

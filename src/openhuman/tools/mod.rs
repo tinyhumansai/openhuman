@@ -8,6 +8,7 @@ pub mod traits;
 #[path = "impl/mod.rs"]
 mod implementations;
 
+pub(crate) use implementations::agent::{skill_description, ARCHETYPE_TOOLS};
 pub use implementations::*;
 pub use ops::*;
 #[allow(unused_imports)]

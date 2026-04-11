@@ -1,7 +1,7 @@
-use crate::openhuman::tools::traits::{Tool, ToolResult};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;

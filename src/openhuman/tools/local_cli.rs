@@ -8,11 +8,9 @@ use serde_json::json;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::security::SecurityPolicy;
 
-use super::image_output::{
-    decode_data_url_bytes, extract_data_url, extract_saved_path, write_bytes_to_path,
-};
 use super::traits::Tool;
 use super::ScreenshotTool;
+use super::{decode_data_url_bytes, extract_data_url, extract_saved_path, write_bytes_to_path};
 
 #[derive(Debug, Default)]
 pub struct CliScreenshotArgs {

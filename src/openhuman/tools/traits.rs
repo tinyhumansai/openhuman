@@ -25,7 +25,7 @@ pub enum ToolScope {
 ///   file_write, cron_*, memory_*, …) that run inside the core process
 ///   with direct host access.
 /// - **Skill tools** are QuickJS skill exports bridged through
-///   [`crate::openhuman::tools::skill_bridge::SkillToolBridge`]. They
+///   [`crate::openhuman::tools::SkillToolBridge`]. They
 ///   talk to external services (Notion, Gmail, Telegram, …) via
 ///   user-installed skill packages.
 ///

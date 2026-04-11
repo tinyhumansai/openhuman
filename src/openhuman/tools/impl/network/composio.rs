@@ -6,9 +6,9 @@
 // This is opt-in. Users who prefer sovereign/local-only mode skip this entirely.
 // The Composio API key is stored in the encrypted secret store.
 
-use crate::openhuman::tools::traits::{Tool, ToolResult};
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use anyhow::Context;
 use async_trait::async_trait;
 use reqwest::Client;

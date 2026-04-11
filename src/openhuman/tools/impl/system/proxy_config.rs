@@ -1,8 +1,8 @@
-use crate::openhuman::tools::traits::{Tool, ToolResult};
 use crate::openhuman::config::{
     runtime_proxy_config, set_runtime_proxy_config, Config, ProxyConfig, ProxyScope,
 };
 use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use crate::openhuman::util::MaybeSet;
 use async_trait::async_trait;
 use serde_json::{json, Value};

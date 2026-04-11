@@ -24,10 +24,10 @@
 //!  19. Builder validation (missing required fields)
 //!  20. Idempotent system prompt insertion
 
-use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::agent::dispatcher::{
     NativeToolDispatcher, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
+use crate::openhuman::agent::harness::session::Agent;
 use crate::openhuman::config::{AgentConfig, MemoryConfig};
 use crate::openhuman::memory::{self, Memory};
 use crate::openhuman::providers::{

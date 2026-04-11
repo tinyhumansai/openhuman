@@ -221,5 +221,4 @@ mod tests {
         assert!(context.contains("[User working memory]"));
         assert!(context.contains("working.user.gmail.summary"));
     }
-
 }

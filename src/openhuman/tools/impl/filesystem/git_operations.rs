@@ -1,5 +1,5 @@
-use crate::openhuman::tools::traits::{Tool, ToolResult};
 use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
+use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;

@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::openhuman::tools::impl::agent::dispatch_subagent;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolResult};
 
 pub struct ArchetypeDelegationTool {
@@ -56,6 +55,6 @@ impl Tool for ArchetypeDelegationTool {
             )));
         }
 
-        dispatch_subagent(&self.agent_id, &self.tool_name, &prompt, None).await
+        super::dispatch_subagent(&self.agent_id, &self.tool_name, &prompt, None).await
     }
 }

@@ -961,4 +961,3 @@ fn scrub_credentials_short_values_not_redacted() {
     let result = scrub_credentials(input);
     assert_eq!(result, input, "short values should not be redacted");
 }
-
