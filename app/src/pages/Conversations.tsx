@@ -285,7 +285,6 @@ const Conversations = () => {
       dispatch(setSelectedThread(DEFAULT_THREAD_ID));
       void dispatch(loadThreadMessages(DEFAULT_THREAD_ID));
     });
-     
   }, [dispatch]);
 
   useEffect(() => {
