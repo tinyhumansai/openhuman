@@ -81,3 +81,136 @@ impl PromptSection for UserProfileSection {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::context::prompt::LearnedContextData;
+    use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
+    use async_trait::async_trait;
+    use std::collections::HashSet;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    struct NoopMemory;
+
+    #[async_trait]
+    impl Memory for NoopMemory {
+        fn name(&self) -> &str {
+            "noop"
+        }
+
+        async fn store(
+            &self,
+            _key: &str,
+            _content: &str,
+            _category: MemoryCategory,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn recall(
+            &self,
+            _query: &str,
+            _limit: usize,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn get(&self, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+            Ok(None)
+        }
+
+        async fn list(
+            &self,
+            _category: Option<&MemoryCategory>,
+            _session_id: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn forget(&self, _key: &str) -> anyhow::Result<bool> {
+            Ok(false)
+        }
+
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(0)
+        }
+
+        async fn health_check(&self) -> bool {
+            true
+        }
+    }
+
+    fn prompt_context(learned: LearnedContextData) -> PromptContext<'static> {
+        let visible_tool_names = Box::leak(Box::new(HashSet::new()));
+        PromptContext {
+            workspace_dir: Path::new("/tmp"),
+            model_name: "test-model",
+            tools: &[],
+            skills: &[],
+            dispatcher_instructions: "",
+            learned,
+            visible_tool_names,
+            tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
+        }
+    }
+
+    #[test]
+    fn learned_context_section_renders_observations_and_patterns() {
+        let section = LearnedContextSection::new(Arc::new(NoopMemory));
+        let rendered = section
+            .build(&prompt_context(LearnedContextData {
+                observations: vec!["Tool use succeeded".into()],
+                patterns: vec!["User prefers terse replies".into()],
+                user_profile: Vec::new(),
+                tree_root_summaries: Vec::new(),
+            }))
+            .unwrap();
+
+        assert_eq!(section.name(), "learned_context");
+        assert!(rendered.contains("## Learned Context"));
+        assert!(rendered.contains("### Recent Observations"));
+        assert!(rendered.contains("- Tool use succeeded"));
+        assert!(rendered.contains("### Recognized Patterns"));
+        assert!(rendered.contains("- User prefers terse replies"));
+    }
+
+    #[test]
+    fn learned_context_section_returns_empty_without_entries() {
+        let section = LearnedContextSection::new(Arc::new(NoopMemory));
+        assert!(section
+            .build(&prompt_context(LearnedContextData::default()))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn user_profile_section_renders_bullets() {
+        let section = UserProfileSection::new(Arc::new(NoopMemory));
+        let rendered = section
+            .build(&prompt_context(LearnedContextData {
+                observations: Vec::new(),
+                patterns: Vec::new(),
+                user_profile: vec!["Timezone: America/Los_Angeles".into(), "Prefers Rust".into()],
+                tree_root_summaries: Vec::new(),
+            }))
+            .unwrap();
+
+        assert_eq!(section.name(), "user_profile");
+        assert!(rendered.starts_with("## User Profile (Learned)\n\n"));
+        assert!(rendered.contains("- Timezone: America/Los_Angeles"));
+        assert!(rendered.contains("- Prefers Rust"));
+    }
+
+    #[test]
+    fn user_profile_section_returns_empty_without_profile_entries() {
+        let section = UserProfileSection::new(Arc::new(NoopMemory));
+        assert!(section
+            .build(&prompt_context(LearnedContextData::default()))
+            .unwrap()
+            .is_empty());
+    }
+}

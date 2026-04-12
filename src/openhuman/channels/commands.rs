@@ -271,3 +271,41 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
     println!("Summary: {healthy} healthy, {unhealthy} unhealthy, {timeout} timed out");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_health_result_maps_all_outcomes() {
+        assert_eq!(
+            classify_health_result(&Ok(true)),
+            ChannelHealthState::Healthy
+        );
+        assert_eq!(
+            classify_health_result(&Ok(false)),
+            ChannelHealthState::Unhealthy
+        );
+    }
+
+    #[tokio::test]
+    async fn classify_health_result_maps_timeout() {
+        let elapsed = tokio::time::timeout(
+            std::time::Duration::from_millis(1),
+            std::future::pending::<()>(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            classify_health_result(&Err(elapsed)),
+            ChannelHealthState::Timeout
+        );
+    }
+
+    #[tokio::test]
+    async fn doctor_channels_returns_ok_when_no_channels_are_configured() {
+        let mut config = Config::default();
+        config.channels_config = crate::openhuman::config::ChannelsConfig::default();
+        doctor_channels(config).await.unwrap();
+    }
+}
