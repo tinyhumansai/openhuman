@@ -95,6 +95,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("trigger_triage/agent.toml"),
         prompt: include_str!("trigger_triage/prompt.md"),
     },
+    BuiltinAgent {
+        id: "trigger_reactor",
+        toml: include_str!("trigger_reactor/agent.toml"),
+        prompt: include_str!("trigger_reactor/prompt.md"),
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -140,7 +145,39 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 9, "expected 9 built-in agents");
+        assert_eq!(defs.len(), 10, "expected 10 built-in agents");
+    }
+
+    #[test]
+    fn trigger_reactor_has_agentic_hint_and_narrow_tools() {
+        let def = find("trigger_reactor");
+        assert!(matches!(def.model, ModelSpec::Hint(ref h) if h == "agentic"));
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert!(
+                    tools.iter().any(|t| t == "memory_recall"),
+                    "trigger_reactor needs memory_recall"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "memory_store"),
+                    "trigger_reactor needs memory_store"
+                );
+                assert!(
+                    tools.iter().any(|t| t == "spawn_subagent"),
+                    "trigger_reactor needs spawn_subagent for escalation"
+                );
+                // No shell / file_write — reactor does not execute code.
+                assert!(!tools.iter().any(|t| t == "shell"));
+                assert!(!tools.iter().any(|t| t == "file_write"));
+            }
+            ToolScope::Wildcard => panic!("trigger_reactor must have a Named tool scope"),
+        }
+        assert_eq!(def.sandbox_mode, SandboxMode::None);
+        assert_eq!(def.max_iterations, 6);
+        assert!(
+            !def.omit_memory_context,
+            "trigger_reactor needs global memory/context"
+        );
     }
 
     #[test]

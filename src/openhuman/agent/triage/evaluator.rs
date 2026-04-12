@@ -579,7 +579,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_triage_surfaces_parser_failure_with_no_retry_yet() {
+    async fn remote_parse_failure_surfaces_as_error() {
+        // When a remote turn (used_local=false) produces an unparseable
+        // reply, the error surfaces directly — no retry is attempted
+        // because there's no "better" provider to fall back to.
         AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
 
         let envelope =
@@ -594,11 +597,106 @@ mod tests {
 
         let err = run_triage_with_resolved(fake_resolved(false), &envelope)
             .await
-            .expect_err("parser failure must surface in commit 1 (no remote retry yet)");
+            .expect_err("remote parse failure must surface as error");
         let msg = err.to_string();
         assert!(
-            msg.contains("did not parse") || msg.contains("JSON"),
+            msg.contains("parser") || msg.contains("JSON"),
             "expected parser error message, got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn local_parse_failure_is_retry_eligible() {
+        // When a local turn (used_local=true) produces an unparseable
+        // reply, the error is wrapped in TurnOutcomeFailure with
+        // used_local=true, so the outer `run_triage` can detect it
+        // and retry on remote.
+        AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+
+        let envelope =
+            TriggerEnvelope::from_composio("slack", "SLACK_MESSAGE", "t", "u", json!({}));
+
+        let _guard = mock_agent_run_turn(move |_req| async move {
+            Ok(AgentTurnResponse {
+                text: "no json here".to_string(),
+            })
+        })
+        .await;
+
+        let err = run_triage_with_resolved(fake_resolved(true), &envelope)
+            .await
+            .expect_err("local parse failure must surface as error");
+
+        // The error must be a TurnOutcomeFailure with used_local=true
+        // so the outer run_triage can detect it for retry.
+        let failure = err
+            .downcast_ref::<TurnOutcomeFailure>()
+            .expect("error must be a TurnOutcomeFailure");
+        assert!(
+            failure.used_local,
+            "TurnOutcomeFailure must report used_local=true for retry eligibility"
+        );
+        assert_eq!(failure.kind, "parser");
+    }
+
+    #[tokio::test]
+    async fn stateful_stub_simulates_local_garbage_then_remote_success() {
+        // Proves the bus round-trip works with a stateful stub that
+        // returns garbage on call 1 (simulating local) and valid JSON
+        // on call 2 (simulating remote). This validates the exact
+        // sequence the retry path in `run_triage` exercises.
+        AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+
+        let envelope = TriggerEnvelope::from_composio(
+            "github",
+            "GITHUB_PUSH",
+            "t",
+            "u",
+            json!({ "ref": "refs/heads/main" }),
+        );
+
+        let call_counter = StdArc::new(AtomicUsize::new(0));
+        let counter_for_stub = StdArc::clone(&call_counter);
+
+        let _guard = mock_agent_run_turn(move |_req| {
+            let counter = StdArc::clone(&counter_for_stub);
+            async move {
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // First call: simulate garbage local response
+                    Ok(AgentTurnResponse {
+                        text: "I have no idea what to do with this".to_string(),
+                    })
+                } else {
+                    // Second call: valid JSON
+                    Ok(AgentTurnResponse {
+                        text: "{\"action\":\"acknowledge\",\"reason\":\"valid on retry\"}"
+                            .to_string(),
+                    })
+                }
+            }
+        })
+        .await;
+
+        // Call 1: local (used_local=true) → expect parse failure
+        let err = run_triage_with_resolved(fake_resolved(true), &envelope)
+            .await
+            .expect_err("first call should fail (garbage)");
+        let failure = err.downcast_ref::<TurnOutcomeFailure>().unwrap();
+        assert!(failure.used_local);
+
+        // Call 2: remote (used_local=false) → expect success
+        let run = run_triage_with_resolved(fake_resolved(false), &envelope)
+            .await
+            .expect("second call should succeed (valid JSON)");
+        assert_eq!(
+            run.decision.action,
+            crate::openhuman::agent::triage::TriageAction::Acknowledge
+        );
+        assert_eq!(run.decision.reason, "valid on retry");
+        assert!(!run.used_local);
+
+        // Total: exactly 2 bus calls
+        assert_eq!(call_counter.load(Ordering::SeqCst), 2);
     }
 }

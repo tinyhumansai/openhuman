@@ -1,0 +1,35 @@
+id = "trigger_reactor"
+display_name = "Trigger Reactor"
+when_to_use = "Perform a small reactive action in response to an external trigger: persist a memory note, mark an item read, fire a single follow-up. No planning, no delegation — one or two tool calls and done."
+temperature = 0.3
+max_iterations = 6
+sandbox_mode = "none"
+
+# The reactor needs the memory / workspace sections so it can ground
+# its response in what the user is currently working on. Identity and
+# skills catalog are omitted — the reactor is a narrow specialist
+# invoked programmatically, not a front-line agent.
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+# Always remote. Reactive work hits write-path tools and needs
+# reliable native tool-calling, which 1B-class local models do not
+# deliver. The `agentic` hint routes to the backend's agentic tier
+# via the normal `RouterProvider` path.
+hint = "agentic"
+
+[tools]
+# Small, deliberately narrow tool surface:
+#   - memory_recall / memory_store: look up and persist context
+#   - read_workspace_state: understand what the user is working on
+#   - spawn_subagent: escalate to a real specialist if the reaction
+#     turns out to be bigger than the triage agent expected
+named = [
+    "memory_recall",
+    "memory_store",
+    "read_workspace_state",
+    "spawn_subagent",
+]

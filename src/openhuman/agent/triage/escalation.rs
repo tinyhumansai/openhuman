@@ -1,25 +1,30 @@
 //! Translate a parsed classifier decision into side effects.
 //!
-//! ## Commit 1 scope
+//! The four actions:
 //!
-//! Only publishes [`crate::core::event_bus::DomainEvent::TriggerEvaluated`]
-//! and logs the would-be action. No sub-agents are actually dispatched
-//! yet — `react` / `escalate` get a `tracing::info!` saying "would
-//! dispatch to …" and nothing else happens. This keeps commit 1
-//! bounded to the classifier round-trip so we can validate the
-//! triage turn works end-to-end without also wiring in the
-//! sub-agent runner (which requires additional plumbing covered in
-//! commit 2).
+//! - **`drop`** — log only, publish `TriggerEvaluated`.
+//! - **`acknowledge`** — log + publish `TriggerEvaluated`. (Memory-write
+//!   for ack is a future addition.)
+//! - **`react`** — dispatch the `trigger_reactor` sub-agent via
+//!   [`run_subagent`], publish `TriggerEvaluated` + `TriggerEscalated`.
+//! - **`escalate`** — dispatch the `orchestrator` sub-agent, same
+//!   events.
 //!
-//! ## Commit 2 scope
-//!
-//! - `acknowledge` → write a memory note via the memory domain.
-//! - `react` → call `subagent_runner::run_subagent(trigger_reactor_def, prompt, …)`
-//!   directly, bypassing the `spawn_subagent` tool path.
-//! - `escalate` → same but against the existing `orchestrator`
-//!   built-in. Also publishes [`TriggerEscalated`].
-//!
-//! `drop` is terminal in both commits.
+//! `react`/`escalate` build a full [`Agent`] from config so they have
+//! a real provider, tool registry, and memory backing — the same
+//! construction path `agent_chat` uses. A [`ParentExecutionContext`] is
+//! installed on the task-local so [`run_subagent`] can inherit the
+//! provider and tools.
+
+use std::sync::Arc;
+
+use anyhow::{anyhow, Context};
+
+use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
+use crate::openhuman::agent::harness::fork_context::{with_parent_context, ParentExecutionContext};
+use crate::openhuman::agent::harness::subagent_runner::{self, SubagentRunOptions};
+use crate::openhuman::agent::Agent;
+use crate::openhuman::config::Config;
 
 use super::decision::TriageAction;
 use super::envelope::TriggerEnvelope;
@@ -28,12 +33,9 @@ use super::events;
 
 /// Interpret a [`TriageRun`] and fire the matching side effects.
 ///
-/// In commit 1 this is mostly just logging + `TriggerEvaluated` —
-/// there is no provider work and no subagent dispatch, so the function
-/// is infallible. The signature returns `Result` anyway because
-/// commit 2 adds fallible paths (memory writes, `run_subagent`
-/// failures) and we want the caller's error handling in place from
-/// the start.
+/// Always publishes [`crate::core::event_bus::DomainEvent::TriggerEvaluated`].
+/// For `react`/`escalate`, also dispatches the named target agent via
+/// [`run_subagent`] and publishes `TriggerEscalated` on success.
 pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyhow::Result<()> {
     // Always publish `TriggerEvaluated` — it's the single source of
     // truth for dashboards, counts every trigger regardless of action.
@@ -58,31 +60,115 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 label = %envelope.display_label,
                 external_id = %envelope.external_id,
                 reason = %run.decision.reason,
-                "[triage::escalation] ACKNOWLEDGE — commit 2 will persist a memory note"
+                "[triage::escalation] ACKNOWLEDGE — logged (memory-write is a future addition)"
             );
-            // Commit 2: write memory note via the memory domain.
         }
         TriageAction::React | TriageAction::Escalate => {
-            // The parser already enforced that target_agent + prompt
-            // are set for these variants — unwraps here would be
-            // safe, but we still handle the absent case as a defensive
-            // measure in case a future refactor weakens the parser.
-            let target = run.decision.target_agent.as_deref().unwrap_or("<unknown>");
+            let target = run
+                .decision
+                .target_agent
+                .as_deref()
+                .unwrap_or("trigger_reactor");
             let prompt = run.decision.prompt.as_deref().unwrap_or("");
+            let action_str = run.decision.action.as_str().to_uppercase();
+
             tracing::info!(
-                action = %run.decision.action.as_str(),
+                action = %action_str,
                 target_agent = %target,
                 label = %envelope.display_label,
                 external_id = %envelope.external_id,
                 prompt_chars = prompt.chars().count(),
                 reason = %run.decision.reason,
-                "[triage::escalation] {action} — commit 2 will run {target} sub-agent",
-                action = run.decision.action.as_str().to_uppercase(),
-                target = target,
+                "[triage::escalation] dispatching sub-agent"
             );
-            // Commit 2: `subagent_runner::run_subagent(def, prompt, …)` here,
-            // then `events::publish_escalated(envelope, target)`.
+
+            match dispatch_target_agent(target, prompt).await {
+                Ok(output) => {
+                    tracing::info!(
+                        target_agent = %target,
+                        output_chars = output.chars().count(),
+                        "[triage::escalation] sub-agent completed"
+                    );
+                    events::publish_escalated(envelope, target);
+                }
+                Err(err) => {
+                    tracing::error!(
+                        target_agent = %target,
+                        error = %err,
+                        "[triage::escalation] sub-agent dispatch failed"
+                    );
+                    events::publish_failed(
+                        envelope,
+                        &format!("sub-agent `{target}` failed: {err}"),
+                    );
+                    return Err(err);
+                }
+            }
         }
     }
     Ok(())
+}
+
+/// Build a full [`Agent`] from config, install a [`ParentExecutionContext`]
+/// on the task-local, and call [`run_subagent`] with the named definition
+/// and prompt.
+///
+/// This is heavier than a simple `agent.run_turn` bus call — it creates a
+/// provider, memory store, tool registry, and all the machinery `Agent`
+/// normally needs. The cost is acceptable because `react`/`escalate`
+/// triggers are relatively rare (most triggers are `drop`/`acknowledge`)
+/// and the construction is the same O(1) code path `agent_chat` uses.
+async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<String> {
+    let config = Config::load_or_init()
+        .await
+        .context("loading config for sub-agent dispatch")?;
+
+    let agent =
+        Agent::from_config(&config).context("building Agent from config for sub-agent dispatch")?;
+
+    let registry = AgentDefinitionRegistry::global()
+        .ok_or_else(|| anyhow!("AgentDefinitionRegistry not initialised"))?;
+    let definition = registry
+        .get(agent_id)
+        .ok_or_else(|| anyhow!("agent definition `{agent_id}` not found in registry"))?;
+
+    // Build the ParentExecutionContext from the Agent's public accessors
+    // so `run_subagent` can inherit the provider, tools, memory, etc.
+    let parent_ctx = ParentExecutionContext {
+        provider: agent.provider_arc(),
+        all_tools: agent.tools_arc(),
+        all_tool_specs: agent.tool_specs_arc(),
+        model_name: agent.model_name().to_string(),
+        temperature: agent.temperature(),
+        workspace_dir: agent.workspace_dir().to_path_buf(),
+        memory: agent.memory_arc(),
+        agent_config: agent.agent_config().clone(),
+        skills: Arc::new(agent.skills().to_vec()),
+        memory_context: None, // Sub-agent queries memory via tools if needed
+        session_id: format!("triage-{}", uuid::Uuid::new_v4()),
+        channel: "triage".to_string(),
+    };
+
+    tracing::debug!(
+        agent_id = %agent_id,
+        model = %parent_ctx.model_name,
+        tool_count = parent_ctx.all_tools.len(),
+        "[triage::escalation] dispatching run_subagent with parent context"
+    );
+
+    let outcome = with_parent_context(parent_ctx, async {
+        subagent_runner::run_subagent(definition, prompt, SubagentRunOptions::default()).await
+    })
+    .await
+    .map_err(|e| anyhow!("run_subagent(`{agent_id}`) failed: {e}"))?;
+
+    tracing::debug!(
+        agent_id = %agent_id,
+        elapsed_ms = outcome.elapsed.as_millis() as u64,
+        iterations = outcome.iterations,
+        output_chars = outcome.output.chars().count(),
+        "[triage::escalation] run_subagent completed"
+    );
+
+    Ok(outcome.output)
 }
