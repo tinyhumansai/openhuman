@@ -9,25 +9,40 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Snapshot of a completed agent turn, passed to every registered hook.
+///
+/// This struct captures the full state of the interaction after the LLM has
+/// produced a final response, including any intermediate tool calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TurnContext {
+    /// The original message sent by the user.
     pub user_message: String,
+    /// The final response emitted by the assistant.
     pub assistant_response: String,
+    /// Records of all tools executed during the turn's tool-call loop.
     pub tool_calls: Vec<ToolCallRecord>,
+    /// Total wall-clock time the turn took to resolve (ms).
     pub turn_duration_ms: u64,
+    /// Optional session identifier for tracking across multiple turns.
     pub session_id: Option<String>,
+    /// How many times the LLM was called during this turn.
     pub iteration_count: usize,
 }
 
 /// Record of a single tool invocation within a turn.
+///
+/// Captures the specific inputs and the high-level outcome of a tool execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallRecord {
+    /// The name of the tool that was called.
     pub name: String,
+    /// The arguments passed to the tool.
     pub arguments: serde_json::Value,
+    /// Whether the tool execution reported success.
     pub success: bool,
     /// Sanitized, non-sensitive summary (tool type, status/error class, safe message).
     /// Never contains raw tool output or PII.
     pub output_summary: String,
+    /// Duration of the specific tool execution (ms).
     pub duration_ms: u64,
 }
 

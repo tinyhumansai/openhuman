@@ -371,7 +371,7 @@ impl ToolDispatcher for PFormatToolDispatcher {
 }
 
 /// Dispatcher for models with native, structured tool-calling support (e.g., OpenAI, Anthropic).
-/// 
+///
 /// This dispatcher leverages the provider's built-in APIs for identifying and
 /// reporting tool calls, which is generally more reliable than text-based parsing.
 /// It still supports a text-based fallback for robustness against models that

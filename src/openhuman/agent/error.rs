@@ -37,7 +37,7 @@ pub enum AgentError {
         consecutive_failures: u8,
     },
 
-    /// The current channel (e.g., Telegram) does not have permission to execute 
+    /// The current channel (e.g., Telegram) does not have permission to execute
     /// the requested tool (e.g., shell access).
     PermissionDenied {
         tool_name: String,

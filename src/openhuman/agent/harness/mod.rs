@@ -1,31 +1,25 @@
 //! Multi-agent harness — sub-agent dispatch and fork-cache support.
+//! 
+//! The harness provides the infrastructure for an agent to delegate work to
+//! specialized sub-agents. It manages the lifecycle of these sub-agents, 
+//! including prompt construction, tool filtering, and result synthesis.
 //!
-//! ## Subagents-as-tools
-//! The main agent runs its normal tool loop and can choose to delegate to a
-//! sub-agent at any iteration via the `spawn_subagent` tool. The sub-agent
-//! is constructed at call time from an [`definition::AgentDefinition`]
-//! looked up in the global [`definition::AgentDefinitionRegistry`], runs
-//! its own narrowed tool loop (cheaper model, fewer tools, no memory
-//! recall), and returns a single text result that the parent threads back
-//! into its history. This is the only execution shape — there is no
-//! separate DAG planner/executor.
+//! ## Delegation via `spawn_subagent`
+//! The system treats specialized agents (researchers, planners, etc.) as tools.
+//! An agent can invoke the `spawn_subagent` tool, which looks up a definition
+//! in the global [`AgentDefinitionRegistry`] and runs a dedicated tool loop.
 //!
-//! ## Fork-cache mode
-//! `spawn_subagent { mode: "fork", … }` replays the parent's *exact*
-//! rendered system prompt + tool schemas + message prefix via the
-//! [`fork_context::ForkContext`] task-local. The OpenAI-compatible
-//! inference backend's automatic prefix caching turns this byte-stable
-//! replay into a real token-savings win.
+//! ## Token Optimization
+//! - **Typed Sub-agents**: Skips unnecessary system prompt sections (e.g., 
+//!   identity, global skills) to keep sub-agent prompts small.
+//! - **Fork Mode**: Allows sub-agents to replay the parent's exact context
+//!   to leverage KV-cache reuse on the inference backend.
 //!
-//! ## Built-in agents
-//! The canonical list of built-in agents lives in
-//! [`crate::openhuman::agent::agents`] — one subfolder per agent, each
-//! containing `agent.toml` (id, tools, model, sandbox, iteration cap)
-//! and `prompt.md` (the sub-agent's system prompt body). Adding a new
-//! built-in agent = drop in a new subfolder and append one entry to
-//! that module's `BUILTINS` slice. [`builtin_definitions`] in this
-//! harness module is a thin wrapper that loads those files and appends
-//! the synthetic `fork` definition (used for prefix-cache reuse).
+//! ## Key Sub-modules
+//! - **[`subagent_runner`]**: The core logic for executing a sub-agent.
+//! - **[`definition`]**: Data structures for defining an agent's archetype.
+//! - **[`fork_context`]**: Task-local storage for parent context sharing.
+//! - **[`interrupt`]**: Infrastructure for graceful cancellation of agent loops.
 
 pub(crate) mod archivist;
 pub(crate) mod builtin_definitions;
