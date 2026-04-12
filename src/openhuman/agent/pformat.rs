@@ -162,8 +162,9 @@ pub fn build_registry(tools: &[Box<dyn Tool>]) -> PFormatRegistry {
 }
 
 /// Render a single tool's p-format signature, e.g. `get_weather[location|unit]`.
-/// Used when emitting the tool catalogue inside the system prompt so the
-/// model sees the exact positional order it should produce.
+///
+/// This signature is included in the tool catalogue within the system prompt
+/// to tell the LLM exactly how to order positional arguments for a tool.
 pub fn render_signature(name: &str, params: &PFormatToolParams) -> String {
     if params.names.is_empty() {
         format!("{name}[]")
@@ -172,30 +173,22 @@ pub fn render_signature(name: &str, params: &PFormatToolParams) -> String {
     }
 }
 
-/// Convenience wrapper that renders a signature directly from a `Tool`.
-/// Equivalent to building a `PFormatToolParams` first; cheaper for
-/// one-off rendering paths that don't pre-compute a registry.
+/// Convenience wrapper that renders a signature directly from a `Tool` implementation.
 pub fn render_signature_from_tool(tool: &dyn Tool) -> String {
     let params = PFormatToolParams::from_schema(&tool.parameters_schema());
     render_signature(tool.name(), &params)
 }
 
-/// Parse a single p-format call body and return `(tool_name, args_json)`.
+/// Parse a single p-format call body and reconstruct named JSON arguments.
 ///
-/// `body` is the inside of a `<tool_call>...</tool_call>` tag (after the
-/// dispatcher has stripped the wrapping). The function expects exactly
-/// one call — multi-call bodies should be split by the caller.
+/// This function:
+/// 1. Locates the positional arguments within the `[...]` brackets.
+/// 2. Splits them by the `|` delimiter (respecting escapes).
+/// 3. Maps each positional value to its parameter name from the tool registry.
+/// 4. Performs type coercion (e.g., string to integer) based on the tool's schema.
 ///
-/// Returns `None` for any of:
-/// - missing `[` or unbalanced `]`
-/// - unknown tool name (defensive — refuses to invent argument names)
-/// - non-identifier characters in the tool name
-///
-/// On a successful parse the returned JSON object is keyed by parameter
-/// name (in declaration order), with values coerced to integers,
-/// numbers, or booleans where the schema asks for it. Excess positional
-/// arguments past the schema length are silently dropped — keeps the
-/// parser permissive when a model adds a stray trailing pipe.
+/// Returns `(tool_name, args_json)` on success, or `None` if the format is invalid
+/// or the tool is unknown.
 pub fn parse_call(body: &str, registry: &PFormatRegistry) -> Option<(String, Value)> {
     let trimmed = body.trim();
 

@@ -561,7 +561,10 @@ mod tests {
         }
 
         let loader = DefaultMemoryLoader::new(5, 0.4).with_max_chars(200);
-        let context = loader.load_context(&WorkingOnlyMemory, "hello").await.unwrap();
+        let context = loader
+            .load_context(&WorkingOnlyMemory, "hello")
+            .await
+            .unwrap();
         assert!(!context.contains("[Memory context]"));
         assert!(context.contains("[User working memory]"));
         assert!(context.contains("working.user.todo"));
@@ -645,7 +648,10 @@ mod tests {
 
         let header_and_line = "[Memory context]\n- main: 1234567890\n".len();
         let loader = DefaultMemoryLoader::new(2, 0.4).with_max_chars(header_and_line + 1);
-        let context = loader.load_context(&TightBudgetMemory, "hello").await.unwrap();
+        let context = loader
+            .load_context(&TightBudgetMemory, "hello")
+            .await
+            .unwrap();
         assert!(context.contains("[Memory context]"));
         assert!(context.contains("- main: 1234567890"));
         assert!(!context.contains("[User working memory]"));

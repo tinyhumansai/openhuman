@@ -66,26 +66,16 @@ pub struct TriageRun {
     pub latency_ms: u64,
 }
 
-/// Run the triage classifier against an envelope. Dispatches a single
-/// `agent.run_turn` through the native bus and parses the reply.
+/// Run the triage classifier against a trigger envelope.
 ///
-/// On success the caller should then hand the `TriageRun` to
-/// [`super::escalation::apply_decision`], which publishes the
-/// `TriggerEvaluated` event and (in commit 2) runs the escalation
-/// sub-agent. The two halves are split so `dry_run` on the future
-/// `agent.triage_evaluate` RPC can call `run_triage` without any
-/// side effects.
+/// This is the main entry point for trigger classification. It performs the following:
+/// 1. Resolves an appropriate provider (preferring local LLMs for speed).
+/// 2. Dispatches a single LLM turn using the `trigger_triage` archetype.
+/// 3. Parses the resulting JSON decision.
+/// 4. If the local attempt fails or produces garbage, automatically retries on a
+///    remote provider for maximum reliability.
 ///
-/// Errors:
-/// - `AgentDefinitionRegistry::global()` is uninitialised (bug — it's
-///   set at startup in `register_domain_subscribers`).
-/// - The `trigger_triage` definition is missing (bug — we ship it in
-///   `agents/mod.rs::BUILTINS`).
-/// - Provider resolution / construction failed (config IO, backend
-///   key misconfiguration, …).
-/// - The agent turn itself failed or returned an unparseable reply
-///   *and* commit 2's remote retry was either disabled (commit 1) or
-///   also failed.
+/// On success returns a [`TriageRun`] containing the decision and performance metrics.
 pub async fn run_triage(envelope: &TriggerEnvelope) -> anyhow::Result<TriageRun> {
     // Load the config once and reuse it for both the first attempt and
     // any retry that falls back to remote. `Config::load_or_init` is

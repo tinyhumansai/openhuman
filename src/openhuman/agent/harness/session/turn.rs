@@ -41,24 +41,23 @@ impl Agent {
     ///
     /// This function is the primary driver of the agent's behavior. It manages the
     /// end-to-end lifecycle of a user request:
-    /// 
+    ///
     /// 1. **Initialization**: Resumes from a session transcript if this is a new turn
     ///    to preserve KV-cache stability.
     /// 2. **Prompt Construction**: Builds the system prompt (only on the first turn)
     ///    incorporating learned context and tool instructions.
-    /// 3. **Context Injection**: Enriches the user message with relevant memories 
+    /// 3. **Context Injection**: Enriches the user message with relevant memories
     ///    fetched via the [`MemoryLoader`].
     /// 4. **Execution Loop**: Enters a loop (up to `max_tool_iterations`) where it:
     ///    - Manages the context window (reduction/summarization).
     ///    - Calls the LLM provider.
     ///    - Parses and executes tool calls.
     ///    - Accumulates results into history.
-    /// 5. **Synthesis**: Returns the final assistant response after all tools have 
+    /// 5. **Synthesis**: Returns the final assistant response after all tools have
     ///    finished or the iteration budget is exhausted.
-    /// 6. **Background Tasks**: Triggers episodic memory indexing and facts 
+    /// 6. **Background Tasks**: Triggers episodic memory indexing and facts
     ///    extraction asynchronously.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
-
         let turn_started = std::time::Instant::now();
         log::info!("[agent] turn started — awaiting user message processing");
         log::info!(
@@ -537,7 +536,7 @@ impl Agent {
     // ─────────────────────────────────────────────────────────────────
 
     /// Executes a single tool call and returns the result and execution record.
-    /// 
+    ///
     /// This method:
     /// 1. Emits telemetry events for the start of execution.
     /// 2. Handles the special `spawn_subagent` tool with `fork` context.
@@ -546,7 +545,6 @@ impl Agent {
     /// 5. Applies per-result byte budgets to prevent context window bloat.
     /// 6. Sanitizes and records the outcome for post-turn hooks.
     pub(super) async fn execute_tool_call(
-
         &self,
         call: &ParsedToolCall,
     ) -> (ToolExecutionResult, ToolCallRecord) {
@@ -677,10 +675,9 @@ impl Agent {
     }
 
     /// Executes multiple tool calls in sequence.
-    /// 
+    ///
     /// Collects results and execution records for all requested tools in a single batch.
     pub(super) async fn execute_tools(
-
         &self,
         calls: &[ParsedToolCall],
     ) -> (Vec<ToolExecutionResult>, Vec<ToolCallRecord>) {

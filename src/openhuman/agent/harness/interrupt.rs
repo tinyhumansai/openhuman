@@ -136,4 +136,17 @@ mod tests {
         fence.trigger();
         assert!(clone.is_interrupted());
     }
+
+    #[test]
+    fn default_matches_new_and_flag_handle_shares_state() {
+        let fence = InterruptFence::default();
+        let raw = fence.flag_handle();
+        assert!(!raw.load(Ordering::Relaxed));
+
+        fence.trigger();
+        assert!(raw.load(Ordering::Relaxed));
+
+        raw.store(false, Ordering::Relaxed);
+        assert!(!fence.is_interrupted());
+    }
 }

@@ -1,8 +1,8 @@
 //! Reusable trigger-triage helper — a high-performance classification pipeline.
 //!
 //! Triage is a specialized domain designed to process incoming external events
-//! (webhooks, cron fires) quickly and accurately. It decides if an event is 
-//! noise to be dropped, a simple notification to be acknowledged, or an 
+//! (webhooks, cron fires) quickly and accurately. It decides if an event is
+//! noise to be dropped, a simple notification to be acknowledged, or an
 //! actionable trigger requiring an agent response.
 //!
 //! ## Architecture
@@ -23,10 +23,10 @@
 //!
 //! // 1. Hydrate the envelope
 //! let envelope = TriggerEnvelope::from_composio(toolkit, trigger, id, uuid, payload);
-//! 
+//!
 //! // 2. Classify (LLM call)
 //! let decision = run_triage(&envelope).await?;
-//! 
+//!
 //! // 3. Execute side effects (Sub-agent spawn + events)
 //! apply_decision(decision, &envelope).await?;
 //! ```

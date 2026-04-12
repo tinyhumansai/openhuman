@@ -193,7 +193,7 @@ impl AgentBuilder {
     }
 
     /// Validates the configuration and constructs a new `Agent` instance.
-    /// 
+    ///
     /// This method is responsible for wiring together the provided components,
     /// setting up the context manager, and initializing the conversation history.
     /// It ensures that all required fields (provider, tools, memory, etc.) are present.
@@ -301,10 +301,10 @@ impl AgentBuilder {
 impl Agent {
     /// Constructs an `Agent` instance from a global system configuration.
     ///
-    /// This is the primary factory method for initializing an agent with all 
-    /// standard system integrations (memory, tools, skills, providers, learning) 
+    /// This is the primary factory method for initializing an agent with all
+    /// standard system integrations (memory, tools, skills, providers, learning)
     /// configured according to the user's `config.toml`.
-    /// 
+    ///
     /// It performs the heavy lifting of:
     /// 1. Initializing the host runtime (native or docker).
     /// 2. Setting up security policies.
