@@ -1083,16 +1083,20 @@ fn sanitize_learned_entry(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
+    use crate::openhuman::agent::memory_loader::MemoryLoader;
     use crate::core::event_bus::{global, init_global, DomainEvent};
     use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
     use crate::openhuman::memory::Memory;
     use crate::openhuman::providers::{ChatRequest, ChatResponse, Provider};
+    use crate::openhuman::tools::Tool;
     use crate::openhuman::tools::ToolResult;
     use async_trait::async_trait;
     use std::collections::HashSet;
     use std::sync::Arc;
     use tokio::sync::Mutex as AsyncMutex;
-    use tokio::time::{sleep, Duration};
+    use tokio::sync::Notify;
+    use tokio::time::{sleep, timeout, Duration};
 
     struct DummyProvider;
 
@@ -1122,6 +1126,49 @@ mod tests {
         }
     }
 
+    struct SequenceProvider {
+        responses: AsyncMutex<Vec<anyhow::Result<ChatResponse>>>,
+        requests: AsyncMutex<Vec<Vec<ChatMessage>>>,
+    }
+
+    #[async_trait]
+    impl Provider for SequenceProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> Result<String> {
+            Ok("unused".into())
+        }
+
+        async fn chat(
+            &self,
+            request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> Result<ChatResponse> {
+            self.requests.lock().await.push(request.messages.to_vec());
+            self.responses.lock().await.remove(0)
+        }
+    }
+
+    struct FixedMemoryLoader {
+        context: String,
+    }
+
+    #[async_trait]
+    impl MemoryLoader for FixedMemoryLoader {
+        async fn load_context(
+            &self,
+            _memory: &dyn Memory,
+            _user_message: &str,
+        ) -> anyhow::Result<String> {
+            Ok(self.context.clone())
+        }
+    }
+
     struct EchoTool;
 
     #[async_trait]
@@ -1143,9 +1190,49 @@ mod tests {
         }
     }
 
+    struct LongTool;
+
+    #[async_trait]
+    impl Tool for LongTool {
+        fn name(&self) -> &str {
+            "long"
+        }
+
+        fn description(&self) -> &str {
+            "long"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+            Ok(ToolResult::success("x".repeat(800)))
+        }
+    }
+
+    struct RecordingHook {
+        calls: Arc<AsyncMutex<Vec<TurnContext>>>,
+        notify: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl PostTurnHook for RecordingHook {
+        fn name(&self) -> &str {
+            "recording"
+        }
+
+        async fn on_turn_complete(&self, ctx: &TurnContext) -> anyhow::Result<()> {
+            self.calls.lock().await.push(ctx.clone());
+            self.notify.notify_waiters();
+            Ok(())
+        }
+    }
+
     fn make_agent(visible_tool_names: Option<HashSet<String>>) -> Agent {
         let workspace = tempfile::TempDir::new().expect("temp workspace");
-        let workspace_path = workspace.into_path();
+        let workspace_path = workspace.path().to_path_buf();
+        std::mem::forget(workspace);
         let memory_cfg = crate::openhuman::config::MemoryConfig {
             backend: "none".into(),
             ..crate::openhuman::config::MemoryConfig::default()
@@ -1171,6 +1258,41 @@ mod tests {
         }
 
         builder.build().unwrap()
+    }
+
+    fn make_agent_with_builder(
+        provider: Arc<dyn Provider>,
+        tools: Vec<Box<dyn Tool>>,
+        memory_loader: Box<dyn MemoryLoader>,
+        post_turn_hooks: Vec<Arc<dyn PostTurnHook>>,
+        config: crate::openhuman::config::AgentConfig,
+        context_config: crate::openhuman::config::ContextConfig,
+    ) -> Agent {
+        let workspace = tempfile::TempDir::new().expect("temp workspace");
+        let workspace_path = workspace.path().to_path_buf();
+        std::mem::forget(workspace);
+        let memory_cfg = crate::openhuman::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::openhuman::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+        );
+
+        Agent::builder()
+            .provider_arc(provider)
+            .tools(tools)
+            .memory(mem)
+            .memory_loader(memory_loader)
+            .tool_dispatcher(Box::new(XmlToolDispatcher))
+            .post_turn_hooks(post_turn_hooks)
+            .config(config)
+            .context_config(context_config)
+            .workspace_dir(workspace_path)
+            .auto_save(true)
+            .event_context("turn-test-session", "turn-test-channel")
+            .build()
+            .unwrap()
     }
 
     #[test]
@@ -1214,6 +1336,63 @@ mod tests {
         assert_eq!(fork.tool_specs.len(), 1);
         assert_eq!(fork.tool_specs[0].name, "echo");
         assert_eq!(fork.message_prefix.len(), 0);
+    }
+
+    #[test]
+    fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
+        let mut agent = make_agent(None);
+        agent.last_memory_context = Some("remember this".into());
+        agent.skills = vec![crate::openhuman::skills::Skill {
+            name: "demo".into(),
+            ..Default::default()
+        }];
+
+        let parent = agent.build_parent_execution_context();
+        assert_eq!(parent.model_name, agent.model_name);
+        assert_eq!(parent.temperature, agent.temperature);
+        assert_eq!(parent.memory_context.as_deref(), Some("remember this"));
+        assert_eq!(parent.session_id, "turn-test-session");
+        assert_eq!(parent.channel, "turn-test-channel");
+        assert_eq!(parent.skills.len(), 1);
+
+        assert_eq!(sanitize_learned_entry("   "), "");
+        assert_eq!(
+            sanitize_learned_entry("Bearer abcdef"),
+            "[redacted: potential secret]"
+        );
+        let long = "x".repeat(500);
+        assert_eq!(sanitize_learned_entry(&long).chars().count(), 200);
+        assert!(collect_tree_root_summaries(agent.workspace_dir()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn transcript_roundtrip_work() {
+        let mut agent = make_agent(None);
+
+        let messages = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hello"),
+            ChatMessage::assistant("done"),
+        ];
+        agent.system_prompt_cache_boundary = Some(12);
+        agent.persist_session_transcript(&messages, 10, 5, 3, 0.25);
+        assert!(agent.session_transcript_path.is_some());
+
+        let loaded = transcript::read_transcript(agent.session_transcript_path.as_ref().unwrap())
+            .expect("transcript should be readable");
+        assert_eq!(loaded.messages.len(), 3);
+        assert_eq!(loaded.meta.cache_boundary, Some(12));
+        assert_eq!(loaded.meta.input_tokens, 10);
+
+        let mut resumed = make_agent(None);
+        resumed.workspace_dir = agent.workspace_dir.clone();
+        resumed.agent_definition_name = agent.agent_definition_name.clone();
+        resumed.try_load_session_transcript();
+        assert_eq!(resumed.system_prompt_cache_boundary, Some(12));
+        assert_eq!(
+            resumed.cached_transcript_messages.as_ref().map(|m| m.len()),
+            Some(3)
+        );
     }
 
     #[tokio::test]
@@ -1276,5 +1455,199 @@ mod tests {
         assert!(result.output.contains("Unknown tool: missing"));
         assert_eq!(record.name, "missing");
         assert!(!record.success);
+    }
+
+    #[tokio::test]
+    async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
+        let provider_impl = Arc::new(SequenceProvider {
+            responses: AsyncMutex::new(vec![
+                Ok(ChatResponse {
+                    text: Some(
+                        "preface <tool_call>{\"name\":\"echo\",\"arguments\":{\"value\":1}}</tool_call>"
+                            .into(),
+                    ),
+                    tool_calls: vec![],
+                    usage: None,
+                }),
+                Ok(ChatResponse {
+                    text: Some("final answer".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                }),
+            ]),
+            requests: AsyncMutex::new(Vec::new()),
+        });
+        let provider: Arc<dyn Provider> = provider_impl.clone();
+        let hook_calls = Arc::new(AsyncMutex::new(Vec::<TurnContext>::new()));
+        let hook_notify = Arc::new(Notify::new());
+        let hooks: Vec<Arc<dyn PostTurnHook>> = vec![Arc::new(RecordingHook {
+            calls: Arc::clone(&hook_calls),
+            notify: Arc::clone(&hook_notify),
+        })];
+
+        let mut agent = make_agent_with_builder(
+            provider,
+            vec![Box::new(EchoTool)],
+            Box::new(FixedMemoryLoader {
+                context: "[Injected]\n".into(),
+            }),
+            hooks,
+            crate::openhuman::config::AgentConfig {
+                max_tool_iterations: 3,
+                max_history_messages: 10,
+                ..crate::openhuman::config::AgentConfig::default()
+            },
+            crate::openhuman::config::ContextConfig::default(),
+        );
+
+        let response = agent.turn("hello world").await.expect("turn should succeed");
+        assert_eq!(response, "final answer");
+        assert!(agent.last_memory_context.as_deref() == Some("[Injected]\n"));
+        assert!(agent.history.iter().any(|message| matches!(
+            message,
+            ConversationMessage::AssistantToolCalls { text, tool_calls }
+                if text.as_deref().is_some_and(|value| value.contains("preface")) && tool_calls.len() == 1
+        )));
+        assert!(agent.history.iter().any(|message| matches!(
+            message,
+            ConversationMessage::Chat(chat) if chat.role == "assistant" && chat.content == "final answer"
+        )));
+
+        timeout(Duration::from_secs(1), async {
+            loop {
+                if !hook_calls.lock().await.is_empty() {
+                    break;
+                }
+                hook_notify.notified().await;
+            }
+        })
+        .await
+        .expect("hook should fire");
+
+        let recorded_hooks = hook_calls.lock().await;
+        assert_eq!(recorded_hooks.len(), 1);
+        assert_eq!(recorded_hooks[0].assistant_response, "final answer");
+        assert_eq!(recorded_hooks[0].iteration_count, 2);
+        assert_eq!(recorded_hooks[0].tool_calls.len(), 1);
+        assert_eq!(recorded_hooks[0].tool_calls[0].name, "echo");
+        drop(recorded_hooks);
+
+        let requests = provider_impl.requests.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0][0].role, "system");
+        assert!(requests[0][1].content.contains("[Injected]"));
+        assert!(requests[0][1].content.contains("hello world"));
+        assert!(requests[1]
+            .iter()
+            .any(|msg| msg.role == "assistant" && msg.content.contains("preface")));
+        assert!(requests[1]
+            .iter()
+            .any(|msg| msg.role == "user" && msg.content.contains("[Tool results]")));
+    }
+
+    #[tokio::test]
+    async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
+        let provider_impl = Arc::new(SequenceProvider {
+            responses: AsyncMutex::new(vec![Ok(ChatResponse {
+                text: Some("cached-final".into()),
+                tool_calls: vec![],
+                usage: None,
+            })]),
+            requests: AsyncMutex::new(Vec::new()),
+        });
+        let provider: Arc<dyn Provider> = provider_impl.clone();
+        let mut agent = make_agent_with_builder(
+            provider,
+            vec![Box::new(EchoTool)],
+            Box::new(FixedMemoryLoader {
+                context: String::new(),
+            }),
+            vec![],
+            crate::openhuman::config::AgentConfig::default(),
+            crate::openhuman::config::ContextConfig::default(),
+        );
+        agent.cached_transcript_messages = Some(vec![
+            ChatMessage::system("cached-system"),
+            ChatMessage::assistant("cached-assistant"),
+        ]);
+
+        let response = agent.turn("fresh").await.expect("turn should succeed");
+        assert_eq!(response, "cached-final");
+        assert!(agent.cached_transcript_messages.is_none());
+
+        let requests = provider_impl.requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].len(), 3);
+        assert_eq!(requests[0][0].content, "cached-system");
+        assert_eq!(requests[0][1].content, "cached-assistant");
+        assert_eq!(requests[0][2].role, "user");
+        assert_eq!(requests[0][2].content, "fresh");
+    }
+
+    #[tokio::test]
+    async fn turn_errors_when_max_tool_iterations_are_exceeded() {
+        let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+            responses: AsyncMutex::new(vec![Ok(ChatResponse {
+                text: Some(
+                    "<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into(),
+                ),
+                tool_calls: vec![],
+                usage: None,
+            })]),
+            requests: AsyncMutex::new(Vec::new()),
+        });
+        let mut agent = make_agent_with_builder(
+            provider,
+            vec![Box::new(EchoTool)],
+            Box::new(FixedMemoryLoader {
+                context: String::new(),
+            }),
+            vec![],
+            crate::openhuman::config::AgentConfig {
+                max_tool_iterations: 1,
+                ..crate::openhuman::config::AgentConfig::default()
+            },
+            crate::openhuman::config::ContextConfig::default(),
+        );
+
+        let err = agent
+            .turn("hello")
+            .await
+            .expect_err("turn should stop at configured iteration budget");
+        assert!(err
+            .to_string()
+            .contains("Agent exceeded maximum tool iterations (1)"));
+        assert!(agent.history.iter().any(|message| matches!(
+            message,
+            ConversationMessage::AssistantToolCalls { tool_calls, .. } if tool_calls.len() == 1
+        )));
+    }
+
+    #[tokio::test]
+    async fn execute_tool_call_applies_inline_result_budget() {
+        let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+        let agent = make_agent_with_builder(
+            provider,
+            vec![Box::new(LongTool)],
+            Box::new(FixedMemoryLoader {
+                context: String::new(),
+            }),
+            vec![],
+            crate::openhuman::config::AgentConfig::default(),
+            crate::openhuman::config::ContextConfig {
+                tool_result_budget_bytes: 300,
+                ..crate::openhuman::config::ContextConfig::default()
+            },
+        );
+        let call = ParsedToolCall {
+            name: "long".into(),
+            arguments: serde_json::json!({}),
+            tool_call_id: Some("long-1".into()),
+        };
+
+        let (result, record) = agent.execute_tool_call(&call).await;
+        assert!(result.success);
+        assert!(result.output.contains("truncated by tool_result_budget"));
+        assert!(record.output_summary.starts_with("long: ok ("));
     }
 }

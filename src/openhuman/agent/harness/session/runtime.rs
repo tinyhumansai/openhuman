@@ -352,7 +352,8 @@ mod tests {
 
     fn make_agent(provider: Arc<dyn Provider>) -> Agent {
         let workspace = tempfile::TempDir::new().expect("temp workspace");
-        let workspace_path = workspace.into_path();
+        let workspace_path = workspace.path().to_path_buf();
+        std::mem::forget(workspace);
         let memory_cfg = crate::openhuman::config::MemoryConfig {
             backend: "none".into(),
             ..crate::openhuman::config::MemoryConfig::default()
@@ -435,6 +436,18 @@ mod tests {
         let persisted = Agent::persisted_tool_calls_for_history(&response, &calls, 2);
         assert_eq!(persisted[0].id, "parsed-3-1");
         assert_eq!(persisted[1].id, "keep");
+
+        let history = vec![
+            ConversationMessage::AssistantToolCalls {
+                text: None,
+                tool_calls: vec![],
+            },
+            ConversationMessage::AssistantToolCalls {
+                text: None,
+                tool_calls: vec![],
+            },
+        ];
+        assert_eq!(Agent::count_iterations(&history), 3);
     }
 
     #[tokio::test]
@@ -502,5 +515,68 @@ mod tests {
                 && message == "permission_denied"
                 && !recoverable
         )));
+    }
+
+    #[test]
+    fn accessors_and_history_reset_expose_agent_runtime_state() {
+        let provider: Arc<dyn Provider> = Arc::new(StaticProvider {
+            response: Mutex::new(None),
+        });
+        let mut agent = make_agent(provider);
+        agent.history = vec![ConversationMessage::Chat(ChatMessage::system("sys"))];
+        agent.system_prompt_cache_boundary = Some(7);
+        agent.skills = vec![crate::openhuman::skills::Skill {
+            name: "demo".into(),
+            ..Default::default()
+        }];
+
+        assert_eq!(agent.event_session_id(), "runtime-test-session");
+        assert_eq!(agent.event_channel(), "runtime-test-channel");
+        assert_eq!(agent.tools().len(), 0);
+        assert_eq!(agent.tool_specs().len(), 0);
+        assert_eq!(agent.workspace_dir(), agent.workspace_dir.as_path());
+        assert_eq!(agent.model_name(), agent.model_name);
+        assert_eq!(agent.temperature(), agent.temperature);
+        assert_eq!(agent.skills().len(), 1);
+        assert_eq!(agent.agent_config().max_tool_iterations, agent.config.max_tool_iterations);
+        assert_eq!(agent.history().len(), 1);
+        assert!(!agent.memory_arc().name().is_empty());
+
+        agent.set_event_context("updated-session", "updated-channel");
+        assert_eq!(agent.event_session_id(), "updated-session");
+        assert_eq!(agent.event_channel(), "updated-channel");
+
+        agent.clear_history();
+        assert!(agent.history().is_empty());
+        assert!(agent.system_prompt_cache_boundary.is_none());
+        assert_eq!(Agent::count_iterations(agent.history()), 1);
+    }
+
+    #[test]
+    fn helper_paths_cover_no_overlap_native_calls_and_truncation() {
+        let history_snapshot = vec![ConversationMessage::Chat(ChatMessage::user("a"))];
+        let current_history = vec![ConversationMessage::Chat(ChatMessage::assistant("b"))];
+        let appended = Agent::new_entries_for_turn(&history_snapshot, &current_history);
+        assert_eq!(appended.len(), 1);
+        assert!(matches!(&appended[0], ConversationMessage::Chat(msg) if msg.content == "b"));
+
+        let native_calls = vec![crate::openhuman::providers::ToolCall {
+            id: "native-1".into(),
+            name: "echo".into(),
+            arguments: "{}".into(),
+        }];
+        let response = crate::openhuman::providers::ChatResponse {
+            text: Some(String::new()),
+            tool_calls: native_calls.clone(),
+            usage: None,
+        };
+        let persisted = Agent::persisted_tool_calls_for_history(&response, &[], 0);
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].id, native_calls[0].id);
+        assert_eq!(persisted[0].name, native_calls[0].name);
+
+        let long = anyhow!("{}", "x".repeat(400));
+        let sanitized = Agent::sanitize_event_error_message(&long);
+        assert!(sanitized.len() <= 256);
     }
 }
