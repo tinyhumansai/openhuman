@@ -154,9 +154,9 @@ impl ComposioProvider for NotionProvider {
         }
 
         let results = extract_results(&resp.data);
-        let items_ingested = persist_snapshot(ctx, &results).await.map_err(|e| {
-            format!("[composio:notion] persist_snapshot failed: {e}")
-        })?;
+        let items_ingested = persist_snapshot(ctx, &results)
+            .await
+            .map_err(|e| format!("[composio:notion] persist_snapshot failed: {e}"))?;
         let finished_at_ms = now_ms();
 
         let summary = format!(
