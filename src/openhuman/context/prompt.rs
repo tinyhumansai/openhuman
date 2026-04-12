@@ -393,6 +393,24 @@ impl PromptSection for ToolsSection {
     }
 }
 
+/// Build a P-Format signature line (`name[a|b|c]`) from a `&dyn Tool`.
+/// Used by `render_subagent_system_prompt` which operates on `Box<dyn Tool>`
+/// directly (no intermediate `PromptTool`). Mirrors the `PromptTool` variant
+/// below — both BTreeMap-iterate the schema's `properties` in the same order.
+fn render_pformat_signature_for_box_tool(tool: &dyn crate::openhuman::tools::Tool) -> String {
+    let schema = tool.parameters_schema();
+    let names: Vec<String> = schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    if names.is_empty() {
+        format!("{}[]", tool.name())
+    } else {
+        format!("{}[{}]", tool.name(), names.join("|"))
+    }
+}
+
 /// Build a P-Format signature line (`name[a|b|c]`) from a [`PromptTool`].
 /// Local to this module so [`ToolsSection`] doesn't have to depend on
 /// the agent crate's `pformat` helper. The two implementations stay in
@@ -669,6 +687,13 @@ pub fn render_subagent_system_prompt(
     //    only produces in-range indices — a future caller that derives
     //    indices from a different source must not be able to panic this
     //    renderer with a stale index.
+    //
+    //    Rendering uses P-Format signatures (`name[arg1|arg2]`) to
+    //    match the main agent's catalogue and the `## Tool Use Protocol`
+    //    preamble injected below. The default format is PFormat (set
+    //    globally); the narrow renderer does not thread
+    //    `PromptContext::tool_call_format` because it doesn't use the
+    //    section-based builder — but both paths must stay in lockstep.
     out.push_str("## Tools\n\n");
     for &i in allowed_indices {
         let Some(tool) = parent_tools.get(i) else {
@@ -679,23 +704,32 @@ pub fn render_subagent_system_prompt(
             );
             continue;
         };
+        let sig = render_pformat_signature_for_box_tool(tool.as_ref());
         let _ = writeln!(
             out,
-            "- **{}**: {}\n  Parameters: `{}`",
+            "- **{}**: {}\n  Call as: `{}`",
             tool.name(),
             tool.description(),
-            tool.parameters_schema()
+            sig
         );
     }
 
-    // 3. Sub-agent calling-convention preamble. Mirrors the existing
-    //    NativeToolDispatcher hint that gets baked into the parent's
-    //    prompt — sub-agents need it too.
+    // 3. Sub-agent calling-convention preamble with P-Format protocol.
+    //    Sub-agents need the same call format the main agent uses so
+    //    the runtime's dispatcher can parse their output identically.
     out.push('\n');
     out.push_str(
-        "Use the provided tools to accomplish the task. Reply with a concise, dense \
-                 final answer when you have one — the parent agent will weave it back into the \
-                 user-visible response.\n\n",
+        "## Tool Use Protocol\n\n\
+         Tool calls use **P-Format**: compact, positional, pipe-delimited syntax \
+         wrapped in `<tool_call>` tags.\n\n\
+         ```\n<tool_call>\ntool_name[arg1|arg2]\n</tool_call>\n```\n\n\
+         Arguments are positional — match the order shown in each tool's `Call as:` \
+         signature above (alphabetical by parameter name). \
+         Escape `|` as `\\|`, `]` as `\\]` inside values. \
+         You may emit multiple `<tool_call>` blocks per response.\n\n\
+         Use the provided tools to accomplish the task. Reply with a concise, dense \
+         final answer when you have one — the parent agent will weave it back into the \
+         user-visible response.\n\n",
     );
 
     // 3b. Optional safety preamble. Definitions that do work with real
