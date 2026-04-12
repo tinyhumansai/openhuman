@@ -172,3 +172,108 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
 
     Ok(outcome.output)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::event_bus::{global, init_global, DomainEvent};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    use tokio::time::{sleep, Duration};
+
+    fn envelope() -> TriggerEnvelope {
+        TriggerEnvelope::from_composio(
+            "gmail",
+            "GMAIL_NEW_GMAIL_MESSAGE",
+            "triage-escalation",
+            "esc-1",
+            json!({ "subject": "hello" }),
+        )
+    }
+
+    fn run(action: TriageAction) -> TriageRun {
+        TriageRun {
+            decision: super::super::decision::TriageDecision {
+                action,
+                target_agent: None,
+                prompt: None,
+                reason: "because".into(),
+            },
+            used_local: false,
+            latency_ms: 9,
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_decision_drop_only_publishes_evaluated() {
+        let _ = init_global(32);
+        let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
+        let seen_handler = Arc::clone(&seen);
+        let _handle = global().unwrap().on("triage-escalation-drop", move |event| {
+            let seen = Arc::clone(&seen_handler);
+            let cloned = event.clone();
+            Box::pin(async move {
+                seen.lock().await.push(cloned);
+            })
+        });
+
+        apply_decision(run(TriageAction::Drop), &envelope())
+            .await
+            .expect("drop should not fail");
+        sleep(Duration::from_millis(20)).await;
+
+        let captured = seen.lock().await;
+        assert!(captured.iter().any(|event| matches!(
+            event,
+            DomainEvent::TriggerEvaluated {
+                decision,
+                external_id,
+                ..
+            } if decision == "drop" && external_id == "esc-1"
+        )));
+        assert!(!captured.iter().any(|event| matches!(
+            event,
+            DomainEvent::TriggerEscalated { external_id, .. }
+                | DomainEvent::TriggerEscalationFailed { external_id, .. }
+                if external_id == "esc-1"
+        )));
+    }
+
+    #[tokio::test]
+    async fn apply_decision_acknowledge_only_publishes_evaluated() {
+        let _ = init_global(32);
+        let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
+        let seen_handler = Arc::clone(&seen);
+        let _handle = global()
+            .unwrap()
+            .on("triage-escalation-ack", move |event| {
+                let seen = Arc::clone(&seen_handler);
+                let cloned = event.clone();
+                Box::pin(async move {
+                    seen.lock().await.push(cloned);
+                })
+            });
+
+        apply_decision(run(TriageAction::Acknowledge), &envelope())
+            .await
+            .expect("acknowledge should not fail");
+        sleep(Duration::from_millis(20)).await;
+
+        let captured = seen.lock().await;
+        assert!(captured.iter().any(|event| matches!(
+            event,
+            DomainEvent::TriggerEvaluated {
+                decision,
+                external_id,
+                ..
+            } if decision == "acknowledge" && external_id == "esc-1"
+        )));
+        assert!(!captured.iter().any(|event| matches!(
+            event,
+            DomainEvent::TriggerEscalated { external_id, .. }
+                | DomainEvent::TriggerEscalationFailed { external_id, .. }
+                if external_id == "esc-1"
+        )));
+    }
+}

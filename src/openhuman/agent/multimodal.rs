@@ -562,4 +562,55 @@ mod tests {
             .expect("payload should be extracted");
         assert_eq!(payload, "abcd==");
     }
+
+    #[test]
+    fn helpers_cover_marker_count_payload_and_message_composition() {
+        let messages = vec![
+            ChatMessage::system("ignore"),
+            ChatMessage::user("one [IMAGE:/tmp/a.png] two [IMAGE:/tmp/b.png]"),
+        ];
+        assert_eq!(count_image_markers(&messages), 2);
+        assert!(contains_image_markers(&messages));
+        assert_eq!(extract_ollama_image_payload(" local-ref ").as_deref(), Some("local-ref"));
+        assert!(extract_ollama_image_payload("data:image/png;base64,   ").is_none());
+
+        let composed = compose_multimodal_message("describe", &["data:image/png;base64,abc".into()]);
+        assert!(composed.starts_with("describe"));
+        assert!(composed.contains("[IMAGE:data:image/png;base64,abc]"));
+    }
+
+    #[test]
+    fn mime_and_content_type_helpers_cover_supported_and_unknown_inputs() {
+        assert_eq!(normalize_content_type("image/PNG; charset=utf-8").as_deref(), Some("image/png"));
+        assert_eq!(normalize_content_type("   ").as_deref(), None);
+        assert_eq!(mime_from_extension("JPEG"), Some("image/jpeg"));
+        assert_eq!(mime_from_extension("txt"), None);
+        assert_eq!(mime_from_magic(&[0xff, 0xd8, 0xff, 0x00]), Some("image/jpeg"));
+        assert_eq!(mime_from_magic(b"GIF89a123"), Some("image/gif"));
+        assert_eq!(mime_from_magic(b"BMrest"), Some("image/bmp"));
+        assert_eq!(mime_from_magic(b"not-an-image"), None);
+        assert_eq!(
+            detect_mime(None, &[0xff, 0xd8, 0xff, 0x00], Some("image/webp; charset=binary")).as_deref(),
+            Some("image/webp")
+        );
+        assert_eq!(validate_mime("x", "text/plain").unwrap_err().to_string(), "multimodal image MIME type is not allowed for 'x': text/plain");
+    }
+
+    #[tokio::test]
+    async fn normalization_helpers_cover_invalid_data_uri_and_missing_local_file() {
+        let err = normalize_data_uri("data:image/png,abcd", 1024)
+            .expect_err("non-base64 data uri should fail");
+        assert!(err
+            .to_string()
+            .contains("only base64 data URIs are supported"));
+
+        let err = normalize_data_uri("data:text/plain;base64,YQ==", 1024)
+            .expect_err("unsupported mime should fail");
+        assert!(err.to_string().contains("MIME type is not allowed"));
+
+        let err = normalize_local_image("/definitely/missing.png", 1024)
+            .await
+            .expect_err("missing local file should fail");
+        assert!(err.to_string().contains("not found or unreadable"));
+    }
 }

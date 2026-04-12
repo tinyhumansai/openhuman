@@ -340,4 +340,88 @@ mod tests {
         assert!(context.contains("working.user.pref"));
         assert!(!context.contains("- k:"));
     }
+
+    #[tokio::test]
+    async fn loader_returns_empty_when_header_alone_exceeds_budget_or_recall_fails() {
+        struct EmptyMemory;
+
+        #[async_trait]
+        impl Memory for EmptyMemory {
+            fn name(&self) -> &str {
+                "empty"
+            }
+
+            async fn store(
+                &self,
+                _key: &str,
+                _content: &str,
+                _category: MemoryCategory,
+                _session_id: Option<&str>,
+            ) -> anyhow::Result<()> {
+                Ok(())
+            }
+
+            async fn recall(
+                &self,
+                query: &str,
+                _limit: usize,
+                _session_id: Option<&str>,
+            ) -> anyhow::Result<Vec<MemoryEntry>> {
+                if query.contains("working.user") {
+                    anyhow::bail!("working memory unavailable");
+                }
+                Ok(vec![MemoryEntry {
+                    id: "1".into(),
+                    key: "tiny".into(),
+                    content: "value".into(),
+                    namespace: None,
+                    category: MemoryCategory::Conversation,
+                    timestamp: "now".into(),
+                    session_id: None,
+                    score: Some(0.9),
+                }])
+            }
+
+            async fn get(&self, _key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+                Ok(None)
+            }
+
+            async fn list(
+                &self,
+                _category: Option<&MemoryCategory>,
+                _session_id: Option<&str>,
+            ) -> anyhow::Result<Vec<MemoryEntry>> {
+                Ok(Vec::new())
+            }
+
+            async fn forget(&self, _key: &str) -> anyhow::Result<bool> {
+                Ok(false)
+            }
+
+            async fn count(&self) -> anyhow::Result<usize> {
+                Ok(0)
+            }
+
+            async fn health_check(&self) -> bool {
+                true
+            }
+        }
+
+        let tiny_budget = DefaultMemoryLoader::new(2, 0.4).with_max_chars(1);
+        assert_eq!(
+            tiny_budget.load_context(&EmptyMemory, "hello").await.unwrap(),
+            ""
+        );
+
+        let exact_budget = DefaultMemoryLoader::new(2, 0.4).with_max_chars("[Memory context]\n".len());
+        assert_eq!(
+            exact_budget.load_context(&EmptyMemory, "hello").await.unwrap(),
+            ""
+        );
+
+        let loader = DefaultMemoryLoader::new(2, 0.4).with_max_chars(64);
+        let context = loader.load_context(&EmptyMemory, "hello").await.unwrap();
+        assert!(context.contains("[Memory context]"));
+        assert!(!context.contains("[User working memory]"));
+    }
 }
