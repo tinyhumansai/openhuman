@@ -595,9 +595,13 @@ fn new_session_runtime(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
     use super::*;
+    #[cfg(target_os = "macos")]
     use crate::openhuman::screen_intelligence::state::EngineState;
+    #[cfg(target_os = "macos")]
     use tokio::sync::Mutex;
+    #[cfg(target_os = "macos")]
     use tokio::time::Duration;
 
     #[cfg(target_os = "macos")]
