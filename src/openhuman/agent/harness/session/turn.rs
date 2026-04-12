@@ -1475,7 +1475,7 @@ mod tests {
             tool_call_id: Some("tc-1".into()),
         };
 
-        let (result, record) = agent.execute_tool_call(&call).await;
+        let (result, record) = agent.execute_tool_call(&call, 0).await;
         assert!(!result.success);
         assert!(result.output.contains("not available to this agent"));
         assert_eq!(record.name, "echo");
@@ -1508,7 +1508,7 @@ mod tests {
             tool_call_id: None,
         };
 
-        let (result, record) = agent.execute_tool_call(&call).await;
+        let (result, record) = agent.execute_tool_call(&call, 0).await;
         assert!(!result.success);
         assert!(result.output.contains("Unknown tool: missing"));
         assert_eq!(record.name, "missing");
@@ -1704,7 +1704,7 @@ mod tests {
             tool_call_id: Some("long-1".into()),
         };
 
-        let (result, record) = agent.execute_tool_call(&call).await;
+        let (result, record) = agent.execute_tool_call(&call, 0).await;
         assert!(result.success);
         assert!(result.output.contains("truncated by tool_result_budget"));
         assert!(record.output_summary.starts_with("long: ok ("));
