@@ -7,6 +7,7 @@ pub mod hooks;
 pub mod host_runtime;
 pub mod memory_loader;
 pub mod multimodal;
+pub mod pformat;
 mod schemas;
 pub mod triage;
 pub use schemas::{

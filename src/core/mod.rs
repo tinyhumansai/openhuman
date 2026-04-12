@@ -1,6 +1,7 @@
 //! Shared core-level schemas and contracts used across adapters (RPC, CLI, etc.).
 use serde::Serialize;
 
+pub mod agent_cli;
 pub mod all;
 pub mod autocomplete_cli_adapter;
 pub mod cli;

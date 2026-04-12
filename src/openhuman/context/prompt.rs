@@ -8,6 +8,17 @@ use std::path::Path;
 const BOOTSTRAP_MAX_CHARS: usize = 20_000;
 const CACHE_BOUNDARY_MARKER: &str = "<!-- CACHE_BOUNDARY -->";
 
+/// Per-namespace cap when injecting tree summarizer root summaries into
+/// the prompt. ~8 000 chars ≈ 2 000 tokens — that's the floor the user
+/// asked for ("at least 2000 tokens of user memory") for a single
+/// namespace, and matches what the tree summarizer's `Day` level
+/// already enforces upstream.
+pub(crate) const USER_MEMORY_PER_NAMESPACE_MAX_CHARS: usize = 8_000;
+
+/// Hard ceiling across all namespaces, so a workspace with 30 namespaces
+/// doesn't burn the entire context window. ~32 000 chars ≈ 8 000 tokens.
+pub(crate) const USER_MEMORY_TOTAL_MAX_CHARS: usize = 32_000;
+
 /// Pre-fetched learned context data for prompt sections (avoids blocking the runtime).
 #[derive(Debug, Clone, Default)]
 pub struct LearnedContextData {
@@ -17,6 +28,17 @@ pub struct LearnedContextData {
     pub patterns: Vec<String>,
     /// Learned user profile entries.
     pub user_profile: Vec<String>,
+    /// Pre-fetched root-level summaries from the tree summarizer, one per
+    /// namespace that has a root node on disk.
+    ///
+    /// Each entry is `(namespace, body)`. The body is the markdown body of
+    /// `memory/namespaces/{ns}/tree/root.md` — already truncated to a
+    /// per-namespace cap by the fetcher so the section can render without
+    /// any further sizing logic.
+    ///
+    /// Empty when the tree summarizer has never run on this workspace
+    /// (the section then renders nothing and is dropped from the prompt).
+    pub tree_root_summaries: Vec<(String, String)>,
 }
 
 /// A lightweight tool descriptor for prompt rendering.
@@ -73,6 +95,28 @@ impl<'a> PromptTool<'a> {
     }
 }
 
+/// How the [`ToolsSection`] should render each tool entry. Driven by
+/// the dispatcher choice on the agent — JSON-schema rendering is the
+/// historic format; P-Format is the new default text protocol.
+///
+/// `Native` is for providers that ship structured tool calls directly,
+/// in which case the catalogue body is informational only and the
+/// renderer falls back to JSON-schema (it's the most descriptive form).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToolCallFormat {
+    /// `tool_name[arg1|arg2|...]` — compact, positional, ~80% fewer
+    /// tokens than JSON. The default.
+    #[default]
+    PFormat,
+    /// Legacy JSON-in-tag rendering. Each tool entry shows the full
+    /// JSON schema. Kept for backwards compatibility with prompts
+    /// tuned against the old format.
+    Json,
+    /// Provider supplies structured tool calls — the catalogue is
+    /// informational. Renders in the same JSON-schema form as `Json`.
+    Native,
+}
+
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub model_name: &'a str,
@@ -85,6 +129,9 @@ pub struct PromptContext<'a> {
     /// Skills section is omitted when a filter is active (the main agent
     /// delegates skill work to sub-agents).
     pub visible_tool_names: &'a std::collections::HashSet<String>,
+    /// How [`ToolsSection`] should render each tool entry. Defaults to
+    /// [`ToolCallFormat::PFormat`] when not set.
+    pub tool_call_format: ToolCallFormat,
 }
 
 pub trait PromptSection: Send + Sync {
@@ -108,6 +155,11 @@ impl SystemPromptBuilder {
         Self {
             sections: vec![
                 Box::new(IdentitySection),
+                // User memory sits right after the identity bootstrap so the
+                // model has rich, persistent context about the user before it
+                // sees the tool catalogue. Section is empty (and skipped) when
+                // the tree summarizer has nothing on disk yet.
+                Box::new(UserMemorySection),
                 Box::new(ToolsSection),
                 Box::new(SafetySection),
                 Box::new(SkillsSection),
@@ -251,6 +303,7 @@ pub struct SkillsSection;
 pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
+pub struct UserMemorySection;
 
 impl PromptSection for IdentitySection {
     fn name(&self) -> &str {
@@ -300,14 +353,36 @@ impl PromptSection for ToolsSection {
             if has_filter && !ctx.visible_tool_names.contains(tool.name) {
                 continue;
             }
-            if let Some(schema) = &tool.parameters_schema {
-                let _ = writeln!(
-                    out,
-                    "- **{}**: {}\n  Parameters: `{}`",
-                    tool.name, tool.description, schema
-                );
-            } else {
-                let _ = writeln!(out, "- **{}**: {}", tool.name, tool.description);
+
+            match ctx.tool_call_format {
+                ToolCallFormat::PFormat => {
+                    // P-Format renders a positional signature line:
+                    // `**name[a|b]**: description`. The signature comes
+                    // straight from the parameter schema (alphabetical
+                    // by property name — see `pformat` module docs for
+                    // why), so the model and the parser agree on
+                    // argument ordering. We deliberately do NOT print
+                    // the full JSON schema here: that's exactly the
+                    // ~25-token-per-tool overhead p-format exists to
+                    // eliminate.
+                    let signature = render_pformat_signature_for_prompt(tool);
+                    let _ = writeln!(
+                        out,
+                        "- **{}**: {}\n  Call as: `{}`",
+                        tool.name, tool.description, signature
+                    );
+                }
+                ToolCallFormat::Json | ToolCallFormat::Native => {
+                    if let Some(schema) = &tool.parameters_schema {
+                        let _ = writeln!(
+                            out,
+                            "- **{}**: {}\n  Parameters: `{}`",
+                            tool.name, tool.description, schema
+                        );
+                    } else {
+                        let _ = writeln!(out, "- **{}**: {}", tool.name, tool.description);
+                    }
+                }
             }
         }
         if !ctx.dispatcher_instructions.is_empty() {
@@ -315,6 +390,47 @@ impl PromptSection for ToolsSection {
             out.push_str(ctx.dispatcher_instructions);
         }
         Ok(out)
+    }
+}
+
+/// Build a P-Format signature line (`name[a|b|c]`) from a `&dyn Tool`.
+/// Used by `render_subagent_system_prompt` which operates on `Box<dyn Tool>`
+/// directly (no intermediate `PromptTool`). Mirrors the `PromptTool` variant
+/// below — both BTreeMap-iterate the schema's `properties` in the same order.
+fn render_pformat_signature_for_box_tool(tool: &dyn crate::openhuman::tools::Tool) -> String {
+    let schema = tool.parameters_schema();
+    let names: Vec<String> = schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    if names.is_empty() {
+        format!("{}[]", tool.name())
+    } else {
+        format!("{}[{}]", tool.name(), names.join("|"))
+    }
+}
+
+/// Build a P-Format signature line (`name[a|b|c]`) from a [`PromptTool`].
+/// Local to this module so [`ToolsSection`] doesn't have to depend on
+/// the agent crate's `pformat` helper. The two implementations stay in
+/// lockstep — both use BTreeMap iteration order on the schema's
+/// `properties` field.
+fn render_pformat_signature_for_prompt(tool: &PromptTool<'_>) -> String {
+    let names: Vec<String> = tool
+        .parameters_schema
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| {
+            v.get("properties")
+                .and_then(|p| p.as_object())
+                .map(|m| m.keys().cloned().collect())
+        })
+        .unwrap_or_default();
+    if names.is_empty() {
+        format!("{}[]", tool.name)
+    } else {
+        format!("{}[{}]", tool.name, names.join("|"))
     }
 }
 
@@ -387,6 +503,39 @@ impl PromptSection for RuntimeSection {
             std::env::consts::OS,
             ctx.model_name
         ))
+    }
+}
+
+impl PromptSection for UserMemorySection {
+    fn name(&self) -> &str {
+        "user_memory"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.learned.tree_root_summaries.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from("## User Memory\n\n");
+        out.push_str(
+            "Long-term memory distilled by the tree summarizer. \
+             Each section is the root summary for a memory namespace, \
+             representing everything we've learned about that domain over time. \
+             Treat this as durable context: the model has seen these facts before, \
+             they should not need to be re-discovered.\n\n",
+        );
+
+        for (namespace, body) in &ctx.learned.tree_root_summaries {
+            let trimmed = body.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "### {namespace}\n");
+            out.push_str(trimmed);
+            out.push_str("\n\n");
+        }
+
+        Ok(out)
     }
 }
 
@@ -505,6 +654,30 @@ pub fn render_subagent_system_prompt(
     archetype_body: &str,
     options: SubagentRenderOptions,
 ) -> String {
+    render_subagent_system_prompt_with_format(
+        workspace_dir,
+        model_name,
+        allowed_indices,
+        parent_tools,
+        archetype_body,
+        options,
+        ToolCallFormat::PFormat,
+    )
+}
+
+/// Inner renderer that accepts an explicit [`ToolCallFormat`] so callers
+/// that know the active dispatcher format can thread it through. The
+/// public [`render_subagent_system_prompt`] defaults to PFormat for
+/// backwards compatibility.
+pub fn render_subagent_system_prompt_with_format(
+    workspace_dir: &Path,
+    model_name: &str,
+    allowed_indices: &[usize],
+    parent_tools: &[Box<dyn Tool>],
+    archetype_body: &str,
+    options: SubagentRenderOptions,
+    tool_call_format: ToolCallFormat,
+) -> String {
     let mut out = String::new();
 
     // 1. Archetype role prompt. Works for both `PromptSource::Inline`
@@ -538,6 +711,9 @@ pub fn render_subagent_system_prompt(
     //    only produces in-range indices — a future caller that derives
     //    indices from a different source must not be able to panic this
     //    renderer with a stale index.
+    //
+    //    Rendering uses the caller-specified `tool_call_format` so
+    //    sub-agents and the main dispatcher stay in lockstep.
     out.push_str("## Tools\n\n");
     for &i in allowed_indices {
         let Some(tool) = parent_tools.get(i) else {
@@ -548,24 +724,68 @@ pub fn render_subagent_system_prompt(
             );
             continue;
         };
-        let _ = writeln!(
-            out,
-            "- **{}**: {}\n  Parameters: `{}`",
-            tool.name(),
-            tool.description(),
-            tool.parameters_schema()
-        );
+        match tool_call_format {
+            ToolCallFormat::PFormat => {
+                let sig = render_pformat_signature_for_box_tool(tool.as_ref());
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}\n  Call as: `{}`",
+                    tool.name(),
+                    tool.description(),
+                    sig
+                );
+            }
+            ToolCallFormat::Json | ToolCallFormat::Native => {
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}\n  Parameters: `{}`",
+                    tool.name(),
+                    tool.description(),
+                    tool.parameters_schema()
+                );
+            }
+        }
     }
 
-    // 3. Sub-agent calling-convention preamble. Mirrors the existing
-    //    NativeToolDispatcher hint that gets baked into the parent's
-    //    prompt — sub-agents need it too.
+    // 3. Sub-agent calling-convention preamble — format-aware.
+    //    Sub-agents need the same call format the main dispatcher expects
+    //    so their output parses correctly.
     out.push('\n');
-    out.push_str(
-        "Use the provided tools to accomplish the task. Reply with a concise, dense \
+    match tool_call_format {
+        ToolCallFormat::PFormat => {
+            out.push_str(
+                "## Tool Use Protocol\n\n\
+                 Tool calls use **P-Format**: compact, positional, pipe-delimited syntax \
+                 wrapped in `<tool_call>` tags.\n\n\
+                 ```\n<tool_call>\ntool_name[arg1|arg2]\n</tool_call>\n```\n\n\
+                 Arguments are positional — match the order shown in each tool's `Call as:` \
+                 signature above (alphabetical by parameter name). \
+                 Escape `|` as `\\|`, `]` as `\\]` inside values. \
+                 You may emit multiple `<tool_call>` blocks per response.\n\n\
+                 Use the provided tools to accomplish the task. Reply with a concise, dense \
                  final answer when you have one — the parent agent will weave it back into the \
                  user-visible response.\n\n",
-    );
+            );
+        }
+        ToolCallFormat::Json => {
+            out.push_str(
+                "## Tool Use Protocol\n\n\
+                 To use a tool, wrap a JSON object in `<tool_call></tool_call>` tags:\n\n\
+                 ```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n\
+                 You may emit multiple `<tool_call>` blocks in a single response.\n\n\
+                 Use the provided tools to accomplish the task. Reply with a concise, dense \
+                 final answer when you have one — the parent agent will weave it back into the \
+                 user-visible response.\n\n",
+            );
+        }
+        ToolCallFormat::Native => {
+            out.push_str(
+                "Use the provided tools via the model's native tool-calling output. \
+                 Reply with a concise, dense final answer when you have one — the parent \
+                 agent will weave it back into the user-visible response.\n\n",
+            );
+        }
+    }
 
     // 3b. Optional safety preamble. Definitions that do work with real
     //     side-effects (code_executor, tool_maker, skills_agent) set
@@ -757,6 +977,7 @@ mod tests {
             dispatcher_instructions: "instr",
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
         };
         let rendered = SystemPromptBuilder::with_defaults()
             .build_with_cache_metadata(&ctx)
@@ -784,6 +1005,7 @@ mod tests {
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
         };
 
         let section = IdentitySection;
@@ -816,6 +1038,7 @@ mod tests {
             dispatcher_instructions: "instr",
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
         };
 
         let rendered = DateTimeSection.build(&ctx).unwrap();
@@ -832,6 +1055,142 @@ mod tests {
         let rendered = extract_cache_boundary("static\n\n<!-- CACHE_BOUNDARY -->\n\ndynamic\n");
         assert_eq!(rendered.text, "static\n\ndynamic\n");
         assert_eq!(rendered.cache_boundary, Some("static\n\n".len()));
+    }
+
+    #[test]
+    fn tools_section_pformat_renders_signature_not_schema() {
+        // ToolsSection must render `name[arg1|arg2]` signatures when
+        // `tool_call_format = PFormat`, NOT the verbose JSON schema —
+        // that's where most of the prompt token saving comes from.
+        struct ParamTool;
+        #[async_trait]
+        impl Tool for ParamTool {
+            fn name(&self) -> &str {
+                "make_tea"
+            }
+            fn description(&self) -> &str {
+                "brew a cup of tea"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string" },
+                        "sugar": { "type": "boolean" }
+                    }
+                })
+            }
+            async fn execute(
+                &self,
+                _args: serde_json::Value,
+            ) -> anyhow::Result<crate::openhuman::tools::ToolResult> {
+                Ok(crate::openhuman::tools::ToolResult::success("ok"))
+            }
+        }
+
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(ParamTool)];
+        let prompt_tools = PromptTool::from_tools(&tools);
+        let ctx = PromptContext {
+            workspace_dir: Path::new("/tmp"),
+            model_name: "test-model",
+            tools: &prompt_tools,
+            skills: &[],
+            dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
+        };
+
+        let rendered = ToolsSection.build(&ctx).unwrap();
+        // Alphabetical: kind, sugar.
+        assert!(
+            rendered.contains("Call as: `make_tea[kind|sugar]`"),
+            "expected p-format signature in tools section, got:\n{rendered}"
+        );
+        // Should NOT contain the raw JSON schema dump.
+        assert!(
+            !rendered.contains("\"properties\""),
+            "tools section should drop the raw JSON schema in p-format mode, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn tools_section_json_renders_full_schema() {
+        // The legacy `Json` mode must keep emitting full schemas so
+        // existing prompts that depend on the verbose form are not
+        // silently changed.
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+        let prompt_tools = PromptTool::from_tools(&tools);
+        let ctx = PromptContext {
+            workspace_dir: Path::new("/tmp"),
+            model_name: "test-model",
+            tools: &prompt_tools,
+            skills: &[],
+            dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::Json,
+        };
+
+        let rendered = ToolsSection.build(&ctx).unwrap();
+        assert!(
+            rendered.contains("Parameters:"),
+            "JSON mode should still print Parameters lines, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\"type\""),
+            "JSON mode should print the schema body, got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn user_memory_section_renders_namespaces_with_headings() {
+        let learned = LearnedContextData {
+            tree_root_summaries: vec![
+                ("user".into(), "Steven prefers terse Rust answers.".into()),
+                (
+                    "conversations".into(),
+                    "Recent thread: prompt rework.".into(),
+                ),
+            ],
+            ..Default::default()
+        };
+        let prompt_tools: Vec<PromptTool<'_>> = Vec::new();
+        let ctx = PromptContext {
+            workspace_dir: Path::new("/tmp"),
+            model_name: "test-model",
+            tools: &prompt_tools,
+            skills: &[],
+            dispatcher_instructions: "",
+            learned,
+            visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
+        };
+        let rendered = UserMemorySection.build(&ctx).unwrap();
+        assert!(rendered.starts_with("## User Memory\n\n"));
+        assert!(rendered.contains("### user\n\nSteven prefers terse Rust answers."));
+        assert!(rendered.contains("### conversations\n\nRecent thread: prompt rework."));
+    }
+
+    #[test]
+    fn user_memory_section_returns_empty_when_no_summaries() {
+        // Empty learned context → section returns empty string and is
+        // skipped by the prompt builder, so the cache boundary stays
+        // exactly where it was for workspaces with no tree summaries.
+        let learned = LearnedContextData::default();
+        let prompt_tools: Vec<PromptTool<'_>> = Vec::new();
+        let ctx = PromptContext {
+            workspace_dir: Path::new("/tmp"),
+            model_name: "test-model",
+            tools: &prompt_tools,
+            skills: &[],
+            dispatcher_instructions: "",
+            learned,
+            visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
+        };
+        let rendered = UserMemorySection.build(&ctx).unwrap();
+        assert!(rendered.is_empty());
     }
 
     #[test]

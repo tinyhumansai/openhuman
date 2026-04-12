@@ -25,6 +25,10 @@ dist-ssr
 
 my_docs
 
+# Local prompt dumps written by `scripts/debug-agent-prompts.sh`.
+# Run-specific snapshots — never checked in.
+prompt-dumps/
+
 # CI secrets for local testing (contains real tokens)
 scripts/ci-secrets.json
 scripts/ci-secrets.local.json

@@ -1,11 +1,11 @@
 id = "planner"
 display_name = "Planner"
-when_to_use = "Architect — break a complex task into a small DAG of subtasks with explicit acceptance criteria. Read-only; produces JSON, not code."
+when_to_use = "Architect — break a complex task into a small DAG of subtasks with explicit acceptance criteria. Reads memory and searches the web to ground plans in real context. Read-only; produces JSON, not code."
 temperature = 0.4
-max_iterations = 5
+max_iterations = 8
 sandbox_mode = "read_only"
 omit_identity = true
-omit_memory_context = true
+omit_memory_context = false
 omit_safety_preamble = true
 omit_skills_catalog = true
 
@@ -13,4 +13,4 @@ omit_skills_catalog = true
 hint = "reasoning"
 
 [tools]
-named = ["query_memory", "read_workspace_state", "file_read"]
+named = ["file_read", "memory_recall", "memory_store", "memory_forget", "web_search_tool"]

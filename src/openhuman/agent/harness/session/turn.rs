@@ -732,6 +732,14 @@ impl Agent {
             .await
             .unwrap_or_default();
 
+        // Pull every namespace's root-level summary from the tree
+        // summarizer. This is the densest user memory we can hand the
+        // orchestrator: each root holds up to 20 000 tokens of distilled
+        // long-term context. Done synchronously here because the calls
+        // are filesystem reads, not provider/network round-trips, and
+        // happen exactly once per session (only on the first turn).
+        let tree_root_summaries = collect_tree_root_summaries(&self.workspace_dir);
+
         LearnedContextData {
             observations: obs_entries
                 .iter()
@@ -749,6 +757,7 @@ impl Agent {
                 .take(20)
                 .map(|e| sanitize_learned_entry(&e.content))
                 .collect(),
+            tree_root_summaries,
         }
     }
 
@@ -773,6 +782,7 @@ impl Agent {
             dispatcher_instructions: &instructions,
             learned,
             visible_tool_names: &self.visible_tool_names,
+            tool_call_format: self.tool_dispatcher.tool_call_format(),
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
@@ -860,6 +870,23 @@ impl Agent {
             }
         });
     }
+}
+
+/// Wrapper around
+/// [`crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps`]
+/// that pins the per-namespace and total caps to the constants exposed
+/// from `context::prompt`. The store helper does the actual work — this
+/// indirection just keeps the call site readable and the caps in one
+/// place where the prompt section is defined.
+fn collect_tree_root_summaries(workspace_dir: &std::path::Path) -> Vec<(String, String)> {
+    use crate::openhuman::context::prompt::{
+        USER_MEMORY_PER_NAMESPACE_MAX_CHARS, USER_MEMORY_TOTAL_MAX_CHARS,
+    };
+    crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps(
+        workspace_dir,
+        USER_MEMORY_PER_NAMESPACE_MAX_CHARS,
+        USER_MEMORY_TOTAL_MAX_CHARS,
+    )
 }
 
 /// Sanitize a learned memory entry before injecting into the system prompt.

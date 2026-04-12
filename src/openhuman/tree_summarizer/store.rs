@@ -329,6 +329,169 @@ pub fn get_tree_status(config: &Config, namespace: &str) -> Result<TreeStatus> {
     })
 }
 
+/// Pull the root-level summary out of every tree summarizer namespace
+/// that has been written to the given workspace.
+///
+/// Each namespace's `root.md` body is truncated to `per_namespace_cap`
+/// chars so a single huge namespace can't dominate the prompt; we then
+/// stop accumulating once the running total crosses `total_cap` so
+/// workspaces with dozens of namespaces can't blow the context window.
+///
+/// Failures (missing files, parse errors) are logged at debug level
+/// and silently dropped — user memory is best-effort context, never a
+/// hard requirement for running a turn or rendering a prompt dump.
+///
+/// Returns a stable-ordered `Vec<(namespace, body)>` so byte-identical
+/// inputs produce byte-identical output across process restarts (the
+/// renderer downstream relies on this for KV-cache prefix reuse).
+pub fn collect_root_summaries_with_caps(
+    workspace_dir: &Path,
+    per_namespace_cap: usize,
+    total_cap: usize,
+) -> Vec<(String, String)> {
+    // The store functions all read `config.workspace_dir` and nothing
+    // else, so we shim a tiny `Config` from the caller's path. Cheap
+    // (a few allocations) and avoids forcing every call site to thread
+    // a real `Config` through just for two read calls.
+    let config = Config {
+        workspace_dir: workspace_dir.to_path_buf(),
+        ..Config::default()
+    };
+
+    let namespaces = match list_namespaces_with_root(&config) {
+        Ok(list) => list,
+        Err(e) => {
+            tracing::debug!(
+                error = %e,
+                workspace = %workspace_dir.display(),
+                "[tree_summarizer] could not enumerate namespaces"
+            );
+            return Vec::new();
+        }
+    };
+
+    if namespaces.is_empty() {
+        tracing::debug!(
+            workspace = %workspace_dir.display(),
+            "[tree_summarizer] no namespaces with a root summary"
+        );
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut total_chars: usize = 0;
+
+    for ns in namespaces {
+        if total_chars >= total_cap {
+            tracing::debug!(
+                namespace = %ns,
+                total_chars,
+                "[tree_summarizer] stopping at namespace — total budget exhausted"
+            );
+            break;
+        }
+
+        let node = match read_node(&config, &ns, "root") {
+            Ok(Some(node)) => node,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::debug!(
+                    namespace = %ns,
+                    error = %e,
+                    "[tree_summarizer] failed to read root summary"
+                );
+                continue;
+            }
+        };
+
+        let body = node.summary.trim();
+        if body.is_empty() {
+            continue;
+        }
+
+        // Per-namespace cap (char count, not byte length, so non-ASCII
+        // text doesn't silently overshoot).
+        let body_chars = body.chars().count();
+        let truncated: String = if body_chars > per_namespace_cap {
+            body.chars().take(per_namespace_cap).collect::<String>() + "\n\n[... truncated]"
+        } else {
+            body.to_string()
+        };
+        let truncated_chars = truncated.chars().count();
+
+        // Total cap — use char counts consistently. If this entry
+        // would push us over, clip to the remaining budget so we
+        // still get something for the namespace instead of dropping
+        // it entirely.
+        let remaining = total_cap.saturating_sub(total_chars);
+        let final_body = if truncated_chars > remaining {
+            let mut clipped: String = truncated.chars().take(remaining).collect();
+            clipped.push_str("\n\n[... truncated]");
+            clipped
+        } else {
+            truncated
+        };
+
+        total_chars += final_body.chars().count();
+        let final_chars = final_body.chars().count();
+        tracing::debug!(
+            namespace = %ns,
+            chars = final_chars,
+            running_total = total_chars,
+            "[tree_summarizer] including namespace in root-summary collection"
+        );
+        out.push((ns, final_body));
+    }
+
+    tracing::info!(
+        included = out.len(),
+        total_chars,
+        "[tree_summarizer] collected root summaries"
+    );
+    out
+}
+
+/// Enumerate every namespace under the workspace that has a `root.md`
+/// summary written. Returns the on-disk directory names (already
+/// sanitised) — these are the keys callers should pass back into
+/// [`read_node`] / [`tree_dir`] when reading content.
+///
+/// Used by the orchestrator's prompt builder to inject "user memory"
+/// into the system prompt: each namespace's root summary is the
+/// densest/highest-quality artefact we can hand the model, capped by
+/// `NodeLevel::Root::max_tokens()` (currently 20 000 tokens).
+///
+/// Skips namespaces that exist on disk but have not yet been
+/// summarised (no `root.md`) — those would render as empty headings
+/// and only burn cache space.
+pub fn list_namespaces_with_root(config: &Config) -> Result<Vec<String>> {
+    let base = config.workspace_dir.join("memory").join("namespaces");
+    if !base.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&base)
+        .with_context(|| format!("scan namespaces dir {}", base.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let ns_name = entry.file_name().to_string_lossy().to_string();
+        let root_path = entry.path().join("tree").join("root.md");
+        if root_path.exists() {
+            out.push(ns_name);
+        }
+    }
+
+    // Stable order so the prompt body stays cache-friendly across
+    // process restarts. Without this, `read_dir` ordering is
+    // filesystem-dependent and would shuffle the cache prefix bytes.
+    out.sort();
+    Ok(out)
+}
+
 /// Remove the entire tree directory for a namespace.
 pub fn delete_tree(config: &Config, namespace: &str) -> Result<u64> {
     let base = tree_dir(config, namespace);
@@ -947,5 +1110,65 @@ mod tests {
     fn validate_namespace_accepts_valid() {
         assert!(validate_namespace("my-namespace").is_ok());
         assert!(validate_namespace("skill:gmail:user@example.com").is_ok());
+    }
+
+    #[test]
+    fn list_namespaces_with_root_returns_only_summarised() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+
+        // ns_a has a root node — should be returned.
+        write_node(&config, &make_node("ns_a", "root", "alpha summary")).unwrap();
+        // ns_b has only an hour leaf, no root — should be filtered out.
+        write_node(&config, &make_node("ns_b", "2024/03/15/14", "hour")).unwrap();
+        // ns_c has a root.
+        write_node(&config, &make_node("ns_c", "root", "gamma summary")).unwrap();
+
+        let listed = list_namespaces_with_root(&config).unwrap();
+        // Sorted alphabetically for cache stability — see fn docs.
+        assert_eq!(listed, vec!["ns_a".to_string(), "ns_c".to_string()]);
+    }
+
+    #[test]
+    fn collect_root_summaries_respects_per_namespace_cap() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+
+        let big = "x".repeat(50);
+        write_node(&config, &make_node("ns", "root", &big)).unwrap();
+
+        // Per-namespace cap of 10 should clip the body.
+        let result = collect_root_summaries_with_caps(&config.workspace_dir, 10, 10_000);
+        assert_eq!(result.len(), 1);
+        let (ns, body) = &result[0];
+        assert_eq!(ns, "ns");
+        assert!(
+            body.starts_with("xxxxxxxxxx"),
+            "expected the first 10 x's, got: {body}"
+        );
+        assert!(body.contains("[... truncated]"));
+    }
+
+    #[test]
+    fn collect_root_summaries_stops_at_total_cap() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+
+        write_node(&config, &make_node("aaa", "root", "first")).unwrap();
+        write_node(&config, &make_node("bbb", "root", "second")).unwrap();
+        write_node(&config, &make_node("ccc", "root", "third")).unwrap();
+
+        // Total cap of 5 chars — should accept aaa ("first" = 5),
+        // then break before reading bbb because total >= cap.
+        let result = collect_root_summaries_with_caps(&config.workspace_dir, 100, 5);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "aaa");
+    }
+
+    #[test]
+    fn collect_root_summaries_returns_empty_for_unknown_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let result = collect_root_summaries_with_caps(&tmp.path().join("nope"), 100, 1000);
+        assert!(result.is_empty());
     }
 }
