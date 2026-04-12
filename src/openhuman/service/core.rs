@@ -38,12 +38,12 @@ pub fn install(config: &Config) -> Result<ServiceStatus> {
     #[cfg(target_os = "linux")]
     {
         linux::install(config)?;
-        return status(config);
+        status(config)
     }
     #[cfg(windows)]
     {
         windows::install(config)?;
-        return status(config);
+        status(config)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     anyhow::bail!("Service management is supported on macOS, Linux, and Windows only")
@@ -77,12 +77,12 @@ pub fn stop(config: &Config) -> Result<ServiceStatus> {
     #[cfg(target_os = "linux")]
     {
         linux::stop(config)?;
-        return status(config);
+        status(config)
     }
     #[cfg(windows)]
     {
         windows::stop(config)?;
-        return status(config);
+        status(config)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     anyhow::bail!("Service management is supported on macOS, Linux, and Windows only")

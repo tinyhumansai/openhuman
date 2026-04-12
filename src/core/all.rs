@@ -57,50 +57,91 @@ fn registry() -> &'static [RegisteredController] {
 }
 
 /// Aggregates all controller implementations from across the codebase.
+///
+/// This function is responsible for collecting every domain-specific controller
+/// registered in the system. It is used during the initialization of the
+/// global [`REGISTRY`].
+///
+/// When adding a new domain/namespace, its `all_*_registered_controllers()`
+/// function must be called here to make it available via RPC and CLI.
 fn build_registered_controllers() -> Vec<RegisteredController> {
     let mut controllers = Vec::new();
+    // Application information and capabilities
     controllers.extend(crate::openhuman::about_app::all_about_app_registered_controllers());
+    // Core application shell state
     controllers.extend(crate::openhuman::app_state::all_app_state_registered_controllers());
+    // Composio integration controllers
     controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
+    // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // System and process health monitoring
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
+    // Diagnostic tools
     controllers.extend(crate::openhuman::doctor::all_doctor_registered_controllers());
+    // Secret storage and encryption
     controllers.extend(crate::openhuman::encryption::all_encryption_registered_controllers());
+    // Background heartbeat loop controls
     controllers.extend(crate::openhuman::heartbeat::all_heartbeat_registered_controllers());
+    // Token usage and billing cost tracking
     controllers.extend(crate::openhuman::cost::all_cost_registered_controllers());
+    // Inline autocomplete settings
     controllers.extend(crate::openhuman::autocomplete::all_autocomplete_registered_controllers());
+    // External messaging channels (Web, Telegram, etc.)
     controllers.extend(
         crate::openhuman::channels::providers::web::all_web_channel_registered_controllers(),
     );
     controllers
         .extend(crate::openhuman::channels::controllers::all_channels_registered_controllers());
+    // Persistent configuration management
     controllers.extend(crate::openhuman::config::all_config_registered_controllers());
+    // User credentials and session management
     controllers.extend(crate::openhuman::credentials::all_credentials_registered_controllers());
+    // Desktop service management
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
+    // Data migration utilities
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
+    // Local AI model management and inference
     controllers.extend(crate::openhuman::local_ai::all_local_ai_registered_controllers());
+    // Screen capture and UI analysis
     controllers.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_registered_controllers(),
     );
+    // Bridge to external skill runtimes
     controllers.extend(crate::openhuman::socket::all_socket_registered_controllers());
+    // User workspace and file management
     controllers.extend(crate::openhuman::workspace::all_workspace_registered_controllers());
+    // Skill tool registry
     controllers.extend(crate::openhuman::tools::all_tools_registered_controllers());
+    // Document and knowledge graph storage
     controllers.extend(crate::openhuman::memory::all_memory_registered_controllers());
+    // Referral and growth tracking
     controllers.extend(crate::openhuman::referral::all_referral_registered_controllers());
+    // Billing and subscription management
     controllers.extend(crate::openhuman::billing::all_billing_registered_controllers());
+    // Team and role management
     controllers.extend(crate::openhuman::team::all_team_registered_controllers());
+    // OS-level text input interactions
     controllers.extend(crate::openhuman::text_input::all_text_input_registered_controllers());
+    // Voice transcription and synthesis
     controllers.extend(crate::openhuman::voice::all_voice_registered_controllers());
+    // Background awareness and autonomous tasks
     controllers.extend(crate::openhuman::subconscious::all_subconscious_registered_controllers());
+    // Webhook tunnel management
     controllers.extend(crate::openhuman::webhooks::all_webhooks_registered_controllers());
+    // Core binary update management
     controllers.extend(crate::openhuman::update::all_update_registered_controllers());
+    // Hierarchical knowledge summarization
     controllers
         .extend(crate::openhuman::tree_summarizer::all_tree_summarizer_registered_controllers());
     controllers
 }
 
 /// Aggregates all controller schemas from across the codebase.
+///
+/// Similar to [`build_registered_controllers`], but only collects the metadata
+/// (schema) for each controller. This is used for discovery and validation.
 fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     let mut schemas = Vec::new();
     schemas.extend(crate::openhuman::about_app::all_about_app_controller_schemas());

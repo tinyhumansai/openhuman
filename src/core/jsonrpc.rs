@@ -24,8 +24,16 @@ use crate::core::types::{AppState, RpcError, RpcFailure, RpcRequest, RpcSuccess}
 
 /// Axum handler for JSON-RPC POST requests.
 ///
-/// It parses the request, invokes the requested method, and returns a
-/// JSON-RPC 2.0 compliant success or failure response.
+/// This function:
+/// 1. Receives a JSON-RPC request body.
+/// 2. Extracts the method name and parameters.
+/// 3. Invokes the corresponding handler via [`invoke_method`].
+/// 4. Wraps the result or error in a JSON-RPC 2.0 compliant response.
+///
+/// # Arguments
+///
+/// * `state` - The application state, injected by Axum.
+/// * `req` - The parsed [`RpcRequest`].
 pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Response {
     let id = req.id.clone();
     let method = req.method.clone();
@@ -67,8 +75,9 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 
 /// Invokes a JSON-RPC method by name.
 ///
-/// It first checks if the method is registered in the static schema registry.
-/// If not, it falls back to the dynamic dispatch system.
+/// This is a high-level wrapper around [`invoke_method_inner`] that adds
+/// automatic session management logic. If a call fails with a 401 Unauthorized
+/// error from the backend, it will automatically clear the local session.
 ///
 /// # Arguments
 ///
@@ -78,9 +87,8 @@ pub async fn rpc_handler(State(state): State<AppState>, Json(req): Json<RpcReque
 pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Result<Value, String> {
     let result = invoke_method_inner(state, method, params).await;
 
-    // If the RPC call failed due to an expired/invalid session token (401 from
-    // the backend), automatically clear the stored session so the frontend
-    // detects the logged-out state and redirects to login.
+    // Session auto-cleanup: If the backend says we're unauthorized,
+    // we should reflect that locally by clearing the stored token.
     if let Err(ref msg) = result {
         if is_session_expired_error(msg) {
             log::warn!(
@@ -96,6 +104,7 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
     result
 }
 
+/// Helper to determine if an error message indicates an expired or invalid session.
 fn is_session_expired_error(msg: &str) -> bool {
     let lower = msg.to_lowercase();
     (lower.contains("401") && lower.contains("unauthorized"))
@@ -103,13 +112,21 @@ fn is_session_expired_error(msg: &str) -> bool {
         || msg.contains("SESSION_EXPIRED")
 }
 
+/// Internal method invocation logic.
+///
+/// It first attempts to match the method name against the static controller
+/// registry (schemas). If a schema is found, it validates the input parameters
+/// before execution. If no schema matches, it falls back to the dynamic
+/// [`crate::core::dispatch::dispatch`] system.
 async fn invoke_method_inner(
     state: AppState,
     method: &str,
     params: Value,
 ) -> Result<Value, String> {
+    // Phase 1: Check static controller registry.
     if let Some(schema) = all::schema_for_rpc_method(method) {
         let params_obj = params_to_object(params)?;
+        // Validate inputs against the schema before calling the handler.
         all::validate_params(&schema, &params_obj)?;
         if let Some(result) = all::try_invoke_registered_rpc(method, params_obj).await {
             return result;
@@ -117,10 +134,14 @@ async fn invoke_method_inner(
         return Err(format!("registered schema has no handler: {method}"));
     }
 
+    // Phase 2: Fall back to dynamic dispatch (internal core methods or legacy paths).
     crate::core::dispatch::dispatch(state, method, params).await
 }
 
 /// Converts JSON parameters into a map, ensuring they are in object format.
+///
+/// JSON-RPC allows parameters to be an Object, an Array, or Null. This implementation
+/// primarily supports Object parameters for named-argument style calls.
 fn params_to_object(params: Value) -> Result<Map<String, Value>, String> {
     match params {
         Value::Object(map) => Ok(map),

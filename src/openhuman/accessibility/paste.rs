@@ -2,6 +2,7 @@
 //!
 //! Three-tier strategy: (1) Swift helper paste, (2) osascript clipboard + CGEvent, (3) AXValue write.
 
+#[cfg(target_os = "macos")]
 use super::text_util::truncate_tail;
 
 /// Apply suggestion text to the focused field.

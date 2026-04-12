@@ -4,6 +4,7 @@
 //! events globally and reports `FN_DOWN` / `FN_UP` lines over stdout.
 
 use super::{detect_permissions, PermissionState};
+#[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 
 #[cfg(target_os = "macos")]

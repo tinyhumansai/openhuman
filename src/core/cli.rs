@@ -29,17 +29,20 @@ Contribute & Star us on GitHub: https://github.com/tinyhumansai/openhuman
 
 /// Dispatches CLI commands based on arguments.
 ///
-/// This is the entry point for CLI argument handling. It prints the banner,
-/// checks for help requests, and dispatches to specific command handlers
-/// like `run`, `call`, `skills`, or namespace-based commands.
+/// This is the entry point for CLI argument handling. It performs the following:
+/// 1. Prints the ASCII welcome banner to stderr.
+/// 2. Resolves and groups available controller schemas.
+/// 3. Checks for global help requests.
+/// 4. Matches the first argument to a subcommand or a domain namespace.
 ///
 /// # Arguments
 ///
-/// * `args` - A slice of strings containing the command-line arguments (excluding the binary name).
+/// * `args` - A slice of strings containing the command-line arguments.
 ///
 /// # Errors
 ///
-/// Returns an error if the command fails or if an unknown command is provided.
+/// Returns an error if the command fails, parameters are invalid, or if
+/// the subcommand/namespace is unknown.
 pub fn run_from_cli_args(args: &[String]) -> Result<()> {
     // Print the welcome banner to stderr to keep stdout clean for JSON output.
     eprint!("{CLI_BANNER}");
@@ -54,6 +57,7 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
     match args[0].as_str() {
         "run" | "serve" => run_server_command(&args[1..]),
         "call" => run_call_command(&args[1..]),
+        // Domain-specific CLI adapters that don't follow the generic namespace pattern.
         "screen-intelligence" => {
             crate::core::screen_intelligence_cli::run_screen_intelligence_command(&args[1..])
         }
@@ -70,14 +74,19 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
             );
             crate::core::agent_cli::run_agent_command(&args[1..])
         }
+        // Generic namespace dispatcher: `openhuman <namespace> <function> ...`
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
 }
 
-/// Loads key/value pairs from a dotenv file into the process environment.
+/// Loads key/value pairs from a `.env` file into the process environment.
 ///
-/// Precedence: variables already set in the environment are **not** overwritten.
-/// Order: `OPENHUMAN_DOTENV_PATH` (if set to a non-empty path), else `.env` in the current working directory.
+/// This is used during the `run` command to load sensitive configurations.
+///
+/// Precedence:
+/// 1. Variables already set in the process environment are **not** overwritten.
+/// 2. If `OPENHUMAN_DOTENV_PATH` is set, that file is loaded.
+/// 3. Otherwise, it searches for `.env` in the current working directory.
 fn load_dotenv_for_server() -> Result<()> {
     match std::env::var("OPENHUMAN_DOTENV_PATH") {
         Ok(path) if !path.trim().is_empty() => {
@@ -94,11 +103,12 @@ fn load_dotenv_for_server() -> Result<()> {
 
 /// Handles the `run` subcommand to start the core HTTP/JSON-RPC server.
 ///
-/// Parses flags for port, host, and optional Socket.IO support.
+/// This command boots the main application server, including its JSON-RPC
+/// endpoint, Socket.IO bridge, and background services (voice, vision, etc.).
 ///
 /// # Arguments
 ///
-/// * `args` - Command-line arguments for the `run` command.
+/// * `args` - Command-line arguments for the `run` command (e.g., `--port`).
 fn run_server_command(args: &[String]) -> Result<()> {
     load_dotenv_for_server()?;
 
@@ -165,7 +175,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
 
     crate::core::logging::init_for_cli_run(verbose, log_scope);
 
-    // Initialize the Tokio runtime and start the server.
+    // Initialize the Tokio multi-threaded runtime.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -177,7 +187,8 @@ fn run_server_command(args: &[String]) -> Result<()> {
 
 /// Handles the `call` subcommand to invoke a JSON-RPC method directly from the CLI.
 ///
-/// Useful for testing and automation.
+/// This is used for one-off commands and debugging, bypassing the HTTP transport
+/// and calling the internal `invoke_method` directly.
 ///
 /// # Arguments
 ///
@@ -222,7 +233,7 @@ fn run_call_command(args: &[String]) -> Result<()> {
         .block_on(async { invoke_method(default_state(), &method, params).await })
         .map_err(anyhow::Error::msg)?;
 
-    // Output the result as pretty-printed JSON.
+    // Output the result as pretty-printed JSON to stdout.
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }

@@ -117,18 +117,21 @@ struct HandlerEntry {
 
 /// Registry of native, in-process typed request handlers.
 ///
-/// Handlers are keyed by a method name (`"agent.run_turn"`,
-/// `"approval.prompt"`, …) and store the request/response `TypeId` so
-/// callers that disagree about types get a structured error instead of a
-/// panic or silent corruption.
+/// Handlers are keyed by a method name (e.g., `"agent.run_turn"`) and store the
+/// expected request and response types. This enables safe, typed communication
+/// between different modules without the overhead of serialization.
+///
+/// The registry is thread-safe, using a `RwLock` to allow concurrent lookups
+/// while guarding registrations.
 #[derive(Clone, Default)]
 pub struct NativeRegistry {
+    /// Internal map of method names to their handler entries.
     handlers: Arc<RwLock<HashMap<String, HandlerEntry>>>,
 }
 
 impl std::fmt::Debug for NativeRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Non-blocking read attempt; if contended, fall back to opaque.
+        // Non-blocking read attempt to avoid deadlocks during debugging.
         match self.handlers.try_read() {
             Ok(guard) => f
                 .debug_struct("NativeRegistry")
@@ -142,25 +145,33 @@ impl std::fmt::Debug for NativeRegistry {
     }
 }
 
-/// Recover from `RwLock` poison by taking the inner guard. The registry
-/// holds simple data (`HashMap`) — a panicked writer cannot leave it in an
-/// invalid state, so it's safe to continue.
+/// Recover from `RwLock` poison by taking the inner guard.
+///
+/// If a thread panics while holding the lock, the lock becomes "poisoned".
+/// Since the registry only holds a simple `HashMap`, we can safely ignore
+/// the poison and continue using the registry.
 fn unpoison<T>(result: Result<T, std::sync::PoisonError<T>>) -> T {
     result.unwrap_or_else(|e| e.into_inner())
 }
 
 impl NativeRegistry {
+    /// Creates a new, empty registry.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Register a handler for `method`. If a handler already exists for
-    /// this method, it is replaced — tests rely on this to override
-    /// production handlers.
+    /// Register a handler for a specific method name.
     ///
-    /// Synchronous because registration only inserts into an in-memory
-    /// map. The handler itself still produces an async future when it
-    /// runs; only the registration step is sync.
+    /// If a handler already exists for the method, it will be replaced.
+    /// This is particularly useful in tests for overriding production handlers
+    /// with mocks or stubs.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `Req` - The request type. Must implement `Send + 'static`.
+    /// * `Resp` - The response type. Must implement `Send + 'static`.
+    /// * `F` - The handler function/closure.
+    /// * `Fut` - The future returned by the handler.
     pub fn register<Req, Resp, F, Fut>(&self, method: &str, handler: F)
     where
         Req: Send + 'static,
@@ -168,6 +179,7 @@ impl NativeRegistry {
         F: Fn(Req) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<Resp, String>> + Send + 'static,
     {
+        // Wrap the typed handler in a type-erased closure.
         let handler_arc: BoxedHandler = Arc::new(move |boxed: BoxedAny| {
             // This downcast is infallible: the dispatch path verifies
             // TypeId equality before invoking the handler.
@@ -186,6 +198,7 @@ impl NativeRegistry {
             resp_name: std::any::type_name::<Resp>(),
         };
 
+        // Insert the handler under a write lock.
         let previous = unpoison(self.handlers.write()).insert(method.to_string(), entry);
 
         if previous.is_some() {
@@ -205,17 +218,17 @@ impl NativeRegistry {
         }
     }
 
-    /// Dispatch a typed request to the registered handler for `method`.
+    /// Dispatch a typed request to a registered handler.
     ///
-    /// Returns [`NativeRequestError::UnregisteredHandler`] if no handler
-    /// is registered, [`NativeRequestError::TypeMismatch`] if the caller's
-    /// `Req` or `Resp` doesn't match the registered handler, or
-    /// [`NativeRequestError::HandlerFailed`] if the handler itself
-    /// returned an error.
+    /// This method performs runtime type checks to ensure the caller and handler
+    /// agree on the request and response types.
     ///
-    /// The read lock is acquired, the handler `Arc` is cloned, and the
-    /// lock is dropped — all before the handler future is awaited. This
-    /// means slow handlers never block concurrent dispatches or registrations.
+    /// # Errors
+    ///
+    /// Returns a [`NativeRequestError`] if:
+    /// - No handler is registered for the method.
+    /// - There is a type mismatch for the request or response.
+    /// - The handler returns an error.
     pub async fn request<Req, Resp>(
         &self,
         method: &str,
@@ -225,9 +238,9 @@ impl NativeRegistry {
         Req: Send + 'static,
         Resp: Send + 'static,
     {
-        // Lookup + cheap clone of the handler Arc under the read lock,
-        // then drop the lock before awaiting the handler future. Scoped
-        // so the `guard` goes out of scope at the end of the block.
+        // Lookup the handler and clone its metadata under a read lock.
+        // We drop the lock BEFORE awaiting the handler's future to avoid
+        // blocking other threads.
         let (handler, expected_req, expected_resp, expected_req_name, expected_resp_name) = {
             let guard = unpoison(self.handlers.read());
             let entry =
@@ -245,6 +258,7 @@ impl NativeRegistry {
             )
         };
 
+        // Verify that the caller's request type matches the registered type.
         if TypeId::of::<Req>() != expected_req {
             return Err(NativeRequestError::TypeMismatch {
                 method: method.to_string(),
@@ -252,6 +266,7 @@ impl NativeRegistry {
                 actual: std::any::type_name::<Req>(),
             });
         }
+        // Verify that the caller's response type matches the registered type.
         if TypeId::of::<Resp>() != expected_resp {
             return Err(NativeRequestError::TypeMismatch {
                 method: method.to_string(),
@@ -267,10 +282,10 @@ impl NativeRegistry {
         );
 
         let boxed_req: BoxedAny = Box::new(req);
+        // Invoke the handler and await its completion.
         match handler(boxed_req).await {
             Ok(boxed_resp) => {
-                // Infallible: TypeId check above guarantees the handler
-                // produced the right Resp type.
+                // Infallible: the TypeId check above guarantees the correct type.
                 let resp = *boxed_resp.downcast::<Resp>().expect(
                     "native_request: handler returned wrong response type despite TypeId check",
                 );

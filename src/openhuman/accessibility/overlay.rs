@@ -1,5 +1,6 @@
 //! Overlay display via the unified Swift helper process.
 
+#[cfg(target_os = "macos")]
 use super::text_util::truncate_tail;
 use super::types::ElementBounds;
 

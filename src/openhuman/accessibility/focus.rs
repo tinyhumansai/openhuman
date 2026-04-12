@@ -3,7 +3,9 @@
 //! Primary path: unified Swift helper (native AX API, fast, persistent process).
 //! Fallback: osascript subprocess (slower, but works without compiled helper).
 
+#[cfg(target_os = "macos")]
 use super::terminal::{is_terminal_app, is_text_role};
+#[cfg(target_os = "macos")]
 use super::text_util::{normalize_ax_value, parse_ax_number};
 use super::types::{AppContext, ElementBounds, FocusedTextContext};
 

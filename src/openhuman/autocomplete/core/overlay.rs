@@ -9,6 +9,7 @@ use once_cell::sync::Lazy;
 #[cfg(target_os = "macos")]
 use std::sync::Mutex as StdMutex;
 
+#[cfg(target_os = "macos")]
 use super::text::truncate_tail;
 use crate::openhuman::accessibility::{self, ElementBounds};
 

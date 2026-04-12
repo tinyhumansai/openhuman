@@ -26,12 +26,16 @@ pub const DEFAULT_CAPACITY: usize = 256;
 
 /// Initialize the global event bus. Must be called **once** during startup.
 ///
-/// Subsequent calls return the already-initialized bus without changing
-/// the capacity. Panics are impossible — `OnceLock` guarantees single init.
+/// This function:
+/// 1. Initializes the native request registry.
+/// 2. Sets up the global singleton bus with the specified capacity.
 ///
-/// This also initializes the native request registry so that any domain
-/// can immediately register handlers and dispatch requests without worrying
-/// about startup ordering.
+/// Subsequent calls return the already-initialized bus without changing
+/// its capacity. This ensures thread-safe, consistent initialization.
+///
+/// # Arguments
+///
+/// * `capacity` - The maximum number of buffered events for the broadcast channel.
 pub fn init_global(capacity: usize) -> &'static EventBus {
     // Initialize the native request registry first so handler registration
     // is always safe from anywhere in the process once the bus is up.
@@ -42,14 +46,21 @@ pub fn init_global(capacity: usize) -> &'static EventBus {
     })
 }
 
-/// Get the global event bus, or `None` if [`init_global`] has not been called.
+/// Get the global event bus.
+///
+/// Returns `Some(&EventBus)` if [`init_global`] has been called, otherwise `None`.
 pub fn global() -> Option<&'static EventBus> {
     GLOBAL_BUS.get()
 }
 
 /// Publish an event on the global bus.
 ///
-/// Silently does nothing if the global bus is not yet initialized.
+/// This is the primary way to notify other modules about domain events
+/// (e.g., an agent turn completed, a memory was stored).
+///
+/// # Arguments
+///
+/// * `event` - The [`DomainEvent`] to broadcast to all subscribers.
 pub fn publish_global(event: DomainEvent) {
     if let Some(bus) = GLOBAL_BUS.get() {
         bus.publish(event);
@@ -60,34 +71,41 @@ pub fn publish_global(event: DomainEvent) {
 
 /// Subscribe a handler on the global bus.
 ///
-/// Silently does nothing and returns `None` if the bus is not yet initialized.
+/// The handler will receive all events that match its domain filter.
+/// Returns a [`SubscriptionHandle`] that will cancel the subscription when dropped.
+///
+/// # Arguments
+///
+/// * `handler` - An implementation of the [`EventHandler`] trait.
 pub fn subscribe_global(handler: Arc<dyn EventHandler>) -> Option<SubscriptionHandle> {
     GLOBAL_BUS.get().map(|bus| bus.subscribe(handler))
 }
 
 // ── EventBus struct ─────────────────────────────────────────────────────
 
-/// The event bus. There is exactly **one** instance at runtime, accessed
-/// through the module-level functions ([`init_global`], [`publish_global`],
-/// [`subscribe_global`], [`global`]).
+/// The event bus, wrapping a `tokio::sync::broadcast` channel.
 ///
-/// Direct construction is restricted to `pub(crate)` for test isolation.
+/// It provides a many-to-many communication channel for [`DomainEvent`]s.
+/// There is exactly **one** production instance at runtime (the global singleton).
 #[derive(Clone, Debug)]
 pub struct EventBus {
+    /// The sending end of the broadcast channel.
     tx: broadcast::Sender<DomainEvent>,
 }
 
 impl EventBus {
-    /// Create a new event bus. **Only** exposed within the crate for testing;
-    /// production code must use [`init_global`].
+    /// Create a new event bus with the given capacity.
+    ///
+    /// This is used internally by [`init_global`] and by tests for isolation.
     pub(crate) fn create(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity.max(1));
         Self { tx }
     }
 
-    /// Publish an event to all subscribers.
+    /// Publish an event to all active subscribers.
     ///
-    /// Silently drops the event if no subscribers are listening.
+    /// The event is cloned and sent to each subscriber's receiving end.
+    /// If no subscribers are currently listening, the event is silently dropped.
     pub fn publish(&self, event: DomainEvent) {
         let receiver_count = self.tx.receiver_count();
         tracing::debug!(
@@ -99,10 +117,19 @@ impl EventBus {
         let _ = self.tx.send(event);
     }
 
-    /// Subscribe with an [`EventHandler`] implementation.
+    /// Subscribe with a trait-based [`EventHandler`].
     ///
-    /// Returns a [`SubscriptionHandle`] that cancels the subscriber when dropped.
-    /// The handler's optional `domains()` filter is applied before dispatching.
+    /// Spawns a background task that listens for events and dispatches them
+    /// to the handler's `handle` method.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The handler to register. Its `domains()` filter is checked
+    ///   before every dispatch.
+    ///
+    /// # Returns
+    ///
+    /// A [`SubscriptionHandle`] to manage the lifetime of the background task.
     pub fn subscribe(&self, handler: Arc<dyn EventHandler>) -> SubscriptionHandle {
         let mut rx = self.tx.subscribe();
         let name = handler.name().to_string();
@@ -121,7 +148,8 @@ impl EventBus {
             loop {
                 match rx.recv().await {
                     Ok(event) => {
-                        // Apply domain filter
+                        // Apply domain filter: only dispatch if the event domain
+                        // matches one of the subscriber's allowed domains.
                         if let Some(ref allowed) = domains {
                             if !allowed.iter().any(|d| d == event.domain()) {
                                 continue;
@@ -132,6 +160,8 @@ impl EventBus {
                             domain = event.domain(),
                             "[event_bus] dispatching to handler"
                         );
+                        // Wrap the handler call in AssertUnwindSafe so that a
+                        // panic in one handler doesn't crash the entire event loop.
                         let result = AssertUnwindSafe(handler.handle(&event))
                             .catch_unwind()
                             .await;
@@ -170,10 +200,11 @@ impl EventBus {
         SubscriptionHandle::new(name, task)
     }
 
-    /// Subscribe with an async closure for simple, one-off handlers.
+    /// Subscribe with an async closure.
     ///
-    /// Domain filtering is not supported with this shorthand — use
-    /// [`subscribe`] with an [`EventHandler`] for domain-filtered subscriptions.
+    /// This is a convenience method for simple, one-off event handlers.
+    /// It doesn't support domain filtering directly; the closure will receive
+    /// every event published on the bus.
     pub fn on<F>(&self, name: &str, handler: F) -> SubscriptionHandle
     where
         F: Fn(&DomainEvent) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>
@@ -188,7 +219,7 @@ impl EventBus {
         self.subscribe(subscriber)
     }
 
-    /// Returns the current number of active subscribers.
+    /// Returns the current number of active subscribers (receivers).
     pub fn subscriber_count(&self) -> usize {
         self.tx.receiver_count()
     }

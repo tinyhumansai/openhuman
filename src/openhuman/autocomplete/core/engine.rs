@@ -9,9 +9,13 @@ use tokio::time::{self, Duration, Instant};
 
 use super::focus::{
     apply_text_to_focused_field, focused_text_context_verbose, is_escape_key_down, is_tab_key_down,
-    send_backspace, validate_focused_target,
+    send_backspace,
 };
-use super::overlay::{overlay_helper_quit, show_overflow_badge};
+#[cfg(target_os = "macos")]
+use super::focus::validate_focused_target;
+use super::overlay::show_overflow_badge;
+#[cfg(target_os = "macos")]
+use super::overlay::overlay_helper_quit;
 use super::terminal::{
     extract_terminal_input_context, is_terminal_app, looks_like_terminal_buffer,
 };
@@ -377,13 +381,13 @@ impl AutocompleteEngine {
         }
         if should_apply {
             // Validate the focused element still matches before inserting.
-            let (expected_app, expected_role) = {
+            let (_expected_app, _expected_role) = {
                 let state = self.inner.lock().await;
                 (state.app_name.clone(), state.target_role.clone())
             };
             let apply_result = (|| -> Result<(), String> {
                 #[cfg(target_os = "macos")]
-                validate_focused_target(expected_app.as_deref(), expected_role.as_deref())?;
+                validate_focused_target(_expected_app.as_deref(), _expected_role.as_deref())?;
                 apply_text_to_focused_field(&cleaned)?;
                 Ok(())
             })();
@@ -809,13 +813,13 @@ impl AutocompleteEngine {
             let cleaned = sanitize_suggestion(&suggestion);
             if !cleaned.is_empty() {
                 // Validate the focused element still matches before inserting.
-                let (expected_app, expected_role) = {
+                let (_expected_app, _expected_role) = {
                     let state = self.inner.lock().await;
                     (state.app_name.clone(), state.target_role.clone())
                 };
                 #[cfg(target_os = "macos")]
                 if let Err(e) =
-                    validate_focused_target(expected_app.as_deref(), expected_role.as_deref())
+                    validate_focused_target(_expected_app.as_deref(), _expected_role.as_deref())
                 {
                     log::warn!("[autocomplete] tab-accept aborted: {e}");
                     let mut state = self.inner.lock().await;
