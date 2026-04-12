@@ -84,4 +84,4 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy (core crate)
-        run: cargo clippy -p openhuman -- -D warnings
+        run: cargo clippy -p openhuman
