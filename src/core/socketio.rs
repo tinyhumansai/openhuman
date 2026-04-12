@@ -82,93 +82,107 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
         let _ = socket.emit("ready", &ready_payload);
 
         // Handler for JSON-RPC over WebSocket.
-        socket.on("rpc:request", |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| async move {
-            let client_id = socket.id.to_string();
-            log::info!(
-                "[socketio] rpc:request method={} id={} client={}",
-                payload.method,
-                payload.id,
-                client_id
-            );
+        socket.on(
+            "rpc:request",
+            |socket: SocketRef, Data(payload): Data<SocketRpcRequest>| async move {
+                let client_id = socket.id.to_string();
+                log::info!(
+                    "[socketio] rpc:request method={} id={} client={}",
+                    payload.method,
+                    payload.id,
+                    client_id
+                );
 
-            // Invoke the method through the same logic used by the HTTP RPC endpoint.
-            let response = match crate::core::jsonrpc::invoke_method(
-                crate::core::jsonrpc::default_state(),
-                payload.method.as_str(),
-                payload.params,
-            )
-            .await
-            {
-                Ok(result) => ("rpc:response", json!({ "id": payload.id, "result": result })),
-                Err(message) => (
-                    "rpc:error",
-                    json!({
-                        "id": payload.id,
-                        "error": { "code": -32000, "message": message }
-                    }),
+                // Invoke the method through the same logic used by the HTTP RPC endpoint.
+                let response = match crate::core::jsonrpc::invoke_method(
+                    crate::core::jsonrpc::default_state(),
+                    payload.method.as_str(),
+                    payload.params,
                 )
-            };
+                .await
+                {
+                    Ok(result) => (
+                        "rpc:response",
+                        json!({ "id": payload.id, "result": result }),
+                    ),
+                    Err(message) => (
+                        "rpc:error",
+                        json!({
+                            "id": payload.id,
+                            "error": { "code": -32000, "message": message }
+                        }),
+                    ),
+                };
 
-            let _ = socket.emit(response.0, &response.1);
-        });
+                let _ = socket.emit(response.0, &response.1);
+            },
+        );
 
         // Handler for starting a chat turn.
-        socket.on("chat:start", |socket: SocketRef, Data(payload): Data<ChatStartPayload>| async move {
-            let client_id = socket.id.to_string();
-            let thread_id = payload.thread_id.clone();
-            let model_override = payload.model_override.or(payload.model);
-            log::debug!(
-                "[socketio] recv event=chat:start client_id={} thread_id={} message_bytes={}",
-                client_id,
-                thread_id,
-                payload.message.len()
-            );
+        socket.on(
+            "chat:start",
+            |socket: SocketRef, Data(payload): Data<ChatStartPayload>| async move {
+                let client_id = socket.id.to_string();
+                let thread_id = payload.thread_id.clone();
+                let model_override = payload.model_override.or(payload.model);
+                log::debug!(
+                    "[socketio] recv event=chat:start client_id={} thread_id={} message_bytes={}",
+                    client_id,
+                    thread_id,
+                    payload.message.len()
+                );
 
-            // Trigger the web channel's chat logic.
-            match crate::openhuman::channels::providers::web::start_chat(
-                &client_id,
-                &payload.thread_id,
-                &payload.message,
-                model_override,
-                payload.temperature,
-            )
-            .await
-            {
-                Ok(request_id) => {
-                    let accepted_payload = json!({
-                        "event": "chat_accepted",
-                        "client_id": client_id,
-                        "thread_id": thread_id,
-                        "request_id": request_id,
-                    });
-                    emit_with_aliases(&socket, "chat_accepted", &accepted_payload);
+                // Trigger the web channel's chat logic.
+                match crate::openhuman::channels::providers::web::start_chat(
+                    &client_id,
+                    &payload.thread_id,
+                    &payload.message,
+                    model_override,
+                    payload.temperature,
+                )
+                .await
+                {
+                    Ok(request_id) => {
+                        let accepted_payload = json!({
+                            "event": "chat_accepted",
+                            "client_id": client_id,
+                            "thread_id": thread_id,
+                            "request_id": request_id,
+                        });
+                        emit_with_aliases(&socket, "chat_accepted", &accepted_payload);
+                    }
+                    Err(error) => {
+                        let error_payload = json!({
+                            "event": "chat_error",
+                            "client_id": client_id,
+                            "thread_id": thread_id,
+                            "request_id": "",
+                            "message": error,
+                            "error_type": "inference",
+                        });
+                        emit_with_aliases(&socket, "chat_error", &error_payload);
+                    }
                 }
-                Err(error) => {
-                    let error_payload = json!({
-                    "event": "chat_error",
-                    "client_id": client_id,
-                    "thread_id": thread_id,
-                    "request_id": "",
-                    "message": error,
-                    "error_type": "inference",
-                });
-                    emit_with_aliases(&socket, "chat_error", &error_payload);
-                }
-            }
-        });
+            },
+        );
 
         // Handler for cancelling an active chat turn.
-        socket.on("chat:cancel", |socket: SocketRef, Data(payload): Data<ChatCancelPayload>| async move {
-            let client_id = socket.id.to_string();
-            log::debug!(
-                "[socketio] recv event=chat:cancel client_id={} thread_id={}",
-                client_id,
-                payload.thread_id
-            );
-            let _ =
-                crate::openhuman::channels::providers::web::cancel_chat(&client_id, &payload.thread_id)
-                    .await;
-        });
+        socket.on(
+            "chat:cancel",
+            |socket: SocketRef, Data(payload): Data<ChatCancelPayload>| async move {
+                let client_id = socket.id.to_string();
+                log::debug!(
+                    "[socketio] recv event=chat:cancel client_id={} thread_id={}",
+                    client_id,
+                    payload.thread_id
+                );
+                let _ = crate::openhuman::channels::providers::web::cancel_chat(
+                    &client_id,
+                    &payload.thread_id,
+                )
+                .await;
+            },
+        );
     });
 
     (layer, io)
