@@ -441,6 +441,7 @@ async fn post_json_rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> 
         .unwrap_or_else(|e| panic!("json for {method}: {e}"))
 }
 
+#[allow(dead_code)]
 async fn read_first_sse_event(events_url: &str) -> Value {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -482,6 +483,54 @@ async fn read_first_sse_event(events_url: &str) -> Value {
         }
     }
     panic!("SSE stream ended before any event payload");
+}
+
+/// Read SSE events until one matches the given `event` field value, skipping
+/// progress events (inference_start, iteration_start, etc.) that precede the
+/// terminal event.
+async fn read_sse_event_by_type(events_url: &str, target_event: &str) -> Value {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .expect("client");
+    let resp = client
+        .get(events_url)
+        .send()
+        .await
+        .unwrap_or_else(|e| panic!("GET {events_url}: {e}"));
+    assert!(
+        resp.status().is_success(),
+        "SSE HTTP error {} for {}",
+        resp.status(),
+        events_url
+    );
+
+    let mut stream = resp.bytes_stream();
+    let mut buffer = String::new();
+    while let Some(item) = stream.next().await {
+        let chunk = item.unwrap_or_else(|e| panic!("sse stream read failed: {e}"));
+        let text = std::str::from_utf8(&chunk).unwrap_or("");
+        buffer.push_str(text);
+        while let Some(idx) = buffer.find("\n\n") {
+            let block = buffer[..idx].to_string();
+            buffer = buffer[idx + 2..].to_string();
+            let mut data_lines = Vec::new();
+            for line in block.lines() {
+                if let Some(data) = line.strip_prefix("data:") {
+                    data_lines.push(data.trim_start());
+                }
+            }
+            if !data_lines.is_empty() {
+                let payload = data_lines.join("\n");
+                let value: Value = serde_json::from_str(&payload)
+                    .unwrap_or_else(|e| panic!("invalid sse data json: {e}"));
+                if value.get("event").and_then(Value::as_str) == Some(target_event) {
+                    return value;
+                }
+            }
+        }
+    }
+    panic!("SSE stream ended before receiving '{target_event}' event");
 }
 
 fn assert_no_jsonrpc_error<'a>(v: &'a Value, context: &str) -> &'a Value {
@@ -653,7 +702,8 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
     let client_id = "e2e-client-1";
     let thread_id = "thread-1";
     let events_url = format!("{}/events?client_id={}", rpc_base, client_id);
-    let sse_task = tokio::spawn(async move { read_first_sse_event(&events_url).await });
+    let sse_task =
+        tokio::spawn(async move { read_sse_event_by_type(&events_url, "chat_done").await });
 
     let web_chat = post_json_rpc(
         &rpc_base,

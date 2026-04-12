@@ -28,6 +28,7 @@ pub mod host_runtime;
 pub mod memory_loader;
 pub mod multimodal;
 pub mod pformat;
+pub mod progress;
 mod schemas;
 pub mod triage;
 pub use schemas::{

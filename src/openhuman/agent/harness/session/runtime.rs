@@ -110,6 +110,18 @@ impl Agent {
         self.event_channel = channel.into();
     }
 
+    /// Attach a progress event sender for real-time turn updates.
+    ///
+    /// When set, the turn loop emits [`AgentProgress`] events so
+    /// callers (e.g. the web channel) can surface live tool-call and
+    /// iteration updates to the UI. Pass `None` to disable.
+    pub fn set_on_progress(
+        &mut self,
+        tx: Option<tokio::sync::mpsc::Sender<crate::openhuman::agent::progress::AgentProgress>>,
+    ) {
+        self.on_progress = tx;
+    }
+
     /// Clears the agent's conversation history.
     pub fn clear_history(&mut self) {
         self.history.clear();

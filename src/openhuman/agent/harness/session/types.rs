@@ -9,6 +9,7 @@
 use crate::openhuman::agent::dispatcher::ToolDispatcher;
 use crate::openhuman::agent::hooks::PostTurnHook;
 use crate::openhuman::agent::memory_loader::MemoryLoader;
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::ContextManager;
 use crate::openhuman::memory::Memory;
@@ -80,6 +81,11 @@ pub struct Agent {
     /// session-memory deltas persist across turns. See
     /// [`crate::openhuman::context`] for the full surface.
     pub(super) context: ContextManager,
+    /// Optional progress event sender for real-time turn progress.
+    /// When set, the turn loop emits [`AgentProgress`] events through
+    /// this channel so callers (e.g. web channel) can surface live
+    /// tool-call and iteration updates to the UI.
+    pub(super) on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.

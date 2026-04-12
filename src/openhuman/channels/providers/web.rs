@@ -11,7 +11,6 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
-use crate::openhuman::providers::ConversationMessage;
 use crate::rpc::RpcOutcome;
 
 use super::presentation;
@@ -262,16 +261,22 @@ async fn run_chat_task(
         )?,
     };
 
-    let history_before = agent.history().len();
+    // Wire up a real-time progress channel so tool calls, iterations,
+    // and sub-agent events are emitted to the web channel as they happen
+    // (instead of retroactively after the loop finishes).
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::channel(64);
+    agent.set_on_progress(Some(progress_tx));
+    spawn_progress_bridge(
+        progress_rx,
+        client_id.to_string(),
+        thread_id.to_string(),
+        request_id.to_string(),
+    );
+
     let result = agent.run_single(message).await.map_err(|e| e.to_string());
-    if result.is_ok() {
-        publish_tool_events_from_history(
-            client_id,
-            thread_id,
-            request_id,
-            &agent.history()[history_before..],
-        );
-    }
+
+    // Clear the sender so it doesn't hold the channel open across sessions.
+    agent.set_on_progress(None);
 
     {
         let mut sessions = THREAD_SESSIONS.lock().await;
@@ -288,38 +293,131 @@ async fn run_chat_task(
     result
 }
 
-fn publish_tool_events_from_history(
-    client_id: &str,
-    thread_id: &str,
-    request_id: &str,
-    messages: &[ConversationMessage],
+/// Spawn a background task that reads [`AgentProgress`] events from the
+/// agent turn loop and translates them into [`WebChannelEvent`]s tagged
+/// with the correct client/thread/request IDs. The task runs until the
+/// sender is dropped (i.e. when the agent turn finishes).
+fn spawn_progress_bridge(
+    mut rx: tokio::sync::mpsc::Receiver<crate::openhuman::agent::progress::AgentProgress>,
+    client_id: String,
+    thread_id: String,
+    request_id: String,
 ) {
-    let mut round: u32 = 0;
-    let mut current_round_calls: Vec<(String, String)> = Vec::new();
+    use crate::openhuman::agent::progress::AgentProgress;
 
-    for message in messages {
-        match message {
-            ConversationMessage::AssistantToolCalls { tool_calls, .. } => {
-                round += 1;
-                current_round_calls.clear();
-                for (idx, call) in tool_calls.iter().enumerate() {
-                    let synthetic_id = if call.id.trim().is_empty() {
-                        format!("idx:{idx}")
-                    } else {
-                        call.id.clone()
-                    };
-                    current_round_calls.push((synthetic_id, call.name.clone()));
+    tokio::spawn(async move {
+        let mut round: u32 = 0;
+        while let Some(event) = rx.recv().await {
+            match event {
+                AgentProgress::TurnStarted => {
                     publish_web_channel_event(WebChannelEvent {
-                        event: "tool_call".to_string(),
-                        client_id: client_id.to_string(),
-                        thread_id: thread_id.to_string(),
-                        request_id: request_id.to_string(),
+                        event: "inference_start".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
                         full_response: None,
                         message: None,
                         error_type: None,
-                        tool_name: Some(call.name.clone()),
+                        tool_name: None,
+                        skill_id: None,
+                        args: None,
+                        output: None,
+                        success: None,
+                        round: None,
+                        reaction_emoji: None,
+                        segment_index: None,
+                        segment_total: None,
+                    });
+                }
+                AgentProgress::IterationStarted {
+                    iteration,
+                    max_iterations,
+                } => {
+                    round = iteration;
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "iteration_start".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        full_response: None,
+                        message: Some(format!("Iteration {iteration}/{max_iterations}")),
+                        error_type: None,
+                        tool_name: None,
+                        skill_id: None,
+                        args: None,
+                        output: None,
+                        success: None,
+                        round: Some(iteration),
+                        reaction_emoji: None,
+                        segment_index: None,
+                        segment_total: None,
+                    });
+                }
+                AgentProgress::ToolCallStarted {
+                    tool_name,
+                    arguments,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "tool_call".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        full_response: None,
+                        message: None,
+                        error_type: None,
+                        tool_name: Some(tool_name),
                         skill_id: Some("web_channel".to_string()),
-                        args: Some(parse_tool_args(&call.arguments)),
+                        args: Some(arguments),
+                        output: None,
+                        success: None,
+                        round: Some(iteration),
+                        reaction_emoji: None,
+                        segment_index: None,
+                        segment_total: None,
+                    });
+                }
+                AgentProgress::ToolCallCompleted {
+                    tool_name,
+                    success,
+                    output_chars,
+                    elapsed_ms,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "tool_result".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        full_response: None,
+                        message: None,
+                        error_type: None,
+                        tool_name: Some(tool_name),
+                        skill_id: Some("web_channel".to_string()),
+                        args: None,
+                        output: Some(
+                            json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
+                                .to_string(),
+                        ),
+                        success: Some(success),
+                        round: Some(iteration),
+                        reaction_emoji: None,
+                        segment_index: None,
+                        segment_total: None,
+                    });
+                }
+                AgentProgress::SubagentSpawned { agent_id, task_id } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_spawned".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        full_response: None,
+                        message: Some(format!("Sub-agent '{agent_id}' spawned")),
+                        error_type: None,
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        args: None,
                         output: None,
                         success: None,
                         round: Some(round),
@@ -328,61 +426,65 @@ fn publish_tool_events_from_history(
                         segment_total: None,
                     });
                 }
-            }
-            ConversationMessage::ToolResults(results) => {
-                for (idx, result) in results.iter().enumerate() {
-                    let fallback = format!("idx:{idx}");
-                    let tool_name = current_round_calls
-                        .iter()
-                        .find(|(tool_call_id, _)| tool_call_id == &result.tool_call_id)
-                        .or_else(|| current_round_calls.get(idx))
-                        .map(|(_, name)| name.clone())
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    let success = !result.content.trim_start().starts_with("Error:");
+                AgentProgress::SubagentCompleted {
+                    agent_id,
+                    task_id,
+                    elapsed_ms,
+                } => {
                     publish_web_channel_event(WebChannelEvent {
-                        event: "tool_result".to_string(),
-                        client_id: client_id.to_string(),
-                        thread_id: thread_id.to_string(),
-                        request_id: request_id.to_string(),
+                        event: "subagent_completed".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
                         full_response: None,
-                        message: None,
+                        message: Some(format!(
+                            "Sub-agent '{agent_id}' completed in {elapsed_ms}ms"
+                        )),
                         error_type: None,
-                        tool_name: Some(tool_name),
-                        skill_id: Some("web_channel".to_string()),
-                        args: Some(Value::Object(Map::from_iter([(
-                            "tool_call_id".to_string(),
-                            Value::String(if result.tool_call_id.is_empty() {
-                                fallback
-                            } else {
-                                result.tool_call_id.clone()
-                            }),
-                        )]))),
-                        output: Some(result.content.clone()),
-                        success: Some(success),
-                        round: Some(round.max(1)),
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        args: None,
+                        output: None,
+                        success: Some(true),
+                        round: Some(round),
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
                     });
                 }
+                AgentProgress::SubagentFailed {
+                    agent_id,
+                    task_id,
+                    error,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_failed".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        full_response: None,
+                        message: Some(error),
+                        error_type: None,
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        args: None,
+                        output: None,
+                        success: Some(false),
+                        round: Some(round),
+                        reaction_emoji: None,
+                        segment_index: None,
+                        segment_total: None,
+                    });
+                }
+                AgentProgress::TurnCompleted { iterations } => {
+                    log::debug!(
+                        "[web_channel] turn completed after {iterations} iteration(s) \
+                         client_id={client_id} thread_id={thread_id} request_id={request_id}"
+                    );
+                }
             }
-            ConversationMessage::Chat(_) => {}
         }
-    }
-}
-
-fn parse_tool_args(arguments: &str) -> Value {
-    if arguments.trim().is_empty() {
-        return Value::Object(Map::new());
-    }
-    match serde_json::from_str::<Value>(arguments) {
-        Ok(value) => value,
-        Err(_) => Value::Object(Map::from_iter([(
-            "raw".to_string(),
-            Value::String(arguments.to_string()),
-        )])),
-    }
+    });
 }
 
 fn normalize_model_override(model_override: Option<String>) -> Option<String> {
@@ -594,8 +696,7 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{cancel_chat, parse_tool_args, start_chat};
-    use serde_json::json;
+    use super::{cancel_chat, start_chat};
 
     #[tokio::test]
     async fn start_chat_validates_required_fields() {
@@ -626,15 +727,5 @@ mod tests {
             .await
             .expect_err("thread id should be required");
         assert!(err.contains("thread_id is required"));
-    }
-
-    #[test]
-    fn parse_tool_args_handles_json_and_raw_fallback() {
-        assert_eq!(
-            parse_tool_args(r#"{"command":"date"}"#),
-            json!({"command":"date"})
-        );
-        assert_eq!(parse_tool_args(""), json!({}));
-        assert_eq!(parse_tool_args("not-json"), json!({"raw":"not-json"}));
     }
 }

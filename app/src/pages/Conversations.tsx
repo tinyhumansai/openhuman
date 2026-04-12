@@ -10,8 +10,12 @@ import UsageLimitModal from '../components/upsell/UsageLimitModal';
 import { useUsageState } from '../hooks/useUsageState';
 import {
   chatCancel,
+  type ChatInferenceStartEvent,
+  type ChatIterationStartEvent,
   type ChatSegmentEvent,
   chatSend,
+  type ChatSubagentDoneEvent,
+  type ChatSubagentSpawnedEvent,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
   segmentText,
@@ -53,6 +57,19 @@ const AGENTIC_MODEL_ID = 'agentic-v1';
 type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
 type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
+
+/** Tracks the live inference state for a thread's in-flight request. */
+interface InferenceStatus {
+  /** Current phase: thinking (LLM call), tool_use, subagent. */
+  phase: 'thinking' | 'tool_use' | 'subagent';
+  /** 1-based iteration index. */
+  iteration: number;
+  maxIterations: number;
+  /** Active tool name (when phase is tool_use). */
+  activeTool?: string;
+  /** Active sub-agent id (when phase is subagent). */
+  activeSubagent?: string;
+}
 const AUTOCOMPLETE_POLL_DEBOUNCE_MS = 320;
 const AUTOCOMPLETE_MIN_CONTEXT_CHARS = 3;
 
@@ -186,6 +203,9 @@ const Conversations = () => {
   const socketStatus = useAppSelector(selectSocketStatus);
   const [toolTimelineByThread, setToolTimelineByThread] = useState<
     Record<string, ToolTimelineEntry[]>
+  >({});
+  const [inferenceStatusByThread, setInferenceStatusByThread] = useState<
+    Record<string, InferenceStatus>
   >({});
   const rustChat = useRustChat();
   const defaultChannelType = useAppSelector(
@@ -431,7 +451,32 @@ const Conversations = () => {
     if (!rustChat || socketStatus !== 'connected') return;
 
     const cleanup = subscribeChatEvents({
+      onInferenceStart: (event: ChatInferenceStartEvent) => {
+        setInferenceStatusByThread(prev => ({
+          ...prev,
+          [event.thread_id]: { phase: 'thinking', iteration: 0, maxIterations: 0 },
+        }));
+      },
+      onIterationStart: (event: ChatIterationStartEvent) => {
+        setInferenceStatusByThread(prev => ({
+          ...prev,
+          [event.thread_id]: {
+            phase: 'thinking',
+            iteration: event.round,
+            maxIterations: prev[event.thread_id]?.maxIterations ?? 0,
+          },
+        }));
+      },
       onToolCall: (event: ChatToolCallEvent) => {
+        // Update inference status to show active tool
+        setInferenceStatusByThread(prev => ({
+          ...prev,
+          [event.thread_id]: {
+            ...(prev[event.thread_id] ?? { iteration: event.round, maxIterations: 0 }),
+            phase: 'tool_use' as const,
+            activeTool: event.tool_name,
+          },
+        }));
         const eventKey = `tool_call:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}`;
         if (!markChatEventSeen(eventKey)) return;
 
@@ -477,6 +522,65 @@ const Conversations = () => {
           if (!changed) return prev;
           return { ...prev, [event.thread_id]: nextEntries };
         });
+        // Tool completed — go back to thinking for the next iteration
+        setInferenceStatusByThread(prev => {
+          const current = prev[event.thread_id];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [event.thread_id]: { ...current, phase: 'thinking', activeTool: undefined },
+          };
+        });
+      },
+      onSubagentSpawned: (event: ChatSubagentSpawnedEvent) => {
+        setInferenceStatusByThread(prev => ({
+          ...prev,
+          [event.thread_id]: {
+            ...(prev[event.thread_id] ?? { iteration: event.round, maxIterations: 0 }),
+            phase: 'subagent' as const,
+            activeSubagent: event.tool_name,
+          },
+        }));
+        // Add sub-agent to tool timeline for visual tracking
+        setToolTimelineByThread(prev => {
+          const existing = prev[event.thread_id] ?? [];
+          return {
+            ...prev,
+            [event.thread_id]: [
+              ...existing,
+              {
+                id: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
+                name: `🤖 ${event.tool_name}`,
+                round: event.round,
+                status: 'running' as const,
+              },
+            ],
+          };
+        });
+      },
+      onSubagentDone: (event: ChatSubagentDoneEvent) => {
+        setToolTimelineByThread(prev => {
+          const existing = prev[event.thread_id] ?? [];
+          return {
+            ...prev,
+            [event.thread_id]: existing.map(entry =>
+              entry.name === `🤖 ${event.tool_name}` && entry.status === 'running'
+                ? {
+                    ...entry,
+                    status: (event.success ? 'success' : 'error') as ToolTimelineEntryStatus,
+                  }
+                : entry
+            ),
+          };
+        });
+        setInferenceStatusByThread(prev => {
+          const current = prev[event.thread_id];
+          if (!current) return prev;
+          return {
+            ...prev,
+            [event.thread_id]: { ...current, phase: 'thinking', activeSubagent: undefined },
+          };
+        });
       },
       onSegment: (event: ChatSegmentEvent) => {
         const eventKey = `segment:${event.thread_id}:${event.request_id}:${event.segment_index}`;
@@ -501,6 +605,14 @@ const Conversations = () => {
       onDone: event => {
         const eventKey = `done:${event.thread_id}:${event.request_id ?? 'none'}`;
         if (!markChatEventSeen(eventKey)) return;
+
+        // Clear inference status — the turn is finished
+        setInferenceStatusByThread(prev => {
+          if (!prev[event.thread_id]) return prev;
+          const next = { ...prev };
+          delete next[event.thread_id];
+          return next;
+        });
 
         // Update tool timeline
         setToolTimelineByThread(prev => {
@@ -561,6 +673,13 @@ const Conversations = () => {
           sendingTimeoutRef.current = null;
         }
         setIsSending(false);
+        // Clear inference status on error
+        setInferenceStatusByThread(prev => {
+          if (!prev[event.thread_id]) return prev;
+          const next = { ...prev };
+          delete next[event.thread_id];
+          return next;
+        });
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
           if (existing.length === 0) return prev;
@@ -973,6 +1092,9 @@ const Conversations = () => {
   const selectedThreadToolTimeline = selectedThreadId
     ? (toolTimelineByThread[selectedThreadId] ?? [])
     : [];
+  const selectedInferenceStatus = selectedThreadId
+    ? (inferenceStatusByThread[selectedThreadId] ?? null)
+    : null;
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
 
   return (
@@ -1153,6 +1275,23 @@ const Conversations = () => {
                   </div>
                 </div>
               )}
+              {/* Inference status indicator */}
+              {selectedInferenceStatus && (
+                <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500">
+                  <span className="inline-block w-2 h-2 rounded-full bg-primary-400 animate-pulse" />
+                  <span>
+                    {selectedInferenceStatus.phase === 'thinking' &&
+                      (selectedInferenceStatus.iteration > 0
+                        ? `Thinking (iteration ${selectedInferenceStatus.iteration})...`
+                        : 'Thinking...')}
+                    {selectedInferenceStatus.phase === 'tool_use' &&
+                      `Running ${selectedInferenceStatus.activeTool ?? 'tool'}...`}
+                    {selectedInferenceStatus.phase === 'subagent' &&
+                      `Sub-agent ${selectedInferenceStatus.activeSubagent ?? ''} working...`}
+                  </span>
+                </div>
+              )}
+              {/* Tool call timeline */}
               {selectedThreadToolTimeline.length > 0 && (
                 <div className="space-y-1 px-1 py-1">
                   {selectedThreadToolTimeline.map(entry => (
