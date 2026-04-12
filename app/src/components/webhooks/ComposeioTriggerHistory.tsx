@@ -53,7 +53,9 @@ export default function ComposeioTriggerHistory({ entries }: ComposeioTriggerHis
               <span className="rounded-full bg-sage-50 px-2.5 py-1 text-xs font-medium text-sage-700">
                 {entry.trigger}
               </span>
-              <span className="text-xs text-stone-500">{formatTimestamp(entry.received_at_ms)}</span>
+              <span className="text-xs text-stone-500">
+                {formatTimestamp(entry.received_at_ms)}
+              </span>
             </div>
 
             <dl className="mt-3 grid gap-2 text-sm text-stone-700 md:grid-cols-2">

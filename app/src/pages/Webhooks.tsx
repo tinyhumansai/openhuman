@@ -52,13 +52,17 @@ export default function Webhooks() {
             </p>
             <div className="space-y-2 rounded-2xl border border-stone-200 bg-stone-50 p-4">
               <div>
-                <div className="text-xs uppercase tracking-wide text-stone-400">Archive Directory</div>
+                <div className="text-xs uppercase tracking-wide text-stone-400">
+                  Archive Directory
+                </div>
                 <div className="font-mono text-xs break-all text-stone-700">
                   {archiveDir ?? 'Not available yet'}
                 </div>
               </div>
               <div>
-                <div className="text-xs uppercase tracking-wide text-stone-400">Today&apos;s File</div>
+                <div className="text-xs uppercase tracking-wide text-stone-400">
+                  Today&apos;s File
+                </div>
                 <div className="font-mono text-xs break-all text-stone-700">
                   {currentDayFile ?? 'Not available yet'}
                 </div>

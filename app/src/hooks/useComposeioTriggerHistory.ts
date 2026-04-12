@@ -3,8 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useCoreState } from '../providers/CoreStateProvider';
 import {
-  openhumanComposioListTriggerHistory,
   type ComposioTriggerHistoryEntry,
+  openhumanComposioListTriggerHistory,
 } from '../utils/tauriCommands';
 
 const log = debug('composio:history');
@@ -66,13 +66,5 @@ export function useComposeioTriggerHistory(limit = 100): ComposeioTriggerHistory
     };
   }, [snapshot.sessionToken, refresh]);
 
-  return {
-    archiveDir,
-    currentDayFile,
-    entries,
-    loading,
-    error,
-    coreConnected,
-    refresh,
-  };
+  return { archiveDir, currentDayFile, entries, loading, error, coreConnected, refresh };
 }

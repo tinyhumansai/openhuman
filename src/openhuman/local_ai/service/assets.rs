@@ -64,18 +64,16 @@ impl LocalAiService {
         };
 
         if let Err(ref err) = stt_resolve {
-            debug!(
-                "[local_ai::assets_status] STT resolve failed (state={stt_state}): {err}"
-            );
+            debug!("[local_ai::assets_status] STT resolve failed (state={stt_state}): {err}");
         }
         if let Err(ref err) = tts_resolve {
-            debug!(
-                "[local_ai::assets_status] TTS resolve failed (state={tts_state}): {err}"
-            );
+            debug!("[local_ai::assets_status] TTS resolve failed (state={tts_state}): {err}");
         }
 
         let stt_warning = match stt_state {
-            "ondemand" => Some("STT model will download on first transcription request.".to_string()),
+            "ondemand" => {
+                Some("STT model will download on first transcription request.".to_string())
+            }
             _ => None,
         };
         let tts_warning = match tts_state {

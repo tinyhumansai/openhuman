@@ -313,9 +313,7 @@ impl LocalAiService {
         // prompt so the model treats it as a directive rather than content
         // it might parrot back.
         let effective_system = if no_think {
-            format!(
-                "{system}\n\nRespond with only the final answer. No reasoning, no preamble."
-            )
+            format!("{system}\n\nRespond with only the final answer. No reasoning, no preamble.")
         } else {
             system.to_string()
         };

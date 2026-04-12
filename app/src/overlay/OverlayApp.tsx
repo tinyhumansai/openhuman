@@ -358,7 +358,9 @@ export default function OverlayApp() {
           (serverState === 'recording' || serverState === 'transcribing') &&
           currentMode === 'idle'
         ) {
-          console.debug(`[overlay] poll sync: server=${serverState}, overlay=idle → activating stt`);
+          console.debug(
+            `[overlay] poll sync: server=${serverState}, overlay=idle → activating stt`
+          );
           setMode('stt');
           setBubble({
             id: `stt-poll-${Date.now()}`,
@@ -369,13 +371,8 @@ export default function OverlayApp() {
         }
 
         // Server is idle/stopped but overlay thinks it's in stt → dismiss
-        if (
-          (serverState === 'idle' || serverState === 'stopped') &&
-          currentMode === 'stt'
-        ) {
-          console.debug(
-            `[overlay] poll sync: server=${serverState}, overlay=stt → dismissing`
-          );
+        if ((serverState === 'idle' || serverState === 'stopped') && currentMode === 'stt') {
+          console.debug(`[overlay] poll sync: server=${serverState}, overlay=stt → dismissing`);
           goIdle();
         }
       } catch {

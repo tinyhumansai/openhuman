@@ -53,8 +53,8 @@ use async_trait::async_trait;
 
 use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
 use crate::openhuman::agent::triage::{apply_decision, run_triage, TriggerEnvelope};
-use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::composio::trigger_history;
+use crate::openhuman::config::rpc as config_rpc;
 
 use super::client::ComposioClient;
 use super::providers::{get_provider, ProviderContext};

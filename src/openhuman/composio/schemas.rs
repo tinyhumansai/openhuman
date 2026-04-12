@@ -330,8 +330,8 @@ fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
 fn handle_list_trigger_history(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
-        let payload: TriggerHistoryParams =
-            serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))?;
+        let payload: TriggerHistoryParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
         to_json(super::ops::composio_list_trigger_history(&config, payload.limit).await?)
     })
 }
