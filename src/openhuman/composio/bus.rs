@@ -167,6 +167,7 @@ impl EventHandler for ComposioTriggerSubscriber {
                     return;
                 }
             };
+            let conn_id_clone = connection_id.clone();
             let Some(ctx) =
                 ProviderContext::from_config(Arc::new(config), toolkit.clone(), connection_id)
             else {
@@ -183,6 +184,10 @@ impl EventHandler for ComposioTriggerSubscriber {
                     error = %e,
                     "[composio:bus] provider on_trigger failed"
                 );
+            } else if let Some(ref cid) = conn_id_clone {
+                // Successful trigger-driven sync — record so the
+                // periodic scheduler doesn't redundantly re-fire.
+                super::periodic::record_sync_success(&toolkit, cid);
             }
         });
     }
@@ -313,6 +318,11 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                     error = %e,
                     "[composio:bus] provider on_connection_created failed"
                 );
+            } else {
+                // Successful connection-created sync — record the
+                // timestamp so the periodic scheduler doesn't
+                // immediately re-fire for this connection.
+                super::periodic::record_sync_success(&toolkit, &connection_id);
             }
         });
     }

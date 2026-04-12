@@ -154,7 +154,9 @@ impl ComposioProvider for NotionProvider {
         }
 
         let results = extract_results(&resp.data);
-        let items_ingested = persist_snapshot(ctx, &results).await;
+        let items_ingested = persist_snapshot(ctx, &results).await.map_err(|e| {
+            format!("[composio:notion] persist_snapshot failed: {e}")
+        })?;
         let finished_at_ms = now_ms();
 
         let summary = format!(
@@ -229,13 +231,13 @@ fn extract_results(data: &Value) -> Vec<Value> {
     Vec::new()
 }
 
-async fn persist_snapshot(ctx: &ProviderContext, results: &[Value]) -> usize {
+async fn persist_snapshot(ctx: &ProviderContext, results: &[Value]) -> Result<usize, String> {
     let Some(client) = ctx.memory_client() else {
         tracing::debug!("[composio:notion] memory client not ready, skipping persist");
-        return 0;
+        return Ok(0);
     };
     if results.is_empty() {
-        return 0;
+        return Ok(0);
     }
 
     let connection_label = ctx
@@ -251,7 +253,7 @@ async fn persist_snapshot(ctx: &ProviderContext, results: &[Value]) -> usize {
     });
     let content = serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| "{}".to_string());
 
-    if let Err(e) = client
+    client
         .store_skill_sync(
             "notion",
             &connection_label,
@@ -269,14 +271,8 @@ async fn persist_snapshot(ctx: &ProviderContext, results: &[Value]) -> usize {
             Some(format!("composio-notion-{connection_label}")),
         )
         .await
-    {
-        tracing::warn!(
-            error = %e,
-            "[composio:notion] persist snapshot failed (non-fatal)"
-        );
-        return 0;
-    }
-    1
+        .map_err(|e| format!("store_skill_sync: {e}"))?;
+    Ok(1)
 }
 
 fn now_ms() -> u64 {
