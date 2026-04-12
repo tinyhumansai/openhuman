@@ -295,6 +295,7 @@ impl AgentBuilder {
             cached_transcript_messages: None,
             context,
             on_progress: None,
+            connected_integrations: Vec::new(),
         })
     }
 }

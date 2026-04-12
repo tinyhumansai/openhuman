@@ -41,6 +41,17 @@ pub struct LearnedContextData {
     pub tree_root_summaries: Vec<(String, String)>,
 }
 
+/// A connected external integration (e.g. a Composio OAuth connection)
+/// surfaced in the system prompt so the orchestrator knows which services
+/// are available and can delegate to the Skills Agent accordingly.
+#[derive(Debug, Clone)]
+pub struct ConnectedIntegration {
+    /// Toolkit slug, e.g. `"gmail"`, `"notion"`.
+    pub toolkit: String,
+    /// Human-readable one-line description of what this integration can do.
+    pub description: String,
+}
+
 /// A lightweight tool descriptor for prompt rendering.
 ///
 /// Shared shape so every call-site that builds a system prompt — main
@@ -132,6 +143,10 @@ pub struct PromptContext<'a> {
     /// How [`ToolsSection`] should render each tool entry. Defaults to
     /// [`ToolCallFormat::PFormat`] when not set.
     pub tool_call_format: ToolCallFormat,
+    /// Active Composio integrations the user has connected. Rendered by
+    /// [`ConnectedIntegrationsSection`] so the orchestrator knows which
+    /// external services are available via the Skills Agent.
+    pub connected_integrations: &'a [ConnectedIntegration],
 }
 
 pub trait PromptSection: Send + Sync {
@@ -161,6 +176,10 @@ impl SystemPromptBuilder {
                 // the tree summarizer has nothing on disk yet.
                 Box::new(UserMemorySection),
                 Box::new(ToolsSection),
+                // Connected integrations sit after tools so the orchestrator
+                // sees which external services are available via the Skills
+                // Agent. Empty when the user has no active Composio connections.
+                Box::new(ConnectedIntegrationsSection),
                 Box::new(SafetySection),
                 Box::new(SkillsSection),
                 Box::new(WorkspaceSection),
@@ -300,6 +319,7 @@ pub struct IdentitySection;
 pub struct ToolsSection;
 pub struct SafetySection;
 pub struct SkillsSection;
+pub struct ConnectedIntegrationsSection;
 pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
@@ -474,6 +494,33 @@ impl PromptSection for SkillsSection {
         }
         prompt.push_str("</available_skills>");
         Ok(prompt)
+    }
+}
+
+impl PromptSection for ConnectedIntegrationsSection {
+    fn name(&self) -> &str {
+        "connected_integrations"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.connected_integrations.is_empty() {
+            return Ok(String::new());
+        }
+
+        let mut out = String::from(
+            "## Connected Integrations\n\n\
+             The user has the following external services connected. \
+             To interact with any of these, delegate to the **Skills Agent** \
+             (`skills_agent`) via `spawn_subagent`.\n\n",
+        );
+        for integration in ctx.connected_integrations {
+            let _ = writeln!(
+                out,
+                "- **{}**: {}",
+                integration.toolkit, integration.description,
+            );
+        }
+        Ok(out)
     }
 }
 
@@ -978,6 +1025,7 @@ mod tests {
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
         };
         let rendered = SystemPromptBuilder::with_defaults()
             .build_with_cache_metadata(&ctx)
@@ -1006,6 +1054,7 @@ mod tests {
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
         };
 
         let section = IdentitySection;
@@ -1039,6 +1088,7 @@ mod tests {
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
         };
 
         let rendered = DateTimeSection.build(&ctx).unwrap();
@@ -1099,6 +1149,7 @@ mod tests {
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
         };
 
         let rendered = ToolsSection.build(&ctx).unwrap();
@@ -1130,6 +1181,7 @@ mod tests {
             learned: LearnedContextData::default(),
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::Json,
+            connected_integrations: &[],
         };
 
         let rendered = ToolsSection.build(&ctx).unwrap();
@@ -1165,6 +1217,7 @@ mod tests {
             learned,
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
         };
         let rendered = UserMemorySection.build(&ctx).unwrap();
         assert!(rendered.starts_with("## User Memory\n\n"));
@@ -1188,6 +1241,7 @@ mod tests {
             learned,
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
         };
         let rendered = UserMemorySection.build(&ctx).unwrap();
         assert!(rendered.is_empty());
@@ -1365,6 +1419,7 @@ mod tests {
             },
             visible_tool_names: &NO_FILTER,
             tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
         };
         let rendered = UserMemorySection.build(&ctx).unwrap();
         assert!(rendered.contains("### user"));

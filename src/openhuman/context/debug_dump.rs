@@ -362,6 +362,7 @@ fn render_main_agent_dump(
         learned,
         visible_tool_names: &empty_filter,
         tool_call_format: ToolCallFormat::PFormat,
+        connected_integrations: &[],
     };
 
     let rendered = SystemPromptBuilder::with_defaults()

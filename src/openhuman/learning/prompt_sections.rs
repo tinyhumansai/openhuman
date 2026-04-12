@@ -155,6 +155,7 @@ mod tests {
             learned,
             visible_tool_names,
             tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
+            connected_integrations: &[],
         }
     }
 

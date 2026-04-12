@@ -86,6 +86,11 @@ pub struct Agent {
     /// this channel so callers (e.g. web channel) can surface live
     /// tool-call and iteration updates to the UI.
     pub(super) on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
+    /// Active Composio integrations the user has connected. Populated at
+    /// agent build time; surfaced in the system prompt via
+    /// [`ConnectedIntegrationsSection`] so the orchestrator knows which
+    /// external services are available.
+    pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.
