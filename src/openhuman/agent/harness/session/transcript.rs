@@ -116,7 +116,7 @@ pub fn write_transcript(
     // Messages
     for msg in messages {
         buf.push('\n');
-        let _ = write!(buf, "{}{}{}\n", MSG_OPEN_PREFIX, msg.role, MSG_OPEN_SUFFIX);
+        let _ = writeln!(buf, "{}{}{}", MSG_OPEN_PREFIX, msg.role, MSG_OPEN_SUFFIX);
         buf.push_str(&escape_content(&msg.content));
         buf.push('\n');
         buf.push_str(MSG_CLOSE);
@@ -367,7 +367,7 @@ fn latest_in_dir(dir: &Path, agent_prefix: &str) -> Option<PathBuf> {
         if name_str.starts_with(&prefix) && name_str.ends_with(".md") {
             let idx_str = &name_str[prefix.len()..name_str.len() - 3];
             if let Ok(idx) = idx_str.parse::<usize>() {
-                if best.as_ref().map_or(true, |(best_idx, _)| idx > *best_idx) {
+                if best.as_ref().is_none_or(|(best_idx, _)| idx > *best_idx) {
                     best = Some((idx, entry.path()));
                 }
             }

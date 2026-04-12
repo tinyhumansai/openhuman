@@ -142,7 +142,6 @@ fn ensure_fastembed_ort_dylib_path() {
 
         if runtime_lib.exists() {
             env::set_var("ORT_DYLIB_PATH", runtime_lib);
-            return;
         }
     }
 
