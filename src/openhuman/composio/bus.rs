@@ -40,9 +40,11 @@ use async_trait::async_trait;
 use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 use crate::openhuman::agent::triage::{apply_decision, run_triage, TriggerEnvelope};
 
-/// Env var that gates the triage pipeline. Flipped on by default in
-/// commit 3 — until then callers must set it explicitly.
-const TRIAGE_ENABLED_ENV: &str = "OPENHUMAN_TRIGGER_TRIAGE_ENABLED";
+/// Env var that **disables** the triage pipeline. The pipeline is
+/// enabled by default; set to `1`/`true`/`yes` to opt out (e.g. for
+/// debugging or in environments where LLM calls on every Composio
+/// webhook are undesirable).
+const TRIAGE_DISABLED_ENV: &str = "OPENHUMAN_TRIGGER_TRIAGE_DISABLED";
 
 static COMPOSIO_TRIGGER_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
@@ -112,11 +114,11 @@ impl EventHandler for ComposioTriggerSubscriber {
             "[composio] trigger received"
         );
 
-        if !triage_enabled() {
+        if triage_disabled() {
             tracing::debug!(
                 toolkit = %toolkit,
                 trigger = %trigger,
-                "[composio][triage] skipped: {TRIAGE_ENABLED_ENV} not set"
+                "[composio][triage] skipped: {TRIAGE_DISABLED_ENV} is set"
             );
             return;
         }
@@ -163,12 +165,12 @@ impl EventHandler for ComposioTriggerSubscriber {
     }
 }
 
-/// Returns `true` when `OPENHUMAN_TRIGGER_TRIAGE_ENABLED` is set to a
-/// truthy value. Matches the existing convention in
-/// `src/openhuman/config/ops.rs::env_flag_enabled`.
-fn triage_enabled() -> bool {
+/// Returns `true` when `OPENHUMAN_TRIGGER_TRIAGE_DISABLED` is set to a
+/// truthy value. The pipeline is **on by default**; this env var is the
+/// opt-out escape hatch.
+fn triage_disabled() -> bool {
     matches!(
-        std::env::var(TRIAGE_ENABLED_ENV).ok().as_deref(),
+        std::env::var(TRIAGE_DISABLED_ENV).ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
     )
 }
@@ -191,9 +193,9 @@ mod tests {
 
     #[tokio::test]
     async fn handles_trigger_event_without_panic() {
-        // Ensure the flag is off for this test so we take the
-        // log-only path and don't spawn a real triage turn.
-        std::env::remove_var(TRIAGE_ENABLED_ENV);
+        // Disable triage so this test takes the log-only path and
+        // doesn't spawn a real LLM turn.
+        std::env::set_var(TRIAGE_DISABLED_ENV, "1");
         let sub = ComposioTriggerSubscriber::new();
         sub.handle(&DomainEvent::ComposioTriggerReceived {
             toolkit: "gmail".into(),
@@ -203,19 +205,23 @@ mod tests {
             payload: json!({ "from": "a@b.com", "subject": "hi" }),
         })
         .await;
+        std::env::remove_var(TRIAGE_DISABLED_ENV);
     }
 
     #[test]
-    fn triage_flag_parser_accepts_common_truthy_values() {
+    fn triage_disabled_flag_parser() {
+        // Truthy values disable triage.
         for val in ["1", "true", "TRUE", "yes", "YES"] {
-            std::env::set_var(TRIAGE_ENABLED_ENV, val);
-            assert!(triage_enabled(), "expected '{val}' to enable triage");
+            std::env::set_var(TRIAGE_DISABLED_ENV, val);
+            assert!(triage_disabled(), "expected '{val}' to disable triage");
         }
+        // Non-truthy values leave triage on.
         for val in ["", "0", "false", "off"] {
-            std::env::set_var(TRIAGE_ENABLED_ENV, val);
-            assert!(!triage_enabled(), "expected '{val}' to disable triage");
+            std::env::set_var(TRIAGE_DISABLED_ENV, val);
+            assert!(!triage_disabled(), "expected '{val}' to keep triage on");
         }
-        std::env::remove_var(TRIAGE_ENABLED_ENV);
-        assert!(!triage_enabled(), "unset must default to disabled");
+        // Unset = triage on (default).
+        std::env::remove_var(TRIAGE_DISABLED_ENV);
+        assert!(!triage_disabled(), "unset must default to triage enabled");
     }
 }
