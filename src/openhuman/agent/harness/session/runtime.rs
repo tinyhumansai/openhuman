@@ -339,14 +339,13 @@ mod tests {
             _model: &str,
             _temperature: f64,
         ) -> Result<ChatResponse> {
-            self.response
-                .lock()
-                .take()
-                .unwrap_or_else(|| Ok(ChatResponse {
+            self.response.lock().take().unwrap_or_else(|| {
+                Ok(ChatResponse {
                     text: Some("done".into()),
                     tool_calls: vec![],
                     usage: None,
-                }))
+                })
+            })
         }
     }
 
@@ -403,11 +402,12 @@ mod tests {
             required_level: "Execute".into(),
             channel_max_level: "ReadOnly".into(),
         });
-        assert_eq!(Agent::sanitize_event_error_message(&err), "permission_denied");
-
-        let generic = anyhow!(
-            "bad key sk-123456789012345678901234567890\nwith\twhitespace"
+        assert_eq!(
+            Agent::sanitize_event_error_message(&err),
+            "permission_denied"
         );
+
+        let generic = anyhow!("bad key sk-123456789012345678901234567890\nwith\twhitespace");
         let sanitized = Agent::sanitize_event_error_message(&generic);
         assert!(!sanitized.contains('\n'));
         assert!(!sanitized.contains('\t'));
@@ -475,13 +475,11 @@ mod tests {
         assert_eq!(response, "ok");
 
         let err_provider: Arc<dyn Provider> = Arc::new(StaticProvider {
-            response: Mutex::new(Some(Err(anyhow!(
-                AgentError::PermissionDenied {
-                    tool_name: "shell".into(),
-                    required_level: "Execute".into(),
-                    channel_max_level: "ReadOnly".into(),
-                }
-            )))),
+            response: Mutex::new(Some(Err(anyhow!(AgentError::PermissionDenied {
+                tool_name: "shell".into(),
+                required_level: "Execute".into(),
+                channel_max_level: "ReadOnly".into(),
+            })))),
         });
         let mut err_agent = make_agent(err_provider);
         let err = err_agent
@@ -538,7 +536,10 @@ mod tests {
         assert_eq!(agent.model_name(), agent.model_name);
         assert_eq!(agent.temperature(), agent.temperature);
         assert_eq!(agent.skills().len(), 1);
-        assert_eq!(agent.agent_config().max_tool_iterations, agent.config.max_tool_iterations);
+        assert_eq!(
+            agent.agent_config().max_tool_iterations,
+            agent.config.max_tool_iterations
+        );
         assert_eq!(agent.history().len(), 1);
         assert!(!agent.memory_arc().name().is_empty());
 

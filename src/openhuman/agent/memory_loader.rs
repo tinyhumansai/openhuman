@@ -409,13 +409,20 @@ mod tests {
 
         let tiny_budget = DefaultMemoryLoader::new(2, 0.4).with_max_chars(1);
         assert_eq!(
-            tiny_budget.load_context(&EmptyMemory, "hello").await.unwrap(),
+            tiny_budget
+                .load_context(&EmptyMemory, "hello")
+                .await
+                .unwrap(),
             ""
         );
 
-        let exact_budget = DefaultMemoryLoader::new(2, 0.4).with_max_chars("[Memory context]\n".len());
+        let exact_budget =
+            DefaultMemoryLoader::new(2, 0.4).with_max_chars("[Memory context]\n".len());
         assert_eq!(
-            exact_budget.load_context(&EmptyMemory, "hello").await.unwrap(),
+            exact_budget
+                .load_context(&EmptyMemory, "hello")
+                .await
+                .unwrap(),
             ""
         );
 

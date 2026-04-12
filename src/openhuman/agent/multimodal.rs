@@ -571,29 +571,47 @@ mod tests {
         ];
         assert_eq!(count_image_markers(&messages), 2);
         assert!(contains_image_markers(&messages));
-        assert_eq!(extract_ollama_image_payload(" local-ref ").as_deref(), Some("local-ref"));
+        assert_eq!(
+            extract_ollama_image_payload(" local-ref ").as_deref(),
+            Some("local-ref")
+        );
         assert!(extract_ollama_image_payload("data:image/png;base64,   ").is_none());
 
-        let composed = compose_multimodal_message("describe", &["data:image/png;base64,abc".into()]);
+        let composed =
+            compose_multimodal_message("describe", &["data:image/png;base64,abc".into()]);
         assert!(composed.starts_with("describe"));
         assert!(composed.contains("[IMAGE:data:image/png;base64,abc]"));
     }
 
     #[test]
     fn mime_and_content_type_helpers_cover_supported_and_unknown_inputs() {
-        assert_eq!(normalize_content_type("image/PNG; charset=utf-8").as_deref(), Some("image/png"));
+        assert_eq!(
+            normalize_content_type("image/PNG; charset=utf-8").as_deref(),
+            Some("image/png")
+        );
         assert_eq!(normalize_content_type("   ").as_deref(), None);
         assert_eq!(mime_from_extension("JPEG"), Some("image/jpeg"));
         assert_eq!(mime_from_extension("txt"), None);
-        assert_eq!(mime_from_magic(&[0xff, 0xd8, 0xff, 0x00]), Some("image/jpeg"));
+        assert_eq!(
+            mime_from_magic(&[0xff, 0xd8, 0xff, 0x00]),
+            Some("image/jpeg")
+        );
         assert_eq!(mime_from_magic(b"GIF89a123"), Some("image/gif"));
         assert_eq!(mime_from_magic(b"BMrest"), Some("image/bmp"));
         assert_eq!(mime_from_magic(b"not-an-image"), None);
         assert_eq!(
-            detect_mime(None, &[0xff, 0xd8, 0xff, 0x00], Some("image/webp; charset=binary")).as_deref(),
+            detect_mime(
+                None,
+                &[0xff, 0xd8, 0xff, 0x00],
+                Some("image/webp; charset=binary")
+            )
+            .as_deref(),
             Some("image/webp")
         );
-        assert_eq!(validate_mime("x", "text/plain").unwrap_err().to_string(), "multimodal image MIME type is not allowed for 'x': text/plain");
+        assert_eq!(
+            validate_mime("x", "text/plain").unwrap_err().to_string(),
+            "multimodal image MIME type is not allowed for 'x': text/plain"
+        );
     }
 
     #[tokio::test]

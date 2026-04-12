@@ -371,8 +371,14 @@ mod tests {
 
         let triage = schemas("triage_evaluate");
         assert_eq!(triage.inputs.len(), 7);
-        assert!(triage.inputs.iter().any(|input| input.name == "payload" && input.required));
-        assert!(triage.inputs.iter().any(|input| input.name == "dry_run" && !input.required));
+        assert!(triage
+            .inputs
+            .iter()
+            .any(|input| input.name == "payload" && input.required));
+        assert!(triage
+            .inputs
+            .iter()
+            .any(|input| input.name == "dry_run" && !input.required));
 
         let unknown = schemas("nope");
         assert_eq!(unknown.function, "unknown");
@@ -395,8 +401,14 @@ mod tests {
         assert!(err.contains("invalid params"));
 
         assert!(required_string("id", "x").required);
-        assert!(matches!(optional_string("id", "x").ty, TypeSchema::Option(_)));
-        assert!(matches!(optional_f64("temperature", "x").ty, TypeSchema::Option(_)));
+        assert!(matches!(
+            optional_string("id", "x").ty,
+            TypeSchema::Option(_)
+        ));
+        assert!(matches!(
+            optional_f64("temperature", "x").ty,
+            TypeSchema::Option(_)
+        ));
         assert!(matches!(json_output("result", "x").ty, TypeSchema::Json));
     }
 
@@ -406,7 +418,11 @@ mod tests {
             .await
             .expect("reload handler should always succeed");
         assert_eq!(reload.get("status").and_then(Value::as_str), Some("noop"));
-        assert!(reload.get("note").and_then(Value::as_str).unwrap().contains("Restart"));
+        assert!(reload
+            .get("note")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains("Restart"));
 
         let list_result = handle_list_definitions(Map::new()).await;
         match list_result {

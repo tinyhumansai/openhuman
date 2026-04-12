@@ -1343,11 +1343,8 @@ mod tests {
         assert_eq!(plain.name, "shell");
         assert!(plain.parameters_schema.is_none());
 
-        let with_schema = PromptTool::with_schema(
-            "http_request",
-            "fetch data",
-            "{\"type\":\"object\"}".into(),
-        );
+        let with_schema =
+            PromptTool::with_schema("http_request", "fetch data", "{\"type\":\"object\"}".into());
         assert_eq!(
             with_schema.parameters_schema.as_deref(),
             Some("{\"type\":\"object\"}")

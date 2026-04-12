@@ -210,13 +210,15 @@ mod tests {
         let _ = init_global(32);
         let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
         let seen_handler = Arc::clone(&seen);
-        let _handle = global().unwrap().on("triage-escalation-drop", move |event| {
-            let seen = Arc::clone(&seen_handler);
-            let cloned = event.clone();
-            Box::pin(async move {
-                seen.lock().await.push(cloned);
-            })
-        });
+        let _handle = global()
+            .unwrap()
+            .on("triage-escalation-drop", move |event| {
+                let seen = Arc::clone(&seen_handler);
+                let cloned = event.clone();
+                Box::pin(async move {
+                    seen.lock().await.push(cloned);
+                })
+            });
 
         apply_decision(run(TriageAction::Drop), &envelope())
             .await
@@ -245,15 +247,13 @@ mod tests {
         let _ = init_global(32);
         let seen = Arc::new(Mutex::new(Vec::<DomainEvent>::new()));
         let seen_handler = Arc::clone(&seen);
-        let _handle = global()
-            .unwrap()
-            .on("triage-escalation-ack", move |event| {
-                let seen = Arc::clone(&seen_handler);
-                let cloned = event.clone();
-                Box::pin(async move {
-                    seen.lock().await.push(cloned);
-                })
-            });
+        let _handle = global().unwrap().on("triage-escalation-ack", move |event| {
+            let seen = Arc::clone(&seen_handler);
+            let cloned = event.clone();
+            Box::pin(async move {
+                seen.lock().await.push(cloned);
+            })
+        });
 
         apply_decision(run(TriageAction::Acknowledge), &envelope())
             .await

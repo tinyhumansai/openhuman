@@ -1083,10 +1083,10 @@ fn sanitize_learned_entry(content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
-    use crate::openhuman::agent::memory_loader::MemoryLoader;
     use crate::core::event_bus::{global, init_global, DomainEvent};
     use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
+    use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
+    use crate::openhuman::agent::memory_loader::MemoryLoader;
     use crate::openhuman::memory::Memory;
     use crate::openhuman::providers::{ChatRequest, ChatResponse, Provider};
     use crate::openhuman::tools::Tool;
@@ -1309,7 +1309,9 @@ mod tests {
         agent.trim_history();
 
         assert_eq!(agent.history.len(), 4);
-        assert!(matches!(&agent.history[0], ConversationMessage::Chat(msg) if msg.role == "system"));
+        assert!(
+            matches!(&agent.history[0], ConversationMessage::Chat(msg) if msg.role == "system")
+        );
         assert!(agent
             .history
             .iter()
@@ -1500,7 +1502,10 @@ mod tests {
             crate::openhuman::config::ContextConfig::default(),
         );
 
-        let response = agent.turn("hello world").await.expect("turn should succeed");
+        let response = agent
+            .turn("hello world")
+            .await
+            .expect("turn should succeed");
         assert_eq!(response, "final answer");
         assert!(agent.last_memory_context.as_deref() == Some("[Injected]\n"));
         assert!(agent.history.iter().any(|message| matches!(
@@ -1588,9 +1593,7 @@ mod tests {
     async fn turn_errors_when_max_tool_iterations_are_exceeded() {
         let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
             responses: AsyncMutex::new(vec![Ok(ChatResponse {
-                text: Some(
-                    "<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into(),
-                ),
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
             })]),
