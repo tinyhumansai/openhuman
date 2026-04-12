@@ -63,7 +63,10 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
             crate::core::tree_summarizer_cli::run_tree_summarizer_command(&args[1..])
         }
         "memory" => crate::core::memory_cli::run_memory_command(&args[1..]),
-        "agent" => crate::core::agent_cli::run_agent_command(&args[1..]),
+        "agent" => {
+            log::debug!("[cli] dispatching to agent subcommand, args={:?}", &args[1..]);
+            crate::core::agent_cli::run_agent_command(&args[1..])
+        }
         namespace => run_namespace_command(namespace, &args[1..], &grouped),
     }
 }

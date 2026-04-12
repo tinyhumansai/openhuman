@@ -712,12 +712,8 @@ pub fn render_subagent_system_prompt_with_format(
     //    indices from a different source must not be able to panic this
     //    renderer with a stale index.
     //
-    //    Rendering uses P-Format signatures (`name[arg1|arg2]`) to
-    //    match the main agent's catalogue and the `## Tool Use Protocol`
-    //    preamble injected below. The default format is PFormat (set
-    //    globally); the narrow renderer does not thread
-    //    `PromptContext::tool_call_format` because it doesn't use the
-    //    section-based builder — but both paths must stay in lockstep.
+    //    Rendering uses the caller-specified `tool_call_format` so
+    //    sub-agents and the main dispatcher stay in lockstep.
     out.push_str("## Tools\n\n");
     for &i in allowed_indices {
         let Some(tool) = parent_tools.get(i) else {
@@ -728,33 +724,68 @@ pub fn render_subagent_system_prompt_with_format(
             );
             continue;
         };
-        let sig = render_pformat_signature_for_box_tool(tool.as_ref());
-        let _ = writeln!(
-            out,
-            "- **{}**: {}\n  Call as: `{}`",
-            tool.name(),
-            tool.description(),
-            sig
-        );
+        match tool_call_format {
+            ToolCallFormat::PFormat => {
+                let sig = render_pformat_signature_for_box_tool(tool.as_ref());
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}\n  Call as: `{}`",
+                    tool.name(),
+                    tool.description(),
+                    sig
+                );
+            }
+            ToolCallFormat::Json | ToolCallFormat::Native => {
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}\n  Parameters: `{}`",
+                    tool.name(),
+                    tool.description(),
+                    tool.parameters_schema()
+                );
+            }
+        }
     }
 
-    // 3. Sub-agent calling-convention preamble with P-Format protocol.
-    //    Sub-agents need the same call format the main agent uses so
-    //    the runtime's dispatcher can parse their output identically.
+    // 3. Sub-agent calling-convention preamble — format-aware.
+    //    Sub-agents need the same call format the main dispatcher expects
+    //    so their output parses correctly.
     out.push('\n');
-    out.push_str(
-        "## Tool Use Protocol\n\n\
-         Tool calls use **P-Format**: compact, positional, pipe-delimited syntax \
-         wrapped in `<tool_call>` tags.\n\n\
-         ```\n<tool_call>\ntool_name[arg1|arg2]\n</tool_call>\n```\n\n\
-         Arguments are positional — match the order shown in each tool's `Call as:` \
-         signature above (alphabetical by parameter name). \
-         Escape `|` as `\\|`, `]` as `\\]` inside values. \
-         You may emit multiple `<tool_call>` blocks per response.\n\n\
-         Use the provided tools to accomplish the task. Reply with a concise, dense \
-         final answer when you have one — the parent agent will weave it back into the \
-         user-visible response.\n\n",
-    );
+    match tool_call_format {
+        ToolCallFormat::PFormat => {
+            out.push_str(
+                "## Tool Use Protocol\n\n\
+                 Tool calls use **P-Format**: compact, positional, pipe-delimited syntax \
+                 wrapped in `<tool_call>` tags.\n\n\
+                 ```\n<tool_call>\ntool_name[arg1|arg2]\n</tool_call>\n```\n\n\
+                 Arguments are positional — match the order shown in each tool's `Call as:` \
+                 signature above (alphabetical by parameter name). \
+                 Escape `|` as `\\|`, `]` as `\\]` inside values. \
+                 You may emit multiple `<tool_call>` blocks per response.\n\n\
+                 Use the provided tools to accomplish the task. Reply with a concise, dense \
+                 final answer when you have one — the parent agent will weave it back into the \
+                 user-visible response.\n\n",
+            );
+        }
+        ToolCallFormat::Json => {
+            out.push_str(
+                "## Tool Use Protocol\n\n\
+                 To use a tool, wrap a JSON object in `<tool_call></tool_call>` tags:\n\n\
+                 ```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n\
+                 You may emit multiple `<tool_call>` blocks in a single response.\n\n\
+                 Use the provided tools to accomplish the task. Reply with a concise, dense \
+                 final answer when you have one — the parent agent will weave it back into the \
+                 user-visible response.\n\n",
+            );
+        }
+        ToolCallFormat::Native => {
+            out.push_str(
+                "Use the provided tools via the model's native tool-calling output. \
+                 Reply with a concise, dense final answer when you have one — the parent \
+                 agent will weave it back into the user-visible response.\n\n",
+            );
+        }
+    }
 
     // 3b. Optional safety preamble. Definitions that do work with real
     //     side-effects (code_executor, tool_maker, skills_agent) set
