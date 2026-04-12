@@ -244,8 +244,9 @@ impl Agent {
                 let messages = if let Some(mut cached) = self.cached_transcript_messages.take() {
                     // Append only the delta (new user message) from the
                     // end of the current history.
-                    let new_tail = self.tool_dispatcher
-                        .to_provider_messages(&self.history[self.history.len().saturating_sub(1)..]);
+                    let new_tail = self.tool_dispatcher.to_provider_messages(
+                        &self.history[self.history.len().saturating_sub(1)..],
+                    );
                     cached.extend(new_tail);
                     log::info!(
                         "[transcript] resumed from cached transcript prefix_len={} new_tail={}",
@@ -856,7 +857,9 @@ impl Agent {
                 match transcript::read_transcript(&path) {
                     Ok(session) => {
                         if session.messages.is_empty() {
-                            log::debug!("[transcript] previous transcript is empty — skipping resume");
+                            log::debug!(
+                                "[transcript] previous transcript is empty — skipping resume"
+                            );
                             return;
                         }
                         // Restore the cache boundary from the transcript

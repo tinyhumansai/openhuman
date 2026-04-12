@@ -77,7 +77,11 @@ pub struct SessionTranscript {
 
 /// Write a session transcript to `path`. Full rewrite (not append)
 /// because context reduction may have removed earlier messages.
-pub fn write_transcript(path: &Path, messages: &[ChatMessage], meta: &TranscriptMeta) -> Result<()> {
+pub fn write_transcript(
+    path: &Path,
+    messages: &[ChatMessage],
+    meta: &TranscriptMeta,
+) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create transcript dir {}", parent.display()))?;
@@ -135,11 +139,11 @@ pub fn write_transcript(path: &Path, messages: &[ChatMessage], meta: &Transcript
 
 /// Read a session transcript from `path` and return the exact messages.
 pub fn read_transcript(path: &Path) -> Result<SessionTranscript> {
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("read transcript {}", path.display()))?;
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("read transcript {}", path.display()))?;
 
-    let meta = parse_meta(&raw)
-        .with_context(|| format!("parse transcript meta in {}", path.display()))?;
+    let meta =
+        parse_meta(&raw).with_context(|| format!("parse transcript meta in {}", path.display()))?;
 
     let messages = parse_messages(&raw)
         .with_context(|| format!("parse transcript messages in {}", path.display()))?;
@@ -218,16 +222,14 @@ fn parse_meta(raw: &str) -> Result<TranscriptMeta> {
     let header = &raw[header_start..header_start + header_end + 3];
 
     let get = |key: &str| -> Option<String> {
-        header
-            .lines()
-            .find_map(|line| {
-                let line = line.trim();
-                if line.starts_with(&format!("{key}:")) {
-                    Some(line[key.len() + 1..].trim().to_string())
-                } else {
-                    None
-                }
-            })
+        header.lines().find_map(|line| {
+            let line = line.trim();
+            if line.starts_with(&format!("{key}:")) {
+                Some(line[key.len() + 1..].trim().to_string())
+            } else {
+                None
+            }
+        })
     };
 
     Ok(TranscriptMeta {
@@ -237,9 +239,15 @@ fn parse_meta(raw: &str) -> Result<TranscriptMeta> {
         created: get("created").unwrap_or_default(),
         updated: get("updated").unwrap_or_default(),
         turn_count: get("turn_count").and_then(|s| s.parse().ok()).unwrap_or(0),
-        input_tokens: get("input_tokens").and_then(|s| s.parse().ok()).unwrap_or(0),
-        output_tokens: get("output_tokens").and_then(|s| s.parse().ok()).unwrap_or(0),
-        cached_input_tokens: get("cached_input_tokens").and_then(|s| s.parse().ok()).unwrap_or(0),
+        input_tokens: get("input_tokens")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        output_tokens: get("output_tokens")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        cached_input_tokens: get("cached_input_tokens")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
         charged_amount_usd: get("charged_usd")
             .and_then(|s| s.trim_start_matches('$').parse().ok())
             .unwrap_or(0.0),
@@ -307,7 +315,13 @@ fn today_session_dir(workspace_dir: &Path) -> PathBuf {
 
 fn sanitize_agent_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -359,7 +373,9 @@ mod tests {
 
     fn sample_messages() -> Vec<ChatMessage> {
         vec![
-            ChatMessage::system("You are a helpful assistant.\n\n## Tools\n\n- **shell**: Run commands"),
+            ChatMessage::system(
+                "You are a helpful assistant.\n\n## Tools\n\n- **shell**: Run commands",
+            ),
             ChatMessage::user("What files are in /tmp?"),
             ChatMessage::assistant("Let me check that for you."),
             ChatMessage::tool("{\"tool_call_id\":\"tc1\",\"content\":\"file1.txt\\nfile2.txt\"}"),
@@ -409,9 +425,7 @@ mod tests {
         let path = dir.path().join("escape_test.md");
         let messages = vec![
             ChatMessage::system("Normal system prompt"),
-            ChatMessage::user(
-                "Here is some tricky content:\n<!--/MSG-->\nand more after",
-            ),
+            ChatMessage::user("Here is some tricky content:\n<!--/MSG-->\nand more after"),
             ChatMessage::assistant("Got it, that had a <!--/MSG--> in it."),
         ];
         let meta = sample_meta();

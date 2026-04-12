@@ -2377,19 +2377,20 @@ mod tests {
             Some(&serde_json::json!({"location":"London","unit":"c"}))
         );
 
-        let parsed = OpenAiCompatibleProvider::parse_native_response(wrap_message(ResponseMessage {
-            content: None,
-            reasoning_content: None,
-            tool_calls: Some(vec![ToolCall {
-                id: Some("call_456".to_string()),
-                kind: Some("function".to_string()),
-                function: Some(Function {
-                    name: Some("get_weather".to_string()),
-                    arguments: Some(serde_json::json!({"location":"London","unit":"c"})),
-                }),
-            }]),
-            function_call: None,
-        }));
+        let parsed =
+            OpenAiCompatibleProvider::parse_native_response(wrap_message(ResponseMessage {
+                content: None,
+                reasoning_content: None,
+                tool_calls: Some(vec![ToolCall {
+                    id: Some("call_456".to_string()),
+                    kind: Some("function".to_string()),
+                    function: Some(Function {
+                        name: Some("get_weather".to_string()),
+                        arguments: Some(serde_json::json!({"location":"London","unit":"c"})),
+                    }),
+                }]),
+                function_call: None,
+            }));
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].id, "call_456");
         assert_eq!(
@@ -2401,12 +2402,13 @@ mod tests {
     #[test]
     fn parse_native_response_recovers_tool_calls_from_json_content() {
         let content = r#"{"content":"Checking files...","tool_calls":[{"id":"call_json_1","function":{"name":"shell","arguments":"{\"command\":\"ls -la\"}"}}]}"#;
-        let parsed = OpenAiCompatibleProvider::parse_native_response(wrap_message(ResponseMessage {
-            content: Some(content.to_string()),
-            reasoning_content: None,
-            tool_calls: None,
-            function_call: None,
-        }));
+        let parsed =
+            OpenAiCompatibleProvider::parse_native_response(wrap_message(ResponseMessage {
+                content: Some(content.to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                function_call: None,
+            }));
 
         assert_eq!(parsed.text.as_deref(), Some("Checking files..."));
         assert_eq!(parsed.tool_calls.len(), 1);
@@ -2417,17 +2419,18 @@ mod tests {
 
     #[test]
     fn parse_native_response_supports_legacy_function_call() {
-        let parsed = OpenAiCompatibleProvider::parse_native_response(wrap_message(ResponseMessage {
-            content: Some("Let me check".to_string()),
-            reasoning_content: None,
-            tool_calls: None,
-            function_call: Some(Function {
-                name: Some("shell".to_string()),
-                arguments: Some(serde_json::Value::String(
-                    r#"{"command":"pwd"}"#.to_string(),
-                )),
-            }),
-        }));
+        let parsed =
+            OpenAiCompatibleProvider::parse_native_response(wrap_message(ResponseMessage {
+                content: Some("Let me check".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                function_call: Some(Function {
+                    name: Some("shell".to_string()),
+                    arguments: Some(serde_json::Value::String(
+                        r#"{"command":"pwd"}"#.to_string(),
+                    )),
+                }),
+            }));
 
         assert_eq!(parsed.tool_calls.len(), 1);
         assert_eq!(parsed.tool_calls[0].name, "shell");
