@@ -30,12 +30,14 @@
 
 use super::definition::{AgentDefinition, PromptSource, ToolScope};
 use super::fork_context::{current_fork, current_parent, ForkContext, ParentExecutionContext};
+use super::session::transcript;
 use crate::openhuman::context::prompt::{
     extract_cache_boundary, render_subagent_system_prompt, SubagentRenderOptions,
 };
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 use std::collections::HashSet;
+use std::path::Path;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -297,6 +299,13 @@ async fn run_typed_mode(
     )
     .await?;
 
+    persist_subagent_transcript(
+        &parent.workspace_dir,
+        &definition.id,
+        &history,
+        system_prompt_cache_boundary,
+    );
+
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),
         agent_id: definition.id.clone(),
@@ -379,6 +388,13 @@ async fn run_fork_mode(
     )
     .await?;
 
+    persist_subagent_transcript(
+        &parent.workspace_dir,
+        &definition.id,
+        &history,
+        fork.cache_boundary,
+    );
+
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),
         agent_id: definition.id.clone(),
@@ -387,6 +403,60 @@ async fn run_fork_mode(
         elapsed: started.elapsed(),
         mode: SubagentMode::Fork,
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session transcript persistence for sub-agents
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Best-effort: persist the sub-agent's conversation as a session transcript
+/// so it can be inspected for debugging and KV cache analysis.
+fn persist_subagent_transcript(
+    workspace_dir: &Path,
+    agent_id: &str,
+    history: &[ChatMessage],
+    cache_boundary: Option<usize>,
+) {
+    let path = match transcript::resolve_new_transcript_path(workspace_dir, agent_id) {
+        Ok(p) => p,
+        Err(err) => {
+            tracing::debug!(
+                agent_id = %agent_id,
+                error = %err,
+                "[subagent_runner] failed to resolve transcript path"
+            );
+            return;
+        }
+    };
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let meta = transcript::TranscriptMeta {
+        agent_name: agent_id.to_string(),
+        dispatcher: "native".into(),
+        cache_boundary,
+        created: now.clone(),
+        updated: now,
+        turn_count: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+    };
+
+    if let Err(err) = transcript::write_transcript(&path, history, &meta) {
+        tracing::debug!(
+            agent_id = %agent_id,
+            error = %err,
+            "[subagent_runner] failed to write transcript"
+        );
+    } else {
+        tracing::debug!(
+            agent_id = %agent_id,
+            messages = history.len(),
+            path = %path.display(),
+            "[subagent_runner] transcript written"
+        );
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

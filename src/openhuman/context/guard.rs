@@ -180,6 +180,7 @@ mod tests {
             input_tokens: 10_000,
             output_tokens: 5_000,
             context_window: 100_000,
+            ..Default::default()
         });
         assert_eq!(guard.check(), ContextCheckResult::Ok);
     }
@@ -191,6 +192,7 @@ mod tests {
             input_tokens: 85_000,
             output_tokens: 6_000,
             context_window: 100_000,
+            ..Default::default()
         });
         assert_eq!(guard.check(), ContextCheckResult::CompactionNeeded);
     }
@@ -202,6 +204,7 @@ mod tests {
             input_tokens: 90_000,
             output_tokens: 6_000,
             context_window: 100_000,
+            ..Default::default()
         });
 
         guard.record_compaction_failure();

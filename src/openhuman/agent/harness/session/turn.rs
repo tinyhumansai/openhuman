@@ -158,6 +158,12 @@ impl Agent {
         // can persist it as a session transcript after the turn completes.
         let mut last_provider_messages: Option<Vec<ChatMessage>> = None;
 
+        // Accumulate usage stats across iterations for the transcript.
+        let mut cumulative_input_tokens: u64 = 0;
+        let mut cumulative_output_tokens: u64 = 0;
+        let mut cumulative_cached_input_tokens: u64 = 0;
+        let mut cumulative_charged_usd: f64 = 0.0;
+
         let turn_body = async {
             for iteration in 0..self.config.max_tool_iterations {
                 log::info!(
@@ -296,6 +302,10 @@ impl Agent {
                         // the provider doesn't return usage.
                         if let Some(ref usage) = resp.usage {
                             self.context.record_usage(usage);
+                            cumulative_input_tokens += usage.input_tokens;
+                            cumulative_output_tokens += usage.output_tokens;
+                            cumulative_cached_input_tokens += usage.cached_input_tokens;
+                            cumulative_charged_usd += usage.charged_amount_usd;
                         }
                         resp
                     }
@@ -474,7 +484,13 @@ impl Agent {
         // resume with a byte-identical prefix for KV cache reuse.
         if result.is_ok() {
             if let Some(ref messages) = last_provider_messages {
-                self.persist_session_transcript(messages);
+                self.persist_session_transcript(
+                    messages,
+                    cumulative_input_tokens,
+                    cumulative_output_tokens,
+                    cumulative_cached_input_tokens,
+                    cumulative_charged_usd,
+                );
             }
         }
 
@@ -876,7 +892,14 @@ impl Agent {
     /// Best-effort: failures are logged and silently ignored. The JSONL
     /// conversation store remains the authoritative persistence layer;
     /// session transcripts are an optimization for KV cache stability.
-    pub(super) fn persist_session_transcript(&mut self, messages: &[ChatMessage]) {
+    pub(super) fn persist_session_transcript(
+        &mut self,
+        messages: &[ChatMessage],
+        input_tokens: u64,
+        output_tokens: u64,
+        cached_input_tokens: u64,
+        charged_amount_usd: f64,
+    ) {
         // Resolve the transcript path on first write.
         if self.session_transcript_path.is_none() {
             match transcript::resolve_new_transcript_path(
@@ -911,6 +934,10 @@ impl Agent {
             created: now.clone(),
             updated: now,
             turn_count: self.context.stats().session_memory_current_turn as usize,
+            input_tokens,
+            output_tokens,
+            cached_input_tokens,
+            charged_amount_usd,
         };
 
         if let Err(err) = transcript::write_transcript(path, messages, &meta) {

@@ -461,6 +461,7 @@ mod tests {
             input_tokens: 5_000,
             output_tokens: 500,
             context_window: 100_000,
+            ..Default::default()
         });
 
         let mut history = vec![user("hi")];
@@ -480,6 +481,7 @@ mod tests {
             input_tokens: 92_000,
             output_tokens: 4_000,
             context_window: 100_000,
+            ..Default::default()
         });
 
         // Build a history with several older tool-result envelopes
@@ -528,6 +530,7 @@ mod tests {
             input_tokens: 92_000,
             output_tokens: 4_000,
             context_window: 100_000,
+            ..Default::default()
         });
 
         // History with no old tool-result envelopes — microcompact
@@ -561,6 +564,7 @@ mod tests {
             input_tokens: 92_000,
             output_tokens: 4_000,
             context_window: 100_000,
+            ..Default::default()
         });
 
         // Try three times — each call sends the pipeline into
@@ -583,6 +587,7 @@ mod tests {
             input_tokens: 96_000,
             output_tokens: 2_000,
             context_window: 100_000,
+            ..Default::default()
         });
         let mut history = vec![user("x")];
         let outcome = manager.reduce_before_call(&mut history).await.unwrap();
@@ -608,6 +613,7 @@ mod tests {
             input_tokens: 92_000,
             output_tokens: 4_000,
             context_window: 100_000,
+            ..Default::default()
         });
 
         // No old tool-result envelopes — microcompact cannot free
@@ -645,6 +651,7 @@ mod tests {
             input_tokens: 96_000,
             output_tokens: 2_000,
             context_window: 100_000,
+            ..Default::default()
         });
 
         let mut history = vec![user("a"), user("b"), user("c")];
@@ -661,6 +668,7 @@ mod tests {
             input_tokens: 10_000,
             output_tokens: 2_000,
             context_window: 100_000,
+            ..Default::default()
         });
         manager.tick_turn();
         manager.record_tool_calls(3);

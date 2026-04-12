@@ -95,6 +95,18 @@ pub fn write_transcript(path: &Path, messages: &[ChatMessage], meta: &Transcript
     let _ = writeln!(buf, "created: {}", meta.created);
     let _ = writeln!(buf, "updated: {}", meta.updated);
     let _ = writeln!(buf, "turn_count: {}", meta.turn_count);
+    if meta.input_tokens > 0 || meta.output_tokens > 0 {
+        let _ = writeln!(buf, "input_tokens: {}", meta.input_tokens);
+        let _ = writeln!(buf, "output_tokens: {}", meta.output_tokens);
+        let _ = writeln!(buf, "cached_input_tokens: {}", meta.cached_input_tokens);
+        if meta.input_tokens > 0 {
+            let cache_pct = (meta.cached_input_tokens as f64 / meta.input_tokens as f64) * 100.0;
+            let _ = writeln!(buf, "cache_hit_pct: {:.1}%", cache_pct);
+        }
+        if meta.charged_amount_usd > 0.0 {
+            let _ = writeln!(buf, "charged_usd: ${:.6}", meta.charged_amount_usd);
+        }
+    }
     buf.push_str("-->\n");
 
     // Messages
@@ -225,6 +237,12 @@ fn parse_meta(raw: &str) -> Result<TranscriptMeta> {
         created: get("created").unwrap_or_default(),
         updated: get("updated").unwrap_or_default(),
         turn_count: get("turn_count").and_then(|s| s.parse().ok()).unwrap_or(0),
+        input_tokens: get("input_tokens").and_then(|s| s.parse().ok()).unwrap_or(0),
+        output_tokens: get("output_tokens").and_then(|s| s.parse().ok()).unwrap_or(0),
+        cached_input_tokens: get("cached_input_tokens").and_then(|s| s.parse().ok()).unwrap_or(0),
+        charged_amount_usd: get("charged_usd")
+            .and_then(|s| s.trim_start_matches('$').parse().ok())
+            .unwrap_or(0.0),
     })
 }
 
@@ -357,6 +375,10 @@ mod tests {
             created: "2026-04-11T14:30:00Z".into(),
             updated: "2026-04-11T14:35:22Z".into(),
             turn_count: 3,
+            input_tokens: 5000,
+            output_tokens: 1200,
+            cached_input_tokens: 3500,
+            charged_amount_usd: 0.0045,
         }
     }
 
@@ -417,6 +439,10 @@ mod tests {
         assert_eq!(loaded.meta.created, "2026-04-11T14:30:00Z");
         assert_eq!(loaded.meta.updated, "2026-04-11T14:35:22Z");
         assert_eq!(loaded.meta.turn_count, 3);
+        assert_eq!(loaded.meta.input_tokens, 5000);
+        assert_eq!(loaded.meta.output_tokens, 1200);
+        assert_eq!(loaded.meta.cached_input_tokens, 3500);
+        assert!((loaded.meta.charged_amount_usd - 0.0045).abs() < 1e-8);
     }
 
     #[test]

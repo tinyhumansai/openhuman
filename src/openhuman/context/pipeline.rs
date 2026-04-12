@@ -288,6 +288,7 @@ mod tests {
             input_tokens: 92_000,
             output_tokens: 4_000,
             context_window: 100_000,
+            ..Default::default()
         });
     }
 
@@ -298,6 +299,7 @@ mod tests {
             input_tokens: 10_000,
             output_tokens: 1_000,
             context_window: 100_000,
+            ..Default::default()
         });
         let mut history = vec![
             user("hi"),
@@ -412,6 +414,7 @@ mod tests {
             input_tokens: 96_000,
             output_tokens: 2_000,
             context_window: 100_000,
+            ..Default::default()
         });
         // Trip the circuit breaker.
         pipeline.guard.record_compaction_failure();
@@ -430,6 +433,7 @@ mod tests {
             input_tokens: 10_000,
             output_tokens: 2_000,
             context_window: 100_000,
+            ..Default::default()
         });
         assert_eq!(pipeline.session_memory_snapshot().total_tokens, 12_000);
     }
