@@ -357,44 +357,43 @@ impl Agent {
         // initialised at startup; if it's not yet populated we
         // conservatively fall back to the legacy "orchestrator-shaped"
         // build by proceeding without a definition override.
-        let target_def: Option<
-            crate::openhuman::agent::harness::definition::AgentDefinition,
-        > = match AgentDefinitionRegistry::global() {
-            Some(reg) => match reg.get(agent_id) {
-                Some(def) => Some(def.clone()),
-                None if agent_id == "orchestrator" => {
-                    // Orchestrator is allowed to be missing from the
-                    // registry (legacy path, tests, pre-startup) —
-                    // fall back to default behaviour.
-                    log::debug!(
-                        "[agent::builder] orchestrator definition not in registry — \
+        let target_def: Option<crate::openhuman::agent::harness::definition::AgentDefinition> =
+            match AgentDefinitionRegistry::global() {
+                Some(reg) => match reg.get(agent_id) {
+                    Some(def) => Some(def.clone()),
+                    None if agent_id == "orchestrator" => {
+                        // Orchestrator is allowed to be missing from the
+                        // registry (legacy path, tests, pre-startup) —
+                        // fall back to default behaviour.
+                        log::debug!(
+                            "[agent::builder] orchestrator definition not in registry — \
                          using legacy default prompt + filter"
+                        );
+                        None
+                    }
+                    None => {
+                        return Err(anyhow::anyhow!(
+                            "agent definition '{}' not found in registry",
+                            agent_id
+                        ));
+                    }
+                },
+                None => {
+                    if agent_id != "orchestrator" {
+                        return Err(anyhow::anyhow!(
+                            "AgentDefinitionRegistry is not initialised — cannot \
+                         resolve agent '{}'. Call AgentDefinitionRegistry::init_global \
+                         at startup.",
+                            agent_id
+                        ));
+                    }
+                    log::debug!(
+                        "[agent::builder] registry not initialised, orchestrator requested — \
+                     using legacy default prompt + filter"
                     );
                     None
                 }
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "agent definition '{}' not found in registry",
-                        agent_id
-                    ));
-                }
-            },
-            None => {
-                if agent_id != "orchestrator" {
-                    return Err(anyhow::anyhow!(
-                        "AgentDefinitionRegistry is not initialised — cannot \
-                         resolve agent '{}'. Call AgentDefinitionRegistry::init_global \
-                         at startup.",
-                        agent_id
-                    ));
-                }
-                log::debug!(
-                    "[agent::builder] registry not initialised, orchestrator requested — \
-                     using legacy default prompt + filter"
-                );
-                None
-            }
-        };
+            };
 
         log::info!(
             "[agent::builder] building session agent id={} \
@@ -407,7 +406,10 @@ impl Agent {
                     ToolScope::Wildcard => "wildcard".to_string(),
                 })
                 .unwrap_or_else(|| "legacy".to_string()),
-            target_def.as_ref().map(|d| d.omit_identity).unwrap_or(false),
+            target_def
+                .as_ref()
+                .map(|d| d.omit_identity)
+                .unwrap_or(false),
             target_def
                 .as_ref()
                 .map(|d| d.temperature)
@@ -675,11 +677,9 @@ impl Agent {
                 // callers that invoke the old `from_config` on a
                 // pre-startup or test registry state.
                 let synthed = match reg.get("orchestrator") {
-                    Some(orch_def) => tools::orchestrator_tools::collect_orchestrator_tools(
-                        orch_def,
-                        reg,
-                        &[],
-                    ),
+                    Some(orch_def) => {
+                        tools::orchestrator_tools::collect_orchestrator_tools(orch_def, reg, &[])
+                    }
                     None => {
                         log::debug!(
                             "[agent::builder] orchestrator definition not in registry — \
