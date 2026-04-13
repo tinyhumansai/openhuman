@@ -193,32 +193,30 @@ async fn check_status() -> anyhow::Result<ToolResult> {
     // ── Auto-finalize side effect ─────────────────────────────────
     //
     // When the user is authenticated AND the chat welcome flow has
-    // not yet completed, flip the flag and seed proactive agents.
-    // This is the welcome → orchestrator handoff: after the flag
-    // flips, the dispatch layer routes future chat turns to the
-    // orchestrator instead of the welcome agent (see
+    // not yet completed, delegate to the legacy `complete()` action
+    // — single source of truth for "what does finalize mean". This
+    // is the welcome → orchestrator handoff: after the flag flips,
+    // the dispatch layer routes future chat turns to the orchestrator
+    // instead of the welcome agent (see
     // `web.rs::build_session_agent` and
     // `dispatch.rs::resolve_target_agent`).
+    //
+    // We discard `complete()`'s `ToolResult::success("ok")` return
+    // value because the caller (check_status) is producing its own
+    // JSON snapshot — the side effect is the only thing we want.
+    // After the call we mirror the flip into our local `config`
+    // variable so the JSON snapshot below reflects the post-finalize
+    // state (the disk has been updated, but our in-memory copy was
+    // loaded before the flip).
     let finalize_action = if !is_authenticated {
         "skipped_no_auth"
     } else if config.chat_onboarding_completed {
         "already_complete"
     } else {
+        let _ = complete().await?;
         config.chat_onboarding_completed = true;
-        config
-            .save()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to save config: {e}"))?;
-        let seed_config = config.clone();
-        tokio::spawn(async move {
-            if let Err(e) = crate::openhuman::cron::seed::seed_proactive_agents(&seed_config) {
-                tracing::warn!(
-                    "[complete_onboarding] failed to seed proactive cron jobs: {e}"
-                );
-            }
-        });
         tracing::info!(
-            "[complete_onboarding] chat welcome flow auto-finalized via check_status, proactive agents seeded"
+            "[complete_onboarding] chat welcome flow auto-finalized via check_status (delegated to complete())"
         );
         "flipped"
     };
