@@ -72,7 +72,7 @@ impl MemoryClient {
         std::fs::create_dir_all(&workspace_dir)
             .map_err(|e| format!("Create workspace dir {}: {e}", workspace_dir.display()))?;
 
-        // Initialize the default local embedding provider (e.g., FastEmbed).
+        // Initialize the default local embedding provider (Ollama).
         let embedder: Arc<dyn EmbeddingProvider> = embeddings::default_local_embedding_provider();
 
         // Create the underlying UnifiedMemory instance.

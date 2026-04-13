@@ -1,31 +1,37 @@
 //! Embedding providers for the OpenHuman memory system.
 //!
 //! This module provides a unified interface for converting text into vector
-//! embeddings. It supports multiple providers:
-//! - **Candle**: Pure-Rust local embeddings using HuggingFace's candle framework.
+//! embeddings. Providers (in priority order):
+//!
+//! - **Ollama** (default): Delegates to a local Ollama server — handles model
+//!   management, quantization, and GPU acceleration out of the box.
+//! - **Candle**: Pure-Rust in-process inference via HuggingFace's candle
+//!   framework. No external process required, but heavier on CPU.
 //! - **OpenAI**: Cloud-based embeddings via the OpenAI API or compatible endpoints.
 //! - **Noop**: A fallback provider for keyword-only search.
 
 pub mod candle_embed;
 pub mod noop;
+pub mod ollama;
 pub mod openai;
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
-pub use candle_embed::{CandleEmbedding, DEFAULT_DIMENSIONS, DEFAULT_HF_REPO, DEFAULT_MODEL_NAME};
+pub use candle_embed::CandleEmbedding;
 pub use noop::NoopEmbedding;
+pub use ollama::{OllamaEmbedding, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
 pub use openai::OpenAiEmbedding;
 
-// Re-export legacy constant names so existing config references keep working.
-pub const DEFAULT_FASTEMBED_MODEL: &str = DEFAULT_MODEL_NAME;
-pub const DEFAULT_FASTEMBED_DIMENSIONS: usize = DEFAULT_DIMENSIONS;
+// Legacy constant aliases so existing config references keep compiling.
+pub const DEFAULT_FASTEMBED_MODEL: &str = DEFAULT_OLLAMA_MODEL;
+pub const DEFAULT_FASTEMBED_DIMENSIONS: usize = DEFAULT_OLLAMA_DIMENSIONS;
 
 /// Interface for embedding providers that convert text into numerical vectors.
 #[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
-    /// Returns the name of the provider (e.g., "candle", "openai").
+    /// Returns the name of the provider (e.g., "ollama", "candle", "openai").
     fn name(&self) -> &str;
 
     /// Returns the number of dimensions in the generated embeddings.
@@ -47,8 +53,9 @@ pub trait EmbeddingProvider: Send + Sync {
 
 /// Creates an embedding provider based on the specified name and configuration.
 ///
-/// Supports:
-/// - `"fastembed"` or `"candle"` → local candle-based embeddings
+/// Supported provider names:
+/// - `"ollama"` → local Ollama server (default, preferred)
+/// - `"fastembed"` or `"candle"` → in-process candle inference
 /// - `"openai"` → OpenAI API
 /// - `"custom:<url>"` → OpenAI-compatible endpoint
 /// - anything else → no-op (keyword-only search)
@@ -59,7 +66,7 @@ pub fn create_embedding_provider(
     dims: usize,
 ) -> Box<dyn EmbeddingProvider> {
     match provider {
-        // Accept both old name and new name for backwards compatibility.
+        "ollama" => Box::new(OllamaEmbedding::new("", model, dims)),
         "fastembed" | "candle" => Box::new(CandleEmbedding::new(model, dims)),
         "openai" => {
             let key = api_key.unwrap_or("");
@@ -79,9 +86,9 @@ pub fn create_embedding_provider(
     }
 }
 
-/// Returns the default local embedding provider (candle-based).
+/// Returns the default local embedding provider (Ollama-backed).
 pub fn default_local_embedding_provider() -> Arc<dyn EmbeddingProvider> {
-    Arc::new(CandleEmbedding::new(DEFAULT_MODEL_NAME, DEFAULT_DIMENSIONS))
+    Arc::new(OllamaEmbedding::default())
 }
 
 #[cfg(test)]
@@ -116,16 +123,28 @@ mod tests {
     }
 
     #[test]
+    fn factory_ollama() {
+        let p = create_embedding_provider("ollama", None, DEFAULT_OLLAMA_MODEL, 768);
+        assert_eq!(p.name(), "ollama");
+        assert_eq!(p.dimensions(), 768);
+    }
+
+    #[test]
     fn factory_candle() {
-        let p = create_embedding_provider("candle", None, DEFAULT_MODEL_NAME, 384);
+        let p = create_embedding_provider(
+            "candle",
+            None,
+            candle_embed::DEFAULT_MODEL_NAME,
+            384,
+        );
         assert_eq!(p.name(), "candle");
         assert_eq!(p.dimensions(), 384);
     }
 
     #[test]
     fn factory_fastembed_compat() {
-        // "fastembed" config value still works — maps to candle provider.
-        let p = create_embedding_provider("fastembed", None, DEFAULT_MODEL_NAME, 384);
+        // Legacy "fastembed" config value maps to candle provider.
+        let p = create_embedding_provider("fastembed", None, "BGESmallENV15", 384);
         assert_eq!(p.name(), "candle");
         assert_eq!(p.dimensions(), 384);
     }
@@ -164,10 +183,10 @@ mod tests {
     }
 
     #[test]
-    fn default_local_provider_uses_candle() {
+    fn default_local_provider_uses_ollama() {
         let p = default_local_embedding_provider();
-        assert_eq!(p.name(), "candle");
-        assert_eq!(p.dimensions(), DEFAULT_DIMENSIONS);
+        assert_eq!(p.name(), "ollama");
+        assert_eq!(p.dimensions(), DEFAULT_OLLAMA_DIMENSIONS);
     }
 
     #[test]
