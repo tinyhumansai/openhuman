@@ -1,73 +1,22 @@
 /**
  * Onboarding step that gathers user context from connected integrations.
  *
- * After the user connects Gmail (and optionally other tools), this step
- * runs a short pipeline to pull initial profile and content data into
- * memory so the agent already knows who they are on first conversation.
- *
- * Stages:
- *   1. Fetch the user's Google profile (name, email) via Composio
- *   2. Sync recent emails into memory
- *   3. Search for LinkedIn profile URL in email history
+ * Calls the Rust-side `learning.linkedin_enrichment` controller which
+ * runs the full pipeline: Gmail search -> LinkedIn extraction -> Apify
+ * scrape -> LLM summarisation -> PROFILE.md. The frontend shows a
+ * progress animation while the pipeline runs and displays the log when
+ * it finishes.
  */
 import { useEffect, useRef, useState } from 'react';
 
-import { execute } from '../../../lib/composio/composioApi';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import OnboardingNextButton from '../components/OnboardingNextButton';
 
 interface ContextGatheringStepProps {
-  /** Which integrations the user connected in the previous step. */
   connectedSources: string[];
   onNext: () => void | Promise<void>;
   onBack?: () => void;
 }
-
-// ── Stage definitions ────────────────────────────────────────────────
-
-interface Stage {
-  id: string;
-  label: string;
-  activeLabel: string;
-}
-
-const STAGES: Stage[] = [
-  {
-    id: 'fetch-profile',
-    label: 'Fetching your profile',
-    activeLabel: 'Reading your Google profile...',
-  },
-  {
-    id: 'sync-emails',
-    label: 'Syncing recent emails',
-    activeLabel: 'Pulling recent emails into memory...',
-  },
-  {
-    id: 'find-linkedin',
-    label: 'Looking for your LinkedIn',
-    activeLabel: 'Searching for LinkedIn profile...',
-  },
-];
-
-type StageStatus = 'pending' | 'active' | 'done' | 'skipped' | 'error';
-
-interface StageState {
-  status: StageStatus;
-  detail?: string;
-}
-
-// ── LinkedIn URL extraction ──────────────────────────────────────────
-
-const LINKEDIN_PROFILE_RE = /https?:\/\/(?:www\.)?linkedin\.com\/in\/([a-zA-Z0-9_-]+)/;
-
-function extractLinkedInUrlFromEmails(data: unknown): string | null {
-  if (!data || typeof data !== 'object') return null;
-  const raw = JSON.stringify(data);
-  const match = LINKEDIN_PROFILE_RE.exec(raw);
-  return match ? match[0] : null;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
 
 /** Unwrap the RpcOutcome CLI envelope the core wraps around responses. */
 function unwrapCliEnvelope<T>(value: unknown): T {
@@ -82,6 +31,49 @@ function unwrapCliEnvelope<T>(value: unknown): T {
   return value as T;
 }
 
+interface EnrichmentResult {
+  profile_url: string | null;
+  profile_data: unknown | null;
+  log: string[];
+}
+
+// ── Visual stage definitions (driven by pipeline log lines) ──────────
+
+interface Stage {
+  id: string;
+  label: string;
+  /** Substring to look for in log lines to mark this stage done. */
+  doneSignal: string;
+  /** If this appears in a log line, the stage is an error. */
+  errorSignal?: string;
+  /** If this appears, mark as skipped. */
+  skipSignal?: string;
+}
+
+const STAGES: Stage[] = [
+  {
+    id: 'gmail-search',
+    label: 'Searching your emails',
+    doneSignal: 'Found LinkedIn profile',
+    errorSignal: 'Gmail search failed',
+    skipSignal: 'No LinkedIn profile URL',
+  },
+  {
+    id: 'apify-scrape',
+    label: 'Scraping your LinkedIn',
+    doneSignal: 'profile scraped successfully',
+    errorSignal: 'scrape failed',
+  },
+  {
+    id: 'build-profile',
+    label: 'Building your profile',
+    doneSignal: 'PROFILE.md written',
+    errorSignal: 'Failed to write PROFILE',
+  },
+];
+
+type StageStatus = 'pending' | 'active' | 'done' | 'skipped' | 'error';
+
 // ── Component ────────────────────────────────────────────────────────
 
 const ContextGatheringStep = ({
@@ -89,31 +81,27 @@ const ContextGatheringStep = ({
   onNext,
   onBack: _onBack,
 }: ContextGatheringStepProps) => {
-  const [stages, setStages] = useState<Record<string, StageState>>(() => {
-    const initial: Record<string, StageState> = {};
-    for (const s of STAGES) {
-      initial[s.id] = { status: 'pending' };
-    }
+  const [stageStatuses, setStageStatuses] = useState<Record<string, StageStatus>>(() => {
+    const initial: Record<string, StageStatus> = {};
+    for (const s of STAGES) initial[s.id] = 'pending';
     return initial;
   });
+  const [stageDetails, setStageDetails] = useState<Record<string, string>>({});
   const [finished, setFinished] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ranRef = useRef(false);
 
   const hasGmail = connectedSources.some(s => s.includes('gmail'));
 
-  const updateStage = (id: string, patch: StageState) => {
-    setStages(prev => ({ ...prev, [id]: patch }));
-  };
-
   useEffect(() => {
     if (ranRef.current) return;
     ranRef.current = true;
 
     if (!hasGmail) {
-      for (const s of STAGES) {
-        updateStage(s.id, { status: 'skipped', detail: 'Gmail not connected' });
-      }
+      const skipped: Record<string, StageStatus> = {};
+      for (const s of STAGES) skipped[s.id] = 'skipped';
+      setStageStatuses(skipped);
+      setStageDetails({ 'gmail-search': 'Gmail not connected' });
       setFinished(true);
       return;
     }
@@ -123,122 +111,81 @@ const ContextGatheringStep = ({
   }, []);
 
   async function runPipeline() {
-    // ── Stage 1: fetch Google profile ────────────────────────────────
-    updateStage('fetch-profile', { status: 'active' });
+    // Mark all stages as active (pipeline runs as one call).
+    setStageStatuses(prev => ({ ...prev, 'gmail-search': 'active' }));
+
     try {
-      const resp = await execute('GMAIL_GET_PROFILE', {});
-      if (resp.successful && resp.data) {
-        const data = resp.data as Record<string, unknown>;
-        const email = data.emailAddress ?? data.email ?? '';
-        updateStage('fetch-profile', {
-          status: 'done',
-          detail: email ? String(email) : 'Profile loaded',
-        });
-      } else {
-        updateStage('fetch-profile', {
-          status: 'error',
-          detail: resp.error ?? 'Could not fetch profile',
-        });
-      }
+      const raw = await callCoreRpc<unknown>({
+        method: 'openhuman.learning_linkedin_enrichment',
+      });
+      const result = unwrapCliEnvelope<EnrichmentResult>(raw);
+      applyLogToStages(result.log, result.profile_url);
     } catch (e) {
-      updateStage('fetch-profile', {
-        status: 'error',
-        detail: e instanceof Error ? e.message : 'Failed to fetch profile',
-      });
-    }
-
-    // ── Stage 2: trigger initial email sync ──────────────────────────
-    updateStage('sync-emails', { status: 'active' });
-    try {
-      // Find the Gmail connection ID so we can call composio_sync.
-      const connResp = await callCoreRpc<unknown>({
-        method: 'openhuman.composio_list_connections',
-      });
-      const connections = unwrapCliEnvelope<{ connections: Array<{ id: string; toolkit: string; status: string }> }>(connResp);
-      const gmailConn = connections.connections.find(
-        c => c.toolkit.toLowerCase() === 'gmail' && (c.status === 'ACTIVE' || c.status === 'CONNECTED')
-      );
-
-      if (gmailConn) {
-        const syncResp = await callCoreRpc<unknown>({
-          method: 'openhuman.composio_sync',
-          params: { connection_id: gmailConn.id, reason: 'manual' },
-        });
-        const outcome = unwrapCliEnvelope<{ items_ingested?: number; summary?: string }>(syncResp);
-        const count = outcome.items_ingested ?? 0;
-        updateStage('sync-emails', {
-          status: 'done',
-          detail: count > 0 ? `${count} emails synced` : 'Sync complete',
-        });
-      } else {
-        updateStage('sync-emails', {
-          status: 'error',
-          detail: 'No active Gmail connection found',
-        });
-      }
-    } catch (e) {
-      updateStage('sync-emails', {
-        status: 'error',
-        detail: e instanceof Error ? e.message : 'Failed to sync emails',
-      });
-    }
-
-    // ── Stage 3: search for LinkedIn profile in emails ───────────────
-    updateStage('find-linkedin', { status: 'active' });
-    try {
-      const resp = await execute('GMAIL_FETCH_EMAILS', {
-        query: 'from:linkedin.com',
-        max_results: 20,
-      });
-
-      let linkedInUrl: string | null = null;
-      if (resp.successful && resp.data) {
-        linkedInUrl = extractLinkedInUrlFromEmails(resp.data);
-      }
-
-      if (linkedInUrl) {
-        // Persist the URL to memory for the agent to use later.
-        try {
-          await callCoreRpc({
-            method: 'openhuman.memory_store',
-            params: {
-              content: `User LinkedIn profile: ${linkedInUrl}`,
-              namespace: 'user-profile',
-              metadata: { source: 'onboarding-gmail-linkedin', url: linkedInUrl },
-            },
-          });
-        } catch {
-          // Best-effort — don't fail the stage if memory store fails.
+      // Pipeline failed entirely — mark all pending stages as error.
+      const errMsg = e instanceof Error ? e.message : 'Pipeline failed';
+      setStageStatuses(prev => {
+        const next = { ...prev };
+        for (const s of STAGES) {
+          if (next[s.id] === 'pending' || next[s.id] === 'active') {
+            next[s.id] = 'error';
+          }
         }
-        updateStage('find-linkedin', {
-          status: 'done',
-          detail: linkedInUrl,
-        });
-      } else {
-        updateStage('find-linkedin', {
-          status: 'skipped',
-          detail: 'No LinkedIn profile found in emails',
-        });
-      }
-    } catch (e) {
-      updateStage('find-linkedin', {
-        status: 'error',
-        detail: e instanceof Error ? e.message : 'Failed to search emails',
+        return next;
       });
+      setStageDetails(prev => ({ ...prev, 'gmail-search': errMsg }));
     }
 
     setFinished(true);
   }
 
+  function applyLogToStages(log: string[], profileUrl: string | null) {
+    const nextStatuses: Record<string, StageStatus> = {};
+    const nextDetails: Record<string, string> = {};
+
+    for (const stage of STAGES) {
+      let status: StageStatus = 'skipped';
+      let detail = '';
+
+      for (const line of log) {
+        if (stage.skipSignal && line.includes(stage.skipSignal)) {
+          status = 'skipped';
+          detail = line;
+          break;
+        }
+        if (stage.errorSignal && line.includes(stage.errorSignal)) {
+          status = 'error';
+          detail = line;
+          break;
+        }
+        if (line.includes(stage.doneSignal)) {
+          status = 'done';
+          detail = line;
+          break;
+        }
+      }
+
+      nextStatuses[stage.id] = status;
+      if (detail) nextDetails[stage.id] = detail;
+    }
+
+    // If we found a profile URL, show it on the search stage.
+    if (profileUrl && !nextDetails['gmail-search']) {
+      nextDetails['gmail-search'] = profileUrl;
+    }
+
+    setStageStatuses(nextStatuses);
+    setStageDetails(nextDetails);
+  }
+
   // ── Derived progress ──────────────────────────────────────────────
 
   const completedCount = STAGES.filter(s => {
-    const st = stages[s.id].status;
+    const st = stageStatuses[s.id];
     return st === 'done' || st === 'skipped' || st === 'error';
   }).length;
   const progressPercent = Math.round((completedCount / STAGES.length) * 100);
-
-  const activeStage = STAGES.find(s => stages[s.id].status === 'active');
+  const isRunning = !finished;
+  const activeStageIdx = STAGES.findIndex(s => stageStatuses[s.id] === 'active');
 
   const handleContinue = async () => {
     setError(null);
@@ -257,37 +204,47 @@ const ContextGatheringStep = ({
         </h1>
         <p className="text-stone-500 text-sm">
           {finished
-            ? 'We gathered what we could. You can always enrich your profile later.'
-            : 'Collecting information from your connected accounts...'}
+            ? 'Your profile is ready. The assistant already knows who you are.'
+            : 'Learning about you from your connected accounts...'}
         </p>
       </div>
 
       {/* Progress bar */}
       <div className="mb-5">
         <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100">
-          <div
-            className="h-full rounded-full bg-primary-500 transition-all duration-500 ease-out"
-            style={{ width: `${finished ? 100 : Math.max(progressPercent, 8)}%` }}
-          />
+          {isRunning ? (
+            <div className="h-full w-full rounded-full bg-primary-400/60 animate-pulse" />
+          ) : (
+            <div
+              className="h-full rounded-full bg-primary-500 transition-all duration-500 ease-out"
+              style={{ width: `${finished ? 100 : Math.max(progressPercent, 8)}%` }}
+            />
+          )}
         </div>
-        {activeStage && !finished && (
+        {isRunning && activeStageIdx >= 0 && (
           <p className="mt-2 text-xs text-primary-600 text-center animate-pulse">
-            {activeStage.activeLabel}
+            {STAGES[activeStageIdx].label}...
           </p>
         )}
       </div>
 
       {/* Stage list */}
       <div className="mb-5 space-y-2">
-        {STAGES.map(stage => {
-          const state = stages[stage.id];
+        {STAGES.map((stage, idx) => {
+          const status = stageStatuses[stage.id];
+          const detail = stageDetails[stage.id];
+          // While pipeline is running, show stages up to current as active.
+          const displayStatus =
+            isRunning && status === 'pending' && idx <= (activeStageIdx < 0 ? 0 : activeStageIdx)
+              ? 'active'
+              : status;
+
           return (
             <div
               key={stage.id}
               className="flex items-start gap-3 rounded-xl border border-stone-100 px-3 py-2.5">
-              {/* Status icon */}
               <div className="mt-0.5 flex-shrink-0">
-                {state.status === 'done' && (
+                {displayStatus === 'done' && (
                   <div className="h-4 w-4 rounded-full bg-sage-500 flex items-center justify-center">
                     <svg
                       className="h-2.5 w-2.5 text-white"
@@ -303,44 +260,43 @@ const ContextGatheringStep = ({
                     </svg>
                   </div>
                 )}
-                {state.status === 'active' && (
+                {displayStatus === 'active' && (
                   <div className="h-4 w-4 rounded-full border-2 border-primary-500 border-t-transparent animate-spin" />
                 )}
-                {state.status === 'pending' && (
+                {displayStatus === 'pending' && (
                   <div className="h-4 w-4 rounded-full border-2 border-stone-200" />
                 )}
-                {state.status === 'skipped' && (
+                {displayStatus === 'skipped' && (
                   <div className="h-4 w-4 rounded-full bg-stone-200 flex items-center justify-center">
                     <span className="text-[8px] text-stone-400">--</span>
                   </div>
                 )}
-                {state.status === 'error' && (
+                {displayStatus === 'error' && (
                   <div className="h-4 w-4 rounded-full bg-amber-400 flex items-center justify-center">
                     <span className="text-[8px] text-white font-bold">!</span>
                   </div>
                 )}
               </div>
 
-              {/* Label + detail */}
               <div className="min-w-0 flex-1">
                 <p
                   className={`text-sm font-medium ${
-                    state.status === 'active'
+                    displayStatus === 'active'
                       ? 'text-stone-900'
-                      : state.status === 'done'
+                      : displayStatus === 'done'
                         ? 'text-sage-700'
-                        : state.status === 'error'
+                        : displayStatus === 'error'
                           ? 'text-amber-700'
                           : 'text-stone-400'
                   }`}>
                   {stage.label}
                 </p>
-                {state.detail && (
+                {detail && !isRunning && (
                   <p
                     className={`mt-0.5 text-xs truncate ${
-                      state.status === 'error' ? 'text-amber-500' : 'text-stone-400'
+                      displayStatus === 'error' ? 'text-amber-500' : 'text-stone-400'
                     }`}>
-                    {state.detail}
+                    {detail}
                   </p>
                 )}
               </div>
