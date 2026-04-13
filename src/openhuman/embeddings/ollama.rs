@@ -336,8 +336,7 @@ mod tests {
             post(|Json(body): Json<serde_json::Value>| async move {
                 let inputs = body["input"].as_array().unwrap();
                 // Server receives only non-blank texts.
-                let embeddings: Vec<Vec<f32>> =
-                    inputs.iter().map(|_| vec![1.0, 2.0]).collect();
+                let embeddings: Vec<Vec<f32>> = inputs.iter().map(|_| vec![1.0, 2.0]).collect();
                 Json(serde_json::json!({ "embeddings": embeddings }))
             }),
         );

@@ -72,14 +72,12 @@ pub fn create_memory_with_storage_and_routes(
     api_key: Option<&str>,
 ) -> anyhow::Result<Box<dyn Memory>> {
     // 1. Create the embedding provider based on config (Local vs Remote).
-    let embedder: Arc<dyn EmbeddingProvider> = Arc::from(
-        embeddings::create_embedding_provider(
-            &config.embedding_provider,
-            api_key,
-            &config.embedding_model,
-            config.embedding_dimensions,
-        )?,
-    );
+    let embedder: Arc<dyn EmbeddingProvider> = Arc::from(embeddings::create_embedding_provider(
+        &config.embedding_provider,
+        api_key,
+        &config.embedding_model,
+        config.embedding_dimensions,
+    )?);
 
     // 2. Instantiate UnifiedMemory which handles SQLite and vector storage.
     let mem = UnifiedMemory::new(workspace_dir, embedder, config.sqlite_open_timeout_secs)?;

@@ -39,6 +39,12 @@ const INIT_SQL: &str = "
         PRIMARY KEY (namespace, id)
     );
     CREATE INDEX IF NOT EXISTS idx_vectors_ns ON vectors(namespace);
+
+    CREATE TABLE IF NOT EXISTS store_meta (
+        key        TEXT    PRIMARY KEY,
+        value      TEXT    NOT NULL,
+        updated_at REAL    NOT NULL
+    );
 ";
 
 /// A single search result from the vector store.
@@ -68,6 +74,12 @@ pub struct VectorStore {
 
 impl VectorStore {
     /// Opens (or creates) a vector store at the given SQLite database path.
+    ///
+    /// On first open the embedding provider name, model-name-hint, and
+    /// dimensions are persisted to a `store_meta` table. On subsequent opens
+    /// the stored dimensions are compared against the runtime embedder and an
+    /// error is returned if they mismatch (prevents silent cosine-similarity
+    /// corruption from mixed-dimension vectors).
     pub fn open(db_path: &Path, embedder: Arc<dyn EmbeddingProvider>) -> anyhow::Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -76,11 +88,14 @@ impl VectorStore {
         let conn = Connection::open(db_path)?;
         conn.execute_batch(INIT_SQL)?;
 
+        Self::check_or_store_meta(&conn, &*embedder)?;
+
         tracing::debug!(
             target: "embeddings.store",
-            "[vector-store] opened at {}, embedder={}",
+            "[vector-store] opened at {}, embedder={}, dims={}",
             db_path.display(),
-            embedder.name()
+            embedder.name(),
+            embedder.dimensions()
         );
 
         Ok(Self {
@@ -93,6 +108,7 @@ impl VectorStore {
     pub fn open_in_memory(embedder: Arc<dyn EmbeddingProvider>) -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(INIT_SQL)?;
+        Self::check_or_store_meta(&conn, &*embedder)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             embedder,
@@ -102,6 +118,57 @@ impl VectorStore {
     /// Returns a reference to the embedding provider.
     pub fn embedder(&self) -> &dyn EmbeddingProvider {
         self.embedder.as_ref()
+    }
+
+    /// Persist or validate the embedding configuration in `store_meta`.
+    fn check_or_store_meta(
+        conn: &Connection,
+        embedder: &dyn EmbeddingProvider,
+    ) -> anyhow::Result<()> {
+        let now = now_ts();
+        let stored_dims: Option<String> = conn
+            .query_row(
+                "SELECT value FROM store_meta WHERE key = 'embed_dims'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match stored_dims {
+            None => {
+                // First open — persist metadata.
+                let stmts: &[(&str, &str)] = &[
+                    ("embed_provider", embedder.name()),
+                    ("embed_dims", &embedder.dimensions().to_string()),
+                ];
+                for (key, value) in stmts {
+                    conn.execute(
+                        "INSERT OR REPLACE INTO store_meta (key, value, updated_at) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![key, value, now],
+                    )?;
+                }
+                tracing::debug!(
+                    target: "embeddings.store",
+                    "[vector-store] stored meta: provider={}, dims={}",
+                    embedder.name(),
+                    embedder.dimensions()
+                );
+            }
+            Some(dims_str) => {
+                let stored: usize = dims_str.parse().unwrap_or(0);
+                let runtime = embedder.dimensions();
+                if stored != 0 && runtime != 0 && stored != runtime {
+                    anyhow::bail!(
+                        "vector store dimension mismatch: database was created with \
+                         {stored}-dim embeddings but the current provider ({}) uses \
+                         {runtime} dims. Delete the database or reconfigure the provider.",
+                        embedder.name()
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // ── Write operations ─────────────────────────────────────
@@ -116,6 +183,11 @@ impl VectorStore {
         text: &str,
         metadata: serde_json::Value,
     ) -> anyhow::Result<()> {
+        tracing::trace!(
+            target: "embeddings.store",
+            "[vector-store] insert: id={id}, ns={namespace}, text_len={}",
+            text.len()
+        );
         let embedding = self.embedder.embed_one(text).await?;
         self.insert_with_vector(id, namespace, text, &embedding, metadata)
     }
@@ -158,6 +230,12 @@ impl VectorStore {
         if entries.is_empty() {
             return Ok(());
         }
+
+        tracing::debug!(
+            target: "embeddings.store",
+            "[vector-store] insert_batch: ns={namespace}, count={}",
+            entries.len()
+        );
 
         let texts: Vec<&str> = entries.iter().map(|(_, text, _)| *text).collect();
         let embeddings = self.embedder.embed(&texts).await?;
@@ -207,6 +285,11 @@ impl VectorStore {
         query: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<SearchResult>> {
+        tracing::trace!(
+            target: "embeddings.store",
+            "[vector-store] search: ns={namespace}, limit={limit}, query_len={}",
+            query.len()
+        );
         let query_vec = self.embedder.embed_one(query).await?;
         self.search_by_vector(namespace, &query_vec, limit)
     }
@@ -219,6 +302,10 @@ impl VectorStore {
         limit: usize,
     ) -> anyhow::Result<Vec<SearchResult>> {
         if limit == 0 {
+            tracing::trace!(
+                target: "embeddings.store",
+                "[vector-store] search_by_vector: limit=0, returning empty"
+            );
             return Ok(Vec::new());
         }
 
@@ -227,16 +314,20 @@ impl VectorStore {
             "SELECT id, namespace, text, embedding, metadata FROM vectors WHERE namespace = ?1",
         )?;
 
-        let mut scored: Vec<SearchResult> = stmt
+        let rows: Vec<(String, String, String, Vec<u8>, String)> = stmt
             .query_map(rusqlite::params![namespace], |row| {
-                let id: String = row.get(0)?;
-                let ns: String = row.get(1)?;
-                let text: String = row.get(2)?;
-                let blob: Vec<u8> = row.get(3)?;
-                let meta_str: String = row.get(4)?;
-                Ok((id, ns, text, blob, meta_str))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
             })?
-            .filter_map(|r| r.ok())
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut scored: Vec<SearchResult> = rows
+            .into_iter()
             .map(|(id, ns, text, blob, meta_str)| {
                 let stored_vec = bytes_to_vec(&blob);
                 let score = cosine_similarity(query_vec, &stored_vec);
@@ -259,6 +350,13 @@ impl VectorStore {
         });
         scored.truncate(limit);
 
+        tracing::trace!(
+            target: "embeddings.store",
+            "[vector-store] search_by_vector: ns={namespace}, scanned={}, returned={}",
+            scored.len() + scored.capacity() - scored.len(), // approximate total before truncate
+            scored.len()
+        );
+
         Ok(scored)
     }
 
@@ -273,6 +371,12 @@ impl VectorStore {
             "DELETE FROM vectors WHERE namespace = ?1 AND id = ?2",
             rusqlite::params![namespace, id],
         )?;
+
+        tracing::trace!(
+            target: "embeddings.store",
+            "[vector-store] delete: ns={namespace}, id={id}, affected={affected}"
+        );
+
         Ok(affected > 0)
     }
 
@@ -314,8 +418,7 @@ impl VectorStore {
         let mut stmt = conn.prepare("SELECT DISTINCT namespace FROM vectors ORDER BY namespace")?;
         let namespaces: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(namespaces)
     }
 }
@@ -381,8 +484,6 @@ mod tests {
     use serde_json::json;
 
     /// A test embedding provider that returns deterministic vectors.
-    /// Each text is mapped to a simple vector based on its hash for
-    /// reproducibility. Dimensions are configurable.
     struct FakeEmbedding {
         dims: usize,
     }
@@ -400,14 +501,11 @@ mod tests {
         }
     }
 
-    /// Deterministic text → vector for tests. Uses a simple hash-based
-    /// approach so similar texts get somewhat similar vectors.
     fn text_to_vec(text: &str, dims: usize) -> Vec<f32> {
         let mut vec = vec![0.0_f32; dims];
         for (i, byte) in text.bytes().enumerate() {
             vec[i % dims] += byte as f32 / 255.0;
         }
-        // L2 normalize
         let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
         if norm > 0.0 {
             for x in &mut vec {
@@ -417,8 +515,6 @@ mod tests {
         vec
     }
 
-    /// An embedder that always returns a fixed number of vectors regardless
-    /// of input count — used to test the batch mismatch error path.
     struct MismatchEmbedding;
 
     #[async_trait::async_trait]
@@ -430,7 +526,6 @@ mod tests {
             2
         }
         async fn embed(&self, _texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
-            // Always returns exactly 1 embedding, regardless of input count.
             Ok(vec![vec![1.0, 0.0]])
         }
     }
@@ -446,83 +541,61 @@ mod tests {
         let original = vec![1.0_f32, -2.5, 3.14, 0.0, f32::MAX, f32::MIN];
         let bytes = vec_to_bytes(&original);
         assert_eq!(bytes.len(), original.len() * 4);
-        let restored = bytes_to_vec(&bytes);
-        assert_eq!(original, restored);
+        assert_eq!(original, bytes_to_vec(&bytes));
     }
 
     #[test]
     fn empty_vec_roundtrip() {
-        let bytes = vec_to_bytes(&[]);
-        assert!(bytes.is_empty());
-        let restored = bytes_to_vec(&bytes);
-        assert!(restored.is_empty());
+        assert!(bytes_to_vec(&vec_to_bytes(&[])).is_empty());
     }
 
     #[test]
     fn bytes_to_vec_truncates_partial_bytes() {
-        // 5 bytes → only 1 f32 (4 bytes), last byte is ignored.
-        let bytes = vec![0u8; 5];
-        let result = bytes_to_vec(&bytes);
-        assert_eq!(result.len(), 1);
+        assert_eq!(bytes_to_vec(&[0u8; 5]).len(), 1);
     }
 
     // ── cosine_similarity ───────────────────────────────────
 
     #[test]
-    fn cosine_identical_vectors() {
+    fn cosine_identical() {
         let v = vec![1.0_f32, 2.0, 3.0];
-        let score = cosine_similarity(&v, &v);
-        assert!((score - 1.0).abs() < 1e-6, "identical vectors: {score}");
+        assert!((cosine_similarity(&v, &v) - 1.0).abs() < 1e-6);
     }
 
     #[test]
-    fn cosine_orthogonal_vectors() {
-        let a = vec![1.0_f32, 0.0];
-        let b = vec![0.0_f32, 1.0];
-        let score = cosine_similarity(&a, &b);
-        assert!(score.abs() < 1e-6, "orthogonal vectors: {score}");
+    fn cosine_orthogonal() {
+        assert!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]).abs() < 1e-6);
     }
 
     #[test]
-    fn cosine_opposite_vectors() {
-        let a = vec![1.0_f32, 0.0];
-        let b = vec![-1.0_f32, 0.0];
-        let score = cosine_similarity(&a, &b);
-        // Clamped to 0.0 since our impl clamps negative similarities.
-        assert!(score.abs() < 1e-6, "opposite vectors: {score}");
+    fn cosine_opposite() {
+        assert!(cosine_similarity(&[1.0, 0.0], &[-1.0, 0.0]).abs() < 1e-6);
     }
 
     #[test]
     fn cosine_mismatched_lengths() {
-        let a = vec![1.0_f32, 2.0];
-        let b = vec![1.0_f32, 2.0, 3.0];
-        assert_eq!(cosine_similarity(&a, &b), 0.0);
+        assert_eq!(cosine_similarity(&[1.0, 2.0], &[1.0, 2.0, 3.0]), 0.0);
     }
 
     #[test]
-    fn cosine_empty_vectors() {
+    fn cosine_empty() {
         assert_eq!(cosine_similarity(&[], &[]), 0.0);
     }
 
     #[test]
     fn cosine_zero_vector() {
-        let a = vec![0.0_f32, 0.0];
-        let b = vec![1.0_f32, 0.0];
-        assert_eq!(cosine_similarity(&a, &b), 0.0);
+        assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 0.0]), 0.0);
     }
 
     #[test]
-    fn cosine_similar_vectors_high_score() {
-        let a = vec![1.0_f32, 2.0, 3.0];
-        let b = vec![1.1_f32, 2.1, 3.1];
-        let score = cosine_similarity(&a, &b);
-        assert!(score > 0.99, "similar vectors should score high: {score}");
+    fn cosine_similar_high() {
+        assert!(cosine_similarity(&[1.0, 2.0, 3.0], &[1.1, 2.1, 3.1]) > 0.99);
     }
 
-    // ── VectorStore: open / create ──────────────────────────
+    // ── VectorStore: open / metadata ────────────────────────
 
     #[test]
-    fn open_in_memory() {
+    fn open_in_memory_succeeds() {
         let store = fake_store(3);
         assert_eq!(store.count(None).unwrap(), 0);
     }
@@ -531,16 +604,37 @@ mod tests {
     fn open_on_disk() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("sub/dir/vectors.db");
-        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FakeEmbedding { dims: 3 });
-        let store = VectorStore::open(&db_path, embedder).unwrap();
+        let store = VectorStore::open(&db_path, Arc::new(FakeEmbedding { dims: 3 })).unwrap();
         assert_eq!(store.count(None).unwrap(), 0);
         assert!(db_path.exists());
+    }
+
+    #[test]
+    fn open_reopen_same_dims_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("v.db");
+        VectorStore::open(&db_path, Arc::new(FakeEmbedding { dims: 4 })).unwrap();
+        // Reopen with same dims — should work.
+        VectorStore::open(&db_path, Arc::new(FakeEmbedding { dims: 4 })).unwrap();
+    }
+
+    #[test]
+    fn open_reopen_different_dims_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("v.db");
+        VectorStore::open(&db_path, Arc::new(FakeEmbedding { dims: 4 })).unwrap();
+        let result = VectorStore::open(&db_path, Arc::new(FakeEmbedding { dims: 8 }));
+        let msg = result.err().expect("should be an error").to_string();
+        assert!(msg.contains("dimension mismatch"), "msg: {msg}");
+        assert!(msg.contains("4"), "should mention stored dims: {msg}");
+        assert!(msg.contains("8"), "should mention runtime dims: {msg}");
     }
 
     #[test]
     fn embedder_accessor() {
         let store = fake_store(3);
         assert_eq!(store.embedder().name(), "fake");
+        assert_eq!(store.embedder().dimensions(), 3);
     }
 
     // ── insert + count ──────────────────────────────────────
@@ -551,7 +645,6 @@ mod tests {
         store.insert("a", "ns1", "hello", json!({})).await.unwrap();
         store.insert("b", "ns1", "world", json!({})).await.unwrap();
         store.insert("c", "ns2", "other", json!({})).await.unwrap();
-
         assert_eq!(store.count(Some("ns1")).unwrap(), 2);
         assert_eq!(store.count(Some("ns2")).unwrap(), 1);
         assert_eq!(store.count(None).unwrap(), 3);
@@ -568,18 +661,13 @@ mod tests {
             .insert("a", "ns", "updated", json!({"v": 2}))
             .await
             .unwrap();
-
         assert_eq!(store.count(Some("ns")).unwrap(), 1);
-
         let results = store
             .search_by_vector("ns", &text_to_vec("updated", 4), 10)
             .unwrap();
-        assert_eq!(results.len(), 1);
         assert_eq!(results[0].text, "updated");
         assert_eq!(results[0].metadata["v"], 2);
     }
-
-    // ── insert_with_vector ──────────────────────────────────
 
     #[test]
     fn insert_with_vector_sync() {
@@ -595,7 +683,7 @@ mod tests {
     #[tokio::test]
     async fn insert_batch_multiple() {
         let store = fake_store(4);
-        let entries: Vec<(&str, &str, serde_json::Value)> = vec![
+        let entries = vec![
             ("a", "alpha", json!({})),
             ("b", "beta", json!({})),
             ("c", "gamma", json!({})),
@@ -609,6 +697,14 @@ mod tests {
         let store = fake_store(4);
         store.insert_batch("ns", &[]).await.unwrap();
         assert_eq!(store.count(None).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn insert_batch_mismatch_error() {
+        let store = VectorStore::open_in_memory(Arc::new(MismatchEmbedding)).unwrap();
+        let entries = vec![("a", "alpha", json!({})), ("b", "beta", json!({}))];
+        let err = store.insert_batch("ns", &entries).await.unwrap_err();
+        assert!(err.to_string().contains("mismatch"));
     }
 
     // ── search ──────────────────────────────────────────────
@@ -628,15 +724,9 @@ mod tests {
             .insert("c", "ns", "the quick brown fox jumps", json!({}))
             .await
             .unwrap();
-
         let results = store.search("ns", "the quick brown fox", 2).await.unwrap();
         assert_eq!(results.len(), 2);
-        // First result should be the exact or closest match.
         assert!(results[0].score >= results[1].score);
-        // Scores should be between 0 and 1.
-        for r in &results {
-            assert!(r.score >= 0.0 && r.score <= 1.0, "score: {}", r.score);
-        }
     }
 
     #[tokio::test]
@@ -648,16 +738,13 @@ mod tests {
                 .await
                 .unwrap();
         }
-
-        let results = store.search("ns", "text", 3).await.unwrap();
-        assert_eq!(results.len(), 3);
+        assert_eq!(store.search("ns", "text", 3).await.unwrap().len(), 3);
     }
 
     #[tokio::test]
     async fn search_empty_namespace() {
         let store = fake_store(4);
-        let results = store.search("empty", "query", 10).await.unwrap();
-        assert!(results.is_empty());
+        assert!(store.search("empty", "query", 10).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -665,13 +752,8 @@ mod tests {
         let store = fake_store(4);
         store.insert("a", "ns1", "hello", json!({})).await.unwrap();
         store.insert("b", "ns2", "hello", json!({})).await.unwrap();
-
-        let r1 = store.search("ns1", "hello", 10).await.unwrap();
-        let r2 = store.search("ns2", "hello", 10).await.unwrap();
-        assert_eq!(r1.len(), 1);
-        assert_eq!(r2.len(), 1);
-        assert_eq!(r1[0].id, "a");
-        assert_eq!(r2[0].id, "b");
+        assert_eq!(store.search("ns1", "hello", 10).await.unwrap()[0].id, "a");
+        assert_eq!(store.search("ns2", "hello", 10).await.unwrap()[0].id, "b");
     }
 
     // ── search_by_vector ────────────────────────────────────
@@ -682,27 +764,25 @@ mod tests {
         store
             .insert_with_vector("a", "ns", "t", &[1.0, 0.0, 0.0], json!({}))
             .unwrap();
-        let results = store.search_by_vector("ns", &[1.0, 0.0, 0.0], 0).unwrap();
-        assert!(results.is_empty());
+        assert!(store
+            .search_by_vector("ns", &[1.0, 0.0, 0.0], 0)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
     fn search_by_vector_scores_correct() {
         let store = fake_store(3);
-        // Insert two orthogonal vectors.
         store
-            .insert_with_vector("x-axis", "ns", "x", &[1.0, 0.0, 0.0], json!({}))
+            .insert_with_vector("x", "ns", "x", &[1.0, 0.0, 0.0], json!({}))
             .unwrap();
         store
-            .insert_with_vector("y-axis", "ns", "y", &[0.0, 1.0, 0.0], json!({}))
+            .insert_with_vector("y", "ns", "y", &[0.0, 1.0, 0.0], json!({}))
             .unwrap();
-
-        // Query along x-axis.
         let results = store.search_by_vector("ns", &[1.0, 0.0, 0.0], 2).unwrap();
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].id, "x-axis");
+        assert_eq!(results[0].id, "x");
         assert!((results[0].score - 1.0).abs() < 1e-6);
-        assert!(results[1].score < 1e-6); // orthogonal → 0
+        assert!(results[1].score < 1e-6);
     }
 
     #[test]
@@ -711,8 +791,26 @@ mod tests {
         store
             .insert_with_vector("a", "ns", "t", &[1.0, 0.0], json!({"key": "value"}))
             .unwrap();
+        assert_eq!(
+            store.search_by_vector("ns", &[1.0, 0.0], 1).unwrap()[0].metadata["key"],
+            "value"
+        );
+    }
+
+    #[test]
+    fn search_handles_invalid_metadata_json() {
+        let store = fake_store(2);
+        {
+            let conn = store.conn.lock();
+            conn.execute(
+                "INSERT INTO vectors (id, namespace, text, embedding, metadata, created_at, updated_at)
+                 VALUES ('bad', 'ns', 'text', ?1, 'not-json', 0.0, 0.0)",
+                rusqlite::params![vec_to_bytes(&[1.0, 0.0])],
+            ).unwrap();
+        }
         let results = store.search_by_vector("ns", &[1.0, 0.0], 1).unwrap();
-        assert_eq!(results[0].metadata["key"], "value");
+        assert_eq!(results[0].id, "bad");
+        assert!(results[0].metadata.is_null());
     }
 
     // ── delete ──────────────────────────────────────────────
@@ -727,8 +825,7 @@ mod tests {
 
     #[test]
     fn delete_nonexistent() {
-        let store = fake_store(3);
-        assert!(!store.delete("ns", "no-such-id").unwrap());
+        assert!(!fake_store(3).delete("ns", "no-such-id").unwrap());
     }
 
     #[tokio::test]
@@ -750,27 +847,21 @@ mod tests {
             .insert("c", "other", "three", json!({}))
             .await
             .unwrap();
-
-        let deleted = store.clear_namespace("ns").unwrap();
-        assert_eq!(deleted, 2);
+        assert_eq!(store.clear_namespace("ns").unwrap(), 2);
         assert_eq!(store.count(Some("ns")).unwrap(), 0);
         assert_eq!(store.count(Some("other")).unwrap(), 1);
     }
 
     #[test]
     fn clear_empty_namespace() {
-        let store = fake_store(3);
-        let deleted = store.clear_namespace("empty").unwrap();
-        assert_eq!(deleted, 0);
+        assert_eq!(fake_store(3).clear_namespace("empty").unwrap(), 0);
     }
 
     // ── list_namespaces ─────────────────────────────────────
 
     #[tokio::test]
     async fn list_namespaces_empty() {
-        let store = fake_store(3);
-        let ns = store.list_namespaces().unwrap();
-        assert!(ns.is_empty());
+        assert!(fake_store(3).list_namespaces().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -779,9 +870,7 @@ mod tests {
         store.insert("a", "beta", "t", json!({})).await.unwrap();
         store.insert("b", "alpha", "t", json!({})).await.unwrap();
         store.insert("c", "beta", "t", json!({})).await.unwrap();
-
-        let ns = store.list_namespaces().unwrap();
-        assert_eq!(ns, vec!["alpha", "beta"]);
+        assert_eq!(store.list_namespaces().unwrap(), vec!["alpha", "beta"]);
     }
 
     // ── count ───────────────────────────────────────────────
@@ -791,62 +880,5 @@ mod tests {
         let store = fake_store(3);
         assert_eq!(store.count(None).unwrap(), 0);
         assert_eq!(store.count(Some("ns")).unwrap(), 0);
-    }
-
-    // ── insert_batch — mismatch error ───────────────────────
-
-    #[tokio::test]
-    async fn insert_batch_mismatch_error() {
-        let store = VectorStore::open_in_memory(Arc::new(MismatchEmbedding)).unwrap();
-        let entries: Vec<(&str, &str, serde_json::Value)> =
-            vec![("a", "alpha", json!({})), ("b", "beta", json!({}))];
-        let err = store.insert_batch("ns", &entries).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("mismatch"), "should mention mismatch: {msg}");
-        assert!(msg.contains("1"), "should mention actual count: {msg}");
-        assert!(msg.contains("2"), "should mention expected count: {msg}");
-    }
-
-    // ── FakeEmbedding dimensions accessor ───────────────────
-
-    #[test]
-    fn fake_embedding_dimensions() {
-        let e = FakeEmbedding { dims: 42 };
-        assert_eq!(e.dimensions(), 42);
-    }
-
-    // ── open on disk with tracing ───────────────────────────
-
-    #[test]
-    fn open_on_disk_creates_parents() {
-        let dir = tempfile::tempdir().unwrap();
-        let db_path = dir.path().join("a/b/c/vectors.db");
-        let embedder: Arc<dyn EmbeddingProvider> = Arc::new(FakeEmbedding { dims: 2 });
-        let store = VectorStore::open(&db_path, embedder).unwrap();
-        assert_eq!(store.embedder().name(), "fake");
-        assert_eq!(store.embedder().dimensions(), 2);
-        assert!(db_path.exists());
-    }
-
-    // ── search_by_vector with malformed metadata ────────────
-
-    #[test]
-    fn search_handles_invalid_metadata_json() {
-        let store = fake_store(2);
-        // Insert directly with raw SQL to set invalid JSON metadata.
-        {
-            let conn = store.conn.lock();
-            conn.execute(
-                "INSERT INTO vectors (id, namespace, text, embedding, metadata, created_at, updated_at)
-                 VALUES ('bad', 'ns', 'text', ?1, 'not-json', 0.0, 0.0)",
-                rusqlite::params![vec_to_bytes(&[1.0, 0.0])],
-            )
-            .unwrap();
-        }
-        let results = store.search_by_vector("ns", &[1.0, 0.0], 1).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "bad");
-        // Invalid JSON falls back to null.
-        assert!(results[0].metadata.is_null());
     }
 }

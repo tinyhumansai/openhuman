@@ -154,9 +154,7 @@ impl EmbeddingProvider for OpenAiEmbedding {
             for (j, v) in embedding.iter().enumerate() {
                 #[allow(clippy::cast_possible_truncation)]
                 let f = v.as_f64().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "non-numeric value at data[{i}].embedding[{j}]: {v}"
-                    )
+                    anyhow::anyhow!("non-numeric value at data[{i}].embedding[{j}]: {v}")
                 })? as f32;
                 vec.push(f);
             }

@@ -136,25 +136,23 @@ mod tests {
 
     #[test]
     fn factory_openai() {
-        let p =
-            create_embedding_provider("openai", Some("key"), "text-embedding-3-small", 1536)
-                .unwrap();
+        let p = create_embedding_provider("openai", Some("key"), "text-embedding-3-small", 1536)
+            .unwrap();
         assert_eq!(p.name(), "openai");
         assert_eq!(p.dimensions(), 1536);
     }
 
     #[test]
     fn factory_openai_no_api_key() {
-        let p =
-            create_embedding_provider("openai", None, "text-embedding-3-small", 1536).unwrap();
+        let p = create_embedding_provider("openai", None, "text-embedding-3-small", 1536).unwrap();
         assert_eq!(p.name(), "openai");
         assert_eq!(p.dimensions(), 1536);
     }
 
     #[test]
     fn factory_custom_url() {
-        let p = create_embedding_provider("custom:http://localhost:1234", None, "model", 768)
-            .unwrap();
+        let p =
+            create_embedding_provider("custom:http://localhost:1234", None, "model", 768).unwrap();
         assert_eq!(p.name(), "openai"); // OpenAI-compatible under the hood
         assert_eq!(p.dimensions(), 768);
     }
@@ -176,23 +174,33 @@ mod tests {
 
     #[test]
     fn factory_unknown_provider_errors() {
-        let err = create_embedding_provider("cohere", None, "model", 1536).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("cohere"), "should include provider name: {msg}");
+        let result = create_embedding_provider("cohere", None, "model", 1536);
+        let msg = result.err().expect("should be an error").to_string();
+        assert!(
+            msg.contains("cohere"),
+            "should include provider name: {msg}"
+        );
         assert!(msg.contains("unknown"), "should say unknown: {msg}");
     }
 
     #[test]
     fn factory_empty_string_errors() {
-        let err = create_embedding_provider("", None, "model", 1536).unwrap_err();
-        assert!(err.to_string().contains("unknown"));
+        let result = create_embedding_provider("", None, "model", 1536);
+        assert!(result
+            .err()
+            .expect("should error")
+            .to_string()
+            .contains("unknown"));
     }
 
     #[test]
     fn factory_fastembed_errors() {
-        let err =
-            create_embedding_provider("fastembed", None, "BGESmallENV15", 384).unwrap_err();
-        assert!(err.to_string().contains("fastembed"));
+        let result = create_embedding_provider("fastembed", None, "BGESmallENV15", 384);
+        assert!(result
+            .err()
+            .expect("should error")
+            .to_string()
+            .contains("fastembed"));
     }
 
     // ── Default provider ─────────────────────────────────────
