@@ -96,7 +96,9 @@ impl Agent {
     }
 
     /// Active Composio integrations fetched at session start.
-    pub fn connected_integrations(&self) -> &[crate::openhuman::context::prompt::ConnectedIntegration] {
+    pub fn connected_integrations(
+        &self,
+    ) -> &[crate::openhuman::context::prompt::ConnectedIntegration] {
         &self.connected_integrations
     }
 

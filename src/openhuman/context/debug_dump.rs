@@ -704,8 +704,9 @@ mod tests {
         std::fs::create_dir_all(&workspace).unwrap();
 
         let definition = skills_agent_def();
-        let dumped = render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
-            .expect("skills_agent prompt should render");
+        let dumped =
+            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
+                .expect("skills_agent prompt should render");
 
         assert_eq!(dumped.mode, "subagent");
         assert!(
@@ -894,7 +895,8 @@ mod tests {
         };
 
         let dumped =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[]).unwrap();
+            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
+                .unwrap();
         assert!(dumped.text.contains("## Tools"));
         assert!(dumped.text.contains("OpenHuman"));
 
@@ -938,7 +940,8 @@ mod tests {
         };
 
         let dumped =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[]).unwrap();
+            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
+                .unwrap();
         assert!(dumped.text.contains("## Tools"));
         assert!(!dumped.text.contains("does-not-exist"));
 
@@ -990,7 +993,8 @@ mod tests {
         };
 
         let agent_prompt =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[]).unwrap();
+            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
+                .unwrap();
         assert!(agent_prompt.text.contains("Workspace agent prompt"));
 
         definition.id = "workspace_root".into();
@@ -998,7 +1002,8 @@ mod tests {
             path: "root.md".into(),
         };
         let root_prompt =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[]).unwrap();
+            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
+                .unwrap();
         assert!(root_prompt.text.contains("Workspace root prompt"));
 
         let _ = std::fs::remove_dir_all(workspace);

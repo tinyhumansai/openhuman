@@ -46,6 +46,7 @@ pub mod types;
 
 pub use bus::{register_composio_trigger_subscriber, ComposioTriggerSubscriber};
 pub use client::{build_composio_client, ComposioClient};
+pub use ops::{fetch_connected_integrations, invalidate_connected_integrations_cache};
 pub use periodic::{record_sync_success, start_periodic_sync};
 pub use providers::{
     all_providers as all_composio_providers, get_provider as get_composio_provider,
@@ -56,7 +57,6 @@ pub use schemas::{
     all_controller_schemas as all_composio_controller_schemas,
     all_registered_controllers as all_composio_registered_controllers,
 };
-pub use ops::{fetch_connected_integrations, invalidate_connected_integrations_cache};
 pub use tools::all_composio_agent_tools;
 pub use types::{
     ComposioAuthorizeResponse, ComposioConnection, ComposioConnectionsResponse,

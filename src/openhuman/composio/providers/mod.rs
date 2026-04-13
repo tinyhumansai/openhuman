@@ -55,7 +55,9 @@ pub use registry::{
 /// a generic fallback so newly connected services still appear.
 pub fn toolkit_description(slug: &str) -> &'static str {
     match slug {
-        "gmail" => "Send, read, draft, reply, forward, and search emails; manage labels and threads",
+        "gmail" => {
+            "Send, read, draft, reply, forward, and search emails; manage labels and threads"
+        }
         "notion" => "Create, read, update, and search notion pages and notion databases",
         "github" => "Manage repositories, issues, pull requests on GitHub",
         "slack" => "Send messages, read channels, manage threads, and post updates in Slack",

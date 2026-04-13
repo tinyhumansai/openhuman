@@ -398,9 +398,7 @@ async fn fetch_connected_integrations_uncached(
     use super::providers::toolkit_description;
 
     let Some(client) = build_composio_client(config) else {
-        tracing::debug!(
-            "[composio] fetch_connected_integrations: no client (not signed in?)"
-        );
+        tracing::debug!("[composio] fetch_connected_integrations: no client (not signed in?)");
         return None;
     };
 
@@ -433,9 +431,7 @@ async fn fetch_connected_integrations_uncached(
     let tools_by_toolkit = match client.list_tools(Some(&toolkit_slugs)).await {
         Ok(resp) => resp.tools,
         Err(e) => {
-            tracing::warn!(
-                "[composio] fetch_connected_integrations: list_tools failed: {e}"
-            );
+            tracing::warn!("[composio] fetch_connected_integrations: list_tools failed: {e}");
             Vec::new()
         }
     };
@@ -449,17 +445,11 @@ async fn fetch_connected_integrations_uncached(
                 .filter(|t| {
                     // Composio action slugs are prefixed with the toolkit
                     // name in uppercase, e.g. GMAIL_SEND_EMAIL.
-                    t.function
-                        .name
-                        .starts_with(&slug.to_uppercase())
+                    t.function.name.starts_with(&slug.to_uppercase())
                 })
                 .map(|t| ConnectedIntegrationTool {
                     name: t.function.name.clone(),
-                    description: t
-                        .function
-                        .description
-                        .clone()
-                        .unwrap_or_default(),
+                    description: t.function.description.clone().unwrap_or_default(),
                 })
                 .collect();
 

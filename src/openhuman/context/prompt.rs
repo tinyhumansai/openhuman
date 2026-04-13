@@ -538,11 +538,7 @@ impl PromptSection for ConnectedIntegrationsSection {
                 );
             } else {
                 for tool in &integration.tools {
-                    let _ = writeln!(
-                        out,
-                        "- `{}`: {}",
-                        tool.name, tool.description,
-                    );
+                    let _ = writeln!(out, "- `{}`: {}", tool.name, tool.description,);
                 }
                 out.push('\n');
             }
