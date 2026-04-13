@@ -35,8 +35,11 @@ anyhow = "1.0"
 async-trait = "0.1"
 chacha20poly1305 = "0.10"
 hex = "0.4"
-fastembed = { version = "5.13", default-features = false, features = ["hf-hub-native-tls", "ort-load-dynamic"] }
-ort = { version = "=2.0.0-rc.11", default-features = false, features = ["std", "ndarray", "load-dynamic"] }
+candle-core = { version = "0.8", default-features = false }
+candle-nn = { version = "0.8", default-features = false }
+candle-transformers = { version = "0.8", default-features = false }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.4", default-features = false, features = ["native-tls", "ureq"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 futures = "0.3"
@@ -118,6 +121,7 @@ fantoccini = ["browser-native"]
 landlock = ["sandbox-landlock"]
 rag-pdf = ["dep:pdf-extract"]
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "serde-big-array"]
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 
 # Fix whisper-rs-sys CRT mismatch on Windows MSVC (LNK2038).
 # Upstream cmake build defaults to /MD but Rust uses /MT.

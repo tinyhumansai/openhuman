@@ -109,7 +109,7 @@ fn default_true() -> bool {
 }
 
 fn default_embedding_provider() -> String {
-    "fastembed".into()
+    "candle".into()
 }
 fn default_hygiene_enabled() -> bool {
     true

@@ -30,6 +30,7 @@ pub mod credentials;
 pub mod cron;
 pub mod dev_paths;
 pub mod doctor;
+pub mod embeddings;
 pub mod encryption;
 pub mod health;
 pub mod heartbeat;
