@@ -73,6 +73,83 @@ impl Drop for HotkeyListenerHandle {
     }
 }
 
+fn process_hotkey_event(
+    event_type: EventType,
+    hotkey: &HotkeyCombination,
+    mode: ActivationMode,
+    pressed_keys: &mut HashSet<Key>,
+    is_active: &AtomicBool,
+) -> Vec<HotkeyEvent> {
+    let mut emitted = Vec::new();
+
+    match event_type {
+        EventType::KeyPress(key) => {
+            let is_trigger = key == hotkey.trigger;
+            pressed_keys.insert(key);
+
+            if !is_trigger {
+                return emitted;
+            }
+
+            if !hotkey.modifiers.iter().all(|m| pressed_keys.contains(m)) {
+                return emitted;
+            }
+
+            let was_active = is_active.load(Ordering::SeqCst);
+            debug!(
+                "{LOG_PREFIX} KeyPress trigger={:?} was_active={was_active} mode={mode:?}",
+                key
+            );
+
+            match mode {
+                ActivationMode::Tap => {
+                    if was_active {
+                        is_active.store(false, Ordering::SeqCst);
+                        info!("{LOG_PREFIX} tap → Released");
+                        emitted.push(HotkeyEvent::Released);
+                    } else {
+                        is_active.store(true, Ordering::SeqCst);
+                        info!("{LOG_PREFIX} tap → Pressed");
+                        emitted.push(HotkeyEvent::Pressed);
+                    }
+                }
+                ActivationMode::Push => {
+                    if !was_active {
+                        is_active.store(true, Ordering::SeqCst);
+                        info!("{LOG_PREFIX} push → Pressed");
+                        emitted.push(HotkeyEvent::Pressed);
+                    } else {
+                        is_active.store(false, Ordering::SeqCst);
+                        info!("{LOG_PREFIX} push → Released (fallback, missed KeyRelease)");
+                        emitted.push(HotkeyEvent::Released);
+                    }
+                }
+            }
+        }
+        EventType::KeyRelease(key) => {
+            pressed_keys.remove(&key);
+
+            if key != hotkey.trigger {
+                return emitted;
+            }
+
+            debug!(
+                "{LOG_PREFIX} KeyRelease trigger={:?} is_active={}",
+                key,
+                is_active.load(Ordering::SeqCst)
+            );
+
+            if mode == ActivationMode::Push && is_active.swap(false, Ordering::SeqCst) {
+                info!("{LOG_PREFIX} push → Released");
+                emitted.push(HotkeyEvent::Released);
+            }
+        }
+        _ => {}
+    }
+
+    emitted
+}
+
 /// Parse a hotkey string like "ctrl+shift+space" or "fn" into a `HotkeyCombination`.
 pub fn parse_hotkey(hotkey_str: &str) -> Result<HotkeyCombination, String> {
     let parts: Vec<&str> = hotkey_str
@@ -134,83 +211,12 @@ pub fn start_listener(
                 if stop_flag_clone.load(Ordering::SeqCst) {
                     return;
                 }
-
-                match event.event_type {
-                    EventType::KeyPress(key) => {
-                        let mut keys = pressed_keys.lock();
-                        let is_trigger = key == hotkey.trigger;
-                        keys.insert(key);
-
-                        if !is_trigger {
-                            return;
-                        }
-
-                        // Check if all modifiers are held.
-                        if !hotkey.modifiers.iter().all(|m| keys.contains(m)) {
-                            return;
-                        }
-
-                        let was_active = is_active.load(Ordering::SeqCst);
-                        debug!(
-                            "{LOG_PREFIX} KeyPress trigger={:?} was_active={was_active} mode={mode:?}",
-                            key
-                        );
-
-                        match mode {
-                            ActivationMode::Tap => {
-                                // Tap: each press toggles.
-                                if was_active {
-                                    is_active.store(false, Ordering::SeqCst);
-                                    info!("{LOG_PREFIX} tap → Released");
-                                    let _ = tx.send(HotkeyEvent::Released);
-                                } else {
-                                    is_active.store(true, Ordering::SeqCst);
-                                    info!("{LOG_PREFIX} tap → Pressed");
-                                    let _ = tx.send(HotkeyEvent::Pressed);
-                                }
-                            }
-                            ActivationMode::Push => {
-                                if !was_active {
-                                    // Normal: start recording.
-                                    is_active.store(true, Ordering::SeqCst);
-                                    info!("{LOG_PREFIX} push → Pressed");
-                                    let _ = tx.send(HotkeyEvent::Pressed);
-                                } else {
-                                    // Already active — this means the KeyRelease
-                                    // was missed (common with macOS Fn key).
-                                    // Send Released to stop the current recording.
-                                    is_active.store(false, Ordering::SeqCst);
-                                    info!(
-                                        "{LOG_PREFIX} push → Released (fallback, missed KeyRelease)"
-                                    );
-                                    let _ = tx.send(HotkeyEvent::Released);
-                                }
-                            }
-                        }
-                    }
-                    EventType::KeyRelease(key) => {
-                        let mut keys = pressed_keys.lock();
-                        keys.remove(&key);
-
-                        if key != hotkey.trigger {
-                            return;
-                        }
-
-                        debug!(
-                            "{LOG_PREFIX} KeyRelease trigger={:?} is_active={}",
-                            key,
-                            is_active.load(Ordering::SeqCst)
-                        );
-
-                        // In push mode, release stops recording.
-                        if mode == ActivationMode::Push
-                            && is_active.swap(false, Ordering::SeqCst)
-                        {
-                            info!("{LOG_PREFIX} push → Released");
-                            let _ = tx.send(HotkeyEvent::Released);
-                        }
-                    }
-                    _ => {}
+                let emitted = {
+                    let mut keys = pressed_keys.lock();
+                    process_hotkey_event(event.event_type, &hotkey, mode, &mut keys, &is_active)
+                };
+                for event in emitted {
+                    let _ = tx.send(event);
                 }
             };
 
@@ -324,6 +330,11 @@ fn string_to_key(s: &str) -> Result<Key, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    fn combo() -> HotkeyCombination {
+        parse_hotkey("ctrl+space").expect("test hotkey")
+    }
 
     #[test]
     fn parse_simple_hotkey() {
@@ -367,5 +378,119 @@ mod tests {
     #[test]
     fn activation_mode_default_is_push() {
         assert_eq!(ActivationMode::default(), ActivationMode::Push);
+    }
+
+    #[test]
+    fn parse_hotkey_trims_and_ignores_empty_segments() {
+        let combo = parse_hotkey("  ctrl +  + shift + space ").unwrap();
+        assert_eq!(combo.trigger, Key::Space);
+        assert!(combo.modifiers.contains(&Key::ControlLeft));
+        assert!(combo.modifiers.contains(&Key::ShiftLeft));
+        assert_eq!(combo.modifiers.len(), 2);
+    }
+
+    #[test]
+    fn parse_hotkey_supports_aliases_and_right_side_modifiers() {
+        let combo = parse_hotkey("rctrl+rshift+return").unwrap();
+        assert_eq!(combo.trigger, Key::Return);
+        assert!(combo.modifiers.contains(&Key::ControlRight));
+        assert!(combo.modifiers.contains(&Key::ShiftRight));
+    }
+
+    #[test]
+    fn parse_hotkey_rejects_whitespace_only() {
+        let err = parse_hotkey("   ").expect_err("whitespace-only hotkey should fail");
+        assert!(err.contains("empty"));
+    }
+
+    #[test]
+    fn process_hotkey_event_push_requires_modifier_then_releases() {
+        let combo = combo();
+        let is_active = AtomicBool::new(false);
+        let mut pressed = HashSet::new();
+
+        let no_emit = process_hotkey_event(
+            EventType::KeyPress(Key::Space),
+            &combo,
+            ActivationMode::Push,
+            &mut pressed,
+            &is_active,
+        );
+        assert!(no_emit.is_empty());
+
+        process_hotkey_event(
+            EventType::KeyPress(Key::ControlLeft),
+            &combo,
+            ActivationMode::Push,
+            &mut pressed,
+            &is_active,
+        );
+        let pressed_event = process_hotkey_event(
+            EventType::KeyPress(Key::Space),
+            &combo,
+            ActivationMode::Push,
+            &mut pressed,
+            &is_active,
+        );
+        assert_eq!(pressed_event, vec![HotkeyEvent::Pressed]);
+
+        let release_event = process_hotkey_event(
+            EventType::KeyRelease(Key::Space),
+            &combo,
+            ActivationMode::Push,
+            &mut pressed,
+            &is_active,
+        );
+        assert_eq!(release_event, vec![HotkeyEvent::Released]);
+    }
+
+    #[test]
+    fn process_hotkey_event_push_second_press_is_release_fallback() {
+        let combo = combo();
+        let is_active = AtomicBool::new(false);
+        let mut pressed = HashSet::from([Key::ControlLeft]);
+
+        let first = process_hotkey_event(
+            EventType::KeyPress(Key::Space),
+            &combo,
+            ActivationMode::Push,
+            &mut pressed,
+            &is_active,
+        );
+        let second = process_hotkey_event(
+            EventType::KeyPress(Key::Space),
+            &combo,
+            ActivationMode::Push,
+            &mut pressed,
+            &is_active,
+        );
+
+        assert_eq!(first, vec![HotkeyEvent::Pressed]);
+        assert_eq!(second, vec![HotkeyEvent::Released]);
+    }
+
+    #[test]
+    fn process_hotkey_event_tap_toggles_on_each_press() {
+        let combo = combo();
+        let is_active = AtomicBool::new(false);
+        let mut pressed = HashSet::from([Key::ControlLeft]);
+
+        let first = process_hotkey_event(
+            EventType::KeyPress(Key::Space),
+            &combo,
+            ActivationMode::Tap,
+            &mut pressed,
+            &is_active,
+        );
+        let second = process_hotkey_event(
+            EventType::KeyPress(Key::Space),
+            &combo,
+            ActivationMode::Tap,
+            &mut pressed,
+            &is_active,
+        );
+
+        assert_eq!(first, vec![HotkeyEvent::Pressed]);
+        assert_eq!(second, vec![HotkeyEvent::Released]);
     }
 }

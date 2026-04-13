@@ -220,4 +220,27 @@ mod tests {
         let text = rx.try_recv().expect("should receive transcription");
         assert_eq!(text, "hello world");
     }
+
+    #[test]
+    fn normalize_commandorcontrol_alias() {
+        let result = normalize_hotkey_for_rdev("CommandOrControl+Alt+K");
+        if cfg!(target_os = "macos") {
+            assert_eq!(result, "cmd+alt+k");
+        } else {
+            assert_eq!(result, "ctrl+alt+k");
+        }
+    }
+
+    #[test]
+    fn dictation_event_serializes_wire_type_field() {
+        let evt = DictationEvent {
+            event_type: "released".to_string(),
+            hotkey: "fn".to_string(),
+            activation_mode: "push".to_string(),
+        };
+        let json = serde_json::to_value(evt).expect("serialize dictation event");
+        assert_eq!(json["type"], "released");
+        assert_eq!(json["hotkey"], "fn");
+        assert_eq!(json["activation_mode"], "push");
+    }
 }

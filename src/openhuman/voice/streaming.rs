@@ -36,6 +36,38 @@ struct ClientCommand {
     cmd_type: String,
 }
 
+fn decode_pcm16le_frame(data: &[u8]) -> Option<Vec<i16>> {
+    if data.len() % 2 != 0 {
+        return None;
+    }
+
+    Some(
+        data.chunks_exact(2)
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect(),
+    )
+}
+
+fn append_stream_samples(audio_buf: &mut Vec<i16>, full_audio_buf: &mut Vec<i16>, samples: &[i16]) {
+    full_audio_buf.extend_from_slice(samples);
+    audio_buf.extend_from_slice(samples);
+    if audio_buf.len() > MAX_STREAM_BUFFER_SAMPLES {
+        let drop_count = audio_buf.len() - MAX_STREAM_BUFFER_SAMPLES;
+        audio_buf.drain(..drop_count);
+        log::debug!(
+            "{LOG_PREFIX} sliding window trimmed {} samples, kept {}",
+            drop_count,
+            audio_buf.len()
+        );
+    }
+}
+
+fn is_stop_command(text: &str) -> bool {
+    serde_json::from_str::<ClientCommand>(text)
+        .map(|cmd| cmd.cmd_type == "stop")
+        .unwrap_or(false)
+}
+
 /// Handle an upgraded WebSocket connection for streaming dictation.
 pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
     log::info!("{LOG_PREFIX} new streaming dictation connection");
@@ -120,28 +152,14 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Binary(data))) => {
-                        // PCM16 LE bytes → i16 samples
-                        if data.len() % 2 != 0 {
+                        let Some(samples) = decode_pcm16le_frame(&data) else {
                             log::warn!("{LOG_PREFIX} received odd-length binary frame, skipping");
                             continue;
-                        }
-                        let samples: Vec<i16> = data
-                            .chunks_exact(2)
-                            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
-                            .collect();
+                        };
 
-                        full_audio_buf.lock().await.extend_from_slice(&samples);
+                        let mut full = full_audio_buf.lock().await;
                         let mut buf = audio_buf.lock().await;
-                        buf.extend_from_slice(&samples);
-                        if buf.len() > MAX_STREAM_BUFFER_SAMPLES {
-                            let drop_count = buf.len() - MAX_STREAM_BUFFER_SAMPLES;
-                            buf.drain(..drop_count);
-                            log::debug!(
-                                "{LOG_PREFIX} sliding window trimmed {} samples, kept {}",
-                                drop_count,
-                                buf.len()
-                            );
-                        }
+                        append_stream_samples(&mut buf, &mut full, &samples);
                         audio_revision.fetch_add(1, Ordering::Relaxed);
                         log::trace!(
                             "{LOG_PREFIX} buffered {} new samples, total {}",
@@ -151,11 +169,9 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
                     }
 
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(cmd) = serde_json::from_str::<ClientCommand>(&text) {
-                            if cmd.cmd_type == "stop" {
-                                log::info!("{LOG_PREFIX} stop command received, running final inference");
-                                break; // fall through to final transcription
-                            }
+                        if is_stop_command(&text) {
+                            log::info!("{LOG_PREFIX} stop command received, running final inference");
+                            break; // fall through to final transcription
                         }
                     }
 
@@ -234,4 +250,38 @@ pub async fn handle_dictation_ws(mut socket: WebSocket, config: Arc<Config>) {
     let _ = socket.send(Message::Text(msg.to_string().into())).await;
     log::info!("{LOG_PREFIX} streaming session complete");
     // Socket is dropped here, which sends a close frame automatically
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_pcm16le_frame_rejects_odd_length() {
+        assert!(decode_pcm16le_frame(&[1, 2, 3]).is_none());
+    }
+
+    #[test]
+    fn decode_pcm16le_frame_decodes_samples() {
+        let samples = decode_pcm16le_frame(&[0x01, 0x00, 0xff, 0xff]).expect("decode");
+        assert_eq!(samples, vec![1, -1]);
+    }
+
+    #[test]
+    fn append_stream_samples_keeps_full_audio_and_trims_window() {
+        let mut audio = vec![0; MAX_STREAM_BUFFER_SAMPLES - 2];
+        let mut full = vec![1, 2];
+        append_stream_samples(&mut audio, &mut full, &[3, 4, 5, 6]);
+
+        assert_eq!(full, vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(audio.len(), MAX_STREAM_BUFFER_SAMPLES);
+        assert_eq!(&audio[audio.len() - 4..], &[3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn is_stop_command_only_accepts_stop_type() {
+        assert!(is_stop_command(r#"{"type":"stop"}"#));
+        assert!(!is_stop_command(r#"{"type":"continue"}"#));
+        assert!(!is_stop_command("not json"));
+    }
 }

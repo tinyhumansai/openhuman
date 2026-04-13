@@ -514,6 +514,7 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn schema_names_are_stable() {
@@ -594,5 +595,108 @@ mod tests {
     fn unknown_schema_returns_fallback() {
         let s = voice_schemas("voice_nonexistent");
         assert_eq!(s.function, "unknown");
+    }
+
+    #[test]
+    fn deserialize_params_applies_defaults() {
+        let params = Map::from_iter([
+            ("audio_path".to_string(), json!("/tmp/audio.wav")),
+            ("context".to_string(), Value::Null),
+        ]);
+
+        let parsed = deserialize_params::<TranscribeParams>(params).expect("parse transcribe");
+        assert_eq!(parsed.audio_path, "/tmp/audio.wav");
+        assert_eq!(parsed.context, None);
+        assert!(!parsed.skip_cleanup);
+    }
+
+    #[test]
+    fn deserialize_params_rejects_wrong_type() {
+        let params = Map::from_iter([("audio_bytes".to_string(), json!("not-bytes"))]);
+        let err = deserialize_params::<TranscribeBytesParams>(params)
+            .expect_err("wrong type should fail");
+        assert!(err.contains("invalid params"));
+    }
+
+    #[test]
+    fn to_json_returns_inner_value() {
+        let json = to_json(RpcOutcome::single_log(json!({"ok": true}), "done"))
+            .expect("serialize outcome");
+        assert_eq!(json["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn overlay_notify_recording_started_publishes_pressed_event() {
+        use crate::openhuman::voice::dictation_listener::subscribe_dictation_events;
+
+        let mut rx = subscribe_dictation_events();
+        let params = Map::from_iter([("state".to_string(), json!("recording_started"))]);
+
+        let result = handle_overlay_stt_notify(params)
+            .await
+            .expect("overlay notify should succeed");
+        assert_eq!(result["ok"], true);
+
+        let evt = rx.try_recv().expect("expected dictation event");
+        assert_eq!(evt.event_type, "pressed");
+        assert_eq!(evt.hotkey, "chat_button");
+    }
+
+    #[tokio::test]
+    async fn overlay_notify_transcription_done_publishes_text_and_release() {
+        use crate::openhuman::voice::dictation_listener::{
+            subscribe_dictation_events, subscribe_transcription_results,
+        };
+
+        let mut dictation_rx = subscribe_dictation_events();
+        let mut transcription_rx = subscribe_transcription_results();
+        let params = Map::from_iter([
+            ("state".to_string(), json!("transcription_done")),
+            ("text".to_string(), json!("hello from overlay")),
+        ]);
+
+        let result = handle_overlay_stt_notify(params)
+            .await
+            .expect("overlay notify should succeed");
+        assert_eq!(result["ok"], true);
+
+        let text = transcription_rx
+            .try_recv()
+            .expect("expected transcription broadcast");
+        assert_eq!(text, "hello from overlay");
+
+        let mut saw_release = false;
+        while let Ok(evt) = dictation_rx.try_recv() {
+            if evt.event_type == "released" {
+                saw_release = true;
+                break;
+            }
+        }
+        assert!(saw_release, "expected a released dictation event");
+    }
+
+    #[tokio::test]
+    async fn overlay_notify_transcription_done_requires_text() {
+        let params = Map::from_iter([("state".to_string(), json!("transcription_done"))]);
+
+        let err = handle_overlay_stt_notify(params)
+            .await
+            .expect_err("missing text should fail");
+        assert!(err.contains("text` is required"));
+    }
+
+    #[tokio::test]
+    async fn server_status_and_stop_return_stopped_when_uninitialized() {
+        let status = handle_voice_server_status(Map::new())
+            .await
+            .expect("status handler");
+        let stopped = handle_voice_server_stop(Map::new())
+            .await
+            .expect("stop handler");
+
+        assert_eq!(status["state"], "stopped");
+        assert_eq!(stopped["state"], "stopped");
+        assert_eq!(status["transcription_count"], 0);
+        assert_eq!(stopped["transcription_count"], 0);
     }
 }

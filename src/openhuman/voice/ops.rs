@@ -365,4 +365,48 @@ mod tests {
         let result = voice_status(&config).await.unwrap();
         assert!(result.value.whisper_binary.is_some());
     }
+
+    #[test]
+    fn safe_basename_helpers_cover_missing_and_present_values() {
+        assert_eq!(safe_basename_path(&None), "<none>");
+        assert_eq!(safe_basename_str(&None), "<none>");
+
+        let path = Some(std::path::PathBuf::from("/tmp/models/voice.bin"));
+        let string = Some("/tmp/models/voice.bin".to_string());
+        assert_eq!(safe_basename_path(&path), "voice.bin");
+        assert_eq!(safe_basename_str(&string), "voice.bin");
+    }
+
+    #[tokio::test]
+    async fn voice_transcribe_errors_when_local_ai_disabled() {
+        let mut config = Config::default();
+        config.local_ai.enabled = false;
+
+        let err = voice_transcribe(&config, " /tmp/input.wav ", None, true)
+            .await
+            .expect_err("disabled local ai should fail");
+        assert!(err.contains("local ai is disabled"));
+    }
+
+    #[tokio::test]
+    async fn voice_transcribe_bytes_errors_when_local_ai_disabled() {
+        let mut config = Config::default();
+        config.local_ai.enabled = false;
+
+        let err = voice_transcribe_bytes(&config, b"abc", Some("wav".to_string()), None, true)
+            .await
+            .expect_err("disabled local ai should fail");
+        assert!(err.contains("local ai is disabled"));
+    }
+
+    #[tokio::test]
+    async fn voice_tts_errors_when_local_ai_disabled() {
+        let mut config = Config::default();
+        config.local_ai.enabled = false;
+
+        let err = voice_tts(&config, "hello world", None)
+            .await
+            .expect_err("disabled local ai should fail");
+        assert!(err.contains("local ai is disabled"));
+    }
 }
