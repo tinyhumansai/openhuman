@@ -41,6 +41,17 @@ export interface ComposioToolkitMeta {
   icon: ReactNode;
 }
 
+const TOOLKIT_ALIASES: Record<string, string> = {
+  google_calendar: 'googlecalendar',
+  google_drive: 'googledrive',
+  googlesheets: 'google_sheets',
+};
+
+export function canonicalizeComposioToolkitSlug(slug: string): string {
+  const key = slug.toLowerCase();
+  return TOOLKIT_ALIASES[key] ?? key;
+}
+
 function GmailIcon() {
   return (
     <SkillIconBadge
@@ -286,7 +297,7 @@ export const KNOWN_COMPOSIO_TOOLKITS = Object.freeze([
 ]);
 
 export function composioToolkitMeta(slug: string): ComposioToolkitMeta {
-  const key = slug.toLowerCase();
+  const key = canonicalizeComposioToolkitSlug(slug);
   const hit = CATALOG[key];
   if (hit) return { slug: key, ...hit };
   // Fallback: title-case the slug and bucket it under "Other".
@@ -294,7 +305,7 @@ export function composioToolkitMeta(slug: string): ComposioToolkitMeta {
   return {
     slug: key,
     name,
-    description: `Composio integration for ${name}.`,
+    description: `Integration for ${name}.`,
     category: 'Other',
     icon: <GenericIntegrationIcon />,
   };

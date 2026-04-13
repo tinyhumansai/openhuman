@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
 import ComposioConnectModal from '../components/composio/ComposioConnectModal';
 import {
+  canonicalizeComposioToolkitSlug,
   composioToolkitMeta,
   type ComposioToolkitMeta,
   KNOWN_COMPOSIO_TOOLKITS,
@@ -213,7 +214,7 @@ export default function Skills() {
   );
 
   const composioCatalogToolkits = useMemo(() => {
-    const normalizedToolkits = composioToolkits.map(slug => slug.toLowerCase());
+    const normalizedToolkits = composioToolkits.map(slug => canonicalizeComposioToolkitSlug(slug));
     const missingKnownToolkits = KNOWN_COMPOSIO_TOOLKITS.filter(
       slug => !normalizedToolkits.includes(slug)
     );

@@ -43,6 +43,6 @@ describe('Skills page — Notion composio integration', () => {
     fireEvent.click(within(notionCard as HTMLElement).getByRole('button', { name: 'Connect' }));
 
     expect(await screen.findByRole('heading', { name: 'Connect Notion' })).toBeInTheDocument();
-    expect(screen.getByText(/Connect your Notion account through Composio\./i)).toBeInTheDocument();
+    expect(screen.getByText(/Connect your Notion account\./i)).toBeInTheDocument();
   });
 });

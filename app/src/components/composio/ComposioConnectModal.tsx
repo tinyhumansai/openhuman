@@ -251,9 +251,8 @@ export default function ComposioConnectModal({
           {phase === 'idle' && (
             <>
               <p className="text-sm text-stone-600">
-                Connect your {toolkit.name} account through Composio. We will open a browser window
-                where you can grant access, and then this app will detect the connection
-                automatically.
+                Connect your {toolkit.name} account. We will open a browser window where you can
+                grant access, and then this app will detect the connection automatically.
               </p>
               <button
                 type="button"
