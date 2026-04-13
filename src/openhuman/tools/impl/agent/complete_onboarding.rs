@@ -84,13 +84,42 @@ async fn check_status() -> anyhow::Result<ToolResult> {
 
     // ── Core setup ──────────────────────────────────────────────────
     report.push_str("### Core\n");
-    let has_api_key = config.api_key.as_ref().map_or(false, |k| !k.is_empty());
+
+    // Authentication can come from EITHER:
+    // 1. `config.api_key` — the legacy free-form provider key field,
+    //    usually `None` for users who go through the desktop login
+    //    flow (the deep-link OAuth handshake doesn't write here);
+    // 2. The `app-session:default` profile in `auth-profiles.json`,
+    //    populated by `exchange_token` after the desktop OAuth flow
+    //    completes. This is the canonical inference credential — it
+    //    holds the openhuman backend session JWT, encrypted with
+    //    `.secret_key`. Every production inference RPC reads from
+    //    here via `crate::api::jwt::get_session_token`.
+    //
+    // Previously this status check looked only at `config.api_key`,
+    // which meant any user logged in through the desktop OAuth flow
+    // (the only way to get an account today) was reported as having
+    // "no API key" because their JWT lives in the auth profile store,
+    // not the config TOML. The welcome agent then refused to call
+    // `complete_onboarding(complete)` and re-ran on every chat turn,
+    // even though the user was fully authenticated. Fix: check both
+    // sources and report authenticated when either is present.
+    let has_legacy_api_key = config.api_key.as_ref().map_or(false, |k| !k.is_empty());
+    let has_session_jwt = crate::api::jwt::get_session_token(&config)
+        .ok()
+        .flatten()
+        .is_some_and(|t| !t.is_empty());
+    let is_authenticated = has_legacy_api_key || has_session_jwt;
     report.push_str(&format!(
-        "- API key: {}\n",
-        if has_api_key {
-            "configured ✓"
+        "- Authentication: {}\n",
+        if is_authenticated {
+            if has_session_jwt {
+                "configured ✓ (session token from desktop login)"
+            } else {
+                "configured ✓ (legacy api_key)"
+            }
         } else {
-            "**missing** — required for inference"
+            "**missing** — log in via the desktop app or set `api_key` in config to enable inference"
         }
     ));
     report.push_str(&format!(
