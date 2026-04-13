@@ -123,7 +123,9 @@ fn user_home_agents_dir() -> Option<PathBuf> {
     if let Ok(custom) = std::env::var("OPENHUMAN_HOME") {
         return Some(PathBuf::from(custom).join("agents"));
     }
-    dirs::home_dir().map(|h| h.join(".openhuman").join("agents"))
+    crate::openhuman::config::default_root_openhuman_dir()
+        .ok()
+        .map(|dir| dir.join("agents"))
 }
 
 #[cfg(test)]

@@ -49,9 +49,8 @@ pub fn init(workspace_dir: PathBuf) -> Result<MemoryClientRef, String> {
 
 /// Initialise using the default `.openhuman/workspace` directory.
 pub fn init_default() -> Result<MemoryClientRef, String> {
-    let workspace_dir = dirs::home_dir()
-        .ok_or_else(|| "failed to resolve home directory".to_string())?
-        .join(".openhuman")
+    let workspace_dir = crate::openhuman::config::default_root_openhuman_dir()
+        .map_err(|e| e.to_string())?
         .join("workspace");
     init(workspace_dir)
 }

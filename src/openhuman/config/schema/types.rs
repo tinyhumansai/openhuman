@@ -198,9 +198,12 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let home =
-            UserDirs::new().map_or_else(|| PathBuf::from("."), |u| u.home_dir().to_path_buf());
-        let openhuman_dir = home.join(".openhuman");
+        let openhuman_dir =
+            crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
+                let home = UserDirs::new()
+                    .map_or_else(|| PathBuf::from("."), |u| u.home_dir().to_path_buf());
+                home.join(".openhuman")
+            });
 
         Self {
             workspace_dir: openhuman_dir.join("workspace"),

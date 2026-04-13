@@ -104,8 +104,8 @@ impl EncryptionKey {
 /// If an active user is set, returns the user-scoped directory
 /// (`~/.openhuman/users/{user_id}`); otherwise falls back to `~/.openhuman/`.
 pub fn get_data_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
-    let root_dir = home.join(".openhuman");
+    let root_dir = crate::openhuman::config::default_root_openhuman_dir()
+        .map_err(|e| format!("Cannot determine app data directory: {e}"))?;
     std::fs::create_dir_all(&root_dir)
         .map_err(|e| format!("Failed to create data directory: {e}"))?;
 

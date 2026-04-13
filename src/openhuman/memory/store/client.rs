@@ -64,9 +64,8 @@ impl MemoryClient {
     /// Returns an error string if the home directory cannot be resolved or if
     /// initialization fails.
     pub fn new_local() -> Result<Self, String> {
-        let workspace_dir = dirs::home_dir()
-            .ok_or_else(|| "Failed to resolve home directory".to_string())?
-            .join(".openhuman")
+        let workspace_dir = crate::openhuman::config::default_root_openhuman_dir()
+            .map_err(|e| e.to_string())?
             .join("workspace");
         Self::from_workspace_dir(workspace_dir)
     }
