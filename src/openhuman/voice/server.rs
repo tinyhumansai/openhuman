@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use log::{debug, error, info, warn};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
 use crate::openhuman::accessibility;
@@ -297,7 +298,39 @@ impl VoiceServer {
                     recording_pending_rx = None;
                     match result {
                         Ok(Ok(handle)) => {
-                            info!("{LOG_PREFIX} recording handle ready (pending_stop={pending_stop})");
+                            // Check for a buffered stop event that lost the
+                            // select! race against pending_ready. On warm CPAL
+                            // init both branches may be ready simultaneously;
+                            // select! picks one pseudo-randomly, so a Released
+                            // event can sit unprocessed in hotkey_rx.
+                            let had_pending_stop = pending_stop;
+                            if !pending_stop {
+                                if let Ok(buffered) = hotkey_rx.try_recv() {
+                                    match buffered {
+                                        HotkeyEvent::Released => {
+                                            info!(
+                                                "{LOG_PREFIX} recording handle ready — found buffered Released in hotkey_rx (select! race recovered)"
+                                            );
+                                            pending_stop = true;
+                                        }
+                                        HotkeyEvent::Pressed => {
+                                            // A second Pressed while pending means
+                                            // user wants to stop (tap-style). Treat
+                                            // the same as a stop intent.
+                                            info!(
+                                                "{LOG_PREFIX} recording handle ready — found buffered Pressed in hotkey_rx (treating as stop intent)"
+                                            );
+                                            pending_stop = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            info!(
+                                "{LOG_PREFIX} recording handle ready (pending_stop={pending_stop}, was_buffered={})",
+                                !had_pending_stop && pending_stop
+                            );
+
                             if pending_stop {
                                 // A stop intent arrived while cpal was initialising.
                                 // Keep recording for a minimum duration, then stop
@@ -389,6 +422,7 @@ impl VoiceServer {
         generation: u64,
         expected_app: Option<String>,
     ) {
+        let pipeline_id = Uuid::new_v4().to_string()[..8].to_string();
         let state = self.state.clone();
         let server_config = self.config.clone();
         let transcription_count = self.transcription_count.clone();
@@ -397,8 +431,13 @@ impl VoiceServer {
         let recent_transcripts = self.recent_transcripts.clone();
         let app_config = config.clone();
 
+        info!(
+            "{LOG_PREFIX} [pipeline={pipeline_id}] spawning process_recording (generation={generation})"
+        );
+
         tokio::spawn(async move {
             process_recording_bg(
+                &pipeline_id,
                 handle,
                 &app_config,
                 &server_config,
@@ -502,6 +541,7 @@ async fn push_recent_transcript(recent_transcripts: &Mutex<Vec<String>>, text: &
 /// state is passed as `Arc` handles.
 #[allow(clippy::too_many_arguments)]
 async fn process_recording_bg(
+    pipeline_id: &str,
     handle: RecordingHandle,
     config: &Config,
     server_config: &VoiceServerConfig,
@@ -514,6 +554,7 @@ async fn process_recording_bg(
     expected_app: Option<String>,
 ) {
     let pipeline_started = Instant::now();
+    info!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=start generation={generation}");
     update_state_if_current(
         &state,
         &session_generation,
@@ -528,7 +569,7 @@ async fn process_recording_bg(
         Ok(result) => {
             let stop_elapsed = stop_started.elapsed();
             info!(
-                "{LOG_PREFIX} recording stopped: {:.1}s, {} bytes, peak_rms={:.6} (stop_elapsed_ms={})",
+                "{LOG_PREFIX} [pipeline={pipeline_id}] stage=stop_recording duration={:.1}s bytes={} peak_rms={:.6} stop_elapsed_ms={}",
                 result.duration_secs,
                 result.wav_bytes.len(),
                 result.peak_rms,
@@ -538,8 +579,9 @@ async fn process_recording_bg(
             // Gate 1: minimum duration.
             if result.duration_secs < server_config.min_duration_secs {
                 warn!(
-                    "{LOG_PREFIX} recording too short ({:.1}s), skipping",
-                    result.duration_secs
+                    "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_duration DROPPED ({:.1}s < {:.1}s min)",
+                    result.duration_secs,
+                    server_config.min_duration_secs
                 );
                 update_state_if_current(
                     &state,
@@ -555,7 +597,7 @@ async fn process_recording_bg(
             // Gate 2: silence detection.
             if result.peak_rms < server_config.silence_threshold {
                 warn!(
-                    "{LOG_PREFIX} audio is silence (peak_rms={:.6} < threshold={:.6}), skipping transcription",
+                    "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_silence DROPPED (peak_rms={:.6} < threshold={:.6})",
                     result.peak_rms,
                     server_config.silence_threshold
                 );
@@ -576,13 +618,13 @@ async fn process_recording_bg(
                 .as_deref()
                 .or(server_config.context.as_deref());
             if let Some(app) = expected_app.as_deref() {
-                debug!("{LOG_PREFIX} insertion target captured on hotkey press: app='{app}'");
+                debug!("{LOG_PREFIX} [pipeline={pipeline_id}] insertion target: app='{app}'");
             } else {
-                debug!("{LOG_PREFIX} insertion target unknown at hotkey press");
+                debug!("{LOG_PREFIX} [pipeline={pipeline_id}] insertion target unknown");
             }
 
             info!(
-                "{LOG_PREFIX} transcribing: skip_cleanup={} context={}",
+                "{LOG_PREFIX} [pipeline={pipeline_id}] stage=transcribe skip_cleanup={} context={}",
                 server_config.skip_cleanup,
                 context.map_or("none".to_string(), |c| format!("{}chars", c.len()))
             );
@@ -601,7 +643,7 @@ async fn process_recording_bg(
                     let transcribe_elapsed = transcribe_started.elapsed();
                     let text = &outcome.value.text;
                     info!(
-                        "{LOG_PREFIX} transcription: '{}' ({} chars, transcribe_elapsed_ms={})",
+                        "{LOG_PREFIX} [pipeline={pipeline_id}] stage=transcription_result text='{}' chars={} elapsed_ms={}",
                         truncate_for_log(text, 80),
                         text.len(),
                         transcribe_elapsed.as_millis()
@@ -610,7 +652,7 @@ async fn process_recording_bg(
                     // Gate 3: filter hallucinated/blank output.
                     if is_hallucinated_output(text) {
                         warn!(
-                            "{LOG_PREFIX} detected hallucinated output, discarding: '{}'",
+                            "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_hallucination DROPPED text='{}'",
                             truncate_for_log(text, 60)
                         );
                         update_state_if_current(
@@ -637,45 +679,46 @@ async fn process_recording_bg(
                             .unwrap_or(false);
 
                         if is_self {
-                            super::dictation_listener::publish_transcription(text.to_string());
+                            let receivers =
+                                super::dictation_listener::publish_transcription(text.to_string());
                             transcription_count.fetch_add(1, Ordering::Relaxed);
                             info!(
-                                "{LOG_PREFIX} app is focused — delivered via Socket.IO (total_pipeline_ms={})",
+                                "{LOG_PREFIX} [pipeline={pipeline_id}] stage=deliver_socketio receivers={receivers} total_pipeline_ms={}",
                                 pipeline_started.elapsed().as_millis()
                             );
                         } else {
                             let insert_started = Instant::now();
                             if let Err(e) = text_input::insert_text(text, expected_app.as_deref()) {
-                                error!("{LOG_PREFIX} failed to insert text: {e}");
+                                error!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=deliver_paste FAILED: {e}");
                                 *last_error.lock().await = Some(e);
                             } else {
                                 let insert_elapsed = insert_started.elapsed();
                                 transcription_count.fetch_add(1, Ordering::Relaxed);
                                 info!(
-                                    "{LOG_PREFIX} text inserted into active field (insert_elapsed_ms={}, total_pipeline_ms={})",
+                                    "{LOG_PREFIX} [pipeline={pipeline_id}] stage=deliver_paste insert_ms={} total_pipeline_ms={}",
                                     insert_elapsed.as_millis(),
                                     pipeline_started.elapsed().as_millis()
                                 );
                             }
                         }
                     } else {
-                        debug!("{LOG_PREFIX} transcription was empty, nothing to insert");
+                        warn!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_empty DROPPED (transcription was blank)");
                     }
                 }
                 Err(e) => {
-                    error!("{LOG_PREFIX} transcription failed: {e}");
+                    error!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=transcribe FAILED: {e}");
                     *last_error.lock().await = Some(e);
                 }
             }
         }
         Err(e) => {
-            error!("{LOG_PREFIX} failed to stop recording: {e}");
+            error!("{LOG_PREFIX} [pipeline={pipeline_id}] stage=stop_recording FAILED: {e}");
             *last_error.lock().await = Some(e);
         }
     }
 
-    debug!(
-        "{LOG_PREFIX} process_recording finished (total_pipeline_ms={})",
+    info!(
+        "{LOG_PREFIX} [pipeline={pipeline_id}] stage=done total_pipeline_ms={}",
         pipeline_started.elapsed().as_millis()
     );
     update_state_if_current(
@@ -1091,6 +1134,7 @@ mod tests {
         let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(generation));
 
         process_recording_bg(
+            "test",
             handle,
             &Config::default(),
             &VoiceServerConfig::default(),
@@ -1123,6 +1167,7 @@ mod tests {
         let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(generation));
 
         process_recording_bg(
+            "test",
             handle,
             &Config::default(),
             &VoiceServerConfig::default(),
@@ -1155,6 +1200,7 @@ mod tests {
         let session_generation = Arc::new(std::sync::atomic::AtomicU64::new(generation));
 
         process_recording_bg(
+            "test",
             handle,
             &Config::default(),
             &VoiceServerConfig::default(),
