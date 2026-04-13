@@ -185,6 +185,15 @@ const CAPABILITIES: &[Capability] = &[
         status: CapabilityStatus::Beta,
     },
     Capability {
+        id: "skills.run_apify_actors",
+        name: "Run Apify Actors",
+        domain: "skills",
+        category: CapabilityCategory::Skills,
+        description: "Launch Apify scrapers and automation actors, then inspect run status and collected results.",
+        how_to: "Conversations > Ask the assistant to run an Apify actor",
+        status: CapabilityStatus::Beta,
+    },
+    Capability {
         id: "skills.toggle_enabled",
         name: "Enable or Disable Skills",
         domain: "skills",

@@ -4,12 +4,14 @@
 //! handles external API calls, billing, rate limiting, and markup. The client
 //! never talks to external services directly.
 
+pub mod apify;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
 pub mod twilio;
 pub mod types;
 
+pub use apify::{ApifyGetRunResultsTool, ApifyGetRunStatusTool, ApifyRunActorTool};
 pub use client::{build_client, IntegrationClient};
 pub use google_places::{GooglePlacesDetailsTool, GooglePlacesSearchTool};
 pub use parallel::{ParallelExtractTool, ParallelSearchTool};
@@ -49,6 +51,7 @@ mod tests {
     fn integration_pricing_defaults_on_missing_fields() {
         let json = r#"{"integrations": {}}"#;
         let pricing: IntegrationPricing = serde_json::from_str(json).unwrap();
+        assert!(pricing.integrations.apify.is_none());
         assert!(pricing.integrations.twilio.is_none());
         assert!(pricing.integrations.google_places.is_none());
         assert!(pricing.integrations.parallel.is_none());

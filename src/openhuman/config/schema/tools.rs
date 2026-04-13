@@ -278,12 +278,17 @@ impl Default for IntegrationToggle {
 /// Composio in particular is unconditionally enabled and has no toggle:
 /// as long as the user is signed in, composio tools are available.
 ///
-/// The per-tool `twilio`, `google_places`, and `parallel` flags below
-/// are preserved because those integrations incur per-call costs that
-/// the user may legitimately want to turn off; composio costs are
-/// metered server-side, so there is no client-side toggle for it.
+/// The per-tool `apify`, `twilio`, `google_places`, and `parallel`
+/// flags below are preserved because those integrations incur per-call
+/// costs that the user may legitimately want to turn off; composio
+/// costs are metered server-side, so there is no client-side toggle
+/// for it.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct IntegrationsConfig {
+    /// Apify actor execution and scraper integration.
+    #[serde(default)]
+    pub apify: IntegrationToggle,
+
     /// Twilio phone-call integration.
     #[serde(default)]
     pub twilio: IntegrationToggle,

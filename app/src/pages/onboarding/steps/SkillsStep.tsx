@@ -3,7 +3,6 @@ import { useState } from 'react';
 import ComposioConnectModal from '../../../components/composio/ComposioConnectModal';
 import {
   composioToolkitMeta,
-  KNOWN_COMPOSIO_TOOLKITS,
   type ComposioToolkitMeta,
 } from '../../../components/composio/toolkitMeta';
 import { useComposioIntegrations } from '../../../lib/composio/hooks';
@@ -67,12 +66,9 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
     refresh: refreshComposio,
   } = useComposioIntegrations();
 
-  // Only show Gmail and Notion during onboarding — the rest are on the Integrations page.
-  const ONBOARDING_TOOLKITS = ['gmail', 'notion'] as const;
-  const displayToolkits: ComposioToolkitMeta[] = ONBOARDING_TOOLKITS.map(slug =>
-    composioToolkitMeta(slug)
-  );
-  const remainingCount = KNOWN_COMPOSIO_TOOLKITS.length - ONBOARDING_TOOLKITS.length;
+  // Only show Gmail during onboarding — more integrations on the Integrations page.
+  const gmailMeta = composioToolkitMeta('gmail');
+  const displayToolkits: ComposioToolkitMeta[] = [gmailMeta];
 
   const connectedCount = Array.from(connectionByToolkit.values()).filter(c => {
     const state = deriveComposioState(c);
@@ -97,10 +93,10 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
   return (
     <div className="rounded-2xl border border-stone-200 bg-white p-8 shadow-soft animate-fade-up">
       <div className="text-center mb-4">
-        <h1 className="text-xl font-bold mb-2 text-stone-900">Connect Your Tools</h1>
+        <h1 className="text-xl font-bold mb-2 text-stone-900">Connect Gmail</h1>
         <p className="text-stone-600 text-sm">
-          Connect your favourite apps so OpenHuman can help you right away. You can always add more
-          later from the Integrations page.
+          Connect your Gmail so OpenHuman can learn about you and build context for your agent. Your
+          data is saved locally and never leaves your device.
         </p>
       </div>
 
@@ -167,14 +163,12 @@ const SkillsStep = ({ onNext, onBack: _onBack }: SkillsStepProps) => {
               );
             })}
 
-            {/* "More" hint */}
-            {remainingCount > 0 && (
-              <div className="rounded-xl border border-stone-100 bg-stone-50 px-3 py-2.5 text-center">
-                <p className="text-xs text-stone-400">
-                  + {remainingCount} more integrations available after setup
-                </p>
-              </div>
-            )}
+            {/* More integrations hint */}
+            <div className="rounded-xl border border-stone-100 bg-stone-50 px-3 py-2.5 text-center">
+              <p className="text-xs text-stone-400">
+                Notion, Slack, GitHub, and more available after setup
+              </p>
+            </div>
           </>
         )}
       </div>
