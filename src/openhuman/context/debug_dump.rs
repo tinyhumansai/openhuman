@@ -301,65 +301,33 @@ fn build_composio_stub_tools() -> Vec<Box<dyn Tool>> {
     ]
 }
 
-/// Best-effort fetch of the user's active Composio connections for the
-/// prompt dump. Returns an empty vec when the user isn't signed in or
-/// the backend is unreachable.
+/// Fetch connected integrations for the prompt dump.
 ///
+/// Delegates to [`crate::openhuman::composio::fetch_connected_integrations`].
 /// The dump script often overrides `OPENHUMAN_WORKSPACE` to a throwaway
-/// temp dir, which causes config resolution to miss the real user's auth
-/// token. We therefore try the caller-supplied config first, then fall
-/// back to a fresh default-path load so the auth token is found even
-/// when the workspace is overridden.
+/// temp dir which causes config resolution to miss the real user's auth
+/// token. We try the caller-supplied config first, then fall back to a
+/// fresh default-path load.
 async fn fetch_connected_integrations_for_dump(config: &Config) -> Vec<ConnectedIntegration> {
-    use crate::openhuman::composio::{build_composio_client, providers::toolkit_description};
+    use crate::openhuman::composio::fetch_connected_integrations;
 
-    // Try the supplied config first (works when no workspace override).
-    let client = match build_composio_client(config) {
-        Some(c) => c,
-        None => {
-            // Fallback: temporarily clear OPENHUMAN_WORKSPACE and reload
-            // config from the default user paths so the real auth token
-            // is found even when the dump script uses a throwaway workspace.
-            let saved = std::env::var("OPENHUMAN_WORKSPACE").ok();
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-            let fallback_config = Config::load_or_init().await.ok();
-            // Restore the env var so downstream code isn't surprised.
-            if let Some(val) = saved {
-                std::env::set_var("OPENHUMAN_WORKSPACE", val);
-            }
-            match fallback_config.and_then(|c| build_composio_client(&c)) {
-                Some(c) => c,
-                None => {
-                    tracing::debug!(
-                        "[debug_dump] no composio client — skipping integrations fetch"
-                    );
-                    return Vec::new();
-                }
-            }
-        }
-    };
+    let result = fetch_connected_integrations(config).await;
+    if !result.is_empty() {
+        return result;
+    }
 
-    match client.list_connections().await {
-        Ok(resp) => {
-            let integrations: Vec<ConnectedIntegration> = resp
-                .connections
-                .iter()
-                .filter(|c| c.status == "ACTIVE" || c.status == "CONNECTED")
-                .map(|c| ConnectedIntegration {
-                    toolkit: c.toolkit.clone(),
-                    description: toolkit_description(&c.toolkit).to_string(),
-                })
-                .collect();
-            tracing::debug!(
-                count = integrations.len(),
-                "[debug_dump] fetched connected integrations"
-            );
-            integrations
-        }
-        Err(e) => {
-            tracing::debug!(error = %e, "[debug_dump] failed to fetch integrations");
-            Vec::new()
-        }
+    // Fallback: temporarily clear OPENHUMAN_WORKSPACE and reload config
+    // from the default user paths so the real auth token is found.
+    let saved = std::env::var("OPENHUMAN_WORKSPACE").ok();
+    std::env::remove_var("OPENHUMAN_WORKSPACE");
+    let fallback = Config::load_or_init().await.ok();
+    if let Some(val) = saved {
+        std::env::set_var("OPENHUMAN_WORKSPACE", val);
+    }
+
+    match fallback {
+        Some(c) => fetch_connected_integrations(&c).await,
+        None => Vec::new(),
     }
 }
 

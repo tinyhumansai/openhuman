@@ -318,6 +318,113 @@ fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
     }
 }
 
+// ── Prompt integration discovery ────────────────────────────────────
+
+use crate::openhuman::context::prompt::{ConnectedIntegration, ConnectedIntegrationTool};
+
+/// Fetch the user's active Composio connections and their available
+/// tool actions, returning a prompt-ready summary.
+///
+/// This is the **single source of truth** for connected integration
+/// data injected into system prompts — both the agent turn loop and
+/// the debug dump CLI call this function.
+///
+/// Best-effort: returns an empty vec when the user isn't signed in,
+/// the backend is unreachable, or any step fails.
+pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedIntegration> {
+    use super::providers::toolkit_description;
+
+    let Some(client) = build_composio_client(config) else {
+        tracing::debug!(
+            "[composio] fetch_connected_integrations: no client (not signed in?)"
+        );
+        return Vec::new();
+    };
+
+    let connections = match client.list_connections().await {
+        Ok(resp) => resp.connections,
+        Err(e) => {
+            tracing::warn!("[composio] fetch_connected_integrations: list_connections failed: {e}");
+            return Vec::new();
+        }
+    };
+
+    let active: Vec<_> = connections
+        .iter()
+        .filter(|c| c.status == "ACTIVE" || c.status == "CONNECTED")
+        .collect();
+
+    if active.is_empty() {
+        return Vec::new();
+    }
+
+    // Collect the unique toolkit slugs so we can batch-fetch their tools.
+    let toolkit_slugs: Vec<String> = {
+        let mut slugs: Vec<String> = active.iter().map(|c| c.toolkit.clone()).collect();
+        slugs.sort();
+        slugs.dedup();
+        slugs
+    };
+
+    // Fetch available tool schemas for all connected toolkits in one call.
+    let tools_by_toolkit = match client.list_tools(Some(&toolkit_slugs)).await {
+        Ok(resp) => resp.tools,
+        Err(e) => {
+            tracing::warn!(
+                "[composio] fetch_connected_integrations: list_tools failed: {e}"
+            );
+            Vec::new()
+        }
+    };
+
+    // Build the per-toolkit integration entries.
+    let mut integrations: Vec<ConnectedIntegration> = toolkit_slugs
+        .iter()
+        .map(|slug| {
+            let tools: Vec<ConnectedIntegrationTool> = tools_by_toolkit
+                .iter()
+                .filter(|t| {
+                    // Composio action slugs are prefixed with the toolkit
+                    // name in uppercase, e.g. GMAIL_SEND_EMAIL.
+                    t.function
+                        .name
+                        .starts_with(&slug.to_uppercase())
+                })
+                .map(|t| ConnectedIntegrationTool {
+                    name: t.function.name.clone(),
+                    description: t
+                        .function
+                        .description
+                        .clone()
+                        .unwrap_or_default(),
+                })
+                .collect();
+
+            ConnectedIntegration {
+                toolkit: slug.clone(),
+                description: toolkit_description(slug).to_string(),
+                tools,
+            }
+        })
+        .collect();
+
+    integrations.sort_by(|a, b| a.toolkit.cmp(&b.toolkit));
+
+    tracing::info!(
+        count = integrations.len(),
+        "[composio] fetch_connected_integrations: done"
+    );
+    for ci in &integrations {
+        tracing::debug!(
+            toolkit = %ci.toolkit,
+            tool_count = ci.tools.len(),
+            "[composio] connected integration"
+        );
+    }
+
+    integrations
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

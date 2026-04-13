@@ -50,6 +50,18 @@ pub struct ConnectedIntegration {
     pub toolkit: String,
     /// Human-readable one-line description of what this integration can do.
     pub description: String,
+    /// Composio action slugs available for this toolkit, e.g.
+    /// `["GMAIL_SEND_EMAIL", "GMAIL_FETCH_EMAILS"]`.
+    pub tools: Vec<ConnectedIntegrationTool>,
+}
+
+/// A single action available on a connected integration.
+#[derive(Debug, Clone)]
+pub struct ConnectedIntegrationTool {
+    /// Action slug, e.g. `"GMAIL_SEND_EMAIL"`.
+    pub name: String,
+    /// One-line description of the action.
+    pub description: String,
 }
 
 /// A lightweight tool descriptor for prompt rendering.
@@ -516,9 +528,24 @@ impl PromptSection for ConnectedIntegrationsSection {
         for integration in ctx.connected_integrations {
             let _ = writeln!(
                 out,
-                "- **{}**: {}",
+                "### {} — {}\n",
                 integration.toolkit, integration.description,
             );
+            if integration.tools.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "Use `composio_list_tools` to discover available actions.\n",
+                );
+            } else {
+                for tool in &integration.tools {
+                    let _ = writeln!(
+                        out,
+                        "- `{}`: {}",
+                        tool.name, tool.description,
+                    );
+                }
+                out.push('\n');
+            }
         }
         Ok(out)
     }

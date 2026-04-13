@@ -880,14 +880,10 @@ impl Agent {
     /// Fetches the user's active Composio connections and populates
     /// `self.connected_integrations` so the system prompt can surface them.
     ///
-    /// Best-effort: failures are logged and silently ignored (the prompt
-    /// just won't show an integrations section).
+    /// Delegates to the shared [`crate::openhuman::composio::fetch_connected_integrations`]
+    /// which is the single source of truth for integration discovery.
     pub(super) async fn fetch_connected_integrations(&mut self) {
-        use crate::openhuman::composio::{build_composio_client, providers::toolkit_description};
-        use crate::openhuman::config::Config;
-        use crate::openhuman::context::prompt::ConnectedIntegration;
-
-        let config = match Config::load_or_init().await {
+        let config = match crate::openhuman::config::Config::load_or_init().await {
             Ok(c) => c,
             Err(e) => {
                 log::debug!(
@@ -896,38 +892,8 @@ impl Agent {
                 return;
             }
         };
-
-        let Some(client) = build_composio_client(&config) else {
-            log::debug!(
-                "[agent] skipping connected integrations fetch: no composio client (not signed in?)"
-            );
-            return;
-        };
-
-        match client.list_connections().await {
-            Ok(resp) => {
-                let integrations: Vec<ConnectedIntegration> = resp
-                    .connections
-                    .iter()
-                    .filter(|c| c.status == "ACTIVE" || c.status == "CONNECTED")
-                    .map(|c| ConnectedIntegration {
-                        toolkit: c.toolkit.clone(),
-                        description: toolkit_description(&c.toolkit).to_string(),
-                    })
-                    .collect();
-                log::info!(
-                    "[agent] fetched {} connected integrations for prompt",
-                    integrations.len()
-                );
-                for ci in &integrations {
-                    log::debug!("[agent] connected integration: {} — {}", ci.toolkit, ci.description);
-                }
-                self.connected_integrations = integrations;
-            }
-            Err(e) => {
-                log::warn!("[agent] failed to fetch connected integrations: {e}");
-            }
-        }
+        self.connected_integrations =
+            crate::openhuman::composio::fetch_connected_integrations(&config).await;
     }
 
     /// Builds the system prompt for the current turn, including tool
