@@ -103,9 +103,7 @@ fn handle_referral_claim(params: Map<String, Value>) -> ControllerFuture {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        to_json(
-            crate::openhuman::referral::claim_referral(&config, payload.code.trim(), fp).await?,
-        )
+        to_json(crate::openhuman::referral::claim_referral(&config, payload.code.trim(), fp).await?)
     })
 }
 
