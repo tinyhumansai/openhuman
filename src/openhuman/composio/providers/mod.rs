@@ -42,6 +42,7 @@ use super::client::{build_composio_client, ComposioClient};
 
 pub mod gmail;
 pub mod notion;
+pub mod profile;
 pub mod registry;
 pub mod sync_state;
 
@@ -261,6 +262,17 @@ pub trait ComposioProvider: Send + Sync {
                     has_email,
                     email_domain = ?email_domain,
                     "[composio:provider] user profile fetched"
+                );
+
+                // Persist profile fields into the local user_profile
+                // facet table so display_name / email / avatar are
+                // available to the agent context and UI without a
+                // round-trip to the upstream provider.
+                let facets = profile::persist_provider_profile(&profile);
+                tracing::debug!(
+                    toolkit = %toolkit,
+                    facets_written = facets,
+                    "[composio:provider] profile facets persisted"
                 );
             }
             Err(e) => {

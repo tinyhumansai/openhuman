@@ -120,8 +120,8 @@ pub fn profile_upsert(
             (None, None) => String::new(),
         };
 
-        if confidence > existing_confidence {
-            // Higher confidence: overwrite value + update metadata.
+        if confidence >= existing_confidence {
+            // Higher or equal confidence: overwrite value + update metadata.
             conn.execute(
                 "UPDATE user_profile
                  SET value = ?2, confidence = ?3, evidence_count = ?4,

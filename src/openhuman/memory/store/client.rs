@@ -44,6 +44,19 @@ pub struct MemoryClient {
 }
 
 impl MemoryClient {
+    /// Returns a handle to the underlying SQLite connection for direct
+    /// profile-facet writes via
+    /// [`crate::openhuman::memory::store::unified::profile::profile_upsert`].
+    ///
+    /// Intentionally `pub(crate)` — external consumers should use the
+    /// higher-level `MemoryClient` API; this escape hatch exists so
+    /// in-crate subsystems (composio providers, archivist, learning
+    /// hooks) can write structured profile facets without an additional
+    /// round-trip through the ingestion queue.
+    pub(crate) fn profile_conn(&self) -> std::sync::Arc<parking_lot::Mutex<rusqlite::Connection>> {
+        std::sync::Arc::clone(&self.inner.conn)
+    }
+
     /// Create a new local memory client using the default `.openhuman` directory.
     ///
     /// # Errors

@@ -15,6 +15,10 @@
 //!      page are older than the cursor.
 //!   7. Advance the cursor and save state.
 
+mod sync;
+#[cfg(test)]
+mod tests;
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -23,8 +27,8 @@ use super::{
     pick_str, ComposioProvider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
 };
 
-const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
-const ACTION_FETCH_DATA: &str = "NOTION_FETCH_DATA";
+pub(crate) const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
+pub(crate) const ACTION_FETCH_DATA: &str = "NOTION_FETCH_DATA";
 
 /// Page size per API call.
 const PAGE_SIZE: u32 = 25;
@@ -133,7 +137,7 @@ impl ComposioProvider for NotionProvider {
     }
 
     async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
-        let started_at_ms = now_ms();
+        let started_at_ms = sync::now_ms();
         let connection_id = ctx
             .connection_id
             .clone()
@@ -163,7 +167,7 @@ impl ComposioProvider for NotionProvider {
                 reason: reason.as_str().to_string(),
                 items_ingested: 0,
                 started_at_ms,
-                finished_at_ms: now_ms(),
+                finished_at_ms: sync::now_ms(),
                 summary: "notion sync skipped: daily budget exhausted".to_string(),
                 details: json!({ "budget_exhausted": true }),
             });
@@ -219,7 +223,7 @@ impl ComposioProvider for NotionProvider {
                 ));
             }
 
-            let results = extract_results(&resp.data);
+            let results = sync::extract_results(&resp.data);
             total_fetched += results.len();
 
             if results.is_empty() {
@@ -273,8 +277,8 @@ impl ComposioProvider for NotionProvider {
                 }
 
                 // Build a title from the page's properties.
-                let title_text =
-                    extract_page_title(page).unwrap_or_else(|| format!("Notion page {page_id}"));
+                let title_text = sync::extract_page_title(page)
+                    .unwrap_or_else(|| format!("Notion page {page_id}"));
                 let doc_id = format!("composio-notion-page-{page_id}");
                 let title = format!("Notion: {title_text}");
 
@@ -312,7 +316,7 @@ impl ComposioProvider for NotionProvider {
             }
 
             // Check for next page cursor from Notion API.
-            notion_cursor = extract_notion_cursor(&resp.data);
+            notion_cursor = sync::extract_notion_cursor(&resp.data);
             if notion_cursor.is_none() {
                 tracing::debug!(page = page_num, "[composio:notion] no next cursor, done");
                 break;
@@ -325,7 +329,7 @@ impl ComposioProvider for NotionProvider {
         }
         state.save(&memory).await?;
 
-        let finished_at_ms = now_ms();
+        let finished_at_ms = sync::now_ms();
         let summary = format!(
             "notion sync ({reason}): fetched {total_fetched}, persisted {total_persisted} new, \
              budget remaining {remaining}",
@@ -377,150 +381,5 @@ impl ComposioProvider for NotionProvider {
             );
         }
         Ok(())
-    }
-}
-
-// ── helpers ────────────────────────────────────────────────────────
-
-/// Walk the Composio response envelope for Notion page results.
-fn extract_results(data: &Value) -> Vec<Value> {
-    let candidates = [
-        data.pointer("/data/results"),
-        data.pointer("/results"),
-        data.pointer("/data/data/results"),
-        data.pointer("/data/items"),
-        data.pointer("/items"),
-    ];
-    for cand in candidates.into_iter().flatten() {
-        if let Some(arr) = cand.as_array() {
-            return arr.clone();
-        }
-    }
-    Vec::new()
-}
-
-/// Extract the Notion pagination cursor (for `start_cursor` on the
-/// next request).
-fn extract_notion_cursor(data: &Value) -> Option<String> {
-    let candidates = [
-        data.pointer("/data/next_cursor"),
-        data.pointer("/next_cursor"),
-        data.pointer("/data/data/next_cursor"),
-    ];
-    for cand in candidates.into_iter().flatten() {
-        if let Some(s) = cand.as_str() {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Try to extract a human-readable title from a Notion page object.
-///
-/// Notion pages store the title in `properties.title` or
-/// `properties.Name.title[0].plain_text`. We try several shapes.
-fn extract_page_title(page: &Value) -> Option<String> {
-    // Try the common `properties.title.title[0].plain_text` shape.
-    let props = page
-        .get("properties")
-        .or_else(|| page.get("data")?.get("properties"));
-    if let Some(props) = props {
-        // Walk all properties looking for a "title" type field.
-        if let Some(obj) = props.as_object() {
-            for (_key, val) in obj {
-                if val.get("type").and_then(Value::as_str) == Some("title") {
-                    if let Some(arr) = val.get("title").and_then(Value::as_array) {
-                        let text: String = arr
-                            .iter()
-                            .filter_map(|t| t.get("plain_text").and_then(Value::as_str))
-                            .collect::<Vec<_>>()
-                            .join("");
-                        if !text.is_empty() {
-                            return Some(text);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback: top-level "title" field (some Composio shapes).
-    pick_str(page, &["title", "data.title", "name", "data.name"])
-}
-
-fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extract_results_walks_common_shapes() {
-        let v1 = json!({ "data": { "results": [{"id": "p1"}] } });
-        let v2 = json!({ "results": [{"id": "p2"}, {"id": "p3"}] });
-        let v3 = json!({ "data": {} });
-        assert_eq!(extract_results(&v1).len(), 1);
-        assert_eq!(extract_results(&v2).len(), 2);
-        assert_eq!(extract_results(&v3).len(), 0);
-    }
-
-    #[test]
-    fn extract_notion_cursor_finds_nested() {
-        let v = json!({ "data": { "next_cursor": "abc123" } });
-        assert_eq!(extract_notion_cursor(&v), Some("abc123".to_string()));
-    }
-
-    #[test]
-    fn extract_notion_cursor_none_when_missing() {
-        let v = json!({ "data": { "has_more": false } });
-        assert_eq!(extract_notion_cursor(&v), None);
-    }
-
-    #[test]
-    fn extract_page_title_from_properties() {
-        let page = json!({
-            "id": "page-1",
-            "properties": {
-                "Name": {
-                    "type": "title",
-                    "title": [
-                        { "plain_text": "My " },
-                        { "plain_text": "Page Title" }
-                    ]
-                }
-            }
-        });
-        assert_eq!(extract_page_title(&page), Some("My Page Title".to_string()));
-    }
-
-    #[test]
-    fn extract_page_title_fallback_to_top_level() {
-        let page = json!({ "title": "Fallback Title" });
-        assert_eq!(
-            extract_page_title(&page),
-            Some("Fallback Title".to_string())
-        );
-    }
-
-    #[test]
-    fn extract_page_title_returns_none_when_missing() {
-        let page = json!({ "id": "p1" });
-        assert_eq!(extract_page_title(&page), None);
-    }
-
-    #[test]
-    fn provider_metadata_is_stable() {
-        let p = NotionProvider::new();
-        assert_eq!(p.toolkit_slug(), "notion");
-        assert_eq!(p.sync_interval_secs(), Some(30 * 60));
     }
 }

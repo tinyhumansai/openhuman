@@ -17,6 +17,10 @@
 //! number of `execute_tool` calls per calendar day, preventing runaway
 //! API usage during large initial backfills.
 
+mod sync;
+#[cfg(test)]
+mod tests;
+
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -151,7 +155,7 @@ impl ComposioProvider for GmailProvider {
     }
 
     async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String> {
-        let started_at_ms = now_ms();
+        let started_at_ms = sync::now_ms();
         let connection_id = ctx
             .connection_id
             .clone()
@@ -181,7 +185,7 @@ impl ComposioProvider for GmailProvider {
                 reason: reason.as_str().to_string(),
                 items_ingested: 0,
                 started_at_ms,
-                finished_at_ms: now_ms(),
+                finished_at_ms: sync::now_ms(),
                 summary: "gmail sync skipped: daily budget exhausted".to_string(),
                 details: json!({ "budget_exhausted": true }),
             });
@@ -212,7 +216,7 @@ impl ComposioProvider for GmailProvider {
             // returns newer mail.
             let mut query = "in:inbox -in:spam -in:trash".to_string();
             if let Some(ref cursor) = state.cursor {
-                if let Some(date_filter) = cursor_to_gmail_after_filter(cursor) {
+                if let Some(date_filter) = sync::cursor_to_gmail_after_filter(cursor) {
                     query.push_str(&format!(" after:{date_filter}"));
                     tracing::debug!(
                         page = page_num,
@@ -252,7 +256,7 @@ impl ComposioProvider for GmailProvider {
                 ));
             }
 
-            let messages = extract_messages(&resp.data);
+            let messages = sync::extract_messages(&resp.data);
             total_fetched += messages.len();
 
             if messages.is_empty() {
@@ -336,7 +340,7 @@ impl ComposioProvider for GmailProvider {
             }
 
             // Check for next page token.
-            page_token = extract_page_token(&resp.data);
+            page_token = sync::extract_page_token(&resp.data);
             if page_token.is_none() {
                 tracing::debug!(page = page_num, "[composio:gmail] no next page token, done");
                 break;
@@ -349,7 +353,7 @@ impl ComposioProvider for GmailProvider {
         }
         state.save(&memory).await?;
 
-        let finished_at_ms = now_ms();
+        let finished_at_ms = sync::now_ms();
         let summary = format!(
             "gmail sync ({reason}): fetched {total_fetched}, persisted {total_persisted} new, \
              budget remaining {remaining}",
@@ -406,146 +410,5 @@ impl ComposioProvider for GmailProvider {
             }
         }
         Ok(())
-    }
-}
-
-// ── helpers ────────────────────────────────────────────────────────
-
-/// Walk the Composio response envelope and pull out message objects.
-fn extract_messages(data: &Value) -> Vec<Value> {
-    let candidates = [
-        data.pointer("/data/messages"),
-        data.pointer("/messages"),
-        data.pointer("/data/data/messages"),
-        data.pointer("/data/items"),
-        data.pointer("/items"),
-    ];
-    for cand in candidates.into_iter().flatten() {
-        if let Some(arr) = cand.as_array() {
-            return arr.clone();
-        }
-    }
-    Vec::new()
-}
-
-/// Try to extract a pagination token from the API response.
-fn extract_page_token(data: &Value) -> Option<String> {
-    let candidates = [
-        data.pointer("/data/nextPageToken"),
-        data.pointer("/nextPageToken"),
-        data.pointer("/data/data/nextPageToken"),
-    ];
-    for cand in candidates.into_iter().flatten() {
-        if let Some(s) = cand.as_str() {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Convert a cursor value (epoch millis or date string) into a Gmail
-/// `after:YYYY/MM/DD` filter component. Returns `None` if the cursor
-/// cannot be parsed.
-fn cursor_to_gmail_after_filter(cursor: &str) -> Option<String> {
-    // Try parsing as epoch millis first (Gmail's internalDate).
-    if let Ok(millis) = cursor.parse::<i64>() {
-        let secs = millis / 1000;
-        if let Some(dt) = chrono::DateTime::from_timestamp(secs, 0) {
-            return Some(dt.format("%Y/%m/%d").to_string());
-        }
-    }
-    // Try parsing as an ISO date/datetime.
-    if let Ok(dt) = chrono::NaiveDate::parse_from_str(cursor, "%Y-%m-%d") {
-        return Some(dt.format("%Y/%m/%d").to_string());
-    }
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(cursor) {
-        return Some(dt.format("%Y/%m/%d").to_string());
-    }
-    None
-}
-
-fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extract_messages_finds_data_messages() {
-        let v = json!({
-            "data": { "messages": [{"id": "m1"}, {"id": "m2"}] },
-            "successful": true,
-        });
-        assert_eq!(extract_messages(&v).len(), 2);
-    }
-
-    #[test]
-    fn extract_messages_finds_top_level_messages() {
-        let v = json!({ "messages": [{"id": "m1"}] });
-        assert_eq!(extract_messages(&v).len(), 1);
-    }
-
-    #[test]
-    fn extract_messages_returns_empty_when_missing() {
-        let v = json!({ "data": { "other": [] } });
-        assert_eq!(extract_messages(&v).len(), 0);
-    }
-
-    #[test]
-    fn extract_page_token_finds_nested() {
-        let v = json!({ "data": { "nextPageToken": "tok123" } });
-        assert_eq!(extract_page_token(&v), Some("tok123".to_string()));
-    }
-
-    #[test]
-    fn extract_page_token_none_when_missing() {
-        let v = json!({ "data": {} });
-        assert_eq!(extract_page_token(&v), None);
-    }
-
-    #[test]
-    fn cursor_to_filter_from_epoch_millis() {
-        // 2026-04-01 00:00:00 UTC in millis
-        let millis = "1774915200000";
-        let filter = cursor_to_gmail_after_filter(millis);
-        assert!(filter.is_some());
-        // Should produce a YYYY/MM/DD date.
-        let f = filter.unwrap();
-        assert!(f.contains('/'), "Expected date with slashes, got {f}");
-    }
-
-    #[test]
-    fn cursor_to_filter_from_iso_date() {
-        assert_eq!(
-            cursor_to_gmail_after_filter("2026-03-15"),
-            Some("2026/03/15".to_string())
-        );
-    }
-
-    #[test]
-    fn cursor_to_filter_from_rfc3339() {
-        let f = cursor_to_gmail_after_filter("2026-03-15T12:00:00Z");
-        assert_eq!(f, Some("2026/03/15".to_string()));
-    }
-
-    #[test]
-    fn cursor_to_filter_returns_none_for_garbage() {
-        assert_eq!(cursor_to_gmail_after_filter("not-a-date"), None);
-    }
-
-    #[test]
-    fn provider_metadata_is_stable() {
-        let p = GmailProvider::new();
-        assert_eq!(p.toolkit_slug(), "gmail");
-        assert_eq!(p.sync_interval_secs(), Some(15 * 60));
     }
 }

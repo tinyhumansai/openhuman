@@ -292,6 +292,15 @@ pub async fn composio_get_user_profile(
         .await
         .map_err(|e| format!("[composio] get_user_profile({toolkit}) failed: {e}"))?;
 
+    // Side-effect: persist profile fields into the local user_profile
+    // facet table so any RPC call also refreshes the local store.
+    let facets = super::providers::profile::persist_provider_profile(&profile);
+    tracing::debug!(
+        toolkit = %toolkit,
+        facets_written = facets,
+        "[composio] profile facets persisted from get_user_profile"
+    );
+
     Ok(RpcOutcome::new(
         profile,
         vec![format!(
