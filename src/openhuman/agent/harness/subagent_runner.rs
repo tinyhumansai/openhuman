@@ -269,6 +269,7 @@ async fn run_typed_mode(
         &parent.all_tools,
         &archetype_prompt_body,
         render_options,
+        &parent.connected_integrations,
     ));
     let system_prompt = rendered_prompt.text;
     let system_prompt_cache_boundary = rendered_prompt.cache_boundary;

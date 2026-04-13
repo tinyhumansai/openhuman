@@ -82,6 +82,9 @@ pub struct ParentExecutionContext {
 
     /// Parent's event-bus channel name.
     pub channel: String,
+
+    /// Active Composio integrations the parent has fetched.
+    pub connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
 }
 
 tokio::task_local! {

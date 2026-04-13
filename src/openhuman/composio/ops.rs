@@ -125,6 +125,8 @@ pub async fn composio_delete_connection(
         .delete_connection(connection_id)
         .await
         .map_err(|e| format!("[composio] delete_connection failed: {e:#}"))?;
+    // Bust the integrations cache so the next prompt reflects the removal.
+    invalidate_connected_integrations_cache();
     Ok(RpcOutcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
@@ -321,6 +323,26 @@ fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
 // ── Prompt integration discovery ────────────────────────────────────
 
 use crate::openhuman::context::prompt::{ConnectedIntegration, ConnectedIntegrationTool};
+use std::sync::RwLock;
+
+/// Process-wide cache for connected integrations. Populated on first
+/// fetch and returned on subsequent calls until explicitly invalidated.
+///
+/// `None` = never fetched (cold). `Some(vec)` = cached (possibly empty
+/// if the user has no connections).
+static INTEGRATIONS_CACHE: RwLock<Option<Vec<ConnectedIntegration>>> = RwLock::new(None);
+
+/// Clear the cached connected integrations so the next call to
+/// [`fetch_connected_integrations`] hits the backend again.
+///
+/// Called by [`super::bus::ComposioConnectionCreatedSubscriber`] when a
+/// new OAuth connection completes, and can also be called from tests.
+pub fn invalidate_connected_integrations_cache() {
+    if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
+        *guard = None;
+        tracing::debug!("[composio] connected integrations cache invalidated");
+    }
+}
 
 /// Fetch the user's active Composio connections and their available
 /// tool actions, returning a prompt-ready summary.
@@ -329,9 +351,37 @@ use crate::openhuman::context::prompt::{ConnectedIntegration, ConnectedIntegrati
 /// data injected into system prompts — both the agent turn loop and
 /// the debug dump CLI call this function.
 ///
+/// Results are cached process-wide and returned instantly on subsequent
+/// calls. The cache is invalidated when a new connection is created
+/// (via [`invalidate_connected_integrations_cache`]) or on process
+/// restart.
+///
 /// Best-effort: returns an empty vec when the user isn't signed in,
 /// the backend is unreachable, or any step fails.
 pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedIntegration> {
+    // Fast path: return cached result.
+    if let Ok(guard) = INTEGRATIONS_CACHE.read() {
+        if let Some(cached) = guard.as_ref() {
+            tracing::debug!(
+                count = cached.len(),
+                "[composio] fetch_connected_integrations: returning cached result"
+            );
+            return cached.clone();
+        }
+    }
+
+    let result = fetch_connected_integrations_uncached(config).await;
+
+    // Store in cache.
+    if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
+        *guard = Some(result.clone());
+    }
+
+    result
+}
+
+/// The actual backend fetch, called on cache miss.
+async fn fetch_connected_integrations_uncached(config: &Config) -> Vec<ConnectedIntegration> {
     use super::providers::toolkit_description;
 
     let Some(client) = build_composio_client(config) else {

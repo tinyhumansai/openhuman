@@ -263,6 +263,10 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
             return;
         };
 
+        // Bust the prompt-level integrations cache so the next agent
+        // session picks up the newly connected toolkit.
+        super::ops::invalidate_connected_integrations_cache();
+
         tracing::info!(
             toolkit = %toolkit,
             connection_id = %connection_id,

@@ -736,6 +736,7 @@ impl Agent {
             memory_context: self.last_memory_context.clone(),
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
+            connected_integrations: self.connected_integrations.clone(),
         }
     }
 

@@ -727,6 +727,7 @@ pub fn render_subagent_system_prompt(
     parent_tools: &[Box<dyn Tool>],
     archetype_body: &str,
     options: SubagentRenderOptions,
+    connected_integrations: &[ConnectedIntegration],
 ) -> String {
     render_subagent_system_prompt_with_format(
         workspace_dir,
@@ -736,6 +737,7 @@ pub fn render_subagent_system_prompt(
         archetype_body,
         options,
         ToolCallFormat::PFormat,
+        connected_integrations,
     )
 }
 
@@ -751,6 +753,7 @@ pub fn render_subagent_system_prompt_with_format(
     archetype_body: &str,
     options: SubagentRenderOptions,
     tool_call_format: ToolCallFormat,
+    connected_integrations: &[ConnectedIntegration],
 ) -> String {
     let mut out = String::new();
 
@@ -884,6 +887,36 @@ pub fn render_subagent_system_prompt_with_format(
         out.push_str(
             "Skills are loaded on demand. Use `read` on the skill path to get full instructions.\n\n",
         );
+    }
+
+    // 3d. Connected integrations — same section the main agent renders
+    //     so the orchestrator (and any sub-agent) sees what external
+    //     services are available via the Skills Agent.
+    if !connected_integrations.is_empty() {
+        out.push_str(
+            "## Connected Integrations\n\n\
+             The user has the following external services connected. \
+             To interact with any of these, delegate to the **Skills Agent** \
+             (`skills_agent`) via `spawn_subagent`.\n\n",
+        );
+        for integration in connected_integrations {
+            let _ = writeln!(
+                out,
+                "### {} — {}\n",
+                integration.toolkit, integration.description,
+            );
+            if integration.tools.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "Use `composio_list_tools` to discover available actions.\n",
+                );
+            } else {
+                for tool in &integration.tools {
+                    let _ = writeln!(out, "- `{}`: {}", tool.name, tool.description);
+                }
+                out.push('\n');
+            }
+        }
     }
 
     // 4. Insert the cache boundary before the dynamic tail. Typed
