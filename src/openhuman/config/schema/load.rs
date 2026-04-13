@@ -216,6 +216,17 @@ async fn resolve_runtime_config_dirs(
         }
     }
 
+    resolve_config_dirs_ignoring_env(default_openhuman_dir, default_workspace_dir).await
+}
+
+/// Same as [`resolve_runtime_config_dirs`] but skips the
+/// `OPENHUMAN_WORKSPACE` env var override. Used by
+/// [`Config::load_from_default_paths`] so callers can reliably load
+/// the real user config without mutating the process environment.
+async fn resolve_config_dirs_ignoring_env(
+    default_openhuman_dir: &Path,
+    default_workspace_dir: &Path,
+) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
     // 2. Active user — scopes the entire openhuman dir to a per-user directory
     //    so that config, auth, encryption, and workspace are all user-isolated.
     if let Some(user_id) = read_active_user_id(default_openhuman_dir) {
@@ -534,6 +545,40 @@ impl Config {
             );
             Ok(config)
         }
+    }
+
+    /// Load config from the default user paths, bypassing the
+    /// `OPENHUMAN_WORKSPACE` environment variable.
+    ///
+    /// This is used by the debug dump to load the real user config
+    /// for auth token resolution when the dump script overrides
+    /// `OPENHUMAN_WORKSPACE` to a throwaway temp directory.
+    pub async fn load_from_default_paths() -> Result<Self> {
+        let (default_openhuman_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        let (openhuman_dir, workspace_dir, _source) =
+            resolve_config_dirs_ignoring_env(&default_openhuman_dir, &default_workspace_dir)
+                .await?;
+        let config_path = openhuman_dir.join("config.toml");
+
+        if !config_path.exists() {
+            let mut config = Config {
+                config_path,
+                workspace_dir,
+                ..Default::default()
+            };
+            config.apply_env_overrides();
+            return Ok(config);
+        }
+
+        let raw = fs::read_to_string(&config_path)
+            .await
+            .context("reading config.toml from default paths")?;
+        let mut config: Config =
+            toml::from_str(&raw).context("parsing config.toml from default paths")?;
+        config.config_path = config_path;
+        config.workspace_dir = workspace_dir;
+        config.apply_env_overrides();
+        Ok(config)
     }
 
     pub fn apply_env_overrides(&mut self) {

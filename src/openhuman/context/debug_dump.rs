@@ -307,8 +307,8 @@ fn build_composio_stub_tools() -> Vec<Box<dyn Tool>> {
 /// Delegates to [`crate::openhuman::composio::fetch_connected_integrations`].
 /// The dump script often overrides `OPENHUMAN_WORKSPACE` to a throwaway
 /// temp dir which causes config resolution to miss the real user's auth
-/// token. We try the caller-supplied config first, then fall back to a
-/// fresh default-path load.
+/// token. We try the caller-supplied config first, then fall back to
+/// [`Config::load_from_default_paths`] which bypasses the env var.
 async fn fetch_connected_integrations_for_dump(config: &Config) -> Vec<ConnectedIntegration> {
     use crate::openhuman::composio::fetch_connected_integrations;
 
@@ -317,18 +317,17 @@ async fn fetch_connected_integrations_for_dump(config: &Config) -> Vec<Connected
         return result;
     }
 
-    // Fallback: temporarily clear OPENHUMAN_WORKSPACE and reload config
-    // from the default user paths so the real auth token is found.
-    let saved = std::env::var("OPENHUMAN_WORKSPACE").ok();
-    std::env::remove_var("OPENHUMAN_WORKSPACE");
-    let fallback = Config::load_or_init().await.ok();
-    if let Some(val) = saved {
-        std::env::set_var("OPENHUMAN_WORKSPACE", val);
-    }
-
-    match fallback {
-        Some(c) => fetch_connected_integrations(&c).await,
-        None => Vec::new(),
+    // Fallback: load config from the default user paths (bypasses
+    // OPENHUMAN_WORKSPACE) so the real auth token is found.
+    match Config::load_from_default_paths().await {
+        Ok(c) => fetch_connected_integrations(&c).await,
+        Err(e) => {
+            tracing::debug!(
+                error = %e,
+                "[debug_dump] fallback config load failed, skipping integrations"
+            );
+            Vec::new()
+        }
     }
 }
 

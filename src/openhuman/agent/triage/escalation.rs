@@ -126,8 +126,15 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
         .await
         .context("loading config for sub-agent dispatch")?;
 
-    let agent =
+    let mut agent =
         Agent::from_config(&config).context("building Agent from config for sub-agent dispatch")?;
+
+    // Populate connected integrations from the process-wide cache (or a
+    // fresh fetch if cold) so triage-triggered sub-agents see the real
+    // integrations in their system prompts.
+    let integrations =
+        crate::openhuman::composio::fetch_connected_integrations(&config).await;
+    agent.set_connected_integrations(integrations);
 
     let registry = AgentDefinitionRegistry::global()
         .ok_or_else(|| anyhow!("AgentDefinitionRegistry not initialised"))?;

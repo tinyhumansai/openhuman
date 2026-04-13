@@ -885,16 +885,41 @@ pub fn render_subagent_system_prompt_with_format(
         );
     }
 
-    // 3d. Connected integrations — same section the main agent renders
-    //     so the orchestrator (and any sub-agent) sees what external
-    //     services are available via the Skills Agent.
+    // 3d. Connected integrations — rendered so the agent knows which
+    //     external services are available. Wording varies based on
+    //     whether the agent can delegate (has spawn_subagent) or must
+    //     call Composio tools directly.
     if !connected_integrations.is_empty() {
-        out.push_str(
-            "## Connected Integrations\n\n\
-             The user has the following external services connected. \
-             To interact with any of these, delegate to the **Skills Agent** \
-             (`skills_agent`) via `spawn_subagent`.\n\n",
-        );
+        let has_spawn = allowed_indices.iter().any(|&i| {
+            parent_tools
+                .get(i)
+                .map_or(false, |t| t.name() == "spawn_subagent")
+        });
+        let has_composio_execute = allowed_indices.iter().any(|&i| {
+            parent_tools
+                .get(i)
+                .map_or(false, |t| t.name() == "composio_execute")
+        });
+
+        out.push_str("## Connected Integrations\n\n");
+        if has_composio_execute {
+            out.push_str(
+                "The user has the following external services connected. \
+                 Use `composio_execute` with the appropriate action slug to interact \
+                 with them.\n\n",
+            );
+        } else if has_spawn {
+            out.push_str(
+                "The user has the following external services connected. \
+                 To interact with any of these, delegate to the **Skills Agent** \
+                 (`skills_agent`) via `spawn_subagent`.\n\n",
+            );
+        } else {
+            out.push_str(
+                "The user has the following external services connected.\n\n",
+            );
+        }
+
         for integration in connected_integrations {
             let _ = writeln!(
                 out,

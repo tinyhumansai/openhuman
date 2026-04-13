@@ -323,23 +323,33 @@ fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
 // ── Prompt integration discovery ────────────────────────────────────
 
 use crate::openhuman::context::prompt::{ConnectedIntegration, ConnectedIntegrationTool};
+use std::collections::HashMap;
 use std::sync::RwLock;
 
-/// Process-wide cache for connected integrations. Populated on first
-/// fetch and returned on subsequent calls until explicitly invalidated.
-///
-/// `None` = never fetched (cold). `Some(vec)` = cached (possibly empty
-/// if the user has no connections).
-static INTEGRATIONS_CACHE: RwLock<Option<Vec<ConnectedIntegration>>> = RwLock::new(None);
+/// Process-wide cache for connected integrations, keyed by the config
+/// identity (the `config_path` string) so different user contexts don't
+/// collide. Each entry is populated on first fetch and returned on
+/// subsequent calls until explicitly invalidated.
+static INTEGRATIONS_CACHE: RwLock<HashMap<String, Vec<ConnectedIntegration>>> =
+    RwLock::new(HashMap::new());
 
-/// Clear the cached connected integrations so the next call to
+/// Derive a stable cache key from a [`Config`]. We use the stringified
+/// `config_path` because it uniquely identifies a user context (it
+/// resolves to the per-user openhuman dir).
+fn cache_key(config: &Config) -> String {
+    config.config_path.display().to_string()
+}
+
+/// Clear cached connected integrations so the next call to
 /// [`fetch_connected_integrations`] hits the backend again.
 ///
 /// Called by [`super::bus::ComposioConnectionCreatedSubscriber`] when a
 /// new OAuth connection completes, and can also be called from tests.
+/// Clears the entire map because the bus subscriber doesn't carry a
+/// config reference.
 pub fn invalidate_connected_integrations_cache() {
     if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
-        *guard = None;
+        guard.clear();
         tracing::debug!("[composio] connected integrations cache invalidated");
     }
 }
@@ -351,19 +361,23 @@ pub fn invalidate_connected_integrations_cache() {
 /// data injected into system prompts — both the agent turn loop and
 /// the debug dump CLI call this function.
 ///
-/// Results are cached process-wide and returned instantly on subsequent
-/// calls. The cache is invalidated when a new connection is created
+/// Results are cached process-wide (keyed by config identity) and
+/// returned instantly on subsequent calls. The cache is invalidated
+/// when a new connection is created
 /// (via [`invalidate_connected_integrations_cache`]) or on process
 /// restart.
 ///
 /// Best-effort: returns an empty vec when the user isn't signed in,
 /// the backend is unreachable, or any step fails.
 pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedIntegration> {
+    let key = cache_key(config);
+
     // Fast path: return cached result.
     if let Ok(guard) = INTEGRATIONS_CACHE.read() {
-        if let Some(cached) = guard.as_ref() {
+        if let Some(cached) = guard.get(&key) {
             tracing::debug!(
                 count = cached.len(),
+                key = %key,
                 "[composio] fetch_connected_integrations: returning cached result"
             );
             return cached.clone();
@@ -374,7 +388,7 @@ pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedInteg
         Some(result) => {
             // Backend was reachable — cache the result (even if empty).
             if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
-                *guard = Some(result.clone());
+                guard.insert(key, result.clone());
             }
             result
         }
