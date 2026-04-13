@@ -11,7 +11,14 @@ import {
 import AutocompleteSetupModal from '../components/skills/AutocompleteSetupModal';
 import ScreenIntelligenceSetupModal from '../components/skills/ScreenIntelligenceSetupModal';
 import UnifiedSkillCard from '../components/skills/SkillCard';
-import SkillCategoryFilter, { type SkillCategory } from '../components/skills/SkillCategoryFilter';
+import { SKILL_CATEGORY_ORDER, type SkillCategory } from '../components/skills/skillCategories';
+import SkillCategoryFilter from '../components/skills/SkillCategoryFilter';
+import {
+  BUILT_IN_SKILL_ICONS,
+  CHANNEL_ICONS,
+  skillCategoryHeadingClassName,
+  SkillCategoryIcon,
+} from '../components/skills/skillIcons';
 import SkillSearchBar from '../components/skills/SkillSearchBar';
 import VoiceSetupModal from '../components/skills/VoiceSetupModal';
 import { useAutocompleteSkillStatus } from '../features/autocomplete/useAutocompleteSkillStatus';
@@ -22,12 +29,6 @@ import { useComposioIntegrations } from '../lib/composio/hooks';
 import { type ComposioConnection, deriveComposioState } from '../lib/composio/types';
 import { useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
-
-const CHANNEL_ICONS: Record<string, string> = {
-  telegram: '\u2708\uFE0F',
-  discord: '\uD83C\uDFAE',
-  web: '\uD83C\uDF10',
-};
 
 function channelStatusDot(status: ChannelConnectionStatus): string {
   switch (status) {
@@ -120,16 +121,7 @@ const BUILT_IN_SKILLS = [
     description:
       'Capture windows, summarize what is on screen, and feed useful context into memory.',
     route: '/settings/screen-intelligence',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={1.8}
-          d="M3 5h18v12H3zM8 21h8m-4-4v4"
-        />
-      </svg>
-    ),
+    icon: BUILT_IN_SKILL_ICONS.screenIntelligence,
   },
   {
     id: 'text-autocomplete',
@@ -137,32 +129,14 @@ const BUILT_IN_SKILLS = [
     description:
       'Suggest inline completions while you type and control where autocomplete is active.',
     route: '/settings/autocomplete',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={1.8}
-          d="M4 7h16M4 12h10m-10 5h7m10 0l3 3m0 0l3-3m-3 3v-8"
-        />
-      </svg>
-    ),
+    icon: BUILT_IN_SKILL_ICONS.textAutocomplete,
   },
   {
     id: 'voice-stt',
     title: 'Voice Intelligence',
     description: 'Use the microphone for dictation and voice-driven chat with your AI.',
     route: '/settings/voice',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={1.8}
-          d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
-        />
-      </svg>
-    ),
+    icon: BUILT_IN_SKILL_ICONS.voiceStt,
   },
 ];
 
@@ -281,7 +255,7 @@ export default function Skills() {
         kind: 'channel',
         channelDef: def,
         channelStatus: bestChannelStatus(def.id as ChannelType),
-        icon: <span className="text-lg">{CHANNEL_ICONS[def.icon] ?? ''}</span>,
+        icon: CHANNEL_ICONS[def.icon],
       });
     }
 
@@ -318,18 +292,7 @@ export default function Skills() {
     for (const item of allItems) {
       cats.add(item.category);
     }
-    const order: SkillCategory[] = [
-      'All',
-      'Built-in',
-      'Channels',
-      'Chat',
-      'Productivity',
-      'Tools & Automation',
-      'Social',
-      'Platform',
-      'Other',
-    ];
-    return order.filter(c => cats.has(c));
+    return SKILL_CATEGORY_ORDER.filter(c => cats.has(c));
   }, [allItems]);
 
   const filteredItems = useMemo(() => {
@@ -397,7 +360,15 @@ export default function Skills() {
                   key={category}
                   className="rounded-2xl border border-stone-200 bg-white p-3 shadow-soft animate-fade-up">
                   <div className="px-1 pb-3 pt-1">
-                    <h2 className="text-sm font-semibold text-stone-900">{category}</h2>
+                    <h2 className="flex items-center gap-2 text-sm font-semibold text-stone-900">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-stone-100">
+                        <SkillCategoryIcon
+                          category={category}
+                          className={skillCategoryHeadingClassName(category)}
+                        />
+                      </span>
+                      {category}
+                    </h2>
                   </div>
                   <div className="space-y-2">
                     {items.map(item => {
