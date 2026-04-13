@@ -34,6 +34,24 @@ fn canonical_linkedin_url(username: &str) -> String {
     format!("https://www.linkedin.com/in/{username}")
 }
 
+/// Typed status for a pipeline stage.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StageStatus {
+    Success,
+    Failed,
+    Skipped,
+}
+
+/// A single pipeline stage result, suitable for structured RPC responses.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EnrichmentStage {
+    pub id: String,
+    pub status: StageStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 /// Outcome of the full enrichment pipeline.
 #[derive(Debug)]
 pub struct LinkedInEnrichmentResult {
@@ -41,7 +59,9 @@ pub struct LinkedInEnrichmentResult {
     pub profile_url: Option<String>,
     /// Raw scraped profile JSON from Apify, if the scrape succeeded.
     pub profile_data: Option<serde_json::Value>,
-    /// Human-readable summary of what happened at each stage.
+    /// Typed stage results for structured consumption by the frontend.
+    pub stages: Vec<EnrichmentStage>,
+    /// Human-readable log lines for display.
     pub log: Vec<String>,
 }
 
@@ -57,10 +77,11 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
     let mut result = LinkedInEnrichmentResult {
         profile_url: None,
         profile_data: None,
+        stages: Vec::new(),
         log: Vec::new(),
     };
 
-    // ── Stage 1: search Gmail for LinkedIn emails ��───────────────────
+    // ── Stage 1: search Gmail for LinkedIn emails ───────────────────
     tracing::info!("[linkedin_enrichment] stage 1: searching Gmail for LinkedIn emails");
     result
         .log
@@ -70,6 +91,11 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
         Ok(Some(url)) => {
             tracing::info!(url = %url, "[linkedin_enrichment] found LinkedIn profile URL");
             result.log.push(format!("Found LinkedIn profile: {url}"));
+            result.stages.push(EnrichmentStage {
+                id: "gmail-search".into(),
+                status: StageStatus::Success,
+                detail: Some(url.clone()),
+            });
             Some(url)
         }
         Ok(None) => {
@@ -77,11 +103,21 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
             result
                 .log
                 .push("No LinkedIn profile URL found in emails.".into());
+            result.stages.push(EnrichmentStage {
+                id: "gmail-search".into(),
+                status: StageStatus::Skipped,
+                detail: Some("No LinkedIn profile URL found in emails".into()),
+            });
             None
         }
         Err(e) => {
             tracing::warn!(error = %e, "[linkedin_enrichment] Gmail search failed");
             result.log.push(format!("Gmail search failed: {e}"));
+            result.stages.push(EnrichmentStage {
+                id: "gmail-search".into(),
+                status: StageStatus::Failed,
+                detail: Some(format!("Gmail search failed: {e}")),
+            });
             None
         }
     };
@@ -93,6 +129,16 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
         result
             .log
             .push("Skipping LinkedIn scrape — no profile URL.".into());
+        result.stages.push(EnrichmentStage {
+            id: "apify-scrape".into(),
+            status: StageStatus::Skipped,
+            detail: Some("No profile URL to scrape".into()),
+        });
+        result.stages.push(EnrichmentStage {
+            id: "build-profile".into(),
+            status: StageStatus::Skipped,
+            detail: Some("No profile data".into()),
+        });
         return Ok(result);
     };
 
@@ -100,7 +146,16 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
     result.log.push("Scraping LinkedIn profile...".into());
 
     // Build memory client once for all persist calls.
-    let memory = build_memory_client().ok();
+    let memory = match build_memory_client() {
+        Ok(m) => Some(m),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "[linkedin_enrichment] memory client init failed, skipping memory persistence"
+            );
+            None
+        }
+    };
 
     match scrape_linkedin_profile(&client, &url).await {
         Ok(data) => {
@@ -108,14 +163,29 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
             result
                 .log
                 .push("LinkedIn profile scraped successfully.".into());
+            result.stages.push(EnrichmentStage {
+                id: "apify-scrape".into(),
+                status: StageStatus::Success,
+                detail: None,
+            });
 
             // ── Stage 3: write PROFILE.md to workspace ──────────────
             tracing::info!("[linkedin_enrichment] stage 3: writing PROFILE.md");
             if let Err(e) = write_profile_md(config, &url, &data).await {
                 tracing::warn!(error = %e, "[linkedin_enrichment] failed to write PROFILE.md");
                 result.log.push(format!("Failed to write PROFILE.md: {e}"));
+                result.stages.push(EnrichmentStage {
+                    id: "build-profile".into(),
+                    status: StageStatus::Failed,
+                    detail: Some(format!("{e}")),
+                });
             } else {
                 result.log.push("PROFILE.md written to workspace.".into());
+                result.stages.push(EnrichmentStage {
+                    id: "build-profile".into(),
+                    status: StageStatus::Success,
+                    detail: Some("PROFILE.md written".into()),
+                });
             }
 
             // Also persist to memory store for RAG retrieval.
@@ -130,6 +200,16 @@ pub async fn run_linkedin_enrichment(config: &Config) -> anyhow::Result<LinkedIn
         Err(e) => {
             tracing::warn!(error = %e, "[linkedin_enrichment] Apify scrape failed");
             result.log.push(format!("LinkedIn scrape failed: {e}"));
+            result.stages.push(EnrichmentStage {
+                id: "apify-scrape".into(),
+                status: StageStatus::Failed,
+                detail: Some(format!("{e}")),
+            });
+            result.stages.push(EnrichmentStage {
+                id: "build-profile".into(),
+                status: StageStatus::Skipped,
+                detail: Some("Scrape failed".into()),
+            });
 
             // Still write a minimal PROFILE.md with just the URL.
             if let Err(e) = write_profile_md_url_only(config, &url) {
@@ -489,7 +569,7 @@ async fn scrape_linkedin_profile(
 
     tracing::debug!(
         actor = LINKEDIN_SCRAPER_ACTOR,
-        url = profile_url,
+        url_len = profile_url.len(),
         "[linkedin_enrichment] invoking Apify actor"
     );
 

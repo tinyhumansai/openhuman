@@ -308,17 +308,17 @@ const CATALOG: Record<string, Omit<ComposioToolkitMeta, 'slug'>> = {
   },
 };
 
-/** All toolkit slugs with known CATALOG entries, including alternate
- *  slug variants the backend may return (e.g. `google_calendar` vs
- *  `googlecalendar`). Both map to the same metadata in CATALOG. */
+/**
+ * Canonical toolkit slugs used as the default catalog when the backend
+ * allowlist hasn't loaded yet. One entry per integration — CATALOG
+ * handles alternate slug variants (e.g. `google_calendar` →
+ * `googlecalendar`) so they don't need to appear here.
+ */
 export const KNOWN_COMPOSIO_TOOLKITS = Object.freeze([
   'gmail',
   'googlecalendar',
-  'google_calendar',
   'googledrive',
-  'google_drive',
   'google_sheets',
-  'googlesheets',
   'notion',
   'github',
   'slack',

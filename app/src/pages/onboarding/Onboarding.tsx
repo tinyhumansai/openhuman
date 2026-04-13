@@ -152,12 +152,14 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
       console.warn('[onboarding] Failed to notify backend of onboarding completion');
     }
 
-    // Write onboarding_completed to core config (source of truth)
+    // Write onboarding_completed to core config (source of truth).
+    // This is the authoritative flag — if it fails, don't complete.
     console.debug('[onboarding:handleContextNext] setting onboarding completed flag');
     try {
       await setOnboardingCompletedFlag(true);
-    } catch {
-      console.warn('[onboarding] Failed to persist onboarding_completed to core config');
+    } catch (e) {
+      console.error('[onboarding] Failed to persist onboarding_completed to core config', e);
+      throw e;
     }
 
     onComplete?.();

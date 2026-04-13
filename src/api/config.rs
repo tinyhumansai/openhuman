@@ -1,7 +1,7 @@
 //! Base URL and defaults for the TinyHumans / AlphaHuman hosted API.
 
 /// Default API host when `config.api_url` is unset or blank and no env override is set.
-pub const DEFAULT_API_BASE_URL: &str = "https://staging-api.alphahuman.xyz";
+pub const DEFAULT_API_BASE_URL: &str = "https://api.tinyhumans.ai";
 
 /// Resolves the hosted API base URL (no path suffix).
 ///

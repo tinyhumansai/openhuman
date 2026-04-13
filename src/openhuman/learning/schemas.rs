@@ -72,6 +72,7 @@ fn handle_linkedin_enrichment(_params: Map<String, Value>) -> ControllerFuture {
         let payload = serde_json::json!({
             "profile_url": result.profile_url,
             "profile_data": result.profile_data,
+            "stages": result.stages,
             "log": result.log,
         });
 
