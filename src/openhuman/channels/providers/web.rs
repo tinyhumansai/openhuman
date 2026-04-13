@@ -32,6 +32,36 @@ struct SessionEntry {
     agent: Agent,
     model_override: Option<String>,
     temperature: Option<f64>,
+    /// Which agent definition was used to build `agent`. Recorded so
+    /// that the cache hit predicate in `run_chat_task` can detect
+    /// when the routing decision (welcome vs orchestrator) flips
+    /// between turns and rebuild instead of reusing a stale agent.
+    /// Without this field the cache hit short-circuited the routing
+    /// fix from Commit 8 — the very first turn picked welcome,
+    /// welcome called `complete_onboarding(complete)`, the flag
+    /// flipped, but the next turn read the cached welcome agent
+    /// instead of invoking `build_session_agent` to re-resolve the
+    /// target.
+    target_agent_id: String,
+}
+
+/// Decide which agent definition this turn should run with.
+///
+/// Mirrors the routing decision inside `build_session_agent` so
+/// `run_chat_task` can compute it once up front and use it both as
+/// the cache hit predicate AND (transitively) as the target id the
+/// builder picks. Reads `chat_onboarding_completed` from a fresh
+/// disk-loaded `Config` (no in-process cache) so the value reflects
+/// the current persisted state — meaning the moment the welcome
+/// agent calls `complete_onboarding(complete)` and the flag flips
+/// to `true`, the very next chat turn observes the new value here
+/// and the cache miss + rebuild routes to orchestrator.
+fn pick_target_agent_id(config: &Config) -> &'static str {
+    if config.chat_onboarding_completed {
+        "orchestrator"
+    } else {
+        "welcome"
+    }
 }
 
 #[derive(Debug)]
@@ -241,6 +271,14 @@ async fn run_chat_task(
     let map_key = key_for(client_id, thread_id);
     let model_override = normalize_model_override(model_override);
 
+    // Compute the routing decision up front so the cache lookup can
+    // detect when it has changed. Without this, a turn that flips
+    // `chat_onboarding_completed` (welcome agent calling
+    // `complete_onboarding(complete)`) would still serve the next
+    // turn from the cached welcome agent — the cache hit predicate
+    // didn't know about the routing decision before Commit 13.
+    let target_agent_id = pick_target_agent_id(&config).to_string();
+
     let prior = {
         let mut sessions = THREAD_SESSIONS.lock().await;
         sessions.remove(&map_key)
@@ -248,11 +286,35 @@ async fn run_chat_task(
 
     let mut agent = match prior {
         Some(entry)
-            if entry.model_override == model_override && entry.temperature == temperature =>
+            if entry.model_override == model_override
+                && entry.temperature == temperature
+                && entry.target_agent_id == target_agent_id =>
         {
+            log::info!(
+                "[web-channel] reusing cached session agent id={} for client={} thread={}",
+                target_agent_id,
+                client_id,
+                thread_id
+            );
             entry.agent
         }
-        Some(_) | None => build_session_agent(
+        Some(prior_entry) => {
+            log::info!(
+                "[web-channel] cache miss — rebuilding session agent (was id={}, now id={}) for client={} thread={}",
+                prior_entry.target_agent_id,
+                target_agent_id,
+                client_id,
+                thread_id
+            );
+            build_session_agent(
+                &config,
+                client_id,
+                thread_id,
+                model_override.clone(),
+                temperature,
+            )?
+        }
+        None => build_session_agent(
             &config,
             client_id,
             thread_id,
@@ -286,6 +348,7 @@ async fn run_chat_task(
                 agent,
                 model_override,
                 temperature,
+                target_agent_id,
             },
         );
     }
