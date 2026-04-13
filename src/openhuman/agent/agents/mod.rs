@@ -100,6 +100,16 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("trigger_reactor/agent.toml"),
         prompt: include_str!("trigger_reactor/prompt.md"),
     },
+    BuiltinAgent {
+        id: "morning_briefing",
+        toml: include_str!("morning_briefing/agent.toml"),
+        prompt: include_str!("morning_briefing/prompt.md"),
+    },
+    BuiltinAgent {
+        id: "welcome",
+        toml: include_str!("welcome/agent.toml"),
+        prompt: include_str!("welcome/prompt.md"),
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -145,7 +155,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 10, "expected 10 built-in agents");
+        assert_eq!(defs.len(), 12, "expected 12 built-in agents");
     }
 
     #[test]
@@ -292,5 +302,39 @@ mod tests {
         let def = find("archivist");
         assert!(def.background);
         assert_eq!(def.max_iterations, 3);
+    }
+
+    #[test]
+    fn morning_briefing_is_read_only_with_skill_filter() {
+        let def = find("morning_briefing");
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        assert!(matches!(def.tools, ToolScope::Wildcard));
+        assert_eq!(
+            def.category_filter,
+            Some(crate::openhuman::tools::ToolCategory::Skill)
+        );
+        assert!(!def.omit_memory_context);
+        assert!(def.omit_identity);
+        assert!(def.omit_safety_preamble);
+        assert_eq!(def.max_iterations, 8);
+    }
+
+    #[test]
+    fn welcome_is_read_only_with_memory_recall_only() {
+        let def = find("welcome");
+        assert_eq!(def.sandbox_mode, SandboxMode::ReadOnly);
+        match &def.tools {
+            ToolScope::Named(tools) => {
+                assert_eq!(tools.len(), 1, "welcome should have exactly one tool");
+                assert!(
+                    tools.iter().any(|t| t == "memory_recall"),
+                    "welcome needs memory_recall"
+                );
+            }
+            ToolScope::Wildcard => panic!("welcome must have a Named tool scope"),
+        }
+        assert!(!def.omit_memory_context);
+        assert!(def.omit_identity);
+        assert_eq!(def.max_iterations, 4);
     }
 }

@@ -559,10 +559,28 @@ pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
 }
 
 /// Updates and persists the onboarding completion status.
+///
+/// When transitioning to `true`, seeds default proactive agent cron jobs
+/// (morning briefing + one-shot welcome). Seeding is fire-and-forget so
+/// it never blocks the RPC response.
 pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, String> {
     let mut config = load_config_with_timeout().await?;
+    let was_completed = config.onboarding_completed;
     config.onboarding_completed = value;
     config.save().await.map_err(|e| e.to_string())?;
+
+    // Seed proactive agents exactly once, on the false→true transition.
+    if value && !was_completed {
+        let seed_config = config.clone();
+        tokio::spawn(async move {
+            if let Err(e) = crate::openhuman::cron::seed::seed_proactive_agents(&seed_config) {
+                tracing::warn!(
+                    "[onboarding] failed to seed proactive agent cron jobs: {e}"
+                );
+            }
+        });
+    }
+
     Ok(RpcOutcome::single_log(
         config.onboarding_completed,
         "onboarding_completed saved to config",

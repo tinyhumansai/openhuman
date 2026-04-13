@@ -1,0 +1,26 @@
+id = "morning_briefing"
+display_name = "Morning Briefing"
+when_to_use = "Proactive daily agent — runs at a scheduled time (default 7 AM) to review the user's upcoming day and deliver a concise morning summary covering tasks, calendar events, important emails, and relevant context from connected skills."
+temperature = 0.5
+max_iterations = 8
+sandbox_mode = "read_only"
+
+# Needs memory for user context and preferences, but not identity/safety
+# boilerplate — the prompt carries its own voice.
+omit_identity = true
+omit_memory_context = false
+omit_safety_preamble = true
+omit_skills_catalog = true
+
+# Skill-category tools so it can pull calendar, email, task data from
+# connected integrations (Composio: Gmail, Google Calendar, Notion, etc.).
+category_filter = "skill"
+
+[model]
+hint = "agentic"
+
+[tools]
+# Wildcard within the skill category — the agent needs to discover and
+# call whichever Composio actions are available for the user's connected
+# integrations (calendar, email, tasks, etc.).
+wildcard = {}

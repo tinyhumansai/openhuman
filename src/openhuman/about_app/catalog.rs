@@ -635,6 +635,25 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Settings > Cron Jobs",
         status: CapabilityStatus::Beta,
     },
+    // ── Proactive agents ─────────────────────────────────────────────────────
+    Capability {
+        id: "automation.morning_briefing",
+        name: "Morning Briefing",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Daily proactive agent that reviews calendar, tasks, emails, and market context to deliver a morning summary.",
+        how_to: "Automatic after onboarding (runs daily at 7 AM). Adjust schedule via Settings > Cron Jobs.",
+        status: CapabilityStatus::Beta,
+    },
+    Capability {
+        id: "automation.welcome_agent",
+        name: "Welcome Message",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "One-shot agent that delivers a personalized, witty welcome message after onboarding completes.",
+        how_to: "Automatic — triggered once after onboarding.",
+        status: CapabilityStatus::Beta,
+    },
     // ── Update ──────────────────────────────────────────────────────────────
     Capability {
         id: "update.check",
