@@ -2,7 +2,6 @@ import { useNavigate } from 'react-router-dom';
 
 import type {
   RewardsAchievement,
-  RewardsDiscordRoleStatus,
   RewardsSnapshot,
 } from '../../types/rewards';
 import { DISCORD_INVITE_URL } from '../../utils/links';
@@ -18,23 +17,6 @@ function discordMembershipLabel(snapshot: RewardsSnapshot | null): string {
       return 'Not linked';
     default:
       return 'Membership status unavailable';
-  }
-}
-
-function roleStatusLabel(status: RewardsDiscordRoleStatus): string {
-  switch (status) {
-    case 'assigned':
-      return 'Assigned in Discord';
-    case 'not_assigned':
-      return 'Earned, pending Discord assignment';
-    case 'not_linked':
-      return 'Link Discord to receive this role';
-    case 'not_in_guild':
-      return 'Join the server to receive this role';
-    case 'not_configured':
-      return 'Discord role not configured';
-    default:
-      return 'Role sync status unavailable';
   }
 }
 
@@ -97,8 +79,6 @@ interface RewardsCommunityTabProps {
 export default function RewardsCommunityTab({
   error,
   isLoading,
-  onSelectRedeem,
-  plan,
   snapshot,
 }: RewardsCommunityTabProps) {
   const navigate = useNavigate();
@@ -112,12 +92,6 @@ export default function RewardsCommunityTab({
     rewardRoles.length > 0 ? rewardRoles.slice(0, 8) : new Array(4).fill(null);
   const ringCircumference = 2 * Math.PI * 24;
   const ringOffset = ringCircumference - (progressPercent / 100) * ringCircumference;
-  const connectedAccountsLabel = snapshot?.discord.linked
-    ? snapshot.discord.membershipStatus === 'member'
-      ? '2 Connected'
-      : '1 Connected'
-    : '0 Connected';
-
   return (
     <>
       <section className="relative overflow-hidden rounded-[1.25rem] bg-gradient-to-br from-[#004ad0] to-[#2b64f1] p-6 text-white shadow-[0_20px_40px_rgba(25,28,30,0.08)]">

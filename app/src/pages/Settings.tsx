@@ -204,80 +204,115 @@ const aiModelsSettingsItems = [
   },
 ];
 
-const Settings = () => {
+const WrappedSettingsPage = ({ children }: { children: React.ReactNode }) => {
   return (
     <div className="p-4 pt-6">
       <div className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
-        <Routes>
-          <Route index element={<SettingsHome />} />
+        {children}
+      </div>
+    </div>
+  );
+};
+
+const Settings = () => {
+  const wrapSettingsPage = (element: React.ReactNode) => (
+    <WrappedSettingsPage>
+      {element}
+      <div className="border-t border-stone-100 px-4 py-3 text-center text-[11px] text-stone-400">
+        Beta build - v{APP_VERSION}
+      </div>
+    </WrappedSettingsPage>
+  );
+
+  return (
+    <div>
+      <Routes>
+          <Route index element={wrapSettingsPage(<SettingsHome />)} />
           <Route
             path="account"
-            element={
+            element={wrapSettingsPage(
               <SettingsSectionPage
                 title="Account"
                 description="Recovery phrase, team, connections, and privacy settings."
                 items={accountSettingsItems}
               />
-            }
+            )}
           />
           <Route
             path="features"
-            element={
+            element={wrapSettingsPage(
               <SettingsSectionPage
                 title="Features"
                 description="Screen awareness, autocomplete, voice, messaging, and tools."
                 items={featuresSettingsItems}
               />
-            }
+            )}
           />
           <Route
             path="ai-models"
-            element={
+            element={wrapSettingsPage(
               <SettingsSectionPage
                 title="AI & Models"
                 description="Local AI model setup and management."
                 items={aiModelsSettingsItems}
               />
-            }
+            )}
           />
           {/* Account & Billing leaf panels */}
-          <Route path="recovery-phrase" element={<RecoveryPhrasePanel />} />
-          <Route path="team" element={<TeamPanel />} />
-          <Route path="team/manage/:teamId" element={<TeamManagementPanel />} />
-          <Route path="team/manage/:teamId/members" element={<TeamMembersPanel />} />
-          <Route path="team/manage/:teamId/invites" element={<TeamInvitesPanel />} />
-          <Route path="team/members" element={<TeamMembersPanel />} />
-          <Route path="team/invites" element={<TeamInvitesPanel />} />
-          <Route path="connections" element={<ConnectionsPanel />} />
+          <Route path="recovery-phrase" element={wrapSettingsPage(<RecoveryPhrasePanel />)} />
+          <Route path="team" element={wrapSettingsPage(<TeamPanel />)} />
+          <Route path="team/manage/:teamId" element={wrapSettingsPage(<TeamManagementPanel />)} />
+          <Route
+            path="team/manage/:teamId/members"
+            element={wrapSettingsPage(<TeamMembersPanel />)}
+          />
+          <Route
+            path="team/manage/:teamId/invites"
+            element={wrapSettingsPage(<TeamInvitesPanel />)}
+          />
+          <Route path="team/members" element={wrapSettingsPage(<TeamMembersPanel />)} />
+          <Route path="team/invites" element={wrapSettingsPage(<TeamInvitesPanel />)} />
+          <Route path="connections" element={wrapSettingsPage(<ConnectionsPanel />)} />
           <Route path="billing" element={<BillingPanel />} />
-          <Route path="privacy" element={<PrivacyPanel />} />
+          <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
           {/* Features leaf panels */}
-          <Route path="screen-intelligence" element={<ScreenIntelligencePanel />} />
-          <Route path="autocomplete" element={<AutocompletePanel />} />
-          <Route path="voice" element={<VoicePanel />} />
-          <Route path="messaging" element={<MessagingPanel />} />
-          <Route path="tools" element={<ToolsPanel />} />
+          <Route
+            path="screen-intelligence"
+            element={wrapSettingsPage(<ScreenIntelligencePanel />)}
+          />
+          <Route path="autocomplete" element={wrapSettingsPage(<AutocompletePanel />)} />
+          <Route path="voice" element={wrapSettingsPage(<VoicePanel />)} />
+          <Route path="messaging" element={wrapSettingsPage(<MessagingPanel />)} />
+          <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
           {/* AI & Models leaf panels */}
-          <Route path="local-model" element={<LocalModelPanel />} />
+          <Route path="local-model" element={wrapSettingsPage(<LocalModelPanel />)} />
           {/* Developer Options */}
-          <Route path="developer-options" element={<DeveloperOptionsPanel />} />
-          <Route path="ai" element={<AIPanel />} />
-          <Route path="agent-chat" element={<AgentChatPanel />} />
-          <Route path="cron-jobs" element={<CronJobsPanel />} />
-          <Route path="screen-awareness-debug" element={<ScreenAwarenessDebugPanel />} />
-          <Route path="autocomplete-debug" element={<AutocompleteDebugPanel />} />
-          <Route path="voice-debug" element={<VoiceDebugPanel />} />
-          <Route path="local-model-debug" element={<LocalModelDebugPanel />} />
-          <Route path="webhooks-debug" element={<WebhooksDebugPanel />} />
-          <Route path="memory-data" element={<MemoryDataPanel />} />
-          <Route path="memory-debug" element={<MemoryDebugPanel />} />
+          <Route
+            path="developer-options"
+            element={wrapSettingsPage(<DeveloperOptionsPanel />)}
+          />
+          <Route path="ai" element={wrapSettingsPage(<AIPanel />)} />
+          <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
+          <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
+          <Route
+            path="screen-awareness-debug"
+            element={wrapSettingsPage(<ScreenAwarenessDebugPanel />)}
+          />
+          <Route
+            path="autocomplete-debug"
+            element={wrapSettingsPage(<AutocompleteDebugPanel />)}
+          />
+          <Route path="voice-debug" element={wrapSettingsPage(<VoiceDebugPanel />)} />
+          <Route
+            path="local-model-debug"
+            element={wrapSettingsPage(<LocalModelDebugPanel />)}
+          />
+          <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
+          <Route path="memory-data" element={wrapSettingsPage(<MemoryDataPanel />)} />
+          <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/settings" replace />} />
-        </Routes>
-        <div className="border-t border-stone-100 px-4 py-3 text-center text-[11px] text-stone-400">
-          Beta build - v{APP_VERSION}
-        </div>
-      </div>
+      </Routes>
     </div>
   );
 };

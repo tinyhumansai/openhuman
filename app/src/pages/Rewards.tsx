@@ -58,7 +58,7 @@ const Rewards = () => {
 
   return (
     <div className="min-h-full px-4 pt-6 pb-10">
-      <div className="mx-auto max-w-lg space-y-4">
+      <div className="mx-auto max-w-2xl space-y-4">
         <PillTabBar
           items={[
             { label: 'Referrals', value: 'referrals' },

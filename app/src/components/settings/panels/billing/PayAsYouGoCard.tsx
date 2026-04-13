@@ -67,117 +67,138 @@ const PayAsYouGoCard = ({
   };
 
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-3">
-      <h3 className="text-sm font-semibold text-stone-900 mb-2">Pay as You Go</h3>
+    <div className="rounded-[28px] bg-white p-6 shadow-[0_24px_70px_rgba(15,23,42,0.06)] ring-1 ring-stone-950/5">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
+            Credits & Add-ons
+          </h3>
+          <p className="mt-1 text-sm leading-relaxed text-stone-500">
+            Top up spendable credits and redeem codes in one place.
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
+            Current balance
+          </p>
+          <p className="mt-1 text-lg font-bold tracking-tight text-primary-600">
+            ${availableCredits.toFixed(2)}
+          </p>
+        </div>
+      </div>
 
-      {/* Balance display */}
       {creditBalance ? (
-        <div className="space-y-1.5 mb-3">
-          <div className="flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-2.5 py-2">
-            <span className="text-xs text-stone-500">Available credits</span>
-            <span className="text-sm font-semibold text-stone-900">
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl bg-stone-50 px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
+              Available
+            </p>
+            <p className="mt-2 text-2xl font-bold tracking-tight text-stone-950">
               ${availableCredits.toFixed(2)}
-            </span>
+            </p>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-stone-400">Signup + promo credits</span>
-            <span className="text-xs font-medium text-stone-900">${promoCredits.toFixed(2)}</span>
+          <div className="rounded-2xl bg-stone-50 px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
+              Promo
+            </p>
+            <p className="mt-2 text-xl font-bold tracking-tight text-stone-950">
+              ${promoCredits.toFixed(2)}
+            </p>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-stone-400">Team top-up credits</span>
-            <span className="text-xs font-medium text-stone-900">
+          <div className="rounded-2xl bg-stone-50 px-4 py-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
+              Top-up pool
+            </p>
+            <p className="mt-2 text-xl font-bold tracking-tight text-stone-950">
               ${teamTopupCredits.toFixed(2)}
-            </span>
+            </p>
           </div>
         </div>
       ) : isLoadingCredits ? (
-        <div className="space-y-1.5 mb-3">
-          <div className="h-3 w-full rounded bg-stone-700/60 animate-pulse" />
-          <div className="h-3 w-3/4 rounded bg-stone-700/60 animate-pulse" />
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {[0, 1, 2].map(index => (
+            <div key={index} className="h-24 rounded-2xl bg-stone-100 animate-pulse" />
+          ))}
         </div>
       ) : (
-        <p className="text-xs text-stone-500 mb-3">Unable to load balance</p>
+        <p className="mt-5 text-sm text-stone-500">Unable to load balance.</p>
       )}
 
-      <p className="mb-3 text-[11px] text-stone-500">
-        Credits are used after any included subscription budget is consumed.
-      </p>
-
-      {/* Top-up buttons */}
-      <div className="flex gap-2 mb-3">
+      <div className="mt-6 grid gap-3 sm:grid-cols-3">
         {[5, 10, 25].map(amount => (
           <button
             key={amount}
             onClick={() => onTopUp(amount)}
             disabled={isToppingUp}
-            className="flex-1 py-1.5 rounded-lg bg-primary-500/20 hover:bg-primary-500/30 text-primary-400 text-xs font-medium border border-primary-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-            {isToppingUp ? '…' : `+$${amount}`}
+            className="group rounded-2xl border border-stone-200 bg-stone-50 px-4 py-5 text-center transition-all hover:border-primary-200 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
+            <div className="text-3xl font-bold tracking-tight text-stone-950">+{amount}</div>
+            <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
+              Credits
+            </div>
+            <div className="mt-4 text-sm font-bold text-primary-600 transition-transform group-hover:-translate-y-0.5">
+              {isToppingUp ? 'Opening…' : `$${amount.toFixed(2)}`}
+            </div>
           </button>
         ))}
       </div>
 
-      {/* Coupon redemption */}
-      <div className="border-t border-stone-100 pt-3">
-        <p className="text-[11px] text-stone-400 mb-1.5">Have a coupon?</p>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={couponCode}
-            onChange={e => {
-              setCouponCode(e.target.value.toUpperCase());
-              if (couponError) setCouponError(null);
-              if (couponSuccess) setCouponSuccess(null);
-            }}
-            onKeyDown={e => {
-              if (e.key === 'Enter') handleRedeemCoupon();
-            }}
-            placeholder="XXXX-XXXX"
-            className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-stone-200 bg-stone-50 text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-1 focus:ring-primary-500 focus:border-primary-500"
-          />
-          <button
-            onClick={handleRedeemCoupon}
-            disabled={couponLoading || !couponCode.trim()}
-            className="px-3 py-1.5 text-xs font-medium rounded-lg transition-colors bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-50 disabled:cursor-not-allowed">
-            {couponLoading ? '…' : 'Redeem'}
-          </button>
-        </div>
-
-        {couponSuccess && (
-          <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-sage-500/10 border border-sage-500/20 px-2.5 py-1.5">
-            <svg
-              className="w-3.5 h-3.5 text-sage-400 flex-shrink-0"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
-            <p className="text-[11px] text-sage-300 font-medium">{couponSuccess}</p>
-          </div>
-        )}
-
-        {couponError && (
-          <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-coral-500/10 border border-coral-500/20 px-2.5 py-1.5">
-            <svg
-              className="w-3.5 h-3.5 text-coral-400 flex-shrink-0"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-              />
-            </svg>
-            <p className="text-[11px] text-coral-300">{couponError}</p>
-          </div>
-        )}
+      <div className="mt-6 grid gap-3 lg:grid-cols-[1fr_auto]">
+        <input
+          type="text"
+          value={couponCode}
+          onChange={e => {
+            setCouponCode(e.target.value.toUpperCase());
+            if (couponError) setCouponError(null);
+            if (couponSuccess) setCouponSuccess(null);
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') handleRedeemCoupon();
+          }}
+          placeholder="Redeem coupon or code"
+          className="w-full rounded-2xl border-0 bg-stone-100 px-5 py-4 text-sm text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+        />
+        <button
+          onClick={handleRedeemCoupon}
+          disabled={couponLoading || !couponCode.trim()}
+          className="rounded-2xl bg-stone-950 px-6 py-4 text-sm font-semibold text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+          {couponLoading ? 'Redeeming…' : 'Redeem'}
+        </button>
       </div>
+
+      <p className="mt-3 text-sm text-stone-500">
+        Credits are consumed after any included subscription budget is exhausted.
+      </p>
+
+      {couponSuccess && (
+        <div className="mt-4 flex items-center gap-2 rounded-2xl border border-sage-500/20 bg-sage-500/10 px-4 py-3">
+          <svg
+            className="h-4 w-4 flex-shrink-0 text-sage-500"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <p className="text-sm font-medium text-sage-700">{couponSuccess}</p>
+        </div>
+      )}
+
+      {couponError && (
+        <div className="mt-4 flex items-center gap-2 rounded-2xl border border-coral-500/20 bg-coral-500/10 px-4 py-3">
+          <svg
+            className="h-4 w-4 flex-shrink-0 text-coral-500"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+            />
+          </svg>
+          <p className="text-sm text-coral-700">{couponError}</p>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,26 +1,30 @@
 import createDebug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import PillTabBar from '../../../components/PillTabBar';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { billingApi } from '../../../services/api/billingApi';
 import {
   type AutoRechargeSettings,
   type CreditBalance,
   creditsApi,
+  type CreditTransaction,
   type SavedCard,
   type TeamUsage,
 } from '../../../services/api/creditsApi';
 import type { CurrentPlanData, PlanTier } from '../../../types/api';
 import { openUrl } from '../../../utils/openUrl';
-import SettingsHeader from '../components/SettingsHeader';
+import PageBackButton from '../components/PageBackButton';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
-import AutoRechargeSection from './billing/AutoRechargeSection';
-import InferenceBudget from './billing/InferenceBudget';
-import PayAsYouGoCard from './billing/PayAsYouGoCard';
-import SubscriptionPlans from './billing/SubscriptionPlans';
-import { buildPlanId, formatUsdAmount, getPlanMeta } from './billingHelpers';
+import BillingHistoryTab from './billing/BillingHistoryTab';
+import BillingOverviewTab from './billing/BillingOverviewTab';
+import BillingPaymentsTab from './billing/BillingPaymentsTab';
+import BillingPlansTab from './billing/BillingPlansTab';
+import { buildPlanId } from './billingHelpers';
 
 const log = createDebug('openhuman:billing-panel');
+
+type BillingTab = 'overview' | 'plans' | 'payments' | 'history';
 
 // ── Component ───────────────────────────────────────────────────────────
 const BillingPanel = () => {
@@ -38,8 +42,10 @@ const BillingPanel = () => {
   const [currentPlan, setCurrentPlan] = useState<CurrentPlanData | null>(null);
   const [creditBalance, setCreditBalance] = useState<CreditBalance | null>(null);
   const [teamUsage, setTeamUsage] = useState<TeamUsage | null>(null);
+  const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [isLoadingCredits, setIsLoadingCredits] = useState(false);
   const [isToppingUp, setIsToppingUp] = useState(false);
+  const [selectedTab, setSelectedTab] = useState<BillingTab>('overview');
 
   // Local state
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly');
@@ -83,9 +89,6 @@ const BillingPanel = () => {
     currentPlan?.hasActiveSubscription ??
     activeTeam?.team.subscription?.hasActiveSubscription ??
     false;
-  const planExpiry = currentPlan?.planExpiry ?? activeTeam?.team.subscription?.planExpiry ?? null;
-  const currentPlanMeta = getPlanMeta(currentTier);
-
   // Fetch current plan, credits balance, and team usage once auth is available.
   useEffect(() => {
     if (!sessionToken) {
@@ -104,8 +107,9 @@ const BillingPanel = () => {
       billingApi.getCurrentPlan(),
       creditsApi.getBalance(),
       creditsApi.getTeamUsage(),
+      creditsApi.getTransactions(5, 0),
     ])
-      .then(([planResult, balanceResult, usageResult]) => {
+      .then(([planResult, balanceResult, usageResult, transactionsResult]) => {
         if (planResult.status === 'fulfilled') {
           const plan = planResult.value;
           log(
@@ -138,6 +142,13 @@ const BillingPanel = () => {
           }
         } else {
           log('[load] getTeamUsage failed: %O', usageResult.reason);
+        }
+        if (transactionsResult.status === 'fulfilled') {
+          if (!cancelled) {
+            setTransactions(transactionsResult.value.transactions);
+          }
+        } else {
+          log('[load] getTransactions failed: %O', transactionsResult.reason);
         }
       })
       .finally(() => {
@@ -420,91 +431,97 @@ const BillingPanel = () => {
     }
   }, []);
 
+  const availableCredits =
+    (creditBalance?.promotionBalanceUsd ?? 0) + (creditBalance?.teamTopupUsd ?? 0);
+  const transactionRows = transactions.slice(0, 4);
+
   // ── JSX ─────────────────────────────────────────────────────────────
   return (
-    <div>
-      <SettingsHeader
-        title={teamName ? `Billing — ${teamName}` : 'Billing & Subscription'}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
-
-      <div className="overflow-y-auto">
-        <div className="p-4 space-y-4">
-          {/* ── Current Plan Header ───────────────────────────────── */}
-          <div className="rounded-2xl border border-stone-200 bg-white p-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <h3 className="text-sm font-semibold text-stone-900">Current Plan — {currentTier}</h3>
-              {hasActive && (
-                <button
-                  onClick={handleManageSubscription}
-                  className="text-xs text-primary-400 hover:text-primary-300 font-medium transition-colors">
-                  Manage
-                </button>
-              )}
-            </div>
-            {planExpiry && (
-              <p className="text-xs text-stone-400 mb-1.5">
-                Renews{' '}
-                {new Date(planExpiry).toLocaleDateString('en-US', {
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
-              </p>
-            )}
-            <p className="text-xs text-stone-500">
-              {currentTier === 'FREE'
-                ? 'Free accounts use pay-as-you-go credits. New accounts may receive a one-time signup credit.'
-                : 'Your subscription includes premium usage each cycle. Top-ups cover any overage.'}
-            </p>
-            {currentPlan && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {currentPlan.monthlyBudgetUsd > 0 && (
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    Included monthly value: {formatUsdAmount(currentPlan.monthlyBudgetUsd)}
+    <div className="overflow-y-auto">
+      <div className="mx-auto max-w-2xl space-y-10 px-4 py-6 sm:px-6 sm:py-8">
+        <header className="space-y-5">
+          <PageBackButton
+            label={teamName ? `Back to ${breadcrumbs.at(-1)?.label ?? 'settings'}` : 'Back to settings'}
+            onClick={navigateBack}
+            trailingContent={
+              breadcrumbs.length > 0 ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-stone-400">
+                {breadcrumbs.map((crumb, index) => (
+                  <span key={`${crumb.label}-${index}`} className="inline-flex items-center gap-2">
+                    <span>{crumb.label}</span>
+                    {index < breadcrumbs.length - 1 && <span>/</span>}
                   </span>
-                )}
-                {currentPlan.weeklyBudgetUsd > 0 && (
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    7-day cycle budget: {formatUsdAmount(currentPlan.weeklyBudgetUsd)}
-                  </span>
-                )}
-                {currentPlan.fiveHourCapUsd > 0 && (
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    10-hour cap: {formatUsdAmount(currentPlan.fiveHourCapUsd)}
-                  </span>
-                )}
-                {currentPlanMeta && currentPlanMeta.discountPercent > 0 && (
-                  <span className="rounded-full border border-stone-200 bg-stone-50 px-2 py-1 text-[10px] text-stone-600">
-                    Premium-usage discount: {currentPlanMeta.discountPercent}%
-                  </span>
-                )}
+                ))}
+                <span>/</span>
+                <span className="font-medium text-stone-600">Billing</span>
               </div>
-            )}
-          </div>
-
-          {/* ── Pay as You Go ── PROMOTED TO TOP ─────────────────── */}
-          <PayAsYouGoCard
-            creditBalance={creditBalance}
-            isLoadingCredits={isLoadingCredits}
-            isToppingUp={isToppingUp}
-            onTopUp={handleTopUp}
-            onBalanceRefresh={handleBalanceRefresh}
+              ) : undefined
+            }
           />
+          <PillTabBar
+            items={[
+              { label: 'Overview', value: 'overview' },
+              { label: 'Plans', value: 'plans' },
+              { label: 'Payments', value: 'payments' },
+              { label: 'History', value: 'history' },
+            ]}
+            selected={selectedTab}
+            onChange={setSelectedTab}
+            activeClassName="border-primary-600 bg-primary-600 text-white"
+            inactiveClassName="border-stone-200 bg-white text-stone-600 hover:bg-stone-50"
+            containerClassName="flex gap-2 overflow-x-auto pb-1 scrollbar-hide"
+          />
+        </header>
 
-          {/* ── Divider ──────────────────────────────────────────── */}
-          <div className="flex items-center gap-3 py-2">
-            <div className="flex-1 h-px bg-stone-200" />
-            <span className="text-xs text-stone-400 whitespace-nowrap">
-              Or subscribe for included usage + discounts
-            </span>
-            <div className="flex-1 h-px bg-stone-200" />
-          </div>
+        {selectedTab === 'overview' && (
+          <BillingOverviewTab
+            arAmount={arAmount}
+            arDirty={arDirty}
+            arError={arError}
+            arLoading={arLoading}
+            arSaving={arSaving}
+            arSettings={arSettings}
+            arThreshold={arThreshold}
+            arWeeklyLimit={arWeeklyLimit}
+            availableCredits={availableCredits}
+            billingInterval={billingInterval}
+            cards={cards}
+            cardsLoading={cardsLoading}
+            confirmDeleteId={confirmDeleteId}
+            creditBalance={creditBalance}
+            currentTier={currentTier}
+            deletingCardId={deletingCardId}
+            hasActive={hasActive}
+            isLoadingCredits={isLoadingCredits}
+            isPurchasing={isPurchasing}
+            isToppingUp={isToppingUp}
+            onAddCard={handleAddCard}
+            onArSave={handleArSave}
+            onArToggle={handleArToggle}
+            onBalanceRefresh={handleBalanceRefresh}
+            onDeleteCard={handleDeleteCard}
+            onManageSubscription={handleManageSubscription}
+            onSetDefault={handleSetDefault}
+            onTopUp={handleTopUp}
+            onUpgrade={handleUpgrade}
+            paymentConfirmed={paymentConfirmed}
+            paymentMethod={paymentMethod}
+            purchasingTier={purchasingTier}
+            setArAmount={setArAmount}
+            setArError={setArError}
+            setArThreshold={setArThreshold}
+            setArWeeklyLimit={setArWeeklyLimit}
+            setBillingInterval={setBillingInterval}
+            setConfirmDeleteId={setConfirmDeleteId}
+            setPaymentMethod={setPaymentMethod}
+            settingDefaultId={settingDefaultId}
+            teamUsage={teamUsage}
+            transactionRows={transactionRows}
+          />
+        )}
 
-          {/* ── Subscription Plans ──────────────────────────────── */}
-          <SubscriptionPlans
+        {selectedTab === 'plans' && (
+          <BillingPlansTab
             currentTier={currentTier}
             billingInterval={billingInterval}
             setBillingInterval={setBillingInterval}
@@ -515,39 +532,49 @@ const BillingPanel = () => {
             paymentConfirmed={paymentConfirmed}
             onUpgrade={handleUpgrade}
           />
+        )}
 
-          {/* ── Inference Budget ────────────────────────────────── */}
-          <div className="pt-2">
-            <InferenceBudget teamUsage={teamUsage} isLoadingCredits={isLoadingCredits} />
-          </div>
-
-          {/* ── Auto-Recharge + Payment Methods ────────────────── */}
-          <AutoRechargeSection
-            arSettings={arSettings}
-            arLoading={arLoading}
-            arError={arError}
-            arSaving={arSaving}
-            arThreshold={arThreshold}
+        {selectedTab === 'payments' && (
+          <BillingPaymentsTab
             arAmount={arAmount}
-            arWeeklyLimit={arWeeklyLimit}
             arDirty={arDirty}
-            setArThreshold={setArThreshold}
-            setArAmount={setArAmount}
-            setArWeeklyLimit={setArWeeklyLimit}
-            setArError={setArError}
-            onArToggle={handleArToggle}
-            onArSave={handleArSave}
+            arError={arError}
+            arLoading={arLoading}
+            arSaving={arSaving}
+            arSettings={arSettings}
+            arThreshold={arThreshold}
+            arWeeklyLimit={arWeeklyLimit}
+            availableCredits={availableCredits}
             cards={cards}
             cardsLoading={cardsLoading}
             confirmDeleteId={confirmDeleteId}
+            creditBalance={creditBalance}
             deletingCardId={deletingCardId}
-            settingDefaultId={settingDefaultId}
-            setConfirmDeleteId={setConfirmDeleteId}
-            onSetDefault={handleSetDefault}
-            onDeleteCard={handleDeleteCard}
+            isLoadingCredits={isLoadingCredits}
+            isToppingUp={isToppingUp}
             onAddCard={handleAddCard}
+            onArSave={handleArSave}
+            onArToggle={handleArToggle}
+            onBalanceRefresh={handleBalanceRefresh}
+            onDeleteCard={handleDeleteCard}
+            onSetDefault={handleSetDefault}
+            onTopUp={handleTopUp}
+            setArAmount={setArAmount}
+            setArError={setArError}
+            setArThreshold={setArThreshold}
+            setArWeeklyLimit={setArWeeklyLimit}
+            setConfirmDeleteId={setConfirmDeleteId}
+            settingDefaultId={settingDefaultId}
           />
-        </div>
+        )}
+
+        {selectedTab === 'history' && (
+          <BillingHistoryTab
+            hasActive={hasActive}
+            onManageSubscription={handleManageSubscription}
+            transactionRows={transactionRows}
+          />
+        )}
       </div>
     </div>
   );
