@@ -13,6 +13,7 @@
 //! See [`crate::openhuman::channels::runtime::dispatch`] for the primary
 //! caller.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -84,6 +85,33 @@ pub struct AgentTurnRequest {
     /// chunks here so channel providers can update "draft" messages in
     /// real time. `None` disables streaming for this turn.
     pub on_delta: Option<mpsc::Sender<String>>,
+
+    // ── Per-agent scoping (issues #525 / #526) ────────────────────────
+    /// Identifier of the agent definition this turn represents (e.g.
+    /// `"orchestrator"`, `"welcome"`). Used for structured tracing and
+    /// downstream bookkeeping; the actual filtering is driven by
+    /// [`Self::visible_tool_names`] and [`Self::extra_tools`] below.
+    /// `None` preserves the legacy "generic unfiltered turn" behaviour.
+    pub target_agent_id: Option<String>,
+
+    /// Whitelist of tool names visible to the LLM this turn. When
+    /// `Some(set)`, the bus handler filters both the function-calling
+    /// schema and the tool-execution lookup to names in the set.
+    /// Pre-built on the dispatch side from the target agent's
+    /// definition (its `[tools] named` list unioned with the names of
+    /// any per-turn synthesised delegation tools). `None` means no
+    /// filter — every tool in `tools_registry` plus `extra_tools` is
+    /// visible.
+    pub visible_tool_names: Option<HashSet<String>>,
+
+    /// Per-turn synthesised tools to splice alongside `tools_registry`.
+    /// The dispatch path uses this to carry `ArchetypeDelegationTool` /
+    /// `SkillDelegationTool` instances built fresh each turn from the
+    /// active agent's `subagents` field and the current Composio
+    /// integrations — tools that don't exist in the global startup
+    /// registry because they depend on per-user runtime state.
+    /// Empty vec for agents that don't delegate.
+    pub extra_tools: Vec<Box<dyn Tool>>,
 }
 
 /// Final response from an agentic turn.
@@ -114,14 +142,21 @@ pub fn register_agent_handlers() {
                 multimodal,
                 max_tool_iterations,
                 on_delta,
+                target_agent_id,
+                visible_tool_names,
+                extra_tools,
             } = req;
 
             tracing::debug!(
                 channel = %channel_name,
+                target_agent = target_agent_id.as_deref().unwrap_or("<unset>"),
                 provider = %provider_name,
                 model = %model,
                 history_len = history.len(),
                 tool_count = tools_registry.len(),
+                extra_tool_count = extra_tools.len(),
+                visible_tool_count = visible_tool_names.as_ref().map(|s| s.len()).unwrap_or(0),
+                filter_active = visible_tool_names.is_some(),
                 streaming = on_delta.is_some(),
                 "[agent::bus] dispatching {AGENT_RUN_TURN_METHOD}"
             );
@@ -143,6 +178,8 @@ pub fn register_agent_handlers() {
                 &multimodal,
                 max_tool_iterations,
                 on_delta,
+                visible_tool_names.as_ref(),
+                &extra_tools,
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -286,6 +323,9 @@ mod tests {
             multimodal: MultimodalConfig::default(),
             max_tool_iterations: 1,
             on_delta: None,
+            target_agent_id: None,
+            visible_tool_names: None,
+            extra_tools: Vec::new(),
         }
     }
 

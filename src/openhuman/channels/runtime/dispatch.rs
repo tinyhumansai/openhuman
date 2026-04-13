@@ -389,6 +389,13 @@ pub(crate) async fn process_channel_message(
         multimodal: ctx.multimodal.clone(),
         max_tool_iterations: ctx.max_tool_iterations,
         on_delta: delta_tx,
+        // Per-agent scoping fields are populated in commit 4b (the
+        // dispatch routing logic for #525). For now, leave them at
+        // their defaults so this commit ships zero behaviour change —
+        // every channel turn still sees the full unfiltered registry.
+        target_agent_id: None,
+        visible_tool_names: None,
+        extra_tools: Vec::new(),
     };
     tracing::debug!(
         channel = %msg.channel,

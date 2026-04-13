@@ -229,6 +229,14 @@ pub async fn run_triage_with_resolved(
         // cap is only a safety net.
         max_tool_iterations: 1,
         on_delta: None,
+        // The triage classifier runs against an empty tools registry
+        // by design and emits a structured JSON decision rather than
+        // calling tools — record the agent identity for tracing but
+        // leave the visible-tool filter unset so the legacy unfiltered
+        // behaviour is preserved.
+        target_agent_id: Some("trigger_triage".to_string()),
+        visible_tool_names: None,
+        extra_tools: Vec::new(),
     };
     tracing::debug!(
         provider = %provider_name,

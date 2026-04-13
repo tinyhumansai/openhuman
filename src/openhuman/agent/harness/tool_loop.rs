@@ -4,12 +4,13 @@ use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ProviderCa
 use crate::openhuman::tools::traits::ToolScope;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::io::Write as _;
 
 use super::credentials::scrub_credentials;
 use super::parse::{
-    build_native_assistant_history, find_tool, parse_structured_tool_calls, parse_tool_calls,
+    build_native_assistant_history, parse_structured_tool_calls, parse_tool_calls,
 };
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
 
@@ -23,6 +24,11 @@ pub(crate) const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 /// Execute a single turn of the agent loop: send messages, parse tool calls,
 /// execute tools, and loop until the LLM produces a final text response.
 /// When `silent` is true, suppresses stdout (for channel use).
+///
+/// This is a thin wrapper around [`run_tool_call_loop`] with the per-agent
+/// filter and extra-tool plumbing disabled — i.e. the LLM sees the entire
+/// `tools_registry` unchanged. Used by legacy call sites and harness tests
+/// that don't need agent-aware scoping.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn agent_turn(
     provider: &dyn Provider,
@@ -48,12 +54,40 @@ pub(crate) async fn agent_turn(
         multimodal_config,
         max_tool_iterations,
         None,
+        None,
+        &[],
     )
     .await
 }
 
 /// Execute a single turn of the agent loop: send messages, parse tool calls,
 /// execute tools, and loop until the LLM produces a final text response.
+///
+/// # Per-agent tool scoping
+///
+/// The last two parameters support per-agent tool filtering without
+/// requiring callers to build a filtered copy of the (non-`Clone`able)
+/// tool registry:
+///
+/// * `visible_tool_names` — optional whitelist of tool names that are
+///   allowed to reach the LLM. When `Some(set)`, only tools whose
+///   `name()` is present in the set contribute to the function-calling
+///   schema and are eligible for execution; every other tool in the
+///   registry is hidden from the model and rejected if the model
+///   somehow emits a call for it. When `None`, no filtering is applied
+///   and every tool in the combined registry is visible (the legacy
+///   behaviour used by CLI/REPL and harness tests).
+///
+/// * `extra_tools` — per-turn synthesised tools to splice alongside the
+///   persistent `tools_registry`. The agent-dispatch path uses this to
+///   surface delegation tools (`research`, `delegate_gmail`, …) that
+///   are synthesised fresh per turn from the active agent's
+///   `subagents` field and the current Composio integration list, and
+///   therefore are not registered in the global startup-time registry.
+///
+/// The combined tool list seen by the LLM this turn is
+/// `tools_registry.iter().chain(extra_tools.iter())`, further narrowed
+/// by `visible_tool_names` when supplied.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_tool_call_loop(
     provider: &dyn Provider,
@@ -68,6 +102,8 @@ pub(crate) async fn run_tool_call_loop(
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
+    visible_tool_names: Option<&HashSet<String>>,
+    extra_tools: &[Box<dyn Tool>],
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -75,16 +111,34 @@ pub(crate) async fn run_tool_call_loop(
         max_tool_iterations
     };
 
-    let tool_specs: Vec<crate::openhuman::tools::ToolSpec> =
-        tools_registry.iter().map(|tool| tool.spec()).collect();
+    // Is a given tool name visible to the model this turn? `None`
+    // means no filter (legacy behaviour = everything visible).
+    let is_visible = |name: &str| -> bool {
+        match visible_tool_names {
+            Some(set) => set.contains(name),
+            None => true,
+        }
+    };
+
+    let tool_specs: Vec<crate::openhuman::tools::ToolSpec> = tools_registry
+        .iter()
+        .chain(extra_tools.iter())
+        .filter(|tool| is_visible(tool.name()))
+        .map(|tool| tool.spec())
+        .collect();
     let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
 
     log::debug!(
-        "[tool-loop] Registry has {} tool(s): [{}]",
+        "[tool-loop] Registry has {} tool(s), extra {} tool(s), filter={} — {} visible in schema: [{}]",
         tools_registry.len(),
-        tools_registry
+        extra_tools.len(),
+        visible_tool_names
+            .map(|s| format!("whitelist({})", s.len()))
+            .unwrap_or_else(|| "none".to_string()),
+        tool_specs.len(),
+        tool_specs
             .iter()
-            .map(|t| t.name())
+            .map(|s| s.name.as_str())
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -289,7 +343,16 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
 
-            let tool_opt = find_tool(tools_registry, &call.name);
+            // Look up the tool by name in the combined registry + extras,
+            // subject to the visibility whitelist. If the model hallucinated
+            // a filtered-out tool name we treat it as unknown — the error
+            // path below produces a structured error message the LLM can
+            // correct in the next iteration.
+            let tool_opt: Option<&dyn Tool> = tools_registry
+                .iter()
+                .chain(extra_tools.iter())
+                .find(|t| t.name() == call.name && is_visible(t.name()))
+                .map(|b| b.as_ref());
             tracing::debug!(
                 iteration,
                 tool = call.name.as_str(),
@@ -563,6 +626,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             1,
             None,
+            None,
+            &[],
         )
         .await
         .expect_err("vision markers should be rejected");
@@ -597,6 +662,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             1,
             Some(tx),
+            None,
+            &[],
         )
         .await
         .expect("final text should succeed");
@@ -646,6 +713,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             2,
             None,
+            None,
+            &[],
         )
         .await
         .expect("loop should recover after denial");
@@ -698,6 +767,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             2,
             None,
+            None,
+            &[],
         )
         .await
         .expect("native tool flow should succeed");
@@ -753,6 +824,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             2,
             None,
+            None,
+            &[],
         )
         .await
         .expect("non-cli channels should auto-approve supervised tools");
@@ -801,6 +874,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             0,
             None,
+            None,
+            &[],
         )
         .await
         .expect("default iteration fallback should still succeed");
@@ -853,6 +928,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             2,
             None,
+            None,
+            &[],
         )
         .await
         .expect("loop should recover after tool errors");
@@ -889,6 +966,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             1,
             None,
+            None,
+            &[],
         )
         .await
         .expect_err("provider error path should fail");
@@ -918,6 +997,8 @@ mod tests {
             &crate::openhuman::config::MultimodalConfig::default(),
             1,
             None,
+            None,
+            &[],
         )
         .await
         .expect_err("loop should stop after configured iterations");

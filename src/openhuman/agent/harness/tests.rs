@@ -124,6 +124,8 @@ async fn run_tool_call_loop_returns_structured_error_for_non_vision_provider() {
         &crate::openhuman::config::MultimodalConfig::default(),
         3,
         None,
+        None,
+        &[],
     )
     .await
     .expect_err("provider without vision support should fail");
@@ -165,6 +167,8 @@ async fn run_tool_call_loop_rejects_oversized_image_payload() {
         &multimodal,
         3,
         None,
+        None,
+        &[],
     )
     .await
     .expect_err("oversized payload must fail");
@@ -200,6 +204,8 @@ async fn run_tool_call_loop_accepts_valid_multimodal_request_flow() {
         &crate::openhuman::config::MultimodalConfig::default(),
         3,
         None,
+        None,
+        &[],
     )
     .await
     .expect("valid multimodal payload should pass");
