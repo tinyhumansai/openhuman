@@ -24,6 +24,16 @@ pub struct ChannelsConfig {
     pub qq: Option<QQConfig>,
     #[serde(default = "default_channel_message_timeout_secs")]
     pub message_timeout_secs: u64,
+    /// The user's preferred channel for proactive messages (morning
+    /// briefings, welcome messages, cron output, etc.). When set, the
+    /// proactive message handler routes to this channel first. Falls
+    /// back to "web" when unset or when the named channel is not
+    /// connected.
+    ///
+    /// Valid values: any channel name (`"web"`, `"telegram"`, `"discord"`,
+    /// `"slack"`, etc.) or `None` to use the default ("web").
+    #[serde(default)]
+    pub active_channel: Option<String>,
 }
 
 fn default_channel_message_timeout_secs() -> u64 {
@@ -71,6 +81,7 @@ impl Default for ChannelsConfig {
             dingtalk: None,
             qq: None,
             message_timeout_secs: default_channel_message_timeout_secs(),
+            active_channel: None,
         }
     }
 }

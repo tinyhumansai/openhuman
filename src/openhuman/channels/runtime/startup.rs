@@ -474,6 +474,15 @@ pub async fn start_channels(config: Config) -> Result<()> {
     let _cron_delivery_handle = bus.subscribe(Arc::new(
         crate::openhuman::cron::bus::CronDeliverySubscriber::new(Arc::clone(&channels_by_name)),
     ));
+    // Register the proactive message subscriber so morning briefings,
+    // welcome messages, and other proactive agent output gets routed to
+    // the user's active channel (+ always to web).
+    let _proactive_handle = bus.subscribe(Arc::new(
+        crate::openhuman::channels::proactive::ProactiveMessageSubscriber::new(
+            Arc::clone(&channels_by_name),
+            config.channels_config.active_channel.clone(),
+        ),
+    ));
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
         crate::openhuman::tree_summarizer::bus::TreeSummarizerEventSubscriber::new(),

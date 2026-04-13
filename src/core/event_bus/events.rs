@@ -127,6 +127,18 @@ pub enum DomainEvent {
         output: String,
     },
 
+    /// A proactive message (morning briefing, welcome, cron output, etc.)
+    /// needs to be delivered to the user. The channels module routes it to
+    /// the user's active channel.
+    ProactiveMessageRequested {
+        /// Identifies the source (e.g. `"cron:morning_briefing"`, `"cron:welcome"`).
+        source: String,
+        /// The message content to deliver.
+        message: String,
+        /// Optional job name for display/threading purposes.
+        job_name: Option<String>,
+    },
+
     // ── Skills ──────────────────────────────────────────────────────────
     /// A skill was loaded into the runtime.
     SkillLoaded { skill_id: String, runtime: String },
@@ -325,7 +337,8 @@ impl DomainEvent {
 
             Self::CronJobTriggered { .. }
             | Self::CronJobCompleted { .. }
-            | Self::CronDeliveryRequested { .. } => "cron",
+            | Self::CronDeliveryRequested { .. }
+            | Self::ProactiveMessageRequested { .. } => "cron",
 
             Self::SkillLoaded { .. }
             | Self::SkillStopped { .. }
@@ -525,6 +538,14 @@ mod tests {
                     channel: "c".into(),
                     target: "t".into(),
                     output: "o".into(),
+                },
+                "cron",
+            ),
+            (
+                DomainEvent::ProactiveMessageRequested {
+                    source: "cron:morning_briefing".into(),
+                    message: "Good morning!".into(),
+                    job_name: Some("morning_briefing".into()),
                 },
                 "cron",
             ),

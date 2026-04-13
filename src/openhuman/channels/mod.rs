@@ -3,6 +3,7 @@
 pub mod bus;
 pub mod cli;
 pub mod controllers;
+pub mod proactive;
 pub mod providers;
 pub mod traits;
 

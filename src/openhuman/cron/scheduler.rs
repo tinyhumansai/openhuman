@@ -274,35 +274,54 @@ fn warn_if_high_frequency_agent_job(job: &CronJob) {
 
 async fn deliver_if_configured(_config: &Config, job: &CronJob, output: &str) -> Result<()> {
     let delivery: &DeliveryConfig = &job.delivery;
-    if !delivery.mode.eq_ignore_ascii_case("announce") {
-        return Ok(());
+
+    match delivery.mode.as_str() {
+        // Proactive delivery — the channels module decides where to send.
+        // Used by morning briefings, welcome messages, and other
+        // user-facing proactive agents.
+        "proactive" => {
+            let source = format!("cron:{}", job.id);
+            tracing::debug!(
+                job_id = %job.id,
+                source = %source,
+                "[cron] publishing ProactiveMessageRequested event"
+            );
+            publish_global(DomainEvent::ProactiveMessageRequested {
+                source,
+                message: output.to_string(),
+                job_name: job.name.clone(),
+            });
+        }
+
+        // Announce delivery — the cron job specifies the exact channel
+        // and target. Used for explicit channel-targeted output.
+        "announce" => {
+            let channel = delivery
+                .channel
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("delivery.channel is required for announce mode"))?;
+            let target = delivery
+                .to
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
+
+            tracing::debug!(
+                job_id = %job.id,
+                channel = %channel,
+                target = %target,
+                "[cron] publishing CronDeliveryRequested event"
+            );
+            publish_global(DomainEvent::CronDeliveryRequested {
+                job_id: job.id.clone(),
+                channel: channel.to_string(),
+                target: target.to_string(),
+                output: output.to_string(),
+            });
+        }
+
+        // No delivery configured — output is stored in last_output only.
+        _ => {}
     }
-
-    let channel = delivery
-        .channel
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("delivery.channel is required for announce mode"))?;
-    let target = delivery
-        .to
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("delivery.to is required for announce mode"))?;
-
-    tracing::debug!(
-        job_id = %job.id,
-        channel = %channel,
-        target = %target,
-        "[cron] publishing CronDeliveryRequested event"
-    );
-
-    // Publish the delivery request as an event. The channels module's
-    // CronDeliverySubscriber handles the actual dispatch, decoupling
-    // the cron scheduler from channel implementations.
-    publish_global(DomainEvent::CronDeliveryRequested {
-        job_id: job.id.clone(),
-        channel: channel.to_string(),
-        target: target.to_string(),
-        output: output.to_string(),
-    });
 
     Ok(())
 }
