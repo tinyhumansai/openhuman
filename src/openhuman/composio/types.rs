@@ -145,3 +145,29 @@ pub struct ComposioTriggerMetadata {
     #[serde(default)]
     pub uuid: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioTriggerHistoryEntry {
+    /// Unix timestamp in milliseconds when the trigger reached the core.
+    pub received_at_ms: u64,
+    /// Toolkit slug, e.g. `"gmail"`.
+    pub toolkit: String,
+    /// Trigger slug, e.g. `"GMAIL_NEW_GMAIL_MESSAGE"`.
+    pub trigger: String,
+    /// Backend metadata id for this event.
+    pub metadata_id: String,
+    /// Backend metadata UUID for this event.
+    pub metadata_uuid: String,
+    /// Raw provider payload as forwarded by the backend socket event.
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioTriggerHistoryResult {
+    /// Directory containing daily JSONL archives.
+    pub archive_dir: String,
+    /// Today's JSONL file path.
+    pub current_day_file: String,
+    /// Recent triggers, newest first.
+    pub entries: Vec<ComposioTriggerHistoryEntry>,
+}

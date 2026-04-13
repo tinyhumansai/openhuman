@@ -1,10 +1,11 @@
-//! Notion sync helpers — result extraction, memory persistence, and
-//! time utilities.
+//! Notion sync helpers — result extraction, pagination cursor,
+//! page title extraction, and time utilities.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use crate::openhuman::composio::providers::ProviderContext;
+use super::pick_str;
 
+/// Walk the Composio response envelope for Notion page results.
 pub(crate) fn extract_results(data: &Value) -> Vec<Value> {
     let candidates = [
         data.pointer("/data/results"),
@@ -21,51 +22,56 @@ pub(crate) fn extract_results(data: &Value) -> Vec<Value> {
     Vec::new()
 }
 
-pub(crate) async fn persist_snapshot(
-    ctx: &ProviderContext,
-    results: &[Value],
-) -> Result<usize, String> {
-    let Some(client) = ctx.memory_client() else {
-        tracing::debug!("[composio:notion] memory client not ready, skipping persist");
-        return Ok(0);
-    };
-    if results.is_empty() {
-        return Ok(0);
+/// Extract the Notion pagination cursor (for `start_cursor` on the
+/// next request).
+pub(crate) fn extract_notion_cursor(data: &Value) -> Option<String> {
+    let candidates = [
+        data.pointer("/data/next_cursor"),
+        data.pointer("/next_cursor"),
+        data.pointer("/data/data/next_cursor"),
+    ];
+    for cand in candidates.into_iter().flatten() {
+        if let Some(s) = cand.as_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Try to extract a human-readable title from a Notion page object.
+///
+/// Notion pages store the title in `properties.title` or
+/// `properties.Name.title[0].plain_text`. We try several shapes.
+pub(crate) fn extract_page_title(page: &Value) -> Option<String> {
+    // Try the common `properties.title.title[0].plain_text` shape.
+    let props = page
+        .get("properties")
+        .or_else(|| page.get("data")?.get("properties"));
+    if let Some(props) = props {
+        // Walk all properties looking for a "title" type field.
+        if let Some(obj) = props.as_object() {
+            for (_key, val) in obj {
+                if val.get("type").and_then(Value::as_str) == Some("title") {
+                    if let Some(arr) = val.get("title").and_then(Value::as_array) {
+                        let text: String = arr
+                            .iter()
+                            .filter_map(|t| t.get("plain_text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("");
+                        if !text.is_empty() {
+                            return Some(text);
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    let connection_label = ctx
-        .connection_id
-        .clone()
-        .unwrap_or_else(|| "default".to_string());
-    let title = format!("notion sync — {connection_label}");
-    let snapshot = json!({
-        "toolkit": "notion",
-        "connection_id": ctx.connection_id,
-        "results": results,
-        "synced_at_ms": now_ms(),
-    });
-    let content = serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| "{}".to_string());
-
-    client
-        .store_skill_sync(
-            "notion",
-            &connection_label,
-            &title,
-            &content,
-            Some("composio-sync".to_string()),
-            Some(json!({
-                "toolkit": "notion",
-                "connection_id": ctx.connection_id,
-                "source": "composio-provider",
-            })),
-            Some("medium".to_string()),
-            None,
-            None,
-            Some(format!("composio-notion-{connection_label}")),
-        )
-        .await
-        .map_err(|e| format!("store_skill_sync: {e}"))?;
-    Ok(1)
+    // Fallback: top-level "title" field (some Composio shapes).
+    pick_str(page, &["title", "data.title", "name", "data.name"])
 }
 
 pub(crate) fn now_ms() -> u64 {

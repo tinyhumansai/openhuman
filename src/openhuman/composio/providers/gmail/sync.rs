@@ -1,15 +1,9 @@
-//! Gmail sync helpers — message extraction, memory persistence, and
-//! time utilities.
+//! Gmail sync helpers — message extraction, pagination, cursor
+//! conversion, and time utilities.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
-use super::MEMORY_NAMESPACE;
-use crate::openhuman::composio::providers::ProviderContext;
-
-/// Walk the Composio response envelope and pull out a list of message
-/// objects. Composio is inconsistent about whether the array lives at
-/// `data.messages`, `messages`, or `data.data.messages`, so we try a
-/// handful of common shapes before giving up.
+/// Walk the Composio response envelope and pull out message objects.
 pub(crate) fn extract_messages(data: &Value) -> Vec<Value> {
     let candidates = [
         data.pointer("/data/messages"),
@@ -26,64 +20,43 @@ pub(crate) fn extract_messages(data: &Value) -> Vec<Value> {
     Vec::new()
 }
 
-/// Persist a sync snapshot into the global memory store under the
-/// `composio-gmail` namespace. Returns the number of items recorded
-/// (currently always one document — the snapshot, not per-message
-/// rows). Per-message ingestion can come later if/when we add an
-/// agent surface that benefits from it.
-pub(crate) async fn persist_messages(ctx: &ProviderContext, messages: &[Value]) -> usize {
-    let Some(client) = ctx.memory_client() else {
-        tracing::debug!("[composio:gmail] memory client not ready, skipping persist");
-        return 0;
-    };
-    if messages.is_empty() {
-        return 0;
+/// Try to extract a pagination token from the API response.
+pub(crate) fn extract_page_token(data: &Value) -> Option<String> {
+    let candidates = [
+        data.pointer("/data/nextPageToken"),
+        data.pointer("/nextPageToken"),
+        data.pointer("/data/data/nextPageToken"),
+    ];
+    for cand in candidates.into_iter().flatten() {
+        if let Some(s) = cand.as_str() {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
     }
+    None
+}
 
-    let connection_label = ctx
-        .connection_id
-        .clone()
-        .unwrap_or_else(|| "default".to_string());
-    let title = format!("gmail sync — {connection_label}");
-    let snapshot = json!({
-        "toolkit": "gmail",
-        "connection_id": ctx.connection_id,
-        "messages": messages,
-        "synced_at_ms": now_ms(),
-    });
-    let content = serde_json::to_string_pretty(&snapshot).unwrap_or_else(|_| "{}".to_string());
-
-    if let Err(e) = client
-        .store_skill_sync(
-            // The store_skill_sync helper namespaces as `skill-{id}`,
-            // so we pass `gmail` here and rely on the standard prefix.
-            // The composio domain reads from `skill-gmail` namespaces
-            // through the same memory store as the JS gmail skill —
-            // intentional, so the agent's `recall_memory` sees both.
-            MEMORY_NAMESPACE.trim_start_matches("composio-"),
-            &connection_label,
-            &title,
-            &content,
-            Some("composio-sync".to_string()),
-            Some(json!({
-                "toolkit": "gmail",
-                "connection_id": ctx.connection_id,
-                "source": "composio-provider",
-            })),
-            Some("medium".to_string()),
-            None,
-            None,
-            Some(format!("composio-gmail-{connection_label}")),
-        )
-        .await
-    {
-        tracing::warn!(
-            error = %e,
-            "[composio:gmail] persist snapshot failed (non-fatal)"
-        );
-        return 0;
+/// Convert a cursor value (epoch millis or date string) into a Gmail
+/// `after:YYYY/MM/DD` filter component. Returns `None` if the cursor
+/// cannot be parsed.
+pub(crate) fn cursor_to_gmail_after_filter(cursor: &str) -> Option<String> {
+    // Try parsing as epoch millis first (Gmail's internalDate).
+    if let Ok(millis) = cursor.parse::<i64>() {
+        let secs = millis / 1000;
+        if let Some(dt) = chrono::DateTime::from_timestamp(secs, 0) {
+            return Some(dt.format("%Y/%m/%d").to_string());
+        }
     }
-    1
+    // Try parsing as an ISO date/datetime.
+    if let Ok(dt) = chrono::NaiveDate::parse_from_str(cursor, "%Y-%m-%d") {
+        return Some(dt.format("%Y/%m/%d").to_string());
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(cursor) {
+        return Some(dt.format("%Y/%m/%d").to_string());
+    }
+    None
 }
 
 pub(crate) fn now_ms() -> u64 {

@@ -42,6 +42,7 @@ pub mod periodic;
 pub mod providers;
 pub mod schemas;
 pub mod tools;
+pub mod trigger_history;
 pub mod types;
 
 pub use bus::{register_composio_trigger_subscriber, ComposioTriggerSubscriber};
@@ -57,8 +58,12 @@ pub use schemas::{
     all_registered_controllers as all_composio_registered_controllers,
 };
 pub use tools::all_composio_agent_tools;
+pub use trigger_history::{
+    global as global_composio_trigger_history, init_global as init_composio_trigger_history,
+};
 pub use types::{
     ComposioAuthorizeResponse, ComposioConnection, ComposioConnectionsResponse,
     ComposioDeleteResponse, ComposioExecuteResponse, ComposioToolFunction, ComposioToolSchema,
-    ComposioToolkitsResponse, ComposioToolsResponse, ComposioTriggerEvent, ComposioTriggerMetadata,
+    ComposioToolkitsResponse, ComposioToolsResponse, ComposioTriggerEvent,
+    ComposioTriggerHistoryEntry, ComposioTriggerHistoryResult, ComposioTriggerMetadata,
 };

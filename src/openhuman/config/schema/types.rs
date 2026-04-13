@@ -113,6 +113,9 @@ pub struct Config {
     pub cost: CostConfig,
 
     #[serde(default)]
+    pub computer_control: ComputerControlConfig,
+
+    #[serde(default)]
     pub peripherals: PeripheralsConfig,
 
     #[serde(default)]
@@ -181,6 +184,7 @@ impl Default for Config {
             web_search: WebSearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
+            computer_control: ComputerControlConfig::default(),
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),

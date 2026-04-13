@@ -33,7 +33,14 @@ pub async fn voice_status(config: &Config) -> Result<RpcOutcome<VoiceStatus>, St
     let service = local_ai::global(config);
     let whisper_in_process = whisper_engine::is_loaded(&service.whisper);
 
-    let stt_available = whisper_in_process || (whisper_bin.is_some() && stt_model.is_some());
+    // STT is available when ANY transcription backend can work:
+    // 1. The in-process whisper engine is already loaded, OR
+    // 2. In-process whisper is enabled in config and the model file exists
+    //    (the engine will load the model on first use), OR
+    // 3. The whisper-cli binary is installed and the model file exists.
+    let stt_available = whisper_in_process
+        || (config.local_ai.whisper_in_process && stt_model.is_some())
+        || (whisper_bin.is_some() && stt_model.is_some());
     let tts_available = piper_bin.is_some() && tts_voice.is_some();
 
     debug!(

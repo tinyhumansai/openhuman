@@ -53,6 +53,7 @@ use async_trait::async_trait;
 
 use crate::core::event_bus::{subscribe_global, DomainEvent, EventHandler, SubscriptionHandle};
 use crate::openhuman::agent::triage::{apply_decision, run_triage, TriggerEnvelope};
+use crate::openhuman::composio::trigger_history;
 use crate::openhuman::config::rpc as config_rpc;
 
 use super::client::ComposioClient;
@@ -164,6 +165,50 @@ impl EventHandler for ComposioTriggerSubscriber {
             payload_bytes = payload.to_string().len(),
             "[composio:bus] trigger received"
         );
+
+        if let Some(store) = trigger_history::global() {
+            let toolkit_owned = toolkit.clone();
+            let trigger_owned = trigger.clone();
+            let metadata_id_owned = metadata_id.clone();
+            let metadata_uuid_owned = metadata_uuid.clone();
+            let payload_owned = payload.clone();
+
+            match tokio::task::spawn_blocking(move || {
+                store.record_trigger(
+                    &toolkit_owned,
+                    &trigger_owned,
+                    &metadata_id_owned,
+                    &metadata_uuid_owned,
+                    &payload_owned,
+                )
+            })
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        trigger = %trigger,
+                        error = %error,
+                        "[composio][history] failed to archive trigger"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        toolkit = %toolkit,
+                        trigger = %trigger,
+                        error = %error,
+                        "[composio][history] failed to join archive task"
+                    );
+                }
+            }
+        } else {
+            tracing::debug!(
+                toolkit = %toolkit,
+                trigger = %trigger,
+                "[composio][history] archive store not initialized"
+            );
+        }
 
         if triage_disabled() {
             tracing::debug!(

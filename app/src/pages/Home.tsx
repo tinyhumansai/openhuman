@@ -184,6 +184,7 @@ const Home = () => {
     if (localAiStatus.state !== 'ready') return false;
     const isDone = (state: string | undefined | null): boolean =>
       state === 'ready' || state === 'disabled' || state === 'ondemand';
+
     return (
       isDone(localAiAssets.chat?.state) &&
       isDone(localAiAssets.vision?.state) &&
@@ -192,6 +193,7 @@ const Home = () => {
       isDone(localAiAssets.tts?.state)
     );
   }, [localAiStatus, localAiAssets]);
+
   const isInstalling = localAiStatus?.state === 'installing';
   const indeterminateDownload =
     isInstalling ||

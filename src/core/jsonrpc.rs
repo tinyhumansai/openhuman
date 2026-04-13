@@ -826,8 +826,13 @@ fn register_domain_subscribers(workspace_dir: std::path::PathBuf) {
 
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
-            workspace_dir,
+            workspace_dir.clone(),
         );
+        if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
+            workspace_dir.clone(),
+        ) {
+            log::warn!("[composio][history] failed to initialize trigger archive: {error}");
+        }
         crate::openhuman::composio::register_composio_trigger_subscriber();
         crate::openhuman::composio::start_periodic_sync();
 

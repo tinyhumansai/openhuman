@@ -576,7 +576,8 @@ const CAPABILITIES: &[Capability] = &[
         name: "Debug Webhooks",
         domain: "settings",
         category: CapabilityCategory::Settings,
-        description: "Inspect registered webhook tunnels and captured request and response logs.",
+        description:
+            "Inspect Composio trigger history and find the daily JSONL archive files stored by the app.",
         how_to: "Settings > Developer Options > Webhooks",
         status: CapabilityStatus::Beta,
     },

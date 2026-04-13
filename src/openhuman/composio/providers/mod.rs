@@ -44,6 +44,7 @@ pub mod gmail;
 pub mod notion;
 pub mod profile;
 pub mod registry;
+pub mod sync_state;
 
 pub use registry::{
     all_providers, get_provider, init_default_providers, register_provider, ProviderArc,

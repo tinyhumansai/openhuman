@@ -19,6 +19,11 @@ use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
 use crate::rpc::RpcOutcome;
 
+#[derive(Debug, serde::Deserialize)]
+struct TriggerHistoryParams {
+    limit: Option<usize>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_toolkits"),
@@ -29,6 +34,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("execute"),
         schemas("get_user_profile"),
         schemas("sync"),
+        schemas("list_trigger_history"),
     ]
 }
 
@@ -65,6 +71,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("sync"),
             handler: handle_sync,
+        },
+        RegisteredController {
+            schema: schemas("list_trigger_history"),
+            handler: handle_list_trigger_history,
         },
     ]
 }
@@ -230,6 +240,24 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "list_trigger_history" => ControllerSchema {
+            namespace: "composio",
+            function: "list_trigger_history",
+            description:
+                "List recent ComposeIO trigger events archived by the core and report the daily JSONL archive paths.",
+            inputs: vec![FieldSchema {
+                name: "limit",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Maximum number of archived trigger events to return.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Trigger history payload: { archive_dir, current_day_file, entries }.",
+                required: true,
+            }],
+        },
         _other => ControllerSchema {
             namespace: "composio",
             function: "unknown",
@@ -296,6 +324,15 @@ fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
         let tool = read_required_non_empty(&params, "tool")?;
         let arguments = read_optional::<Value>(&params, "arguments")?;
         to_json(super::ops::composio_execute(&config, &tool, arguments).await?)
+    })
+}
+
+fn handle_list_trigger_history(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: TriggerHistoryParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        to_json(super::ops::composio_list_trigger_history(&config, payload.limit).await?)
     })
 }
 

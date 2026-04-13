@@ -65,7 +65,16 @@ const VoicePanel = () => {
       setSavedSettings(settingsResponse.result);
       setServerStatus(serverResponse);
       setVoiceStatus(voiceResponse);
-      setSttReady(assetsResponse.result.stt?.state === 'ready' && voiceResponse.stt_available);
+      const sttAssetState = assetsResponse.result.stt?.state;
+      const sttAssetOk = sttAssetState === 'ready' || sttAssetState === 'ondemand';
+      if (process.env.NODE_ENV !== 'production') {
+        console.debug('[VoicePanel:stt] readiness decision', {
+          sttAssetState,
+          sttAssetOk,
+          sttAvailable: voiceResponse.stt_available,
+        });
+      }
+      setSttReady(sttAssetOk && voiceResponse.stt_available);
       setError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load voice settings';

@@ -34,6 +34,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
+import { callCoreRpc } from '../services/coreRpcClient';
 import { CORE_RPC_URL } from '../utils/config';
 
 const OVERLAY_IDLE_WIDTH = 50;
@@ -51,6 +52,7 @@ const DEFAULT_ATTENTION_TTL_MS = 6000;
 const STT_RELEASE_LINGER_MS = 1500;
 /** Placeholder bubble text while waiting for the first transcription. */
 const STT_LISTENING_PLACEHOLDER = '"Listening…"';
+let lastPollDebugTs = 0;
 
 // ── State model ──────────────────────────────────────────────────────────
 
@@ -324,6 +326,75 @@ export default function OverlayApp() {
       clearDismissTimer();
     };
   }, [clearDismissTimer, handleAttention, handleDictationToggle, handleDictationTranscription]);
+
+  // ── Poll voice server status as fallback sync ─────────────────────────
+  // Socket events are the primary state driver, but if an event is missed
+  // (reconnect, brief disconnect) the overlay can get stuck. Polling the
+  // actual server state every 2s corrects any drift.
+  const modeRef = useRef(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    let disposed = false;
+
+    const poll = async () => {
+      try {
+        const res = await callCoreRpc<{
+          state: string;
+          hotkey: string;
+          activation_mode: string;
+          transcription_count: number;
+          last_error: string | null;
+        }>({ method: 'openhuman.voice_server_status' });
+
+        if (disposed) return;
+
+        const serverState = res.state; // 'stopped' | 'idle' | 'recording' | 'transcribing'
+        const currentMode = modeRef.current;
+
+        // Server is actively recording/transcribing but overlay is idle → show stt
+        if (
+          (serverState === 'recording' || serverState === 'transcribing') &&
+          currentMode !== 'stt'
+        ) {
+          console.debug(
+            `[overlay] poll sync: server=${serverState}, overlay=${currentMode} → activating stt`
+          );
+          clearDismissTimer();
+          setMode('stt');
+          setBubble({
+            id: `stt-poll-${Date.now()}`,
+            text: serverState === 'transcribing' ? '"Transcribing…"' : STT_LISTENING_PLACEHOLDER,
+            tone: 'accent',
+            compact: true,
+          });
+        }
+
+        // Server is idle/stopped but overlay thinks it's in stt → dismiss
+        if ((serverState === 'idle' || serverState === 'stopped') && currentMode === 'stt') {
+          console.debug(`[overlay] poll sync: server=${serverState}, overlay=stt → dismissing`);
+          goIdle();
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          const now = Date.now();
+          if (now - lastPollDebugTs > 5000) {
+            lastPollDebugTs = now;
+            console.debug('[overlay] RPC poll failed', err);
+          }
+        }
+      }
+    };
+
+    void poll();
+    const id = window.setInterval(() => void poll(), 2000);
+    return () => {
+      disposed = true;
+      window.clearInterval(id);
+    };
+  }, [clearDismissTimer, goIdle]);
 
   // ── Window framing: resize / reposition on mode change ────────────────
   const status: 'idle' | 'active' = mode === 'idle' ? 'idle' : 'active';

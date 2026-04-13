@@ -90,6 +90,7 @@ hound = "3.5"
 enigo = "0.3"
 arboard = "3"
 rdev = "0.5"
+fs2 = "0.4"
 
 matrix-sdk = { version = "0.16", optional = true, default-features = false, features = ["e2e-encryption", "rustls-tls", "markdown"] }
 fantoccini = { version = "0.22.0", optional = true, default-features = false, features = ["rustls-tls"] }

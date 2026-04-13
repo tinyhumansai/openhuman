@@ -60,8 +60,12 @@ export function useVoiceSkillStatus(): VoiceSkillStatus {
   const sttReady = useMemo(() => {
     if (!voiceStatus) return false;
     if (!voiceStatus.stt_available) return false;
-    // Also check Local AI asset state if available
-    if (localAi && localAi.stt_state !== 'ready') return false;
+    // The in-memory stt_state starts as "idle" and only flips to "ready"
+    // after the first download or transcription.  The authoritative check
+    // is `voiceStatus.stt_available` (which inspects the filesystem and
+    // engine readiness).  Only block when stt_state is explicitly an error
+    // state — "missing" means the model file really isn't on disk.
+    if (localAi && localAi.stt_state === 'missing') return false;
     return true;
   }, [voiceStatus, localAi]);
 
