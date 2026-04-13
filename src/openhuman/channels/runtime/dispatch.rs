@@ -4,6 +4,9 @@ use crate::core::event_bus::{
     publish_global, request_native_global, DomainEvent, NativeRequestError,
 };
 use crate::openhuman::agent::bus::{AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD};
+use crate::openhuman::agent::harness::definition::{
+    AgentDefinition, AgentDefinitionRegistry, ToolScope,
+};
 use crate::openhuman::channels::context::{
     build_memory_context, compact_sender_history, conversation_history_key,
     conversation_memory_key, is_context_window_overflow_error, ChannelRuntimeContext,
@@ -14,8 +17,12 @@ use crate::openhuman::channels::routes::{
 };
 use crate::openhuman::channels::traits;
 use crate::openhuman::channels::{Channel, SendMessage};
+use crate::openhuman::composio::fetch_connected_integrations;
+use crate::openhuman::config::Config;
 use crate::openhuman::providers::{self, ChatMessage};
+use crate::openhuman::tools::{orchestrator_tools, Tool};
 use crate::openhuman::util::truncate_with_ellipsis;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -174,6 +181,181 @@ fn spawn_scoped_typing_task(
     });
 
     handle
+}
+
+/// Per-turn scoping fields derived from the active agent definition.
+///
+/// Carries the three new fields that get spliced into [`AgentTurnRequest`]
+/// in [`process_channel_message`]. Constructed by [`resolve_target_agent`]
+/// after reading `config.onboarding_completed`, looking up the matching
+/// definition in [`AgentDefinitionRegistry`], and synthesising any
+/// per-turn delegation tools the agent needs.
+struct AgentScoping {
+    target_agent_id: Option<String>,
+    visible_tool_names: Option<HashSet<String>>,
+    extra_tools: Vec<Box<dyn Tool>>,
+}
+
+impl AgentScoping {
+    /// Empty scoping — preserves the legacy "every tool in the global
+    /// registry is visible" behaviour. Returned when the registry isn't
+    /// initialised yet (early startup) or when the target agent
+    /// definition isn't found, so the channel layer never crashes the
+    /// runtime over a routing miss.
+    fn unscoped() -> Self {
+        Self {
+            target_agent_id: None,
+            visible_tool_names: None,
+            extra_tools: Vec::new(),
+        }
+    }
+}
+
+/// Decide which agent should run for this channel turn and build the
+/// matching tool-scoping payload.
+///
+/// The selection is purely a function of `config.onboarding_completed`:
+///
+/// * **`false`** → route to the `welcome` agent. Welcome's TOML
+///   restricts it to two tools (`complete_onboarding`, `memory_recall`)
+///   so the LLM cannot accidentally send messages or write files
+///   while guiding the user through setup. The welcome agent decides
+///   when the user is ready and calls
+///   `complete_onboarding(action="complete")`, which flips the flag.
+///
+/// * **`true`** → route to the `orchestrator` agent. Orchestrator
+///   delegates real work to specialist subagents via a `subagents`
+///   field in its TOML; this function expands that field into a list
+///   of `delegate_*` tools spliced alongside the global registry.
+///
+/// The next channel message after `complete_onboarding` flips the flag
+/// is automatically routed to the orchestrator because
+/// `Config::load_or_init()` reads from disk every call (no in-process
+/// cache, verified at `config/schema/load.rs:409`), so the new value
+/// is observed on the next turn without any explicit handoff event.
+///
+/// On any failure path (missing registry, missing definition, missing
+/// orchestrator delegation targets) the function logs and returns
+/// [`AgentScoping::unscoped`], which lets the turn run with the legacy
+/// unfiltered behaviour rather than failing the whole message.
+async fn resolve_target_agent(channel: &str) -> AgentScoping {
+    let config = match Config::load_or_init().await {
+        Ok(c) => c,
+        Err(err) => {
+            tracing::warn!(
+                channel = %channel,
+                error = %err,
+                "[dispatch::routing] failed to load config — falling back to unscoped turn"
+            );
+            return AgentScoping::unscoped();
+        }
+    };
+
+    let target_id = if config.onboarding_completed {
+        "orchestrator"
+    } else {
+        "welcome"
+    };
+
+    tracing::info!(
+        channel = %channel,
+        target_agent = target_id,
+        onboarding_completed = config.onboarding_completed,
+        "[dispatch::routing] selected target agent"
+    );
+
+    let registry = match AgentDefinitionRegistry::global() {
+        Some(reg) => reg,
+        None => {
+            tracing::warn!(
+                channel = %channel,
+                target_agent = target_id,
+                "[dispatch::routing] AgentDefinitionRegistry not initialised — falling back to unscoped turn"
+            );
+            return AgentScoping::unscoped();
+        }
+    };
+
+    let definition = match registry.get(target_id) {
+        Some(def) => def,
+        None => {
+            tracing::warn!(
+                channel = %channel,
+                target_agent = target_id,
+                "[dispatch::routing] target agent not in registry — falling back to unscoped turn"
+            );
+            return AgentScoping::unscoped();
+        }
+    };
+
+    // Synthesise per-turn delegation tools when the target agent has a
+    // `subagents = [...]` field. Today only the orchestrator does, but
+    // the helper is agent-agnostic so future agents that delegate
+    // (e.g. a custom workspace-override planner that subdivides work)
+    // pick this up for free.
+    let extra_tools = if !definition.subagents.is_empty() {
+        let connected = fetch_connected_integrations(&config).await;
+        tracing::debug!(
+            channel = %channel,
+            target_agent = target_id,
+            connected_integration_count = connected.len(),
+            "[dispatch::routing] fetched connected integrations for delegation expansion"
+        );
+        orchestrator_tools::collect_orchestrator_tools(definition, registry, &connected)
+    } else {
+        Vec::new()
+    };
+
+    let visible_tool_names = build_visible_tool_set(definition, &extra_tools);
+
+    tracing::debug!(
+        channel = %channel,
+        target_agent = target_id,
+        named_tool_count = match &definition.tools {
+            ToolScope::Named(names) => names.len(),
+            ToolScope::Wildcard => 0,
+        },
+        extra_tool_count = extra_tools.len(),
+        visible_tool_count = visible_tool_names.as_ref().map(|s| s.len()).unwrap_or(0),
+        "[dispatch::routing] assembled tool scoping for turn"
+    );
+
+    AgentScoping {
+        target_agent_id: Some(target_id.to_string()),
+        visible_tool_names,
+        extra_tools,
+    }
+}
+
+/// Build the visible-tool whitelist for an agent.
+///
+/// The set is the union of:
+/// * every tool name in the agent's `[tools] named = [...]` list
+///   (when the scope is [`ToolScope::Named`]); and
+/// * every name produced by the per-turn synthesised delegation tools
+///   in `extra_tools` (e.g. `research`, `delegate_gmail`).
+///
+/// When the agent's tool scope is [`ToolScope::Wildcard`] **and** there
+/// are no `extra_tools`, returns `None` to preserve the legacy
+/// "everything visible" semantics — a `Wildcard` agent that delegates
+/// nothing should still see the full registry. When `Wildcard` is
+/// combined with non-empty extras (an unusual but legal combination),
+/// the legacy unfiltered behaviour also wins because the wildcard
+/// implicitly covers anything in the registry plus the extras.
+fn build_visible_tool_set(
+    definition: &AgentDefinition,
+    extra_tools: &[Box<dyn Tool>],
+) -> Option<HashSet<String>> {
+    match &definition.tools {
+        ToolScope::Wildcard => None,
+        ToolScope::Named(names) => {
+            let mut set: HashSet<String> = names.iter().cloned().collect();
+            for tool in extra_tools {
+                set.insert(tool.name().to_string());
+            }
+            Some(set)
+        }
+    }
 }
 
 pub(crate) async fn process_channel_message(
@@ -377,6 +559,12 @@ pub(crate) async fn process_channel_message(
     // The agent handler owns the history vector — we `mem::take` the
     // local one to avoid an unnecessary clone; `history` is not read
     // again below.
+    // Pick the active agent for this turn (welcome pre-onboarding,
+    // orchestrator post) and synthesise its delegation tool surface.
+    // Fresh disk read of `Config::onboarding_completed` happens inside
+    // `resolve_target_agent` — see the `[dispatch::routing]` traces.
+    let scoping = resolve_target_agent(&msg.channel).await;
+
     let turn_request = AgentTurnRequest {
         provider: Arc::clone(&active_provider),
         history: std::mem::take(&mut history),
@@ -389,13 +577,9 @@ pub(crate) async fn process_channel_message(
         multimodal: ctx.multimodal.clone(),
         max_tool_iterations: ctx.max_tool_iterations,
         on_delta: delta_tx,
-        // Per-agent scoping fields are populated in commit 4b (the
-        // dispatch routing logic for #525). For now, leave them at
-        // their defaults so this commit ships zero behaviour change —
-        // every channel turn still sees the full unfiltered registry.
-        target_agent_id: None,
-        visible_tool_names: None,
-        extra_tools: Vec::new(),
+        target_agent_id: scoping.target_agent_id,
+        visible_tool_names: scoping.visible_tool_names,
+        extra_tools: scoping.extra_tools,
     };
     tracing::debug!(
         channel = %msg.channel,
