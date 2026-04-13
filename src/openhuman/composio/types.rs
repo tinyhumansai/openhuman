@@ -114,6 +114,41 @@ pub struct ComposioExecuteResponse {
     pub cost_usd: f64,
 }
 
+// ── GitHub repos + triggers ─────────────────────────────────────────
+
+/// One repository returned by `GET /agent-integrations/composio/github/repos`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioGithubRepo {
+    pub owner: String,
+    pub repo: String,
+    #[serde(rename = "fullName")]
+    pub full_name: String,
+    #[serde(default)]
+    pub private: Option<bool>,
+    #[serde(rename = "defaultBranch", default)]
+    pub default_branch: Option<String>,
+    #[serde(rename = "htmlUrl", default)]
+    pub html_url: Option<String>,
+}
+
+/// Response body of `GET /agent-integrations/composio/github/repos`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioGithubReposResponse {
+    #[serde(rename = "connectionId")]
+    pub connection_id: String,
+    #[serde(default, rename = "repositories")]
+    pub repositories: Vec<ComposioGithubRepo>,
+}
+
+/// Response body of `POST /agent-integrations/composio/triggers`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioCreateTriggerResponse {
+    #[serde(rename = "triggerId")]
+    pub trigger_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
 // ── Triggers ────────────────────────────────────────────────────────
 
 /// Payload of the `composio:trigger` Socket.IO event emitted by the backend
