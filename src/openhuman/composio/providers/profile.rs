@@ -100,9 +100,7 @@ fn now_secs() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::memory::store::profile::{
-        profile_load_all, PROFILE_INIT_SQL,
-    };
+    use crate::openhuman::memory::store::profile::{profile_load_all, PROFILE_INIT_SQL};
     use parking_lot::Mutex;
     use rusqlite::Connection;
     use std::sync::Arc;

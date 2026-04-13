@@ -53,9 +53,7 @@ impl MemoryClient {
     /// in-crate subsystems (composio providers, archivist, learning
     /// hooks) can write structured profile facets without an additional
     /// round-trip through the ingestion queue.
-    pub(crate) fn profile_conn(
-        &self,
-    ) -> std::sync::Arc<parking_lot::Mutex<rusqlite::Connection>> {
+    pub(crate) fn profile_conn(&self) -> std::sync::Arc<parking_lot::Mutex<rusqlite::Connection>> {
         std::sync::Arc::clone(&self.inner.conn)
     }
 
