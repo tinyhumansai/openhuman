@@ -93,7 +93,7 @@ const SubscriptionPlans = ({
               }`}>
               <div className="flex items-start gap-4">
                 <div
-                  className={`flex h-12 w-12 items-center justify-center rounded-full ${
+                  className={`flex h-12 w-12 min-h-12 min-w-12 flex-shrink-0 items-center justify-center rounded-full ${
                     plan.recommended
                       ? 'bg-primary-600 text-white'
                       : isCurrent
@@ -154,7 +154,7 @@ const SubscriptionPlans = ({
                 </div>
               </div>
 
-              <div className="flex items-end justify-between gap-4 sm:flex-col sm:items-end">
+              <div className="flex items-end justify-between gap-4 sm:min-w-[148px] sm:flex-col sm:items-end">
                 <div className="text-right">
                   <p className="text-2xl font-bold tracking-tight text-stone-950">
                     {displayPrice(plan, billingInterval)}
