@@ -508,7 +508,33 @@ fn build_session_agent(
         effective.default_temperature = temp;
     }
 
-    Agent::from_config(&effective)
+    // Route to welcome vs orchestrator based on the per-user onboarding
+    // flag. #525 fix: pre-onboarding users see the welcome agent's
+    // persona with its 2-tool TOML scope (complete_onboarding +
+    // memory_recall) instead of the orchestrator's default delegation
+    // surface. Post-onboarding they transition automatically on the
+    // next chat turn because `Config::load_or_init` reads fresh from
+    // disk every call.
+    //
+    // The config reached here has already been loaded by
+    // `run_chat_task` via `config_rpc::load_config_with_timeout`, so
+    // the `onboarding_completed` field reflects the current persisted
+    // state — no cache to invalidate.
+    let target_agent_id = if effective.onboarding_completed {
+        "orchestrator"
+    } else {
+        "welcome"
+    };
+
+    log::info!(
+        "[web-channel] routing chat turn to '{}' (onboarding_completed={}, client_id={}, thread_id={})",
+        target_agent_id,
+        effective.onboarding_completed,
+        client_id,
+        thread_id
+    );
+
+    Agent::from_config_for_agent(&effective, target_agent_id)
         .map(|mut agent| {
             agent.set_event_context(event_session_id_for(client_id, thread_id), "web_channel");
             agent

@@ -1,4 +1,6 @@
-use std::fs::{self, File};
+use std::fs;
+#[cfg(unix)]
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -170,10 +172,26 @@ fn load_stored_app_state(config: &Config) -> Result<StoredAppState, String> {
 }
 
 fn sync_parent_dir(path: &Path) -> Result<(), String> {
+    // Directory fsync is a POSIX-only durability guarantee — on Unix we
+    // open the parent dir and call `sync_all()` so the rename of the
+    // temp file into place is persisted even if the host crashes before
+    // the next buffer flush. On Windows, opening a directory as a
+    // regular file requires `FILE_FLAG_BACKUP_SEMANTICS` which
+    // `std::fs::File::open` does not set, so the call fails with
+    // "Access is denied. (os error 5)". Since Windows uses a different
+    // durability model (and `NamedTempFile::persist` issues an atomic
+    // MoveFileEx which is already durable enough for our config files),
+    // we skip the fsync entirely on non-Unix and return Ok. Mirrors the
+    // existing `sync_directory` guard in `config/schema/load.rs`.
+    #[cfg(unix)]
     if let Some(parent) = path.parent() {
         File::open(parent)
             .and_then(|dir| dir.sync_all())
             .map_err(|e| format!("failed to sync directory {}: {e}", parent.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
     }
     Ok(())
 }

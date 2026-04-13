@@ -303,18 +303,130 @@ impl AgentBuilder {
 impl Agent {
     /// Constructs an `Agent` instance from a global system configuration.
     ///
-    /// This is the primary factory method for initializing an agent with all
-    /// standard system integrations (memory, tools, skills, providers, learning)
-    /// configured according to the user's `config.toml`.
+    /// Thin wrapper around [`Agent::from_config_for_agent`] that always
+    /// targets the orchestrator definition. This preserves the legacy
+    /// "main agent = orchestrator" behaviour for CLI / REPL / any caller
+    /// that does not participate in the #525 onboarding-routing flow.
     ///
-    /// It performs the heavy lifting of:
+    /// Callers that need to select a different agent at session-build
+    /// time (for example the Tauri web chat path, which routes to the
+    /// welcome agent pre-onboarding) should call
+    /// [`Agent::from_config_for_agent`] directly.
+    pub fn from_config(config: &Config) -> Result<Self> {
+        Self::from_config_for_agent(config, "orchestrator")
+    }
+
+    /// Constructs an `Agent` instance scoped to a specific agent
+    /// definition loaded from the global [`AgentDefinitionRegistry`].
+    ///
+    /// `agent_id` is looked up in the registry; the returned agent
+    /// inherits that definition's `ToolScope`, `system_prompt`,
+    /// `temperature`, `max_iterations`, and `omit_*` flags. Unknown
+    /// agent ids produce a registry-lookup error rather than silently
+    /// falling back to the orchestrator.
+    ///
+    /// Shared infrastructure between agent ids is identical:
     /// 1. Initializing the host runtime (native or docker).
     /// 2. Setting up security policies.
     /// 3. Initializing memory and embedding services.
     /// 4. Registering all built-in and orchestrator tools.
     /// 5. Configuring the routed AI provider.
     /// 6. Setting up the learning system and post-turn hooks.
-    pub fn from_config(config: &Config) -> Result<Self> {
+    ///
+    /// What differs per agent id:
+    /// * `visible_tool_names` is the agent's `ToolScope::Named` list
+    ///   (unioned with the names of synthesised delegation tools when
+    ///   the agent declares `subagents = [...]`). `ToolScope::Wildcard`
+    ///   yields an empty filter, matching the legacy unfiltered path.
+    /// * `prompt_builder` uses [`SystemPromptBuilder::for_subagent`]
+    ///   with the agent's inline/file prompt body and `omit_*` flags,
+    ///   so each agent renders its own persona rather than the default
+    ///   orchestrator workspace-files identity dump.
+    /// * `temperature` comes from the agent's TOML (falls back to
+    ///   `config.default_temperature` for the orchestrator to preserve
+    ///   legacy behaviour).
+    ///
+    /// The welcome agent uses this entry point when routed from the
+    /// Tauri web channel (see `channels::providers::web::build_session_agent`).
+    pub fn from_config_for_agent(config: &Config, agent_id: &str) -> Result<Self> {
+        use crate::openhuman::agent::harness::definition::{AgentDefinitionRegistry, ToolScope};
+
+        // Look up the target definition up front so we can fail fast
+        // with a clear error instead of building half an agent and then
+        // discovering the id is unknown. The registry is a singleton
+        // initialised at startup; if it's not yet populated we
+        // conservatively fall back to the legacy "orchestrator-shaped"
+        // build by proceeding without a definition override.
+        let target_def: Option<
+            crate::openhuman::agent::harness::definition::AgentDefinition,
+        > = match AgentDefinitionRegistry::global() {
+            Some(reg) => match reg.get(agent_id) {
+                Some(def) => Some(def.clone()),
+                None if agent_id == "orchestrator" => {
+                    // Orchestrator is allowed to be missing from the
+                    // registry (legacy path, tests, pre-startup) —
+                    // fall back to default behaviour.
+                    log::debug!(
+                        "[agent::builder] orchestrator definition not in registry — \
+                         using legacy default prompt + filter"
+                    );
+                    None
+                }
+                None => {
+                    return Err(anyhow::anyhow!(
+                        "agent definition '{}' not found in registry",
+                        agent_id
+                    ));
+                }
+            },
+            None => {
+                if agent_id != "orchestrator" {
+                    return Err(anyhow::anyhow!(
+                        "AgentDefinitionRegistry is not initialised — cannot \
+                         resolve agent '{}'. Call AgentDefinitionRegistry::init_global \
+                         at startup.",
+                        agent_id
+                    ));
+                }
+                log::debug!(
+                    "[agent::builder] registry not initialised, orchestrator requested — \
+                     using legacy default prompt + filter"
+                );
+                None
+            }
+        };
+
+        log::info!(
+            "[agent::builder] building session agent id={} \
+             (scope={}, omit_identity={}, temperature={:.2})",
+            agent_id,
+            target_def
+                .as_ref()
+                .map(|d| match &d.tools {
+                    ToolScope::Named(names) => format!("named({})", names.len()),
+                    ToolScope::Wildcard => "wildcard".to_string(),
+                })
+                .unwrap_or_else(|| "legacy".to_string()),
+            target_def.as_ref().map(|d| d.omit_identity).unwrap_or(false),
+            target_def
+                .as_ref()
+                .map(|d| d.temperature)
+                .unwrap_or(config.default_temperature)
+        );
+
+        Self::build_session_agent_inner(config, agent_id, target_def.as_ref())
+    }
+
+    /// Internal constructor that consumes the optionally-resolved agent
+    /// definition. Split out from [`Agent::from_config_for_agent`] so
+    /// the lookup + logging live in one place and the heavy-lifting
+    /// body stays readable.
+    fn build_session_agent_inner(
+        config: &Config,
+        agent_id: &str,
+        target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
+    ) -> Result<Self> {
+        use crate::openhuman::agent::harness::definition::{PromptSource, ToolScope};
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
             Arc::from(host_runtime::create_runtime(&config.runtime)?);
         let security = Arc::new(SecurityPolicy::from_config(
@@ -385,8 +497,68 @@ impl Agent {
         let dispatcher_choice = config.agent.tool_dispatcher.clone();
         let supports_native = provider.supports_native_tools();
 
-        // Build prompt builder, optionally with learning sections
-        let mut prompt_builder = SystemPromptBuilder::with_defaults();
+        // Build prompt builder — either the default "orchestrator /
+        // main agent" layout that bootstraps from workspace identity
+        // files, OR a narrow per-agent builder that injects the target
+        // definition's `prompt.md` body and respects its `omit_*` flags.
+        //
+        // The narrow path is selected whenever we resolved a
+        // non-orchestrator definition from the registry. Welcome agent
+        // is the first real consumer: its TOML sets
+        // `omit_identity = true`, `omit_memory_context = false`,
+        // `omit_safety_preamble = true`, `omit_skills_catalog = true`,
+        // so the rendered prompt becomes:
+        //
+        //   (welcome persona body)
+        //   ── Memory context (user profile, learned observations)
+        //   ── Tools (2 entries: complete_onboarding + memory_recall)
+        //   ── Workspace directory
+        //
+        // The orchestrator continues to use `with_defaults` so its
+        // prompt stays byte-identical to the legacy CLI/REPL behaviour
+        // except for the tool-scope tightening we already landed in
+        // earlier commits.
+        let mut prompt_builder = match target_def {
+            Some(def) if agent_id != "orchestrator" => {
+                // Resolve the prompt body. For built-in agents,
+                // `system_prompt` is `PromptSource::Inline(...)` populated
+                // at crate-build time from the sibling `prompt.md` via
+                // `include_str!` in `agents/mod.rs`. File-based prompts
+                // (custom workspace overrides) read from disk.
+                let body = match &def.system_prompt {
+                    PromptSource::Inline(text) => text.clone(),
+                    PromptSource::File { path } => {
+                        let workspace_path = config
+                            .workspace_dir
+                            .join("agent")
+                            .join("prompts")
+                            .join(path);
+                        if workspace_path.is_file() {
+                            std::fs::read_to_string(&workspace_path).unwrap_or_else(|e| {
+                                log::warn!(
+                                    "[agent::builder] failed to read prompt {}: {e} — using empty body",
+                                    workspace_path.display()
+                                );
+                                String::new()
+                            })
+                        } else {
+                            log::warn!(
+                                "[agent::builder] prompt file {} not found — using empty body",
+                                path
+                            );
+                            String::new()
+                        }
+                    }
+                };
+                SystemPromptBuilder::for_subagent(
+                    body,
+                    def.omit_identity,
+                    def.omit_safety_preamble,
+                    def.omit_skills_catalog,
+                )
+            }
+            _ => SystemPromptBuilder::with_defaults(),
+        };
         if config.learning.enabled {
             prompt_builder = prompt_builder
                 .add_section(Box::new(
@@ -453,33 +625,61 @@ impl Agent {
             }
         }
 
-        // Generate the orchestrator's delegation tool set from its
-        // declarative `subagents = [...]` field: one `ArchetypeDelegationTool`
-        // per named sub-agent, plus one `SkillDelegationTool` per connected
-        // Composio toolkit when the orchestrator includes a
-        // `{ skills = "*" }` wildcard. These are the only delegation tools
-        // the main-agent LLM sees; sub-agents themselves still access the
-        // full `tools` registry via `ParentExecutionContext` and apply
-        // their own per-definition whitelist in the subagent runner.
+        // Resolve the per-agent delegation tool set and visible-tool
+        // whitelist from the target definition (when we have one) or
+        // fall back to the orchestrator's synthesis path.
         //
-        // This builder is synchronous and sits on the CLI / REPL code
-        // path. It does not have access to the async Composio fetcher,
-        // so we pass an empty slice of connected integrations here — the
-        // skill-wildcard expansion therefore produces zero delegation
-        // tools in this path, which is correct behaviour for CLI (the
-        // CLI user can still reach any toolkit via the generic
-        // `composio_execute` tool or `spawn_subagent`).
+        // For an agent with `subagents = [...]` in its TOML (today:
+        // orchestrator), `collect_orchestrator_tools` synthesises one
+        // `ArchetypeDelegationTool` per named sub-agent plus one
+        // `SkillDelegationTool` per connected Composio toolkit.
         //
-        // The channel-dispatch path (`channels::runtime::dispatch`) has
-        // its own tool registry assembly and will populate the
-        // connected integrations list from the live Composio fetch in a
-        // later commit (#525/#526 dispatch routing).
-        let orchestrator_tools =
-            match crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global() {
-                Some(reg) => match reg.get("orchestrator") {
-                    Some(orch_def) => {
-                        tools::orchestrator_tools::collect_orchestrator_tools(orch_def, reg, &[])
+        // For an agent without `subagents` (today: welcome, critic,
+        // archivist, etc.), no delegation tools are synthesised — the
+        // LLM only sees the agent's own `ToolScope::Named` entries
+        // from the global registry, narrowed by the visible-tool
+        // filter.
+        //
+        // This builder is synchronous and sits on the CLI / REPL /
+        // Tauri-web code path. It does not have access to the async
+        // Composio fetcher, so we pass an empty slice of connected
+        // integrations here — the skill-wildcard expansion therefore
+        // produces zero delegation tools. That is correct behaviour:
+        // callers that need live integration expansion go through the
+        // bus-based `channels::runtime::dispatch` path instead.
+        let (delegation_tools, filter_from_scope): (
+            Vec<Box<dyn Tool>>,
+            Option<std::collections::HashSet<String>>,
+        ) = match (
+            target_def,
+            crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global(),
+        ) {
+            (Some(def), Some(reg)) => {
+                let synthed = tools::orchestrator_tools::collect_orchestrator_tools(def, reg, &[]);
+                let filter: Option<std::collections::HashSet<String>> = match &def.tools {
+                    ToolScope::Named(names) => {
+                        let mut set: std::collections::HashSet<String> =
+                            names.iter().cloned().collect();
+                        for t in &synthed {
+                            set.insert(t.name().to_string());
+                        }
+                        Some(set)
                     }
+                    ToolScope::Wildcard => None,
+                };
+                (synthed, filter)
+            }
+            (None, Some(reg)) => {
+                // Legacy orchestrator fallback (no target definition).
+                // Keeps the pre-refactor behaviour byte-identical for
+                // callers that invoke the old `from_config` on a
+                // pre-startup or test registry state.
+                let synthed = match reg.get("orchestrator") {
+                    Some(orch_def) => tools::orchestrator_tools::collect_orchestrator_tools(
+                        orch_def,
+                        reg,
+                        &[],
+                    ),
                     None => {
                         log::debug!(
                             "[agent::builder] orchestrator definition not in registry — \
@@ -487,26 +687,41 @@ impl Agent {
                         );
                         Vec::new()
                     }
-                },
-                None => {
-                    log::debug!(
-                        "[agent::builder] AgentDefinitionRegistry not initialised — \
-                         skipping delegation tool synthesis"
-                    );
-                    Vec::new()
-                }
-            };
-        let visible: std::collections::HashSet<String> = orchestrator_tools
-            .iter()
-            .map(|t| t.name().to_string())
-            .collect();
+                };
+                (synthed, None)
+            }
+            (_, None) => {
+                log::debug!(
+                    "[agent::builder] AgentDefinitionRegistry not initialised — \
+                     skipping delegation tool synthesis"
+                );
+                (Vec::new(), None)
+            }
+        };
+
+        // The final visible-tool whitelist is the union of whatever the
+        // definition scope produced (for named scopes) and every tool
+        // we just synthesised as a delegation wrapper. When the
+        // definition is `ToolScope::Wildcard` (legacy default, no
+        // filter), we still populate `visible` from the delegation
+        // tools alone so the existing `Agent::visible_tool_names`
+        // contract (empty == no filter) stays intact: an empty set
+        // means "no filter" for both legacy callers and the new
+        // agent-scoped path.
+        let visible: std::collections::HashSet<String> = match filter_from_scope {
+            Some(set) => set,
+            None => delegation_tools
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect(),
+        };
         // De-duplicate: some synthesised tool names may collide with
         // already-registered tools (unlikely for `delegate_*` names but
         // cheap to guard against).
         let existing_names: std::collections::HashSet<String> =
             tools.iter().map(|t| t.name().to_string()).collect();
         tools.extend(
-            orchestrator_tools
+            delegation_tools
                 .into_iter()
                 .filter(|t| !existing_names.contains(t.name())),
         );
@@ -531,6 +746,24 @@ impl Agent {
             pformat_registry.len()
         );
 
+        // Temperature override: when we have a target definition, use
+        // its declared temperature from the TOML (welcome is 0.7,
+        // orchestrator is 0.4, etc). Fall back to
+        // `config.default_temperature` for the legacy "no definition"
+        // path so existing callers keep getting their configured value.
+        let effective_temperature = target_def
+            .map(|def| def.temperature)
+            .unwrap_or(config.default_temperature);
+
+        // `agent_id` is not stamped onto the returned Agent here — the
+        // `event_channel` field on `Agent` is for transport identity
+        // (which channel the session belongs to: "web_channel", "cli",
+        // etc.), not the agent-definition id. Callers that want to
+        // record which definition they asked for should log it at
+        // call-site. The `[agent::builder]` info trace at the top of
+        // `from_config_for_agent` already captures this.
+        let _ = agent_id; // silence unused-warning if all code paths above move
+
         Agent::builder()
             .provider(provider)
             .tools(tools)
@@ -545,7 +778,7 @@ impl Agent {
             .config(config.agent.clone())
             .context_config(config.context.clone())
             .model_name(model_name)
-            .temperature(config.default_temperature)
+            .temperature(effective_temperature)
             .workspace_dir(config.workspace_dir.clone())
             .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
             .auto_save(config.memory.auto_save)
