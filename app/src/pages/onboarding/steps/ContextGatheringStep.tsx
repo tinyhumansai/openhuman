@@ -99,13 +99,13 @@ const ContextGatheringStep = ({
 
     if (!hasGmail) {
       // Derive skipped state asynchronously to avoid synchronous setState in effect.
-      queueMicrotask(() => {
+      setTimeout(() => {
         const skipped: Record<string, StageStatus> = {};
         for (const s of STAGES) skipped[s.id] = 'skipped';
         setStageStatuses(skipped);
         setStageDetails({ 'gmail-search': 'Gmail not connected' });
         setFinished(true);
-      });
+      }, 0);
       return;
     }
 
