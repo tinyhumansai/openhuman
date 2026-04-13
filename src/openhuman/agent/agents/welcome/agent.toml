@@ -1,8 +1,8 @@
 id = "welcome"
 display_name = "Welcome"
-when_to_use = "One-shot introductory agent — triggered after onboarding completes. Reviews all collected user information and connected skills, then delivers a witty, personalized welcome message that shows the system already understands the user."
+when_to_use = "First agent a new user speaks to. Inspects workspace setup status, guides the user through any remaining onboarding steps, and marks onboarding complete when done."
 temperature = 0.7
-max_iterations = 4
+max_iterations = 6
 sandbox_mode = "read_only"
 
 # Needs full memory context to personalize the welcome, but not the
@@ -16,7 +16,6 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
-# Minimal tools — the welcome agent reads context, it doesn't act on
-# external services. memory_recall lets it pull additional user details
-# beyond what the system prompt builder injects.
-named = ["memory_recall"]
+# complete_onboarding: check setup status and mark onboarding done.
+# memory_recall: pull additional user details beyond injected context.
+named = ["complete_onboarding", "memory_recall"]

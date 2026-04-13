@@ -1,5 +1,6 @@
 mod archetype_delegation;
 mod ask_clarification;
+mod complete_onboarding;
 mod delegate;
 mod spawn_subagent;
 
@@ -119,5 +120,6 @@ pub(crate) async fn dispatch_subagent(
 
 pub use archetype_delegation::ArchetypeDelegationTool;
 pub use ask_clarification::AskClarificationTool;
+pub use complete_onboarding::CompleteOnboardingTool;
 pub use delegate::DelegateTool;
 pub use spawn_subagent::SpawnSubagentTool;
