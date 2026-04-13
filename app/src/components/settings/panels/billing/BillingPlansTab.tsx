@@ -1,5 +1,5 @@
-import SubscriptionPlans from './SubscriptionPlans';
 import type { PlanTier } from '../../../../types/api';
+import SubscriptionPlans from './SubscriptionPlans';
 
 interface BillingPlansTabProps {
   billingInterval: 'monthly' | 'annual';
@@ -27,12 +27,12 @@ export default function BillingPlansTab({
   return (
     <>
       <section className="space-y-4">
-        <div>
+        <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 border border-stone-200">
           <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
-            Explore tiers
+            Choose a Subscription Plan
           </h3>
           <p className="mt-1 text-sm text-stone-500">
-            Compare plans, switch billing cadence, and choose card or crypto checkout.
+            Compare plans, switch billing cadence, and choose a payment method.
           </p>
         </div>
         <SubscriptionPlans
@@ -46,30 +46,6 @@ export default function BillingPlansTab({
           paymentConfirmed={paymentConfirmed}
           onUpgrade={onUpgrade}
         />
-      </section>
-
-      <section>
-        <div className="rounded-[28px] border-l-4 border-primary-600 bg-[#eef4ff] p-6 shadow-[0_24px_60px_rgba(15,23,42,0.05)]">
-          <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-primary-600 shadow-sm">
-              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.8}
-                  d="M11.5 4v16m-5-5 5 5 5-5M4 7.5l7.5-3 7.5 3-7.5 3-7.5-3Z"
-                />
-              </svg>
-            </div>
-            <div className="space-y-1">
-              <h4 className="text-lg font-bold text-stone-950">Crypto payments available</h4>
-              <p className="max-w-2xl text-sm leading-6 text-stone-600">
-                Secure your subscription using Ethereum, Bitcoin, or USDC. This payment method is
-                reserved for annual plan commitments to keep checkout and settlement stable.
-              </p>
-            </div>
-          </div>
-        </div>
       </section>
     </>
   );

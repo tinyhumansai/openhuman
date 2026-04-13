@@ -45,7 +45,7 @@ const BillingPanel = () => {
   const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
   const [isLoadingCredits, setIsLoadingCredits] = useState(false);
   const [isToppingUp, setIsToppingUp] = useState(false);
-  const [selectedTab, setSelectedTab] = useState<BillingTab>('overview');
+  const [selectedTab, setSelectedTab] = useState<BillingTab>('plans');
 
   // Local state
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'annual'>('monthly');
@@ -441,28 +441,15 @@ const BillingPanel = () => {
       <div className="mx-auto max-w-2xl space-y-10 px-4 py-6 sm:px-6 sm:py-8">
         <header className="space-y-5">
           <PageBackButton
-            label={teamName ? `Back to ${breadcrumbs.at(-1)?.label ?? 'settings'}` : 'Back to settings'}
-            onClick={navigateBack}
-            trailingContent={
-              breadcrumbs.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-stone-400">
-                {breadcrumbs.map((crumb, index) => (
-                  <span key={`${crumb.label}-${index}`} className="inline-flex items-center gap-2">
-                    <span>{crumb.label}</span>
-                    {index < breadcrumbs.length - 1 && <span>/</span>}
-                  </span>
-                ))}
-                <span>/</span>
-                <span className="font-medium text-stone-600">Billing</span>
-              </div>
-              ) : undefined
+            label={
+              teamName ? `Back to ${breadcrumbs.at(-1)?.label ?? 'settings'}` : 'Back to settings'
             }
+            onClick={navigateBack}
           />
           <PillTabBar
             items={[
-              { label: 'Overview', value: 'overview' },
               { label: 'Plans', value: 'plans' },
-              { label: 'Payments', value: 'payments' },
+              { label: 'Credits & Top-ups', value: 'payments' },
               { label: 'History', value: 'history' },
             ]}
             selected={selectedTab}
@@ -472,53 +459,6 @@ const BillingPanel = () => {
             containerClassName="flex gap-2 overflow-x-auto pb-1 scrollbar-hide"
           />
         </header>
-
-        {selectedTab === 'overview' && (
-          <BillingOverviewTab
-            arAmount={arAmount}
-            arDirty={arDirty}
-            arError={arError}
-            arLoading={arLoading}
-            arSaving={arSaving}
-            arSettings={arSettings}
-            arThreshold={arThreshold}
-            arWeeklyLimit={arWeeklyLimit}
-            availableCredits={availableCredits}
-            billingInterval={billingInterval}
-            cards={cards}
-            cardsLoading={cardsLoading}
-            confirmDeleteId={confirmDeleteId}
-            creditBalance={creditBalance}
-            currentTier={currentTier}
-            deletingCardId={deletingCardId}
-            hasActive={hasActive}
-            isLoadingCredits={isLoadingCredits}
-            isPurchasing={isPurchasing}
-            isToppingUp={isToppingUp}
-            onAddCard={handleAddCard}
-            onArSave={handleArSave}
-            onArToggle={handleArToggle}
-            onBalanceRefresh={handleBalanceRefresh}
-            onDeleteCard={handleDeleteCard}
-            onManageSubscription={handleManageSubscription}
-            onSetDefault={handleSetDefault}
-            onTopUp={handleTopUp}
-            onUpgrade={handleUpgrade}
-            paymentConfirmed={paymentConfirmed}
-            paymentMethod={paymentMethod}
-            purchasingTier={purchasingTier}
-            setArAmount={setArAmount}
-            setArError={setArError}
-            setArThreshold={setArThreshold}
-            setArWeeklyLimit={setArWeeklyLimit}
-            setBillingInterval={setBillingInterval}
-            setConfirmDeleteId={setConfirmDeleteId}
-            setPaymentMethod={setPaymentMethod}
-            settingDefaultId={settingDefaultId}
-            teamUsage={teamUsage}
-            transactionRows={transactionRows}
-          />
-        )}
 
         {selectedTab === 'plans' && (
           <BillingPlansTab

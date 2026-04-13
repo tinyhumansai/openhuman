@@ -53,8 +53,10 @@ const SubscriptionPlans = ({
 
         <div className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-stone-950/5 lg:min-w-[280px]">
           <div>
-            <p className="text-sm font-semibold text-stone-950">Crypto payments</p>
-            <p className="mt-0.5 text-xs text-stone-500">Available for annual plans only</p>
+            <p className="text-sm font-semibold text-stone-950">Pay using crypto?</p>
+            <p className="mt-0.5 text-xs text-stone-500">
+              You can optionally choose to pay annually using BTC/ETH/USDC.
+            </p>
           </div>
           <button
             onClick={() => setPaymentMethod(paymentMethod === 'card' ? 'crypto' : 'card')}
@@ -104,7 +106,12 @@ const SubscriptionPlans = ({
                     </svg>
                   ) : plan.tier === 'BASIC' ? (
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 12h14M12 5l7 7-7 7"
+                      />
                     </svg>
                   ) : (
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -134,9 +141,7 @@ const SubscriptionPlans = ({
                       </span>
                     )}
                   </div>
-                  {plan.tagline && (
-                    <p className="mt-1 text-sm text-stone-500">{plan.tagline}</p>
-                  )}
+                  {plan.tagline && <p className="mt-1 text-sm text-stone-500">{plan.tagline}</p>}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {plan.features.slice(0, 2).map(feature => (
                       <span
