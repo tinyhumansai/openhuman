@@ -15,10 +15,10 @@ export default function BillingHistoryTab({
     <section className="space-y-4">
       <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 border border-stone-200">
         <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
-          Recent invoices
+          Transaction History
         </h3>
         <p className="mt-1 text-sm text-stone-500">
-          A quick view of recent billing activity from your credit ledger.
+          A quick view of your credit ledger. All credits/debits are shown here.
         </p>
         <div className="flex items-center justify-between gap-3">
           {hasActive && (
@@ -51,7 +51,7 @@ export default function BillingHistoryTab({
                   </div>
                   <div className="text-stone-500">{transaction.type}</div>
                   <div className={`font-semibold ${isEarn ? 'text-sage-600' : 'text-stone-950'}`}>
-                    {isEarn ? '+' : '-'}${Math.abs(transaction.amountUsd).toFixed(2)}
+                    {isEarn ? '+' : '-'}${Math.abs(transaction.amountUsd).toFixed(5)}
                   </div>
                   <div className="sm:text-right">
                     <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">

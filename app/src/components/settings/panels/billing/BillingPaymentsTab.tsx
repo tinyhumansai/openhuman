@@ -67,16 +67,6 @@ export default function BillingPaymentsTab({
 }: BillingPaymentsTabProps) {
   return (
     <>
-      <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 border border-stone-200">
-        <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
-          Top ups & Credits
-        </h3>
-        <p className="mt-1 text-sm text-stone-500">
-          You can top up your credits if you ever exhaust your monthly budget or hit rate limits.
-          Credits are consumed after any included subscription budget is exhausted.
-        </p>
-      </div>
-
       <section className="space-y-4">
         <PayAsYouGoCard
           creditBalance={creditBalance}

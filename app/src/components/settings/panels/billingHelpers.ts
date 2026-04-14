@@ -51,7 +51,7 @@ export const PLANS: PlanMeta[] = [
     tagline: 'Best value for most users',
     features: [
       { text: 'Everything in Free', included: true },
-      { text: '2x more usage', included: true },
+      { text: '20x more usage', included: true },
       { text: 'Cloud features enabled', included: true },
     ],
   },
@@ -67,7 +67,7 @@ export const PLANS: PlanMeta[] = [
     tagline: 'For power users and teams',
     features: [
       { text: 'Everything in Basic', included: true },
-      { text: '4x more usage', included: true },
+      { text: '40x more usage', included: true },
       { text: 'Higher Rate Limits', included: true },
     ],
   },
