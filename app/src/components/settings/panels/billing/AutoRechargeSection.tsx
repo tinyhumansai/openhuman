@@ -75,7 +75,7 @@ const AutoRechargeSection = ({
     {/* Header row */}
     <div className="flex items-center justify-between p-3">
       <div>
-        <p className="text-xs font-semibold text-stone-900">Auto-Recharge Credits</p>
+        <p className="text-md font-semibold text-stone-900">Enable Auto-Recharge</p>
         <p className="text-[11px] text-stone-400 mt-0.5">
           Automatically top up when your balance runs low
         </p>
@@ -116,20 +116,7 @@ const AutoRechargeSection = ({
             d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
           />
         </svg>
-        <p className="text-[11px] text-coral-300 leading-relaxed">{arError}</p>
-        <button
-          onClick={() => setArError(null)}
-          className="ml-auto text-coral-400 hover:text-coral-300 flex-shrink-0"
-          aria-label="Dismiss error">
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          </svg>
-        </button>
+        <p className="text-[12px] text-coral-400 leading-relaxed">{arError}</p>
       </div>
     )}
 
@@ -283,7 +270,7 @@ const AutoRechargeSection = ({
         <button
           onClick={onAddCard}
           className="text-[11px] text-primary-400 hover:text-primary-300 font-medium transition-colors">
-          + Add card
+          + Add card on Stripe
         </button>
       </div>
 

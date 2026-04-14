@@ -202,7 +202,7 @@ const BillingPanel = () => {
     const nextEnabled = !arSettings.enabled;
 
     if (nextEnabled && !arSettings.hasSavedPaymentMethod && cards.length === 0) {
-      setArError('Add a payment card before enabling auto-recharge.');
+      setArError('Add a payment card on Stripe before enabling auto-recharge.');
       return;
     }
 

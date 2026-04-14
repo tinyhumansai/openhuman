@@ -128,12 +128,13 @@ const SubscriptionPlans = ({
           const isUpgrade = checkIsUpgrade(plan.tier, currentTier);
           const savings = annualSavings(plan, billingInterval);
           const isThisPurchasing = isPurchasing && purchasingTier === plan.tier;
+          const isPopular = plan.recommended && billingInterval === 'annual';
 
           return (
             <div
               key={plan.tier}
               className={`relative flex flex-col gap-5 rounded-[24px] px-5 py-5 transition-all sm:flex-row sm:items-center sm:justify-between ${
-                plan.recommended
+                isPopular
                   ? 'bg-primary-50 ring-2 ring-primary-500 shadow-sm'
                   : isCurrent
                     ? 'bg-white ring-1 ring-primary-200 shadow-sm'
@@ -178,7 +179,7 @@ const SubscriptionPlans = ({
                     <h4 className="font-headline text-xl font-bold tracking-tight text-stone-950">
                       {plan.name}
                     </h4>
-                    {plan.recommended && (
+                    {isPopular && (
                       <span className="rounded-full bg-primary-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.24em] text-white">
                         Popular
                       </span>

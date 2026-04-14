@@ -87,13 +87,14 @@ const PayAsYouGoCard = ({
           </h3>
           <p className="mt-1 text-sm leading-relaxed text-stone-500">
             You can top up your credits if you ever exhaust your monthly budget or hit rate limits.
+            Credits are consumed after any included subscription budget is exhausted.
           </p>
         </div>
       </div>
 
       {creditBalance ? (
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <div className="rounded-2xl bg-stone-50 px-4 py-4">
+          <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
               Available
             </p>
@@ -101,7 +102,7 @@ const PayAsYouGoCard = ({
               ${availableCredits.toFixed(2)}
             </p>
           </div>
-          <div className="rounded-2xl bg-stone-50 px-4 py-4">
+          <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
               Promo
             </p>
@@ -109,7 +110,7 @@ const PayAsYouGoCard = ({
               ${promoCredits.toFixed(2)}
             </p>
           </div>
-          <div className="rounded-2xl bg-stone-50 px-4 py-4">
+          <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
               Top-up pool
             </p>
@@ -134,13 +135,12 @@ const PayAsYouGoCard = ({
             key={amount}
             onClick={() => onTopUp(amount)}
             disabled={isToppingUp}
-            className="group rounded-2xl border border-stone-200 bg-stone-50 px-4 py-5 text-center transition-all hover:border-primary-200 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50">
-            <div className="text-3xl font-bold tracking-tight text-stone-950">+{amount}</div>
+            className="group rounded-2xl border border-primary-200/50 bg-primary-50/50 px-4 py-5 text-center transition-all hover:border-primary-200 disabled:cursor-not-allowed disabled:opacity-50">
+            <div className="text-2xl font-bold tracking-tight text-primary-600">
+              {isToppingUp ? 'Opening…' : `$${amount.toFixed(2)}`}
+            </div>
             <div className="mt-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-stone-400">
               Credits
-            </div>
-            <div className="mt-4 text-sm font-bold text-primary-600 transition-transform group-hover:-translate-y-0.5">
-              {isToppingUp ? 'Opening…' : `$${amount.toFixed(2)}`}
             </div>
           </button>
         ))}
@@ -183,64 +183,6 @@ const PayAsYouGoCard = ({
           </button>
         </div>
       </div>
-
-      <p className="mt-3 text-sm text-stone-500">
-        Credits are consumed after any included subscription budget is exhausted.
-      </p>
-
-      <div className="mt-6 grid gap-3 lg:grid-cols-[1fr_auto]">
-        <input
-          type="text"
-          value={couponCode}
-          onChange={e => {
-            setCouponCode(e.target.value.toUpperCase());
-            if (couponError) setCouponError(null);
-            if (couponSuccess) setCouponSuccess(null);
-          }}
-          onKeyDown={e => {
-            if (e.key === 'Enter') handleRedeemCoupon();
-          }}
-          placeholder="Redeem coupon or code"
-          className="w-full rounded-2xl border-0 bg-stone-100 px-5 py-4 text-sm text-stone-900 placeholder:text-stone-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20"
-        />
-        <button
-          onClick={handleRedeemCoupon}
-          disabled={couponLoading || !couponCode.trim()}
-          className="rounded-2xl bg-stone-950 px-6 py-4 text-sm font-semibold text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-          {couponLoading ? 'Redeeming…' : 'Redeem'}
-        </button>
-      </div>
-
-      {couponSuccess && (
-        <div className="mt-4 flex items-center gap-2 rounded-2xl border border-sage-500/20 bg-sage-500/10 px-4 py-3">
-          <svg
-            className="h-4 w-4 flex-shrink-0 text-sage-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-          <p className="text-sm font-medium text-sage-700">{couponSuccess}</p>
-        </div>
-      )}
-
-      {couponError && (
-        <div className="mt-4 flex items-center gap-2 rounded-2xl border border-coral-500/20 bg-coral-500/10 px-4 py-3">
-          <svg
-            className="h-4 w-4 flex-shrink-0 text-coral-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-            />
-          </svg>
-          <p className="text-sm text-coral-700">{couponError}</p>
-        </div>
-      )}
     </div>
   );
 };
