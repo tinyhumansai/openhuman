@@ -2,7 +2,23 @@
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const OLLAMA_BASE_URL: &str = "http://localhost:11434";
+pub(crate) const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
+
+/// Returns the effective Ollama base URL, honouring the
+/// `OPENHUMAN_OLLAMA_BASE_URL` env override so tests can point it at
+/// a local mock server. In production builds this is always
+/// [`DEFAULT_OLLAMA_BASE_URL`] unless an operator has deliberately
+/// pointed the sidecar at a remote Ollama.
+pub(crate) fn ollama_base_url() -> String {
+    match std::env::var("OPENHUMAN_OLLAMA_BASE_URL") {
+        Ok(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/').to_string(),
+        _ => DEFAULT_OLLAMA_BASE_URL.to_string(),
+    }
+}
+
+/// Back-compat constant kept at its original value for callers that
+/// reference it directly. New callers should use [`ollama_base_url`].
+pub(crate) const OLLAMA_BASE_URL: &str = DEFAULT_OLLAMA_BASE_URL;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OllamaPullRequest {

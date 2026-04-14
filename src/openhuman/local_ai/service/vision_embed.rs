@@ -2,8 +2,8 @@ use crate::openhuman::agent::multimodal;
 use crate::openhuman::config::Config;
 use crate::openhuman::local_ai::model_ids;
 use crate::openhuman::local_ai::ollama_api::{
-    OllamaEmbedRequest, OllamaEmbedResponse, OllamaGenerateOptions, OllamaGenerateRequest,
-    OLLAMA_BASE_URL,
+    ollama_base_url, OllamaEmbedRequest, OllamaEmbedResponse, OllamaGenerateOptions,
+    OllamaGenerateRequest,
 };
 use crate::openhuman::local_ai::presets::{self, VisionMode};
 use crate::openhuman::local_ai::types::LocalAiEmbeddingResult;
@@ -63,7 +63,7 @@ impl LocalAiService {
 
         let response = self
             .http
-            .post(format!("{OLLAMA_BASE_URL}/api/generate"))
+            .post(format!("{}/api/generate", ollama_base_url()))
             .json(&body)
             .send()
             .await
@@ -118,7 +118,7 @@ impl LocalAiService {
 
         let response = self
             .http
-            .post(format!("{OLLAMA_BASE_URL}/api/embed"))
+            .post(format!("{}/api/embed", ollama_base_url()))
             .json(&OllamaEmbedRequest {
                 model: embedding_model.clone(),
                 input: items.clone(),
