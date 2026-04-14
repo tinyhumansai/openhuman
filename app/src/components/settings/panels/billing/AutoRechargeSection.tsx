@@ -31,7 +31,6 @@ interface AutoRechargeSectionProps {
   setArThreshold: (v: number) => void;
   setArAmount: (v: number) => void;
   setArWeeklyLimit: (v: number) => void;
-  setArError: (v: string | null) => void;
   onArToggle: () => void;
   onArSave: () => void;
   // Cards
@@ -58,7 +57,6 @@ const AutoRechargeSection = ({
   setArThreshold,
   setArAmount,
   setArWeeklyLimit,
-  setArError,
   onArToggle,
   onArSave,
   cards,

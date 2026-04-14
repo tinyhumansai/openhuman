@@ -25,6 +25,37 @@ const SubscriptionPlans = ({
   onUpgrade,
 }: SubscriptionPlansProps) => (
   <>
+    <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 border border-stone-200">
+      <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
+        Choose a Subscription Plan
+      </h3>
+      <p className="mt-1 text-sm text-stone-500">
+        Compare plans, switch billing cadence, and choose a payment method.
+      </p>
+
+      <div className="flex items-center justify-between mt-4">
+        <div>
+          <p className="text-sm font-semibold text-stone-950">Pay using crypto?</p>
+          <p className="mt-0.5 text-xs text-stone-500">
+            You can optionally choose to pay annually using BTC/ETH/USDC.
+          </p>
+        </div>
+        <button
+          onClick={() => setPaymentMethod(paymentMethod === 'card' ? 'crypto' : 'card')}
+          className={`relative h-6 w-11 rounded-full transition-colors ${
+            paymentMethod === 'crypto' ? 'bg-primary-600' : 'bg-stone-300'
+          }`}
+          role="switch"
+          aria-checked={paymentMethod === 'crypto'}>
+          <span
+            className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+              paymentMethod === 'crypto' ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
+      </div>
+    </div>
+
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="mx-auto inline-flex w-fit rounded-full bg-white p-1 shadow-sm ring-1 ring-stone-950/5 lg:mx-0">
@@ -48,28 +79,6 @@ const SubscriptionPlans = ({
                 : 'text-stone-500 hover:text-stone-900'
             }`}>
             Annual
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm ring-1 ring-stone-950/5 lg:min-w-[280px]">
-          <div>
-            <p className="text-sm font-semibold text-stone-950">Pay using crypto?</p>
-            <p className="mt-0.5 text-xs text-stone-500">
-              You can optionally choose to pay annually using BTC/ETH/USDC.
-            </p>
-          </div>
-          <button
-            onClick={() => setPaymentMethod(paymentMethod === 'card' ? 'crypto' : 'card')}
-            className={`relative h-6 w-11 rounded-full transition-colors ${
-              paymentMethod === 'crypto' ? 'bg-primary-600' : 'bg-stone-300'
-            }`}
-            role="switch"
-            aria-checked={paymentMethod === 'crypto'}>
-            <span
-              className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                paymentMethod === 'crypto' ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
           </button>
         </div>
       </div>

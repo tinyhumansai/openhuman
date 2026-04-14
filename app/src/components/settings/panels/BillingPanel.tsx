@@ -485,7 +485,6 @@ const BillingPanel = () => {
             onSetDefault={handleSetDefault}
             onTopUp={handleTopUp}
             setArAmount={setArAmount}
-            setArError={setArError}
             setArThreshold={setArThreshold}
             setArWeeklyLimit={setArWeeklyLimit}
             setConfirmDeleteId={setConfirmDeleteId}

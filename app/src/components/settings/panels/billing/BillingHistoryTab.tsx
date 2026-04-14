@@ -13,22 +13,22 @@ export default function BillingHistoryTab({
 }: BillingHistoryTabProps) {
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
-            Recent invoices
-          </h3>
-          <p className="mt-1 text-sm text-stone-500">
-            A quick view of recent billing activity from your credit ledger.
-          </p>
+      <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 border border-stone-200">
+        <h3 className="font-headline text-2xl font-bold tracking-tight text-stone-950">
+          Recent invoices
+        </h3>
+        <p className="mt-1 text-sm text-stone-500">
+          A quick view of recent billing activity from your credit ledger.
+        </p>
+        <div className="flex items-center justify-between gap-3">
+          {hasActive && (
+            <button
+              onClick={onManageSubscription}
+              className="text-sm font-semibold text-primary-600 transition-colors hover:text-primary-700">
+              Open billing portal
+            </button>
+          )}
         </div>
-        {hasActive && (
-          <button
-            onClick={onManageSubscription}
-            className="text-sm font-semibold text-primary-600 transition-colors hover:text-primary-700">
-            Open billing portal
-          </button>
-        )}
       </div>
       <div className="overflow-hidden rounded-[28px] bg-white shadow-[0_24px_70px_rgba(15,23,42,0.06)] ring-1 ring-stone-950/5">
         {transactionRows.length > 0 ? (
