@@ -1286,4 +1286,242 @@ mod tests {
             None => std::env::remove_var(crate::api::config::APP_ENV_VAR),
         }
     }
+    // ── apply_env_overrides ────────────────────────────────────────
+
+    use std::sync::Mutex;
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn clear_env(keys: &[&str]) {
+        for key in keys {
+            unsafe {
+                std::env::remove_var(key);
+            }
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_picks_up_api_key() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&["OPENHUMAN_API_KEY", "API_KEY", "OPENHUMAN_MODEL", "MODEL"]);
+        unsafe {
+            std::env::set_var("OPENHUMAN_API_KEY", "sk-test");
+        }
+        let mut cfg = Config::default();
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.api_key.as_deref(), Some("sk-test"));
+        unsafe {
+            std::env::remove_var("OPENHUMAN_API_KEY");
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_ignores_empty_api_key() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&["OPENHUMAN_API_KEY", "API_KEY"]);
+        unsafe {
+            std::env::set_var("OPENHUMAN_API_KEY", "");
+        }
+        let mut cfg = Config::default();
+        cfg.api_key = Some("prior".into());
+        cfg.apply_env_overrides();
+        // Empty env var must not overwrite existing value.
+        assert_eq!(cfg.api_key.as_deref(), Some("prior"));
+        unsafe {
+            std::env::remove_var("OPENHUMAN_API_KEY");
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_picks_up_model() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&["OPENHUMAN_MODEL", "MODEL"]);
+        unsafe {
+            std::env::set_var("OPENHUMAN_MODEL", "gpt-5");
+        }
+        let mut cfg = Config::default();
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.default_model.as_deref(), Some("gpt-5"));
+        unsafe {
+            std::env::remove_var("OPENHUMAN_MODEL");
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_validates_temperature_range() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&["OPENHUMAN_TEMPERATURE"]);
+        let mut cfg = Config::default();
+        cfg.default_temperature = 0.5;
+        unsafe {
+            std::env::set_var("OPENHUMAN_TEMPERATURE", "1.2");
+        }
+        cfg.apply_env_overrides();
+        assert!((cfg.default_temperature - 1.2).abs() < f64::EPSILON);
+
+        // Out of range — should be ignored.
+        unsafe {
+            std::env::set_var("OPENHUMAN_TEMPERATURE", "5");
+        }
+        cfg.apply_env_overrides();
+        assert!((cfg.default_temperature - 1.2).abs() < f64::EPSILON);
+
+        // Garbage value — ignored.
+        unsafe {
+            std::env::set_var("OPENHUMAN_TEMPERATURE", "not-a-number");
+        }
+        cfg.apply_env_overrides();
+        assert!((cfg.default_temperature - 1.2).abs() < f64::EPSILON);
+        unsafe {
+            std::env::remove_var("OPENHUMAN_TEMPERATURE");
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_reasoning_enabled_parses_truthy_falsy() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&["OPENHUMAN_REASONING_ENABLED", "REASONING_ENABLED"]);
+        let mut cfg = Config::default();
+        cfg.runtime.reasoning_enabled = None;
+
+        unsafe {
+            std::env::set_var("OPENHUMAN_REASONING_ENABLED", "yes");
+        }
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.runtime.reasoning_enabled, Some(true));
+
+        unsafe {
+            std::env::set_var("OPENHUMAN_REASONING_ENABLED", "off");
+        }
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.runtime.reasoning_enabled, Some(false));
+
+        // Unknown value — leaves field unchanged.
+        unsafe {
+            std::env::set_var("OPENHUMAN_REASONING_ENABLED", "maybe");
+        }
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.runtime.reasoning_enabled, Some(false));
+        unsafe {
+            std::env::remove_var("OPENHUMAN_REASONING_ENABLED");
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_web_search_enabled_parses_values() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&["OPENHUMAN_WEB_SEARCH_ENABLED", "WEB_SEARCH_ENABLED"]);
+        let mut cfg = Config::default();
+        unsafe {
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_ENABLED", "true");
+        }
+        cfg.apply_env_overrides();
+        assert!(cfg.web_search.enabled);
+        unsafe {
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_ENABLED", "0");
+        }
+        cfg.apply_env_overrides();
+        assert!(!cfg.web_search.enabled);
+        unsafe {
+            std::env::remove_var("OPENHUMAN_WEB_SEARCH_ENABLED");
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_web_search_provider_and_api_keys() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&[
+            "OPENHUMAN_WEB_SEARCH_PROVIDER",
+            "WEB_SEARCH_PROVIDER",
+            "OPENHUMAN_BRAVE_API_KEY",
+            "BRAVE_API_KEY",
+            "OPENHUMAN_PARALLEL_API_KEY",
+            "PARALLEL_API_KEY",
+        ]);
+        let mut cfg = Config::default();
+        unsafe {
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_PROVIDER", "brave");
+            std::env::set_var("OPENHUMAN_BRAVE_API_KEY", "bk-1");
+            std::env::set_var("OPENHUMAN_PARALLEL_API_KEY", "pk-1");
+        }
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.web_search.provider, "brave");
+        assert_eq!(cfg.web_search.brave_api_key.as_deref(), Some("bk-1"));
+        assert_eq!(cfg.web_search.parallel_api_key.as_deref(), Some("pk-1"));
+        clear_env(&[
+            "OPENHUMAN_WEB_SEARCH_PROVIDER",
+            "OPENHUMAN_BRAVE_API_KEY",
+            "OPENHUMAN_PARALLEL_API_KEY",
+        ]);
+    }
+
+    #[test]
+    fn apply_env_overrides_web_search_max_results_and_timeout_clamped() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&[
+            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
+            "WEB_SEARCH_MAX_RESULTS",
+            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
+            "WEB_SEARCH_TIMEOUT_SECS",
+        ]);
+        let mut cfg = Config::default();
+        cfg.web_search.max_results = 3;
+        cfg.web_search.timeout_secs = 10;
+
+        // Valid values apply.
+        unsafe {
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "5");
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "20");
+        }
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.web_search.max_results, 5);
+        assert_eq!(cfg.web_search.timeout_secs, 20);
+
+        // Out-of-range (>10 for max_results, 0 for timeout) — ignored.
+        unsafe {
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_MAX_RESULTS", "999");
+            std::env::set_var("OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS", "0");
+        }
+        cfg.apply_env_overrides();
+        assert_eq!(
+            cfg.web_search.max_results, 5,
+            "out-of-range must be ignored"
+        );
+        assert_eq!(cfg.web_search.timeout_secs, 20);
+        clear_env(&[
+            "OPENHUMAN_WEB_SEARCH_MAX_RESULTS",
+            "OPENHUMAN_WEB_SEARCH_TIMEOUT_SECS",
+        ]);
+    }
+
+    #[test]
+    fn apply_env_overrides_storage_provider_and_db_url() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env(&["OPENHUMAN_STORAGE_PROVIDER", "OPENHUMAN_STORAGE_DB_URL"]);
+        let mut cfg = Config::default();
+        unsafe {
+            std::env::set_var("OPENHUMAN_STORAGE_PROVIDER", "postgres");
+            std::env::set_var("OPENHUMAN_STORAGE_DB_URL", "postgres://host/db");
+        }
+        cfg.apply_env_overrides();
+        assert_eq!(cfg.storage.provider.config.provider, "postgres");
+        assert_eq!(
+            cfg.storage.provider.config.db_url.as_deref(),
+            Some("postgres://host/db")
+        );
+        clear_env(&["OPENHUMAN_STORAGE_PROVIDER", "OPENHUMAN_STORAGE_DB_URL"]);
+    }
+
+    // ── resolve_config_dir_for_workspace ───────────────────────────
+
+    #[test]
+    fn resolve_config_dir_for_workspace_returns_parent_and_workspace() {
+        let ws = PathBuf::from("/home/test/.openhuman/workspace");
+        let (config_dir, workspace_dir) = resolve_config_dir_for_workspace(&ws);
+        // Config dir is the parent of workspace.
+        assert!(
+            config_dir.ends_with(".openhuman")
+                || config_dir == PathBuf::from("/home/test/.openhuman")
+        );
+        assert!(workspace_dir.ends_with("workspace"));
+    }
 }

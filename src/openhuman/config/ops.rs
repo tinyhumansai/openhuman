@@ -856,4 +856,179 @@ mod tests {
             .and_then(|value| value.as_array())
             .is_some_and(|paths| !paths.is_empty()));
     }
+
+    // ── env_flag_enabled ────────────────────────────────────────────
+
+    use std::sync::Mutex;
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn env_flag_enabled_recognizes_truthy_forms() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let key = "OPENHUMAN_TEST_FLAG_A";
+        for truthy in ["1", "true", "TRUE", "yes", "YES"] {
+            unsafe {
+                std::env::set_var(key, truthy);
+            }
+            assert!(env_flag_enabled(key), "{truthy} should be truthy");
+        }
+        for falsy in ["0", "false", "off", "", "No"] {
+            unsafe {
+                std::env::set_var(key, falsy);
+            }
+            assert!(!env_flag_enabled(key), "{falsy} should be falsy");
+        }
+        unsafe {
+            std::env::remove_var(key);
+        }
+        assert!(!env_flag_enabled(key), "unset must be falsy");
+    }
+
+    // ── core_rpc_url_from_env ───────────────────────────────────────
+
+    #[test]
+    fn core_rpc_url_from_env_returns_default_when_unset() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("OPENHUMAN_CORE_RPC_URL");
+        }
+        assert_eq!(core_rpc_url_from_env(), "http://127.0.0.1:7788/rpc");
+    }
+
+    #[test]
+    fn core_rpc_url_from_env_uses_override_when_set() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::set_var("OPENHUMAN_CORE_RPC_URL", "http://1.2.3.4:9999/rpc");
+        }
+        assert_eq!(core_rpc_url_from_env(), "http://1.2.3.4:9999/rpc");
+        unsafe {
+            std::env::remove_var("OPENHUMAN_CORE_RPC_URL");
+        }
+    }
+
+    // ── Pure path helpers ──────────────────────────────────────────
+
+    #[test]
+    fn fallback_workspace_dir_ends_in_workspace_under_openhuman() {
+        let p = fallback_workspace_dir();
+        assert!(p.ends_with("workspace"));
+        assert!(p
+            .parent()
+            .map(|d| d.ends_with(".openhuman"))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn default_openhuman_dir_ends_in_dot_openhuman() {
+        let p = default_openhuman_dir();
+        assert!(p.ends_with(".openhuman"));
+    }
+
+    #[test]
+    fn active_workspace_marker_path_is_under_default_dir() {
+        let default_dir = std::path::Path::new("/tmp/openhuman-test");
+        let marker = active_workspace_marker_path(default_dir);
+        assert_eq!(marker, default_dir.join("active_workspace.toml"));
+    }
+
+    #[test]
+    fn config_openhuman_dir_returns_config_path_parent() {
+        let mut cfg = Config::default();
+        cfg.config_path = PathBuf::from("/tmp/xyz/config.toml");
+        assert_eq!(config_openhuman_dir(&cfg), PathBuf::from("/tmp/xyz"));
+    }
+
+    // ── get_runtime_flags / set_browser_allow_all ─────────────────
+
+    #[test]
+    fn get_runtime_flags_reads_env_overrides() {
+        let _g = ENV_LOCK.lock().unwrap();
+        unsafe {
+            std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL");
+        }
+        let flags = get_runtime_flags();
+        // Just exercise the path — we don't assume anything about
+        // what other tests in the suite may have set.
+        let _ = flags.value;
+    }
+
+    #[test]
+    fn set_browser_allow_all_toggles_env_var() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let before = std::env::var("OPENHUMAN_BROWSER_ALLOW_ALL").ok();
+
+        let _ = set_browser_allow_all(true);
+        assert!(env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"));
+
+        let _ = set_browser_allow_all(false);
+        assert!(!env_flag_enabled("OPENHUMAN_BROWSER_ALLOW_ALL"));
+
+        unsafe {
+            match before {
+                Some(v) => std::env::set_var("OPENHUMAN_BROWSER_ALLOW_ALL", v),
+                None => std::env::remove_var("OPENHUMAN_BROWSER_ALLOW_ALL"),
+            }
+        }
+    }
+
+    // ── snapshot_config_json ───────────────────────────────────────
+
+    #[test]
+    fn snapshot_config_json_emits_config_and_workspace_and_config_path() {
+        let tmp = tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.workspace_dir = tmp.path().join("workspace");
+        cfg.config_path = tmp.path().join("config.toml");
+
+        let snap = snapshot_config_json(&cfg).expect("snapshot should succeed");
+        assert!(snap.get("config").is_some());
+        assert!(snap.get("workspace_dir").is_some());
+        assert!(snap.get("config_path").is_some());
+        // Workspace + config paths must point at our tempdir.
+        let ws = snap["workspace_dir"].as_str().unwrap_or("");
+        assert!(ws.contains(tmp.path().to_str().unwrap_or("")));
+    }
+
+    // ── agent_server_status ────────────────────────────────────────
+
+    #[test]
+    fn agent_server_status_exposes_running_and_url() {
+        let outcome = agent_server_status();
+        assert!(outcome.value.get("running").is_some());
+        assert!(outcome.value.get("url").is_some());
+    }
+
+    // ── workspace_onboarding_flag_exists ───────────────────────────
+
+    #[test]
+    fn workspace_onboarding_flag_exists_returns_false_for_fresh_workspace() {
+        let tmp = tempdir().unwrap();
+        let res = workspace_onboarding_flag_exists(tmp.path().join("workspace"), "onboarding.done")
+            .expect("flag check ok");
+        assert_eq!(res.value, false);
+    }
+
+    #[test]
+    fn workspace_onboarding_flag_exists_rejects_invalid_flag_names() {
+        let tmp = tempdir().unwrap();
+        for bad in ["", "   ", "a/b", "a\\b", "..", "foo/.."] {
+            let err =
+                workspace_onboarding_flag_exists(tmp.path().join("workspace"), bad).unwrap_err();
+            assert!(
+                err.contains("Invalid onboarding flag"),
+                "name `{bad}`: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_onboarding_flag_exists_true_when_file_present() {
+        let tmp = tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join("onboarding.done"), "").unwrap();
+        let res = workspace_onboarding_flag_exists(ws, "onboarding.done").expect("flag check ok");
+        assert_eq!(res.value, true);
+    }
 }
