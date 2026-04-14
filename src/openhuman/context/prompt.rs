@@ -1490,8 +1490,7 @@ mod tests {
     fn subagent_render_options_invert_definition_flags() {
         // (omit_identity, omit_safety_preamble, omit_skills_catalog,
         //  omit_profile, omit_memory_md)
-        let options =
-            SubagentRenderOptions::from_definition_flags(true, false, true, false, false);
+        let options = SubagentRenderOptions::from_definition_flags(true, false, true, false, false);
         assert!(!options.include_identity);
         assert!(options.include_safety_preamble);
         assert!(!options.include_skills_catalog);
@@ -1577,7 +1576,11 @@ mod tests {
         ));
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(workspace.join("SOUL.md"), "# Soul\nShould be hidden").unwrap();
-        std::fs::write(workspace.join("IDENTITY.md"), "# Identity\nShould be hidden").unwrap();
+        std::fs::write(
+            workspace.join("IDENTITY.md"),
+            "# Identity\nShould be hidden",
+        )
+        .unwrap();
         std::fs::write(
             workspace.join("PROFILE.md"),
             "# User Profile\nName: Jane Doe\nRole: Data scientist",
@@ -1806,9 +1809,7 @@ mod tests {
         .unwrap();
 
         // Mirrors e.g. `critic/agent.toml` — all omit_* default-true.
-        let options = SubagentRenderOptions::from_definition_flags(
-            true, true, true, true, true,
-        );
+        let options = SubagentRenderOptions::from_definition_flags(true, true, true, true, true);
 
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
         let rendered = render_subagent_system_prompt(
