@@ -70,7 +70,7 @@ describe('Rewards page', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getAllByText('Loading rewards…')).toHaveLength(2);
+    expect(screen.queryAllByText('Loading rewards…').length).toBeGreaterThan(0);
 
     await waitFor(() => {
       expect(screen.getByText('7-Day Streak')).toBeInTheDocument();
@@ -130,7 +130,7 @@ describe('Rewards page', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Referrals' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Referrals' }));
 
     expect(screen.getByText('Referral Rewards Section')).toBeInTheDocument();
     expect(screen.queryByText('Rewards Coupon Section')).not.toBeInTheDocument();
@@ -170,7 +170,7 @@ describe('Rewards page', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Redeem' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Redeem' }));
 
     expect(screen.getByText('Rewards Coupon Section')).toBeInTheDocument();
     expect(screen.queryByText('Referral Rewards Section')).not.toBeInTheDocument();

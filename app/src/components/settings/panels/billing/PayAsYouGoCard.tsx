@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { type CreditBalance } from '../../../../services/api/creditsApi';
 
@@ -7,7 +7,6 @@ interface PayAsYouGoCardProps {
   isLoadingCredits: boolean;
   isToppingUp: boolean;
   onTopUp: (amountUsd: number) => void;
-  onBalanceRefresh: () => void;
 }
 
 const PayAsYouGoCard = ({
@@ -27,16 +26,12 @@ const PayAsYouGoCard = ({
   const availableCredits = promoCredits + teamTopupCredits;
 
   const [customTopUpAmount, setCustomTopUpAmount] = useState('');
-  const [customTopUpAmountValid, setCustomTopUpAmountValid] = useState(false);
+  const customTopUpAmountValid = Number(customTopUpAmount) > 0;
 
   const handleCustomTopUp = () => {
     if (!customTopUpAmountValid || isToppingUp) return;
     onTopUp(Number(customTopUpAmount));
   };
-
-  useEffect(() => {
-    setCustomTopUpAmountValid(Number(customTopUpAmount) > 0);
-  }, [customTopUpAmount]);
 
   return (
     <>

@@ -405,20 +405,6 @@ const BillingPanel = () => {
     }
   };
 
-  const handleBalanceRefresh = useCallback(async () => {
-    try {
-      const balance = await creditsApi.getBalance();
-      log(
-        '[balance-refresh] promotion=%s teamTopup=%s',
-        balance.promotionBalanceUsd,
-        balance.teamTopupUsd
-      );
-      setCreditBalance(balance);
-    } catch (err) {
-      log('[balance-refresh] failed: %O', err);
-    }
-  }, []);
-
   const transactionRows = transactions.slice(0, 4);
 
   // ── JSX ─────────────────────────────────────────────────────────────
@@ -480,7 +466,6 @@ const BillingPanel = () => {
             onAddCard={handleAddCard}
             onArSave={handleArSave}
             onArToggle={handleArToggle}
-            onBalanceRefresh={handleBalanceRefresh}
             onDeleteCard={handleDeleteCard}
             onSetDefault={handleSetDefault}
             onTopUp={handleTopUp}

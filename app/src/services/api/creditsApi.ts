@@ -150,13 +150,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function asNumber(value: unknown): number {
+function normalizeUsd(value: unknown, fallback = 0): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
   }
-  return 0;
+  return fallback;
 }
 
 function asStringOrNull(value: unknown): string | null {
@@ -172,7 +172,7 @@ export function normalizeCouponRedeemResult(raw: unknown): CouponRedeemResult {
       (typeof payload.couponCode === 'string' && payload.couponCode.trim()) ||
       (typeof payload.code === 'string' && payload.code.trim()) ||
       '',
-    amountUsd: asNumber(payload.amountUsd ?? payload.amount_usd),
+    amountUsd: normalizeUsd(payload.amountUsd ?? payload.amount_usd),
     pending: Boolean(payload.pending),
   };
 }
@@ -184,7 +184,7 @@ export function normalizeRedeemedCoupon(raw: unknown): RedeemedCoupon {
       (typeof record.code === 'string' && record.code.trim()) ||
       (typeof record.couponCode === 'string' && record.couponCode.trim()) ||
       '',
-    amountUsd: asNumber(record.amountUsd ?? record.amount_usd),
+    amountUsd: normalizeUsd(record.amountUsd ?? record.amount_usd),
     redeemedAt: asStringOrNull(record.redeemedAt ?? record.redeemed_at),
     activationType:
       (typeof record.activationType === 'string' && record.activationType.trim()) ||
@@ -196,19 +196,38 @@ export function normalizeRedeemedCoupon(raw: unknown): RedeemedCoupon {
   };
 }
 
-function normalizeUsd(value: unknown, fallback = 0): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return fallback;
-}
-
 function normalizeCreditBalance(payload: unknown): CreditBalance {
   const raw = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>;
   const nested = asRecord(raw.data) ?? asRecord(raw.balance) ?? null;
   const source = nested ?? raw;
+  const promotionBalanceKeys = [
+    'promotionBalanceUsd',
+    'promotion_balance_usd',
+    'promotionalBalanceUsd',
+    'promotional_balance_usd',
+    'promoBalanceUsd',
+    'promo_balance_usd',
+  ] as const;
+  const teamTopupKeys = [
+    'teamTopupUsd',
+    'team_topup_usd',
+    'teamTopUpUsd',
+    'team_top_up_usd',
+    'teamTopupBalanceUsd',
+    'team_topup_balance_usd',
+  ] as const;
+  const missingPromotionBalance = promotionBalanceKeys.every(key => !(key in source));
+  const missingTeamTopup = teamTopupKeys.every(key => !(key in source));
+
+  if (missingPromotionBalance || missingTeamTopup) {
+    console.debug('[creditsApi] normalizeCreditBalance missing expected keys', {
+      raw: source,
+      missingPromotionBalance,
+      missingPromotionBalanceKeys: missingPromotionBalance ? promotionBalanceKeys : [],
+      missingTeamTopup,
+      missingTeamTopupKeys: missingTeamTopup ? teamTopupKeys : [],
+    });
+  }
 
   return {
     promotionBalanceUsd: normalizeUsd(

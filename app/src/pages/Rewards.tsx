@@ -4,14 +4,12 @@ import PillTabBar from '../components/PillTabBar';
 import RewardsCommunityTab from '../components/rewards/RewardsCommunityTab';
 import RewardsRedeemTab from '../components/rewards/RewardsRedeemTab';
 import RewardsReferralsTab from '../components/rewards/RewardsReferralsTab';
-import { useUser } from '../hooks/useUser';
 import { rewardsApi } from '../services/api/rewardsApi';
 import type { RewardsSnapshot } from '../types/rewards';
 
 type RewardsTab = 'referrals' | 'redeem' | 'rewards';
 
 const Rewards = () => {
-  const { user } = useUser();
   const [selectedTab, setSelectedTab] = useState<RewardsTab>('rewards');
   const [snapshot, setSnapshot] = useState<RewardsSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -75,13 +73,7 @@ const Rewards = () => {
         ) : selectedTab === 'redeem' ? (
           <RewardsRedeemTab />
         ) : (
-          <RewardsCommunityTab
-            error={error}
-            isLoading={isLoading}
-            onSelectRedeem={() => setSelectedTab('redeem')}
-            plan={snapshot?.summary.plan ?? user?.subscription?.plan ?? 'FREE'}
-            snapshot={snapshot}
-          />
+          <RewardsCommunityTab error={error} isLoading={isLoading} snapshot={snapshot} />
         )}
       </div>
     </div>

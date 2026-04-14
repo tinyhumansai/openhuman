@@ -25,15 +25,19 @@ export default function PillTabBar<T extends string>({
   selected,
 }: PillTabBarProps<T>) {
   return (
-    <div className={containerClassName}>
+    <div className={containerClassName} role="tablist">
       {items.map(item => {
         const active = selected === item.value;
+        const tabId = `pill-tab-${String(item.value)}`;
 
         return (
           <button
             key={item.value}
             type="button"
-            aria-pressed={active}
+            id={tabId}
+            role="tab"
+            aria-selected={active}
+            tabIndex={active ? 0 : -1}
             onClick={() => onChange(item.value)}
             className={`flex-shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               active ? activeClassName : inactiveClassName

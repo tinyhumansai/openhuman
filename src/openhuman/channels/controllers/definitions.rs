@@ -438,16 +438,44 @@ mod tests {
             serde_json::Value::String("api_key".to_string())
         );
         assert_eq!(
+            serde_json::from_value::<ChannelAuthMode>(serde_json::Value::String(
+                "api_key".to_string()
+            ))
+            .expect("deserialize"),
+            ChannelAuthMode::ApiKey
+        );
+        assert_eq!(
             serde_json::to_value(ChannelAuthMode::BotToken).expect("serialize"),
             serde_json::Value::String("bot_token".to_string())
+        );
+        assert_eq!(
+            serde_json::from_value::<ChannelAuthMode>(serde_json::Value::String(
+                "bot_token".to_string()
+            ))
+            .expect("deserialize"),
+            ChannelAuthMode::BotToken
         );
         assert_eq!(
             serde_json::to_value(ChannelAuthMode::OAuth).expect("serialize"),
             serde_json::Value::String("oauth".to_string())
         );
         assert_eq!(
+            serde_json::from_value::<ChannelAuthMode>(serde_json::Value::String(
+                "oauth".to_string()
+            ))
+            .expect("deserialize"),
+            ChannelAuthMode::OAuth
+        );
+        assert_eq!(
             serde_json::to_value(ChannelAuthMode::ManagedDm).expect("serialize"),
             serde_json::Value::String("managed_dm".to_string())
+        );
+        assert_eq!(
+            serde_json::from_value::<ChannelAuthMode>(serde_json::Value::String(
+                "managed_dm".to_string()
+            ))
+            .expect("deserialize"),
+            ChannelAuthMode::ManagedDm
         );
     }
 }

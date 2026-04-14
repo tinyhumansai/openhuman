@@ -1,4 +1,5 @@
 use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -75,6 +76,17 @@ static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
 
 static IN_FLIGHT: Lazy<Mutex<HashMap<String, InFlightEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
+static BUDGET_ERROR_NORMALIZE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[-_\s]+").expect("budget normalize regex"));
+static BUDGET_ERROR_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+    vec![
+        Regex::new(r"budget.*exceed").expect("budget exceeded regex"),
+        Regex::new(r"top up").expect("top up regex"),
+        Regex::new(r"add.*credits").expect("add credits regex"),
+        Regex::new(r"out of credits").expect("out of credits regex"),
+        Regex::new(r"no remaining credits").expect("no remaining credits regex"),
+    ]
+});
 
 fn key_for(client_id: &str, thread_id: &str) -> String {
     format!("{client_id}::{thread_id}")
@@ -89,11 +101,12 @@ fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
 }
 
 fn is_inference_budget_exceeded_error(message: &str) -> bool {
-    let normalized = message.trim().to_ascii_lowercase();
-    normalized.contains("budget exceeded")
-        && (normalized.contains("add credits to continue")
-            || normalized.contains("add credits")
-            || normalized.contains("top up"))
+    let normalized = BUDGET_ERROR_NORMALIZE_RE
+        .replace_all(&message.trim().to_ascii_lowercase(), " ")
+        .into_owned();
+    BUDGET_ERROR_PATTERNS
+        .iter()
+        .any(|pattern| pattern.is_match(&normalized))
 }
 
 fn inference_budget_exceeded_user_message() -> &'static str {
@@ -353,11 +366,10 @@ async fn run_chat_task(
             let err_message = err.to_string();
             if is_inference_budget_exceeded_error(&err_message) {
                 log::warn!(
-                    "[web-channel] inference budget exhausted for client={} thread={} request_id={} error={}",
+                    "[web-channel] inference budget exhausted for client={} thread={} request_id={} error_category=budget_exhausted",
                     client_id,
                     thread_id,
-                    request_id,
-                    err_message
+                    request_id
                 );
                 Ok(inference_budget_exceeded_user_message().to_string())
             } else {

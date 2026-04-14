@@ -58,11 +58,90 @@ export default function IntelligenceSubconsciousTab({
     e.preventDefault();
     const title = newTaskTitle.trim();
     if (!title) return;
+    console.debug('[subconscious-ui] add task:start', { title });
     try {
       await addSubconsciousTask(title);
       setNewTaskTitle('');
-    } catch {
-      // handled by hook
+      console.debug('[subconscious-ui] add task:success', { title });
+    } catch (error) {
+      console.debug('[subconscious-ui] add task:error', {
+        title,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const handleRunTick = async () => {
+    console.debug('[subconscious-ui] run tick:start', { triggering });
+    try {
+      await triggerTick();
+      console.debug('[subconscious-ui] run tick:done');
+    } catch (error) {
+      console.debug('[subconscious-ui] run tick:error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const handleApproveEscalation = async (escalationId: string) => {
+    console.debug('[subconscious-ui] escalation approve:start', { escalationId });
+    try {
+      await approveEscalation(escalationId);
+      console.debug('[subconscious-ui] escalation approve:success', { escalationId });
+    } catch (error) {
+      console.debug('[subconscious-ui] escalation approve:error', {
+        escalationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const handleDismissEscalation = async (escalationId: string) => {
+    console.debug('[subconscious-ui] escalation dismiss:start', { escalationId });
+    try {
+      await dismissEscalation(escalationId);
+      console.debug('[subconscious-ui] escalation dismiss:success', { escalationId });
+    } catch (error) {
+      console.debug('[subconscious-ui] escalation dismiss:error', {
+        escalationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const handleFixInSkills = (escalationId: string) => {
+    console.debug('[subconscious-ui] escalation fix in skills:navigate', { escalationId });
+    navigate('/skills', {
+      state: { subconsciousEscalationId: escalationId },
+    });
+  };
+
+  const handleToggleTask = async (taskId: string, enabled: boolean, title: string) => {
+    console.debug('[subconscious-ui] task toggle:start', { taskId, enabled, title });
+    try {
+      await toggleSubconsciousTask(taskId, enabled);
+      console.debug('[subconscious-ui] task toggle:success', { taskId, enabled, title });
+    } catch (error) {
+      console.debug('[subconscious-ui] task toggle:error', {
+        taskId,
+        enabled,
+        title,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  const handleRemoveTask = async (taskId: string, title: string) => {
+    console.debug('[subconscious-ui] task remove:start', { taskId, title });
+    try {
+      await removeSubconsciousTask(taskId);
+      console.debug('[subconscious-ui] task remove:success', { taskId, title });
+    } catch (error) {
+      console.debug('[subconscious-ui] task remove:error', {
+        taskId,
+        title,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -123,7 +202,7 @@ export default function IntelligenceSubconsciousTab({
             </select>
           </div>
           <button
-            onClick={() => void triggerTick()}
+            onClick={() => void handleRunTick()}
             disabled={triggering}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 hover:bg-stone-100 disabled:opacity-40 border border-stone-200 rounded-lg text-stone-600 transition-colors">
             {triggering ? (
@@ -178,22 +257,19 @@ export default function IntelligenceSubconsciousTab({
                   <div className="flex gap-2 ml-3 flex-shrink-0">
                     {isSkillRelated(esc.title, esc.description) ? (
                       <button
-                        onClick={() => {
-                          void dismissEscalation(esc.id);
-                          navigate('/skills');
-                        }}
+                        onClick={() => handleFixInSkills(esc.id)}
                         className="px-3 py-1.5 text-xs bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors">
                         Fix in Skills
                       </button>
                     ) : (
                       <button
-                        onClick={() => void approveEscalation(esc.id)}
+                        onClick={() => void handleApproveEscalation(esc.id)}
                         className="px-3 py-1.5 text-xs bg-sage-500 hover:bg-sage-600 text-white rounded-lg transition-colors">
                         Go ahead
                       </button>
                     )}
                     <button
-                      onClick={() => void dismissEscalation(esc.id)}
+                      onClick={() => void handleDismissEscalation(esc.id)}
                       className="px-3 py-1.5 text-xs bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-lg transition-colors">
                       Skip
                     </button>
@@ -234,7 +310,10 @@ export default function IntelligenceSubconsciousTab({
                   className="flex items-center justify-between py-2 px-3 bg-stone-50 rounded-lg group">
                   <div className="flex items-center gap-2.5 flex-1 min-w-0">
                     <button
-                      onClick={() => void toggleSubconsciousTask(task.id, !task.enabled)}
+                      type="button"
+                      aria-pressed={task.enabled}
+                      aria-label={`${task.enabled ? 'Disable' : 'Enable'} ${task.title}`}
+                      onClick={() => void handleToggleTask(task.id, !task.enabled, task.title)}
                       className={`relative w-7 h-4 rounded-full flex-shrink-0 transition-colors ${
                         task.enabled ? 'bg-sage-500' : 'bg-stone-300'
                       }`}>
@@ -250,7 +329,9 @@ export default function IntelligenceSubconsciousTab({
                     </span>
                   </div>
                   <button
-                    onClick={() => void removeSubconsciousTask(task.id)}
+                    type="button"
+                    aria-label={`Remove ${task.title}`}
+                    onClick={() => void handleRemoveTask(task.id, task.title)}
                     className="opacity-0 group-hover:opacity-100 p-1 text-stone-400 hover:text-coral-500 transition-all">
                     <svg
                       className="w-3.5 h-3.5"

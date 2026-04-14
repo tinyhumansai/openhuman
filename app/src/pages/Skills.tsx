@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
 import ComposioConnectModal from '../components/composio/ComposioConnectModal';
 import {
-  canonicalizeComposioToolkitSlug,
   composioToolkitMeta,
   type ComposioToolkitMeta,
   KNOWN_COMPOSIO_TOOLKITS,
@@ -27,9 +26,11 @@ import { useScreenIntelligenceSkillStatus } from '../features/screen-intelligenc
 import { useVoiceSkillStatus } from '../features/voice/useVoiceSkillStatus';
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
 import { useComposioIntegrations } from '../lib/composio/hooks';
+import { canonicalizeComposioToolkitSlug } from '../lib/composio/toolkitSlug';
 import { type ComposioConnection, deriveComposioState } from '../lib/composio/types';
 import { useAppSelector } from '../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../types/channels';
+import { subconsciousEscalationsDismiss } from '../utils/tauriCommands';
 
 function channelStatusDot(status: ChannelConnectionStatus): string {
   switch (status) {
@@ -163,6 +164,7 @@ interface SkillItem {
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
 
 export default function Skills() {
+  const location = useLocation();
   const navigate = useNavigate();
   const { definitions: channelDefs } = useChannelDefinitions();
   const channelConnections = useAppSelector(state => state.channelConnections);
@@ -187,6 +189,43 @@ export default function Skills() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<SkillCategory>('All');
+  const pendingEscalationId =
+    location.state &&
+    typeof location.state === 'object' &&
+    'subconsciousEscalationId' in location.state &&
+    typeof location.state.subconsciousEscalationId === 'string'
+      ? location.state.subconsciousEscalationId
+      : null;
+
+  const clearPendingEscalationState = useCallback(() => {
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, navigate]);
+
+  const dismissPendingEscalationIfResolved = useCallback(
+    async (resolution: string) => {
+      if (!pendingEscalationId) return;
+      console.debug('[skills][subconscious] dismiss escalation:start', {
+        escalationId: pendingEscalationId,
+        resolution,
+      });
+      try {
+        await subconsciousEscalationsDismiss(pendingEscalationId);
+        console.debug('[skills][subconscious] dismiss escalation:success', {
+          escalationId: pendingEscalationId,
+          resolution,
+        });
+      } catch (error) {
+        console.debug('[skills][subconscious] dismiss escalation:error', {
+          escalationId: pendingEscalationId,
+          resolution,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      clearPendingEscalationState();
+    },
+    [clearPendingEscalationState, pendingEscalationId]
+  );
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -565,7 +604,10 @@ export default function Skills() {
         <ComposioConnectModal
           toolkit={composioModalToolkit}
           connection={composioConnectionByToolkit.get(composioModalToolkit.slug)}
-          onChanged={() => void refreshComposio()}
+          onChanged={() => {
+            void refreshComposio();
+            void dismissPendingEscalationIfResolved(`composio:${composioModalToolkit.slug}`);
+          }}
           onClose={() => setComposioModalToolkit(null)}
         />
       )}

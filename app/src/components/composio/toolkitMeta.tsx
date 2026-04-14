@@ -27,6 +27,7 @@ import {
 
 import type { SkillCategory } from '../skills/skillCategories';
 import { SkillIconBadge } from '../skills/skillIcons';
+import { canonicalizeComposioToolkitSlug } from '../../lib/composio/toolkitSlug';
 
 export interface ComposioToolkitMeta {
   /** Toolkit slug as returned by the backend, e.g. `"gmail"`. */
@@ -39,17 +40,6 @@ export interface ComposioToolkitMeta {
   category: SkillCategory;
   /** Small branded icon rendered on the card and connect modal. */
   icon: ReactNode;
-}
-
-const TOOLKIT_ALIASES: Record<string, string> = {
-  google_calendar: 'googlecalendar',
-  google_drive: 'googledrive',
-  googlesheets: 'google_sheets',
-};
-
-export function canonicalizeComposioToolkitSlug(slug: string): string {
-  const key = slug.toLowerCase();
-  return TOOLKIT_ALIASES[key] ?? key;
 }
 
 function GmailIcon() {
@@ -286,7 +276,7 @@ export const KNOWN_COMPOSIO_TOOLKITS = Object.freeze([
   'gmail',
   'googlecalendar',
   'googledrive',
-  'google_sheets',
+  'googlesheets',
   'notion',
   'github',
   'slack',

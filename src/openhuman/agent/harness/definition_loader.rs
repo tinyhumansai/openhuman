@@ -123,9 +123,16 @@ fn user_home_agents_dir() -> Option<PathBuf> {
     if let Ok(custom) = std::env::var("OPENHUMAN_HOME") {
         return Some(PathBuf::from(custom).join("agents"));
     }
-    crate::openhuman::config::default_root_openhuman_dir()
-        .ok()
-        .map(|dir| dir.join("agents"))
+    match crate::openhuman::config::default_root_openhuman_dir() {
+        Ok(dir) => Some(dir.join("agents")),
+        Err(error) => {
+            tracing::debug!(
+                error = %error,
+                "[agent-definition-loader] resolving root openhuman dir failed"
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]

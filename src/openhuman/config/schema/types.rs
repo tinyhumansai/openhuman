@@ -202,7 +202,14 @@ impl Default for Config {
             crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
                 let home = UserDirs::new()
                     .map_or_else(|| PathBuf::from("."), |u| u.home_dir().to_path_buf());
-                home.join(".openhuman")
+                let dir_name = if crate::api::config::is_staging_app_env(
+                    crate::api::config::app_env_from_env().as_deref(),
+                ) {
+                    ".openhuman-staging"
+                } else {
+                    ".openhuman"
+                };
+                home.join(dir_name)
             });
 
         Self {

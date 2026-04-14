@@ -19,9 +19,9 @@ export default function IntelligenceDreamsTab() {
       </div>
       <h2 className="text-lg font-semibold text-stone-900 mb-2">Dreams</h2>
       <p className="text-stone-400 text-sm mb-1">
-        Twice everyday, OpenHuman will generate a dream (or a summary) based on everything that has
-        happened in your life today. These dreams re then indexed and can be used to influence
-        OpenHuman&apos;s behavior.
+        Twice every day, OpenHuman will generate a dream (or a summary) based on
+        everything that has happened in your life today. These dreams are then
+        indexed and can be used to influence OpenHuman&apos;s behavior.
       </p>
       <p className="text-xs text-stone-500">Coming soon</p>
     </div>

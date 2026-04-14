@@ -199,7 +199,6 @@ const SubscriptionPlans = ({
                       </span>
                     )}
                   </div>
-                  {/* {plan.tagline && <p className="mt-1 text-sm text-stone-500">{plan.tagline}</p>} */}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {plan.features.slice(0, 4).map(feature => (
                       <span

@@ -12,7 +12,9 @@ pub const VITE_APP_ENV_VAR: &str = "VITE_OPENHUMAN_APP_ENV";
 /// Resolves the hosted API base URL (no path suffix).
 ///
 /// Order: non-empty `api_url` from config → [`api_base_from_env`] (`BACKEND_URL`, then `VITE_BACKEND_URL`)
-/// → [`DEFAULT_API_BASE_URL`] (same host your curl command used when config is blank).
+/// → [`default_api_base_url_for_env`](`app_env_from_env().as_deref()`), which selects the
+/// environment-aware default host based on the current app environment instead of always using
+/// [`DEFAULT_API_BASE_URL`].
 pub fn effective_api_url(api_url: &Option<String>) -> String {
     if let Some(u) = api_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         return normalize_api_base_url(u);

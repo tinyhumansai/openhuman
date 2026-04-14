@@ -42,7 +42,7 @@ export default function BillingHistoryTab({
                   <div>
                     <p className="font-semibold text-stone-950">{transaction.action}</p>
                     <p className="mt-1 text-xs text-stone-500">
-                      {new Date(transaction.createdAt).toLocaleDateString('en-US', {
+                      {new Date(transaction.createdAt).toLocaleDateString(undefined, {
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric',
@@ -51,7 +51,7 @@ export default function BillingHistoryTab({
                   </div>
                   <div className="text-stone-500">{transaction.type}</div>
                   <div className={`font-semibold ${isEarn ? 'text-sage-600' : 'text-stone-950'}`}>
-                    {isEarn ? '+' : '-'}${Math.abs(transaction.amountUsd).toFixed(5)}
+                    {isEarn ? '+' : '-'}${Math.abs(transaction.amountUsd).toFixed(2)}
                   </div>
                   <div className="sm:text-right">
                     <span className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">

@@ -36,7 +36,11 @@ export default function IntelligenceMemoryTab({
     <>
       <div className="flex items-center gap-3 mb-6 animate-fade-up">
         <div className="flex-1">
+          <label htmlFor="actionable-search" className="sr-only">
+            Search actionable items
+          </label>
           <input
+            id="actionable-search"
             type="text"
             placeholder="Search actionable items..."
             value={searchFilter}
@@ -44,7 +48,11 @@ export default function IntelligenceMemoryTab({
             className="w-full px-3 py-2 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 placeholder-stone-400 focus:outline-none focus:border-primary-500/50 transition-colors"
           />
         </div>
+        <label htmlFor="actionable-source" className="sr-only">
+          Filter by source
+        </label>
         <select
+          id="actionable-source"
           value={sourceFilter}
           onChange={e => setSourceFilter(e.target.value as ActionableItemSource | 'all')}
           className="px-3 py-2 text-sm bg-white border border-stone-200 rounded-lg text-stone-900 focus:outline-none focus:border-primary-500/50 transition-colors">

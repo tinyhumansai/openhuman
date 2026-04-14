@@ -40,14 +40,25 @@ pub async fn load_config_with_timeout() -> Result<Config, String> {
 /// Returns the default workspace directory fallback (~/.openhuman/workspace).
 fn fallback_workspace_dir() -> PathBuf {
     crate::openhuman::config::default_root_openhuman_dir()
-        .unwrap_or_else(|_| PathBuf::from(".openhuman"))
+        .unwrap_or_else(|_| env_scoped_fallback_root_dir())
         .join("workspace")
 }
 
 /// Returns the default OpenHuman configuration directory (~/.openhuman).
 fn default_openhuman_dir() -> PathBuf {
     crate::openhuman::config::default_root_openhuman_dir()
-        .unwrap_or_else(|_| PathBuf::from(".openhuman"))
+        .unwrap_or_else(|_| env_scoped_fallback_root_dir())
+}
+
+fn env_scoped_fallback_root_dir() -> PathBuf {
+    let suffix = if crate::api::config::is_staging_app_env(
+        crate::api::config::app_env_from_env().as_deref(),
+    ) {
+        "-staging"
+    } else {
+        ""
+    };
+    PathBuf::from(format!(".openhuman{suffix}"))
 }
 
 /// Returns the path to the active workspace marker file.

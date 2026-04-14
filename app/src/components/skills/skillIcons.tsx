@@ -35,6 +35,7 @@ export function SkillIconBadge({
 }) {
   return (
     <span
+      role="img"
       aria-label={label}
       className={iconClasses(
         'flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5',

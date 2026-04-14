@@ -68,8 +68,6 @@ function roleGlyph(index: number) {
 interface RewardsCommunityTabProps {
   error: string | null;
   isLoading: boolean;
-  onSelectRedeem: () => void;
-  plan: string;
   snapshot: RewardsSnapshot | null;
 }
 

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
@@ -204,7 +205,7 @@ const aiModelsSettingsItems = [
   },
 ];
 
-const WrappedSettingsPage = ({ children }: { children: React.ReactNode }) => {
+const WrappedSettingsPage = ({ children }: { children: ReactNode }) => {
   return (
     <div className="p-4 pt-6">
       <div className="max-w-lg mx-auto bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
@@ -214,8 +215,8 @@ const WrappedSettingsPage = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
-const Settings = () => {
-  const wrapSettingsPage = (element: React.ReactNode) => (
+function wrapSettingsPage(element: ReactNode) {
+  return (
     <WrappedSettingsPage>
       {element}
       <div className="border-t border-stone-100 px-4 py-3 text-center text-[11px] text-stone-400">
@@ -223,7 +224,9 @@ const Settings = () => {
       </div>
     </WrappedSettingsPage>
   );
+}
 
+const Settings = () => {
   return (
     <div>
       <Routes>
@@ -273,6 +276,7 @@ const Settings = () => {
         <Route path="team/members" element={wrapSettingsPage(<TeamMembersPanel />)} />
         <Route path="team/invites" element={wrapSettingsPage(<TeamInvitesPanel />)} />
         <Route path="connections" element={wrapSettingsPage(<ConnectionsPanel />)} />
+        {/* BillingPanel intentionally uses its own wider layout. */}
         <Route path="billing" element={<BillingPanel />} />
         <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
         {/* Features leaf panels */}

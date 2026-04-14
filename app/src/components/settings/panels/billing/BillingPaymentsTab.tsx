@@ -25,7 +25,6 @@ interface BillingPaymentsTabProps {
   onAddCard: () => void;
   onArSave: () => void;
   onArToggle: () => void;
-  onBalanceRefresh: () => void;
   onDeleteCard: (paymentMethodId: string) => void;
   onSetDefault: (paymentMethodId: string) => void;
   onTopUp: (amountUsd: number) => void;
@@ -55,7 +54,6 @@ export default function BillingPaymentsTab({
   onAddCard,
   onArSave,
   onArToggle,
-  onBalanceRefresh,
   onDeleteCard,
   onSetDefault,
   onTopUp,
@@ -73,7 +71,6 @@ export default function BillingPaymentsTab({
           isLoadingCredits={isLoadingCredits}
           isToppingUp={isToppingUp}
           onTopUp={onTopUp}
-          onBalanceRefresh={onBalanceRefresh}
         />
       </section>
 

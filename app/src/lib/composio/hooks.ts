@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { canonicalizeComposioToolkitSlug } from '../../components/composio/toolkitMeta';
 import { listConnections, listToolkits } from './composioApi';
+import { canonicalizeComposioToolkitSlug } from './toolkitSlug';
 import type { ComposioConnection } from './types';
 
 // ── useComposioIntegrations ───────────────────────────────────────

@@ -126,10 +126,11 @@ const ReferralRewardsSection = () => {
   const handleApply = async () => {
     const trimmed = applyCode.trim();
     if (!trimmed) return;
+    const normalizedValue = /^https?:\/\//i.test(trimmed) ? trimmed : trimmed.toUpperCase();
     setApplyLoading(true);
     setApplyError(null);
     try {
-      await referralApi.claimReferral(trimmed);
+      await referralApi.claimReferral(normalizedValue);
       setApplySuccess(true);
       setApplyCode('');
       await refetch();
@@ -263,7 +264,7 @@ const ReferralRewardsSection = () => {
             <input
               type="text"
               value={applyCode}
-              onChange={e => setApplyCode(e.target.value.toUpperCase())}
+              onChange={e => setApplyCode(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && void handleApply()}
               placeholder="Referral code or link"
               disabled={applyLoading}
