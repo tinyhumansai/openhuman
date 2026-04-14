@@ -29,6 +29,10 @@ pub enum AgentProgress {
 
     /// The LLM responded and the agent is about to execute a tool.
     ToolCallStarted {
+        /// Provider-assigned (or synthesised) tool call id that ties
+        /// this event to its eventual [`Self::ToolCallCompleted`] and
+        /// to any preceding [`Self::ToolCallArgsDelta`] fragments.
+        call_id: String,
         tool_name: String,
         arguments: serde_json::Value,
         /// 1-based iteration index.
@@ -37,6 +41,9 @@ pub enum AgentProgress {
 
     /// A tool execution completed (success or failure).
     ToolCallCompleted {
+        /// Same call id as the matching [`Self::ToolCallStarted`] and
+        /// [`Self::ToolCallArgsDelta`] events.
+        call_id: String,
         tool_name: String,
         success: bool,
         output_chars: usize,

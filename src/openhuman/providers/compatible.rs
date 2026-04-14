@@ -1207,7 +1207,11 @@ impl OpenAiCompatibleProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("{} streaming API error ({}): {}", self.name, status, body);
+            // Sanitize the upstream error body so we don't leak user
+            // prompts, tool arguments, or credentials the backend
+            // echoed back into the anyhow chain / logs.
+            let sanitized = super::sanitize_api_error(&body);
+            anyhow::bail!("{} streaming API error ({}): {}", self.name, status, sanitized);
         }
 
         // Some OpenAI-compatible backends (and our e2e mock) accept

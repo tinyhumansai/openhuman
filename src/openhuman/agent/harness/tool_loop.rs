@@ -148,17 +148,28 @@ pub(crate) async fn run_tool_call_loop(
 
     let mut context_guard = ContextGuard::new();
 
-    // Announce turn start to progress subscribers (if any).
+    // Announce turn start to progress subscribers (if any). We use
+    // `send().await` for lifecycle (turn/iteration) events so they
+    // survive downstream backpressure — dropping one of these would
+    // desync the web-channel progress bridge. High-volume delta events
+    // use the same backpressure discipline (see below).
     if let Some(ref sink) = on_progress {
-        let _ = sink.try_send(AgentProgress::TurnStarted);
+        if let Err(e) = sink.send(AgentProgress::TurnStarted).await {
+            log::warn!("[agent_loop] progress sink closed at TurnStarted: {e}");
+        }
     }
 
     for iteration in 0..max_iterations {
         if let Some(ref sink) = on_progress {
-            let _ = sink.try_send(AgentProgress::IterationStarted {
-                iteration: (iteration + 1) as u32,
-                max_iterations: max_iterations as u32,
-            });
+            if let Err(e) = sink
+                .send(AgentProgress::IterationStarted {
+                    iteration: (iteration + 1) as u32,
+                    max_iterations: max_iterations as u32,
+                })
+                .await
+            {
+                log::warn!("[agent_loop] progress sink closed at IterationStarted: {e}");
+            }
         }
         // ── Context guard: check utilization before each LLM call ──
         match context_guard.check() {
@@ -243,7 +254,13 @@ pub(crate) async fn run_tool_call_loop(
                             }
                         }
                     };
-                    let _ = progress_sink.try_send(mapped);
+                    // Await backpressure rather than dropping deltas so
+                    // partial streamed text/args stays consistent with the
+                    // eventual ToolCallStarted / ToolCallCompleted events.
+                    if progress_sink.send(mapped).await.is_err() {
+                        // Downstream closed — abandon the forwarder.
+                        break;
+                    }
                 }
             });
             (Some(tx), Some(forwarder))
@@ -362,9 +379,14 @@ pub(crate) async fn run_tool_call_loop(
             }
             history.push(ChatMessage::assistant(response_text.clone()));
             if let Some(ref sink) = on_progress {
-                let _ = sink.try_send(AgentProgress::TurnCompleted {
-                    iterations: (iteration + 1) as u32,
-                });
+                if let Err(e) = sink
+                    .send(AgentProgress::TurnCompleted {
+                        iterations: (iteration + 1) as u32,
+                    })
+                    .await
+                {
+                    log::warn!("[agent_loop] progress sink closed at TurnCompleted: {e}");
+                }
             }
             return Ok(display_text);
         }
@@ -454,12 +476,25 @@ pub(crate) async fn run_tool_call_loop(
                 let tool_deadline =
                     crate::openhuman::tool_timeout::tool_execution_timeout_duration();
                 let timeout_secs = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
+                // Stable id threaded through the start/complete pair
+                // (and any preceding args-delta events) so consumers can
+                // reconcile tool rows by id.
+                let progress_call_id = call
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| format!("loop-{iteration}-{}", call.name));
                 if let Some(ref sink) = on_progress {
-                    let _ = sink.try_send(AgentProgress::ToolCallStarted {
-                        tool_name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                        iteration: (iteration + 1) as u32,
-                    });
+                    if let Err(e) = sink
+                        .send(AgentProgress::ToolCallStarted {
+                            call_id: progress_call_id.clone(),
+                            tool_name: call.name.clone(),
+                            arguments: call.arguments.clone(),
+                            iteration: (iteration + 1) as u32,
+                        })
+                        .await
+                    {
+                        log::warn!("[agent_loop] progress sink closed while emitting ToolCallStarted: {e}");
+                    }
                 }
                 let tool_started = std::time::Instant::now();
                 let outcome =
@@ -511,13 +546,19 @@ pub(crate) async fn run_tool_call_loop(
                     }
                 };
                 if let Some(ref sink) = on_progress {
-                    let _ = sink.try_send(AgentProgress::ToolCallCompleted {
-                        tool_name: call.name.clone(),
-                        success,
-                        output_chars: result_text.chars().count(),
-                        elapsed_ms,
-                        iteration: (iteration + 1) as u32,
-                    });
+                    if let Err(e) = sink
+                        .send(AgentProgress::ToolCallCompleted {
+                            call_id: progress_call_id.clone(),
+                            tool_name: call.name.clone(),
+                            success,
+                            output_chars: result_text.chars().count(),
+                            elapsed_ms,
+                            iteration: (iteration + 1) as u32,
+                        })
+                        .await
+                    {
+                        log::warn!("[agent_loop] progress sink closed while emitting ToolCallCompleted: {e}");
+                    }
                 }
                 result_text
             } else {

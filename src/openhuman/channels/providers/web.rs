@@ -432,6 +432,7 @@ fn spawn_progress_bridge(
                     });
                 }
                 AgentProgress::ToolCallStarted {
+                    call_id,
                     tool_name,
                     arguments,
                     iteration,
@@ -441,24 +442,16 @@ fn spawn_progress_bridge(
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
-                        message: None,
-                        error_type: None,
                         tool_name: Some(tool_name),
                         skill_id: Some("web_channel".to_string()),
                         args: Some(arguments),
-                        output: None,
-                        success: None,
                         round: Some(iteration),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
+                        tool_call_id: Some(call_id),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::ToolCallCompleted {
+                    call_id,
                     tool_name,
                     success,
                     output_chars,
@@ -470,24 +463,16 @@ fn spawn_progress_bridge(
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
-                        message: None,
-                        error_type: None,
                         tool_name: Some(tool_name),
                         skill_id: Some("web_channel".to_string()),
-                        args: None,
                         output: Some(
                             json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
                                 .to_string(),
                         ),
                         success: Some(success),
                         round: Some(iteration),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
-                        delta: None,
-                        delta_kind: None,
-                        tool_call_id: None,
+                        tool_call_id: Some(call_id),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::SubagentSpawned { agent_id, task_id } => {

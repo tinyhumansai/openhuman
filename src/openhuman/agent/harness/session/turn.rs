@@ -337,7 +337,12 @@ impl Agent {
                                     }
                                 }
                             };
-                            let _ = sink.try_send(mapped);
+                            // Await backpressure so streamed deltas arrive
+                            // in order and aren't silently dropped when the
+                            // downstream progress bridge is slow.
+                            if sink.send(mapped).await.is_err() {
+                                break;
+                            }
                         }
                     });
                     (Some(tx), Some(forwarder))
@@ -626,7 +631,15 @@ impl Agent {
             tool_name: call.name.clone(),
             session_id: self.event_session_id().to_string(),
         });
+        // Synthesise a fallback id for prompt-guided (non-native) tool
+        // calls so downstream consumers always have a stable key to
+        // reconcile tool_call / tool_args_delta / tool_result rows by.
+        let call_id = call
+            .tool_call_id
+            .clone()
+            .unwrap_or_else(|| format!("turn-{iteration}-{}", call.name));
         self.emit_progress(AgentProgress::ToolCallStarted {
+            call_id: call_id.clone(),
             tool_name: call.name.clone(),
             arguments: call.arguments.clone(),
             iteration: (iteration + 1) as u32,
@@ -714,6 +727,7 @@ impl Agent {
             elapsed_ms,
         });
         self.emit_progress(AgentProgress::ToolCallCompleted {
+            call_id: call_id.clone(),
             tool_name: call.name.clone(),
             success,
             output_chars: result.chars().count(),
