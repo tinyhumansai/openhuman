@@ -655,4 +655,76 @@ mod tests {
         fns.dedup();
         assert_eq!(fns.len(), len, "duplicate function names found");
     }
+
+    #[test]
+    fn every_known_key_resolves_to_non_unknown_schema() {
+        let keys = [
+            "list",
+            "describe",
+            "connect",
+            "disconnect",
+            "status",
+            "test",
+            "telegram_login_start",
+            "telegram_login_check",
+            "discord_list_guilds",
+            "discord_list_channels",
+            "discord_check_permissions",
+            "send_message",
+            "send_reaction",
+            "create_thread",
+            "update_thread",
+            "list_threads",
+        ];
+        for k in keys {
+            let s = schemas(k);
+            assert_eq!(s.namespace, "channels");
+            assert_ne!(s.function, "unknown", "key `{k}` fell through");
+            assert!(!s.description.is_empty(), "key `{k}` missing description");
+            assert!(!s.outputs.is_empty(), "key `{k}` has no outputs");
+        }
+    }
+
+    #[test]
+    fn unknown_function_returns_unknown_fallback() {
+        let s = schemas("no_such_fn_123");
+        assert_eq!(s.function, "unknown");
+        assert_eq!(s.namespace, "channels");
+    }
+
+    #[test]
+    fn describe_schema_requires_channel() {
+        let s = schemas("describe");
+        let chan = s.inputs.iter().find(|f| f.name == "channel");
+        assert!(chan.is_some_and(|f| f.required));
+    }
+
+    #[test]
+    fn send_message_requires_channel_and_message() {
+        let s = schemas("send_message");
+        let required: Vec<&str> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert!(required.contains(&"channel"));
+        // The rich-message body is carried in `message` (JSON).
+        assert!(required.contains(&"message"));
+    }
+
+    #[test]
+    fn telegram_login_check_requires_session_id_or_token() {
+        let s = schemas("telegram_login_check");
+        // Should have at least one required input
+        assert!(s.inputs.iter().any(|f| f.required));
+    }
+
+    #[test]
+    fn discord_list_guilds_schema_may_have_no_required_inputs() {
+        let s = schemas("discord_list_guilds");
+        // Either no inputs or all-optional inputs are acceptable — but the
+        // schema must still exist with outputs.
+        assert!(!s.outputs.is_empty());
+    }
 }

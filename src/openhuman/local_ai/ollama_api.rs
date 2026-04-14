@@ -2,7 +2,23 @@
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const OLLAMA_BASE_URL: &str = "http://localhost:11434";
+pub(crate) const DEFAULT_OLLAMA_BASE_URL: &str = "http://localhost:11434";
+
+/// Returns the effective Ollama base URL, honouring the
+/// `OPENHUMAN_OLLAMA_BASE_URL` env override so tests can point it at
+/// a local mock server. In production builds this is always
+/// [`DEFAULT_OLLAMA_BASE_URL`] unless an operator has deliberately
+/// pointed the sidecar at a remote Ollama.
+pub(crate) fn ollama_base_url() -> String {
+    match std::env::var("OPENHUMAN_OLLAMA_BASE_URL") {
+        Ok(url) if !url.trim().is_empty() => url.trim().trim_end_matches('/').to_string(),
+        _ => DEFAULT_OLLAMA_BASE_URL.to_string(),
+    }
+}
+
+/// Back-compat constant kept at its original value for callers that
+/// reference it directly. New callers should use [`ollama_base_url`].
+pub(crate) const OLLAMA_BASE_URL: &str = DEFAULT_OLLAMA_BASE_URL;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OllamaPullRequest {
@@ -245,5 +261,90 @@ mod tests {
 
         assert_eq!(progress.aggregate_downloaded(), 80);
         assert_eq!(progress.aggregate_total(), Some(120));
+    }
+
+    // ── ollama_base_url env-override behaviour ───────────────────────
+    //
+    // These tests mutate the process-global `OPENHUMAN_OLLAMA_BASE_URL`
+    // variable, so they coordinate with the shared `LOCAL_AI_TEST_MUTEX`
+    // used by `public_infer.rs` tests to prevent interleaved set/remove
+    // calls from other tests in the same binary.
+
+    const ENV_VAR: &str = "OPENHUMAN_OLLAMA_BASE_URL";
+
+    struct OllamaEnvGuard {
+        prior: Option<String>,
+    }
+
+    impl OllamaEnvGuard {
+        fn clear() -> Self {
+            let prior = std::env::var(ENV_VAR).ok();
+            unsafe { std::env::remove_var(ENV_VAR) };
+            Self { prior }
+        }
+
+        fn set(value: &str) -> Self {
+            let prior = std::env::var(ENV_VAR).ok();
+            unsafe { std::env::set_var(ENV_VAR, value) };
+            Self { prior }
+        }
+    }
+
+    impl Drop for OllamaEnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.prior.take() {
+                    Some(v) => std::env::set_var(ENV_VAR, v),
+                    None => std::env::remove_var(ENV_VAR),
+                }
+            }
+        }
+    }
+
+    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::openhuman::local_ai::LOCAL_AI_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn ollama_base_url_returns_default_when_env_unset() {
+        let _lock = test_lock();
+        let _g = OllamaEnvGuard::clear();
+        assert_eq!(ollama_base_url(), DEFAULT_OLLAMA_BASE_URL);
+    }
+
+    #[test]
+    fn ollama_base_url_returns_env_value_for_normal_url() {
+        let _lock = test_lock();
+        let _g = OllamaEnvGuard::set("http://127.0.0.1:55555");
+        assert_eq!(ollama_base_url(), "http://127.0.0.1:55555");
+    }
+
+    #[test]
+    fn ollama_base_url_trims_surrounding_whitespace() {
+        let _lock = test_lock();
+        let _g = OllamaEnvGuard::set("   http://127.0.0.1:55555   ");
+        assert_eq!(ollama_base_url(), "http://127.0.0.1:55555");
+    }
+
+    #[test]
+    fn ollama_base_url_strips_trailing_slashes() {
+        let _lock = test_lock();
+        let _g = OllamaEnvGuard::set("http://127.0.0.1:55555///");
+        assert_eq!(ollama_base_url(), "http://127.0.0.1:55555");
+    }
+
+    #[test]
+    fn ollama_base_url_falls_back_for_empty_or_whitespace_env() {
+        let _lock = test_lock();
+        {
+            let _g = OllamaEnvGuard::set("");
+            assert_eq!(ollama_base_url(), DEFAULT_OLLAMA_BASE_URL);
+        }
+        {
+            let _g = OllamaEnvGuard::set("   ");
+            assert_eq!(ollama_base_url(), DEFAULT_OLLAMA_BASE_URL);
+        }
     }
 }

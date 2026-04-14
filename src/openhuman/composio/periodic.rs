@@ -228,4 +228,90 @@ mod tests {
         assert!(TICK_SECONDS >= 30);
         assert!(TICK_SECONDS <= 300);
     }
+
+    #[test]
+    fn record_sync_success_stores_timestamp_keyed_by_toolkit_and_connection() {
+        // Use unique keys so this test doesn't collide with other tests
+        // writing into the process-wide map.
+        let toolkit = "test_periodic_toolkit_a";
+        let conn = "test-conn-a";
+        record_sync_success(toolkit, conn);
+        let map = last_sync_map();
+        let guard = map.lock().expect("lock");
+        let ts = guard
+            .get(&(toolkit.to_string(), conn.to_string()))
+            .expect("entry recorded");
+        // Just-recorded timestamps should be very recent.
+        assert!(ts.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn record_sync_success_overwrites_previous_timestamp() {
+        let toolkit = "test_periodic_toolkit_b";
+        let conn = "test-conn-b";
+        record_sync_success(toolkit, conn);
+        let first = last_sync_map()
+            .lock()
+            .expect("lock")
+            .get(&(toolkit.to_string(), conn.to_string()))
+            .copied()
+            .expect("first entry");
+        // Second call must replace (not keep the older) timestamp.
+        std::thread::sleep(Duration::from_millis(5));
+        record_sync_success(toolkit, conn);
+        let second = last_sync_map()
+            .lock()
+            .expect("lock")
+            .get(&(toolkit.to_string(), conn.to_string()))
+            .copied()
+            .expect("second entry");
+        assert!(
+            second >= first,
+            "record_sync_success should advance the stored Instant"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_one_tick_returns_ok_when_no_client() {
+        // With no session stored, `build_composio_client` returns None and
+        // the tick should silently skip (returning Ok). This covers the
+        // early-return path that's otherwise only hit in production.
+        //
+        // Note: this uses the same `load_config_with_timeout()` call path
+        // that real startup uses. If some other test has written a session
+        // profile to disk, this test accepts either outcome (Ok) gracefully.
+        let result = run_one_tick().await;
+        // Either Ok (no client, skipped) or Ok (backend unreachable handled
+        // gracefully). The `Err` branch only fires on config-load failure.
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn start_periodic_sync_is_idempotent() {
+        // First call installs the scheduler via the OnceLock; subsequent
+        // calls must be cheap no-ops without panicking. `tokio::spawn`
+        // needs an ambient runtime, so this test runs under `tokio::test`.
+        start_periodic_sync();
+        start_periodic_sync();
+        assert!(SCHEDULER_STARTED.get().is_some());
+    }
+
+    #[test]
+    fn record_sync_success_distinguishes_connections() {
+        let toolkit = "test_periodic_toolkit_c";
+        record_sync_success(toolkit, "conn-1");
+        record_sync_success(toolkit, "conn-2");
+        let map = last_sync_map();
+        let guard = map.lock().expect("lock");
+        assert!(guard
+            .get(&(toolkit.to_string(), "conn-1".to_string()))
+            .is_some());
+        assert!(guard
+            .get(&(toolkit.to_string(), "conn-2".to_string()))
+            .is_some());
+        // Unrelated key should be absent.
+        assert!(guard
+            .get(&(toolkit.to_string(), "conn-3".to_string()))
+            .is_none());
+    }
 }

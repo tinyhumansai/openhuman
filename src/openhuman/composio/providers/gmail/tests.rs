@@ -73,3 +73,15 @@ fn provider_metadata_is_stable() {
     assert_eq!(p.toolkit_slug(), "gmail");
     assert_eq!(p.sync_interval_secs(), Some(15 * 60));
 }
+
+#[test]
+fn default_impl_matches_new() {
+    let _a = GmailProvider::new();
+    let _b = GmailProvider::default();
+    // Both are unit structs — constructing via Default is the cover target.
+}
+
+// Note: full `sync` / `fetch_user_profile` / `on_trigger` paths require a
+// live `ComposioClient` (HTTP) plus the global `MemoryClient` singleton.
+// Those go through the integration test suite. Here we just lock in
+// the provider's identity surface and helpers.

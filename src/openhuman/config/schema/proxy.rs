@@ -490,3 +490,184 @@ pub(crate) fn parse_proxy_enabled(raw: &str) -> Option<bool> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── normalize_proxy_url_option ─────────────────────────────────
+
+    #[test]
+    fn normalize_proxy_url_option_handles_none_empty_and_valid() {
+        assert_eq!(normalize_proxy_url_option(None), None);
+        assert_eq!(normalize_proxy_url_option(Some("")), None);
+        assert_eq!(normalize_proxy_url_option(Some("   ")), None);
+        assert_eq!(
+            normalize_proxy_url_option(Some("  http://proxy:8080  ")),
+            Some("http://proxy:8080".to_string())
+        );
+    }
+
+    // ── normalize_comma_values / normalize_service_list / normalize_no_proxy_list ─
+
+    #[test]
+    fn normalize_comma_values_splits_trims_and_dedups() {
+        let out = normalize_comma_values(vec!["a,b".into(), " c,a  ".into(), "".into()]);
+        assert_eq!(out, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn normalize_comma_values_empty_input_returns_empty() {
+        assert!(normalize_comma_values(vec![]).is_empty());
+        assert!(normalize_comma_values(vec!["".into(), " ".into()]).is_empty());
+    }
+
+    #[test]
+    fn normalize_service_list_lowercases_and_dedups() {
+        let out =
+            normalize_service_list(vec!["OPENAI".into(), "openai".into(), "Anthropic".into()]);
+        assert_eq!(out, vec!["anthropic", "openai"]);
+    }
+
+    #[test]
+    fn normalize_no_proxy_list_preserves_case() {
+        let out = normalize_no_proxy_list(vec!["localhost,127.0.0.1".into()]);
+        assert_eq!(out, vec!["127.0.0.1", "localhost"]);
+    }
+
+    // ── parse_proxy_scope ──────────────────────────────────────────
+
+    #[test]
+    fn parse_proxy_scope_accepts_known_aliases() {
+        assert_eq!(
+            parse_proxy_scope("environment"),
+            Some(ProxyScope::Environment)
+        );
+        assert_eq!(parse_proxy_scope("env"), Some(ProxyScope::Environment));
+        assert_eq!(parse_proxy_scope("ENV"), Some(ProxyScope::Environment));
+        assert_eq!(parse_proxy_scope("openhuman"), Some(ProxyScope::OpenHuman));
+        assert_eq!(parse_proxy_scope("internal"), Some(ProxyScope::OpenHuman));
+        assert_eq!(parse_proxy_scope("core"), Some(ProxyScope::OpenHuman));
+        assert_eq!(parse_proxy_scope("services"), Some(ProxyScope::Services));
+        assert_eq!(parse_proxy_scope("service"), Some(ProxyScope::Services));
+        assert_eq!(
+            parse_proxy_scope("  SERVICES  "),
+            Some(ProxyScope::Services)
+        );
+    }
+
+    #[test]
+    fn parse_proxy_scope_rejects_unknown() {
+        assert!(parse_proxy_scope("").is_none());
+        assert!(parse_proxy_scope("other").is_none());
+    }
+
+    // ── parse_proxy_enabled ────────────────────────────────────────
+
+    #[test]
+    fn parse_proxy_enabled_accepts_truthy_and_falsy() {
+        for t in ["1", "true", "yes", "on", "TRUE", " YES "] {
+            assert_eq!(
+                parse_proxy_enabled(t),
+                Some(true),
+                "`{t}` should parse truthy"
+            );
+        }
+        for f in ["0", "false", "no", "off", "FALSE"] {
+            assert_eq!(
+                parse_proxy_enabled(f),
+                Some(false),
+                "`{f}` should parse falsy"
+            );
+        }
+        assert_eq!(parse_proxy_enabled(""), None);
+        assert_eq!(parse_proxy_enabled("nope"), None);
+    }
+
+    // ── ProxyConfig::default / has_any_proxy_url ──────────────────
+
+    #[test]
+    fn proxy_config_default_has_no_urls() {
+        let c = ProxyConfig::default();
+        assert!(!c.has_any_proxy_url());
+    }
+
+    #[test]
+    fn proxy_config_has_any_proxy_url_detects_each_url_field() {
+        let mut c = ProxyConfig::default();
+        c.http_proxy = Some("http://h:8080".into());
+        assert!(c.has_any_proxy_url());
+        let mut c = ProxyConfig::default();
+        c.https_proxy = Some("https://h:8443".into());
+        assert!(c.has_any_proxy_url());
+        let mut c = ProxyConfig::default();
+        c.all_proxy = Some("socks5://h:1080".into());
+        assert!(c.has_any_proxy_url());
+    }
+
+    #[test]
+    fn proxy_config_has_any_proxy_url_ignores_whitespace_urls() {
+        let mut c = ProxyConfig::default();
+        c.http_proxy = Some("   ".into());
+        c.https_proxy = Some("".into());
+        assert!(!c.has_any_proxy_url());
+    }
+
+    // ── is_supported_proxy_service_selector ────────────────────────
+
+    #[test]
+    fn is_supported_proxy_service_selector_accepts_known_keys_case_insensitive() {
+        for key in SUPPORTED_PROXY_SERVICE_KEYS {
+            assert!(is_supported_proxy_service_selector(key));
+            assert!(is_supported_proxy_service_selector(
+                &key.to_ascii_uppercase()
+            ));
+        }
+        for sel in SUPPORTED_PROXY_SERVICE_SELECTORS {
+            assert!(is_supported_proxy_service_selector(sel));
+        }
+        assert!(!is_supported_proxy_service_selector("not-a-selector-xyz"));
+    }
+
+    // ── service_selector_matches ───────────────────────────────────
+
+    #[test]
+    fn service_selector_matches_exact_and_wildcard() {
+        assert!(service_selector_matches("openai", "openai"));
+        assert!(!service_selector_matches("openai", "anthropic"));
+        // Wildcard prefix: `foo.*` matches `foo.bar` but not `foo` or `foobar`.
+        assert!(service_selector_matches("foo.*", "foo.bar"));
+        assert!(service_selector_matches("foo.*", "foo.bar.baz"));
+        assert!(!service_selector_matches("foo.*", "foo"));
+        assert!(!service_selector_matches("foo.*", "foobar"));
+    }
+
+    // ── validate_proxy_url ─────────────────────────────────────────
+
+    #[test]
+    fn validate_proxy_url_accepts_supported_schemes_with_host() {
+        assert!(validate_proxy_url("http_proxy", "http://proxy:8080").is_ok());
+        assert!(validate_proxy_url("https_proxy", "https://proxy:8443").is_ok());
+        assert!(validate_proxy_url("all_proxy", "socks5://proxy:1080").is_ok());
+        assert!(validate_proxy_url("all_proxy", "socks5h://proxy:1080").is_ok());
+    }
+
+    #[test]
+    fn validate_proxy_url_rejects_unsupported_schemes() {
+        let err = validate_proxy_url("x", "ftp://proxy:21").unwrap_err();
+        assert!(err.to_string().contains("Invalid"));
+    }
+
+    #[test]
+    fn validate_proxy_url_rejects_missing_host() {
+        // e.g. scheme-only URL parses but has no host
+        let err = validate_proxy_url("x", "http://").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid"));
+    }
+
+    #[test]
+    fn validate_proxy_url_rejects_malformed_url() {
+        let err = validate_proxy_url("x", "not a url").unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("invalid"));
+    }
+}

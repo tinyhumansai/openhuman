@@ -965,4 +965,95 @@ mod tests {
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("imap.debug.com"));
     }
+
+    // ── is_sender_allowed comprehensive matrix ─────────────────────
+
+    fn channel_with_allowlist(allowlist: Vec<String>) -> EmailChannel {
+        let cfg = EmailConfig {
+            imap_host: "imap.x".into(),
+            imap_port: 993,
+            imap_folder: "INBOX".into(),
+            smtp_host: "smtp.x".into(),
+            smtp_port: 465,
+            smtp_tls: true,
+            username: "u".into(),
+            password: "p".into(),
+            from_address: "me@x".into(),
+            idle_timeout_secs: 300,
+            allowed_senders: allowlist,
+        };
+        EmailChannel::new(cfg)
+    }
+
+    #[test]
+    fn is_sender_allowed_empty_denies_all() {
+        let ch = channel_with_allowlist(vec![]);
+        assert!(!ch.is_sender_allowed("anyone@any.com"));
+    }
+
+    #[test]
+    fn is_sender_allowed_wildcard_allows_everyone() {
+        let ch = channel_with_allowlist(vec!["*".into()]);
+        assert!(ch.is_sender_allowed("anyone@any.com"));
+        assert!(ch.is_sender_allowed("other@different.com"));
+    }
+
+    #[test]
+    fn is_sender_allowed_full_email_exact_match_case_insensitive() {
+        let ch = channel_with_allowlist(vec!["alice@example.com".into()]);
+        assert!(ch.is_sender_allowed("alice@example.com"));
+        assert!(ch.is_sender_allowed("ALICE@EXAMPLE.COM"));
+        assert!(!ch.is_sender_allowed("bob@example.com"));
+    }
+
+    #[test]
+    fn is_sender_allowed_at_prefix_domain_match() {
+        let ch = channel_with_allowlist(vec!["@trusted.com".into()]);
+        assert!(ch.is_sender_allowed("user@trusted.com"));
+        assert!(ch.is_sender_allowed("other@Trusted.com"));
+        assert!(!ch.is_sender_allowed("user@untrusted.com"));
+    }
+
+    #[test]
+    fn is_sender_allowed_bare_domain_match_is_case_insensitive() {
+        let ch = channel_with_allowlist(vec!["trusted.com".into()]);
+        assert!(ch.is_sender_allowed("user@trusted.com"));
+        assert!(ch.is_sender_allowed("USER@TRUSTED.COM"));
+        assert!(!ch.is_sender_allowed("user@other.com"));
+    }
+
+    #[test]
+    fn is_sender_allowed_prevents_subdomain_confusion() {
+        // "trusted.com" must NOT match "user@malicioustrusted.com"
+        let ch = channel_with_allowlist(vec!["trusted.com".into()]);
+        assert!(!ch.is_sender_allowed("user@notmytrusted.com"));
+        assert!(!ch.is_sender_allowed("user@trusted.com.evil.com"));
+    }
+
+    // ── strip_html edge cases ──────────────────────────────────────
+
+    #[test]
+    fn strip_html_empty_string() {
+        assert_eq!(EmailChannel::strip_html(""), "");
+    }
+
+    #[test]
+    fn strip_html_only_tags() {
+        assert_eq!(EmailChannel::strip_html("<p></p><br/>"), "");
+    }
+
+    #[test]
+    fn strip_html_unclosed_tag_eats_rest_until_gt() {
+        // A '<' without '>' enters tag mode; anything after until a '>' is
+        // discarded. This is the implementation's behaviour — lock it in.
+        assert_eq!(EmailChannel::strip_html("before<never closed"), "before");
+    }
+
+    #[test]
+    fn strip_html_collapses_whitespace_runs() {
+        assert_eq!(
+            EmailChannel::strip_html("<p>hello</p>\n\n\n   <p>world</p>"),
+            "hello world"
+        );
+    }
 }

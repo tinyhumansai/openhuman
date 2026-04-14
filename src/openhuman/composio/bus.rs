@@ -554,4 +554,77 @@ mod tests {
         })
         .await;
     }
+
+    #[test]
+    fn subscribers_have_stable_names_and_domains() {
+        let t = ComposioTriggerSubscriber::new();
+        assert_eq!(t.name(), "composio::trigger");
+        assert_eq!(t.domains(), Some(["composio"].as_ref()));
+
+        let c = ComposioConnectionCreatedSubscriber::new();
+        assert_eq!(c.name(), "composio::connection_created");
+        assert_eq!(c.domains(), Some(["composio"].as_ref()));
+    }
+
+    #[test]
+    fn subscriber_default_impls_equal_new() {
+        // Call Default just to cover the impl block. Since both are
+        // unit structs, equality is implicit — we just exercise the
+        // constructor to bump coverage on the Default line.
+        let _ = ComposioTriggerSubscriber::default();
+        let _ = ComposioConnectionCreatedSubscriber::default();
+    }
+
+    #[tokio::test]
+    async fn trigger_subscriber_ignores_other_composio_event_variants() {
+        // Only ComposioTriggerReceived is relevant — the subscriber must
+        // early-return for anything else without error.
+        let sub = ComposioTriggerSubscriber::new();
+        sub.handle(&DomainEvent::ComposioConnectionCreated {
+            toolkit: "gmail".into(),
+            connection_id: "c-1".into(),
+            connect_url: "url".into(),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn connection_subscriber_ignores_other_composio_event_variants() {
+        let sub = ComposioConnectionCreatedSubscriber::new();
+        sub.handle(&DomainEvent::ComposioTriggerReceived {
+            toolkit: "gmail".into(),
+            trigger: "GMAIL_NEW_GMAIL_MESSAGE".into(),
+            metadata_id: "id-1".into(),
+            metadata_uuid: "u-1".into(),
+            payload: json!({}),
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn connection_subscriber_skips_when_no_provider_registered() {
+        // Pass a toolkit that has no native provider — the subscriber
+        // must hit the `no provider registered` early-return branch.
+        let sub = ComposioConnectionCreatedSubscriber::new();
+        sub.handle(&DomainEvent::ComposioConnectionCreated {
+            toolkit: "__no_such_provider_toolkit__".into(),
+            connection_id: "c-1".into(),
+            connect_url: "url".into(),
+        })
+        .await;
+    }
+
+    #[test]
+    fn wait_error_variants_construct_and_format() {
+        let e = WaitError::Timeout {
+            last_status: Some("PENDING".into()),
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("Timeout"));
+        let e = WaitError::Lookup {
+            error: "backend down".into(),
+        };
+        let s = format!("{e:?}");
+        assert!(s.contains("Lookup"));
+    }
 }

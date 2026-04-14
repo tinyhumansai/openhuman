@@ -442,4 +442,85 @@ mod tests {
         assert!(!is_auth);
         assert!(source.is_null());
     }
+
+    // ── description ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn description_mentions_key_actions() {
+        let tool = CompleteOnboardingTool::new();
+        let desc = tool.description();
+        assert!(!desc.is_empty());
+        assert!(
+            desc.contains("check_status"),
+            "description should mention check_status"
+        );
+        assert!(
+            desc.contains("complete"),
+            "description should mention complete"
+        );
+    }
+
+    // ── schema enum values ────────────────────────────────────────────────────
+
+    #[test]
+    fn schema_action_enum_has_both_values() {
+        let tool = CompleteOnboardingTool::new();
+        let schema = tool.parameters_schema();
+        let enum_vals = schema["properties"]["action"]["enum"]
+            .as_array()
+            .expect("action enum should be an array");
+        let names: Vec<&str> = enum_vals.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(
+            names.contains(&"check_status"),
+            "enum should contain check_status"
+        );
+        assert!(names.contains(&"complete"), "enum should contain complete");
+    }
+
+    // ── spec roundtrip ────────────────────────────────────────────────────────
+
+    #[test]
+    fn spec_roundtrip() {
+        let tool = CompleteOnboardingTool::new();
+        let spec = tool.spec();
+        assert_eq!(spec.name, "complete_onboarding");
+        assert!(spec.parameters.is_object());
+    }
+
+    // ── execute: unknown action ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn execute_unknown_action_returns_error() {
+        let tool = CompleteOnboardingTool::new();
+        let result = tool
+            .execute(serde_json::json!({"action": "unknown_action"}))
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.output().contains("Unknown action"),
+            "error message should contain 'Unknown action', got: {}",
+            result.output()
+        );
+    }
+
+    // ── execute: missing action defaults to check_status ─────────────────────
+
+    #[tokio::test]
+    async fn execute_missing_action_defaults_to_check_status() {
+        // When action is absent it defaults to "check_status", which calls
+        // Config::load_or_init() — that may succeed or fail depending on env,
+        // but it should not return the "Unknown action" error.
+        let tool = CompleteOnboardingTool::new();
+        let result = tool.execute(serde_json::json!({})).await;
+        // Either Ok (config loaded) or Err (config failed) — just must not be
+        // the "Unknown action" variant.
+        if let Ok(r) = result {
+            assert!(
+                !r.output().contains("Unknown action"),
+                "missing action should default to check_status, not 'Unknown action'"
+            );
+        }
+        // Err from config loading is also acceptable here.
+    }
 }

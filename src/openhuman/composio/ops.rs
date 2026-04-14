@@ -610,6 +610,407 @@ mod tests {
         assert!(parse_sync_reason(Some("Periodic")).is_err());
         assert!(parse_sync_reason(Some("")).is_err());
     }
+
+    // ── resolve_client / ops auth errors ──────────────────────────
+
+    fn test_config(tmp: &tempfile::TempDir) -> Config {
+        let mut c = Config::default();
+        c.workspace_dir = tmp.path().join("workspace");
+        c.config_path = tmp.path().join("config.toml");
+        c.api_key = None; // ensure no token fallback
+        c
+    }
+
+    #[test]
+    fn resolve_client_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        // `ComposioClient` intentionally doesn't implement `Debug` — use a
+        // pattern match instead of `.unwrap_err()`.
+        let Err(err) = resolve_client(&config) else {
+            panic!("expected auth error when no session is stored");
+        };
+        assert!(err.contains("composio unavailable"));
+        assert!(err.contains("auth_store_session"));
+    }
+
+    #[tokio::test]
+    async fn composio_list_toolkits_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_list_toolkits(&config).await.unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_list_connections_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_list_connections(&config).await.unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_authorize_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_authorize(&config, "gmail").await.unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_delete_connection_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_delete_connection(&config, "c-1")
+            .await
+            .unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_list_tools_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_list_tools(&config, None).await.unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_execute_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_execute(&config, "GMAIL_SEND_EMAIL", None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_get_user_profile_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_get_user_profile(&config, "c-1").await.unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_sync_errors_without_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let err = composio_sync(&config, "c-1", None).await.unwrap_err();
+        assert!(err.contains("composio unavailable"));
+    }
+
+    #[tokio::test]
+    async fn composio_sync_rejects_invalid_reason_before_client_check() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        // Invalid reason → should fail at parse step *before* touching the
+        // client, so the error message references the reason, not auth.
+        let err = composio_sync(&config, "c-1", Some("weird".into()))
+            .await
+            .unwrap_err();
+        assert!(err.contains("unrecognized sync reason"));
+    }
+
+    #[tokio::test]
+    async fn composio_list_trigger_history_errors_when_store_not_init() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        // The trigger history store is a process-global singleton. If
+        // another test in the same binary already initialised it (e.g.
+        // via the archive-roundtrip test), skip rather than asserting on
+        // the uninitialised branch.
+        if super::super::trigger_history::global().is_some() {
+            return;
+        }
+        let err = composio_list_trigger_history(&config, Some(10))
+            .await
+            .unwrap_err();
+        assert!(err.contains("archive store is not initialized"));
+    }
+
+    // ── cache_key / invalidate_connected_integrations_cache ───────
+
+    #[test]
+    fn cache_key_is_based_on_config_path_string() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut a = Config::default();
+        a.config_path = tmp.path().join("a.toml");
+        let mut b = Config::default();
+        b.config_path = tmp.path().join("b.toml");
+        assert_ne!(cache_key(&a), cache_key(&b));
+        assert_eq!(cache_key(&a), cache_key(&a));
+    }
+
+    #[tokio::test]
+    async fn fetch_connected_integrations_returns_empty_without_auth() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = test_config(&tmp);
+        let integrations = fetch_connected_integrations(&config).await;
+        assert!(integrations.is_empty());
+    }
+
+    #[test]
+    fn invalidate_connected_integrations_cache_is_safe_without_prior_insert() {
+        // Must not panic on an empty cache.
+        invalidate_connected_integrations_cache();
+        invalidate_connected_integrations_cache();
+    }
+
+    // ── Mock-backend integration tests for ops ─────────────────────
+
+    use axum::{
+        extract::{Path, Query},
+        routing::{get, post},
+        Json, Router,
+    };
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+
+    async fn start_mock_backend(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // Wait until the axum accept loop is actually serving — not just
+        // until the kernel-level TCP socket is bound. Without this, fast
+        // tests can fire a request before `axum::serve` starts polling and
+        // occasionally see connection resets / hangs on loaded CI.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut backoff = std::time::Duration::from_millis(2);
+        loop {
+            if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("mock backend at {addr} did not become ready in time");
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(std::time::Duration::from_millis(50));
+        }
+
+        format!("http://127.0.0.1:{}", addr.port())
+    }
+
+    fn config_with_backend(tmp: &tempfile::TempDir, base: String) -> Config {
+        let mut c = Config::default();
+        c.workspace_dir = tmp.path().join("workspace");
+        c.config_path = tmp.path().join("config.toml");
+        c.api_key = Some("test-token".into());
+        c.api_url = Some(base);
+        c
+    }
+
+    #[tokio::test]
+    async fn composio_list_toolkits_via_mock() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/toolkits",
+            get(|| async { Json(json!({"success": true, "data": {"toolkits": ["gmail"]}})) }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        let outcome = composio_list_toolkits(&config).await.unwrap();
+        assert_eq!(outcome.value.toolkits, vec!["gmail".to_string()]);
+        assert!(outcome.logs.iter().any(|l| l.contains("toolkit")));
+    }
+
+    #[tokio::test]
+    async fn composio_list_connections_via_mock_counts_active() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"c1","toolkit":"gmail","status":"ACTIVE"},
+                        {"id":"c2","toolkit":"notion","status":"PENDING"},
+                        {"id":"c3","toolkit":"gmail","status":"CONNECTED"}
+                    ]}
+                }))
+            }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        let outcome = composio_list_connections(&config).await.unwrap();
+        assert_eq!(outcome.value.connections.len(), 3);
+        // 2 active, 3 total
+        assert!(outcome.logs.iter().any(|l| l.contains("3 connection")));
+        assert!(outcome.logs.iter().any(|l| l.contains("2 active")));
+    }
+
+    #[tokio::test]
+    async fn composio_authorize_via_mock_publishes_event_and_returns_url() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/authorize",
+            post(|Json(_b): Json<Value>| async move {
+                Json(json!({
+                    "success": true,
+                    "data": {"connectUrl": "https://x", "connectionId": "c1"}
+                }))
+            }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        let outcome = composio_authorize(&config, "gmail").await.unwrap();
+        assert_eq!(outcome.value.connect_url, "https://x");
+        assert_eq!(outcome.value.connection_id, "c1");
+    }
+
+    #[tokio::test]
+    async fn composio_delete_connection_via_mock() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(|Path(_id): Path<String>| async move {
+                Json(json!({"success": true, "data": {"deleted": true}}))
+            }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        let outcome = composio_delete_connection(&config, "c1").await.unwrap();
+        assert!(outcome.value.deleted);
+    }
+
+    #[tokio::test]
+    async fn composio_list_tools_via_mock_with_filter() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/tools",
+            get(|Query(_q): Query<HashMap<String, String>>| async move {
+                Json(json!({
+                    "success": true,
+                    "data": {"tools": [
+                        {"type":"function","function":{"name":"GMAIL_SEND_EMAIL"}},
+                        {"type":"function","function":{"name":"GMAIL_SEARCH"}}
+                    ]}
+                }))
+            }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]))
+            .await
+            .unwrap();
+        assert_eq!(outcome.value.tools.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn composio_execute_via_mock_succeeds_and_logs_elapsed() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/execute",
+            post(|Json(b): Json<Value>| async move {
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "data": {"echo": b["tool"]},
+                        "successful": true,
+                        "error": null,
+                        "costUsd": 0.001
+                    }
+                }))
+            }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        let outcome = composio_execute(&config, "GMAIL_SEND", Some(json!({"to": "a"})))
+            .await
+            .unwrap();
+        assert!(outcome.value.successful);
+        assert!(outcome
+            .logs
+            .iter()
+            .any(|l| l.contains("executed GMAIL_SEND")));
+    }
+
+    #[tokio::test]
+    async fn composio_execute_via_mock_propagates_backend_error() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/execute",
+            post(|| async { Json(json!({"success": false, "error": "rate limited"})) }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        let err = composio_execute(&config, "ANY_TOOL", None)
+            .await
+            .unwrap_err();
+        assert!(err.contains("execute failed"));
+    }
+
+    #[tokio::test]
+    async fn fetch_connected_integrations_via_mock_aggregates_tools() {
+        // Connections: gmail + notion. Tools: filtered to those toolkits
+        // and prefixed with the uppercased slug.
+        let app = Router::new()
+            .route(
+                "/agent-integrations/composio/connections",
+                get(|| async {
+                    Json(json!({
+                        "success": true,
+                        "data": {"connections": [
+                            {"id":"c1","toolkit":"gmail","status":"ACTIVE"},
+                            {"id":"c2","toolkit":"notion","status":"CONNECTED"}
+                        ]}
+                    }))
+                }),
+            )
+            .route(
+                "/agent-integrations/composio/tools",
+                get(|| async {
+                    Json(json!({
+                        "success": true,
+                        "data": {"tools": [
+                            {"type":"function","function":{
+                                "name":"GMAIL_SEND_EMAIL",
+                                "description":"Send"
+                            }},
+                            {"type":"function","function":{
+                                "name":"NOTION_CREATE_PAGE",
+                                "description":"Create"
+                            }}
+                        ]}
+                    }))
+                }),
+            );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        // Use a fresh cache key by isolating config_path.
+        let config = config_with_backend(&tmp, base);
+        invalidate_connected_integrations_cache();
+        let integrations = fetch_connected_integrations(&config).await;
+        assert_eq!(integrations.len(), 2);
+        // Sorted by toolkit name
+        assert_eq!(integrations[0].toolkit, "gmail");
+        assert_eq!(integrations[1].toolkit, "notion");
+        assert_eq!(integrations[0].tools.len(), 1);
+        assert_eq!(integrations[0].tools[0].name, "GMAIL_SEND_EMAIL");
+    }
+
+    #[tokio::test]
+    async fn fetch_connected_integrations_via_mock_returns_empty_with_no_active() {
+        let app = Router::new().route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({"success": true, "data": {"connections": [
+                    {"id":"c1","toolkit":"gmail","status":"PENDING"}
+                ]}}))
+            }),
+        );
+        let base = start_mock_backend(app).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let config = config_with_backend(&tmp, base);
+        invalidate_connected_integrations_cache();
+        let integrations = fetch_connected_integrations(&config).await;
+        assert!(integrations.is_empty());
+    }
 }
 
 // ── Helpers re-exported so callers can pull connection/tool types without
