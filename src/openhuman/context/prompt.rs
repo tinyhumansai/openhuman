@@ -999,33 +999,47 @@ pub fn render_subagent_system_prompt_with_format(
     //    sub-agents and the main dispatcher stay in lockstep.
     // Tool catalogue rendering is dispatcher-format-aware:
     //
-    // - **Native / Json**: The provider receives full tool schemas
-    //   through the request body's `tools` field (via `filtered_specs`
-    //   in the sub-agent runner). Listing the same tools again as
-    //   prose in the system prompt is pure duplication — for a
-    //   skills_agent spawn with 62 dynamic gmail tools, that
-    //   duplication added ~54k tokens and blew past the model's
-    //   context window. We skip the prose `## Tools` section entirely
-    //   in this mode and rely on the native function-calling channel
-    //   for tool discovery.
+    // - **Native**: The provider receives full tool schemas through
+    //   the request body's `tools` field (via `filtered_specs` in the
+    //   sub-agent runner) and emits structured `tool_calls`. Listing
+    //   the same tools again as prose in the system prompt is pure
+    //   duplication — for a skills_agent spawn with 62 dynamic gmail
+    //   tools, that duplication added ~54k tokens and blew past the
+    //   model's context window. We skip the prose `## Tools` section
+    //   entirely in this mode.
     //
-    // - **PFormat**: There is no native tool channel; the model
-    //   discovers tools by reading the prose `## Tools` section and
-    //   emits compact `<tool_call>name[arg|arg]</tool_call>` syntax.
-    //   We MUST list each tool here, including dynamically-registered
-    //   `extra_tools`, with its compact signature so the model can
-    //   call them.
-    if matches!(tool_call_format, ToolCallFormat::PFormat) {
+    // - **PFormat / Json**: Both are prompt-driven formats — the
+    //   model discovers tools by reading the prose `## Tools` section
+    //   and emits text-wrapped tool calls (`<tool_call>name[a|b]</tool_call>`
+    //   for PFormat, `<tool_call>{"name":...}</tool_call>` for Json).
+    //   Neither uses the native `tools` request field, so we MUST
+    //   list each tool in prose — including dynamically-registered
+    //   `extra_tools` — or the model has no way to know they exist.
+    if !matches!(tool_call_format, ToolCallFormat::Native) {
         out.push_str("## Tools\n\n");
-        let render_one = |out: &mut String, tool: &dyn Tool| {
-            let sig = render_pformat_signature_for_box_tool(tool);
-            let _ = writeln!(
-                out,
-                "- **{}**: {}\n  Call as: `{}`",
-                tool.name(),
-                tool.description(),
-                sig
-            );
+        let render_one = |out: &mut String, tool: &dyn Tool| match tool_call_format {
+            ToolCallFormat::PFormat => {
+                let sig = render_pformat_signature_for_box_tool(tool);
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}\n  Call as: `{}`",
+                    tool.name(),
+                    tool.description(),
+                    sig
+                );
+            }
+            ToolCallFormat::Json => {
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}\n  Parameters: `{}`",
+                    tool.name(),
+                    tool.description(),
+                    tool.parameters_schema()
+                );
+            }
+            ToolCallFormat::Native => {
+                // Unreachable — outer guard skips Native entirely.
+            }
         };
         for &i in allowed_indices {
             let Some(tool) = parent_tools.get(i) else {
@@ -1683,15 +1697,17 @@ mod tests {
         assert!(rendered.contains("### SOUL.md"));
         assert!(rendered.contains("## Safety"));
         assert!(rendered.contains("## Available Skills"));
-        // Native/Json dispatchers: the prose `## Tools` section is
-        // deliberately omitted from the rendered system prompt — schemas
-        // travel through the provider request's `tools` field instead.
-        // Previously this path emitted `- **test_tool**: …\n  Parameters: {…}`
-        // for every tool, which duplicated the native function-calling
-        // channel and inflated token cost (see the #447 patch). Regression
-        // guards: no `## Tools` header, no inline schema.
-        assert!(!rendered.contains("\n## Tools\n"));
-        assert!(!rendered.contains("Parameters:"));
+        // Json is a prompt-driven format (the model wraps JSON tool
+        // calls in `<tool_call>` tags); it does NOT use the provider's
+        // native function-calling channel. So the prose `## Tools`
+        // section MUST still be rendered for Json, with each tool's
+        // parameter schema inline so the model knows what to emit.
+        // Only `ToolCallFormat::Native` gets the section omitted (see
+        // the `native` branch below and the `!matches!(…, Native)`
+        // guard in the renderer).
+        assert!(rendered.contains("## Tools"));
+        assert!(rendered.contains("Parameters:"));
+        assert!(rendered.contains("\"type\""));
 
         let native = render_subagent_system_prompt_with_format(
             &workspace,
@@ -1706,6 +1722,12 @@ mod tests {
         );
         assert!(native.contains("native tool-calling output"));
         assert!(!native.contains("## Safety"));
+        // Native is the only format where the prose `## Tools` section
+        // is intentionally omitted — schemas travel through the
+        // provider's `tools` field instead. Regression guard against
+        // the ~54k-token schema duplication from the #447 PR.
+        assert!(!native.contains("\n## Tools\n"));
+        assert!(!native.contains("Parameters:"));
 
         let _ = std::fs::remove_dir_all(workspace);
     }

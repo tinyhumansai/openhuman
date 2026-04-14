@@ -34,7 +34,13 @@ function rustHostTriple() {
 
 function cargoTargetDir() {
   if (process.env.CARGO_TARGET_DIR) {
-    return resolve(process.env.CARGO_TARGET_DIR);
+    // Resolve against the repo root so this path stays consistent
+    // with the `cargo build` invocation below (which runs with
+    // `cwd: root`). If the script were invoked from a different
+    // working directory and `CARGO_TARGET_DIR` were relative, a
+    // bare `resolve()` would anchor it to the wrong cwd and the
+    // staged binary lookup would miss.
+    return resolve(root, process.env.CARGO_TARGET_DIR);
   }
   const res = spawnSync(
     "cargo",

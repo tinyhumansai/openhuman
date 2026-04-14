@@ -470,11 +470,19 @@ async fn fetch_connected_integrations_uncached(
     // possibly suggest, regardless of whether the user has authorized
     // it yet. This is the universe of valid `toolkit` arguments to
     // `spawn_subagent(skills_agent, …)`.
+    //
+    // On transient backend errors we return `None` instead of a
+    // degraded `Some(Vec::new())` so `fetch_connected_integrations`
+    // does NOT cache the failure. Caching an empty allowlist would
+    // hide every integration from the orchestrator until the process
+    // restarts or the cache is explicitly invalidated — a single 5xx
+    // during startup would silently break delegation for the whole
+    // session.
     let allowlisted_toolkits: Vec<String> = match client.list_toolkits().await {
         Ok(resp) => resp.toolkits,
         Err(e) => {
             tracing::warn!("[composio] fetch_connected_integrations: list_toolkits failed: {e}");
-            return Some(Vec::new());
+            return None;
         }
     };
 
@@ -487,9 +495,11 @@ async fn fetch_connected_integrations_uncached(
         Ok(resp) => resp.connections,
         Err(e) => {
             tracing::warn!("[composio] fetch_connected_integrations: list_connections failed: {e}");
-            // Allowlist still useful — render every toolkit as
-            // not-connected so the orchestrator can surface them.
-            Vec::new()
+            // Same rationale as above — caching a snapshot where
+            // every toolkit is marked as not-connected would
+            // silently wipe main's Delegation Guide's "available
+            // now" bullets for the rest of the session.
+            return None;
         }
     };
 
@@ -514,7 +524,13 @@ async fn fetch_connected_integrations_uncached(
             Ok(resp) => resp.tools,
             Err(e) => {
                 tracing::warn!("[composio] fetch_connected_integrations: list_tools failed: {e}");
-                Vec::new()
+                // Same rationale as list_toolkits/list_connections —
+                // caching connected entries with empty `tools` vectors
+                // would cause `subagent_runner::run_typed_mode` to
+                // build zero dynamic Composio action tools for a
+                // toolkit-scoped `skills_agent` spawn, silently
+                // leaving the sub-agent with nothing callable.
+                return None;
             }
         }
     };
@@ -532,14 +548,15 @@ async fn fetch_connected_integrations_uncached(
         .iter()
         .map(|slug| {
             let connected = connected_slugs.contains(slug);
+            // Anchor the prefix with an underscore so slugs that share
+            // a text prefix (e.g. `git` vs `github`) don't false-match
+            // each other's actions. `GMAIL_SEND_EMAIL` matches `gmail_`,
+            // not just `gmail`, so siblings stay in their own buckets.
+            let action_prefix = format!("{}_", slug.to_uppercase());
             let tools: Vec<ConnectedIntegrationTool> = if connected {
                 tools_by_toolkit
                     .iter()
-                    .filter(|t| {
-                        // Composio action slugs are prefixed with the
-                        // toolkit name in uppercase, e.g. GMAIL_SEND_EMAIL.
-                        t.function.name.starts_with(&slug.to_uppercase())
-                    })
+                    .filter(|t| t.function.name.starts_with(&action_prefix))
                     .map(|t| ConnectedIntegrationTool {
                         name: t.function.name.clone(),
                         description: t.function.description.clone().unwrap_or_default(),
