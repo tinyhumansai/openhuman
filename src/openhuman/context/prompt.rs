@@ -203,6 +203,15 @@ impl SystemPromptBuilder {
         Self {
             sections: vec![
                 Box::new(IdentitySection),
+                // User files (PROFILE.md, MEMORY.md) ride right after the
+                // identity bootstrap so they land in the cache-friendly
+                // prefix alongside SOUL/IDENTITY. Gated per-agent — see
+                // `UserFilesSection`. Intentionally separate from
+                // `IdentitySection` so agents that strip the identity
+                // preamble via `for_subagent(omit_identity=true)` still
+                // get their user files (welcome / orchestrator / the
+                // trigger pair).
+                Box::new(UserFilesSection),
                 // User memory sits right after the identity bootstrap so the
                 // model has rich, persistent context about the user before it
                 // sees the tool catalogue. Section is empty (and skipped) when
@@ -256,6 +265,15 @@ impl SystemPromptBuilder {
         if !omit_identity {
             sections.push(Box::new(IdentitySection));
         }
+        // User files (PROFILE.md / MEMORY.md) are gated independently of
+        // `omit_identity` so agents that drop the identity preamble (e.g.
+        // welcome's `omit_identity = true`) still surface the user's
+        // onboarding + archivist context when `omit_profile` /
+        // `omit_memory_md` are opted in. The section builds to an empty
+        // string when both flags are off, so the existing empty-section
+        // skip in `build_with_cache_metadata` keeps the prompt layout
+        // byte-identical for narrow specialists.
+        sections.push(Box::new(UserFilesSection));
         // Tools section is always included — the sub-agent needs to see
         // its own (filtered) tool catalogue.
         sections.push(Box::new(ToolsSection));
@@ -358,6 +376,20 @@ pub struct RuntimeSection;
 pub struct DateTimeSection;
 pub struct UserMemorySection;
 
+/// Injects the user-specific, session-frozen workspace files
+/// (`PROFILE.md` + `MEMORY.md`), each capped at [`USER_FILE_MAX_CHARS`].
+///
+/// Separate from [`IdentitySection`] so agents that strip the project-
+/// context preamble (`omit_identity = true` — welcome, orchestrator,
+/// the trigger pair) still get their user-file injection at runtime via
+/// [`SystemPromptBuilder::for_subagent`], which skips `IdentitySection`
+/// entirely when `omit_identity` is on.
+///
+/// Cache-stability: static per session — the whole point of the
+/// 2000-char cap and the load-once rule documented on
+/// [`AgentDefinition::omit_profile`] / `omit_memory_md`.
+pub struct UserFilesSection;
+
 impl PromptSection for IdentitySection {
     fn name(&self) -> &str {
         "identity"
@@ -389,21 +421,37 @@ impl PromptSection for IdentitySection {
             }
         }
 
-        // PROFILE.md (onboarding enrichment) and MEMORY.md (archivist-
-        // curated long-term memory) are user-specific files that can
-        // grow large. They're capped at [`USER_FILE_MAX_CHARS`] (~1000
-        // tokens each) rather than the full bootstrap budget, and each
-        // is gated by its own flag so narrow specialists can skip them.
+        // PROFILE.md / MEMORY.md injection lives in the dedicated
+        // `UserFilesSection` (below) so agents that strip the identity
+        // preamble (`omit_identity = true`) — welcome, orchestrator, the
+        // trigger pair — still get their user files at runtime via
+        // `SystemPromptBuilder::for_subagent`, which omits
+        // `IdentitySection` entirely when `omit_identity` is set.
+
+        Ok(prompt)
+    }
+}
+
+impl PromptSection for UserFilesSection {
+    fn name(&self) -> &str {
+        "user_files"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        // Gate on the per-agent flags derived from
+        // `AgentDefinition::omit_profile` / `omit_memory_md`. Both files
+        // are user-specific, potentially growing, and capped at
+        // [`USER_FILE_MAX_CHARS`] (~1000 tokens) so they can't bloat the
+        // cached prefix.
         //
         // KV-cache contract: once injected into a session's rendered
         // prompt, the bytes are frozen for the remainder of that
-        // session. Mid-session writes to either file do NOT update the
-        // in-flight prompt — they land on the next session. See the
-        // note on `render_subagent_system_prompt` and
-        // `AgentDefinition::omit_memory_md` / `omit_profile`.
+        // session — any mid-session archivist write or enrichment
+        // refresh lands on the NEXT session, never the in-flight one.
+        let mut out = String::new();
         if ctx.include_profile {
             inject_workspace_file_capped(
-                &mut prompt,
+                &mut out,
                 ctx.workspace_dir,
                 "PROFILE.md",
                 USER_FILE_MAX_CHARS,
@@ -411,14 +459,13 @@ impl PromptSection for IdentitySection {
         }
         if ctx.include_memory_md {
             inject_workspace_file_capped(
-                &mut prompt,
+                &mut out,
                 ctx.workspace_dir,
                 "MEMORY.md",
                 USER_FILE_MAX_CHARS,
             );
         }
-
-        Ok(prompt)
+        Ok(out)
     }
 }
 
@@ -2011,6 +2058,100 @@ mod tests {
         assert_eq!(
             first, second,
             "repeat spawns must produce byte-identical prompts"
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
+        // Regression pin for the review finding: the runtime Tauri chat
+        // path spins welcome/trigger_* via `Agent::from_config_for_agent`
+        // → `SystemPromptBuilder::for_subagent(body, omit_identity=true, …)`,
+        // which deliberately drops `IdentitySection`. Before
+        // `UserFilesSection` existed, our PROFILE/MEMORY injection lived
+        // inside `IdentitySection::build` and got dropped along with it,
+        // so the first Tauri turn never saw the user's onboarding output
+        // even though the subagent_runner path and the debug dumper did.
+        //
+        // This test exercises the exact builder call-site the runtime
+        // uses for welcome (`omit_identity = true`, both user-file flags
+        // opted in via PromptContext) and pins that the rendered prompt
+        // contains both files.
+        let workspace = std::env::temp_dir().join(format!(
+            "openhuman_prompt_for_subagent_user_files_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(
+            workspace.join("PROFILE.md"),
+            "# User Profile\nJane Doe — crypto trader in PST.",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("MEMORY.md"),
+            "# Long-term memory\nShipped v1 last sprint; prefers terse Rust.",
+        )
+        .unwrap();
+
+        let tools: Vec<Box<dyn Tool>> = vec![];
+        let prompt_tools = PromptTool::from_tools(&tools);
+        let ctx = PromptContext {
+            workspace_dir: &workspace,
+            model_name: "test-model",
+            tools: &prompt_tools,
+            skills: &[],
+            dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
+            include_profile: true,
+            include_memory_md: true,
+        };
+
+        // Mirror the welcome agent runtime path:
+        // `SystemPromptBuilder::for_subagent(body, omit_identity=true, …)`.
+        let builder = SystemPromptBuilder::for_subagent(
+            "You are the welcome agent.".into(),
+            true, // omit_identity  — drops SOUL/IDENTITY preamble
+            true, // omit_safety_preamble
+            true, // omit_skills_catalog
+        );
+        let rendered = builder.build(&ctx).unwrap();
+
+        assert!(
+            !rendered.contains("## Project Context"),
+            "identity preamble must still be suppressed when omit_identity=true"
+        );
+        assert!(
+            rendered.contains("### PROFILE.md") && rendered.contains("Jane Doe"),
+            "welcome runtime path must inject PROFILE.md despite omit_identity=true, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("### MEMORY.md") && rendered.contains("terse Rust"),
+            "welcome runtime path must inject MEMORY.md despite omit_identity=true, got:\n{rendered}"
+        );
+
+        // Mirror the narrow-specialist runtime path (code_executor,
+        // critic, …): both flags off → user files must stay out.
+        let ctx_narrow = PromptContext {
+            workspace_dir: &workspace,
+            model_name: "test-model",
+            tools: &prompt_tools,
+            skills: &[],
+            dispatcher_instructions: "",
+            learned: LearnedContextData::default(),
+            visible_tool_names: &NO_FILTER,
+            tool_call_format: ToolCallFormat::PFormat,
+            connected_integrations: &[],
+            include_profile: false,
+            include_memory_md: false,
+        };
+        let narrow = builder.build(&ctx_narrow).unwrap();
+        assert!(
+            !narrow.contains("### PROFILE.md") && !narrow.contains("### MEMORY.md"),
+            "narrow specialist runtime path must NOT leak user files, got:\n{narrow}"
         );
 
         let _ = std::fs::remove_dir_all(workspace);

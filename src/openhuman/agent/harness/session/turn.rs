@@ -90,7 +90,29 @@ impl Agent {
                 "[agent_loop] system prompt built chars={}",
                 rendered_prompt.text.chars().count()
             );
-            log::debug!("[agent_loop] system prompt body:\n{}", rendered_prompt.text);
+            // User-file injection (PROFILE.md, MEMORY.md) puts
+            // potentially-sensitive content (LinkedIn scrape output,
+            // archivist-curated memories) into the system prompt. Avoid
+            // leaking that to debug logs — log a length + content hash
+            // instead so cache-boundary diagnostics still work. Narrow
+            // specialists (both flags off) keep the full-body log so
+            // prompt-engineering iteration on tools/safety sections
+            // stays easy.
+            if self.omit_profile && self.omit_memory_md {
+                log::debug!(
+                    "[agent_loop] system prompt body:\n{}",
+                    rendered_prompt.text
+                );
+            } else {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                rendered_prompt.text.hash(&mut hasher);
+                log::debug!(
+                    "[agent_loop] system prompt body redacted (contains PROFILE/MEMORY): chars={} hash={:016x}",
+                    rendered_prompt.text.chars().count(),
+                    hasher.finish()
+                );
+            }
             self.system_prompt_cache_boundary = rendered_prompt.cache_boundary;
             self.history
                 .push(ConversationMessage::Chat(ChatMessage::system(

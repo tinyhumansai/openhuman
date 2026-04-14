@@ -421,7 +421,7 @@ impl Agent {
 
         log::info!(
             "[agent::builder] building session agent id={} \
-             (scope={}, omit_identity={}, temperature={:.2})",
+             (scope={}, omit_identity={}, omit_profile={}, omit_memory_md={}, temperature={:.2})",
             agent_id,
             target_def
                 .as_ref()
@@ -434,6 +434,11 @@ impl Agent {
                 .as_ref()
                 .map(|d| d.omit_identity)
                 .unwrap_or(false),
+            target_def.as_ref().map(|d| d.omit_profile).unwrap_or(true),
+            target_def
+                .as_ref()
+                .map(|d| d.omit_memory_md)
+                .unwrap_or(true),
             target_def
                 .as_ref()
                 .map(|d| d.temperature)

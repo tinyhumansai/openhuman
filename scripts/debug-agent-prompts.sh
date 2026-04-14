@@ -98,15 +98,63 @@ done
 if [[ -z "${OUT_DIR}" ]]; then
   OUT_DIR="${REPO_ROOT}/prompt-dumps"
 fi
-# Wipe and recreate so each run produces a clean snapshot — no leftover
-# files from a previous run of a different agent set or config.
-# Guard against a caller pointing --out at something catastrophic.
+
+# ── Validate & canonicalize OUT_DIR before `rm -rf` ─────────────────────
+# The output directory is wiped at the start of each run. Literal string
+# matching against "/" / $HOME / $REPO_ROOT is not enough on its own:
+# trailing slashes, ".", "..", or symlinked paths can slip past and
+# trigger `rm -rf` on a sensitive target. So:
+#
+#   1. Reject obviously bad inputs up-front ("", ".", "..", relative).
+#   2. Canonicalize OUT_DIR and REPO_ROOT via `realpath` (falling back
+#      to python when realpath is unavailable on barebones macOS).
+#   3. Match the canonicalized form against the disallow list.
+#   4. Only then `rm -rf` the canonicalized path.
 case "${OUT_DIR}" in
-  "" | "/" | "${HOME}" | "${REPO_ROOT}")
-    echo "[debug-agent-prompts] refusing to wipe --out=${OUT_DIR}" >&2
+  "" | "." | "..")
+    echo "[debug-agent-prompts] refusing to wipe --out='${OUT_DIR}' (relative/empty)" >&2
     exit 64
     ;;
 esac
+if [[ "${OUT_DIR}" != /* ]]; then
+  echo "[debug-agent-prompts] --out must be an absolute path (starts with '/'), got '${OUT_DIR}'" >&2
+  exit 64
+fi
+
+canonicalize() {
+  local p="$1"
+  # `realpath` is GNU + modern macOS (coreutils), and `readlink -f` on
+  # Linux. Try both; if neither resolves the path (target missing) we
+  # fall back to python3, which handles symlinks even for non-existent
+  # leaves via `os.path.realpath`.
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "${p}" 2>/dev/null && return 0
+  fi
+  if command -v readlink >/dev/null 2>&1 && readlink -f / >/dev/null 2>&1; then
+    readlink -f -- "${p}" 2>/dev/null && return 0
+  fi
+  python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${p}"
+}
+
+resolved_out="$(canonicalize "${OUT_DIR}")"
+resolved_repo="$(canonicalize "${REPO_ROOT}")"
+resolved_home="$(canonicalize "${HOME}")"
+
+if [[ -z "${resolved_out}" ]]; then
+  echo "[debug-agent-prompts] failed to canonicalize --out='${OUT_DIR}'" >&2
+  exit 64
+fi
+case "${resolved_out}" in
+  "/" | "${resolved_home}" | "${resolved_repo}")
+    echo "[debug-agent-prompts] refusing to wipe --out (resolves to ${resolved_out})" >&2
+    exit 64
+    ;;
+esac
+
+# Use the canonicalized path from here on so every subsequent command
+# (rm, mkdir, per-agent dump writes) operates on the same resolved
+# target — no symlink window between validation and deletion.
+OUT_DIR="${resolved_out}"
 rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 
