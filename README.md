@@ -25,7 +25,7 @@
   "The Tet. What a brilliant machine" — Morgan Freeman as he reminisces about <a href="https://youtu.be/SveLVpqy_Rc?si=y83aZNokPiUjILN0&t=60">alien superintelligence</a> in the movie <em>Oblivion</em>
 </p>
 
-> **Early Beta** — Under active development. Expect rough edges.
+> **Early Beta** — Under active development. Expect rough edges - we're improving daily!
 
 To install or get started, either download from the website over at [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman) or run
 
@@ -90,3 +90,5 @@ Show some love and end up in the hall of fame
 <a href="https://github.com/tinyhumansai/openhuman/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=tinyhumansai/openhuman" alt="OpenHuman contributors" />
 </a>
+## Contributors
+- olatundefaruk88-svg
