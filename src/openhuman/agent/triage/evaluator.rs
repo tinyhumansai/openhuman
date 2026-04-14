@@ -237,6 +237,7 @@ pub async fn run_triage_with_resolved(
         target_agent_id: Some("trigger_triage".to_string()),
         visible_tool_names: None,
         extra_tools: Vec::new(),
+        on_progress: None,
     };
     tracing::debug!(
         provider = %provider_name,

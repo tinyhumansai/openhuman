@@ -133,6 +133,9 @@ pub async fn start_chat(
                 reaction_emoji: None,
                 segment_index: None,
                 segment_total: None,
+                delta: None,
+                delta_kind: None,
+                tool_call_id: None,
             });
         }
     }
@@ -187,6 +190,9 @@ pub async fn start_chat(
                     reaction_emoji: None,
                     segment_index: None,
                     segment_total: None,
+                    delta: None,
+                    delta_kind: None,
+                    tool_call_id: None,
                 });
             }
         }
@@ -253,6 +259,9 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             reaction_emoji: None,
             segment_index: None,
             segment_total: None,
+            delta: None,
+            delta_kind: None,
+            tool_call_id: None,
         });
     }
 
@@ -390,6 +399,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::IterationStarted {
@@ -414,6 +426,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::ToolCallStarted {
@@ -438,6 +453,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::ToolCallCompleted {
@@ -467,6 +485,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::SubagentSpawned { agent_id, task_id } => {
@@ -487,6 +508,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::SubagentCompleted {
@@ -513,6 +537,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::SubagentFailed {
@@ -537,6 +564,57 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
+                    });
+                }
+                AgentProgress::TextDelta { delta, iteration } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "text_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(iteration),
+                        delta: Some(delta),
+                        delta_kind: Some("text".to_string()),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::ThinkingDelta { delta, iteration } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "thinking_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(iteration),
+                        delta: Some(delta),
+                        delta_kind: Some("thinking".to_string()),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::ToolCallArgsDelta {
+                    call_id,
+                    tool_name,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "tool_args_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: if tool_name.is_empty() {
+                            None
+                        } else {
+                            Some(tool_name)
+                        },
+                        skill_id: Some("web_channel".to_string()),
+                        round: Some(iteration),
+                        delta: Some(delta),
+                        delta_kind: Some("tool_args".to_string()),
+                        tool_call_id: Some(call_id),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::TurnCompleted { iterations } => {

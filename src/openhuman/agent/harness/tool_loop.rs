@@ -1,6 +1,9 @@
 use crate::openhuman::agent::multimodal;
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
-use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ProviderCapabilityError};
+use crate::openhuman::providers::{
+    ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
+};
 use crate::openhuman::tools::traits::ToolScope;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
@@ -54,6 +57,7 @@ pub(crate) async fn agent_turn(
         None,
         None,
         &[],
+        None,
     )
     .await
 }
@@ -102,6 +106,7 @@ pub(crate) async fn run_tool_call_loop(
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     visible_tool_names: Option<&HashSet<String>>,
     extra_tools: &[Box<dyn Tool>],
+    on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -143,7 +148,18 @@ pub(crate) async fn run_tool_call_loop(
 
     let mut context_guard = ContextGuard::new();
 
+    // Announce turn start to progress subscribers (if any).
+    if let Some(ref sink) = on_progress {
+        let _ = sink.try_send(AgentProgress::TurnStarted);
+    }
+
     for iteration in 0..max_iterations {
+        if let Some(ref sink) = on_progress {
+            let _ = sink.try_send(AgentProgress::IterationStarted {
+                iteration: (iteration + 1) as u32,
+                max_iterations: max_iterations as u32,
+            });
+        }
         // ── Context guard: check utilization before each LLM call ──
         match context_guard.check() {
             ContextCheckResult::Ok => {}
@@ -193,19 +209,68 @@ pub(crate) async fn run_tool_call_loop(
             None
         };
 
+        // Wire up a ProviderDelta → AgentProgress forwarder for this
+        // iteration when a progress sink exists. Senders dropped after
+        // the chat call so the forwarder task exits cleanly.
+        let iteration_for_stream = (iteration + 1) as u32;
+        let (delta_tx_opt, delta_forwarder) = if let Some(progress_sink) = on_progress.clone() {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
+            let forwarder = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let mapped = match event {
+                        ProviderDelta::TextDelta { delta } => AgentProgress::TextDelta {
+                            delta,
+                            iteration: iteration_for_stream,
+                        },
+                        ProviderDelta::ThinkingDelta { delta } => AgentProgress::ThinkingDelta {
+                            delta,
+                            iteration: iteration_for_stream,
+                        },
+                        ProviderDelta::ToolCallStart { call_id, tool_name } => {
+                            AgentProgress::ToolCallArgsDelta {
+                                call_id,
+                                tool_name,
+                                delta: String::new(),
+                                iteration: iteration_for_stream,
+                            }
+                        }
+                        ProviderDelta::ToolCallArgsDelta { call_id, delta } => {
+                            AgentProgress::ToolCallArgsDelta {
+                                call_id,
+                                tool_name: String::new(),
+                                delta,
+                                iteration: iteration_for_stream,
+                            }
+                        }
+                    };
+                    let _ = progress_sink.try_send(mapped);
+                }
+            });
+            (Some(tx), Some(forwarder))
+        } else {
+            (None, None)
+        };
+
+        let chat_result = provider
+            .chat(
+                ChatRequest {
+                    messages: &prepared_messages.messages,
+                    tools: request_tools,
+                    system_prompt_cache_boundary: None,
+                    stream: delta_tx_opt.as_ref(),
+                },
+                model,
+                temperature,
+            )
+            .await;
+
+        drop(delta_tx_opt);
+        if let Some(handle) = delta_forwarder {
+            let _ = handle.await;
+        }
+
         let (response_text, parsed_text, tool_calls, assistant_history_content, native_tool_calls) =
-            match provider
-                .chat(
-                    ChatRequest {
-                        messages: &prepared_messages.messages,
-                        tools: request_tools,
-                        system_prompt_cache_boundary: None,
-                    },
-                    model,
-                    temperature,
-                )
-                .await
-            {
+            match chat_result {
                 Ok(resp) => {
                     // Update context guard with token usage from this response.
                     if let Some(ref usage) = resp.usage {
@@ -296,6 +361,11 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
             history.push(ChatMessage::assistant(response_text.clone()));
+            if let Some(ref sink) = on_progress {
+                let _ = sink.try_send(AgentProgress::TurnCompleted {
+                    iterations: (iteration + 1) as u32,
+                });
+            }
             return Ok(display_text);
         }
 
@@ -384,26 +454,39 @@ pub(crate) async fn run_tool_call_loop(
                 let tool_deadline =
                     crate::openhuman::tool_timeout::tool_execution_timeout_duration();
                 let timeout_secs = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
-                match tokio::time::timeout(tool_deadline, tool.execute(call.arguments.clone()))
-                    .await
-                {
+                if let Some(ref sink) = on_progress {
+                    let _ = sink.try_send(AgentProgress::ToolCallStarted {
+                        tool_name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                        iteration: (iteration + 1) as u32,
+                    });
+                }
+                let tool_started = std::time::Instant::now();
+                let outcome = tokio::time::timeout(
+                    tool_deadline,
+                    tool.execute(call.arguments.clone()),
+                )
+                .await;
+                let elapsed_ms = tool_started.elapsed().as_millis() as u64;
+                let (result_text, success) = match outcome {
                     Ok(Ok(r)) => {
                         let output = r.output();
-                        if !r.is_error {
+                        let success = !r.is_error;
+                        if success {
                             tracing::debug!(
                                 iteration,
                                 tool = call.name.as_str(),
                                 output_len = output.len(),
                                 "[agent_loop] tool succeeded"
                             );
-                            scrub_credentials(&output)
+                            (scrub_credentials(&output), true)
                         } else {
                             tracing::warn!(
                                 iteration,
                                 tool = call.name.as_str(),
                                 "[agent_loop] tool returned error: {output}"
                             );
-                            format!("Error: {output}")
+                            (format!("Error: {output}"), false)
                         }
                     }
                     Ok(Err(e)) => {
@@ -412,7 +495,7 @@ pub(crate) async fn run_tool_call_loop(
                             tool = call.name.as_str(),
                             "[agent_loop] tool execution failed: {e}"
                         );
-                        format!("Error executing {}: {e}", call.name)
+                        (format!("Error executing {}: {e}", call.name), false)
                     }
                     Err(_) => {
                         tracing::error!(
@@ -421,12 +504,25 @@ pub(crate) async fn run_tool_call_loop(
                             secs = timeout_secs,
                             "[agent_loop] tool execution timed out"
                         );
-                        format!(
-                            "Error: tool '{}' timed out after {} seconds",
-                            call.name, timeout_secs
+                        (
+                            format!(
+                                "Error: tool '{}' timed out after {} seconds",
+                                call.name, timeout_secs
+                            ),
+                            false,
                         )
                     }
+                };
+                if let Some(ref sink) = on_progress {
+                    let _ = sink.try_send(AgentProgress::ToolCallCompleted {
+                        tool_name: call.name.clone(),
+                        success,
+                        output_chars: result_text.chars().count(),
+                        elapsed_ms,
+                        iteration: (iteration + 1) as u32,
+                    });
                 }
+                result_text
             } else {
                 tracing::warn!(
                     iteration,
@@ -626,6 +722,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect_err("vision markers should be rejected");
@@ -662,6 +759,7 @@ mod tests {
             Some(tx),
             None,
             &[],
+            None,
         )
         .await
         .expect("final text should succeed");
@@ -713,6 +811,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("loop should recover after denial");
@@ -767,6 +866,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("native tool flow should succeed");
@@ -824,6 +924,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("non-cli channels should auto-approve supervised tools");
@@ -874,6 +975,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("default iteration fallback should still succeed");
@@ -928,6 +1030,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("loop should recover after tool errors");
@@ -966,6 +1069,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect_err("provider error path should fail");
@@ -997,6 +1101,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect_err("loop should stop after configured iterations");

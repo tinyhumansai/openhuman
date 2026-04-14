@@ -522,6 +522,37 @@ impl BackendOAuthClient {
         .await
     }
 
+    /// Edits an existing channel message. Used by the progressive-edit
+    /// streaming path (Telegram / Slack) to coalesce live deltas into a
+    /// single evolving outbound message rather than spamming the chat
+    /// with one bubble per token.
+    ///
+    /// `message_id` is the backend-returned id of the message that was
+    /// first sent via [`Self::send_channel_message`]. Returns the
+    /// updated message record, or an `Err` if the backend does not
+    /// support editing for this channel (caller should fall back to
+    /// atomic-final delivery).
+    pub async fn send_channel_edit(
+        &self,
+        channel: &str,
+        message_id: &str,
+        bearer_jwt: &str,
+        edit_body: Value,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        anyhow::ensure!(!message_id.is_empty(), "message_id is required");
+        let encoded_channel = urlencoding::encode(channel);
+        let encoded_id = urlencoding::encode(message_id);
+        self.authed_json(
+            bearer_jwt,
+            Method::PATCH,
+            &format!("channels/{encoded_channel}/messages/{encoded_id}"),
+            Some(edit_body),
+        )
+        .await
+    }
+
     /// Sends a reaction (e.g. emoji) to a message in a channel.
     pub async fn send_channel_reaction(
         &self,

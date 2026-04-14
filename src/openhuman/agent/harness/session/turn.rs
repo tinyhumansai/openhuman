@@ -31,7 +31,7 @@ use crate::openhuman::context::prompt::{
 };
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::memory::MemoryCategory;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage};
+use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
@@ -294,6 +294,55 @@ impl Agent {
                     self.tool_dispatcher.should_send_tool_specs()
                 );
                 let provider_started = std::time::Instant::now();
+                // Only set up the streaming sink when someone is
+                // listening for progress events. Without a listener the
+                // channel buffer would fill up and back-pressure the
+                // provider; skipping it also keeps the non-streaming
+                // HTTP path alive for providers that don't implement
+                // SSE.
+                let iteration_for_stream = (iteration + 1) as u32;
+                let (delta_tx_opt, delta_forwarder) = if self.on_progress.is_some() {
+                    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
+                    let progress_tx = self.on_progress.clone();
+                    let forwarder = tokio::spawn(async move {
+                        while let Some(event) = rx.recv().await {
+                            let Some(ref sink) = progress_tx else { continue };
+                            let mapped = match event {
+                                ProviderDelta::TextDelta { delta } => AgentProgress::TextDelta {
+                                    delta,
+                                    iteration: iteration_for_stream,
+                                },
+                                ProviderDelta::ThinkingDelta { delta } => {
+                                    AgentProgress::ThinkingDelta {
+                                        delta,
+                                        iteration: iteration_for_stream,
+                                    }
+                                }
+                                ProviderDelta::ToolCallStart {
+                                    call_id,
+                                    tool_name,
+                                } => AgentProgress::ToolCallArgsDelta {
+                                    call_id,
+                                    tool_name,
+                                    delta: String::new(),
+                                    iteration: iteration_for_stream,
+                                },
+                                ProviderDelta::ToolCallArgsDelta { call_id, delta } => {
+                                    AgentProgress::ToolCallArgsDelta {
+                                        call_id,
+                                        tool_name: String::new(),
+                                        delta,
+                                        iteration: iteration_for_stream,
+                                    }
+                                }
+                            };
+                            let _ = sink.try_send(mapped);
+                        }
+                    });
+                    (Some(tx), Some(forwarder))
+                } else {
+                    (None, None)
+                };
                 let response = match self
                     .provider
                     .chat(
@@ -305,6 +354,7 @@ impl Agent {
                                 None
                             },
                             system_prompt_cache_boundary: self.system_prompt_cache_boundary,
+                            stream: delta_tx_opt.as_ref(),
                         },
                         &effective_model,
                         self.temperature,
@@ -332,8 +382,18 @@ impl Agent {
                         }
                         resp
                     }
-                    Err(err) => return Err(err),
+                    Err(err) => {
+                        drop(delta_tx_opt);
+                        if let Some(handle) = delta_forwarder {
+                            let _ = handle.await;
+                        }
+                        return Err(err);
+                    }
                 };
+                drop(delta_tx_opt);
+                if let Some(handle) = delta_forwarder {
+                    let _ = handle.await;
+                }
 
                 let (text, calls) = self.tool_dispatcher.parse_response(&response);
                 let calls = Self::with_fallback_tool_call_ids(calls, iteration);

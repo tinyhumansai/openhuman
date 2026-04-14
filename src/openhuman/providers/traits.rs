@@ -91,6 +91,31 @@ impl ChatResponse {
     }
 }
 
+/// A fine-grained streaming event emitted by a provider while serving a
+/// `chat()` call. Providers that support SSE/streaming forward these to
+/// the optional sender on [`ChatRequest::stream`]; the final aggregated
+/// response is still returned from `chat()` so callers that ignore the
+/// stream keep working unchanged.
+#[derive(Debug, Clone)]
+pub enum ProviderDelta {
+    /// A chunk of the assistant's visible text output.
+    TextDelta { delta: String },
+    /// A chunk of the model's reasoning/thinking output (for models
+    /// that emit `reasoning_content` or an equivalent). Consumers should
+    /// render this in a separate UI affordance from the visible output.
+    ThinkingDelta { delta: String },
+    /// The start of a new native tool call. `call_id` is the
+    /// provider-assigned id that later appears on the result message.
+    ToolCallStart {
+        call_id: String,
+        tool_name: String,
+    },
+    /// A chunk of argument JSON text for an in-flight tool call.
+    /// Streamed verbatim; may arrive as partial JSON that only becomes
+    /// valid once the stream completes.
+    ToolCallArgsDelta { call_id: String, delta: String },
+}
+
 /// Request payload for provider chat calls.
 #[derive(Debug, Clone, Copy)]
 pub struct ChatRequest<'a> {
@@ -101,6 +126,12 @@ pub struct ChatRequest<'a> {
     /// apply `cache_control` to the prefix before this boundary.
     /// `None` means no cache boundary is known.
     pub system_prompt_cache_boundary: Option<usize>,
+    /// Optional sink for `ProviderDelta` events. When `Some`, providers
+    /// that support streaming will ask the upstream API for SSE and
+    /// forward fine-grained events here. Providers without a streaming
+    /// implementation ignore the sender and return only the aggregated
+    /// response.
+    pub stream: Option<&'a tokio::sync::mpsc::Sender<ProviderDelta>>,
 }
 
 /// A tool result to feed back to the LLM.
@@ -798,6 +829,7 @@ mod tests {
             messages: &[ChatMessage::user("Hello")],
             tools: Some(&tools),
             system_prompt_cache_boundary: None,
+            stream: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -816,6 +848,7 @@ mod tests {
             messages: &[ChatMessage::user("Hello")],
             tools: None,
             system_prompt_cache_boundary: None,
+            stream: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -917,6 +950,7 @@ mod tests {
             ],
             tools: Some(&tools),
             system_prompt_cache_boundary: None,
+            stream: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -940,6 +974,7 @@ mod tests {
             messages: &[ChatMessage::system("BASE"), ChatMessage::user("Hello")],
             tools: Some(&tools),
             system_prompt_cache_boundary: None,
+            stream: None,
         };
 
         let response = provider.chat(request, "model", 0.7).await.unwrap();
@@ -963,6 +998,7 @@ mod tests {
             messages: &[ChatMessage::user("Hello")],
             tools: Some(&tools),
             system_prompt_cache_boundary: None,
+            stream: None,
         };
 
         let err = provider.chat(request, "model", 0.7).await.unwrap_err();

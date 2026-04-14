@@ -60,6 +60,9 @@ pub async fn deliver_response(
             reaction_emoji,
             segment_index: None,
             segment_total: None,
+            delta: None,
+            delta_kind: None,
+            tool_call_id: None,
         });
         return;
     }
@@ -91,6 +94,9 @@ pub async fn deliver_response(
             reaction_emoji: if i == 0 { reaction_emoji.clone() } else { None },
             segment_index: Some(i as u32),
             segment_total: Some(total),
+            delta: None,
+            delta_kind: None,
+            tool_call_id: None,
         });
     }
 
@@ -112,6 +118,9 @@ pub async fn deliver_response(
         reaction_emoji: None,
         segment_index: None,
         segment_total: Some(total),
+        delta: None,
+        delta_kind: None,
+        tool_call_id: None,
     });
 }
 

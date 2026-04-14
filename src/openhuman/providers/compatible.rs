@@ -503,11 +503,16 @@ struct ResponsesContent {
 #[derive(Debug, Deserialize)]
 struct StreamChunkResponse {
     choices: Vec<StreamChoice>,
+    #[serde(default)]
+    usage: Option<ApiUsage>,
+    #[serde(default)]
+    openhuman: Option<OpenHumanMeta>,
 }
 
 #[derive(Debug, Deserialize)]
 struct StreamChoice {
     delta: StreamDelta,
+    #[allow(dead_code)]
     finish_reason: Option<String>,
 }
 
@@ -518,6 +523,37 @@ struct StreamDelta {
     /// Reasoning/thinking models may stream output via `reasoning_content`.
     #[serde(default)]
     reasoning_content: Option<String>,
+    /// Native tool-call chunks. Each entry is keyed by `index`; the first
+    /// chunk for a given index carries `id`/`type`/`function.name`, later
+    /// chunks only carry fragments of `function.arguments`.
+    #[serde(default)]
+    tool_calls: Option<Vec<StreamToolCallDelta>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCallDelta {
+    /// Index of this tool call within the assistant message. Multiple
+    /// concurrent tool calls share the same message and are distinguished
+    /// by index — not id (which may only appear on the first chunk).
+    #[serde(default)]
+    index: Option<u32>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default, rename = "type")]
+    #[allow(dead_code)]
+    kind: Option<String>,
+    #[serde(default)]
+    function: Option<StreamToolCallFunction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StreamToolCallFunction {
+    #[serde(default)]
+    name: Option<String>,
+    /// Arguments are streamed as a raw JSON string fragment; we accumulate
+    /// them as-is and only parse at the end of the stream.
+    #[serde(default)]
+    arguments: Option<String>,
 }
 
 /// Parse SSE (Server-Sent Events) stream from OpenAI-compatible providers.
@@ -1132,6 +1168,254 @@ impl OpenAiCompatibleProvider {
         .iter()
         .any(|hint| lower.contains(hint))
     }
+
+    /// Streaming variant of the native-tools chat path.
+    ///
+    /// Sends the request with `stream: true`, consumes the upstream SSE
+    /// stream chunk by chunk, forwards fine-grained `ProviderDelta`
+    /// events to the caller-supplied sender, and returns the aggregated
+    /// [`ProviderChatResponse`] once the stream ends. Per-chunk parsing
+    /// uses [`StreamChunkResponse`] — a permissive subset of the
+    /// OpenAI/Fireworks streaming schema that tolerates unknown fields.
+    async fn stream_native_chat(
+        &self,
+        credential: &str,
+        native_request: &NativeChatRequest,
+        delta_tx: &tokio::sync::mpsc::Sender<crate::openhuman::providers::ProviderDelta>,
+    ) -> anyhow::Result<ProviderChatResponse> {
+        use futures_util::StreamExt;
+
+        let url = self.chat_completions_url();
+        log::debug!(
+            "[stream] {} POST {} (stream=true, tools={})",
+            self.name,
+            url,
+            native_request.tools.as_ref().map_or(0, |t| t.len()),
+        );
+
+        let response = self
+            .apply_auth_header(
+                self.http_client()
+                    .post(&url)
+                    .header("Accept", "text/event-stream")
+                    .json(native_request),
+                credential,
+            )
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("{} streaming API error ({}): {}", self.name, status, body);
+        }
+
+        // Accumulators for the final aggregated response. Tool-call
+        // state is keyed by the upstream `index` so interleaved chunks
+        // for multiple tool calls in the same turn don't clobber each
+        // other.
+        let mut text_accum = String::new();
+        let mut thinking_accum = String::new();
+        let mut tool_accum: std::collections::BTreeMap<u32, StreamingToolCall> =
+            std::collections::BTreeMap::new();
+        let mut last_usage: Option<ApiUsage> = None;
+        let mut last_openhuman: Option<OpenHumanMeta> = None;
+
+        let mut bytes_stream = response.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(item) = bytes_stream.next().await {
+            let bytes = item?;
+            buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+            // SSE events are separated by "\n\n"; lines within an event
+            // are "\n"-terminated. We accumulate partial events across
+            // socket reads and only pop complete ones.
+            while let Some(sep_idx) = buffer.find("\n\n") {
+                let event = buffer[..sep_idx].to_string();
+                buffer.drain(..sep_idx + 2);
+                for line in event.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+                    let Some(data) = line.strip_prefix("data:") else {
+                        continue;
+                    };
+                    let data = data.trim();
+                    if data == "[DONE]" {
+                        continue;
+                    }
+
+                    let chunk: StreamChunkResponse = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::debug!(
+                                "[stream] {} skipping unparseable chunk: {} — data={}",
+                                self.name,
+                                e,
+                                data,
+                            );
+                            continue;
+                        }
+                    };
+
+                    if let Some(usage) = chunk.usage {
+                        last_usage = Some(usage);
+                    }
+                    if let Some(meta) = chunk.openhuman {
+                        last_openhuman = Some(meta);
+                    }
+
+                    for choice in chunk.choices {
+                        // Visible text delta.
+                        if let Some(content) = choice.delta.content.as_ref() {
+                            if !content.is_empty() {
+                                text_accum.push_str(content);
+                                let _ = delta_tx
+                                    .send(
+                                        crate::openhuman::providers::ProviderDelta::TextDelta {
+                                            delta: content.clone(),
+                                        },
+                                    )
+                                    .await;
+                            }
+                        }
+                        // Reasoning / thinking delta.
+                        if let Some(reasoning) = choice.delta.reasoning_content.as_ref() {
+                            if !reasoning.is_empty() {
+                                thinking_accum.push_str(reasoning);
+                                let _ = delta_tx
+                                    .send(
+                                        crate::openhuman::providers::ProviderDelta::ThinkingDelta {
+                                            delta: reasoning.clone(),
+                                        },
+                                    )
+                                    .await;
+                            }
+                        }
+                        // Tool-call fragments.
+                        if let Some(tc_list) = choice.delta.tool_calls.as_ref() {
+                            for tc in tc_list {
+                                let idx = tc.index.unwrap_or(0);
+                                let entry = tool_accum
+                                    .entry(idx)
+                                    .or_insert_with(StreamingToolCall::default);
+                                let first_fragment = entry.id.is_none() && entry.name.is_none();
+                                if let Some(id) = tc.id.as_ref() {
+                                    entry.id = Some(id.clone());
+                                }
+                                if let Some(func) = tc.function.as_ref() {
+                                    if let Some(name) = func.name.as_ref() {
+                                        if !name.is_empty() {
+                                            entry.name = Some(name.clone());
+                                        }
+                                    }
+                                    if let Some(args) = func.arguments.as_ref() {
+                                        if !args.is_empty() {
+                                            entry.arguments.push_str(args);
+                                            let call_id = entry
+                                                .id
+                                                .clone()
+                                                .unwrap_or_else(|| format!("stream-{}", idx));
+                                            let _ = delta_tx
+                                                .send(
+                                                    crate::openhuman::providers::ProviderDelta::ToolCallArgsDelta {
+                                                        call_id,
+                                                        delta: args.clone(),
+                                                    },
+                                                )
+                                                .await;
+                                        }
+                                    }
+                                }
+                                // Emit a `ToolCallStart` the first time
+                                // we learn both the id and the name for
+                                // a given index.
+                                if first_fragment {
+                                    if let (Some(id), Some(name)) =
+                                        (entry.id.as_ref(), entry.name.as_ref())
+                                    {
+                                        let _ = delta_tx
+                                            .send(
+                                                crate::openhuman::providers::ProviderDelta::ToolCallStart {
+                                                    call_id: id.clone(),
+                                                    tool_name: name.clone(),
+                                                },
+                                            )
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Aggregate the collected tool calls into the unified response
+        // shape. We reuse `parse_native_response` by building an
+        // `ApiChatResponse` from the accumulators so downstream code
+        // sees the same shape as the non-streaming path.
+        let tool_calls_for_api: Vec<ToolCall> = tool_accum
+            .into_iter()
+            .map(|(_idx, c)| ToolCall {
+                id: c.id,
+                kind: Some("function".to_string()),
+                function: Some(Function {
+                    name: c.name,
+                    arguments: if c.arguments.is_empty() {
+                        None
+                    } else {
+                        // Try to parse as JSON first so downstream
+                        // `normalize_function_arguments` can handle the
+                        // usual Value path; fall back to a JSON-string
+                        // value if the accumulated text isn't valid
+                        // JSON yet.
+                        Some(
+                            serde_json::from_str(&c.arguments)
+                                .unwrap_or_else(|_| serde_json::Value::String(c.arguments)),
+                        )
+                    },
+                }),
+            })
+            .collect();
+
+        let api_resp = ApiChatResponse {
+            choices: vec![Choice {
+                message: ResponseMessage {
+                    content: if text_accum.is_empty() {
+                        None
+                    } else {
+                        Some(text_accum)
+                    },
+                    reasoning_content: if thinking_accum.is_empty() {
+                        None
+                    } else {
+                        Some(thinking_accum)
+                    },
+                    tool_calls: if tool_calls_for_api.is_empty() {
+                        None
+                    } else {
+                        Some(tool_calls_for_api)
+                    },
+                    function_call: None,
+                },
+            }],
+            usage: last_usage,
+            openhuman: last_openhuman,
+        };
+
+        Self::parse_native_response(api_resp, &self.name)
+    }
+}
+
+/// Per-index tool-call accumulator used while consuming an SSE stream.
+#[derive(Debug, Default)]
+struct StreamingToolCall {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
 }
 
 #[async_trait]
@@ -1498,6 +1782,37 @@ impl Provider for OpenAiCompatibleProvider {
         } else {
             request.messages.to_vec()
         };
+
+        // ── Streaming branch ─────────────────────────────────────────
+        // When the caller supplied a `ProviderDelta` sender, request
+        // SSE and forward fine-grained deltas while accumulating the
+        // final response. Fall back to non-streaming on non-200 errors
+        // so tool-schema rejections etc. still work.
+        if let Some(tx) = request.stream {
+            let native_request = NativeChatRequest {
+                model: model.to_string(),
+                messages: Self::convert_messages_for_native(&effective_messages),
+                temperature,
+                stream: Some(true),
+                tool_choice: tools.as_ref().map(|_| "auto".to_string()),
+                tools: tools.clone(),
+            };
+            match self
+                .stream_native_chat(credential, &native_request, tx)
+                .await
+            {
+                Ok(resp) => return Ok(resp),
+                Err(err) => {
+                    log::warn!(
+                        "[stream] {} streaming chat failed, falling back to non-streaming: {}",
+                        self.name,
+                        err
+                    );
+                    // Fall through to the non-streaming path below.
+                }
+            }
+        }
+
         let native_request = NativeChatRequest {
             model: model.to_string(),
             messages: Self::convert_messages_for_native(&effective_messages),

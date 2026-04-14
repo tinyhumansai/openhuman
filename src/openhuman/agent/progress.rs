@@ -62,6 +62,39 @@ pub enum AgentProgress {
         error: String,
     },
 
+    /// A chunk of visible assistant text arrived from the provider
+    /// while the current iteration is still in flight.
+    TextDelta {
+        delta: String,
+        /// 1-based iteration index this delta belongs to.
+        iteration: u32,
+    },
+
+    /// A chunk of model reasoning / thinking output arrived (for
+    /// models that emit `reasoning_content`). Consumers typically
+    /// render this in a separate collapsible UI region.
+    ThinkingDelta {
+        delta: String,
+        /// 1-based iteration index.
+        iteration: u32,
+    },
+
+    /// A chunk of argument JSON arrived for an in-flight tool call.
+    /// Emitted before the matching [`AgentProgress::ToolCallStarted`]
+    /// event so consumers can show the model composing the call.
+    ToolCallArgsDelta {
+        /// Provider-assigned tool call id (stable across chunks).
+        call_id: String,
+        /// Tool name, when known (may be empty on the very first
+        /// chunk if the provider hasn't sent the `function.name` yet).
+        tool_name: String,
+        /// Raw JSON text fragment; concatenated fragments form the
+        /// complete arguments object.
+        delta: String,
+        /// 1-based iteration index.
+        iteration: u32,
+    },
+
     /// The turn completed with a final text response.
     TurnCompleted {
         /// Total iterations used.

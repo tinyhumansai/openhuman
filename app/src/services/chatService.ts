@@ -111,6 +111,49 @@ export interface ChatSubagentDoneEvent {
   round: number;
 }
 
+/**
+ * Emitted for each chunk of streamed assistant text that arrives from the
+ * provider during an iteration. Concatenating `delta` values in order yields
+ * the visible assistant text for that iteration.
+ */
+export interface ChatTextDeltaEvent {
+  thread_id: string;
+  request_id: string;
+  /** 1-based iteration index the chunk belongs to. */
+  round: number;
+  /** Text fragment; may be a single token or a few characters. */
+  delta: string;
+}
+
+/**
+ * Emitted for each chunk of streamed model reasoning / thinking output.
+ * Only sent by models that expose `reasoning_content` (see the
+ * `supportsThinking` flag on the model registry entry). Concatenating
+ * `delta`s in order yields the full reasoning transcript.
+ */
+export interface ChatThinkingDeltaEvent {
+  thread_id: string;
+  request_id: string;
+  round: number;
+  delta: string;
+}
+
+/**
+ * Emitted for each chunk of a native tool call's arguments JSON while the
+ * model is still composing the call. `tool_call_id` groups fragments for
+ * the same call, and `tool_name` is populated once the provider sends it
+ * (may be empty on the very first chunk).
+ */
+export interface ChatToolArgsDeltaEvent {
+  thread_id: string;
+  request_id: string;
+  round: number;
+  tool_call_id: string;
+  tool_name: string;
+  /** JSON fragment; only valid JSON once concatenated across all chunks. */
+  delta: string;
+}
+
 export interface ChatEventListeners {
   onInferenceStart?: (event: ChatInferenceStartEvent) => void;
   onIterationStart?: (event: ChatIterationStartEvent) => void;
@@ -119,6 +162,9 @@ export interface ChatEventListeners {
   onSubagentSpawned?: (event: ChatSubagentSpawnedEvent) => void;
   onSubagentDone?: (event: ChatSubagentDoneEvent) => void;
   onSegment?: (event: ChatSegmentEvent) => void;
+  onTextDelta?: (event: ChatTextDeltaEvent) => void;
+  onThinkingDelta?: (event: ChatThinkingDeltaEvent) => void;
+  onToolArgsDelta?: (event: ChatToolArgsDeltaEvent) => void;
   onDone?: (event: ChatDoneEvent) => void;
   onError?: (event: ChatErrorEvent) => void;
 }
@@ -140,6 +186,9 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     subagentCompleted: 'subagent_completed',
     subagentFailed: 'subagent_failed',
     segment: 'chat_segment',
+    textDelta: 'text_delta',
+    thinkingDelta: 'thinking_delta',
+    toolArgsDelta: 'tool_args_delta',
     done: 'chat_done',
     error: 'chat_error',
   } as const;
@@ -271,6 +320,58 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.segment, cb);
     handlers.push([EVENTS.segment, cb]);
+  }
+
+  if (listeners.onTextDelta) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatTextDeltaEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s round=%d chars=%d',
+        EVENTS.textDelta,
+        e.thread_id,
+        e.request_id,
+        e.round,
+        e.delta?.length ?? 0
+      );
+      listeners.onTextDelta?.(e);
+    };
+    socket.on(EVENTS.textDelta, cb);
+    handlers.push([EVENTS.textDelta, cb]);
+  }
+
+  if (listeners.onThinkingDelta) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatThinkingDeltaEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s round=%d chars=%d',
+        EVENTS.thinkingDelta,
+        e.thread_id,
+        e.request_id,
+        e.round,
+        e.delta?.length ?? 0
+      );
+      listeners.onThinkingDelta?.(e);
+    };
+    socket.on(EVENTS.thinkingDelta, cb);
+    handlers.push([EVENTS.thinkingDelta, cb]);
+  }
+
+  if (listeners.onToolArgsDelta) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatToolArgsDeltaEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s round=%d tool_call_id=%s chars=%d',
+        EVENTS.toolArgsDelta,
+        e.thread_id,
+        e.request_id,
+        e.round,
+        e.tool_call_id,
+        e.delta?.length ?? 0
+      );
+      listeners.onToolArgsDelta?.(e);
+    };
+    socket.on(EVENTS.toolArgsDelta, cb);
+    handlers.push([EVENTS.toolArgsDelta, cb]);
   }
 
   if (listeners.onDone) {

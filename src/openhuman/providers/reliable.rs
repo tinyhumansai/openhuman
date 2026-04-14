@@ -537,6 +537,7 @@ impl Provider for ReliableProvider {
                         messages: request.messages,
                         tools: request.tools,
                         system_prompt_cache_boundary: request.system_prompt_cache_boundary,
+                        stream: request.stream,
                     };
                     match provider.chat(req, current_model, temperature).await {
                         Ok(resp) => {

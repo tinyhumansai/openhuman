@@ -545,6 +545,7 @@ async fn run_inner_loop(
                     messages: history.as_slice(),
                     tools: request_tools,
                     system_prompt_cache_boundary,
+                    stream: None,
                 },
                 model,
                 temperature,
