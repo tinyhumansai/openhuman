@@ -73,7 +73,9 @@ mod tests {
         assert!(is_low_quality("I am unable to assist."));
         assert!(is_low_quality("As an AI, I don't have opinions."));
         assert!(is_low_quality("As an AI language model, I cannot..."));
-        assert!(is_low_quality("I don't have the ability to browse the web."));
+        assert!(is_low_quality(
+            "I don't have the ability to browse the web."
+        ));
         assert!(is_low_quality("I'm sorry, but I cannot comply."));
         assert!(is_low_quality("I apologize, but I cannot do that."));
         assert!(is_low_quality("Sorry, I cannot assist with that."));

@@ -39,8 +39,8 @@ pub mod telemetry;
 
 pub use health::LocalHealthChecker;
 pub use policy::{classify, decide, RoutingTarget, TaskCategory};
-pub use quality::is_low_quality;
 pub use provider::IntelligentRoutingProvider;
+pub use quality::is_low_quality;
 pub use telemetry::{emit as emit_routing_record, RoutingRecord};
 
 use std::sync::Arc;

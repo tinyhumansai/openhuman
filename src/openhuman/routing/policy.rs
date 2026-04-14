@@ -247,10 +247,17 @@ mod tests {
             true,
             &default_hints(),
         );
-        assert_eq!(primary, RoutingTarget::Local { model: "local-model".into() });
+        assert_eq!(
+            primary,
+            RoutingTarget::Local {
+                model: "local-model".into()
+            }
+        );
         assert_eq!(
             fallback,
-            Some(RoutingTarget::Remote { model: "remote-model".into() })
+            Some(RoutingTarget::Remote {
+                model: "remote-model".into()
+            })
         );
     }
 
@@ -263,7 +270,12 @@ mod tests {
             false,
             &default_hints(),
         );
-        assert_eq!(primary, RoutingTarget::Remote { model: "remote-model".into() });
+        assert_eq!(
+            primary,
+            RoutingTarget::Remote {
+                model: "remote-model".into()
+            }
+        );
         assert!(fallback.is_none());
     }
 
@@ -276,7 +288,12 @@ mod tests {
             true,
             &default_hints(),
         );
-        assert_eq!(primary, RoutingTarget::Local { model: "local-model".into() });
+        assert_eq!(
+            primary,
+            RoutingTarget::Local {
+                model: "local-model".into()
+            }
+        );
         assert!(fallback.is_some());
     }
 
@@ -292,7 +309,9 @@ mod tests {
             );
             assert_eq!(
                 primary,
-                RoutingTarget::Remote { model: "remote-model".into() },
+                RoutingTarget::Remote {
+                    model: "remote-model".into()
+                },
                 "heavy tasks must always go remote (local_healthy={local_healthy})"
             );
             assert!(fallback.is_none());
@@ -303,12 +322,24 @@ mod tests {
 
     #[test]
     fn privacy_required_forces_local_no_fallback() {
-        let hints = RoutingHints { privacy_required: true, ..Default::default() };
+        let hints = RoutingHints {
+            privacy_required: true,
+            ..Default::default()
+        };
         // Even for heavy tasks and when local is unhealthy
-        for category in [TaskCategory::Lightweight, TaskCategory::Medium, TaskCategory::Heavy] {
+        for category in [
+            TaskCategory::Lightweight,
+            TaskCategory::Medium,
+            TaskCategory::Heavy,
+        ] {
             for local_available in [true, false] {
-                let (primary, fallback) =
-                    decide(category, "local-model", "remote-model", local_available, &hints);
+                let (primary, fallback) = decide(
+                    category,
+                    "local-model",
+                    "remote-model",
+                    local_available,
+                    &hints,
+                );
                 assert_eq!(
                     primary,
                     RoutingTarget::Local { model: "local-model".into() },
@@ -380,17 +411,31 @@ mod tests {
     fn regression_reasoning_always_remote() {
         let category = classify("hint:reasoning");
         assert_eq!(category, TaskCategory::Heavy);
-        let (primary, _) = decide(category, "local-model", "hint:reasoning", true, &default_hints());
+        let (primary, _) = decide(
+            category,
+            "local-model",
+            "hint:reasoning",
+            true,
+            &default_hints(),
+        );
         assert_eq!(
             primary,
-            RoutingTarget::Remote { model: "hint:reasoning".into() }
+            RoutingTarget::Remote {
+                model: "hint:reasoning".into()
+            }
         );
     }
 
     #[test]
     fn regression_agentic_always_remote() {
         let category = classify("hint:agentic");
-        let (primary, _) = decide(category, "local-model", "hint:agentic", true, &default_hints());
+        let (primary, _) = decide(
+            category,
+            "local-model",
+            "hint:agentic",
+            true,
+            &default_hints(),
+        );
         assert!(matches!(primary, RoutingTarget::Remote { .. }));
     }
 

@@ -198,7 +198,12 @@ async fn live_channel_web_chat_routing_cases_trigger_real_backend() {
     .await;
     assert_no_jsonrpc_error(&store, "store_session");
 
-    let routing_cases = ["hint:reasoning", "hint:agentic", "hint:coding", "reasoning-v1"];
+    let routing_cases = [
+        "hint:reasoning",
+        "hint:agentic",
+        "hint:coding",
+        "reasoning-v1",
+    ];
 
     for (idx, model_override) in routing_cases.iter().enumerate() {
         let client_id = format!("live-routing-client-{idx}");
@@ -235,7 +240,10 @@ async fn live_channel_web_chat_routing_cases_trigger_real_backend() {
                 panic!("timed out waiting for terminal SSE event for case {model_override}")
             })
             .expect("sse task join should succeed");
-        let event_type = sse_event.get("event").and_then(Value::as_str).unwrap_or("unknown");
+        let event_type = sse_event
+            .get("event")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
         assert_eq!(
             event_type, "chat_done",
             "received terminal SSE event '{event_type}' for case {model_override}: {sse_event}"
@@ -245,4 +253,3 @@ async fn live_channel_web_chat_routing_cases_trigger_real_backend() {
 
     rpc_join.abort();
 }
-

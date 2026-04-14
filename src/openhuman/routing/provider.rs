@@ -118,8 +118,13 @@ impl IntelligentRoutingProvider {
         // Lightweight/medium fallbacks use the configured default remote model.
         let remote_model = self.resolve_remote_model(model, category);
 
-        let (primary, fallback) =
-            policy::decide(category, &self.local_model, &remote_model, local_healthy, &self.hints);
+        let (primary, fallback) = policy::decide(
+            category,
+            &self.local_model,
+            &remote_model,
+            local_healthy,
+            &self.hints,
+        );
 
         (primary, fallback, category, local_healthy)
     }
@@ -191,7 +196,8 @@ impl IntelligentRoutingProvider {
                     .unwrap_or_default();
 
                 self.try_local_with_fallback(
-                    self.local.chat_with_system(system_prompt, message, &m, temperature),
+                    self.local
+                        .chat_with_system(system_prompt, message, &m, temperature),
                     &fallback,
                     self.remote
                         .chat_with_system(system_prompt, message, &fb_model, temperature),
@@ -214,9 +220,16 @@ impl IntelligentRoutingProvider {
         telemetry::emit(&RoutingRecord {
             model_hint: model.to_string(),
             task_category: category.as_str(),
-            routed_to: if fallback_occurred { "remote" } else { primary.label() },
+            routed_to: if fallback_occurred {
+                "remote"
+            } else {
+                primary.label()
+            },
             resolved_model: if fallback_occurred {
-                fallback.as_ref().map(|t| t.model().to_string()).unwrap_or_default()
+                fallback
+                    .as_ref()
+                    .map(|t| t.model().to_string())
+                    .unwrap_or_default()
             } else {
                 primary.model().to_string()
             },
@@ -289,9 +302,7 @@ impl IntelligentRoutingProvider {
                     r
                 }
             }
-            RoutingTarget::Remote { model: m } => {
-                self.remote.chat(request, m, temperature).await
-            }
+            RoutingTarget::Remote { model: m } => self.remote.chat(request, m, temperature).await,
         };
 
         let (input_tokens, output_tokens, cost_usd) = match &result {
@@ -312,7 +323,10 @@ impl IntelligentRoutingProvider {
                 effective_primary.label()
             },
             resolved_model: if fallback_occurred {
-                fallback.as_ref().map(|t| t.model().to_string()).unwrap_or_default()
+                fallback
+                    .as_ref()
+                    .map(|t| t.model().to_string())
+                    .unwrap_or_default()
             } else {
                 effective_primary.model().to_string()
             },
@@ -370,9 +384,14 @@ impl Provider for IntelligentRoutingProvider {
                     };
                 if do_fallback {
                     if let Some(RoutingTarget::Remote { model: fb }) = &fallback {
-                        tracing::warn!(hint = model, "[routing] local history failed/low-quality → remote");
+                        tracing::warn!(
+                            hint = model,
+                            "[routing] local history failed/low-quality → remote"
+                        );
                         fallback_occurred = true;
-                        self.remote.chat_with_history(messages, fb, temperature).await
+                        self.remote
+                            .chat_with_history(messages, fb, temperature)
+                            .await
                     } else {
                         r
                     }
@@ -381,16 +400,25 @@ impl Provider for IntelligentRoutingProvider {
                 }
             }
             RoutingTarget::Remote { model: m } => {
-                self.remote.chat_with_history(messages, m, temperature).await
+                self.remote
+                    .chat_with_history(messages, m, temperature)
+                    .await
             }
         };
 
         telemetry::emit(&RoutingRecord {
             model_hint: model.to_string(),
             task_category: category.as_str(),
-            routed_to: if fallback_occurred { "remote" } else { primary.label() },
+            routed_to: if fallback_occurred {
+                "remote"
+            } else {
+                primary.label()
+            },
             resolved_model: if fallback_occurred {
-                fallback.as_ref().map(|t| t.model().to_string()).unwrap_or_default()
+                fallback
+                    .as_ref()
+                    .map(|t| t.model().to_string())
+                    .unwrap_or_default()
             } else {
                 primary.model().to_string()
             },
@@ -405,7 +433,12 @@ impl Provider for IntelligentRoutingProvider {
         result
     }
 
-    async fn chat(&self, request: ChatRequest<'_>, model: &str, temperature: f64) -> Result<ChatResponse> {
+    async fn chat(
+        &self,
+        request: ChatRequest<'_>,
+        model: &str,
+        temperature: f64,
+    ) -> Result<ChatResponse> {
         self.dispatch_chat(request, model, temperature).await
     }
 
@@ -424,8 +457,13 @@ impl Provider for IntelligentRoutingProvider {
         // Streaming always uses remote — local streaming is not integrated.
         let category = policy::classify(model);
         let remote_model = self.resolve_remote_model(model, category);
-        self.remote
-            .stream_chat_with_system(system_prompt, message, &remote_model, temperature, options)
+        self.remote.stream_chat_with_system(
+            system_prompt,
+            message,
+            &remote_model,
+            temperature,
+            options,
+        )
     }
 
     async fn warmup(&self) -> Result<()> {
@@ -509,7 +547,10 @@ mod tests {
         }
 
         fn capabilities(&self) -> ProviderCapabilities {
-            ProviderCapabilities { native_tool_calling: true, vision: false }
+            ProviderCapabilities {
+                native_tool_calling: true,
+                vision: false,
+            }
         }
     }
 
@@ -540,8 +581,16 @@ mod tests {
         let remote = MockProvider::new("remote", "remote-resp");
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
-        let result = r.chat_with_system(None, "React to this", "hint:reaction", 0.7).await.unwrap();
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
+        let result = r
+            .chat_with_system(None, "React to this", "hint:reaction", 0.7)
+            .await
+            .unwrap();
 
         assert_eq!(result, "Great reaction!");
         assert_eq!(local.calls(), 1, "local must have been called");
@@ -555,7 +604,12 @@ mod tests {
         let remote = MockProvider::new("remote", "remote-resp");
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
         r.chat_with_system(None, "Summarize this", "hint:summarize", 0.7)
             .await
             .unwrap();
@@ -572,7 +626,12 @@ mod tests {
         let remote = MockProvider::new("remote", "Actually here is a proper answer.");
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
         let result = r
             .chat_with_system(None, "react", "hint:reaction", 0.7)
             .await
@@ -590,7 +649,12 @@ mod tests {
         let remote = MockProvider::new("remote", "Good answer from remote.");
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
         let result = r
             .chat_with_system(None, "classify", "hint:classify", 0.7)
             .await
@@ -609,7 +673,12 @@ mod tests {
         let remote = MockProvider::new("remote", "remote recovered");
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
         let result = r
             .chat_with_system(None, "react", "hint:reaction", 0.7)
             .await
@@ -628,8 +697,15 @@ mod tests {
         let remote = MockProvider::new("remote", "remote answer");
         let health = LocalHealthChecker::seeded(false);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
-        r.chat_with_system(None, "react", "hint:reaction", 0.7).await.unwrap();
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
+        r.chat_with_system(None, "react", "hint:reaction", 0.7)
+            .await
+            .unwrap();
 
         assert_eq!(local.calls(), 0, "local must not be called when unhealthy");
         assert_eq!(remote.calls(), 1);
@@ -643,7 +719,12 @@ mod tests {
         let remote = MockProvider::new("remote", "reasoning answer");
         let health = LocalHealthChecker::seeded(true); // local is healthy
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
         r.chat_with_system(None, "reason hard", "hint:reasoning", 0.7)
             .await
             .unwrap();
@@ -661,7 +742,10 @@ mod tests {
         local.set_fail(false); // returns low-quality, not an error
         let remote = MockProvider::new("remote", "would breach privacy");
         let health = LocalHealthChecker::seeded(true);
-        let hints = RoutingHints { privacy_required: true, ..Default::default() };
+        let hints = RoutingHints {
+            privacy_required: true,
+            ..Default::default()
+        };
 
         let r = router(Arc::clone(&local), Arc::clone(&remote), health, hints);
         // Local returns a refusal (low quality) but privacy blocks fallback.
@@ -671,7 +755,11 @@ mod tests {
             .unwrap();
 
         assert!(result.contains("cannot"), "got: {result}");
-        assert_eq!(remote.calls(), 0, "remote must never be called with privacy_required");
+        assert_eq!(
+            remote.calls(),
+            0,
+            "remote must never be called with privacy_required"
+        );
     }
 
     #[tokio::test]
@@ -680,10 +768,15 @@ mod tests {
         let local = MockProvider::new("local", "local heavy response");
         let remote = MockProvider::new("remote", "remote");
         let health = LocalHealthChecker::seeded(true);
-        let hints = RoutingHints { privacy_required: true, ..Default::default() };
+        let hints = RoutingHints {
+            privacy_required: true,
+            ..Default::default()
+        };
 
         let r = router(Arc::clone(&local), Arc::clone(&remote), health, hints);
-        r.chat_with_system(None, "reason", "hint:reasoning", 0.7).await.unwrap();
+        r.chat_with_system(None, "reason", "hint:reasoning", 0.7)
+            .await
+            .unwrap();
 
         assert_eq!(local.calls(), 1);
         assert_eq!(remote.calls(), 0);
@@ -702,7 +795,9 @@ mod tests {
         };
 
         let r = router(Arc::clone(&local), Arc::clone(&remote), health, hints);
-        r.chat_with_system(None, "quick task", "hint:reaction", 0.7).await.unwrap();
+        r.chat_with_system(None, "quick task", "hint:reaction", 0.7)
+            .await
+            .unwrap();
 
         assert_eq!(local.calls(), 1);
         assert_eq!(remote.calls(), 0);
@@ -725,7 +820,9 @@ mod tests {
             false, // disabled
             health,
         );
-        r.chat_with_system(None, "react", "hint:reaction", 0.7).await.unwrap();
+        r.chat_with_system(None, "react", "hint:reaction", 0.7)
+            .await
+            .unwrap();
 
         assert_eq!(local.calls(), 0);
         assert_eq!(remote.calls(), 1);
@@ -739,8 +836,15 @@ mod tests {
         let remote = MockProvider::new("remote", "r");
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
-        r.chat_with_system(None, "reason", "hint:reasoning", 0.7).await.unwrap();
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
+        r.chat_with_system(None, "reason", "hint:reasoning", 0.7)
+            .await
+            .unwrap();
 
         // Heavy reasoning hints must be normalized to backend-valid model IDs.
         assert_eq!(remote.last_model(), "reasoning-v1");
@@ -754,9 +858,16 @@ mod tests {
         remote.set_fail(true);
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
         // Heavy task goes remote, remote fails → error propagates, no local retry.
-        let err = r.chat_with_system(None, "reason", "hint:reasoning", 0.7).await;
+        let err = r
+            .chat_with_system(None, "reason", "hint:reasoning", 0.7)
+            .await;
         assert!(err.is_err());
         assert_eq!(local.calls(), 0);
     }
@@ -768,8 +879,16 @@ mod tests {
         let remote = MockProvider::new("remote", "r");
         let health = LocalHealthChecker::seeded(true);
 
-        let r = router(Arc::clone(&local), Arc::clone(&remote), health, RoutingHints::default());
-        assert!(r.warmup().await.is_ok(), "local warmup failure must not propagate");
+        let r = router(
+            Arc::clone(&local),
+            Arc::clone(&remote),
+            health,
+            RoutingHints::default(),
+        );
+        assert!(
+            r.warmup().await.is_ok(),
+            "local warmup failure must not propagate"
+        );
     }
 
     #[tokio::test]

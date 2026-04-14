@@ -71,7 +71,6 @@ fn with_chat_completion_models<T>(f: impl FnOnce(&mut Vec<String>) -> T) -> T {
     }
 }
 
-
 fn mock_upstream_router() -> Router {
     const GENERAL_TOKEN: &str = "e2e-test-jwt";
     const BILLING_TOKEN: &str = "e2e-billing-jwt";
@@ -848,7 +847,10 @@ async fn json_rpc_web_chat_routing_cases_use_expected_backend_models() {
             .await
             .unwrap_or_else(|_| panic!("timed out waiting for chat_done for case {model_override}"))
             .expect("sse task join should succeed");
-        assert_eq!(sse_event.get("event").and_then(Value::as_str), Some("chat_done"));
+        assert_eq!(
+            sse_event.get("event").and_then(Value::as_str),
+            Some("chat_done")
+        );
 
         let mut captured_models: Vec<String> = Vec::new();
         for _ in 0..50 {
