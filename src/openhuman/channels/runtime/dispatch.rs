@@ -792,6 +792,7 @@ pub(crate) async fn process_channel_message(
         target_agent_id: scoping.target_agent_id,
         visible_tool_names: scoping.visible_tool_names,
         extra_tools: scoping.extra_tools,
+        on_progress: None,
     };
     tracing::debug!(
         channel = %msg.channel,

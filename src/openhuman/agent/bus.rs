@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::core::event_bus::register_native_global;
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::config::MultimodalConfig;
 use crate::openhuman::providers::{ChatMessage, Provider};
 use crate::openhuman::tools::Tool;
@@ -112,6 +113,13 @@ pub struct AgentTurnRequest {
     /// registry because they depend on per-user runtime state.
     /// Empty vec for agents that don't delegate.
     pub extra_tools: Vec<Box<dyn Tool>>,
+
+    /// Optional sink for per-turn [`AgentProgress`] events — lets
+    /// external channel adapters (Telegram, Slack, …) subscribe to
+    /// fine-grained tool-call / text-delta / thinking-delta events and
+    /// progressively edit outbound messages. `None` disables streaming
+    /// status updates for this turn.
+    pub on_progress: Option<mpsc::Sender<AgentProgress>>,
 }
 
 /// Final response from an agentic turn.
@@ -145,6 +153,7 @@ pub fn register_agent_handlers() {
                 target_agent_id,
                 visible_tool_names,
                 extra_tools,
+                on_progress,
             } = req;
 
             tracing::debug!(
@@ -158,6 +167,7 @@ pub fn register_agent_handlers() {
                 visible_tool_count = visible_tool_names.as_ref().map(|s| s.len()).unwrap_or(0),
                 filter_active = visible_tool_names.is_some(),
                 streaming = on_delta.is_some(),
+                progress_subscribed = on_progress.is_some(),
                 "[agent::bus] dispatching {AGENT_RUN_TURN_METHOD}"
             );
 
@@ -180,6 +190,7 @@ pub fn register_agent_handlers() {
                 on_delta,
                 visible_tool_names.as_ref(),
                 &extra_tools,
+                on_progress,
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -326,6 +337,7 @@ mod tests {
             target_agent_id: None,
             visible_tool_names: None,
             extra_tools: Vec::new(),
+            on_progress: None,
         }
     }
 

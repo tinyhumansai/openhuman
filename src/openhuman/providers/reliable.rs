@@ -533,10 +533,32 @@ impl Provider for ReliableProvider {
                 let mut backoff_ms = self.base_backoff_ms;
 
                 for attempt in 0..=self.max_retries {
+                    // Only forward the streaming sender on the first
+                    // attempt. A failed attempt that partially streamed
+                    // text/args has already published those fragments to
+                    // the downstream progress bridge; if a retry also
+                    // streamed, the consumer would see duplicated tokens
+                    // and mismatched tool_call_ids. Retries silently
+                    // degrade to non-streaming and the caller still gets
+                    // a correct aggregated response from `chat()`.
+                    let stream_this_attempt = if attempt == 0 {
+                        request.stream
+                    } else {
+                        if request.stream.is_some() {
+                            tracing::info!(
+                                provider = provider_name,
+                                model = *current_model,
+                                attempt,
+                                "[reliable] retry forcing non-streaming to avoid duplicate deltas"
+                            );
+                        }
+                        None
+                    };
                     let req = ChatRequest {
                         messages: request.messages,
                         tools: request.tools,
                         system_prompt_cache_boundary: request.system_prompt_cache_boundary,
+                        stream: stream_this_attempt,
                     };
                     match provider.chat(req, current_model, temperature).await {
                         Ok(resp) => {

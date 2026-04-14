@@ -1,6 +1,9 @@
 use crate::openhuman::agent::multimodal;
+use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
-use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ProviderCapabilityError};
+use crate::openhuman::providers::{
+    ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
+};
 use crate::openhuman::tools::traits::ToolScope;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
@@ -54,6 +57,7 @@ pub(crate) async fn agent_turn(
         None,
         None,
         &[],
+        None,
     )
     .await
 }
@@ -102,6 +106,7 @@ pub(crate) async fn run_tool_call_loop(
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     visible_tool_names: Option<&HashSet<String>>,
     extra_tools: &[Box<dyn Tool>],
+    on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -143,7 +148,29 @@ pub(crate) async fn run_tool_call_loop(
 
     let mut context_guard = ContextGuard::new();
 
+    // Announce turn start to progress subscribers (if any). We use
+    // `send().await` for lifecycle (turn/iteration) events so they
+    // survive downstream backpressure — dropping one of these would
+    // desync the web-channel progress bridge. High-volume delta events
+    // use the same backpressure discipline (see below).
+    if let Some(ref sink) = on_progress {
+        if let Err(e) = sink.send(AgentProgress::TurnStarted).await {
+            log::warn!("[agent_loop] progress sink closed at TurnStarted: {e}");
+        }
+    }
+
     for iteration in 0..max_iterations {
+        if let Some(ref sink) = on_progress {
+            if let Err(e) = sink
+                .send(AgentProgress::IterationStarted {
+                    iteration: (iteration + 1) as u32,
+                    max_iterations: max_iterations as u32,
+                })
+                .await
+            {
+                log::warn!("[agent_loop] progress sink closed at IterationStarted: {e}");
+            }
+        }
         // ── Context guard: check utilization before each LLM call ──
         match context_guard.check() {
             ContextCheckResult::Ok => {}
@@ -193,19 +220,74 @@ pub(crate) async fn run_tool_call_loop(
             None
         };
 
+        // Wire up a ProviderDelta → AgentProgress forwarder for this
+        // iteration when a progress sink exists. Senders dropped after
+        // the chat call so the forwarder task exits cleanly.
+        let iteration_for_stream = (iteration + 1) as u32;
+        let (delta_tx_opt, delta_forwarder) = if let Some(progress_sink) = on_progress.clone() {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
+            let forwarder = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    let mapped = match event {
+                        ProviderDelta::TextDelta { delta } => AgentProgress::TextDelta {
+                            delta,
+                            iteration: iteration_for_stream,
+                        },
+                        ProviderDelta::ThinkingDelta { delta } => AgentProgress::ThinkingDelta {
+                            delta,
+                            iteration: iteration_for_stream,
+                        },
+                        ProviderDelta::ToolCallStart { call_id, tool_name } => {
+                            AgentProgress::ToolCallArgsDelta {
+                                call_id,
+                                tool_name,
+                                delta: String::new(),
+                                iteration: iteration_for_stream,
+                            }
+                        }
+                        ProviderDelta::ToolCallArgsDelta { call_id, delta } => {
+                            AgentProgress::ToolCallArgsDelta {
+                                call_id,
+                                tool_name: String::new(),
+                                delta,
+                                iteration: iteration_for_stream,
+                            }
+                        }
+                    };
+                    // Await backpressure rather than dropping deltas so
+                    // partial streamed text/args stays consistent with the
+                    // eventual ToolCallStarted / ToolCallCompleted events.
+                    if progress_sink.send(mapped).await.is_err() {
+                        // Downstream closed — abandon the forwarder.
+                        break;
+                    }
+                }
+            });
+            (Some(tx), Some(forwarder))
+        } else {
+            (None, None)
+        };
+
+        let chat_result = provider
+            .chat(
+                ChatRequest {
+                    messages: &prepared_messages.messages,
+                    tools: request_tools,
+                    system_prompt_cache_boundary: None,
+                    stream: delta_tx_opt.as_ref(),
+                },
+                model,
+                temperature,
+            )
+            .await;
+
+        drop(delta_tx_opt);
+        if let Some(handle) = delta_forwarder {
+            let _ = handle.await;
+        }
+
         let (response_text, parsed_text, tool_calls, assistant_history_content, native_tool_calls) =
-            match provider
-                .chat(
-                    ChatRequest {
-                        messages: &prepared_messages.messages,
-                        tools: request_tools,
-                        system_prompt_cache_boundary: None,
-                    },
-                    model,
-                    temperature,
-                )
-                .await
-            {
+            match chat_result {
                 Ok(resp) => {
                     // Update context guard with token usage from this response.
                     if let Some(ref usage) = resp.usage {
@@ -296,6 +378,16 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
             history.push(ChatMessage::assistant(response_text.clone()));
+            if let Some(ref sink) = on_progress {
+                if let Err(e) = sink
+                    .send(AgentProgress::TurnCompleted {
+                        iterations: (iteration + 1) as u32,
+                    })
+                    .await
+                {
+                    log::warn!("[agent_loop] progress sink closed at TurnCompleted: {e}");
+                }
+            }
             return Ok(display_text);
         }
 
@@ -310,7 +402,66 @@ pub(crate) async fn run_tool_call_loop(
         // can emit one `role: tool` message per tool call with the correct ID.
         let mut tool_results = String::new();
         let mut individual_results: Vec<String> = Vec::new();
-        for call in &tool_calls {
+        for (call_idx, call) in tool_calls.iter().enumerate() {
+            // Stable id threaded through the start/complete pair (and
+            // any preceding args-delta events) so consumers can
+            // reconcile tool rows by id. The fallback includes
+            // `call_idx` to stay unique when the same tool name
+            // appears multiple times in one iteration.
+            let progress_call_id = call
+                .id
+                .clone()
+                .unwrap_or_else(|| format!("loop-{iteration}-{call_idx}-{}", call.name));
+            // Emit `ToolCallStarted` for every parsed call, even ones
+            // that will be rejected below (approval denied, CliRpcOnly,
+            // unknown) — the client-side row was created from the
+            // streamed args and needs a terminal event to resolve.
+            if let Some(ref sink) = on_progress {
+                if let Err(e) = sink
+                    .send(AgentProgress::ToolCallStarted {
+                        call_id: progress_call_id.clone(),
+                        tool_name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                        iteration: (iteration + 1) as u32,
+                    })
+                    .await
+                {
+                    log::warn!(
+                        "[agent_loop] progress sink closed while emitting ToolCallStarted: {e}"
+                    );
+                }
+            }
+
+            // Helper: emit a failed `ToolCallCompleted` for an
+            // early-exit path (denied / CliRpcOnly / unknown) so the
+            // client row flips to `error` instead of staying running.
+            let emit_failed_completion = |message: &str| {
+                let call_id = progress_call_id.clone();
+                let tool_name = call.name.clone();
+                let output_chars = message.chars().count();
+                let iteration_u32 = (iteration + 1) as u32;
+                let sink_opt = on_progress.clone();
+                async move {
+                    if let Some(sink) = sink_opt {
+                        if let Err(e) = sink
+                            .send(AgentProgress::ToolCallCompleted {
+                                call_id,
+                                tool_name,
+                                success: false,
+                                output_chars,
+                                elapsed_ms: 0,
+                                iteration: iteration_u32,
+                            })
+                            .await
+                        {
+                            log::warn!(
+                                "[agent_loop] progress sink closed while emitting early-exit ToolCallCompleted: {e}"
+                            );
+                        }
+                    }
+                }
+            };
+
             // ── Approval hook ────────────────────────────────
             if let Some(mgr) = approval {
                 if mgr.needs_approval(&call.name) {
@@ -330,6 +481,7 @@ pub(crate) async fn run_tool_call_loop(
 
                     if decision == ApprovalResponse::No {
                         let denied = "Denied by user.".to_string();
+                        emit_failed_completion(&denied).await;
                         individual_results.push(denied.clone());
                         let _ = writeln!(
                             tool_results,
@@ -370,6 +522,7 @@ pub(crate) async fn run_tool_call_loop(
                         "Tool '{}' is only available via explicit CLI/RPC invocation, not in the autonomous agent loop.",
                         call.name
                     );
+                    emit_failed_completion(&denied).await;
                     individual_results.push(denied.clone());
                     let _ = writeln!(
                         tool_results,
@@ -384,26 +537,29 @@ pub(crate) async fn run_tool_call_loop(
                 let tool_deadline =
                     crate::openhuman::tool_timeout::tool_execution_timeout_duration();
                 let timeout_secs = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
-                match tokio::time::timeout(tool_deadline, tool.execute(call.arguments.clone()))
-                    .await
-                {
+                let tool_started = std::time::Instant::now();
+                let outcome =
+                    tokio::time::timeout(tool_deadline, tool.execute(call.arguments.clone())).await;
+                let elapsed_ms = tool_started.elapsed().as_millis() as u64;
+                let (result_text, success) = match outcome {
                     Ok(Ok(r)) => {
                         let output = r.output();
-                        if !r.is_error {
+                        let success = !r.is_error;
+                        if success {
                             tracing::debug!(
                                 iteration,
                                 tool = call.name.as_str(),
                                 output_len = output.len(),
                                 "[agent_loop] tool succeeded"
                             );
-                            scrub_credentials(&output)
+                            (scrub_credentials(&output), true)
                         } else {
                             tracing::warn!(
                                 iteration,
                                 tool = call.name.as_str(),
                                 "[agent_loop] tool returned error: {output}"
                             );
-                            format!("Error: {output}")
+                            (format!("Error: {output}"), false)
                         }
                     }
                     Ok(Err(e)) => {
@@ -412,7 +568,7 @@ pub(crate) async fn run_tool_call_loop(
                             tool = call.name.as_str(),
                             "[agent_loop] tool execution failed: {e}"
                         );
-                        format!("Error executing {}: {e}", call.name)
+                        (format!("Error executing {}: {e}", call.name), false)
                     }
                     Err(_) => {
                         tracing::error!(
@@ -421,19 +577,40 @@ pub(crate) async fn run_tool_call_loop(
                             secs = timeout_secs,
                             "[agent_loop] tool execution timed out"
                         );
-                        format!(
-                            "Error: tool '{}' timed out after {} seconds",
-                            call.name, timeout_secs
+                        (
+                            format!(
+                                "Error: tool '{}' timed out after {} seconds",
+                                call.name, timeout_secs
+                            ),
+                            false,
                         )
                     }
+                };
+                if let Some(ref sink) = on_progress {
+                    if let Err(e) = sink
+                        .send(AgentProgress::ToolCallCompleted {
+                            call_id: progress_call_id.clone(),
+                            tool_name: call.name.clone(),
+                            success,
+                            output_chars: result_text.chars().count(),
+                            elapsed_ms,
+                            iteration: (iteration + 1) as u32,
+                        })
+                        .await
+                    {
+                        log::warn!("[agent_loop] progress sink closed while emitting ToolCallCompleted: {e}");
+                    }
                 }
+                result_text
             } else {
                 tracing::warn!(
                     iteration,
                     tool = call.name.as_str(),
                     "[agent_loop] unknown tool requested"
                 );
-                format!("Unknown tool: {}", call.name)
+                let msg = format!("Unknown tool: {}", call.name);
+                emit_failed_completion(&msg).await;
+                msg
             };
 
             individual_results.push(result.clone());
@@ -626,6 +803,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect_err("vision markers should be rejected");
@@ -662,6 +840,7 @@ mod tests {
             Some(tx),
             None,
             &[],
+            None,
         )
         .await
         .expect("final text should succeed");
@@ -713,6 +892,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("loop should recover after denial");
@@ -767,6 +947,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("native tool flow should succeed");
@@ -824,6 +1005,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("non-cli channels should auto-approve supervised tools");
@@ -874,6 +1056,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("default iteration fallback should still succeed");
@@ -928,6 +1111,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect("loop should recover after tool errors");
@@ -966,6 +1150,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect_err("provider error path should fail");
@@ -997,6 +1182,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
         )
         .await
         .expect_err("loop should stop after configured iterations");

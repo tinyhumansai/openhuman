@@ -5,7 +5,7 @@ use base64::Engine;
 use reqwest::header::AUTHORIZATION;
 use reqwest::{Client, Method, Url};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::time::Duration;
 
 use super::jwt::bearer_authorization_value;
@@ -518,6 +518,59 @@ impl BackendOAuthClient {
             Method::POST,
             &format!("channels/{encoded}/messages"),
             Some(message_body),
+        )
+        .await
+    }
+
+    /// Signals "the agent is typing…" on a channel that supports it
+    /// (Telegram's `sendChatAction`, Slack's typing event, …). The backend
+    /// resolves the target chat from the channel integration metadata and
+    /// is responsible for hitting the provider-native API.
+    ///
+    /// Telegram keeps the typing indicator alive for ~5 seconds per call,
+    /// so callers should re-invoke every ~4 s for as long as the turn is
+    /// in flight. Returns `Err` if the backend doesn't support typing for
+    /// this channel — caller should swallow the error silently.
+    pub async fn send_channel_typing(&self, channel: &str, bearer_jwt: &str) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        let encoded = urlencoding::encode(channel);
+        self.authed_json(
+            bearer_jwt,
+            Method::POST,
+            &format!("channels/{encoded}/typing"),
+            Some(json!({})),
+        )
+        .await
+    }
+
+    /// Edits an existing channel message. Used by the progressive-edit
+    /// streaming path (Telegram / Slack) to coalesce live deltas into a
+    /// single evolving outbound message rather than spamming the chat
+    /// with one bubble per token.
+    ///
+    /// `message_id` is the backend-returned id of the message that was
+    /// first sent via [`Self::send_channel_message`]. Returns the
+    /// updated message record, or an `Err` if the backend does not
+    /// support editing for this channel (caller should fall back to
+    /// atomic-final delivery).
+    pub async fn send_channel_edit(
+        &self,
+        channel: &str,
+        message_id: &str,
+        bearer_jwt: &str,
+        edit_body: Value,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        anyhow::ensure!(!message_id.is_empty(), "message_id is required");
+        let encoded_channel = urlencoding::encode(channel);
+        let encoded_id = urlencoding::encode(message_id);
+        self.authed_json(
+            bearer_jwt,
+            Method::PATCH,
+            &format!("channels/{encoded_channel}/messages/{encoded_id}"),
+            Some(edit_body),
         )
         .await
     }

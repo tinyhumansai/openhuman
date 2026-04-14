@@ -158,6 +158,9 @@ pub async fn start_chat(
                 reaction_emoji: None,
                 segment_index: None,
                 segment_total: None,
+                delta: None,
+                delta_kind: None,
+                tool_call_id: None,
             });
         }
     }
@@ -212,6 +215,9 @@ pub async fn start_chat(
                     reaction_emoji: None,
                     segment_index: None,
                     segment_total: None,
+                    delta: None,
+                    delta_kind: None,
+                    tool_call_id: None,
                 });
             }
         }
@@ -278,6 +284,9 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             reaction_emoji: None,
             segment_index: None,
             segment_total: None,
+            delta: None,
+            delta_kind: None,
+            tool_call_id: None,
         });
     }
 
@@ -410,8 +419,102 @@ fn spawn_progress_bridge(
     use crate::openhuman::agent::progress::AgentProgress;
 
     tokio::spawn(async move {
+        log::debug!(
+            "[web_channel][bridge] spawned client_id={} thread_id={} request_id={}",
+            client_id,
+            thread_id,
+            request_id,
+        );
         let mut round: u32 = 0;
+        let mut events_seen: u64 = 0;
         while let Some(event) = rx.recv().await {
+            events_seen += 1;
+            // Per-variant trace so branch decisions are visible in
+            // terminal output when correlating progress over Socket.IO.
+            // Kept at trace-level for high-volume deltas and debug for
+            // lifecycle transitions.
+            match &event {
+                AgentProgress::TextDelta { delta, iteration } => {
+                    log::trace!(
+                        "[web_channel][bridge] text_delta round={} chars={} request_id={}",
+                        iteration,
+                        delta.len(),
+                        request_id,
+                    );
+                }
+                AgentProgress::ThinkingDelta { delta, iteration } => {
+                    log::trace!(
+                        "[web_channel][bridge] thinking_delta round={} chars={} request_id={}",
+                        iteration,
+                        delta.len(),
+                        request_id,
+                    );
+                }
+                AgentProgress::ToolCallArgsDelta {
+                    call_id,
+                    tool_name,
+                    delta,
+                    iteration,
+                } => {
+                    log::trace!(
+                        "[web_channel][bridge] tool_args_delta round={} tool={} call_id={} chars={} request_id={}",
+                        iteration,
+                        tool_name,
+                        call_id,
+                        delta.len(),
+                        request_id,
+                    );
+                }
+                AgentProgress::ToolCallStarted {
+                    call_id,
+                    tool_name,
+                    iteration,
+                    ..
+                } => {
+                    log::debug!(
+                        "[web_channel][bridge] tool_call round={} tool={} call_id={} request_id={}",
+                        iteration,
+                        tool_name,
+                        call_id,
+                        request_id,
+                    );
+                }
+                AgentProgress::ToolCallCompleted {
+                    call_id,
+                    tool_name,
+                    success,
+                    iteration,
+                    ..
+                } => {
+                    log::debug!(
+                        "[web_channel][bridge] tool_result round={} tool={} call_id={} success={} request_id={}",
+                        iteration,
+                        tool_name,
+                        call_id,
+                        success,
+                        request_id,
+                    );
+                }
+                AgentProgress::SubagentFailed {
+                    agent_id, error, ..
+                } => {
+                    log::warn!(
+                        "[web_channel][bridge] subagent_failed agent_id={} err={} client_id={} thread_id={} request_id={}",
+                        agent_id,
+                        error,
+                        client_id,
+                        thread_id,
+                        request_id,
+                    );
+                }
+                other => {
+                    log::debug!(
+                        "[web_channel][bridge] lifecycle event={:?} request_id={}",
+                        std::mem::discriminant(other),
+                        request_id,
+                    );
+                }
+            }
             match event {
                 AgentProgress::TurnStarted => {
                     publish_web_channel_event(WebChannelEvent {
@@ -431,6 +534,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::IterationStarted {
@@ -455,9 +561,13 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::ToolCallStarted {
+                    call_id,
                     tool_name,
                     arguments,
                     iteration,
@@ -467,21 +577,16 @@ fn spawn_progress_bridge(
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
-                        message: None,
-                        error_type: None,
                         tool_name: Some(tool_name),
                         skill_id: Some("web_channel".to_string()),
                         args: Some(arguments),
-                        output: None,
-                        success: None,
                         round: Some(iteration),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
+                        tool_call_id: Some(call_id),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::ToolCallCompleted {
+                    call_id,
                     tool_name,
                     success,
                     output_chars,
@@ -493,21 +598,16 @@ fn spawn_progress_bridge(
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        full_response: None,
-                        message: None,
-                        error_type: None,
                         tool_name: Some(tool_name),
                         skill_id: Some("web_channel".to_string()),
-                        args: None,
                         output: Some(
                             json!({"output_chars": output_chars, "elapsed_ms": elapsed_ms})
                                 .to_string(),
                         ),
                         success: Some(success),
                         round: Some(iteration),
-                        reaction_emoji: None,
-                        segment_index: None,
-                        segment_total: None,
+                        tool_call_id: Some(call_id),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::SubagentSpawned { agent_id, task_id } => {
@@ -528,6 +628,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::SubagentCompleted {
@@ -554,6 +657,9 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
                     });
                 }
                 AgentProgress::SubagentFailed {
@@ -578,6 +684,57 @@ fn spawn_progress_bridge(
                         reaction_emoji: None,
                         segment_index: None,
                         segment_total: None,
+                        delta: None,
+                        delta_kind: None,
+                        tool_call_id: None,
+                    });
+                }
+                AgentProgress::TextDelta { delta, iteration } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "text_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(iteration),
+                        delta: Some(delta),
+                        delta_kind: Some("text".to_string()),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::ThinkingDelta { delta, iteration } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "thinking_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(iteration),
+                        delta: Some(delta),
+                        delta_kind: Some("thinking".to_string()),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::ToolCallArgsDelta {
+                    call_id,
+                    tool_name,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "tool_args_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: if tool_name.is_empty() {
+                            None
+                        } else {
+                            Some(tool_name)
+                        },
+                        skill_id: Some("web_channel".to_string()),
+                        round: Some(iteration),
+                        delta: Some(delta),
+                        delta_kind: Some("tool_args".to_string()),
+                        tool_call_id: Some(call_id),
+                        ..Default::default()
                     });
                 }
                 AgentProgress::TurnCompleted { iterations } => {
@@ -588,6 +745,14 @@ fn spawn_progress_bridge(
                 }
             }
         }
+        log::debug!(
+            "[web_channel][bridge] exit client_id={} thread_id={} request_id={} round={} events_seen={}",
+            client_id,
+            thread_id,
+            request_id,
+            round,
+            events_seen,
+        );
     });
 }
 

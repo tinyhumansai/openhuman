@@ -7,6 +7,10 @@ use std::sync::LazyLock;
 pub(crate) struct ParsedToolCall {
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Provider-assigned call id when the call came from a native
+    /// tool-use response. `None` for prompt-guided (XML-parsed)
+    /// tool calls — progress emitters synthesise a fallback id.
+    pub id: Option<String>,
 }
 
 /// Find a tool by name in the registry.
@@ -32,7 +36,11 @@ pub(crate) fn parse_tool_call_value(value: &serde_json::Value) -> Option<ParsedT
             .to_string();
         if !name.is_empty() {
             let arguments = parse_arguments_value(function.get("arguments"));
-            return Some(ParsedToolCall { name, arguments });
+            return Some(ParsedToolCall {
+                name,
+                arguments,
+                id: None,
+            });
         }
     }
 
@@ -48,7 +56,11 @@ pub(crate) fn parse_tool_call_value(value: &serde_json::Value) -> Option<ParsedT
     }
 
     let arguments = parse_arguments_value(value.get("arguments"));
-    Some(ParsedToolCall { name, arguments })
+    Some(ParsedToolCall {
+        name,
+        arguments,
+        id: None,
+    })
 }
 
 pub(crate) fn parse_tool_calls_from_json_value(value: &serde_json::Value) -> Vec<ParsedToolCall> {
@@ -455,6 +467,7 @@ pub(crate) fn parse_tool_calls(response: &str) -> (String, Vec<ParsedToolCall>) 
                 calls.push(ParsedToolCall {
                     name: name.clone(),
                     arguments: args.clone(),
+                    id: None,
                 });
                 if let Some(r) = raw {
                     cleaned_text = cleaned_text.replace(r, "");
@@ -492,6 +505,7 @@ pub(crate) fn parse_structured_tool_calls(tool_calls: &[ToolCall]) -> Vec<Parsed
             name: call.name.clone(),
             arguments: serde_json::from_str::<serde_json::Value>(&call.arguments)
                 .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new())),
+            id: Some(call.id.clone()),
         })
         .collect()
 }

@@ -8,7 +8,7 @@ use socketioxide::SocketIo;
 ///
 /// This structure defines the data sent to Socket.IO clients for various
 /// chat-related events, such as message delivery, tool execution, and errors.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WebChannelEvent {
     /// The event name (e.g., `chat_message`, `tool_call`).
@@ -55,6 +55,20 @@ pub struct WebChannelEvent {
     /// Total number of segments in a segmented delivery.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub segment_total: Option<u32>,
+    /// Fine-grained streaming payload for `text_delta`, `thinking_delta`,
+    /// and `tool_args_delta` events. Concatenating `delta`s in order
+    /// yields the full text/thinking/arguments string.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<String>,
+    /// Discriminator for the `delta` payload: `"text"`, `"thinking"`,
+    /// or `"tool_args"`. Only set on streaming delta events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta_kind: Option<String>,
+    /// Provider-assigned tool call id that groups `tool_args_delta`
+    /// chunks together and ties them to the eventual `tool_call` /
+    /// `tool_result` events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

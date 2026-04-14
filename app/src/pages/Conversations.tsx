@@ -54,6 +54,11 @@ import {
 const DEFAULT_THREAD_ID = 'default-thread';
 const DEFAULT_THREAD_TITLE = 'Conversation';
 const AGENTIC_MODEL_ID = 'agentic-v1';
+/** Maximum trailing characters rendered in the live-streaming assistant
+ *  preview bubble. The full response is revealed via `addInferenceResponse`
+ *  on `chat_done` — this is purely a ticker-tape affordance to signal
+ *  progress without jumping the scroll position as tokens arrive. */
+const STREAMING_PREVIEW_CHARS = 120;
 type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
 type InputMode = 'text' | 'voice';
 type ReplyMode = 'text' | 'voice';
@@ -78,6 +83,19 @@ interface ToolTimelineEntry {
   name: string;
   round: number;
   status: ToolTimelineEntryStatus;
+  /** Live JSON fragment streamed while the model composes the call. */
+  argsBuffer?: string;
+}
+
+/**
+ * Live streaming state for the in-flight agent turn on a thread. Cleared
+ * on `chat_done` / `chat_error`. Rendered as a provisional assistant
+ * bubble + optional "Thinking…" collapsible while present.
+ */
+interface StreamingAssistantState {
+  requestId: string;
+  content: string;
+  thinking: string;
 }
 
 function formatRelativeTime(dateStr: string): string {
@@ -206,6 +224,9 @@ const Conversations = () => {
   >({});
   const [inferenceStatusByThread, setInferenceStatusByThread] = useState<
     Record<string, InferenceStatus>
+  >({});
+  const [streamingAssistantByThread, setStreamingAssistantByThread] = useState<
+    Record<string, StreamingAssistantState>
   >({});
   const rustChat = useRustChat();
   const defaultChannelType = useAppSelector(
@@ -479,17 +500,34 @@ const Conversations = () => {
             activeTool: event.tool_name,
           },
         }));
-        const eventKey = `tool_call:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}`;
+        const eventKey = `tool_call:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}:${event.tool_call_id ?? ''}`;
         if (!markChatEventSeen(eventKey)) return;
 
         setToolTimelineByThread(prev => {
           const existing = prev[event.thread_id] ?? [];
+          // If a row was already created by onToolArgsDelta (keyed by
+          // tool_call_id), upgrade it in place so we don't duplicate.
+          const existingIdx = event.tool_call_id
+            ? existing.findIndex(entry => entry.id === event.tool_call_id)
+            : -1;
+          if (existingIdx >= 0) {
+            const merged = [...existing];
+            merged[existingIdx] = {
+              ...merged[existingIdx],
+              name: event.tool_name,
+              round: event.round,
+              status: 'running',
+            };
+            return { ...prev, [event.thread_id]: merged };
+          }
           return {
             ...prev,
             [event.thread_id]: [
               ...existing,
               {
-                id: `${event.thread_id}:${event.round}:${existing.length}:${event.tool_name}`,
+                id:
+                  event.tool_call_id ??
+                  `${event.thread_id}:${event.round}:${existing.length}:${event.tool_name}`,
                 name: event.tool_name,
                 round: event.round,
                 status: 'running',
@@ -499,7 +537,7 @@ const Conversations = () => {
         });
       },
       onToolResult: (event: ChatToolResultEvent) => {
-        const eventKey = `tool_result:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}:${event.success}`;
+        const eventKey = `tool_result:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}:${event.success}:${event.tool_call_id ?? ''}`;
         if (!markChatEventSeen(eventKey)) return;
 
         setToolTimelineByThread(prev => {
@@ -508,16 +546,30 @@ const Conversations = () => {
 
           const nextEntries = [...existing];
           let changed = false;
-          for (let i = nextEntries.length - 1; i >= 0; i--) {
-            const entry = nextEntries[i];
-            if (
-              entry.status === 'running' &&
-              entry.name === event.tool_name &&
-              entry.round === event.round
-            ) {
-              nextEntries[i] = { ...entry, status: event.success ? 'success' : 'error' };
+          // Prefer matching by tool_call_id; fall back to name+round
+          // for legacy events that don't carry an id.
+          if (event.tool_call_id) {
+            const idx = nextEntries.findIndex(entry => entry.id === event.tool_call_id);
+            if (idx >= 0) {
+              nextEntries[idx] = {
+                ...nextEntries[idx],
+                status: event.success ? 'success' : 'error',
+              };
               changed = true;
-              break;
+            }
+          }
+          if (!changed) {
+            for (let i = nextEntries.length - 1; i >= 0; i--) {
+              const entry = nextEntries[i];
+              if (
+                entry.status === 'running' &&
+                entry.name === event.tool_name &&
+                entry.round === event.round
+              ) {
+                nextEntries[i] = { ...entry, status: event.success ? 'success' : 'error' };
+                changed = true;
+                break;
+              }
             }
           }
 
@@ -604,12 +656,113 @@ const Conversations = () => {
         }
         dispatch(addInferenceResponse({ content: segmentText(event), threadId: event.thread_id }));
       },
+      onTextDelta: event => {
+        setStreamingAssistantByThread(prev => {
+          const existing = prev[event.thread_id];
+          if (existing && existing.requestId !== event.request_id) {
+            return {
+              ...prev,
+              [event.thread_id]: {
+                requestId: event.request_id,
+                content: event.delta,
+                thinking: '',
+              },
+            };
+          }
+          return {
+            ...prev,
+            [event.thread_id]: {
+              requestId: event.request_id,
+              content: (existing?.content ?? '') + event.delta,
+              thinking: existing?.thinking ?? '',
+            },
+          };
+        });
+      },
+      onThinkingDelta: event => {
+        setStreamingAssistantByThread(prev => {
+          const existing = prev[event.thread_id];
+          if (existing && existing.requestId !== event.request_id) {
+            return {
+              ...prev,
+              [event.thread_id]: {
+                requestId: event.request_id,
+                content: '',
+                thinking: event.delta,
+              },
+            };
+          }
+          return {
+            ...prev,
+            [event.thread_id]: {
+              requestId: event.request_id,
+              content: existing?.content ?? '',
+              thinking: (existing?.thinking ?? '') + event.delta,
+            },
+          };
+        });
+      },
+      onToolArgsDelta: event => {
+        setToolTimelineByThread(prev => {
+          const existing = prev[event.thread_id] ?? [];
+          // Reconcile strategy (matches onToolCall/onToolResult keys):
+          //   1. Match by tool_call_id when known.
+          //   2. Fall back to an in-flight running row with the same
+          //      name+round (legacy path when tool_call_id is absent).
+          //   3. Create a fresh row keyed by tool_call_id.
+          let matchIdx = -1;
+          if (event.tool_call_id) {
+            matchIdx = existing.findIndex(entry => entry.id === event.tool_call_id);
+          }
+          if (matchIdx < 0 && event.tool_name) {
+            matchIdx = existing.findIndex(
+              entry =>
+                entry.status === 'running' &&
+                entry.name === event.tool_name &&
+                entry.round === event.round
+            );
+          }
+          if (matchIdx >= 0) {
+            const merged = [...existing];
+            merged[matchIdx] = {
+              ...merged[matchIdx],
+              argsBuffer: (merged[matchIdx].argsBuffer ?? '') + event.delta,
+              // Fill in the tool name once the provider sends it.
+              name:
+                merged[matchIdx].name.length === 0 && event.tool_name
+                  ? event.tool_name
+                  : merged[matchIdx].name,
+            };
+            return { ...prev, [event.thread_id]: merged };
+          }
+          return {
+            ...prev,
+            [event.thread_id]: [
+              ...existing,
+              {
+                id: event.tool_call_id,
+                name: event.tool_name ?? '',
+                round: event.round,
+                status: 'running' as const,
+                argsBuffer: event.delta,
+              },
+            ],
+          };
+        });
+      },
       onDone: event => {
         const eventKey = `done:${event.thread_id}:${event.request_id ?? 'none'}`;
         if (!markChatEventSeen(eventKey)) return;
 
         // Clear inference status — the turn is finished
         setInferenceStatusByThread(prev => {
+          if (!prev[event.thread_id]) return prev;
+          const next = { ...prev };
+          delete next[event.thread_id];
+          return next;
+        });
+        // Clear the streaming buffer — the final message replaces it.
+        setStreamingAssistantByThread(prev => {
           if (!prev[event.thread_id]) return prev;
           const next = { ...prev };
           delete next[event.thread_id];
@@ -677,6 +830,12 @@ const Conversations = () => {
         setIsSending(false);
         // Clear inference status on error
         setInferenceStatusByThread(prev => {
+          if (!prev[event.thread_id]) return prev;
+          const next = { ...prev };
+          delete next[event.thread_id];
+          return next;
+        });
+        setStreamingAssistantByThread(prev => {
           if (!prev[event.thread_id]) return prev;
           const next = { ...prev };
           delete next[event.thread_id];
@@ -1097,6 +1256,9 @@ const Conversations = () => {
   const selectedInferenceStatus = selectedThreadId
     ? (inferenceStatusByThread[selectedThreadId] ?? null)
     : null;
+  const selectedStreamingAssistant = selectedThreadId
+    ? (streamingAssistantByThread[selectedThreadId] ?? null)
+    : null;
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
 
   return (
@@ -1266,17 +1428,59 @@ const Conversations = () => {
                   </div>
                 </div>
               ))}
-              {activeThreadId === selectedThreadId && isSending && (
-                <div className="flex justify-start">
-                  <div className="bg-stone-200/80 rounded-2xl rounded-bl-md px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
-                      <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+              {activeThreadId === selectedThreadId &&
+                isSending &&
+                // Suppress the legacy 3-dot placeholder once streaming
+                // output (visible text or thinking) has started — the
+                // streaming preview bubble below takes over as the
+                // activity indicator.
+                !(
+                  (selectedStreamingAssistant?.content.length ?? 0) > 0 ||
+                  (selectedStreamingAssistant?.thinking.length ?? 0) > 0
+                ) && (
+                  <div className="flex justify-start">
+                    <div className="bg-stone-200/80 rounded-2xl rounded-bl-md px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:0ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:150ms]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-stone-500 animate-bounce [animation-delay:300ms]" />
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              {/* Streaming assistant preview — compact trailing tail of the
+                  in-flight response. Rendered as plain text (not Markdown) to
+                  avoid jitter from partially-parsed fences. The final bubble
+                  replaces this via addInferenceResponse on chat_done. */}
+              {selectedStreamingAssistant &&
+                (selectedStreamingAssistant.content.length > 0 ||
+                  selectedStreamingAssistant.thinking.length > 0) && (
+                  <div className="flex justify-start">
+                    <div className="relative max-w-[75%]">
+                      {selectedStreamingAssistant.thinking.length > 0 && (
+                        <details className="mb-1.5 bg-stone-100 rounded-lg px-3 py-1.5 text-xs text-stone-600 open:bg-stone-100">
+                          <summary className="cursor-pointer select-none flex items-center gap-1.5">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary-400 animate-pulse" />
+                            <span>Thinking…</span>
+                          </summary>
+                          <pre className="whitespace-pre-wrap break-words mt-1.5 font-sans text-[11px] text-stone-500">
+                            {selectedStreamingAssistant.thinking.slice(-STREAMING_PREVIEW_CHARS)}
+                          </pre>
+                        </details>
+                      )}
+                      {selectedStreamingAssistant.content.length > 0 && (
+                        <div className="rounded-2xl rounded-bl-md px-3 py-1.5 bg-stone-200/80 text-stone-900">
+                          <p className="text-xs text-stone-700 font-mono whitespace-pre-wrap break-words leading-snug">
+                            {selectedStreamingAssistant.content.length >
+                              STREAMING_PREVIEW_CHARS && <span className="text-stone-400">…</span>}
+                            {selectedStreamingAssistant.content.slice(-STREAMING_PREVIEW_CHARS)}
+                            <span className="inline-block w-1 h-3 ml-0.5 align-middle bg-primary-400 animate-pulse" />
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               {/* Inference status indicator */}
               {selectedInferenceStatus && (
                 <div className="flex items-center gap-2 px-1 py-1.5 text-xs text-stone-500">
@@ -1297,18 +1501,27 @@ const Conversations = () => {
               {selectedThreadToolTimeline.length > 0 && (
                 <div className="space-y-1 px-1 py-1">
                   {selectedThreadToolTimeline.map(entry => (
-                    <div key={entry.id} className="flex items-center gap-2 text-xs text-stone-400">
-                      <span className="font-mono">{entry.name}</span>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[10px] ${
-                          entry.status === 'running'
-                            ? 'bg-amber-100 text-amber-600'
-                            : entry.status === 'success'
-                              ? 'bg-sage-100 text-sage-600'
-                              : 'bg-coral-100 text-coral-600'
-                        }`}>
-                        {entry.status}
-                      </span>
+                    <div key={entry.id} className="flex flex-col gap-0.5 text-xs text-stone-400">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono">{entry.name}</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] ${
+                            entry.status === 'running'
+                              ? 'bg-amber-100 text-amber-600'
+                              : entry.status === 'success'
+                                ? 'bg-sage-100 text-sage-600'
+                                : 'bg-coral-100 text-coral-600'
+                          }`}>
+                          {entry.status}
+                        </span>
+                      </div>
+                      {entry.status === 'running' &&
+                        entry.argsBuffer &&
+                        entry.argsBuffer.length > 0 && (
+                          <pre className="ml-1 mt-0.5 px-2 py-1 bg-stone-100 rounded text-[10px] font-mono text-stone-500 whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
+                            {entry.argsBuffer}
+                          </pre>
+                        )}
                     </div>
                   ))}
                 </div>

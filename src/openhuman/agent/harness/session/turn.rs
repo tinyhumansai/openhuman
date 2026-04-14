@@ -31,7 +31,7 @@ use crate::openhuman::context::prompt::{
 };
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::memory::MemoryCategory;
-use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage};
+use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
@@ -60,7 +60,7 @@ impl Agent {
     ///    extraction asynchronously.
     pub async fn turn(&mut self, user_message: &str) -> Result<String> {
         let turn_started = std::time::Instant::now();
-        self.emit_progress(AgentProgress::TurnStarted);
+        self.emit_progress(AgentProgress::TurnStarted).await;
         log::info!("[agent] turn started — awaiting user message processing");
         log::info!(
             "[agent_loop] turn start message_chars={} history_len={} max_tool_iterations={}",
@@ -206,7 +206,8 @@ impl Agent {
                 self.emit_progress(AgentProgress::IterationStarted {
                     iteration: (iteration + 1) as u32,
                     max_iterations: self.config.max_tool_iterations as u32,
-                });
+                })
+                .await;
                 log::info!(
                     "[agent_loop] iteration start i={} history_len={}",
                     iteration + 1,
@@ -313,6 +314,61 @@ impl Agent {
                     self.tool_dispatcher.should_send_tool_specs()
                 );
                 let provider_started = std::time::Instant::now();
+                // Only set up the streaming sink when someone is
+                // listening for progress events. Without a listener the
+                // channel buffer would fill up and back-pressure the
+                // provider; skipping it also keeps the non-streaming
+                // HTTP path alive for providers that don't implement
+                // SSE.
+                let iteration_for_stream = (iteration + 1) as u32;
+                let (delta_tx_opt, delta_forwarder) = if self.on_progress.is_some() {
+                    let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
+                    let progress_tx = self.on_progress.clone();
+                    let forwarder = tokio::spawn(async move {
+                        while let Some(event) = rx.recv().await {
+                            let Some(ref sink) = progress_tx else {
+                                continue;
+                            };
+                            let mapped = match event {
+                                ProviderDelta::TextDelta { delta } => AgentProgress::TextDelta {
+                                    delta,
+                                    iteration: iteration_for_stream,
+                                },
+                                ProviderDelta::ThinkingDelta { delta } => {
+                                    AgentProgress::ThinkingDelta {
+                                        delta,
+                                        iteration: iteration_for_stream,
+                                    }
+                                }
+                                ProviderDelta::ToolCallStart { call_id, tool_name } => {
+                                    AgentProgress::ToolCallArgsDelta {
+                                        call_id,
+                                        tool_name,
+                                        delta: String::new(),
+                                        iteration: iteration_for_stream,
+                                    }
+                                }
+                                ProviderDelta::ToolCallArgsDelta { call_id, delta } => {
+                                    AgentProgress::ToolCallArgsDelta {
+                                        call_id,
+                                        tool_name: String::new(),
+                                        delta,
+                                        iteration: iteration_for_stream,
+                                    }
+                                }
+                            };
+                            // Await backpressure so streamed deltas arrive
+                            // in order and aren't silently dropped when the
+                            // downstream progress bridge is slow.
+                            if sink.send(mapped).await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    (Some(tx), Some(forwarder))
+                } else {
+                    (None, None)
+                };
                 let response = match self
                     .provider
                     .chat(
@@ -324,6 +380,7 @@ impl Agent {
                                 None
                             },
                             system_prompt_cache_boundary: self.system_prompt_cache_boundary,
+                            stream: delta_tx_opt.as_ref(),
                         },
                         &effective_model,
                         self.temperature,
@@ -351,8 +408,18 @@ impl Agent {
                         }
                         resp
                     }
-                    Err(err) => return Err(err),
+                    Err(err) => {
+                        drop(delta_tx_opt);
+                        if let Some(handle) = delta_forwarder {
+                            let _ = handle.await;
+                        }
+                        return Err(err);
+                    }
                 };
+                drop(delta_tx_opt);
+                if let Some(handle) = delta_forwarder {
+                    let _ = handle.await;
+                }
 
                 let (text, calls) = self.tool_dispatcher.parse_response(&response);
                 let calls = Self::with_fallback_tool_call_ids(calls, iteration);
@@ -385,7 +452,8 @@ impl Agent {
 
                     self.emit_progress(AgentProgress::TurnCompleted {
                         iterations: (iteration + 1) as u32,
-                    });
+                    })
+                    .await;
 
                     self.history
                         .push(ConversationMessage::Chat(ChatMessage::assistant(
@@ -584,11 +652,26 @@ impl Agent {
             tool_name: call.name.clone(),
             session_id: self.event_session_id().to_string(),
         });
+        // Synthesise a fallback id for prompt-guided (non-native) tool
+        // calls so downstream consumers always have a stable key to
+        // reconcile tool_call / tool_args_delta / tool_result rows by.
+        // A random uuid guarantees uniqueness even when the same tool
+        // name appears multiple times in the same iteration's parsed
+        // calls.
+        let call_id = call.tool_call_id.clone().unwrap_or_else(|| {
+            format!(
+                "turn-{iteration}-{}-{}",
+                call.name,
+                uuid::Uuid::new_v4().simple()
+            )
+        });
         self.emit_progress(AgentProgress::ToolCallStarted {
+            call_id: call_id.clone(),
             tool_name: call.name.clone(),
             arguments: call.arguments.clone(),
             iteration: (iteration + 1) as u32,
-        });
+        })
+        .await;
         log::info!("[agent] executing tool: {}", call.name);
         log::info!("[agent_loop] tool start name={}", call.name);
 
@@ -672,12 +755,14 @@ impl Agent {
             elapsed_ms,
         });
         self.emit_progress(AgentProgress::ToolCallCompleted {
+            call_id: call_id.clone(),
             tool_name: call.name.clone(),
             success,
             output_chars: result.chars().count(),
             elapsed_ms,
             iteration: (iteration + 1) as u32,
-        });
+        })
+        .await;
         log::info!(
             "[agent] tool completed: {} success={} elapsed_ms={}",
             call.name,
@@ -797,10 +882,19 @@ impl Agent {
     // History & prompt helpers
     // ─────────────────────────────────────────────────────────────────
 
-    /// Emit a progress event (fire-and-forget) if the sender is set.
-    fn emit_progress(&self, event: AgentProgress) {
+    /// Emit a lifecycle progress event. Uses `send().await` so control
+    /// events (turn/iteration boundaries, tool_call_started/completed,
+    /// turn_completed) survive downstream backpressure from the
+    /// higher-frequency streamed deltas that share the same `on_progress`
+    /// channel — dropping one of these would desync the web-channel
+    /// progress bridge (e.g. a tool row stuck in `running` forever).
+    /// A closed sink is logged and ignored; no progress subscriber is
+    /// equivalent to success.
+    async fn emit_progress(&self, event: AgentProgress) {
         if let Some(ref tx) = self.on_progress {
-            let _ = tx.try_send(event);
+            if let Err(e) = tx.send(event).await {
+                log::warn!("[agent] progress sink closed while emitting lifecycle event: {e}");
+            }
         }
     }
 
