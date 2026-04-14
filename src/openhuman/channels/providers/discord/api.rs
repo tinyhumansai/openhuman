@@ -131,8 +131,18 @@ pub async fn check_channel_permissions(
     guild_id: &str,
     channel_id: &str,
 ) -> anyhow::Result<BotPermissionCheck> {
+    check_channel_permissions_at_base(DISCORD_API_BASE, token, guild_id, channel_id).await
+}
+
+/// Test seam: see [`check_channel_permissions`].
+async fn check_channel_permissions_at_base(
+    base: &str,
+    token: &str,
+    guild_id: &str,
+    channel_id: &str,
+) -> anyhow::Result<BotPermissionCheck> {
     // Fetch the bot's guild member info which includes computed permissions
-    let url = format!("{DISCORD_API_BASE}/guilds/{guild_id}/members/@me");
+    let url = format!("{base}/guilds/{guild_id}/members/@me");
     tracing::debug!(
         "[discord-api] checking permissions in channel {channel_id} (guild {guild_id})"
     );
@@ -152,7 +162,7 @@ pub async fn check_channel_permissions(
     let member: serde_json::Value = resp.json().await?;
 
     // Fetch guild roles to compute permissions
-    let roles_url = format!("{DISCORD_API_BASE}/guilds/{guild_id}/roles");
+    let roles_url = format!("{base}/guilds/{guild_id}/roles");
     let roles_resp = build_client()
         .get(&roles_url)
         .header("Authorization", auth_header(token))
@@ -200,7 +210,7 @@ pub async fn check_channel_permissions(
     }
 
     // Now check channel-level permission overwrites
-    let channel_url = format!("{DISCORD_API_BASE}/channels/{channel_id}");
+    let channel_url = format!("{base}/channels/{channel_id}");
     let ch_resp = build_client()
         .get(&channel_url)
         .header("Authorization", auth_header(token))
@@ -514,5 +524,147 @@ mod tests {
         let base = spawn_mock(app).await;
         let channels = list_guild_channels_at_base(&base, "t", "g").await.unwrap();
         assert!(channels.is_empty());
+    }
+
+    // ── check_channel_permissions ─────────────────────────────────
+
+    /// Build a mock Discord that answers all three endpoints the permissions
+    /// check touches: `/guilds/<id>/members/@me`, `/guilds/<id>/roles`, and
+    /// `/channels/<id>`.
+    fn permissions_mock(
+        member: serde_json::Value,
+        roles: serde_json::Value,
+        channel: serde_json::Value,
+    ) -> Router {
+        use axum::extract::Path;
+        Router::new()
+            .route(
+                "/guilds/{guild_id}/members/@me",
+                get(move |Path(_g): Path<String>| {
+                    let m = member.clone();
+                    async move { Json(m) }
+                }),
+            )
+            .route(
+                "/guilds/{guild_id}/roles",
+                get(move |Path(_g): Path<String>| {
+                    let r = roles.clone();
+                    async move { Json(r) }
+                }),
+            )
+            .route(
+                "/channels/{channel_id}",
+                get(move |Path(_c): Path<String>| {
+                    let c = channel.clone();
+                    async move { Json(c) }
+                }),
+            )
+    }
+
+    #[tokio::test]
+    async fn check_channel_permissions_administrator_bypasses_everything() {
+        let member = json!({ "roles": ["role-admin"], "user": { "id": "bot-1" } });
+        // Role with Administrator bit (1<<3 = 8) — overrides all other checks.
+        let roles = json!([
+            { "id": "role-admin", "permissions": "8" }
+        ]);
+        let channel = json!({ "permission_overwrites": [] });
+        let base = spawn_mock(permissions_mock(member, roles, channel)).await;
+        let out = check_channel_permissions_at_base(&base, "token", "guild-1", "channel-1")
+            .await
+            .unwrap();
+        assert!(out.can_view_channel);
+        assert!(out.can_send_messages);
+        assert!(out.can_read_message_history);
+        assert!(out.missing_permissions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn check_channel_permissions_flags_missing_bits_when_role_lacks_them() {
+        // No roles grant any of the 3 permissions → all missing.
+        let member = json!({ "roles": ["role-nobody"], "user": { "id": "bot-1" } });
+        let roles = json!([
+            { "id": "role-nobody", "permissions": "0" }
+        ]);
+        let channel = json!({ "permission_overwrites": [] });
+        let base = spawn_mock(permissions_mock(member, roles, channel)).await;
+        let out = check_channel_permissions_at_base(&base, "t", "guild-1", "channel-1")
+            .await
+            .unwrap();
+        assert!(!out.can_view_channel);
+        assert!(!out.can_send_messages);
+        assert!(!out.can_read_message_history);
+        assert!(out
+            .missing_permissions
+            .contains(&"VIEW_CHANNEL".to_string()));
+        assert!(out
+            .missing_permissions
+            .contains(&"SEND_MESSAGES".to_string()));
+        assert!(out
+            .missing_permissions
+            .contains(&"READ_MESSAGE_HISTORY".to_string()));
+    }
+
+    #[tokio::test]
+    async fn check_channel_permissions_grants_everything_when_everyone_role_allows() {
+        // @everyone role (id == guild_id) grants VIEW|SEND|HISTORY
+        // = 1024 | 2048 | 65536 = 68608
+        let member = json!({ "roles": [], "user": { "id": "bot-1" } });
+        let roles = json!([
+            { "id": "guild-1", "permissions": "68608" }
+        ]);
+        let channel = json!({ "permission_overwrites": [] });
+        let base = spawn_mock(permissions_mock(member, roles, channel)).await;
+        let out = check_channel_permissions_at_base(&base, "t", "guild-1", "channel-1")
+            .await
+            .unwrap();
+        assert!(out.can_view_channel);
+        assert!(out.can_send_messages);
+        assert!(out.can_read_message_history);
+        assert!(out.missing_permissions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn check_channel_permissions_channel_overwrite_can_deny_permission() {
+        // @everyone role grants everything, but the channel's @everyone
+        // overwrite denies VIEW_CHANNEL — expect VIEW missing.
+        let member = json!({ "roles": [], "user": { "id": "bot-1" } });
+        let roles = json!([
+            { "id": "guild-1", "permissions": "68608" }
+        ]);
+        let channel = json!({
+            "permission_overwrites": [
+                {
+                    "id": "guild-1",
+                    "type": 0,
+                    "allow": "0",
+                    "deny": "1024"  // VIEW_CHANNEL
+                }
+            ]
+        });
+        let base = spawn_mock(permissions_mock(member, roles, channel)).await;
+        let out = check_channel_permissions_at_base(&base, "t", "guild-1", "channel-1")
+            .await
+            .unwrap();
+        assert!(!out.can_view_channel);
+        assert!(out
+            .missing_permissions
+            .contains(&"VIEW_CHANNEL".to_string()));
+    }
+
+    #[tokio::test]
+    async fn check_channel_permissions_errors_on_member_lookup_failure() {
+        use axum::http::StatusCode;
+        let app = Router::new().route(
+            "/guilds/{guild_id}/members/@me",
+            get(|| async { (StatusCode::UNAUTHORIZED, "bad token") }),
+        );
+        let base = spawn_mock(app).await;
+        let err = check_channel_permissions_at_base(&base, "t", "g", "c")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("member info failed"));
+        assert!(err.contains("401"));
     }
 }

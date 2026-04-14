@@ -1358,4 +1358,135 @@ mod tests {
             serde_json::json!({"key": "val"})
         ]));
     }
+
+    #[test]
+    fn should_refresh_last_recv_true_for_binary_ping_pong() {
+        use tokio_tungstenite::tungstenite::Message as WsMsg;
+        assert!(should_refresh_last_recv(&WsMsg::Binary(vec![1, 2, 3])));
+        assert!(should_refresh_last_recv(&WsMsg::Ping(vec![])));
+        assert!(should_refresh_last_recv(&WsMsg::Pong(vec![])));
+    }
+
+    #[test]
+    fn should_refresh_last_recv_false_for_text_and_close() {
+        use tokio_tungstenite::tungstenite::Message as WsMsg;
+        assert!(!should_refresh_last_recv(&WsMsg::Text("hello".into())));
+        assert!(!should_refresh_last_recv(&WsMsg::Close(None)));
+    }
+
+    #[test]
+    fn lark_new_stores_fields_and_allowlist() {
+        let ch = LarkChannel::new(
+            "app_id".into(),
+            "secret".into(),
+            "verify".into(),
+            Some(3001),
+            vec!["u1".into(), "u2".into()],
+        );
+        assert_eq!(ch.app_id, "app_id");
+        assert_eq!(ch.port, Some(3001));
+        assert_eq!(ch.allowed_users.len(), 2);
+    }
+
+    #[test]
+    fn lark_is_user_allowed_wildcard_allows_everyone() {
+        let ch = LarkChannel::new("a".into(), "s".into(), "v".into(), None, vec!["*".into()]);
+        assert!(ch.is_user_allowed("anyone"));
+    }
+
+    #[test]
+    fn lark_is_user_allowed_empty_allowlist_blocks_everyone() {
+        // Empty allowlist matches nothing — explicit guard against the
+        // "accidentally allowing all users" bug.
+        let ch = LarkChannel::new("a".into(), "s".into(), "v".into(), None, vec![]);
+        assert!(!ch.is_user_allowed("anyone"));
+    }
+
+    #[test]
+    fn lark_is_user_allowed_respects_allowlist() {
+        let ch = LarkChannel::new("a".into(), "s".into(), "v".into(), None, vec!["u1".into()]);
+        assert!(ch.is_user_allowed("u1"));
+        assert!(!ch.is_user_allowed("u2"));
+    }
+
+    #[test]
+    fn lark_parse_event_payload_empty_object_returns_no_messages() {
+        let ch = make_channel();
+        let msgs = ch.parse_event_payload(&serde_json::json!({}));
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn lark_parse_event_payload_ignores_unsupported_message_type() {
+        let ch = make_channel();
+        let payload = serde_json::json!({
+            "header": { "event_type": "im.message.receive_v1" },
+            "event": {
+                "sender": { "sender_id": { "open_id": "ou_testuser123" } },
+                "message": {
+                    "message_type": "image",
+                    "content": r#"{"image_key":"abc"}"#,
+                    "create_time": "1700000000000",
+                    "chat_id": "chat_xyz"
+                }
+            }
+        });
+        let msgs = ch.parse_event_payload(&payload);
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn lark_parse_event_payload_empty_sender_returns_no_messages() {
+        let ch = make_channel();
+        let payload = serde_json::json!({
+            "header": { "event_type": "im.message.receive_v1" },
+            "event": {
+                "sender": { "sender_id": { "open_id": "" } },
+                "message": {
+                    "message_type": "text",
+                    "content": r#"{"text":"hi"}"#,
+                    "create_time": "1700000000000"
+                }
+            }
+        });
+        let msgs = ch.parse_event_payload(&payload);
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn lark_parse_event_payload_missing_event_returns_empty() {
+        let ch = make_channel();
+        let payload = serde_json::json!({
+            "header": { "event_type": "im.message.receive_v1" }
+        });
+        let msgs = ch.parse_event_payload(&payload);
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn lark_parse_event_payload_post_type_extracts_readable_text() {
+        let ch = make_channel();
+        let post_content = serde_json::json!({
+            "zh_cn": {
+                "title": "Title",
+                "content": [[{"tag":"text","text":"Body"}]]
+            }
+        })
+        .to_string();
+        let payload = serde_json::json!({
+            "header": { "event_type": "im.message.receive_v1" },
+            "event": {
+                "sender": { "sender_id": { "open_id": "ou_testuser123" } },
+                "message": {
+                    "message_type": "post",
+                    "content": post_content,
+                    "create_time": "1700000000000",
+                    "chat_id": "chat_xyz"
+                }
+            }
+        });
+        let msgs = ch.parse_event_payload(&payload);
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].content.contains("Title"));
+    }
 }

@@ -637,9 +637,20 @@ mod tests {
             .expect("overlay notify should succeed");
         assert_eq!(result["ok"], true);
 
-        let evt = rx.try_recv().expect("expected dictation event");
-        assert_eq!(evt.event_type, "pressed");
-        assert_eq!(evt.hotkey, "chat_button");
+        // The broadcast bus is shared across the whole test process, so
+        // other tests may have dispatched unrelated events before this one.
+        // Scan until we find the "pressed" event from our notify call.
+        let mut saw_pressed = false;
+        while let Ok(evt) = rx.try_recv() {
+            if evt.event_type == "pressed" && evt.hotkey == "chat_button" {
+                saw_pressed = true;
+                break;
+            }
+        }
+        assert!(
+            saw_pressed,
+            "expected a pressed dictation event on chat_button"
+        );
     }
 
     #[tokio::test]
