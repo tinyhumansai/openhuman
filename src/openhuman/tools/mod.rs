@@ -6,7 +6,7 @@ mod schemas;
 pub mod traits;
 
 #[path = "impl/mod.rs"]
-mod implementations;
+pub(crate) mod implementations;
 
 pub use implementations::*;
 pub use ops::*;

@@ -1,6 +1,6 @@
 mod archetype_delegation;
 mod ask_clarification;
-mod complete_onboarding;
+pub(crate) mod complete_onboarding;
 mod delegate;
 mod skill_delegation;
 mod spawn_subagent;

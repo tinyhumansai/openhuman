@@ -164,31 +164,7 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
 
-    // ── Auth detection ────────────────────────────────────────────
-    //
-    // Two possible auth sources, in priority order:
-    //
-    // 1. The `app-session:default` profile in `auth-profiles.json` —
-    //    the canonical inference credential, populated by the desktop
-    //    OAuth deep-link flow's `exchange_token` Rust command. This is
-    //    where every production inference RPC reads from.
-    // 2. `config.api_key` — legacy free-form provider key field, kept
-    //    for CI / dev setups that bypass the desktop login flow.
-    //
-    // Either one counts as "authenticated" for the welcome flow.
-    let has_session_jwt = crate::api::jwt::get_session_token(&config)
-        .ok()
-        .flatten()
-        .is_some_and(|t| !t.is_empty());
-    let has_legacy_api_key = config.api_key.as_ref().is_some_and(|k| !k.is_empty());
-    let is_authenticated = has_session_jwt || has_legacy_api_key;
-    let auth_source: Value = if has_session_jwt {
-        Value::String("session_token".to_string())
-    } else if has_legacy_api_key {
-        Value::String("legacy_api_key".to_string())
-    } else {
-        Value::Null
-    };
+    let (is_authenticated, _auth_source) = detect_auth(&config);
 
     // ── Auto-finalize side effect ─────────────────────────────────
     //
@@ -220,6 +196,67 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         );
         "flipped"
     };
+
+    let snapshot = build_status_snapshot(&config, finalize_action);
+    let payload = serde_json::to_string_pretty(&snapshot)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize status snapshot: {e}"))?;
+
+    tracing::debug!(
+        "[complete_onboarding] check_status returned authenticated={} finalize_action={} chars={}",
+        is_authenticated,
+        finalize_action,
+        payload.len()
+    );
+
+    Ok(ToolResult::success(payload))
+}
+
+/// Detect whether the user is authenticated for the welcome flow.
+///
+/// Two possible auth sources, in priority order:
+///
+/// 1. The `app-session:default` profile in `auth-profiles.json` —
+///    the canonical inference credential, populated by the desktop
+///    OAuth deep-link flow's `exchange_token` Rust command. This is
+///    where every production inference RPC reads from.
+/// 2. `config.api_key` — legacy free-form provider key field, kept
+///    for CI / dev setups that bypass the desktop login flow.
+///
+/// Either one counts as "authenticated".
+///
+/// Returned as `(is_authenticated, auth_source_json)` so callers can
+/// both gate behaviour on the bool and embed the source label in a
+/// JSON payload without rebuilding the logic.
+pub(crate) fn detect_auth(config: &Config) -> (bool, Value) {
+    let has_session_jwt = crate::api::jwt::get_session_token(config)
+        .ok()
+        .flatten()
+        .is_some_and(|t| !t.is_empty());
+    let has_legacy_api_key = config.api_key.as_ref().is_some_and(|k| !k.is_empty());
+    let is_authenticated = has_session_jwt || has_legacy_api_key;
+    let auth_source: Value = if has_session_jwt {
+        Value::String("session_token".to_string())
+    } else if has_legacy_api_key {
+        Value::String("legacy_api_key".to_string())
+    } else {
+        Value::Null
+    };
+    (is_authenticated, auth_source)
+}
+
+/// Build the structured JSON snapshot that the welcome agent consumes.
+///
+/// The snapshot describes the user's workspace setup (connected
+/// channels, integrations, delegate agents, memory settings, and
+/// onboarding flags) and embeds a `finalize_action` discriminator so
+/// the agent knows which message framing to use. Shared between
+/// [`check_status`] (reactive, called by the tool) and the proactive
+/// welcome path (fired on `onboarding_completed` false→true).
+///
+/// The caller is responsible for computing `finalize_action` —
+/// typically `"flipped"`, `"already_complete"`, or `"skipped_no_auth"`.
+pub(crate) fn build_status_snapshot(config: &Config, finalize_action: &str) -> Value {
+    let (is_authenticated, auth_source) = detect_auth(config);
 
     // ── Connected messaging channels ──────────────────────────────
     let mut channels_connected: Vec<&str> = Vec::new();
@@ -266,7 +303,6 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         channels_connected.push("qq");
     }
 
-    // ── Integrations ──────────────────────────────────────────────
     let composio_enabled = config.composio.enabled
         && config
             .composio
@@ -274,11 +310,9 @@ async fn check_status() -> anyhow::Result<ToolResult> {
             .as_ref()
             .is_some_and(|k| !k.is_empty());
 
-    // ── Delegate agents ───────────────────────────────────────────
     let delegate_agents: Vec<&str> = config.agents.keys().map(|s| s.as_str()).collect();
 
-    // ── Build the JSON snapshot ───────────────────────────────────
-    let snapshot = json!({
+    json!({
         "authenticated": is_authenticated,
         "auth_source": auth_source,
         "default_model": config
@@ -306,19 +340,7 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         "ui_onboarding_completed": config.onboarding_completed,
         "chat_onboarding_completed": config.chat_onboarding_completed,
         "finalize_action": finalize_action,
-    });
-
-    let payload = serde_json::to_string_pretty(&snapshot)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize status snapshot: {e}"))?;
-
-    tracing::debug!(
-        "[complete_onboarding] check_status returned authenticated={} finalize_action={} chars={}",
-        is_authenticated,
-        finalize_action,
-        payload.len()
-    );
-
-    Ok(ToolResult::success(payload))
+    })
 }
 
 /// Legacy manual finalize-only path. Flips `chat_onboarding_completed`
@@ -370,5 +392,54 @@ mod tests {
         let schema = tool.parameters_schema();
         assert!(schema["properties"]["action"].is_object());
         assert_eq!(schema["required"], serde_json::json!(["action"]));
+    }
+
+    #[test]
+    fn build_status_snapshot_carries_finalize_action_and_core_fields() {
+        // A default Config is "bare install" — no channels, no
+        // integrations. This test locks in the JSON shape the welcome
+        // agent's prompt.md depends on, and is the contract shared
+        // between `check_status` (reactive) and the proactive welcome
+        // path — if a future refactor drops or renames a field, this
+        // fails loudly.
+        let config = Config::default();
+        let snapshot = build_status_snapshot(&config, "flipped");
+
+        assert_eq!(snapshot["finalize_action"], "flipped");
+        assert_eq!(snapshot["chat_onboarding_completed"], false);
+        assert_eq!(snapshot["ui_onboarding_completed"], false);
+        assert_eq!(snapshot["active_channel"], "web");
+        assert_eq!(
+            snapshot["channels_connected"]
+                .as_array()
+                .expect("channels_connected is an array")
+                .len(),
+            0,
+            "default Config should report zero connected channels"
+        );
+        assert!(snapshot["integrations"].is_object());
+        assert!(snapshot["memory"].is_object());
+        // Every integration flag present so the welcome prompt can
+        // branch on bare-install handling without optional-chain checks.
+        for key in [
+            "composio",
+            "browser",
+            "web_search",
+            "http_request",
+            "local_ai",
+        ] {
+            assert!(
+                snapshot["integrations"][key].is_boolean(),
+                "integrations.{key} must be a bool"
+            );
+        }
+    }
+
+    #[test]
+    fn detect_auth_on_default_config_is_unauthenticated() {
+        let config = Config::default();
+        let (is_auth, source) = detect_auth(&config);
+        assert!(!is_auth);
+        assert!(source.is_null());
     }
 }
