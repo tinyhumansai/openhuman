@@ -503,4 +503,33 @@ allowed_users = ["user1"]
         assert_eq!(config.app_secret, "secret_abc");
         assert_eq!(config.allowed_users, vec!["user1"]);
     }
+
+    #[test]
+    fn ensure_https_accepts_https_urls() {
+        assert!(ensure_https("https://api.example.com").is_ok());
+        assert!(ensure_https("https://api.sgroup.qq.com/v1").is_ok());
+    }
+
+    #[test]
+    fn ensure_https_rejects_http_and_other_schemes() {
+        assert!(ensure_https("http://example.com").is_err());
+        assert!(ensure_https("ws://example.com").is_err());
+        assert!(ensure_https("ftp://example.com").is_err());
+        assert!(ensure_https("").is_err());
+        assert!(ensure_https("example.com").is_err());
+    }
+
+    #[test]
+    fn api_base_and_auth_url_are_https_constants() {
+        assert!(QQ_API_BASE.starts_with("https://"));
+        assert!(QQ_AUTH_URL.starts_with("https://"));
+    }
+
+    #[test]
+    fn new_constructor_stores_fields() {
+        let ch = QQChannel::new("a".into(), "b".into(), vec!["u1".into()]);
+        assert_eq!(ch.app_id, "a");
+        assert_eq!(ch.app_secret, "b");
+        assert_eq!(ch.allowed_users, vec!["u1".to_string()]);
+    }
 }

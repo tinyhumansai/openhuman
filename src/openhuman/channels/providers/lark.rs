@@ -1268,4 +1268,94 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].sender, "ou_user");
     }
+
+    // ── parse_post_content ─────────────────────────────────────────
+
+    #[test]
+    fn parse_post_content_returns_zh_cn_locale_content() {
+        let post = serde_json::json!({
+            "zh_cn": {
+                "title": "标题",
+                "content": [[{"tag": "text", "text": "你好"}]]
+            }
+        })
+        .to_string();
+        let out = parse_post_content(&post).expect("parsed");
+        assert!(out.contains("标题"));
+        assert!(out.contains("你好"));
+    }
+
+    #[test]
+    fn parse_post_content_falls_back_to_en_us_when_zh_cn_missing() {
+        let post = serde_json::json!({
+            "en_us": {
+                "title": "Hello",
+                "content": [[{"tag": "text", "text": "world"}]]
+            }
+        })
+        .to_string();
+        let out = parse_post_content(&post).expect("parsed");
+        assert!(out.contains("Hello"));
+        assert!(out.contains("world"));
+    }
+
+    #[test]
+    fn parse_post_content_returns_none_for_invalid_json() {
+        assert!(parse_post_content("not json").is_none());
+    }
+
+    #[test]
+    fn parse_post_content_handles_links_and_mentions() {
+        let post = serde_json::json!({
+            "zh_cn": {
+                "title": "T",
+                "content": [[
+                    {"tag": "text", "text": "pre "},
+                    {"tag": "a", "text": "link", "href": "https://x"},
+                    {"tag": "at", "user_name": "alice"}
+                ]]
+            }
+        })
+        .to_string();
+        let out = parse_post_content(&post).expect("parsed");
+        assert!(out.contains("link"));
+        assert!(out.contains("@alice"));
+    }
+
+    #[test]
+    fn parse_post_content_returns_none_when_all_sections_empty() {
+        let post = serde_json::json!({ "zh_cn": { "title": "" } }).to_string();
+        assert!(parse_post_content(&post).is_none());
+    }
+
+    // ── strip_at_placeholders ──────────────────────────────────────
+
+    #[test]
+    fn strip_at_placeholders_removes_user_tokens() {
+        assert_eq!(strip_at_placeholders("hello @_user_1 world"), "hello world");
+        assert_eq!(
+            strip_at_placeholders("@_user_42 message here"),
+            "message here"
+        );
+    }
+
+    #[test]
+    fn strip_at_placeholders_preserves_real_at_mentions() {
+        assert_eq!(strip_at_placeholders("hello @alice"), "hello @alice");
+    }
+
+    #[test]
+    fn strip_at_placeholders_handles_multiple_placeholders() {
+        assert_eq!(strip_at_placeholders("@_user_1 hi @_user_2 bye"), "hi bye");
+    }
+
+    // ── should_respond_in_group ────────────────────────────────────
+
+    #[test]
+    fn should_respond_in_group_requires_nonempty_mentions() {
+        assert!(!should_respond_in_group(&[]));
+        assert!(should_respond_in_group(&[
+            serde_json::json!({"key": "val"})
+        ]));
+    }
 }
