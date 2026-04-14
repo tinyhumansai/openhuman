@@ -26,9 +26,9 @@ use super::providers::{
     get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
 };
 use super::types::{
-    ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioDeleteResponse,
-    ComposioExecuteResponse, ComposioToolkitsResponse, ComposioToolsResponse,
-    ComposioTriggerHistoryResult,
+    ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioCreateTriggerResponse,
+    ComposioDeleteResponse, ComposioExecuteResponse, ComposioGithubReposResponse,
+    ComposioToolkitsResponse, ComposioToolsResponse, ComposioTriggerHistoryResult,
 };
 
 /// Resolve a [`ComposioClient`] from the root config, or return an
@@ -195,6 +195,49 @@ pub async fn composio_execute(
             Err(format!("[composio] execute failed: {e:#}"))
         }
     }
+}
+
+// ── GitHub repos + trigger provisioning ─────────────────────────────
+
+pub async fn composio_list_github_repos(
+    config: &Config,
+    connection_id: Option<String>,
+) -> OpResult<RpcOutcome<ComposioGithubReposResponse>> {
+    tracing::debug!(?connection_id, "[composio] rpc list_github_repos");
+    let client = resolve_client(config)?;
+    let resp = client
+        .list_github_repos(connection_id.as_deref())
+        .await
+        .map_err(|e| format!("[composio] list_github_repos failed: {e:#}"))?;
+    let count = resp.repositories.len();
+    let connection_id = resp.connection_id.clone();
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!(
+            "composio: {count} github repo(s) listed for connection {connection_id}"
+        )],
+    ))
+}
+
+pub async fn composio_create_trigger(
+    config: &Config,
+    slug: &str,
+    connection_id: Option<String>,
+    trigger_config: Option<serde_json::Value>,
+) -> OpResult<RpcOutcome<ComposioCreateTriggerResponse>> {
+    tracing::debug!(slug = %slug, ?connection_id, "[composio] rpc create_trigger");
+    let client = resolve_client(config)?;
+    let resp = client
+        .create_trigger(slug, connection_id.as_deref(), trigger_config)
+        .await
+        .map_err(|e| format!("[composio] create_trigger failed: {e:#}"))?;
+    let trigger_id = resp.trigger_id.clone();
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!(
+            "composio: trigger {trigger_id} created for slug {slug}"
+        )],
+    ))
 }
 
 // ── Trigger history ────────────────────────────────────────────────

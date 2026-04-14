@@ -17,8 +17,9 @@ use serde_json::json;
 use crate::openhuman::integrations::IntegrationClient;
 
 use super::types::{
-    ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioDeleteResponse,
-    ComposioExecuteResponse, ComposioToolkitsResponse, ComposioToolsResponse,
+    ComposioAuthorizeResponse, ComposioConnectionsResponse, ComposioCreateTriggerResponse,
+    ComposioDeleteResponse, ComposioExecuteResponse, ComposioGithubReposResponse,
+    ComposioToolkitsResponse, ComposioToolsResponse,
 };
 
 /// High-level client for all backend-proxied Composio operations.
@@ -134,6 +135,45 @@ impl ComposioClient {
         let body = json!({ "tool": tool, "arguments": arguments });
         self.inner
             .post::<ComposioExecuteResponse>("/agent-integrations/composio/execute", &body)
+            .await
+    }
+
+    /// `GET /agent-integrations/composio/github/repos` — list repositories
+    /// available via the user's authorized GitHub connected account.
+    pub async fn list_github_repos(
+        &self,
+        connection_id: Option<&str>,
+    ) -> Result<ComposioGithubReposResponse> {
+        let path = match connection_id.map(str::trim).filter(|id| !id.is_empty()) {
+            Some(id) => format!("/agent-integrations/composio/github/repos?connectionId={id}"),
+            None => "/agent-integrations/composio/github/repos".to_string(),
+        };
+        tracing::debug!(path = %path, "[composio] list_github_repos");
+        self.inner.get::<ComposioGithubReposResponse>(&path).await
+    }
+
+    /// `POST /agent-integrations/composio/triggers` — create a trigger
+    /// instance for the authenticated user.
+    pub async fn create_trigger(
+        &self,
+        slug: &str,
+        connection_id: Option<&str>,
+        trigger_config: Option<serde_json::Value>,
+    ) -> Result<ComposioCreateTriggerResponse> {
+        let slug = slug.trim();
+        if slug.is_empty() {
+            anyhow::bail!("composio.create_trigger: slug must not be empty");
+        }
+        let mut body = json!({ "slug": slug });
+        if let Some(connection_id) = connection_id.map(str::trim).filter(|id| !id.is_empty()) {
+            body["connectionId"] = json!(connection_id);
+        }
+        if let Some(config) = trigger_config {
+            body["triggerConfig"] = config;
+        }
+        tracing::debug!(slug = %slug, "[composio] create_trigger");
+        self.inner
+            .post::<ComposioCreateTriggerResponse>("/agent-integrations/composio/triggers", &body)
             .await
     }
 

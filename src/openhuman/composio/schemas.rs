@@ -8,6 +8,8 @@
 //!   - `composio.delete_connection`   → `openhuman.composio_delete_connection`
 //!   - `composio.list_tools`          → `openhuman.composio_list_tools`
 //!   - `composio.execute`             → `openhuman.composio_execute`
+//!   - `composio.list_github_repos`   → `openhuman.composio_list_github_repos`
+//!   - `composio.create_trigger`      → `openhuman.composio_create_trigger`
 //!   - `composio.get_user_profile`    → `openhuman.composio_get_user_profile`
 //!   - `composio.sync`                → `openhuman.composio_sync`
 
@@ -24,6 +26,18 @@ struct TriggerHistoryParams {
     limit: Option<usize>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct ListGithubReposParams {
+    connection_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CreateTriggerParams {
+    slug: String,
+    connection_id: Option<String>,
+    trigger_config: Option<Value>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list_toolkits"),
@@ -32,6 +46,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete_connection"),
         schemas("list_tools"),
         schemas("execute"),
+        schemas("list_github_repos"),
+        schemas("create_trigger"),
         schemas("get_user_profile"),
         schemas("sync"),
         schemas("list_trigger_history"),
@@ -63,6 +79,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("execute"),
             handler: handle_execute,
+        },
+        RegisteredController {
+            schema: schemas("list_github_repos"),
+            handler: handle_list_github_repos,
+        },
+        RegisteredController {
+            schema: schemas("create_trigger"),
+            handler: handle_create_trigger,
         },
         RegisteredController {
             schema: schemas("get_user_profile"),
@@ -188,6 +212,58 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "result",
                 ty: TypeSchema::Json,
                 comment: "Execution envelope: { data, successful, error?, costUsd }.",
+                required: true,
+            }],
+        },
+        "list_github_repos" => ControllerSchema {
+            namespace: "composio",
+            function: "list_github_repos",
+            description:
+                "List repositories available through the caller's authorized GitHub Composio connection.",
+            inputs: vec![FieldSchema {
+                name: "connection_id",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment:
+                    "Optional GitHub connection id. If omitted, backend picks the first active GitHub connection.",
+                required: false,
+            }],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Payload: { connectionId, repositories:[{ owner, repo, fullName, ... }] }.",
+                required: true,
+            }],
+        },
+        "create_trigger" => ControllerSchema {
+            namespace: "composio",
+            function: "create_trigger",
+            description:
+                "Create a Composio trigger instance for a connected account. For GitHub triggers, pass owner/repo in trigger_config.",
+            inputs: vec![
+                FieldSchema {
+                    name: "slug",
+                    ty: TypeSchema::String,
+                    comment: "Trigger slug, e.g. GITHUB_PULL_REQUEST_EVENT.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "connection_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Optional connected account id. Backend resolves from slug toolkit when omitted.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "trigger_config",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment:
+                        "Trigger config object. For GitHub, include owner/repo or repoFullName.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "result",
+                ty: TypeSchema::Json,
+                comment: "Payload: { triggerId, status? }.",
                 required: true,
             }],
         },
@@ -324,6 +400,36 @@ fn handle_execute(params: Map<String, Value>) -> ControllerFuture {
         let tool = read_required_non_empty(&params, "tool")?;
         let arguments = read_optional::<Value>(&params, "arguments")?;
         to_json(super::ops::composio_execute(&config, &tool, arguments).await?)
+    })
+}
+
+fn handle_list_github_repos(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: ListGithubReposParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        to_json(super::ops::composio_list_github_repos(&config, payload.connection_id).await?)
+    })
+}
+
+fn handle_create_trigger(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload: CreateTriggerParams = serde_json::from_value(Value::Object(params))
+            .map_err(|e| format!("invalid params: {e}"))?;
+        let slug = payload.slug.trim();
+        if slug.is_empty() {
+            return Err("invalid params: 'slug' must not be empty".to_string());
+        }
+        to_json(
+            super::ops::composio_create_trigger(
+                &config,
+                slug,
+                payload.connection_id,
+                payload.trigger_config,
+            )
+            .await?,
+        )
     })
 }
 

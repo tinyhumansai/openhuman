@@ -127,6 +127,13 @@ pub(super) fn handle_sio_event(
                             "[socket] composio:trigger missing toolkit/trigger; dropping event"
                         );
                     } else {
+                        log::info!(
+                            "[socket] Publishing composio:trigger to event bus: toolkit={}, trigger={}, metadata_id={}, metadata_uuid={}",
+                            event.toolkit,
+                            event.trigger,
+                            event.metadata.id,
+                            event.metadata.uuid
+                        );
                         publish_global(DomainEvent::ComposioTriggerReceived {
                             toolkit: event.toolkit,
                             trigger: event.trigger,
