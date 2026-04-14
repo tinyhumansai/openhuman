@@ -61,6 +61,15 @@ pub struct SubagentRunOptions {
     /// skill or system tools for this specific call.
     pub category_filter_override: Option<ToolCategory>,
 
+    /// Optional Composio toolkit scope (e.g. `"gmail"`, `"notion"`).
+    /// When set, skill-category tools are further restricted to those
+    /// whose name starts with the uppercased `{toolkit}_` prefix, and
+    /// the sub-agent's rendered `Connected Integrations` section is
+    /// narrowed to only that toolkit's entry. Used by main/orchestrator
+    /// when spawning `skills_agent` for a specific platform so the
+    /// sub-agent only sees one integration's tool catalogue.
+    pub toolkit_override: Option<String>,
+
     /// Optional context blob the parent wants to inject before the
     /// task prompt. Rendered as a `[Context]\n…\n` prefix.
     pub context: Option<String>,
@@ -214,7 +223,8 @@ async fn run_typed_mode(
     let category_filter = options
         .category_filter_override
         .or(definition.category_filter);
-    let allowed_indices = filter_tool_indices(
+    let toolkit_filter = options.toolkit_override.as_deref();
+    let mut allowed_indices = filter_tool_indices(
         &parent.all_tools,
         &definition.tools,
         &definition.disallowed_tools,
@@ -225,14 +235,88 @@ async fn run_typed_mode(
         category_filter,
     );
 
-    let filtered_specs: Vec<ToolSpec> = allowed_indices
+    // ── Dynamic per-action toolkit tools (skills_agent + toolkit) ──────
+    //
+    // When `skills_agent` is spawned with a `toolkit` argument (e.g.
+    // `toolkit="gmail"`), build one [`ComposioActionTool`] per action
+    // in that toolkit and inject them into the sub-agent's tool list.
+    // Each carries the action's real JSON schema, so the LLM's native
+    // tool-calling path validates arguments before they hit the wire
+    // — no more "guess parameters from prose then dispatch through
+    // composio_execute" round-trips.
+    //
+    // Generic dispatchers (`composio_execute`, `composio_list_tools`)
+    // are stripped from the parent-filtered indices in this path so
+    // the model only sees one way to call each action.
+    let mut dynamic_tools: Vec<Box<dyn Tool>> = Vec::new();
+    let is_skills_agent_with_toolkit =
+        definition.id == "skills_agent" && toolkit_filter.is_some();
+    if is_skills_agent_with_toolkit {
+        // Drop EVERY skill-category parent tool. In the new
+        // architecture all integration discovery / authorization /
+        // dispatching is the orchestrator's responsibility (via the
+        // Delegation Guide and `spawn_subagent` pre-flight). The
+        // sub-agent's only job is to execute per-action tools for
+        // its bound toolkit, so leftover meta-tools (composio_*,
+        // apify_*, other-toolkit dispatchers) are pure noise that
+        // confuses the model and wastes tokens.
+        allowed_indices.retain(|&i| parent.all_tools[i].category() != ToolCategory::Skill);
+
+        if let (Some(tk), Some(client)) = (toolkit_filter, parent.composio_client.as_ref()) {
+            // The spawn_subagent pre-flight already verified the
+            // toolkit is in the allowlist AND has an active
+            // connection, so the matching entry must be present and
+            // marked connected. Defensive lookup anyway.
+            if let Some(integration) = parent
+                .connected_integrations
+                .iter()
+                .find(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(tk))
+            {
+                for action in &integration.tools {
+                    dynamic_tools.push(Box::new(
+                        crate::openhuman::composio::ComposioActionTool::new(
+                            client.clone(),
+                            action.name.clone(),
+                            action.description.clone(),
+                            action.parameters.clone(),
+                        ),
+                    ));
+                }
+                tracing::debug!(
+                    agent_id = %definition.id,
+                    toolkit = %tk,
+                    action_count = dynamic_tools.len(),
+                    "[subagent_runner:typed] dynamically registered per-action composio tools"
+                );
+            } else {
+                tracing::warn!(
+                    agent_id = %definition.id,
+                    toolkit = %tk,
+                    "[subagent_runner:typed] toolkit not found among parent's connected integrations; sub-agent will have no callable actions (spawn_subagent pre-flight should have caught this)"
+                );
+            }
+        } else if toolkit_filter.is_some() {
+            tracing::warn!(
+                agent_id = %definition.id,
+                "[subagent_runner:typed] toolkit requested but composio client is unavailable on parent context"
+            );
+        }
+    }
+
+    let mut filtered_specs: Vec<ToolSpec> = allowed_indices
         .iter()
         .map(|&i| parent.all_tool_specs[i].clone())
         .collect();
-    let allowed_names: HashSet<String> = allowed_indices
+    let mut allowed_names: HashSet<String> = allowed_indices
         .iter()
         .map(|&i| parent.all_tools[i].name().to_string())
         .collect();
+    // Append dynamic tool specs / names so they're discoverable by the
+    // provider (native tool-calling) and by the inner loop's allowlist.
+    for tool in &dynamic_tools {
+        filtered_specs.push(tool.spec());
+        allowed_names.insert(tool.name().to_string());
+    }
 
     tracing::debug!(
         agent_id = %definition.id,
@@ -264,14 +348,37 @@ async fn run_typed_mode(
         definition.omit_profile,
         definition.omit_memory_md,
     );
+
+    // Sub-agent prompt rendering: only ever surface CONNECTED
+    // integrations. When narrowed to a specific toolkit, we further
+    // restrict to that one entry. Not-connected entries belong only
+    // in the orchestrator's Delegation Guide; they have no place in
+    // a sub-agent that's actually executing work.
+    let narrowed_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration> =
+        match toolkit_filter {
+            Some(tk) => parent
+                .connected_integrations
+                .iter()
+                .filter(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(tk))
+                .cloned()
+                .collect(),
+            None => parent
+                .connected_integrations
+                .iter()
+                .filter(|ci| ci.connected)
+                .cloned()
+                .collect(),
+        };
     let rendered_prompt = extract_cache_boundary(&render_subagent_system_prompt(
         &parent.workspace_dir,
         &model,
         &allowed_indices,
         &parent.all_tools,
+        &dynamic_tools,
         &archetype_prompt_body,
         render_options,
-        &parent.connected_integrations,
+        parent.tool_call_format,
+        &narrowed_integrations,
     ));
     let system_prompt = rendered_prompt.text;
     let system_prompt_cache_boundary = rendered_prompt.cache_boundary;
@@ -305,6 +412,7 @@ async fn run_typed_mode(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
+        &dynamic_tools,
         &filtered_specs,
         &allowed_names,
         &model,
@@ -397,10 +505,14 @@ async fn run_fork_mode(
     // Use the parent's iteration cap, not the synthetic fork definition's.
     let max_iterations = parent.agent_config.max_tool_iterations.max(1);
 
+    // Fork mode replays the parent's exact tool list — no dynamic
+    // toolkit-scoped tools, so `extra_tools` is empty.
+    let fork_extra_tools: Vec<Box<dyn Tool>> = Vec::new();
     let (output, iterations, agg_usage) = run_inner_loop(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
+        &fork_extra_tools,
         fork.tool_specs.as_slice(),
         &allowed_names,
         &model,
@@ -513,6 +625,7 @@ async fn run_inner_loop(
     provider: &dyn Provider,
     history: &mut Vec<ChatMessage>,
     parent_tools: &[Box<dyn Tool>],
+    extra_tools: &[Box<dyn Tool>],
     tool_specs: &[ToolSpec],
     allowed_names: &HashSet<String>,
     model: &str,
@@ -595,7 +708,11 @@ async fn run_inner_loop(
                     "Error: tool '{}' is not available to the {} sub-agent",
                     call.name, agent_id
                 )
-            } else if let Some(tool) = parent_tools.iter().find(|t| t.name() == call.name) {
+            } else if let Some(tool) = extra_tools
+                .iter()
+                .find(|t| t.name() == call.name)
+                .or_else(|| parent_tools.iter().find(|t| t.name() == call.name))
+            {
                 let args = parse_tool_arguments(&call.arguments);
                 let timeout = crate::openhuman::tool_timeout::tool_execution_timeout_duration();
                 match tokio::time::timeout(timeout, tool.execute(args)).await {
@@ -1200,6 +1317,8 @@ mod tests {
             session_id: "test-session".into(),
             channel: "test".into(),
             connected_integrations: vec![],
+            composio_client: None,
+            tool_call_format: crate::openhuman::context::prompt::ToolCallFormat::PFormat,
         }
     }
 

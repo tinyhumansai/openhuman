@@ -149,6 +149,7 @@ mod tests {
         PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
+            agent_id: "",
             tools: &[],
             skills: &[],
             dispatcher_instructions: "",

@@ -50,18 +50,32 @@ pub struct LearnedContextData {
     pub tree_root_summaries: Vec<(String, String)>,
 }
 
-/// A connected external integration (e.g. a Composio OAuth connection)
-/// surfaced in the system prompt so the orchestrator knows which services
-/// are available and can delegate to the Skills Agent accordingly.
+/// An external integration (e.g. a Composio OAuth-backed toolkit)
+/// surfaced in the system prompt so the orchestrator knows which
+/// services are available — both **already connected** and **available
+/// to authorize**. Delegation guidance differs by status:
+///
+/// - **Connected**: the orchestrator may `spawn_subagent(skills_agent,
+///   toolkit=…)` directly. `tools` carries the per-action catalogue
+///   used to dynamically register native tool-calling schemas inside
+///   the spawned sub-agent.
+/// - **Not connected**: the orchestrator must NOT delegate. Instead it
+///   tells the user to authorize the toolkit in Settings →
+///   Integrations. `tools` is empty in this case.
 #[derive(Debug, Clone)]
 pub struct ConnectedIntegration {
     /// Toolkit slug, e.g. `"gmail"`, `"notion"`.
     pub toolkit: String,
     /// Human-readable one-line description of what this integration can do.
     pub description: String,
-    /// Composio action slugs available for this toolkit, e.g.
-    /// `["GMAIL_SEND_EMAIL", "GMAIL_FETCH_EMAILS"]`.
+    /// Per-action catalogue (only populated when `connected == true`).
     pub tools: Vec<ConnectedIntegrationTool>,
+    /// Whether the user has an active OAuth connection for this
+    /// toolkit. When `false`, the toolkit is in the backend allowlist
+    /// but no authorization has been completed yet — `tools` is empty
+    /// and the orchestrator must point the user at Settings instead
+    /// of attempting to delegate.
+    pub connected: bool,
 }
 
 /// A single action available on a connected integration.
@@ -71,6 +85,13 @@ pub struct ConnectedIntegrationTool {
     pub name: String,
     /// One-line description of the action.
     pub description: String,
+    /// JSON schema for the action's parameters, carried through from
+    /// the backend tool-list response. `None` when the backend didn't
+    /// supply a schema. Consumed by [`ComposioActionTool`] when the
+    /// subagent runner dynamically registers per-action tools for a
+    /// `skills_agent(toolkit=…)` spawn — the schema becomes the
+    /// native tool-calling signature the LLM sees.
+    pub parameters: Option<serde_json::Value>,
 }
 
 /// A lightweight tool descriptor for prompt rendering.
@@ -152,6 +173,13 @@ pub enum ToolCallFormat {
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub model_name: &'a str,
+    /// Id of the agent this prompt is being built for (e.g. `orchestrator`,
+    /// `skills_agent`, `welcome`). Drives per-agent rendering decisions —
+    /// notably [`ConnectedIntegrationsSection`], which dumps the full
+    /// Composio tool catalog only for `skills_agent` and leaves delegating
+    /// agents with a toolkit-only summary. Empty string means "unknown",
+    /// which is treated as a delegating agent.
+    pub agent_id: &'a str,
     pub tools: &'a [PromptTool<'a>],
     pub skills: &'a [Skill],
     pub dispatcher_instructions: &'a str,
@@ -616,30 +644,78 @@ impl PromptSection for ConnectedIntegrationsSection {
             return Ok(String::new());
         }
 
+        // Skill-executing agents (`skills_agent` and its specialisations)
+        // need the full per-action catalog so they can emit Composio calls
+        // directly. Every other agent (main/orchestrator/welcome/planner/…)
+        // is a delegator — it only needs a Delegation Guide: a toolkit
+        // list + the exact `spawn_subagent` invocation to use. Dumping
+        // the full tool catalog into a delegator's system prompt wastes
+        // thousands of tokens and teaches the model to call actions
+        // that aren't actually in its tool list.
+        let is_skill_executor = ctx.agent_id == "skills_agent";
+
+        if is_skill_executor {
+            // skills_agent only ever sees CONNECTED integrations —
+            // unconnected ones are filtered out by the sub-agent
+            // runner before we get here, but we double-filter for
+            // safety in case some other caller invokes the section
+            // directly.
+            let mut out = String::from(
+                "## Connected Integrations\n\n\
+                 You have direct access to the following external services. \
+                 The corresponding action tools are in your tool list with \
+                 their typed parameter schemas — call them by name.\n\n",
+            );
+            for integration in ctx.connected_integrations.iter().filter(|ci| ci.connected) {
+                let _ = writeln!(
+                    out,
+                    "- **{}** — {}",
+                    integration.toolkit, integration.description,
+                );
+            }
+            out.push('\n');
+            return Ok(out);
+        }
+
+        // Delegating agent path — render a single unified Delegation
+        // Guide. Every integration in the backend allowlist is listed
+        // with the same spawn snippet, regardless of whether the user
+        // has authorized it yet. Auth state is the `spawn_subagent`
+        // pre-flight's responsibility:
+        //
+        //   - Connected toolkit → spawn proceeds normally.
+        //   - In allowlist but not connected → pre-flight returns a
+        //     structured error telling the orchestrator to ask the
+        //     user to authorize it in Settings → Integrations and NOT
+        //     to retry.
+        //   - Not in allowlist → pre-flight returns a different error
+        //     listing the valid toolkits.
+        //
+        // Keeping the prompt small and uniform — one bullet per
+        // integration, no auth-state branching in prose — and
+        // trusting the runtime check as the single source of truth
+        // for which toolkits are actually callable.
         let mut out = String::from(
-            "## Connected Integrations\n\n\
-             The user has the following external services connected. \
-             To interact with any of these, delegate to the **Skills Agent** \
-             (`skills_agent`) via `spawn_subagent`.\n\n",
+            "## Delegation Guide — Integrations\n\n\
+             For any task that touches one of these external services, \
+             delegate to `skills_agent` with the matching `toolkit` \
+             argument. The sub-agent receives the full action catalogue \
+             for that integration as native tool schemas — do not \
+             attempt to call integration actions directly from this \
+             agent.\n\n\
+             If a spawn returns an authorization error, surface it to \
+             the user and ask them to authorize the integration in \
+             **Settings → Integrations** before retrying.\n\n",
         );
         for integration in ctx.connected_integrations {
             let _ = writeln!(
                 out,
-                "### {} — {}\n",
-                integration.toolkit, integration.description,
+                "- **{}** — {}\n  Delegate with: `spawn_subagent(agent_id=\"skills_agent\", toolkit=\"{}\", prompt=<task>)`",
+                integration.toolkit, integration.description, integration.toolkit,
             );
-            if integration.tools.is_empty() {
-                let _ = writeln!(
-                    out,
-                    "Use `composio_list_tools` to discover available actions.\n",
-                );
-            } else {
-                for tool in &integration.tools {
-                    let _ = writeln!(out, "- `{}`: {}", tool.name, tool.description,);
-                }
-                out.push('\n');
-            }
         }
+        out.push('\n');
+
         Ok(out)
     }
 }
@@ -833,8 +909,10 @@ pub fn render_subagent_system_prompt(
     model_name: &str,
     allowed_indices: &[usize],
     parent_tools: &[Box<dyn Tool>],
+    extra_tools: &[Box<dyn Tool>],
     archetype_body: &str,
     options: SubagentRenderOptions,
+    tool_call_format: ToolCallFormat,
     connected_integrations: &[ConnectedIntegration],
 ) -> String {
     render_subagent_system_prompt_with_format(
@@ -842,9 +920,10 @@ pub fn render_subagent_system_prompt(
         model_name,
         allowed_indices,
         parent_tools,
+        extra_tools,
         archetype_body,
         options,
-        ToolCallFormat::PFormat,
+        tool_call_format,
         connected_integrations,
     )
 }
@@ -858,6 +937,7 @@ pub fn render_subagent_system_prompt_with_format(
     model_name: &str,
     allowed_indices: &[usize],
     parent_tools: &[Box<dyn Tool>],
+    extra_tools: &[Box<dyn Tool>],
     archetype_body: &str,
     options: SubagentRenderOptions,
     tool_call_format: ToolCallFormat,
@@ -917,36 +997,49 @@ pub fn render_subagent_system_prompt_with_format(
     //
     //    Rendering uses the caller-specified `tool_call_format` so
     //    sub-agents and the main dispatcher stay in lockstep.
-    out.push_str("## Tools\n\n");
-    for &i in allowed_indices {
-        let Some(tool) = parent_tools.get(i) else {
-            tracing::warn!(
-                index = i,
-                tool_count = parent_tools.len(),
-                "[context::prompt] dropping out-of-range tool index in subagent render"
+    // Tool catalogue rendering is dispatcher-format-aware:
+    //
+    // - **Native / Json**: The provider receives full tool schemas
+    //   through the request body's `tools` field (via `filtered_specs`
+    //   in the sub-agent runner). Listing the same tools again as
+    //   prose in the system prompt is pure duplication — for a
+    //   skills_agent spawn with 62 dynamic gmail tools, that
+    //   duplication added ~54k tokens and blew past the model's
+    //   context window. We skip the prose `## Tools` section entirely
+    //   in this mode and rely on the native function-calling channel
+    //   for tool discovery.
+    //
+    // - **PFormat**: There is no native tool channel; the model
+    //   discovers tools by reading the prose `## Tools` section and
+    //   emits compact `<tool_call>name[arg|arg]</tool_call>` syntax.
+    //   We MUST list each tool here, including dynamically-registered
+    //   `extra_tools`, with its compact signature so the model can
+    //   call them.
+    if matches!(tool_call_format, ToolCallFormat::PFormat) {
+        out.push_str("## Tools\n\n");
+        let render_one = |out: &mut String, tool: &dyn Tool| {
+            let sig = render_pformat_signature_for_box_tool(tool);
+            let _ = writeln!(
+                out,
+                "- **{}**: {}\n  Call as: `{}`",
+                tool.name(),
+                tool.description(),
+                sig
             );
-            continue;
         };
-        match tool_call_format {
-            ToolCallFormat::PFormat => {
-                let sig = render_pformat_signature_for_box_tool(tool.as_ref());
-                let _ = writeln!(
-                    out,
-                    "- **{}**: {}\n  Call as: `{}`",
-                    tool.name(),
-                    tool.description(),
-                    sig
+        for &i in allowed_indices {
+            let Some(tool) = parent_tools.get(i) else {
+                tracing::warn!(
+                    index = i,
+                    tool_count = parent_tools.len(),
+                    "[context::prompt] dropping out-of-range tool index in subagent render"
                 );
-            }
-            ToolCallFormat::Json | ToolCallFormat::Native => {
-                let _ = writeln!(
-                    out,
-                    "- **{}**: {}\n  Parameters: `{}`",
-                    tool.name(),
-                    tool.description(),
-                    tool.parameters_schema()
-                );
-            }
+                continue;
+            };
+            render_one(&mut out, tool.as_ref());
+        }
+        for tool in extra_tools {
+            render_one(&mut out, tool.as_ref());
         }
     }
 
@@ -1015,57 +1108,46 @@ pub fn render_subagent_system_prompt_with_format(
         );
     }
 
-    // 3d. Connected integrations — rendered so the agent knows which
-    //     external services are available. Wording varies based on
-    //     whether the agent can delegate (has spawn_subagent) or must
-    //     call Composio tools directly.
+    // 3d. Connected integrations — short toolkit header only. The
+    //     per-action catalogue is intentionally NOT rendered here:
+    //     when the sub-agent runner spawns `skills_agent` with a
+    //     `toolkit` argument it dynamically registers per-action
+    //     tools whose JSON schemas travel through the provider's
+    //     native tool-calling channel, making a prose enumeration
+    //     redundant (and a token sink). For sub-agents that can
+    //     delegate (`spawn_subagent` in their tool list), the
+    //     wording instead points them at the Skills Agent.
     if !connected_integrations.is_empty() {
         let has_spawn = allowed_indices.iter().any(|&i| {
             parent_tools
                 .get(i)
                 .map_or(false, |t| t.name() == "spawn_subagent")
         });
-        let has_composio_execute = allowed_indices.iter().any(|&i| {
-            parent_tools
-                .get(i)
-                .map_or(false, |t| t.name() == "composio_execute")
-        });
 
         out.push_str("## Connected Integrations\n\n");
-        if has_composio_execute {
-            out.push_str(
-                "The user has the following external services connected. \
-                 Use `composio_execute` with the appropriate action slug to interact \
-                 with them.\n\n",
-            );
-        } else if has_spawn {
+        if has_spawn {
             out.push_str(
                 "The user has the following external services connected. \
                  To interact with any of these, delegate to the **Skills Agent** \
-                 (`skills_agent`) via `spawn_subagent`.\n\n",
+                 (`skills_agent`) via `spawn_subagent`, passing the matching \
+                 `toolkit` argument.\n\n",
             );
         } else {
-            out.push_str("The user has the following external services connected.\n\n");
+            out.push_str(
+                "You have direct access to the following external service. \
+                 Action tools are available in your tool list with their \
+                 typed parameter schemas — call them by name.\n\n",
+            );
         }
 
         for integration in connected_integrations {
             let _ = writeln!(
                 out,
-                "### {} — {}\n",
+                "- **{}** — {}",
                 integration.toolkit, integration.description,
             );
-            if integration.tools.is_empty() {
-                let _ = writeln!(
-                    out,
-                    "Use `composio_list_tools` to discover available actions.\n",
-                );
-            } else {
-                for tool in &integration.tools {
-                    let _ = writeln!(out, "- `{}`: {}", tool.name, tool.description);
-                }
-                out.push('\n');
-            }
         }
+        out.push('\n');
     }
 
     // 4. Insert the cache boundary before the dynamic tail. Typed
@@ -1255,6 +1337,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "instr",
@@ -1286,6 +1369,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: &workspace,
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
@@ -1322,6 +1406,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "instr",
@@ -1385,6 +1470,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
@@ -1419,6 +1505,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
@@ -1457,6 +1544,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
@@ -1483,6 +1571,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
@@ -2099,6 +2188,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: &workspace,
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
@@ -2138,6 +2228,7 @@ mod tests {
         let ctx_narrow = PromptContext {
             workspace_dir: &workspace,
             model_name: "test-model",
+            agent_id: "",
             tools: &prompt_tools,
             skills: &[],
             dispatcher_instructions: "",
@@ -2217,6 +2308,7 @@ mod tests {
         let ctx = PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "model",
+            agent_id: "",
             tools: &[],
             skills: &[],
             dispatcher_instructions: "",

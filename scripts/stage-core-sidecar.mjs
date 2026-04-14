@@ -32,6 +32,26 @@ function rustHostTriple() {
   return triple;
 }
 
+function cargoTargetDir() {
+  if (process.env.CARGO_TARGET_DIR) {
+    return resolve(process.env.CARGO_TARGET_DIR);
+  }
+  const res = spawnSync(
+    "cargo",
+    ["metadata", "--format-version", "1", "--no-deps", "--manifest-path", "Cargo.toml"],
+    { cwd: root, encoding: "utf8", shell: false, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (res.status === 0 && res.stdout) {
+    try {
+      const meta = JSON.parse(res.stdout);
+      if (meta.target_directory) return resolve(meta.target_directory);
+    } catch {
+      // fall through to default
+    }
+  }
+  return join(root, "target");
+}
+
 const triple = rustHostTriple();
 const isWindows = process.platform === "win32";
 const binName = isWindows ? "openhuman-core.exe" : "openhuman-core";
@@ -41,9 +61,7 @@ console.log(
 );
 run("cargo", ["build", "--manifest-path", "Cargo.toml", "--bin", "openhuman-core"]);
 
-const targetDir = process.env.CARGO_TARGET_DIR
-  ? resolve(process.env.CARGO_TARGET_DIR)
-  : join(root, "target");
+const targetDir = cargoTargetDir();
 const source = join(targetDir, "debug", binName);
 if (!existsSync(source)) {
   console.error(`[core:stage] compiled binary not found: ${source}`);

@@ -315,6 +315,7 @@ impl AgentBuilder {
             context,
             on_progress: None,
             connected_integrations: Vec::new(),
+            composio_client: None,
             // Default to `true` (omit) so legacy / custom agents built
             // without a definition stay lean. Opt-in agents thread their
             // `omit_profile = false` through the builder.

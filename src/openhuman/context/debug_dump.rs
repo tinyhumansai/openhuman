@@ -450,6 +450,7 @@ fn render_main_agent_dump(
     let ctx = PromptContext {
         workspace_dir,
         model_name,
+        agent_id: "orchestrator",
         tools: &prompt_tools,
         skills: &[],
         dispatcher_instructions: &dispatcher_instructions,
@@ -573,13 +574,21 @@ fn render_subagent_dump(
         definition.omit_memory_md,
     );
 
+    // Debug dump runs outside the agent lifecycle, so there's no
+    // dynamic per-action toolkit to inject and no live dispatcher to
+    // read the format from. Use empty extra_tools and the legacy
+    // PFormat default to preserve existing dump output for
+    // contributors who diff against committed snapshots.
+    let no_extra_tools: Vec<Box<dyn Tool>> = Vec::new();
     let raw = render_subagent_system_prompt(
         workspace_dir,
         &model,
         &allowed_indices,
         tools_vec,
+        &no_extra_tools,
         &archetype_body,
         options,
+        crate::openhuman::context::prompt::ToolCallFormat::PFormat,
         connected_integrations,
     );
     let rendered = extract_cache_boundary(&raw);

@@ -58,16 +58,19 @@ pub(crate) async fn dispatch_subagent(
         prompt.chars().count()
     );
 
-    // Propagate the per-call skill filter into the subagent runner so
+    // Propagate the per-call toolkit scope into the subagent runner so
     // that `SkillDelegationTool`s can narrow `skills_agent` to a single
     // Composio toolkit (e.g. `delegate_gmail` → skills_agent +
-    // skill_filter="gmail"). Previously this argument was hardcoded to
-    // `None`, which meant the toolkit pre-selection never reached the
-    // subagent and skills_agent always saw the full Composio catalog —
-    // the downstream half of the #526 leak.
+    // toolkit="gmail"). Earlier code plumbed this through
+    // `skill_filter_override` (which matches `{skill}__` QuickJS-style
+    // names), but Composio actions are named `GMAIL_*` / `NOTION_*` —
+    // so the filter excluded every Composio tool instead of narrowing
+    // them. `toolkit_override` applies the correct `{TOOLKIT}_` prefix
+    // check, restricted to skill-category tools.
     let options = SubagentRunOptions {
-        skill_filter_override: skill_filter.map(str::to_string),
+        skill_filter_override: None,
         category_filter_override: None,
+        toolkit_override: skill_filter.map(str::to_string),
         context: None,
         task_id: Some(task_id.clone()),
     };

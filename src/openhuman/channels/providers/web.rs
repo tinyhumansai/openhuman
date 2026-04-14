@@ -198,6 +198,13 @@ pub async fn start_chat(
                 .await;
             }
             Err(err) => {
+                log::warn!(
+                    "[web-channel] run_chat_task failed client_id={} thread_id={} request_id={} error={}",
+                    client_id_task,
+                    thread_id_task,
+                    request_id_task,
+                    err
+                );
                 publish_web_channel_event(WebChannelEvent {
                     event: "chat_error".to_string(),
                     client_id: client_id_task.clone(),

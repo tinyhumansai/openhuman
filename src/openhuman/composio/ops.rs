@@ -447,10 +447,15 @@ pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedInteg
 
 /// The actual backend fetch, called on cache miss.
 ///
-/// Returns `Some(vec)` when the backend was reachable (even if the user
-/// has zero connections — that's a valid cacheable state). Returns `None`
-/// when we couldn't even build a client (no auth), signalling the caller
-/// should NOT cache this result.
+/// Returns `Some(vec)` when the backend was reachable. The returned
+/// vector is the merged **integration overview** — every toolkit in
+/// the backend allowlist appears as one entry, with a `connected`
+/// flag indicating whether the user has an active OAuth connection.
+/// Connected entries also carry the per-action tool catalogue
+/// (fetched in a single batched call).
+///
+/// Returns `None` when we couldn't even build a client (no auth),
+/// signalling the caller should NOT cache this result.
 async fn fetch_connected_integrations_uncached(
     config: &Config,
 ) -> Option<Vec<ConnectedIntegration>> {
@@ -461,76 +466,119 @@ async fn fetch_connected_integrations_uncached(
         return None;
     };
 
-    let connections = match client.list_connections().await {
-        Ok(resp) => resp.connections,
+    // Pull the backend allowlist — every toolkit the orchestrator can
+    // possibly suggest, regardless of whether the user has authorized
+    // it yet. This is the universe of valid `toolkit` arguments to
+    // `spawn_subagent(skills_agent, …)`.
+    let allowlisted_toolkits: Vec<String> = match client.list_toolkits().await {
+        Ok(resp) => resp.toolkits,
         Err(e) => {
-            tracing::warn!("[composio] fetch_connected_integrations: list_connections failed: {e}");
+            tracing::warn!(
+                "[composio] fetch_connected_integrations: list_toolkits failed: {e}"
+            );
             return Some(Vec::new());
         }
     };
 
-    let active: Vec<_> = connections
-        .iter()
-        .filter(|c| c.status == "ACTIVE" || c.status == "CONNECTED")
-        .collect();
-
-    if active.is_empty() {
+    if allowlisted_toolkits.is_empty() {
+        tracing::debug!("[composio] fetch_connected_integrations: backend allowlist is empty");
         return Some(Vec::new());
     }
 
-    // Collect the unique toolkit slugs so we can batch-fetch their tools.
-    let toolkit_slugs: Vec<String> = {
-        let mut slugs: Vec<String> = active.iter().map(|c| c.toolkit.clone()).collect();
-        slugs.sort();
-        slugs.dedup();
-        slugs
-    };
-
-    // Fetch available tool schemas for all connected toolkits in one call.
-    let tools_by_toolkit = match client.list_tools(Some(&toolkit_slugs)).await {
-        Ok(resp) => resp.tools,
+    let connections = match client.list_connections().await {
+        Ok(resp) => resp.connections,
         Err(e) => {
-            tracing::warn!("[composio] fetch_connected_integrations: list_tools failed: {e}");
+            tracing::warn!(
+                "[composio] fetch_connected_integrations: list_connections failed: {e}"
+            );
+            // Allowlist still useful — render every toolkit as
+            // not-connected so the orchestrator can surface them.
             Vec::new()
         }
     };
 
-    // Build the per-toolkit integration entries.
-    let mut integrations: Vec<ConnectedIntegration> = toolkit_slugs
+    // Active connection slugs (status filter mirrors the original logic).
+    let connected_slugs: std::collections::HashSet<String> = connections
+        .iter()
+        .filter(|c| c.status == "ACTIVE" || c.status == "CONNECTED")
+        .map(|c| c.toolkit.clone())
+        .collect();
+
+    // Fetch available tool schemas — only for the connected slugs,
+    // since not-connected toolkits won't be invoked from a sub-agent.
+    let connected_slugs_vec: Vec<String> = {
+        let mut v: Vec<String> = connected_slugs.iter().cloned().collect();
+        v.sort();
+        v
+    };
+    let tools_by_toolkit = if connected_slugs_vec.is_empty() {
+        Vec::new()
+    } else {
+        match client.list_tools(Some(&connected_slugs_vec)).await {
+            Ok(resp) => resp.tools,
+            Err(e) => {
+                tracing::warn!(
+                    "[composio] fetch_connected_integrations: list_tools failed: {e}"
+                );
+                Vec::new()
+            }
+        }
+    };
+
+    // Deduplicate the allowlist so a backend that returns duplicates
+    // doesn't produce dual entries downstream.
+    let mut unique_toolkits: Vec<String> = allowlisted_toolkits.clone();
+    unique_toolkits.sort();
+    unique_toolkits.dedup();
+
+    // Build one entry per allowlisted toolkit. Connected entries
+    // carry their action catalogue; not-connected entries carry an
+    // empty `tools` vec.
+    let mut integrations: Vec<ConnectedIntegration> = unique_toolkits
         .iter()
         .map(|slug| {
-            let tools: Vec<ConnectedIntegrationTool> = tools_by_toolkit
-                .iter()
-                .filter(|t| {
-                    // Composio action slugs are prefixed with the toolkit
-                    // name in uppercase, e.g. GMAIL_SEND_EMAIL.
-                    t.function.name.starts_with(&slug.to_uppercase())
-                })
-                .map(|t| ConnectedIntegrationTool {
-                    name: t.function.name.clone(),
-                    description: t.function.description.clone().unwrap_or_default(),
-                })
-                .collect();
+            let connected = connected_slugs.contains(slug);
+            let tools: Vec<ConnectedIntegrationTool> = if connected {
+                tools_by_toolkit
+                    .iter()
+                    .filter(|t| {
+                        // Composio action slugs are prefixed with the
+                        // toolkit name in uppercase, e.g. GMAIL_SEND_EMAIL.
+                        t.function.name.starts_with(&slug.to_uppercase())
+                    })
+                    .map(|t| ConnectedIntegrationTool {
+                        name: t.function.name.clone(),
+                        description: t.function.description.clone().unwrap_or_default(),
+                        parameters: t.function.parameters.clone(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
             ConnectedIntegration {
                 toolkit: slug.clone(),
                 description: toolkit_description(slug).to_string(),
                 tools,
+                connected,
             }
         })
         .collect();
 
     integrations.sort_by(|a, b| a.toolkit.cmp(&b.toolkit));
 
+    let connected_count = integrations.iter().filter(|i| i.connected).count();
     tracing::info!(
-        count = integrations.len(),
+        total = integrations.len(),
+        connected = connected_count,
         "[composio] fetch_connected_integrations: done"
     );
     for ci in &integrations {
         tracing::debug!(
             toolkit = %ci.toolkit,
+            connected = ci.connected,
             tool_count = ci.tools.len(),
-            "[composio] connected integration"
+            "[composio] integration overview"
         );
     }
 
