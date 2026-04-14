@@ -45,6 +45,7 @@ impl AgentBuilder {
             event_session_id: None,
             event_channel: None,
             agent_definition_name: None,
+            omit_profile: None,
         }
     }
 
@@ -192,6 +193,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Forward the target agent definition's `omit_profile` flag so
+    /// [`Agent::build_system_prompt`] can decide whether to inject
+    /// `PROFILE.md`. Only opt-in agents (welcome, orchestrator, the
+    /// trigger pair) should set this to `false`.
+    pub fn omit_profile(mut self, omit: bool) -> Self {
+        self.omit_profile = Some(omit);
+        self
+    }
+
     /// Validates the configuration and constructs a new `Agent` instance.
     ///
     /// This method is responsible for wiring together the provided components,
@@ -296,6 +306,10 @@ impl AgentBuilder {
             context,
             on_progress: None,
             connected_integrations: Vec::new(),
+            // Default to `true` (omit) so legacy / custom agents built
+            // without a definition stay lean. Opt-in agents thread their
+            // `omit_profile = false` through the builder.
+            omit_profile: self.omit_profile.unwrap_or(true),
         })
     }
 }
