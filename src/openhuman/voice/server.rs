@@ -1143,4 +1143,58 @@ mod tests {
         assert_eq!(*state.lock().await, ServerState::Idle);
         assert!(last_error.lock().await.is_none());
     }
+
+    // ── truncate_for_log ───────────────────────────────────────────
+
+    #[test]
+    fn truncate_for_log_passes_through_short_strings() {
+        assert_eq!(truncate_for_log("hi", 10), "hi");
+        assert_eq!(truncate_for_log("", 10), "");
+    }
+
+    #[test]
+    fn truncate_for_log_appends_ellipsis_when_truncated() {
+        assert_eq!(truncate_for_log("abcdefghij", 5), "abcde...");
+    }
+
+    #[test]
+    fn truncate_for_log_handles_multibyte_chars() {
+        // Each "日" is multi-byte but one `char` — truncate by char count.
+        let out = truncate_for_log("日本語テスト", 3);
+        assert_eq!(out, "日本語...");
+    }
+
+    // ── try_global_server / global_server ─────────────────────────
+
+    #[tokio::test]
+    async fn try_global_server_returns_some_after_global_server_initialized() {
+        // `global_server` is OnceLock-backed; first call initialises it.
+        let _ = global_server(VoiceServerConfig::default());
+        assert!(try_global_server().is_some());
+    }
+
+    // ── ServerState transitions ───────────────────────────────────
+
+    #[tokio::test]
+    async fn server_status_reflects_current_state_and_counts() {
+        let server = VoiceServer::new(VoiceServerConfig::default());
+        let status = server.status().await;
+        assert_eq!(status.state, ServerState::Stopped);
+        assert_eq!(status.transcription_count, 0);
+    }
+
+    #[test]
+    fn hallucination_detection_longer_real_phrase_is_not_flagged() {
+        // Real multi-word speech should not be classified as hallucination.
+        assert!(!is_hallucinated_output("please summarise the meeting"));
+        assert!(!is_hallucinated_output("open the browser"));
+    }
+
+    #[test]
+    fn hallucination_detection_trailing_exclamation_still_flags_known_pattern() {
+        // Periods are stripped in normalisation; other punctuation behaviour
+        // depends on the pattern list — we just lock in that exclamation
+        // after "Thank you" does not accidentally un-flag it.
+        assert!(is_hallucinated_output("Thank you!"));
+    }
 }

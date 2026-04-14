@@ -990,3 +990,142 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_counts_match_and_nonempty() {
+        let s = all_controller_schemas();
+        let h = all_registered_controllers();
+        assert_eq!(s.len(), h.len());
+        assert!(s.len() >= 20, "local_ai should expose >=20 controller fns");
+    }
+
+    #[test]
+    fn all_schemas_use_local_ai_namespace_and_have_descriptions() {
+        for s in all_controller_schemas() {
+            assert_eq!(s.namespace, "local_ai", "function {}", s.function);
+            assert!(!s.description.is_empty(), "function {} desc", s.function);
+            assert!(!s.outputs.is_empty(), "function {} outputs", s.function);
+        }
+    }
+
+    #[test]
+    fn unknown_function_returns_unknown_schema() {
+        let s = schemas("no_such_fn");
+        assert_eq!(s.function, "unknown");
+        assert_eq!(s.namespace, "local_ai");
+    }
+
+    #[test]
+    fn every_registered_key_resolves_to_non_unknown_schema() {
+        let keys = [
+            "agent_chat",
+            "agent_chat_simple",
+            "local_ai_status",
+            "local_ai_download",
+            "local_ai_download_all_assets",
+            "local_ai_summarize",
+            "local_ai_suggest_questions",
+            "local_ai_prompt",
+            "local_ai_vision_prompt",
+            "local_ai_embed",
+            "local_ai_transcribe",
+            "local_ai_transcribe_bytes",
+            "local_ai_tts",
+            "local_ai_assets_status",
+            "local_ai_downloads_progress",
+            "local_ai_download_asset",
+            "local_ai_device_profile",
+            "local_ai_presets",
+            "local_ai_apply_preset",
+            "local_ai_set_ollama_path",
+            "local_ai_diagnostics",
+            "local_ai_chat",
+            "local_ai_should_react",
+            "local_ai_analyze_sentiment",
+            "local_ai_should_send_gif",
+            "local_ai_tenor_search",
+        ];
+        for k in keys {
+            let s = schemas(k);
+            assert_eq!(s.namespace, "local_ai");
+            assert_ne!(s.function, "unknown", "key `{k}` fell through");
+        }
+    }
+
+    #[test]
+    fn registered_controllers_all_in_local_ai_namespace() {
+        for h in all_registered_controllers() {
+            assert_eq!(h.schema.namespace, "local_ai");
+            assert!(!h.schema.function.is_empty());
+        }
+    }
+
+    #[test]
+    fn field_builder_helpers_are_correct_shape() {
+        let r = required_string("k", "c");
+        assert!(r.required);
+        assert!(matches!(r.ty, TypeSchema::String));
+
+        let o = optional_string("k", "c");
+        assert!(!o.required);
+
+        let ou = optional_u64("k", "c");
+        assert!(!ou.required);
+
+        let j = json_output("result", "c");
+        assert!(j.required);
+        assert!(matches!(j.ty, TypeSchema::Json));
+    }
+
+    #[test]
+    fn to_json_wraps_rpc_outcome() {
+        let v = to_json(RpcOutcome::single_log(serde_json::json!({"ok": true}), "l"))
+            .expect("serialize");
+        assert!(v.get("logs").is_some() || v.get("result").is_some() || v.get("ok").is_some());
+    }
+
+    #[test]
+    fn deserialize_params_parses_valid_object() {
+        let mut m = Map::new();
+        m.insert("message".into(), Value::String("hi".into()));
+        let p: AgentChatParams = deserialize_params(m).expect("parse");
+        assert_eq!(p.message, "hi");
+    }
+
+    #[test]
+    fn deserialize_params_errors_on_invalid_shape() {
+        let mut m = Map::new();
+        m.insert("message".into(), Value::Bool(true));
+        let err = deserialize_params::<AgentChatParams>(m).unwrap_err();
+        assert!(err.contains("invalid params"));
+    }
+
+    #[test]
+    fn prompt_schema_has_inputs() {
+        let s = schemas("local_ai_prompt");
+        assert!(!s.inputs.is_empty());
+    }
+
+    #[test]
+    fn apply_preset_schema_has_inputs() {
+        let s = schemas("local_ai_apply_preset");
+        assert!(!s.inputs.is_empty());
+    }
+
+    #[test]
+    fn download_schema_optional_force_flag() {
+        let s = schemas("local_ai_download");
+        let force = s.inputs.iter().find(|f| f.name == "force");
+        assert!(force.is_some_and(|f| !f.required));
+    }
+
+    #[test]
+    fn summarize_schema_requires_text_or_equivalent() {
+        let s = schemas("local_ai_summarize");
+        assert!(s.inputs.iter().any(|f| f.required));
+    }
+}

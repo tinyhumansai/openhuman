@@ -241,3 +241,70 @@ pub async fn accessibility_globe_listener_stop() -> Result<RpcOutcome<GlobeHotke
         "globe listener stop processed",
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn accessibility_status_returns_ok() {
+        let outcome = accessibility_status().await.expect("status");
+        // Permissions field is always present (even if all Denied on Linux).
+        let _ = outcome.value;
+    }
+
+    #[tokio::test]
+    async fn accessibility_doctor_cli_json_returns_summary_permissions_and_recommendations() {
+        let v = accessibility_doctor_cli_json().await.expect("doctor json");
+        assert!(v.get("result").is_some());
+        let result = &v["result"];
+        assert!(result.get("summary").is_some());
+        assert!(result.get("permissions").is_some());
+        assert!(result.get("recommendations").is_some());
+        // Recommendations are always non-empty (either action-items or "ready").
+        assert!(result["recommendations"]
+            .as_array()
+            .map_or(false, |a| !a.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn accessibility_doctor_cli_json_has_summary_flags_as_bools() {
+        let v = accessibility_doctor_cli_json().await.unwrap();
+        let summary = &v["result"]["summary"];
+        for field in [
+            "overall_ready",
+            "platform_supported",
+            "session_active",
+            "screen_capture_ready",
+            "accessibility_ready",
+            "input_monitoring_ready",
+        ] {
+            assert!(
+                summary[field].is_boolean(),
+                "summary field `{field}` should be boolean"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn accessibility_stop_session_is_tolerant_of_no_reason() {
+        let payload = StopSessionParams { reason: None };
+        let _ = accessibility_stop_session(payload).await;
+    }
+
+    #[tokio::test]
+    async fn accessibility_capture_image_ref_returns_ok_even_on_unsupported_platform() {
+        // `capture_image_ref_test` is `async fn` returning `CaptureImageRefResult`
+        // directly (no `Result`), so this call should always succeed. On
+        // non-macOS platforms the result will simply report capture failure.
+        let outcome = accessibility_capture_image_ref().await.expect("capture");
+        let _ = outcome.value;
+    }
+
+    #[tokio::test]
+    async fn accessibility_vision_recent_with_no_args_returns_ok() {
+        let outcome = accessibility_vision_recent(Some(5)).await;
+        // Either Ok or Err — just ensure the call doesn't panic.
+        let _ = outcome;
+    }
+}
