@@ -15,6 +15,7 @@ export interface UsageState {
   isAtLimit: boolean;
   isRateLimited: boolean;
   isBudgetExhausted: boolean;
+  shouldShowBudgetCompletedMessage: boolean;
   isLoading: boolean;
   refresh: () => void;
 }
@@ -86,6 +87,13 @@ export function useUsageState(): UsageState {
     ? teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
     : false;
 
+  // Some users have no included recurring budget at all. They still need the
+  // completed-budget warning in chat even though they are not in an exhausted
+  // paid cycle.
+  const shouldShowBudgetCompletedMessage = teamUsage
+    ? isBudgetExhausted || (teamUsage.cycleBudgetUsd <= 0 && teamUsage.remainingUsd <= 0)
+    : false;
+
   const isRateLimited =
     teamUsage !== null &&
     !teamUsage.bypassCycleLimit &&
@@ -107,6 +115,7 @@ export function useUsageState(): UsageState {
     isAtLimit,
     isRateLimited,
     isBudgetExhausted,
+    shouldShowBudgetCompletedMessage,
     isLoading,
     refresh,
   };

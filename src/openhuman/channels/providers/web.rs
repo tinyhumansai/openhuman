@@ -88,6 +88,18 @@ fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
     .to_string()
 }
 
+fn is_inference_budget_exceeded_error(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    normalized.contains("budget exceeded")
+        && (normalized.contains("add credits to continue")
+            || normalized.contains("add credits")
+            || normalized.contains("top up"))
+}
+
+fn inference_budget_exceeded_user_message() -> &'static str {
+    "I don't have any budget available right now. Please top up your credits or choose a plan to continue."
+}
+
 pub async fn start_chat(
     client_id: &str,
     thread_id: &str,
@@ -335,7 +347,24 @@ async fn run_chat_task(
         request_id.to_string(),
     );
 
-    let result = agent.run_single(message).await.map_err(|e| e.to_string());
+    let result = match agent.run_single(message).await {
+        Ok(response) => Ok(response),
+        Err(err) => {
+            let err_message = err.to_string();
+            if is_inference_budget_exceeded_error(&err_message) {
+                log::warn!(
+                    "[web-channel] inference budget exhausted for client={} thread={} request_id={} error={}",
+                    client_id,
+                    thread_id,
+                    request_id,
+                    err_message
+                );
+                Ok(inference_budget_exceeded_user_message().to_string())
+            } else {
+                Err(err_message)
+            }
+        }
+    };
 
     // Clear the sender so it doesn't hold the channel open across sessions.
     agent.set_on_progress(None);
@@ -798,7 +827,10 @@ fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String>
 
 #[cfg(test)]
 mod tests {
-    use super::{cancel_chat, start_chat};
+    use super::{
+        cancel_chat, inference_budget_exceeded_user_message, is_inference_budget_exceeded_error,
+        start_chat,
+    };
 
     #[tokio::test]
     async fn start_chat_validates_required_fields() {
@@ -829,5 +861,25 @@ mod tests {
             .await
             .expect_err("thread id should be required");
         assert!(err.contains("thread_id is required"));
+    }
+
+    #[test]
+    fn detects_backend_budget_exhaustion_error() {
+        assert!(is_inference_budget_exceeded_error(
+            "OpenHuman API error (402 Payment Required): Budget exceeded — add credits to continue."
+        ));
+        assert!(is_inference_budget_exceeded_error(
+            "provider error: budget exceeded, please add credits"
+        ));
+        assert!(!is_inference_budget_exceeded_error(
+            "OpenHuman API error (500): Internal server error"
+        ));
+    }
+
+    #[test]
+    fn budget_exceeded_copy_mentions_top_up() {
+        let message = inference_budget_exceeded_user_message();
+        assert!(message.contains("top up"));
+        assert!(message.contains("credits"));
     }
 }

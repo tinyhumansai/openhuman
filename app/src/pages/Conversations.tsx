@@ -233,8 +233,10 @@ const Conversations = () => {
     isLoading: isLoadingBudget,
     isAtLimit,
     isBudgetExhausted,
+    isRateLimited,
     isNearLimit,
     isFreeTier,
+    shouldShowBudgetCompletedMessage,
     usagePct10h,
     usagePct7d,
     currentTier,
@@ -1368,10 +1370,7 @@ const Conversations = () => {
               </div>
             )}
           {teamUsage &&
-            ((teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0) ||
-              (!teamUsage.bypassCycleLimit &&
-                teamUsage.fiveHourCapUsd > 0 &&
-                teamUsage.cycleLimit5hr >= teamUsage.fiveHourCapUsd)) && (
+            (shouldShowBudgetCompletedMessage || isRateLimited) && (
               <div className="mb-3 p-3 rounded-xl bg-coral-50 border border-coral-200 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <svg
@@ -1387,12 +1386,14 @@ const Conversations = () => {
                     />
                   </svg>
                   <p className="text-xs text-coral-600 truncate">
-                    {teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0
-                      ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
+                    {shouldShowBudgetCompletedMessage
+                      ? teamUsage.cycleBudgetUsd > 0
+                        ? `You've hit your weekly limit.${teamUsage.cycleEndsAt ? ` Resets ${formatResetTime(teamUsage.cycleEndsAt)}.` : ''} Top up to continue.`
+                        : 'Your included budget is complete. Add credits or upgrade to continue.'
                       : `10-hour rate limit reached.${teamUsage.fiveHourResetsAt ? ` Resets ${formatResetTime(teamUsage.fiveHourResetsAt)}.` : ''}`}
                   </p>
                 </div>
-                {teamUsage.cycleBudgetUsd > 0 && teamUsage.remainingUsd <= 0 && (
+                {shouldShowBudgetCompletedMessage && (
                   <button
                     onClick={() => navigate('/settings/billing')}
                     className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-coral-500 hover:bg-coral-400 text-white text-xs font-medium transition-colors">
