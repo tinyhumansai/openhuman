@@ -12,7 +12,7 @@
 //! |---------------|---------------|---------|
 //! | Lightweight   | yes           | local   |
 //! | Lightweight   | no            | remote  |
-//! | Medium        | yes           | local   |
+//! | Medium        | yes           | local/remote (hint-driven) |
 //! | Medium        | no            | remote  |
 //! | Heavy         | either        | remote  |
 //!

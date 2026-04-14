@@ -9,7 +9,7 @@
 pub enum TaskCategory {
     /// Reactions, short classifications, simple formatting. Local-first.
     Lightweight,
-    /// Summarization, limited tool orchestration. Local-preferred.
+    /// Summarization, limited tool orchestration. Hint-sensitive.
     Medium,
     /// Deep reasoning, long-context planning, complex generation. Remote only.
     Heavy,
@@ -116,7 +116,11 @@ pub fn classify(model: &str) -> TaskCategory {
 /// Heavy tasks always use remote unless `privacy_required` forces local.
 ///
 /// # Local preference
-/// Lightweight and medium tasks use local when `local_available` is true.
+/// Lightweight tasks prefer local when `local_available` is true.
+///
+/// Medium tasks use routing hints as a tie-breaker:
+/// - `LatencyBudget::Low` and/or `CostSensitivity::High` bias toward local.
+/// - Without a local-bias hint, medium defaults to remote.
 pub fn decide(
     category: TaskCategory,
     local_model: &str,
@@ -144,9 +148,17 @@ pub fn decide(
         );
     }
 
-    // Lightweight / Medium: prefer local when available.
-    let use_local =
-        local_available && matches!(category, TaskCategory::Lightweight | TaskCategory::Medium);
+    let local_bias = (hints.latency_budget == LatencyBudget::Low) as i32
+        + (hints.cost_sensitivity == CostSensitivity::High) as i32;
+
+    // Lightweight is always local-first when available.
+    // Medium requires at least one explicit local-bias hint.
+    let use_local = local_available
+        && match category {
+            TaskCategory::Lightweight => true,
+            TaskCategory::Medium => local_bias > 0,
+            TaskCategory::Heavy => false,
+        };
 
     if use_local {
         (
@@ -274,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn medium_local_healthy_routes_local() {
+    fn medium_without_hints_routes_remote() {
         let (primary, fallback) = decide(
             TaskCategory::Medium,
             "local-model",
@@ -282,13 +294,8 @@ mod tests {
             true,
             &default_hints(),
         );
-        assert_eq!(
-            primary,
-            RoutingTarget::Local {
-                model: "local-model".into()
-            }
-        );
-        assert!(fallback.is_some());
+        assert!(matches!(primary, RoutingTarget::Remote { .. }));
+        assert!(fallback.is_none());
     }
 
     #[test]
@@ -351,13 +358,13 @@ mod tests {
     // ── decide: latency / cost signals ───────────────────────────────────────
 
     #[test]
-    fn low_latency_budget_routes_local_when_available() {
+    fn low_latency_budget_routes_medium_local_when_available() {
         let hints = RoutingHints {
             latency_budget: LatencyBudget::Low,
             ..Default::default()
         };
         let (primary, _) = decide(
-            TaskCategory::Lightweight,
+            TaskCategory::Medium,
             "local-model",
             "remote-model",
             true,
@@ -367,13 +374,13 @@ mod tests {
     }
 
     #[test]
-    fn high_cost_sensitivity_routes_local_when_available() {
+    fn high_cost_sensitivity_routes_medium_local_when_available() {
         let hints = RoutingHints {
             cost_sensitivity: CostSensitivity::High,
             ..Default::default()
         };
         let (primary, _) = decide(
-            TaskCategory::Lightweight,
+            TaskCategory::Medium,
             "local-model",
             "remote-model",
             true,

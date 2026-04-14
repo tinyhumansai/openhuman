@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use crate::openhuman::config::{MODEL_AGENTIC_V1, MODEL_CODING_V1, MODEL_REASONING_V1};
 use crate::openhuman::providers::traits::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderCapabilities, StreamChunk,
-    StreamOptions, StreamResult, ToolsPayload,
+    StreamError, StreamOptions, StreamResult, ToolsPayload,
 };
 use crate::openhuman::tools::ToolSpec;
 
@@ -28,6 +28,13 @@ use super::health::LocalHealthChecker;
 use super::policy::{self, RoutingHints, RoutingTarget, TaskCategory};
 use super::quality;
 use super::telemetry::{self, RoutingRecord};
+
+fn stream_local_not_supported_error() -> StreamResult<StreamChunk> {
+    Err(StreamError::Provider(
+        "[routing] streaming selected local path, but local streaming is not implemented"
+            .to_string(),
+    ))
+}
 
 fn truncate_safe(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
@@ -72,6 +79,19 @@ pub struct IntelligentRoutingProvider {
 }
 
 impl IntelligentRoutingProvider {
+    fn resolve_streaming_target(&self, model: &str) -> (RoutingTarget, String) {
+        let category = policy::classify(model);
+        let remote_model = self.resolve_remote_model(model, category);
+        let (primary, _fallback) = policy::decide(
+            category,
+            &self.local_model,
+            &remote_model,
+            self.local_enabled,
+            &self.hints,
+        );
+        (primary, remote_model)
+    }
+
     fn resolve_remote_model(&self, requested_model: &str, category: TaskCategory) -> String {
         if category != TaskCategory::Heavy {
             return self.remote_fallback_model.clone();
@@ -448,7 +468,9 @@ impl Provider for IntelligentRoutingProvider {
     }
 
     fn supports_streaming(&self) -> bool {
-        self.remote.supports_streaming()
+        // With privacy_required we fail closed to local-only routing, and local
+        // streaming is intentionally unsupported.
+        !self.hints.privacy_required && self.remote.supports_streaming()
     }
 
     fn stream_chat_with_system(
@@ -459,16 +481,24 @@ impl Provider for IntelligentRoutingProvider {
         temperature: f64,
         options: StreamOptions,
     ) -> futures_util::stream::BoxStream<'static, StreamResult<StreamChunk>> {
-        // Streaming always uses remote — local streaming is not integrated.
-        let category = policy::classify(model);
-        let remote_model = self.resolve_remote_model(model, category);
-        self.remote.stream_chat_with_system(
-            system_prompt,
-            message,
-            &remote_model,
-            temperature,
-            options,
-        )
+        let (primary, remote_model) = self.resolve_streaming_target(model);
+
+        match primary {
+            RoutingTarget::Remote { .. } => self.remote.stream_chat_with_system(
+                system_prompt,
+                message,
+                &remote_model,
+                temperature,
+                options,
+            ),
+            RoutingTarget::Local { .. } => {
+                // Fail closed: do not bypass privacy/local routing by delegating
+                // streaming to remote when policy chose local.
+                Box::pin(futures_util::stream::once(async {
+                    stream_local_not_supported_error()
+                }))
+            }
+        }
     }
 
     async fn warmup(&self) -> Result<()> {
@@ -604,7 +634,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_used_when_healthy_and_medium() {
+    async fn medium_without_hints_uses_remote() {
         let local = MockProvider::new("local", "Here is a summary.");
         let remote = MockProvider::new("remote", "remote-resp");
         let health = LocalHealthChecker::seeded(true);
@@ -615,6 +645,25 @@ mod tests {
             health,
             RoutingHints::default(),
         );
+        r.chat_with_system(None, "Summarize this", "hint:summarize", 0.7)
+            .await
+            .unwrap();
+
+        assert_eq!(local.calls(), 0);
+        assert_eq!(remote.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn medium_with_local_bias_hint_uses_local() {
+        let local = MockProvider::new("local", "Here is a local summary.");
+        let remote = MockProvider::new("remote", "remote-resp");
+        let health = LocalHealthChecker::seeded(true);
+        let hints = RoutingHints {
+            latency_budget: crate::openhuman::routing::policy::LatencyBudget::Low,
+            ..Default::default()
+        };
+
+        let r = router(Arc::clone(&local), Arc::clone(&remote), health, hints);
         r.chat_with_system(None, "Summarize this", "hint:summarize", 0.7)
             .await
             .unwrap();
