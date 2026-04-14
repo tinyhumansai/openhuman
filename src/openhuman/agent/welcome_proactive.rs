@@ -144,6 +144,18 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
         job_name: Some(PROACTIVE_WELCOME_JOB_NAME.to_string()),
     });
 
+    // Post-publish confirmation. `publish_global` is a best-effort
+    // broadcast send that swallows lag / no-subscriber errors, so
+    // without this line the caller can't distinguish "reached the
+    // end successfully" from "silently bailed somewhere above" by
+    // reading the log alone.
+    tracing::debug!(
+        source = PROACTIVE_WELCOME_SOURCE,
+        job_name = PROACTIVE_WELCOME_JOB_NAME,
+        response_chars = trimmed.chars().count(),
+        "[welcome::proactive] proactive welcome flow complete"
+    );
+
     Ok(())
 }
 

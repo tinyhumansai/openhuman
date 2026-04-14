@@ -608,12 +608,13 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
 
     config.save().await.map_err(|e| e.to_string())?;
 
-    // Seed proactive agents (morning briefing) and fire the welcome
-    // agent exactly once, on the false→true transition.
+    // Seed proactive agents (morning briefing) on any UI false→true
+    // transition. The welcome agent fires only when the *chat* flow
+    // hasn't completed yet — otherwise a user whose chat welcome was
+    // already delivered (e.g. via the legacy tool path, or a manual
+    // flip) would get a second welcome.
     if value && !was_completed {
-        tracing::debug!(
-            "[onboarding] false→true transition detected — seeding morning briefing and firing proactive welcome"
-        );
+        tracing::debug!("[onboarding] false→true transition detected — seeding morning briefing");
         let seed_config = config.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = crate::openhuman::cron::seed::seed_proactive_agents(&seed_config) {
@@ -621,7 +622,14 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
             }
         });
 
-        crate::openhuman::agent::welcome_proactive::spawn_proactive_welcome(config.clone());
+        if !was_chat_completed {
+            tracing::debug!("[onboarding] chat flow not yet completed — firing proactive welcome");
+            crate::openhuman::agent::welcome_proactive::spawn_proactive_welcome(config.clone());
+        } else {
+            tracing::debug!(
+                "[onboarding] chat_onboarding_completed already true — skipping proactive welcome"
+            );
+        }
     } else {
         tracing::debug!(
             was_completed,

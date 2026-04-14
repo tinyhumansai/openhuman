@@ -101,14 +101,16 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
         let client_id = socket.id.to_string();
         log::info!("[socketio] client connected id={client_id}");
         // Join a room named after the client ID for targeted event delivery.
-        let _ = socket.join(client_id.clone());
+        join_room_logged(&socket, &client_id, &client_id);
         // Also auto-join the "system" room so every connected client
         // receives broadcast-style events that aren't tied to a
         // specific chat thread. Today this covers proactive messages
         // (welcome agent, morning briefing, cron-driven announcements)
         // which `channels::proactive::ProactiveMessageSubscriber`
         // emits with `client_id = "system"` — see `emit_web_channel_event`.
-        let _ = socket.join("system");
+        // If this join fails the welcome message silently disappears,
+        // so we log both success and failure for diagnosability.
+        join_room_logged(&socket, "system", &client_id);
         let ready_payload = json!({ "sid": client_id });
         log::debug!("[socketio] emit event=ready to_client={}", socket.id);
         let _ = socket.emit("ready", &ready_payload);
@@ -332,6 +334,21 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         }
         log::debug!("[socketio] transcription bridge stopped");
     });
+}
+
+/// Join `socket` to `room`, logging the result.
+///
+/// `socket.join()` returns a `Result` that historically was discarded
+/// with `let _ = …`. Silent failure on the `"system"` room in
+/// particular makes proactive-message delivery vanish without a trace,
+/// so both the happy and error paths are logged with enough context
+/// (room name + client id) to diagnose missing welcome messages from
+/// logs alone.
+fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
+    match socket.join(room.to_string()) {
+        Ok(()) => log::debug!("[socketio] joined room '{room}' for client {client_id}"),
+        Err(e) => log::warn!("[socketio] failed to join room '{room}' for client {client_id}: {e}"),
+    }
 }
 
 fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {

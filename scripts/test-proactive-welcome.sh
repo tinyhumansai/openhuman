@@ -41,20 +41,44 @@ fail() { printf "[test][FAIL] %s\n" "$*" >&2; exit 1; }
 [[ -f "$BIN" ]] || fail "binary not built: $BIN (run: cargo build --bin openhuman-core)"
 [[ -f "$CONFIG_PATH" ]] || fail "config not found: $CONFIG_PATH"
 
+# Flip the two onboarding keys to `false` in place, preserving any
+# trailing inline comment and whitespace. If a key is missing, append
+# a single line at the end of the file — never prepend, because the
+# first line is usually a bare top-level assignment like
+# `default_model = "..."` and prepending could land inside a section
+# header on files laid out differently.
 reset_flags() {
     python3 - "$CONFIG_PATH" <<'PY'
 import sys, re, pathlib
 p = pathlib.Path(sys.argv[1])
 text = p.read_text()
+# Match: start-of-line, key, optional spaces, =, spaces, true|false,
+# optional trailing whitespace + "# comment" (captured so we can keep it).
 for key in ("onboarding_completed", "chat_onboarding_completed"):
-    pat = re.compile(rf'^{key}\s*=\s*(true|false)\s*$', re.M)
-    if pat.search(text):
-        text = pat.sub(f"{key} = false", text)
+    pat = re.compile(
+        rf'^(?P<indent>[ \t]*){key}[ \t]*=[ \t]*(?:true|false)(?P<tail>[ \t]*(?:#.*)?)$',
+        re.M,
+    )
+    m = pat.search(text)
+    if m:
+        text = pat.sub(lambda mm: f"{mm.group('indent')}{key} = false{mm.group('tail')}", text, count=1)
     else:
-        text = f"{key} = false\n" + text
+        if not text.endswith("\n"):
+            text += "\n"
+        text += f"{key} = false\n"
 p.write_text(text)
 PY
 }
+
+# Back up the config before touching it so cleanup can restore the
+# user's original state verbatim (including comments, section order,
+# and any unrelated fields). Belt-and-suspenders: we still call
+# `reset_flags` pre-run to guarantee the two flags are `false` when
+# the binary reads them, but the exit-trap uses `mv` of the backup
+# so nothing we write survives unless `--keep-flags` is set.
+CONFIG_BACKUP="${CONFIG_PATH}.bak.$$"
+log "backing up $CONFIG_PATH -> $CONFIG_BACKUP"
+cp "$CONFIG_PATH" "$CONFIG_BACKUP"
 
 log "resetting flags in $CONFIG_PATH"
 reset_flags
@@ -72,9 +96,17 @@ cleanup() {
         kill "$BIN_PID" 2>/dev/null || true
         wait "$BIN_PID" 2>/dev/null || true
     fi
-    if [[ "$KEEP_FLAGS" -eq 0 ]]; then
-        log "resetting flags to false"
-        reset_flags
+    # Restore the original config from the backup — runs on both
+    # success and failure so the developer's staging profile is never
+    # permanently mutated by a test run. `--keep-flags` opts out so
+    # the flipped-to-true state survives for interactive debugging.
+    if [[ -f "$CONFIG_BACKUP" ]]; then
+        if [[ "$KEEP_FLAGS" -eq 0 ]]; then
+            log "restoring original config from $CONFIG_BACKUP"
+            mv "$CONFIG_BACKUP" "$CONFIG_PATH"
+        else
+            log "--keep-flags set; leaving backup at $CONFIG_BACKUP and current flag state in place"
+        fi
     fi
     log "binary log:  $LOG_FILE"
     log "socket log:  $SIO_LOG"
