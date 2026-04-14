@@ -45,6 +45,8 @@ impl AgentBuilder {
             event_session_id: None,
             event_channel: None,
             agent_definition_name: None,
+            omit_profile: None,
+            omit_memory_md: None,
         }
     }
 
@@ -192,6 +194,23 @@ impl AgentBuilder {
         self
     }
 
+    /// Forward the target agent definition's `omit_profile` flag so
+    /// [`Agent::build_system_prompt`] can decide whether to inject
+    /// `PROFILE.md`. Only opt-in agents (welcome, orchestrator, the
+    /// trigger pair) should set this to `false`.
+    pub fn omit_profile(mut self, omit: bool) -> Self {
+        self.omit_profile = Some(omit);
+        self
+    }
+
+    /// Forward the target agent definition's `omit_memory_md` flag so
+    /// [`Agent::build_system_prompt`] can decide whether to inject
+    /// `MEMORY.md`. Same opt-in set as `omit_profile`.
+    pub fn omit_memory_md(mut self, omit: bool) -> Self {
+        self.omit_memory_md = Some(omit);
+        self
+    }
+
     /// Validates the configuration and constructs a new `Agent` instance.
     ///
     /// This method is responsible for wiring together the provided components,
@@ -296,6 +315,11 @@ impl AgentBuilder {
             context,
             on_progress: None,
             connected_integrations: Vec::new(),
+            // Default to `true` (omit) so legacy / custom agents built
+            // without a definition stay lean. Opt-in agents thread their
+            // `omit_profile = false` through the builder.
+            omit_profile: self.omit_profile.unwrap_or(true),
+            omit_memory_md: self.omit_memory_md.unwrap_or(true),
         })
     }
 }
@@ -397,7 +421,7 @@ impl Agent {
 
         log::info!(
             "[agent::builder] building session agent id={} \
-             (scope={}, omit_identity={}, temperature={:.2})",
+             (scope={}, omit_identity={}, omit_profile={}, omit_memory_md={}, temperature={:.2})",
             agent_id,
             target_def
                 .as_ref()
@@ -410,6 +434,11 @@ impl Agent {
                 .as_ref()
                 .map(|d| d.omit_identity)
                 .unwrap_or(false),
+            target_def.as_ref().map(|d| d.omit_profile).unwrap_or(true),
+            target_def
+                .as_ref()
+                .map(|d| d.omit_memory_md)
+                .unwrap_or(true),
             target_def
                 .as_ref()
                 .map(|d| d.temperature)
@@ -755,6 +784,12 @@ impl Agent {
             .map(|def| def.temperature)
             .unwrap_or(config.default_temperature);
 
+        // Thread PROFILE.md + MEMORY.md inclusion from the resolved
+        // definition. Legacy / no-definition path stays on the safe
+        // `true` default (omit) for both files.
+        let effective_omit_profile = target_def.map(|def| def.omit_profile).unwrap_or(true);
+        let effective_omit_memory_md = target_def.map(|def| def.omit_memory_md).unwrap_or(true);
+
         // `agent_id` is not stamped onto the returned Agent here — the
         // `event_channel` field on `Agent` is for transport identity
         // (which channel the session belongs to: "web_channel", "cli",
@@ -784,6 +819,8 @@ impl Agent {
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)
+            .omit_profile(effective_omit_profile)
+            .omit_memory_md(effective_omit_memory_md)
             .build()
     }
 }

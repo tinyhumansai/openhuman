@@ -13,6 +13,14 @@ omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = false
 omit_skills_catalog = true
+# The reactor personalises small reactive messages (e.g. a follow-up
+# DM on behalf of the user) — PROFILE.md gives it the user's name,
+# role, and voice so replies don't land generic.
+omit_profile = false
+# MEMORY.md carries curated context about the user's ongoing work so
+# reactive follow-ups stay coherent with what came before. Frozen per
+# session (KV-cache contract on `omit_memory_md`).
+omit_memory_md = false
 
 [model]
 # Always remote. Reactive work hits write-path tools and needs

@@ -91,6 +91,16 @@ pub struct Agent {
     /// [`ConnectedIntegrationsSection`] so the orchestrator knows which
     /// external services are available.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
+    /// Mirrors the agent definition's `omit_profile` flag. Threaded into
+    /// [`PromptContext::include_profile`] in `turn::build_system_prompt`
+    /// so only user-facing agents (welcome, orchestrator, triggers)
+    /// inject `PROFILE.md`. Defaults to `true` (omit) for custom / legacy
+    /// agents built without a definition.
+    pub(super) omit_profile: bool,
+    /// Mirrors the agent definition's `omit_memory_md` flag. Forwarded to
+    /// [`PromptContext::include_memory_md`] at prompt-build time. Same
+    /// session-freeze contract as `omit_profile`.
+    pub(super) omit_memory_md: bool,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.
@@ -118,6 +128,13 @@ pub struct AgentBuilder {
     pub(super) event_session_id: Option<String>,
     pub(super) event_channel: Option<String>,
     pub(super) agent_definition_name: Option<String>,
+    /// Forwarded to [`Agent::omit_profile`] at `build()` time. Mirrors the
+    /// target definition's `omit_profile` flag; `None` means "fall back
+    /// to the safe default" (omit).
+    pub(super) omit_profile: Option<bool>,
+    /// Forwarded to [`Agent::omit_memory_md`]. Same shape as
+    /// `omit_profile` — `None` falls back to the "omit" default.
+    pub(super) omit_memory_md: Option<bool>,
 }
 
 impl Default for AgentBuilder {

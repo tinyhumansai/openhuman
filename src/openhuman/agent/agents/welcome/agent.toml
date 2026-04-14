@@ -11,6 +11,15 @@ omit_identity = true
 omit_memory_context = false
 omit_safety_preamble = true
 omit_skills_catalog = true
+# Personalises the greeting using the user's enriched PROFILE.md
+# (LinkedIn scrape, role, timezone, …). Without this the welcome
+# message can only reference setup state, not who the user is.
+omit_profile = false
+# MEMORY.md is the archivist's long-term distilled memory. Welcome
+# uses it to reference past conversations ("good to see you back,
+# last time we worked on X"). Frozen per session — see the
+# KV-cache contract on `AgentDefinition::omit_memory_md`.
+omit_memory_md = false
 
 [model]
 hint = "agentic"

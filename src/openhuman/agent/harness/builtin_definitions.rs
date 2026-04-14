@@ -49,6 +49,11 @@ pub fn fork_definition() -> AgentDefinition {
         omit_memory_context: false,
         omit_safety_preamble: false,
         omit_skills_catalog: false,
+        // Fork preserves the parent's exact prompt bytes — mirror whatever
+        // PROFILE.md injection state the parent already produced rather
+        // than re-gating here.
+        omit_profile: false,
+        omit_memory_md: false,
         model: ModelSpec::Inherit,
         // Inherit the parent's temperature too — set to a sentinel that the
         // runner replaces with the parent's actual temp at spawn time.
@@ -109,6 +114,8 @@ mod tests {
         assert!(!def.omit_memory_context);
         assert!(!def.omit_safety_preamble);
         assert!(!def.omit_skills_catalog);
+        assert!(!def.omit_profile);
+        assert!(!def.omit_memory_md);
     }
 
     #[test]
