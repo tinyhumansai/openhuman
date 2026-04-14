@@ -117,8 +117,6 @@ pub fn classify(model: &str) -> TaskCategory {
 ///
 /// # Local preference
 /// Lightweight and medium tasks use local when `local_available` is true.
-/// `LatencyBudget::Low` or `CostSensitivity::High` additionally route
-/// medium tasks locally even when neither category alone would.
 pub fn decide(
     category: TaskCategory,
     local_model: &str,
@@ -147,12 +145,8 @@ pub fn decide(
     }
 
     // Lightweight / Medium: prefer local when available.
-    // Extra signals (low latency budget or high cost sensitivity) also
-    // tilt medium tasks toward local.
-    let use_local = local_available
-        && (matches!(category, TaskCategory::Lightweight | TaskCategory::Medium)
-            || hints.latency_budget == LatencyBudget::Low
-            || hints.cost_sensitivity == CostSensitivity::High);
+    let use_local =
+        local_available && matches!(category, TaskCategory::Lightweight | TaskCategory::Medium);
 
     if use_local {
         (
