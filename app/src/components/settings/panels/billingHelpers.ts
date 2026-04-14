@@ -32,10 +32,10 @@ export const PLANS: PlanMeta[] = [
     discountPercent: 0,
     tagline: 'Get started at no cost',
     features: [
-      { text: 'Access to all integrations and inference', included: true },
-      { text: 'One-time signup credits when available', included: true },
-      { text: 'Pay-as-you-go top-ups', included: true },
-      { text: 'No subscription discount', included: false },
+      { text: 'Access to Everything', included: true },
+      { text: 'Heavy Rate Limits', included: true },
+      { text: 'Pay-as-you-go', included: true },
+      { text: 'No discounts', included: false },
     ],
   },
   {
@@ -51,7 +51,7 @@ export const PLANS: PlanMeta[] = [
     tagline: 'Best value for most users',
     features: [
       { text: 'Everything in Free', included: true },
-      { text: '2x more premium usage included', included: true },
+      { text: '2x more usage', included: true },
       { text: 'Cloud features enabled', included: true },
     ],
   },
@@ -67,7 +67,7 @@ export const PLANS: PlanMeta[] = [
     tagline: 'For power users and teams',
     features: [
       { text: 'Everything in Basic', included: true },
-      { text: '4x more premium usage included', included: true },
+      { text: '4x more usage', included: true },
       { text: 'Higher Rate Limits', included: true },
     ],
   },

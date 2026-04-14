@@ -201,7 +201,7 @@ const SubscriptionPlans = ({
                   </div>
                   {/* {plan.tagline && <p className="mt-1 text-sm text-stone-500">{plan.tagline}</p>} */}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {plan.features.slice(0, 3).map(feature => (
+                    {plan.features.slice(0, 4).map(feature => (
                       <span
                         key={feature.text}
                         className="rounded-full bg-stone-100/50 border border-primary-200/50 px-3 py-1 text-xs font-medium text-stone-600">
