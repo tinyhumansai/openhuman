@@ -29,6 +29,7 @@ struct HealthCache {
 /// `await` boundary: the lock is acquired to read/write the cache, released,
 /// and *then* the async HTTP probe is performed if needed.
 pub struct LocalHealthChecker {
+    client: reqwest::Client,
     probe_url: String,
     cache: Mutex<Option<HealthCache>>,
     ttl: Duration,
@@ -44,7 +45,18 @@ impl LocalHealthChecker {
 
     /// Create a checker with a custom cache TTL (useful in tests).
     pub fn with_ttl(base_url: &str, ttl: Duration) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(PROBE_TIMEOUT)
+            .build()
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "[routing] failed to build health probe client, using default client"
+                );
+                reqwest::Client::new()
+            });
         Self {
+            client,
             probe_url: format!("{base_url}/api/tags"),
             cache: Mutex::new(None),
             ttl,
@@ -58,12 +70,20 @@ impl LocalHealthChecker {
         {
             let guard = self.cache.lock();
             if let Some(cached) = guard.as_ref() {
-                if cached.checked_at.elapsed() < cached.ttl {
+                let elapsed = cached.checked_at.elapsed();
+                if elapsed < cached.ttl {
+                    tracing::trace!(
+                        cached_last_result = ?cached.last_result,
+                        checked_at_elapsed = ?elapsed,
+                        cached_ttl = ?cached.ttl,
+                        "[routing] local health cache hit"
+                    );
                     return cached.last_result == CachedStatus::Healthy;
                 }
             }
         }
 
+        tracing::trace!("[routing] local health cache stale/miss; probing");
         // Slow path: probe and update cache.
         let healthy = self.probe().await;
         let status = if healthy {
@@ -71,14 +91,26 @@ impl LocalHealthChecker {
         } else {
             CachedStatus::Unavailable
         };
+        tracing::trace!(
+            healthy,
+            mapped_status = ?status,
+            "[routing] local health probe completed"
+        );
 
         {
             let mut guard = self.cache.lock();
-            *guard = Some(HealthCache {
+            let new_cache = HealthCache {
                 last_result: status,
                 checked_at: Instant::now(),
                 ttl: self.ttl,
-            });
+            };
+            tracing::trace!(
+                new_last_result = ?new_cache.last_result,
+                new_checked_at = ?new_cache.checked_at,
+                new_ttl = ?new_cache.ttl,
+                "[routing] local health cache updated"
+            );
+            *guard = Some(new_cache);
         }
 
         healthy
@@ -86,12 +118,7 @@ impl LocalHealthChecker {
 
     /// Perform a single live probe — no caching.
     async fn probe(&self) -> bool {
-        let client = reqwest::Client::builder()
-            .timeout(PROBE_TIMEOUT)
-            .build()
-            .unwrap_or_default();
-
-        match client.get(&self.probe_url).send().await {
+        match self.client.get(&self.probe_url).send().await {
             Ok(resp) => resp.status().is_success(),
             Err(err) => {
                 tracing::debug!(
