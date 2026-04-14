@@ -16,6 +16,7 @@ use crate::openhuman::local_ai::paths::{
 use crate::openhuman::local_ai::whisper_engine;
 use crate::rpc::RpcOutcome;
 
+use super::hallucination::is_hallucinated_output;
 use super::postprocess;
 use super::types::{VoiceSpeechResult, VoiceStatus, VoiceTtsResult};
 
@@ -181,6 +182,19 @@ pub async fn voice_transcribe_bytes(
         write_elapsed.as_millis(),
         transcribe_elapsed.as_millis()
     );
+
+    // Filter hallucinated output before spending time on LLM cleanup.
+    if is_hallucinated_output(&raw_text) {
+        debug!("{LOG_PREFIX} transcribe_bytes: hallucination detected, returning empty result");
+        return Ok(RpcOutcome::single_log(
+            VoiceSpeechResult {
+                text: String::new(),
+                raw_text,
+                model_id: output.model_id,
+            },
+            "voice transcription filtered (hallucination)",
+        ));
+    }
 
     let cleanup_started = Instant::now();
     let text = if skip_cleanup {
