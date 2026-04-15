@@ -1,27 +1,24 @@
-//! IndexedDB scanner driven over the Chrome DevTools Protocol (CDP).
+//! WhatsApp Web scanner driven over the Chrome DevTools Protocol (CDP).
 //!
 //! We talk to the embedded CEF instance through its remote-debugging port
-//! (set via `--remote-debugging-port=9222` in `lib.rs`). For each tracked
-//! webview-account target, we periodically:
+//! (set via `--remote-debugging-port=9222` in `lib.rs`). Per tracked
+//! WhatsApp-account webview, two interleaved loops run:
 //!
-//!   1. Discover the right CDP page target by URL prefix
-//!      (`https://web.whatsapp.com/`).
-//!   2. Open its DevTools WebSocket and send `Runtime.evaluate` with the
-//!      bundled `scanner.js` payload.
-//!   3. The script runs inside the page (so it has access to the
-//!      non-extractable `CryptoKey` already resident there), reads
-//!      IndexedDB, decrypts envelopes via `crypto.subtle.decrypt`, and
-//!      returns a normalized snapshot as JSON.
-//!   4. Rust forwards the snapshot to React via the existing
-//!      `webview:event` Tauri event so the UI / persistence layer can
-//!      consume it without a second pipeline.
+//!   * **Fast tick** (`FAST_SCAN_INTERVAL`, 2s) — `dom_scan.js` scrapes
+//!     rendered `[data-id]` message rows from the DOM. Emits only when
+//!     the visible-set hash changes so idle windows stay silent.
+//!   * **Full tick** (`FULL_SCAN_INTERVAL`, 30s) — `scanner.js` walks
+//!     WhatsApp's IndexedDB stores (model-storage, signal-storage, …) to
+//!     pull message metadata, chat names, contact names.
 //!
-//! No DOM scrape, no Tauri-IPC-from-injected-JS, no CSP fight. We "own the
-//! browser" through CDP.
+//! Each scan groups messages by `(chatId, day)` and posts one
+//! `openhuman.memory_doc_ingest` JSON-RPC call per group to the core, so
+//! each day of a conversation upserts a single memory doc. We also emit
+//! `webview:event` ingest events so any React UI listening can update
+//! live when the main window is open.
 //!
-//! NOTE: this module is only meaningful with the `cef` feature — the wry
-//! runtime does not expose a remote debugging port. We compile-gate the
-//! task spawn at the call site.
+//! NOTE: only meaningful with the `cef` feature — the wry runtime does
+//! not expose a remote debugging port. Compile-gated at the call site.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -50,17 +47,6 @@ const SCANNER_JS: &str = include_str!("scanner.js");
 /// `hash` is a rolling FNV-1a over (dataId, body) so the Rust side can
 /// skip emission when the visible set hasn't changed.
 const DOM_SCAN_JS: &str = include_str!("dom_scan.js");
-// The worker_spy / worker_hook / force-extractable scripts are retained in
-// the source tree for reference (we explored worker-side crypto capture +
-// CSP bypass before pivoting to pure DOM scraping) but are not wired into
-// the active scan path — no page reload, no hook install, minimal user
-// disruption.
-#[allow(dead_code)]
-const WORKER_SPY_JS: &str = include_str!("worker_spy.js");
-#[allow(dead_code)]
-const WORKER_HOOK_JS_RAW: &str = include_str!("worker_hook.js");
-#[allow(dead_code)]
-const FORCE_EXTRACTABLE_JS: &str = include_str!("force_extractable.js");
 
 /// One CDP target descriptor (from `Target.getTargets`).
 #[derive(Debug, Clone)]
@@ -82,57 +68,19 @@ pub struct ScanSnapshot {
     pub chats: serde_json::Map<String, Value>,
     #[serde(default)]
     pub messages: Vec<Value>,
-    #[serde(rename = "hadKey", default)]
-    pub had_key: bool,
     #[serde(default)]
     pub error: Option<String>,
-    /// Up to N most-recent decrypted messages (body preview only) — useful
-    /// to confirm decryption produced real text and not garbage. Each
-    /// entry: { chatId, chatName, from, fromMe, timestamp, bodyPreview }.
+    /// Up to N most-recent messages (body preview only) — useful as a log
+    /// sanity check. Each entry: { chatId, chatName, from, fromMe,
+    /// timestamp, bodyPreview }.
     #[serde(rename = "sampleMessages", default)]
     pub sample_messages: Vec<Value>,
     /// DOM-scraped rendered message bodies (chat currently open in the
-    /// webview). WhatsApp doesn't re-decrypt msgRowOpaqueData via
-    /// crypto.subtle when rendering, so we read the rendered DOM directly
-    /// and join to IndexedDB metadata via the data-id attribute.
+    /// webview). WhatsApp doesn't expose msgRowOpaqueData via crypto.subtle
+    /// when rendering, so we read the rendered DOM directly and join to
+    /// IndexedDB metadata via the data-id attribute.
     #[serde(rename = "domMessages", default)]
     pub dom_messages: Vec<Value>,
-    /// Total CryptoKey objects discovered across all DBs/stores.
-    #[serde(rename = "keyCount", default)]
-    pub key_count: usize,
-    /// Where each CryptoKey was found, in priority order.
-    #[serde(rename = "keySources", default)]
-    pub key_sources: Vec<String>,
-    /// Number of CryptoKeys harvested from `wawc_db_enc/keys` (indexed by
-    /// `_keyId` for `msgRowOpaqueData` decryption).
-    #[serde(rename = "keyByIdCount", default)]
-    pub key_by_id_count: usize,
-    /// First few record-keys observed in `wawc_db_enc/keys` — used to
-    /// confirm the keyId space matches `msgRowOpaqueData._keyId` values.
-    #[serde(rename = "keyByIdSampleIds", default)]
-    pub key_by_id_sample_ids: Vec<String>,
-    /// Per-scan decrypt counters: how many opaque envelopes we saw, how
-    /// many decrypted, how many yielded text, and the histogram of
-    /// `_keyId` values seen on messages. Plus a hex preview of the first
-    /// successful decrypt (first 64 bytes) so we can see the wire format.
-    #[serde(rename = "decryptStats", default)]
-    pub decrypt_stats: Option<Value>,
-    /// Shape of the first `wawc_db_enc/keys` record + every CryptoKey in
-    /// it (path, algorithm, usages). Tells us if we're picking the wrong
-    /// key (e.g. HMAC vs AES-GCM).
-    #[serde(rename = "keystoreSample", default)]
-    pub keystore_sample: Option<Value>,
-    /// Captured `crypto.subtle.{deriveKey,deriveBits,decrypt}` calls from
-    /// the WhatsApp page (debug spy installed by scanner.js). Tells us
-    /// the exact (info, salt) parameters WA uses for HKDF.
-    #[serde(rename = "cryptoSpy", default)]
-    pub crypto_spy: Option<Value>,
-    /// Per-WORKER spy dumps — collected via Worker constructor wrapper
-    /// (worker_hook.js) + postMessage round-trip. `wrappedCount` is the
-    /// number of currently-tracked workers; `replies` is whatever each
-    /// one replied with (HKDF derives + AES-GCM decrypt sizes).
-    #[serde(rename = "workerSpies", default)]
-    pub worker_spies: Option<Value>,
     /// `window.*` keys matching encryption/local-storage patterns —
     /// would let us call WA's own decryption helper directly if exposed.
     #[serde(rename = "windowGlobals", default)]
@@ -179,7 +127,7 @@ pub struct ScanSnapshot {
 pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_prefix: String) {
     tokio::spawn(async move {
         log::info!(
-            "[cdp] scanner up account={} url_prefix={} fast={:?} full={:?}",
+            "[wa] scanner up account={} url_prefix={} fast={:?} full={:?}",
             account_id,
             url_prefix,
             FAST_SCAN_INTERVAL,
@@ -205,7 +153,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                                 && !dom.dom_messages.is_empty();
                             if changed {
                                 log::info!(
-                                    "[cdp][{}] fast dom-scan rows={} hash={} (changed)",
+                                    "[wa][{}] fast dom-scan rows={} hash={} (changed)",
                                     account_id,
                                     dom.dom_messages.len(),
                                     dom.hash
@@ -214,11 +162,11 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                                 last_dom_hash = Some(dom.hash);
                             }
                         } else if let Some(err) = dom.error {
-                            log::debug!("[cdp][{}] dom-scan err: {}", account_id, err);
+                            log::debug!("[wa][{}] dom-scan err: {}", account_id, err);
                         }
                     }
                     Err(e) => {
-                        log::debug!("[cdp][{}] dom-scan failed: {}", account_id, e);
+                        log::debug!("[wa][{}] dom-scan failed: {}", account_id, e);
                     }
                 }
                 sleep(FAST_SCAN_INTERVAL).await;
@@ -228,53 +176,37 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
             match scan_once(&app, &account_id, &url_prefix).await {
                 Ok(snap) => {
                     log::info!(
-                        "[cdp][{}] scan ok dbs={} messages={} chats={} keys={} sources={:?} keyById={} sampleIds={:?}",
+                        "[wa][{}] scan ok dbs={} messages={} chats={}",
                         account_id,
                         snap.dbs.len(),
                         snap.messages.len(),
                         snap.chats.len(),
-                        snap.key_count,
-                        snap.key_sources,
-                        snap.key_by_id_count,
-                        snap.key_by_id_sample_ids,
                     );
-                    if let Some(ref ds) = snap.decrypt_stats {
-                        log::info!("[cdp][{}] decrypt {}", account_id, ds);
-                    }
-                    if let Some(ref ks) = snap.keystore_sample {
-                        log::info!("[cdp][{}] keystore {}", account_id, ks);
-                    }
-                    if let Some(ref spy) = snap.crypto_spy {
-                        log::info!("[cdp][{}] spy {}", account_id, spy);
-                    }
-                    if let Some(ref ws) = snap.worker_spies {
-                        log::info!("[cdp][{}] worker-spies {}", account_id, ws);
-                    }
                     if !snap.window_globals.is_empty() {
                         log::info!(
-                            "[cdp][{}] globals {:?}",
+                            "[wa][{}] globals {:?}",
                             account_id,
                             snap.window_globals
                         );
                     }
                     if let Some(ref types) = snap.message_type_breakdown {
-                        log::info!("[cdp][{}] msg-types {}", account_id, types);
+                        log::info!("[wa][{}] msg-types {}", account_id, types);
                     }
                     if let Some(ref union) = snap.message_key_union {
-                        log::info!("[cdp][{}] msg-key-union {}", account_id, union);
+                        log::info!("[wa][{}] msg-key-union {}", account_id, union);
                     }
                     if let Some(ref by_type) = snap.sample_by_type {
                         if let Some(map) = by_type.as_object() {
                             for (t, shape) in map {
-                                log::info!("[cdp][{}] msg-shape type={} {}", account_id, t, shape);
+                                log::info!("[wa][{}] msg-shape type={} {}", account_id, t, shape);
                             }
                         }
                     }
                     for (store, shape) in &snap.schema_dump {
-                        log::info!("[cdp][{}] schema {} {}", account_id, store, shape);
+                        log::info!("[wa][{}] schema {} {}", account_id, store, shape);
                     }
                     if let Some(ref opfs) = snap.opfs {
-                        log::info!("[cdp][{}] opfs {}", account_id, opfs);
+                        log::info!("[wa][{}] opfs {}", account_id, opfs);
                     }
                     for (i, sample) in snap.sample_messages.iter().enumerate() {
                         let chat_name = sample
@@ -304,7 +236,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
                         log::info!(
-                            "[cdp][{}] msg#{} ts={} chat={} ({}) from={} body={:?}",
+                            "[wa][{}] msg#{} ts={} chat={} ({}) from={} body={:?}",
                             account_id,
                             i + 1,
                             ts,
@@ -317,7 +249,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                     // DOM-scraped message bodies (the chat the user has open).
                     if !snap.dom_messages.is_empty() {
                         log::info!(
-                            "[cdp][{}] dom-scrape count={}",
+                            "[wa][{}] dom-scrape count={}",
                             account_id,
                             snap.dom_messages.len()
                         );
@@ -343,7 +275,7 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                                 body.to_string()
                             };
                             log::info!(
-                                "[cdp][{}] dom#{} chat={} msg={} fromMe={} [{}] {}: {:?}",
+                                "[wa][{}] dom#{} chat={} msg={} fromMe={} [{}] {}: {:?}",
                                 account_id,
                                 i + 1,
                                 chat,
@@ -374,12 +306,12 @@ pub fn spawn_scanner<R: Runtime>(app: AppHandle<R>, account_id: String, url_pref
                             })
                             .collect::<Vec<_>>()
                             .join(" ");
-                        log::info!("[cdp][{}] stores {}", account_id, layout);
+                        log::info!("[wa][{}] stores {}", account_id, layout);
                     }
                     emit_snapshot(&app, &account_id, &snap);
                 }
                 Err(e) => {
-                    log::warn!("[cdp][{}] scan failed: {}", account_id, e);
+                    log::warn!("[wa][{}] scan failed: {}", account_id, e);
                 }
             }
             // After a full scan, go back to fast-tick cadence until the
@@ -445,15 +377,11 @@ async fn scan_once<R: Runtime>(
         .call("Target.getTargets", json!({}), None)
         .await?;
     let targets = parse_targets(&targets_v);
-    log::debug!("[cdp][{}] {} targets total", account_id, targets.len());
+    log::debug!("[wa][{}] {} targets total", account_id, targets.len());
 
-    // We don't probe worker targets directly — CEF workers never answer
-    // Runtime.evaluate calls (confirmed empirically) so each attempt would
-    // waste ~10s. The page-level spy in SCANNER_JS captures everything we
-    // need. Leave the worker_spy.js / worker_hook.js machinery in the tree
-    // for reference; it's intentionally not called from the hot path.
-
-    // Run the full IndexedDB scanner against the WhatsApp page.
+    // Run the full IndexedDB scanner against the WhatsApp page. Worker
+    // targets are intentionally ignored — CEF workers don't answer CDP
+    // Runtime calls so probing them would waste ~10s per attempt.
     let page_target = targets
         .iter()
         .find(|t| t.kind == "page" && t.url.starts_with(url_prefix))
@@ -586,17 +514,12 @@ async fn scan_dom_once(
     let result: DomScanResult =
         serde_json::from_value(value).map_err(|e| format!("decode dom-scan: {e}"))?;
     log::debug!(
-        "[cdp][{}] fast dom-scan rows={} hash={}",
+        "[wa][{}] fast dom-scan rows={} hash={}",
         account_id,
         result.dom_messages.len(),
         result.hash
     );
     Ok(result)
-}
-
-#[allow(dead_code)]
-fn short(id: &str) -> &str {
-    &id[..8.min(id.len())]
 }
 
 fn parse_targets(v: &Value) -> Vec<CdpTarget> {
@@ -719,7 +642,7 @@ impl CdpConn {
 fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSnapshot) {
     if !snap.ok {
         log::warn!(
-            "[cdp][{}] snapshot not ok, error={:?}",
+            "[wa][{}] snapshot not ok, error={:?}",
             account_id,
             snap.error
         );
@@ -811,7 +734,7 @@ fn emit_snapshot<R: Runtime>(app: &AppHandle<R>, account_id: &str, snap: &ScanSn
             }
         }
         log::info!(
-            "[cdp][{}] dom-merge patched={} appended={} total={}",
+            "[wa][{}] dom-merge patched={} appended={} total={}",
             account_id,
             patched,
             appended,
@@ -996,7 +919,7 @@ fn emit_grouped_whatsapp<R: Runtime>(
             "ts": chrono_now_millis(),
         });
         if let Err(e) = app.emit("webview:event", &envelope) {
-            log::warn!("[cdp][{}] ingest emit failed: {}", account_id, e);
+            log::warn!("[wa][{}] ingest emit failed: {}", account_id, e);
         } else {
             emitted += 1;
         }
@@ -1005,13 +928,13 @@ fn emit_grouped_whatsapp<R: Runtime>(
         let acct = account_id.to_string();
         tokio::spawn(async move {
             if let Err(e) = post_memory_doc_ingest(&acct, &payload).await {
-                log::warn!("[cdp][{}] memory write failed: {}", acct, e);
+                log::warn!("[wa][{}] memory write failed: {}", acct, e);
             }
         });
     }
     if emitted > 0 {
         log::info!(
-            "[cdp][{}] emitted {} ingest group(s) source={}",
+            "[wa][{}] emitted {} ingest group(s) source={}",
             account_id,
             emitted,
             source
@@ -1147,7 +1070,7 @@ async fn post_memory_doc_ingest(account_id: &str, ingest: &Value) -> Result<(), 
         return Err(format!("rpc error: {err}"));
     }
     log::info!(
-        "[cdp][{}] memory upsert ok namespace={} key={} msgs={}",
+        "[wa][{}] memory upsert ok namespace={} key={} msgs={}",
         account_id,
         namespace,
         key,
@@ -1164,18 +1087,6 @@ pub struct ScannerRegistry {
     started: Mutex<std::collections::HashSet<String>>,
 }
 
-/// Per-account flag: have we installed the Worker constructor hook +
-/// reloaded the page yet for this account? Module-level so we don't have
-/// to thread the registry through every CDP call.
-#[allow(dead_code)]
-fn hook_already_installed_for(account_id: &str) -> bool {
-    use std::sync::OnceLock;
-    static HOOKED: OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = OnceLock::new();
-    let set = HOOKED.get_or_init(|| std::sync::Mutex::new(Default::default()));
-    let mut g = set.lock().unwrap();
-    !g.insert(account_id.to_string())
-}
-
 impl ScannerRegistry {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
@@ -1189,7 +1100,7 @@ impl ScannerRegistry {
     ) {
         let mut g = self.started.lock().await;
         if !g.insert(account_id.clone()) {
-            log::debug!("[cdp] scanner already running for {}", account_id);
+            log::debug!("[wa] scanner already running for {}", account_id);
             return;
         }
         spawn_scanner(app, account_id, url_prefix);

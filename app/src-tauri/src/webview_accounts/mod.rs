@@ -318,7 +318,7 @@ pub async fn webview_account_open<R: Runtime>(
         if args.provider == "whatsapp" {
             if let Some(prefix) = provider_url(&args.provider) {
                 let registry = app
-                    .try_state::<std::sync::Arc<crate::cdp_indexeddb::ScannerRegistry>>()
+                    .try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
                     .map(|s| s.inner().clone());
                 if let Some(registry) = registry {
                     let app_clone = app.clone();
@@ -359,7 +359,7 @@ pub async fn webview_account_close<R: Runtime>(
     #[cfg(feature = "cef")]
     {
         if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::cdp_indexeddb::ScannerRegistry>>()
+            app.try_state::<std::sync::Arc<crate::whatsapp_scanner::ScannerRegistry>>()
         {
             let registry = registry.inner().clone();
             let acct = args.account_id.clone();

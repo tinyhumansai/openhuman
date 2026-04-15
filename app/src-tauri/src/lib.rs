@@ -2,7 +2,7 @@
 compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supported.");
 
 #[cfg(feature = "cef")]
-mod cdp_indexeddb;
+mod whatsapp_scanner;
 mod core_process;
 mod core_update;
 mod webview_accounts;
@@ -477,7 +477,7 @@ pub fn run() {
         .manage(DictationHotkeyState(Mutex::new(Vec::new())))
         .manage(webview_accounts::WebviewAccountsState::default());
     #[cfg(feature = "cef")]
-    let builder = builder.manage(cdp_indexeddb::ScannerRegistry::new());
+    let builder = builder.manage(whatsapp_scanner::ScannerRegistry::new());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
