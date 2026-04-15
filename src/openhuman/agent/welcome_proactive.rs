@@ -7,17 +7,15 @@
 //! 1. [`crate::openhuman::config::ops::set_onboarding_completed`]
 //!    detects a false→true transition and calls [`spawn_proactive_welcome`].
 //! 2. That function spawns a detached Tokio task that:
+//!    - Pre-builds the JSON snapshot (config + user profile + onboarding
+//!      tasks + composio connections) in Rust — no LLM round-trip needed.
 //!    - Loads the `welcome` agent via
 //!      [`crate::openhuman::agent::Agent::from_config_for_agent`] so
 //!      the agent runs with its own `prompt.md`, tool allowlist, and
-//!      model hint.
-//!    - Calls [`crate::openhuman::agent::Agent::run_single`] which
-//!      lets the agent run its full workflow: call `check_status` +
-//!      `composio_list_connections`, greet the user, pitch Gmail
-//!      connection via `composio_authorize`, and deliver the welcome.
-//!      Because we already flipped `chat_onboarding_completed`, the
-//!      `check_status` tool returns `finalize_action:
-//!      "already_complete"` which the prompt handles correctly.
+//!      model hint (`agentic-v1`).
+//!    - Calls [`crate::openhuman::agent::Agent::run_single`] with the
+//!      pre-built context, skipping iteration 1 (tool calls). The agent
+//!      goes straight to writing the personalised welcome message.
 //!    - On success, publishes
 //!      [`DomainEvent::ProactiveMessageRequested`] so the existing
 //!      [`crate::openhuman::channels::proactive::ProactiveMessageSubscriber`]
@@ -30,6 +28,7 @@
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
+use crate::openhuman::tools::implementations::agent::complete_onboarding::build_status_snapshot;
 
 /// Event-bus `source` label attached to the proactive welcome message.
 /// Kept as a constant so tests and channel-side filters have a stable
@@ -63,7 +62,7 @@ pub fn spawn_proactive_welcome(config: Config) {
     });
 }
 
-/// Internal: build the snapshot, run the welcome agent, publish the
+/// Internal: pre-build context, run the welcome agent, publish the
 /// result. Split out from the spawn so it can be unit-tested with
 /// an injected Config + mocked provider.
 async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
@@ -77,7 +76,85 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
     // connect and join the "system" room after the onboarding overlay
     // closes. Without this, the message can arrive before anyone is
     // listening.
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+    // ── Pre-build context in Rust (no LLM round-trip) ────────────
+    //
+    // Gather the same data the agent would get from calling
+    // check_status + composio_list_connections, but directly in Rust.
+    // This saves one full LLM iteration (~30-50s).
+
+    let mut snapshot = build_status_snapshot(&config, "flipped");
+
+    // Enrich with user profile + onboarding tasks (best-effort)
+    if let serde_json::Value::Object(ref mut map) = snapshot {
+        // Onboarding tasks — sync local file read
+        match crate::openhuman::app_state::ops::load_stored_app_state(&config) {
+            Ok(local_state) => {
+                if let Some(tasks) = local_state.onboarding_tasks {
+                    map.insert(
+                        "onboarding_tasks".to_string(),
+                        serde_json::to_value(&tasks).unwrap_or_default(),
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!("[welcome::proactive] failed to load app state: {e}");
+            }
+        }
+
+        // User profile — async HTTP, 5s timeout
+        match crate::api::jwt::get_session_token(&config) {
+            Ok(Some(token)) if !token.is_empty() => {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    crate::openhuman::app_state::ops::fetch_current_user(&config, &token),
+                )
+                .await
+                {
+                    Ok(Ok(Some(user))) => {
+                        map.insert("user_profile".to_string(), user);
+                    }
+                    _ => {
+                        tracing::debug!("[welcome::proactive] user profile unavailable; omitting");
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // Composio connections — async HTTP, 5s timeout
+        if let Some(client) = crate::openhuman::composio::client::build_composio_client(&config) {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                client.list_connections(),
+            )
+            .await
+            {
+                Ok(Ok(connections)) => {
+                    map.insert(
+                        "composio_connections".to_string(),
+                        serde_json::to_value(&connections).unwrap_or_default(),
+                    );
+                }
+                _ => {
+                    tracing::debug!(
+                        "[welcome::proactive] composio connections unavailable; omitting"
+                    );
+                }
+            }
+        }
+    }
+
+    let snapshot_json = serde_json::to_string_pretty(&snapshot)
+        .map_err(|e| anyhow::anyhow!("serialize status snapshot: {e}"))?;
+
+    tracing::debug!(
+        snapshot_chars = snapshot_json.len(),
+        "[welcome::proactive] pre-built context snapshot"
+    );
+
+    // ── Run the welcome agent (single LLM call) ─────────────────
 
     let mut agent = Agent::from_config_for_agent(&config, "welcome").map_err(|e| {
         anyhow::anyhow!("build welcome agent: {e} — ensure AgentDefinitionRegistry is initialised")
@@ -87,30 +164,34 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
         "proactive",
     );
 
-    // Let the agent run its full workflow — call check_status,
-    // composio_list_connections, greet the user, pitch Gmail, etc.
-    // The agent's prompt.md defines the iteration flow; we just
-    // provide the opening context. check_status will return
-    // `finalize_action: "already_complete"` (since we pre-flipped
-    // the flag) which the prompt handles correctly.
-    let prompt = "[PROACTIVE INVOCATION — the user just finished the desktop \
-         onboarding wizard; this is not a reply to anything they typed, it is \
-         your opening message.]\n\n\
-         Run your full workflow starting from iteration 1. Call your tools, \
-         gather context, and deliver the personalised welcome message per \
-         your system prompt guidelines."
-        .to_string();
+    // Pre-deliver all context so the agent skips iteration 1 (tool
+    // calls) and goes straight to writing the welcome message. This
+    // saves one full LLM round-trip. The agent still has tools
+    // available for Gmail OAuth (composio_authorize) if needed in
+    // subsequent iterations.
+    let prompt = format!(
+        "[PROACTIVE INVOCATION — the user just finished the desktop onboarding wizard; \
+         this is not a reply to anything they typed, it is your opening message.]\n\n\
+         Skip iteration 1. The context that `complete_onboarding(check_status)` and \
+         `composio_list_connections` would have returned is already provided below. \
+         Jump straight to iteration 2 and write the personalised welcome message \
+         per your system prompt guidelines.\n\n\
+         Status snapshot (treat exactly as if it were the tool return values):\n\
+         ```json\n{snapshot_json}\n```\n\n\
+         Write your welcome message now."
+    );
+
     tracing::debug!(
         prompt_chars = prompt.len(),
         "[welcome::proactive] invoking welcome agent run_single"
     );
 
     let response = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
+        std::time::Duration::from_secs(60),
         agent.run_single(&prompt),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("welcome agent timed out after 120s"))?
+    .map_err(|_| anyhow::anyhow!("welcome agent timed out after 60s"))?
     .map_err(|e| anyhow::anyhow!("welcome agent run_single failed: {e}"))?;
 
     let trimmed = response.trim();
@@ -129,11 +210,6 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
         job_name: Some(PROACTIVE_WELCOME_JOB_NAME.to_string()),
     });
 
-    // Post-publish confirmation. `publish_global` is a best-effort
-    // broadcast send that swallows lag / no-subscriber errors, so
-    // without this line the caller can't distinguish "reached the
-    // end successfully" from "silently bailed somewhere above" by
-    // reading the log alone.
     tracing::debug!(
         source = PROACTIVE_WELCOME_SOURCE,
         job_name = PROACTIVE_WELCOME_JOB_NAME,

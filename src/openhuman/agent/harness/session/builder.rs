@@ -499,11 +499,16 @@ impl Agent {
             config,
         );
 
-        let model_name = config
+        // Resolve model from the agent definition's hint when available,
+        // falling back to config.default_model → DEFAULT_MODEL.
+        let default_model = config
             .default_model
             .as_deref()
             .unwrap_or(crate::openhuman::config::DEFAULT_MODEL)
             .to_string();
+        let model_name = target_def
+            .map(|def| def.model.resolve(&default_model))
+            .unwrap_or(default_model);
 
         let provider_runtime_options = providers::ProviderRuntimeOptions {
             auth_profile_override: None,
