@@ -110,6 +110,11 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         toml: include_str!("welcome/agent.toml"),
         prompt: include_str!("welcome/prompt.md"),
     },
+    BuiltinAgent {
+        id: "summarizer",
+        toml: include_str!("summarizer/agent.toml"),
+        prompt: include_str!("summarizer/prompt.md"),
+    },
 ];
 
 /// Parse every entry in [`BUILTINS`] into an [`AgentDefinition`].
@@ -155,7 +160,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 12, "expected 12 built-in agents");
+        assert_eq!(defs.len(), 13, "expected 13 built-in agents");
     }
 
     #[test]

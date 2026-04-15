@@ -130,6 +130,7 @@ mod tests {
             "researcher",
             "critic",
             "archivist",
+            "summarizer",
             "fork",
         ] {
             assert!(ids.contains(&expected.to_string()), "missing {expected}");

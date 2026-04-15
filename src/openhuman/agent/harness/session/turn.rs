@@ -715,7 +715,48 @@ impl Agent {
             match outcome {
                 Ok(r) => {
                     if !r.is_error {
-                        (r.output(), true)
+                        let mut output = r.output();
+                        // Issue #574 — if a payload summarizer is wired
+                        // in (orchestrator session only) and the output
+                        // exceeds the configured threshold, hand it to
+                        // the summarizer sub-agent before it enters
+                        // history. On any failure or below-threshold
+                        // payload, leave `output` untouched and let the
+                        // existing tool_result_budget_bytes truncation
+                        // pipeline handle it downstream.
+                        if let Some(ps) = self.payload_summarizer.as_ref() {
+                            log::debug!(
+                                "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
+                                call.name,
+                                output.len()
+                            );
+                            match ps.maybe_summarize(&call.name, None, &output).await {
+                                Ok(Some(payload)) => {
+                                    log::info!(
+                                        "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
+                                        call.name,
+                                        payload.original_bytes,
+                                        payload.summary_bytes
+                                    );
+                                    output = payload.summary;
+                                }
+                                Ok(None) => {
+                                    log::debug!(
+                                        "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
+                                        call.name,
+                                        output.len()
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
+                                        call.name,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        (output, true)
                     } else {
                         (format!("Error: {}", r.output()), false)
                     }

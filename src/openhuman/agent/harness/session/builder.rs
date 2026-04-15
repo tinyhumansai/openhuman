@@ -47,6 +47,7 @@ impl AgentBuilder {
             agent_definition_name: None,
             omit_profile: None,
             omit_memory_md: None,
+            payload_summarizer: None,
         }
     }
 
@@ -245,6 +246,23 @@ impl AgentBuilder {
         self
     }
 
+    /// Wire an oversized-tool-result summarizer into the agent. When
+    /// set, [`Agent::execute_tool_call`] calls
+    /// [`crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer::maybe_summarize`]
+    /// on every successful tool output and replaces the raw payload
+    /// with the compressed summary on success. Currently set only for
+    /// the orchestrator session by
+    /// [`Agent::build_session_agent_inner`].
+    pub fn payload_summarizer(
+        mut self,
+        summarizer: Arc<
+            dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
+        >,
+    ) -> Self {
+        self.payload_summarizer = Some(summarizer);
+        self
+    }
+
     /// Validates the configuration and constructs a new `Agent` instance.
     ///
     /// This method is responsible for wiring together the provided components,
@@ -355,6 +373,7 @@ impl AgentBuilder {
             // `omit_profile = false` through the builder.
             omit_profile: self.omit_profile.unwrap_or(true),
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
+            payload_summarizer: self.payload_summarizer,
         })
     }
 }
@@ -850,7 +869,60 @@ impl Agent {
             agent_id
         );
 
-        Agent::builder()
+        // ── Orchestrator-only: wire the payload summarizer ──────────
+        //
+        // Issue #574 — when a tool returns a huge payload (Composio
+        // dump, long file read, web scrape), it should be compressed
+        // by a dedicated `summarizer` sub-agent before entering the
+        // orchestrator's history. We resolve the summarizer agent
+        // definition from the global registry and construct a
+        // `SubagentPayloadSummarizer` parameterized from the
+        // [`ContextConfig`] thresholds. Every other agent id gets
+        // `None` and their tool results stay untouched (the summarizer
+        // itself MUST be `None` to avoid recursive self-summarization).
+        let payload_summarizer: Option<
+            std::sync::Arc<
+                dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
+            >,
+        > = if agent_id == "orchestrator" && config.context.summarizer_payload_threshold_bytes > 0 {
+            match crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global() {
+                Some(reg) => match reg.get("summarizer") {
+                    Some(summarizer_def) => {
+                        log::info!(
+                            "[agent::builder] wiring payload_summarizer for orchestrator: \
+                             threshold={} max={}",
+                            config.context.summarizer_payload_threshold_bytes,
+                            config.context.summarizer_max_payload_bytes
+                        );
+                        Some(std::sync::Arc::new(
+                            crate::openhuman::agent::harness::payload_summarizer::SubagentPayloadSummarizer::new(
+                                summarizer_def.clone(),
+                                config.context.summarizer_payload_threshold_bytes,
+                                config.context.summarizer_max_payload_bytes,
+                            ),
+                        ))
+                    }
+                    None => {
+                        log::warn!(
+                            "[agent::builder] orchestrator requested payload_summarizer but \
+                             `summarizer` definition is not in the registry — proceeding without it"
+                        );
+                        None
+                    }
+                },
+                None => {
+                    log::warn!(
+                        "[agent::builder] orchestrator requested payload_summarizer but \
+                         AgentDefinitionRegistry is not initialised — proceeding without it"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let mut builder = Agent::builder()
             .provider(provider)
             .tools(tools)
             .visible_tool_names(visible)
@@ -872,7 +944,10 @@ impl Agent {
             .learning_enabled(config.learning.enabled)
             .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
-            .omit_memory_md(effective_omit_memory_md)
-            .build()
+            .omit_memory_md(effective_omit_memory_md);
+        if let Some(ps) = payload_summarizer {
+            builder = builder.payload_summarizer(ps);
+        }
+        builder.build()
     }
 }

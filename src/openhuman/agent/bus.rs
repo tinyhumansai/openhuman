@@ -191,6 +191,11 @@ pub fn register_agent_handlers() {
                 visible_tool_names.as_ref(),
                 &extra_tools,
                 on_progress,
+                // Bus path runs ad-hoc agent turns without an Agent
+                // handle, so we pass None — payload summarization is
+                // wired into the orchestrator session via Agent::turn,
+                // not the bus dispatcher.
+                None,
             )
             .await
             .map_err(|e| e.to_string())?;
