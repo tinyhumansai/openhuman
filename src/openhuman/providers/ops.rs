@@ -290,6 +290,32 @@ pub fn create_routed_provider_with_options(
     )))
 }
 
+/// Create a provider with intelligent local/remote routing.
+///
+/// When `config.local_ai.enabled` is `true` and Ollama is reachable,
+/// lightweight and medium tasks (e.g. `hint:reaction`, `hint:summarize`) are
+/// served by the local model. Heavy tasks (`hint:reasoning`, `hint:agentic`,
+/// `hint:coding`) always go to the remote backend. A health-gated fallback
+/// transparently promotes failed local calls to the remote backend.
+///
+/// Telemetry for every routing decision is emitted at `INFO` level under the
+/// `"routing"` tracing target.
+pub fn create_intelligent_routing_provider(
+    api_key: Option<&str>,
+    api_url: Option<&str>,
+    config: &crate::openhuman::config::Config,
+    options: &ProviderRuntimeOptions,
+) -> anyhow::Result<Box<dyn Provider>> {
+    let remote = create_backend_inference_provider(api_key, api_url, options)?;
+    let default_model = config
+        .default_model
+        .as_deref()
+        .unwrap_or(crate::openhuman::config::DEFAULT_MODEL);
+
+    let provider = crate::openhuman::routing::new_provider(remote, &config.local_ai, default_model);
+    Ok(Box::new(provider))
+}
+
 /// Information about a supported provider for display purposes.
 pub struct ProviderInfo {
     pub name: &'static str,

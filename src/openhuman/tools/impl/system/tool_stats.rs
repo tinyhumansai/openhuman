@@ -127,3 +127,158 @@ impl Tool for ToolStatsTool {
         Ok(ToolResult::success(output))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry};
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct MockMemory {
+        entries: Mutex<HashMap<String, MemoryEntry>>,
+    }
+
+    #[async_trait]
+    impl Memory for MockMemory {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        async fn store(
+            &self,
+            key: &str,
+            content: &str,
+            category: MemoryCategory,
+            session_id: Option<&str>,
+        ) -> anyhow::Result<()> {
+            self.entries.lock().insert(
+                key.to_string(),
+                MemoryEntry {
+                    id: key.to_string(),
+                    key: key.to_string(),
+                    content: content.to_string(),
+                    namespace: None,
+                    category,
+                    timestamp: "now".into(),
+                    session_id: session_id.map(str::to_string),
+                    score: None,
+                },
+            );
+            Ok(())
+        }
+        async fn recall(
+            &self,
+            _q: &str,
+            _l: usize,
+            _s: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(vec![])
+        }
+        async fn get(&self, key: &str) -> anyhow::Result<Option<MemoryEntry>> {
+            Ok(self.entries.lock().get(key).cloned())
+        }
+        async fn list(
+            &self,
+            _cat: Option<&MemoryCategory>,
+            _s: Option<&str>,
+        ) -> anyhow::Result<Vec<MemoryEntry>> {
+            Ok(self.entries.lock().values().cloned().collect())
+        }
+        async fn forget(&self, key: &str) -> anyhow::Result<bool> {
+            Ok(self.entries.lock().remove(key).is_some())
+        }
+        async fn count(&self) -> anyhow::Result<usize> {
+            Ok(self.entries.lock().len())
+        }
+        async fn health_check(&self) -> bool {
+            true
+        }
+    }
+
+    fn make_tool() -> ToolStatsTool {
+        ToolStatsTool::new(Arc::new(MockMemory::default()))
+    }
+
+    #[test]
+    fn name_is_correct() {
+        assert_eq!(make_tool().name(), "tool_stats");
+    }
+
+    #[test]
+    fn description_is_non_empty() {
+        assert!(!make_tool().description().is_empty());
+    }
+
+    #[test]
+    fn schema_is_object_type() {
+        let schema = make_tool().parameters_schema();
+        assert_eq!(schema["type"], "object");
+    }
+
+    #[tokio::test]
+    async fn returns_no_data_message_when_empty() {
+        let result = make_tool().execute(json!({})).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.output().contains("No tool effectiveness data"));
+    }
+
+    #[tokio::test]
+    async fn returns_stats_for_stored_entry() {
+        use crate::openhuman::learning::tool_tracker::ToolStats;
+        let mem = Arc::new(MockMemory::default());
+        let stats = ToolStats {
+            total_calls: 5,
+            successes: 4,
+            failures: 1,
+            avg_duration_ms: 120.0,
+            common_error_patterns: vec![],
+        };
+        mem.store(
+            "tool/shell",
+            &serde_json::to_string(&stats).unwrap(),
+            MemoryCategory::Custom("tool_effectiveness".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        let tool = ToolStatsTool::new(mem);
+        let result = tool.execute(json!({})).await.unwrap();
+        assert!(!result.is_error);
+        let out = result.output();
+        assert!(out.contains("shell"));
+        assert!(out.contains("Calls: 5"));
+    }
+
+    #[tokio::test]
+    async fn filter_by_tool_name_returns_no_data_when_missing() {
+        use crate::openhuman::learning::tool_tracker::ToolStats;
+        let mem = Arc::new(MockMemory::default());
+        let stats = ToolStats {
+            total_calls: 1,
+            successes: 1,
+            failures: 0,
+            avg_duration_ms: 50.0,
+            common_error_patterns: vec![],
+        };
+        mem.store(
+            "tool/shell",
+            &serde_json::to_string(&stats).unwrap(),
+            MemoryCategory::Custom("tool_effectiveness".into()),
+            None,
+        )
+        .await
+        .unwrap();
+        let tool = ToolStatsTool::new(mem);
+        let result = tool
+            .execute(json!({"tool_name": "file_read"}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(result
+            .output()
+            .contains("No effectiveness data recorded for tool 'file_read'"));
+    }
+}

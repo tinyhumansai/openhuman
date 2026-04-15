@@ -216,3 +216,139 @@ pub(crate) fn find_system_ollama_binary() -> Option<PathBuf> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+
+    /// Serialises tests that mutate process-global environment variables
+    /// (OLLAMA_BIN, PATH). Without this, cargo's test runner can interleave
+    /// their set/remove calls and cause flakes.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        // Recover from a prior test's panic so one failure doesn't cascade.
+        ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// RAII guard: records the prior value of `var` on construction and
+    /// restores it on drop (or removes the var if it was previously unset).
+    struct EnvGuard {
+        var: &'static str,
+        prior: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(var: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let prior = std::env::var_os(var);
+            unsafe { std::env::set_var(var, value) };
+            Self { var, prior }
+        }
+
+        fn unset(var: &'static str) -> Self {
+            let prior = std::env::var_os(var);
+            unsafe { std::env::remove_var(var) };
+            Self { var, prior }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.prior.take() {
+                    Some(v) => std::env::set_var(self.var, v),
+                    None => std::env::remove_var(self.var),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn build_install_command_on_supported_platform_returns_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = build_install_command(tmp.path());
+        if cfg!(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "windows"
+        )) {
+            assert!(
+                result.is_ok(),
+                "build_install_command must return Ok on supported platforms, got {result:?}"
+            );
+        } else {
+            assert!(
+                result.is_err(),
+                "build_install_command must return Err on unsupported platforms"
+            );
+        }
+    }
+
+    #[test]
+    fn find_system_ollama_binary_respects_env_override_when_file_exists() {
+        let _lock = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let fake = tmp.path().join("ollama-stub");
+        std::fs::write(&fake, "").unwrap();
+        let _g = EnvGuard::set("OLLAMA_BIN", &fake);
+        let found = find_system_ollama_binary();
+        assert_eq!(found.as_deref(), Some(fake.as_path()));
+    }
+
+    #[test]
+    fn find_system_ollama_binary_ignores_env_override_when_file_missing() {
+        let _lock = env_lock();
+        let _g = EnvGuard::set("OLLAMA_BIN", "/nonexistent/ollama-stub-missing");
+        // Result depends on whether /usr/bin/ollama etc. exist on this
+        // machine. The important thing is the env-override didn't succeed.
+        let found = find_system_ollama_binary();
+        if let Some(p) = found {
+            assert!(!p.to_string_lossy().contains("ollama-stub-missing"));
+        }
+    }
+
+    #[test]
+    fn find_system_ollama_binary_ignores_empty_env_override() {
+        let _lock = env_lock();
+        {
+            let _g = EnvGuard::set("OLLAMA_BIN", "");
+            let _ = find_system_ollama_binary();
+        }
+        {
+            let _g = EnvGuard::set("OLLAMA_BIN", "   ");
+            let _ = find_system_ollama_binary();
+        }
+    }
+
+    #[test]
+    fn find_system_ollama_binary_finds_binary_via_path() {
+        let _lock = env_lock();
+        // Build a fake binary and inject its directory as the first PATH entry.
+        let tmp = tempfile::tempdir().unwrap();
+        let binary_name = if cfg!(windows) {
+            "ollama.exe"
+        } else {
+            "ollama"
+        };
+        let fake = tmp.path().join(binary_name);
+        std::fs::write(&fake, "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let prev_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut new_entries = vec![tmp.path().to_path_buf()];
+        new_entries.extend(std::env::split_paths(&prev_path));
+        let new_path = std::env::join_paths(new_entries).unwrap();
+        let _ollama_guard = EnvGuard::unset("OLLAMA_BIN");
+        let _path_guard = EnvGuard::set("PATH", &new_path);
+        let found = find_system_ollama_binary();
+        assert!(
+            found.is_some(),
+            "PATH-based lookup should succeed with a valid stub"
+        );
+    }
+}

@@ -183,14 +183,17 @@ impl LocalAiService {
         }
 
         // Attempt to load whisper model in-process if configured (blocking I/O).
+        // Pass GPU info from the device profile so whisper can use hardware acceleration.
         if effective_config.local_ai.whisper_in_process {
             if let Ok(model_path) =
                 crate::openhuman::local_ai::paths::resolve_stt_model_path(&effective_config)
             {
                 let model = std::path::PathBuf::from(&model_path);
                 let handle = self.whisper.clone();
+                let gpu = device.has_gpu;
+                let gpu_desc = device.gpu_description.clone();
                 let load_result = tokio::task::spawn_blocking(move || {
-                    super::whisper_engine::load_engine(&handle, &model)
+                    super::whisper_engine::load_engine(&handle, &model, gpu, gpu_desc.as_deref())
                 })
                 .await;
                 match load_result {

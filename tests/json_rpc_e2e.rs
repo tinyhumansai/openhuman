@@ -49,6 +49,7 @@ impl Drop for EnvVarGuard {
 /// process-global, so parallel tests would clobber each other and hit the wrong `config.toml` or
 /// inherited `VITE_BACKEND_URL`.
 static JSON_RPC_E2E_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static CHAT_COMPLETION_MODELS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
 fn json_rpc_e2e_env_lock() -> std::sync::MutexGuard<'static, ()> {
     let mutex = JSON_RPC_E2E_ENV_LOCK.get_or_init(|| Mutex::new(()));
@@ -56,6 +57,17 @@ fn json_rpc_e2e_env_lock() -> std::sync::MutexGuard<'static, ()> {
     match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+fn with_chat_completion_models<T>(f: impl FnOnce(&mut Vec<String>) -> T) -> T {
+    let mutex = CHAT_COMPLETION_MODELS.get_or_init(|| Mutex::new(Vec::new()));
+    match mutex.lock() {
+        Ok(mut guard) => f(&mut guard),
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            f(&mut guard)
+        }
     }
 }
 
@@ -152,7 +164,10 @@ fn mock_upstream_router() -> Router {
         })))
     }
 
-    async fn chat_completions(Json(_body): Json<Value>) -> Json<Value> {
+    async fn chat_completions(Json(body): Json<Value>) -> Json<Value> {
+        if let Some(model) = body.get("model").and_then(Value::as_str) {
+            with_chat_completion_models(|models| models.push(model.to_string()));
+        }
         Json(json!({
             "choices": [{
                 "message": {
@@ -589,7 +604,6 @@ encrypt = false
         toml::from_str(&cfg).expect("config toml must match Config schema");
 }
 
-#[cfg(target_os = "macos")]
 fn write_min_config_with_local_ai_disabled(openhuman_dir: &Path, api_origin: &str) {
     let cfg = format!(
         r#"api_url = "{api_origin}"
@@ -750,6 +764,118 @@ async fn json_rpc_protocol_auth_and_agent_hello() {
             > 0,
         "expected non-empty chat_done response payload: {sse_event}"
     );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_web_chat_routing_cases_use_expected_backend_models() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+
+    write_min_config_with_local_ai_disabled(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("e2e-user");
+    write_min_config_with_local_ai_disabled(&user_scoped_dir, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let store = post_json_rpc(
+        &rpc_base,
+        1,
+        "openhuman.auth_store_session",
+        json!({
+            "token": "e2e-test-jwt",
+            "user_id": "e2e-user"
+        }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&store, "store_session");
+
+    let routing_cases = [
+        ("hint:reasoning", "reasoning-v1"),
+        ("hint:agentic", "agentic-v1"),
+        ("hint:coding", "coding-v1"),
+        ("reasoning-v1", "reasoning-v1"),
+        // Web chat forwards lightweight hint overrides as-is for this path,
+        // so the upstream model receives the original hint string.
+        ("hint:reaction", "hint:reaction"),
+    ];
+
+    for (idx, (model_override, expected_model)) in routing_cases.iter().enumerate() {
+        with_chat_completion_models(|models| models.clear());
+
+        let client_id = format!("routing-case-client-{idx}");
+        let thread_id = format!("routing-case-thread-{idx}");
+        let events_url = format!("{}/events?client_id={}", rpc_base, client_id);
+        let sse_task =
+            tokio::spawn(async move { read_sse_event_by_type(&events_url, "chat_done").await });
+
+        let web_chat = post_json_rpc(
+            &rpc_base,
+            100 + idx as i64,
+            "openhuman.channel_web_chat",
+            json!({
+                "client_id": client_id,
+                "thread_id": thread_id,
+                "message": format!("route case {idx}"),
+                "model_override": model_override,
+            }),
+        )
+        .await;
+        let web_chat_result = assert_no_jsonrpc_error(&web_chat, "channel_web_chat");
+        assert_eq!(
+            web_chat_result
+                .get("result")
+                .and_then(|v| v.get("accepted")),
+            Some(&json!(true))
+        );
+
+        let sse_event = tokio::time::timeout(Duration::from_secs(12), sse_task)
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for chat_done for case {model_override}"))
+            .expect("sse task join should succeed");
+        assert_eq!(
+            sse_event.get("event").and_then(Value::as_str),
+            Some("chat_done")
+        );
+
+        let mut captured_models: Vec<String> = Vec::new();
+        for _ in 0..50 {
+            captured_models = with_chat_completion_models(|models| models.clone());
+            if captured_models.iter().any(|m| m == expected_model) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        assert!(
+            captured_models.iter().any(|m| m == expected_model),
+            "case={model_override} expected={expected_model} captured={captured_models:?}"
+        );
+
+        if model_override.starts_with("hint:")
+            && *model_override != "hint:reaction"
+            && *expected_model != *model_override
+        {
+            assert!(
+                !captured_models.iter().any(|m| m == model_override),
+                "hint model should not pass through for case={model_override}: {captured_models:?}"
+            );
+        }
+    }
 
     mock_join.abort();
     rpc_join.abort();

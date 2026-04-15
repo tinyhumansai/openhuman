@@ -47,6 +47,14 @@ pub use schemas::{
     all_registered_controllers as all_config_registered_controllers,
 };
 
+/// Shared mutex used by test modules in this crate that mutate the
+/// `OPENHUMAN_WORKSPACE` env var so they serialize against one another.
+/// Living at the module root means multiple test submodules — `ops::tests`,
+/// `schema::load::tests`, etc. — can grab the same lock and avoid
+/// interleaved mutations.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;

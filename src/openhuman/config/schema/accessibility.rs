@@ -68,7 +68,7 @@ fn default_autocomplete_enabled() -> bool {
 }
 
 fn default_use_vision_model() -> bool {
-    true
+    false
 }
 
 impl Default for ScreenIntelligenceConfig {

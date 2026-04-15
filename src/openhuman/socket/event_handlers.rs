@@ -127,6 +127,13 @@ pub(super) fn handle_sio_event(
                             "[socket] composio:trigger missing toolkit/trigger; dropping event"
                         );
                     } else {
+                        log::info!(
+                            "[socket] Publishing composio:trigger to event bus: toolkit={}, trigger={}, metadata_id={}, metadata_uuid={}",
+                            event.toolkit,
+                            event.trigger,
+                            event.metadata.id,
+                            event.metadata.uuid
+                        );
                         publish_global(DomainEvent::ComposioTriggerReceived {
                             toolkit: event.toolkit,
                             trigger: event.trigger,
@@ -224,4 +231,164 @@ pub(super) fn parse_sio_event(text: &str) -> Option<(String, serde_json::Value)>
     let event_name = arr.first()?.as_str()?.to_string();
     let data = arr.get(1).cloned().unwrap_or(serde_json::Value::Null);
     Some((event_name, data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parking_lot::RwLock;
+    use serde_json::json;
+
+    fn make_shared() -> Arc<SharedState> {
+        Arc::new(SharedState {
+            webhook_router: RwLock::new(None),
+            status: RwLock::new(ConnectionStatus::Disconnected),
+            socket_id: RwLock::new(None),
+        })
+    }
+
+    // ── base64_encode ───────────────────────────────────────────────
+
+    #[test]
+    fn base64_encode_round_trips_ascii() {
+        use base64::Engine;
+        let s = "hello world";
+        let encoded = base64_encode(s);
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .unwrap();
+        assert_eq!(decoded, s.as_bytes());
+    }
+
+    #[test]
+    fn base64_encode_handles_empty_string() {
+        assert_eq!(base64_encode(""), "");
+    }
+
+    #[test]
+    fn base64_encode_handles_json_body() {
+        let encoded = base64_encode(r#"{"error":"nope"}"#);
+        assert_eq!(encoded, "eyJlcnJvciI6Im5vcGUifQ==");
+    }
+
+    // ── parse_sio_event ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_sio_event_accepts_bare_array() {
+        let (name, data) = parse_sio_event(r#"["hello",{"x":1}]"#).unwrap();
+        assert_eq!(name, "hello");
+        assert_eq!(data, json!({"x": 1}));
+    }
+
+    #[test]
+    fn parse_sio_event_strips_ack_id_prefix() {
+        let (name, data) = parse_sio_event(r#"123["hello",{"x":1}]"#).unwrap();
+        assert_eq!(name, "hello");
+        assert_eq!(data["x"], 1);
+    }
+
+    #[test]
+    fn parse_sio_event_defaults_data_to_null_when_missing() {
+        let (name, data) = parse_sio_event(r#"["ping"]"#).unwrap();
+        assert_eq!(name, "ping");
+        assert!(data.is_null());
+    }
+
+    #[test]
+    fn parse_sio_event_returns_none_for_garbage() {
+        assert!(parse_sio_event("not an sio event").is_none());
+        assert!(parse_sio_event("").is_none());
+    }
+
+    #[test]
+    fn parse_sio_event_returns_none_when_first_element_is_not_string() {
+        assert!(parse_sio_event("[42,{}]").is_none());
+    }
+
+    #[test]
+    fn parse_sio_event_returns_none_when_json_invalid() {
+        assert!(parse_sio_event(r#"[invalid json"#).is_none());
+    }
+
+    // ── handle_sio_event dispatch ───────────────────────────────────
+
+    #[test]
+    fn handle_sio_event_ready_sets_connected() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event("ready", json!({}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Connected);
+    }
+
+    #[test]
+    fn handle_sio_event_error_sets_error_status() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event("error", json!({"msg":"oops"}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Error);
+    }
+
+    #[test]
+    fn handle_sio_event_unknown_event_is_noop_on_status() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        // Start disconnected — an unhandled event must not flip status.
+        handle_sio_event("weird.unrelated.event", json!({}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn handle_sio_event_channel_message_missing_channel_is_dropped() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        // No "channel" field → the dispatcher must return without touching status.
+        handle_sio_event("telegram:message", json!({"message": "hi"}), &tx, &shared);
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn handle_sio_event_channel_message_empty_text_is_dropped() {
+        let shared = make_shared();
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        handle_sio_event(
+            "telegram:message",
+            json!({"channel": "tg:123", "message": "   "}),
+            &tx,
+            &shared,
+        );
+        // Status should still be untouched. The dropped-empty branch is the
+        // coverage target — this test validates we hit the early-return path.
+        assert_eq!(*shared.status.read(), ConnectionStatus::Disconnected);
+    }
+
+    // ── emit_via_channel ────────────────────────────────────────────
+
+    #[test]
+    fn emit_via_channel_sends_socketio_event_frame() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        emit_via_channel(&tx, "hello", json!({"x": 1}));
+        let msg = rx.try_recv().expect("message should be sent");
+        assert!(
+            msg.starts_with("42"),
+            "expected SIO EVENT prefix, got: {msg}"
+        );
+        assert!(msg.contains("\"hello\""));
+        assert!(msg.contains("\"x\""));
+    }
+
+    #[test]
+    fn emit_via_channel_works_with_null_data() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+        emit_via_channel(&tx, "ping", serde_json::Value::Null);
+        let msg = rx.try_recv().expect("message should be sent");
+        assert_eq!(msg, r#"42["ping",null]"#);
+    }
+
+    #[test]
+    fn emit_via_channel_logs_but_does_not_panic_on_closed_receiver() {
+        let (tx, rx) = mpsc::unbounded_channel::<String>();
+        drop(rx); // receiver closed first
+                  // Must not panic — error path just logs.
+        emit_via_channel(&tx, "ping", json!({}));
+    }
 }

@@ -199,3 +199,85 @@ pub(super) fn emit_state_change(shared: &SharedState) {
 pub(super) fn emit_server_event(_shared: &SharedState, event_name: &str, _data: serde_json::Value) {
     log::debug!("[socket] Server event: {}", event_name);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn new_manager_is_disconnected_with_no_sid() {
+        let mgr = SocketManager::new();
+        let state = mgr.get_state();
+        assert_eq!(state.status, ConnectionStatus::Disconnected);
+        assert!(state.socket_id.is_none());
+        assert!(state.error.is_none());
+        assert!(!mgr.is_connected());
+    }
+
+    #[test]
+    fn default_impl_matches_new() {
+        let a = SocketManager::new();
+        let b = SocketManager::default();
+        assert_eq!(a.get_state().status, b.get_state().status);
+    }
+
+    #[test]
+    fn is_connected_tracks_status_transitions() {
+        let mgr = SocketManager::new();
+        assert!(!mgr.is_connected());
+        *mgr.shared.status.write() = ConnectionStatus::Connected;
+        assert!(mgr.is_connected());
+        *mgr.shared.status.write() = ConnectionStatus::Error;
+        assert!(!mgr.is_connected());
+    }
+
+    #[test]
+    fn get_state_reflects_stored_sid_and_status() {
+        let mgr = SocketManager::new();
+        *mgr.shared.status.write() = ConnectionStatus::Connected;
+        *mgr.shared.socket_id.write() = Some("sid-abc".to_string());
+        let state = mgr.get_state();
+        assert_eq!(state.status, ConnectionStatus::Connected);
+        assert_eq!(state.socket_id.as_deref(), Some("sid-abc"));
+    }
+
+    #[tokio::test]
+    async fn emit_without_connection_errors_without_panic() {
+        let mgr = SocketManager::new();
+        let err = mgr.emit("test.event", json!({"k":"v"})).await.unwrap_err();
+        assert_eq!(err, "Not connected");
+    }
+
+    #[tokio::test]
+    async fn disconnect_on_fresh_manager_is_idempotent() {
+        let mgr = SocketManager::new();
+        assert!(mgr.disconnect().await.is_ok());
+        // Calling again must still succeed.
+        assert!(mgr.disconnect().await.is_ok());
+        assert_eq!(mgr.get_state().status, ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn emit_state_change_is_safe_to_call_on_empty_shared() {
+        let shared = SharedState {
+            webhook_router: RwLock::new(None),
+            status: RwLock::new(ConnectionStatus::Connecting),
+            socket_id: RwLock::new(None),
+        };
+        // Must not panic even with all default state.
+        emit_state_change(&shared);
+    }
+
+    #[test]
+    fn emit_server_event_is_safe_without_subscribers() {
+        let shared = SharedState {
+            webhook_router: RwLock::new(None),
+            status: RwLock::new(ConnectionStatus::Connected),
+            socket_id: RwLock::new(Some("x".into())),
+        };
+        // Pure logging — must not touch state or panic.
+        emit_server_event(&shared, "any.event", json!({}));
+        assert_eq!(*shared.status.read(), ConnectionStatus::Connected);
+    }
+}

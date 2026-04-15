@@ -6,6 +6,7 @@
 
 pub mod audio_capture;
 pub mod dictation_listener;
+pub mod hallucination;
 pub mod hotkey;
 mod ops;
 mod postprocess;

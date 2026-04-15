@@ -114,6 +114,41 @@ pub struct ComposioExecuteResponse {
     pub cost_usd: f64,
 }
 
+// ── GitHub repos + triggers ─────────────────────────────────────────
+
+/// One repository returned by `GET /agent-integrations/composio/github/repos`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioGithubRepo {
+    pub owner: String,
+    pub repo: String,
+    #[serde(rename = "fullName")]
+    pub full_name: String,
+    #[serde(default)]
+    pub private: Option<bool>,
+    #[serde(rename = "defaultBranch", default)]
+    pub default_branch: Option<String>,
+    #[serde(rename = "htmlUrl", default)]
+    pub html_url: Option<String>,
+}
+
+/// Response body of `GET /agent-integrations/composio/github/repos`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioGithubReposResponse {
+    #[serde(rename = "connectionId")]
+    pub connection_id: String,
+    #[serde(default, rename = "repositories")]
+    pub repositories: Vec<ComposioGithubRepo>,
+}
+
+/// Response body of `POST /agent-integrations/composio/triggers`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposioCreateTriggerResponse {
+    #[serde(rename = "triggerId")]
+    pub trigger_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
 // ── Triggers ────────────────────────────────────────────────────────
 
 /// Payload of the `composio:trigger` Socket.IO event emitted by the backend
@@ -170,4 +205,150 @@ pub struct ComposioTriggerHistoryResult {
     pub current_day_file: String,
     /// Recent triggers, newest first.
     pub entries: Vec<ComposioTriggerHistoryEntry>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn toolkits_response_defaults_to_empty() {
+        let resp: ComposioToolkitsResponse = serde_json::from_str("{}").unwrap();
+        assert!(resp.toolkits.is_empty());
+    }
+
+    #[test]
+    fn toolkits_response_roundtrips() {
+        let resp = ComposioToolkitsResponse {
+            toolkits: vec!["gmail".into(), "notion".into()],
+        };
+        let value = serde_json::to_value(&resp).unwrap();
+        assert_eq!(value, json!({ "toolkits": ["gmail", "notion"] }));
+        let back: ComposioToolkitsResponse = serde_json::from_value(value).unwrap();
+        assert_eq!(back.toolkits, vec!["gmail", "notion"]);
+    }
+
+    #[test]
+    fn connection_parses_and_serializes_camelcase_created_at() {
+        let raw = json!({
+            "id": "conn_1",
+            "toolkit": "gmail",
+            "status": "ACTIVE",
+            "createdAt": "2026-02-01T00:00:00Z"
+        });
+        let conn: ComposioConnection = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(conn.id, "conn_1");
+        assert_eq!(conn.toolkit, "gmail");
+        assert_eq!(conn.status, "ACTIVE");
+        assert_eq!(conn.created_at.as_deref(), Some("2026-02-01T00:00:00Z"));
+
+        // Round-trip must use camelCase too.
+        let serialized = serde_json::to_value(&conn).unwrap();
+        assert!(serialized.get("createdAt").is_some());
+    }
+
+    #[test]
+    fn connection_without_created_at_omits_field_when_serialized() {
+        let conn = ComposioConnection {
+            id: "x".into(),
+            toolkit: "notion".into(),
+            status: "PENDING".into(),
+            created_at: None,
+        };
+        let s = serde_json::to_value(&conn).unwrap();
+        assert!(
+            s.get("createdAt").is_none(),
+            "createdAt must be skipped when None"
+        );
+    }
+
+    #[test]
+    fn authorize_response_uses_camelcase_keys() {
+        let raw = json!({
+            "connectUrl": "https://composio.dev/oauth/abc",
+            "connectionId": "conn_2"
+        });
+        let resp: ComposioAuthorizeResponse = serde_json::from_value(raw).unwrap();
+        assert_eq!(resp.connect_url, "https://composio.dev/oauth/abc");
+        assert_eq!(resp.connection_id, "conn_2");
+
+        let s = serde_json::to_value(&resp).unwrap();
+        assert!(s.get("connectUrl").is_some());
+        assert!(s.get("connectionId").is_some());
+    }
+
+    #[test]
+    fn tool_schema_defaults_type_field_to_function() {
+        let raw = json!({
+            "function": {
+                "name": "GMAIL_SEND_EMAIL",
+                "description": "Send an email",
+                "parameters": { "type": "object" }
+            }
+        });
+        let tool: ComposioToolSchema = serde_json::from_value(raw).unwrap();
+        assert_eq!(tool.kind, "function");
+        assert_eq!(tool.function.name, "GMAIL_SEND_EMAIL");
+        assert_eq!(tool.function.description.as_deref(), Some("Send an email"));
+        assert!(tool.function.parameters.is_some());
+    }
+
+    #[test]
+    fn tool_function_tolerates_missing_description_and_parameters() {
+        let raw = json!({ "function": { "name": "SLUG_ONLY" } });
+        let tool: ComposioToolSchema = serde_json::from_value(raw).unwrap();
+        assert_eq!(tool.function.name, "SLUG_ONLY");
+        assert!(tool.function.description.is_none());
+        assert!(tool.function.parameters.is_none());
+    }
+
+    #[test]
+    fn execute_response_parses_cost_and_error() {
+        let raw = json!({
+            "data": { "messageId": "m-1" },
+            "successful": true,
+            "error": null,
+            "costUsd": 0.0025
+        });
+        let resp: ComposioExecuteResponse = serde_json::from_value(raw).unwrap();
+        assert!(resp.successful);
+        assert!(resp.error.is_none());
+        assert!((resp.cost_usd - 0.0025).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn execute_response_defaults_when_fields_missing() {
+        let resp: ComposioExecuteResponse = serde_json::from_str("{}").unwrap();
+        assert!(!resp.successful);
+        assert!(resp.error.is_none());
+        assert_eq!(resp.cost_usd, 0.0);
+        assert!(resp.data.is_null());
+    }
+
+    #[test]
+    fn trigger_event_defaults_empty_fields_to_empty_strings() {
+        let ev: ComposioTriggerEvent = serde_json::from_str("{}").unwrap();
+        assert_eq!(ev.toolkit, "");
+        assert_eq!(ev.trigger, "");
+        assert_eq!(ev.metadata.id, "");
+        assert_eq!(ev.metadata.uuid, "");
+        assert!(ev.payload.is_null());
+    }
+
+    #[test]
+    fn trigger_event_parses_full_payload() {
+        let raw = json!({
+            "toolkit": "gmail",
+            "trigger": "GMAIL_NEW_GMAIL_MESSAGE",
+            "payload": { "subject": "hi" },
+            "metadata": { "id": "evt-1", "uuid": "uuid-1" }
+        });
+        let ev: ComposioTriggerEvent = serde_json::from_value(raw).unwrap();
+        assert_eq!(ev.toolkit, "gmail");
+        assert_eq!(ev.trigger, "GMAIL_NEW_GMAIL_MESSAGE");
+        assert_eq!(ev.metadata.id, "evt-1");
+        assert_eq!(ev.metadata.uuid, "uuid-1");
+        assert_eq!(ev.payload["subject"], "hi");
+    }
 }

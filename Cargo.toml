@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.52.9"
+version = "0.52.13"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -100,6 +100,9 @@ wa-rs-binary = { version = "0.2", optional = true, default-features = false }
 wa-rs-proto = { version = "0.2", optional = true, default-features = false }
 wa-rs-ureq-http = { version = "0.2", optional = true }
 wa-rs-tokio-transport = { version = "0.2", optional = true, default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = { version = "0.4", optional = true }

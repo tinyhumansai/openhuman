@@ -788,3 +788,86 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_counts_match_and_nonempty() {
+        let s = all_controller_schemas();
+        let h = all_registered_controllers();
+        assert_eq!(s.len(), h.len());
+        assert!(s.len() >= 20, "config namespace should expose ≥20 fns");
+    }
+
+    #[test]
+    fn all_schemas_use_config_namespace_and_have_descriptions() {
+        for s in all_controller_schemas() {
+            assert_eq!(s.namespace, "config", "function {}", s.function);
+            assert!(!s.description.is_empty(), "function {} desc", s.function);
+            assert!(!s.outputs.is_empty(), "function {} outputs", s.function);
+        }
+    }
+
+    #[test]
+    fn unknown_function_returns_unknown_schema() {
+        let s = schemas("no_such_fn");
+        assert_eq!(s.function, "unknown");
+        assert_eq!(s.namespace, "config");
+    }
+
+    #[test]
+    fn every_registered_key_resolves_to_non_unknown_schema() {
+        let keys = [
+            "get_config",
+            "update_model_settings",
+            "update_memory_settings",
+            "update_screen_intelligence_settings",
+            "update_runtime_settings",
+            "update_browser_settings",
+            "resolve_api_url",
+            "get_runtime_flags",
+            "set_browser_allow_all",
+            "workspace_onboarding_flag_exists",
+            "workspace_onboarding_flag_set",
+            "update_analytics_settings",
+            "get_analytics_settings",
+            "agent_server_status",
+            "reset_local_data",
+            "get_onboarding_completed",
+            "set_onboarding_completed",
+            "get_dictation_settings",
+            "update_dictation_settings",
+            "get_voice_server_settings",
+            "update_voice_server_settings",
+        ];
+        for k in keys {
+            let s = schemas(k);
+            assert_ne!(s.function, "unknown", "`{k}` fell through to unknown");
+            assert_eq!(s.namespace, "config");
+        }
+    }
+
+    #[test]
+    fn registered_controllers_all_use_config_namespace() {
+        for h in all_registered_controllers() {
+            assert_eq!(h.schema.namespace, "config");
+            assert!(!h.schema.function.is_empty());
+        }
+    }
+
+    #[test]
+    fn json_output_helper_builds_required_json_field() {
+        let f = json_output("result", "desc");
+        assert!(f.required);
+        assert!(matches!(f.ty, TypeSchema::Json));
+    }
+
+    #[test]
+    fn to_json_wraps_rpc_outcome() {
+        let v = to_json(RpcOutcome::single_log(serde_json::json!({"ok": true}), "l"))
+            .expect("serialize");
+        assert!(v.get("logs").is_some() || v.get("result").is_some());
+    }
+}

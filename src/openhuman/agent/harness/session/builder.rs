@@ -315,6 +315,7 @@ impl AgentBuilder {
             context,
             on_progress: None,
             connected_integrations: Vec::new(),
+            composio_client: None,
             // Default to `true` (omit) so legacy / custom agents built
             // without a definition stay lean. Opt-in agents thread their
             // `omit_profile = false` through the builder.
@@ -512,12 +513,10 @@ impl Agent {
             reasoning_enabled: config.runtime.reasoning_enabled,
         };
 
-        let provider: Box<dyn Provider> = providers::create_routed_provider_with_options(
+        let provider: Box<dyn Provider> = providers::create_intelligent_routing_provider(
             config.api_key.as_deref(),
             config.api_url.as_deref(),
-            &config.reliability,
-            &config.model_routes,
-            &model_name,
+            config,
             &provider_runtime_options,
         )?;
 

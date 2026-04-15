@@ -44,7 +44,7 @@ pub struct DictationConfig {
 }
 
 fn default_enabled() -> bool {
-    true
+    false
 }
 
 fn default_hotkey() -> String {

@@ -841,6 +841,8 @@ impl Agent {
             session_id: self.event_session_id().to_string(),
             channel: self.event_channel().to_string(),
             connected_integrations: self.connected_integrations.clone(),
+            composio_client: self.composio_client.clone(),
+            tool_call_format: self.tool_dispatcher.tool_call_format(),
         }
     }
 
@@ -993,6 +995,9 @@ impl Agent {
 
     /// Fetches the user's active Composio connections and populates
     /// `self.connected_integrations` so the system prompt can surface them.
+    /// Also caches a [`ComposioClient`] on the session so the sub-agent
+    /// runner can construct per-action tools for `skills_agent` spawns
+    /// without rebuilding the client on every call.
     ///
     /// Delegates to the shared [`crate::openhuman::composio::fetch_connected_integrations`]
     /// which is the single source of truth for integration discovery.
@@ -1008,6 +1013,7 @@ impl Agent {
         };
         self.connected_integrations =
             crate::openhuman::composio::fetch_connected_integrations(&config).await;
+        self.composio_client = crate::openhuman::composio::build_composio_client(&config);
     }
 
     /// Builds the system prompt for the current turn, including tool
@@ -1026,6 +1032,7 @@ impl Agent {
         let ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
             model_name: &self.model_name,
+            agent_id: &self.agent_definition_name,
             tools: &prompt_tools,
             skills: &self.skills,
             dispatcher_instructions: &instructions,

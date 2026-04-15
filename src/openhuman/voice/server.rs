@@ -650,7 +650,7 @@ async fn process_recording_bg(
                     );
 
                     // Gate 3: filter hallucinated/blank output.
-                    if is_hallucinated_output(text) {
+                    if is_hallucinated_output(text, HallucinationMode::Dictation) {
                         warn!(
                             "{LOG_PREFIX} [pipeline={pipeline_id}] stage=gate_hallucination DROPPED text='{}'",
                             truncate_for_log(text, 60)
@@ -852,86 +852,8 @@ pub async fn run_standalone(
     server_arc.run(&app_config).await
 }
 
-/// Known whisper hallucination patterns. These are common outputs when
-/// whisper processes near-silent audio or audio with background noise.
-/// Sourced from community lists and OpenWhispr's filtering behavior.
-const HALLUCINATION_PATTERNS: &[&str] = &[
-    // whisper.cpp blank markers
-    "[blank_audio]",
-    "[ blank_audio ]",
-    "[blank audio]",
-    "(blank audio)",
-    // Common hallucinations from YouTube-trained models
-    "thank you",
-    "thank you.",
-    "thanks.",
-    "thank you for watching",
-    "thanks for watching",
-    "thank you for listening",
-    "thanks for listening",
-    "thank you so much",
-    "please subscribe",
-    "like and subscribe",
-    "see you next time",
-    "see you in the next video",
-    "bye bye",
-    "bye.",
-    "goodbye.",
-    // Single-word noise artifacts
-    "you",
-    "the",
-    "i",
-    "a",
-    "so",
-    "okay",
-    "ok",
-    "yeah",
-    "yes",
-    "no",
-    "oh",
-    "hmm",
-    "huh",
-    "ah",
-    // Punctuation-only
-    "...",
-    ".",
-    ",",
-    "!",
-    "?",
-];
-
-/// Check if whisper output is a known hallucination pattern.
-///
-/// Whisper.cpp famously outputs "[BLANK_AUDIO]" for silence and various
-/// stock phrases ("Thank you for watching", etc.) when fed noisy or
-/// near-empty audio. Filtering these prevents inserting garbage text.
-fn is_hallucinated_output(text: &str) -> bool {
-    let normalized = text.trim().to_lowercase();
-    if normalized.is_empty() {
-        return false; // handled separately as "empty"
-    }
-
-    // Strip trailing punctuation for matching (whisper often appends periods).
-    let stripped = normalized.trim_end_matches(|c: char| c.is_ascii_punctuation());
-
-    // Exact match against known hallucination phrases.
-    for pattern in HALLUCINATION_PATTERNS {
-        if normalized == *pattern || stripped == *pattern {
-            return true;
-        }
-    }
-
-    // Detect repeated short phrases (e.g. "you you you you").
-    let words: Vec<&str> = normalized.split_whitespace().collect();
-    if words.len() >= 3 {
-        let first = words[0];
-        if words.iter().all(|w| *w == first) {
-            return true;
-        }
-    }
-
-    false
-}
+// Hallucination detection is now in the shared `hallucination` module.
+use super::hallucination::{is_hallucinated_output, HallucinationMode};
 
 fn truncate_for_log(s: &str, max: usize) -> String {
     let truncated: String = s.chars().take(max).collect();
@@ -960,37 +882,41 @@ mod tests {
 
     #[test]
     fn hallucination_detection() {
+        use super::HallucinationMode;
+        let mode = HallucinationMode::Dictation;
+
         // Blank audio markers.
-        assert!(is_hallucinated_output("[BLANK_AUDIO]"));
-        assert!(is_hallucinated_output("  [blank_audio]  "));
-        assert!(is_hallucinated_output("[ BLANK_AUDIO ]"));
+        assert!(is_hallucinated_output("[BLANK_AUDIO]", mode));
+        assert!(is_hallucinated_output("  [blank_audio]  ", mode));
+        assert!(is_hallucinated_output("[ BLANK_AUDIO ]", mode));
         // Common hallucinated phrases.
-        assert!(is_hallucinated_output("Thank you for watching"));
-        assert!(is_hallucinated_output("thanks for listening"));
-        assert!(is_hallucinated_output("Thank you."));
-        assert!(is_hallucinated_output("Thank you"));
-        assert!(is_hallucinated_output("Thanks."));
-        assert!(is_hallucinated_output("Bye."));
-        assert!(is_hallucinated_output("Goodbye."));
+        assert!(is_hallucinated_output("Thank you for watching", mode));
+        assert!(is_hallucinated_output("thanks for listening", mode));
+        assert!(is_hallucinated_output("Thank you.", mode));
+        assert!(is_hallucinated_output("Thank you", mode));
+        assert!(is_hallucinated_output("Thanks.", mode));
+        assert!(is_hallucinated_output("Bye.", mode));
+        assert!(is_hallucinated_output("Goodbye.", mode));
         // Repeated words.
-        assert!(is_hallucinated_output("you you you you"));
-        assert!(is_hallucinated_output("the the the the"));
+        assert!(is_hallucinated_output("you you you you", mode));
+        assert!(is_hallucinated_output("the the the the", mode));
         // Punctuation-only.
-        assert!(is_hallucinated_output("..."));
-        assert!(is_hallucinated_output("."));
-        // Single noise words.
-        assert!(is_hallucinated_output("you"));
-        assert!(is_hallucinated_output("Yeah"));
-        assert!(is_hallucinated_output("Hmm"));
-        assert!(is_hallucinated_output("Oh."));
+        assert!(is_hallucinated_output("...", mode));
+        assert!(is_hallucinated_output(".", mode));
+        // Single noise words (dictation mode drops these).
+        assert!(is_hallucinated_output("you", mode));
+        assert!(is_hallucinated_output("Yeah", mode));
+        assert!(is_hallucinated_output("Hmm", mode));
+        assert!(is_hallucinated_output("Oh.", mode));
         // Should NOT flag real speech.
-        assert!(!is_hallucinated_output("Hello, how are you?"));
-        assert!(!is_hallucinated_output("the quick brown fox"));
-        assert!(!is_hallucinated_output("I want to order pizza"));
+        assert!(!is_hallucinated_output("Hello, how are you?", mode));
+        assert!(!is_hallucinated_output("the quick brown fox", mode));
+        assert!(!is_hallucinated_output("I want to order pizza", mode));
         assert!(!is_hallucinated_output(
-            "thank you for your help with the project"
+            "thank you for your help with the project",
+            mode
         ));
-        assert!(!is_hallucinated_output(""));
+        assert!(!is_hallucinated_output("", mode));
     }
 
     #[tokio::test]
@@ -1216,5 +1142,57 @@ mod tests {
 
         assert_eq!(*state.lock().await, ServerState::Idle);
         assert!(last_error.lock().await.is_none());
+    }
+
+    // ── truncate_for_log ───────────────────────────────────────────
+
+    #[test]
+    fn truncate_for_log_passes_through_short_strings() {
+        assert_eq!(truncate_for_log("hi", 10), "hi");
+        assert_eq!(truncate_for_log("", 10), "");
+    }
+
+    #[test]
+    fn truncate_for_log_appends_ellipsis_when_truncated() {
+        assert_eq!(truncate_for_log("abcdefghij", 5), "abcde...");
+    }
+
+    #[test]
+    fn truncate_for_log_handles_multibyte_chars() {
+        // Each "日" is multi-byte but one `char` — truncate by char count.
+        let out = truncate_for_log("日本語テスト", 3);
+        assert_eq!(out, "日本語...");
+    }
+
+    // ── try_global_server / global_server ─────────────────────────
+
+    #[tokio::test]
+    async fn try_global_server_returns_some_after_global_server_initialized() {
+        // `global_server` is OnceCell-backed; first call initialises it.
+        let _ = global_server(VoiceServerConfig::default());
+        assert!(try_global_server().is_some());
+    }
+
+    // ── ServerState transitions ───────────────────────────────────
+    // Initial-status coverage lives in `server_status_initial` above.
+
+    #[test]
+    fn hallucination_detection_longer_real_phrase_is_not_flagged() {
+        // Real multi-word speech should not be classified as hallucination.
+        let mode = HallucinationMode::Dictation;
+        assert!(!is_hallucinated_output(
+            "please summarise the meeting",
+            mode
+        ));
+        assert!(!is_hallucinated_output("open the browser", mode));
+    }
+
+    #[test]
+    fn hallucination_detection_trailing_exclamation_still_flags_known_pattern() {
+        // Periods are stripped in normalisation; other punctuation behaviour
+        // depends on the pattern list — we just lock in that exclamation
+        // after "Thank you" does not accidentally un-flag it.
+        let mode = HallucinationMode::Dictation;
+        assert!(is_hallucinated_output("Thank you!", mode));
     }
 }

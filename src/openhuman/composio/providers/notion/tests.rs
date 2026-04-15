@@ -65,3 +65,9 @@ fn provider_metadata_is_stable() {
     assert_eq!(p.toolkit_slug(), "notion");
     assert_eq!(p.sync_interval_secs(), Some(30 * 60));
 }
+
+#[test]
+fn default_impl_matches_new() {
+    let _a = NotionProvider::new();
+    let _b = NotionProvider::default();
+}

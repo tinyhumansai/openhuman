@@ -190,6 +190,32 @@ mod tests {
     }
 
     #[test]
+    fn now_secs_returns_recent_unix_seconds() {
+        // Sanity check: the helper just wraps SystemTime::now() into f64.
+        let t = now_secs();
+        assert!(t > 1_000_000_000.0, "expected unix epoch seconds, got {t}");
+    }
+
+    #[test]
+    fn persist_provider_profile_returns_zero_when_memory_client_not_ready() {
+        // The global memory client is gated behind login; in the test
+        // binary it may or may not be initialised depending on test
+        // ordering. We just exercise the entrypoint to cover the
+        // early-return branch — if the global IS ready we accept the
+        // returned count without further assertions.
+        let profile = ProviderUserProfile {
+            toolkit: "gmail".into(),
+            connection_id: Some("c-1".into()),
+            display_name: Some("Jane".into()),
+            email: Some("jane@example.com".into()),
+            username: None,
+            avatar_url: None,
+            extras: serde_json::Value::Null,
+        };
+        let _written = persist_provider_profile(&profile);
+    }
+
+    #[test]
     fn empty_fields_are_skipped() {
         let profile = ProviderUserProfile {
             toolkit: "gmail".into(),

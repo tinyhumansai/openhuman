@@ -6,7 +6,6 @@ import { userApi } from '../../services/api/userApi';
 import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
 import ContextGatheringStep from './steps/ContextGatheringStep';
 import ReferralApplyStep from './steps/ReferralApplyStep';
-import ScreenPermissionsStep from './steps/ScreenPermissionsStep';
 import SkillsStep from './steps/SkillsStep';
 import WelcomeStep from './steps/WelcomeStep';
 
@@ -16,7 +15,6 @@ interface OnboardingProps {
 }
 
 interface OnboardingDraft {
-  accessibilityPermissionGranted: boolean;
   connectedSources: string[];
 }
 
@@ -29,7 +27,7 @@ function hasReferralFromProfile(
   return !!(user?.referral?.invitedBy || user?.referral?.invitedByCode);
 }
 
-/** When referral is skipped, step index 1 (apply) is not shown — treat as screen permissions (2). */
+/** When referral is skipped, step index 1 (apply) is not shown — treat as skills (2). */
 function resolveOnboardingStep(currentStep: number, skipReferralStep: boolean): number {
   if (skipReferralStep && currentStep === 1) {
     return 2;
@@ -40,10 +38,7 @@ function resolveOnboardingStep(currentStep: number, skipReferralStep: boolean): 
 const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
   const { setOnboardingCompletedFlag, setOnboardingTasks, snapshot } = useCoreState();
   const [currentStep, setCurrentStep] = useState(0);
-  const [draft, setDraft] = useState<OnboardingDraft>({
-    accessibilityPermissionGranted: false,
-    connectedSources: [],
-  });
+  const [draft, setDraft] = useState<OnboardingDraft>({ connectedSources: [] });
   /** Last session token for which referral stats prefetch finished (async path only). */
   const [referralStatsToken, setReferralStatsToken] = useState<string | null>(null);
   const [skipReferralFromStats, setSkipReferralFromStats] = useState(false);
@@ -104,7 +99,7 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
 
   const handleNext = () => {
     const logical = resolveOnboardingStep(currentStep, skipReferralStep);
-    if (logical < 4) {
+    if (logical < 3) {
       setCurrentStep(logical + 1);
     }
   };
@@ -122,25 +117,27 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
     setCurrentStep(logical - 1);
   };
 
-  const handleAccessibilityNext = (accessibilityPermissionGranted: boolean) => {
-    setDraft(prev => ({ ...prev, accessibilityPermissionGranted }));
-    handleNext();
-  };
-
   const handleSkillsNext = async (connectedSources: string[]) => {
     console.debug('[onboarding:handleSkillsNext]', { connectedSources });
     setDraft(prev => ({ ...prev, connectedSources }));
-    handleNext();
+    if (connectedSources.length === 0) {
+      // No sources connected — skip context gathering and finish onboarding.
+      await handleContextNext(connectedSources);
+    } else {
+      handleNext();
+    }
   };
 
-  const handleContextNext = async () => {
-    console.debug('[onboarding:handleContextNext]', { connectedSources: draft.connectedSources });
+  const handleContextNext = async (connectedSourcesOverride?: string[]) => {
+    const sources = connectedSourcesOverride ?? draft.connectedSources;
+    console.debug('[onboarding:handleContextNext]', { connectedSources: sources });
     await setOnboardingTasks({
-      accessibilityPermissionGranted: draft.accessibilityPermissionGranted,
+      accessibilityPermissionGranted:
+        snapshot.localState.onboardingTasks?.accessibilityPermissionGranted ?? false,
       localModelConsentGiven: false,
       localModelDownloadStarted: false,
       enabledTools: getDefaultEnabledTools(),
-      connectedSources: draft.connectedSources,
+      connectedSources: sources,
       updatedAtMs: Date.now(),
     });
 
@@ -185,10 +182,8 @@ const Onboarding = ({ onComplete, onDefer }: OnboardingProps) => {
           />
         );
       case 2:
-        return <ScreenPermissionsStep onNext={handleAccessibilityNext} onBack={handleBack} />;
-      case 3:
         return <SkillsStep onNext={handleSkillsNext} onBack={handleBack} />;
-      case 4:
+      case 3:
         return (
           <ContextGatheringStep
             connectedSources={draft.connectedSources}

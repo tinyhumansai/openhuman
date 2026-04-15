@@ -86,10 +86,10 @@ pub async fn start_channels(config: Config) -> Result<()> {
         secrets_encrypt: config.secrets.encrypt,
         reasoning_enabled: config.runtime.reasoning_enabled,
     };
-    let provider: Arc<dyn Provider> = Arc::from(providers::create_resilient_provider_with_options(
+    let provider: Arc<dyn Provider> = Arc::from(providers::create_intelligent_routing_provider(
         config.api_key.as_deref(),
         config.api_url.as_deref(),
-        &config.reliability,
+        &config,
         &provider_runtime_options,
     )?);
 

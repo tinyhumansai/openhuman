@@ -143,3 +143,108 @@ pub async fn run_cli_screenshot_ref(
         "logs": logs
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── CliScreenshotArgs ─────────────────────────────────────────────────────
+
+    #[test]
+    fn cli_screenshot_args_default_fields() {
+        let args = CliScreenshotArgs::default();
+        assert!(args.filename.is_none());
+        assert!(args.region.is_none());
+        assert!(args.output.is_none());
+        assert!(!args.print_data_url);
+    }
+
+    #[test]
+    fn cli_screenshot_args_debug_does_not_panic() {
+        let args = CliScreenshotArgs {
+            filename: Some("shot.png".into()),
+            region: Some("selection".into()),
+            output: Some(PathBuf::from("/tmp/out.png")),
+            print_data_url: true,
+        };
+        let dbg = format!("{args:?}");
+        assert!(dbg.contains("shot.png"));
+        assert!(dbg.contains("selection"));
+        assert!(dbg.contains("print_data_url: true"));
+    }
+
+    // ── CliScreenshotRefArgs ──────────────────────────────────────────────────
+
+    #[test]
+    fn cli_screenshot_ref_args_default_fields() {
+        let args = CliScreenshotRefArgs::default();
+        assert!(args.output.is_none());
+        assert!(!args.print_data_url);
+    }
+
+    #[test]
+    fn cli_screenshot_ref_args_debug_does_not_panic() {
+        let args = CliScreenshotRefArgs {
+            output: Some(PathBuf::from("/tmp/ref.png")),
+            print_data_url: false,
+        };
+        let dbg = format!("{args:?}");
+        assert!(dbg.contains("print_data_url: false"));
+    }
+
+    // ── tools_wrappers_list_json ──────────────────────────────────────────────
+
+    #[test]
+    fn tools_wrappers_list_json_shape() {
+        let v = tools_wrappers_list_json();
+
+        // Top-level keys
+        assert!(v["result"].is_object(), "should have a 'result' key");
+        assert!(v["logs"].is_array(), "should have a 'logs' array");
+
+        // Wrappers array
+        let wrappers = v["result"]["wrappers"]
+            .as_array()
+            .expect("wrappers is array");
+        assert_eq!(wrappers.len(), 2, "should list exactly 2 wrappers");
+
+        // First wrapper
+        assert_eq!(wrappers[0]["name"].as_str(), Some("screenshot"));
+        assert!(
+            wrappers[0]["description"]
+                .as_str()
+                .unwrap()
+                .contains("screenshot"),
+            "screenshot description should mention screenshot"
+        );
+
+        // Second wrapper
+        assert_eq!(wrappers[1]["name"].as_str(), Some("screenshot-ref"));
+        assert!(
+            wrappers[1]["description"]
+                .as_str()
+                .unwrap()
+                .contains("capture_image_ref"),
+            "screenshot-ref description should mention capture_image_ref"
+        );
+    }
+
+    #[test]
+    fn tools_wrappers_list_json_logs_populated() {
+        let v = tools_wrappers_list_json();
+        let logs = v["logs"].as_array().unwrap();
+        assert!(!logs.is_empty(), "logs should not be empty");
+        let first = logs[0].as_str().unwrap();
+        assert!(
+            first.contains("listed"),
+            "log entry should mention 'listed'"
+        );
+    }
+
+    #[test]
+    fn tools_wrappers_list_json_is_deterministic() {
+        let v1 = tools_wrappers_list_json();
+        let v2 = tools_wrappers_list_json();
+        assert_eq!(v1, v2);
+    }
+}

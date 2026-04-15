@@ -53,8 +53,12 @@ impl LocalAiService {
                     debug!(
                         "{LOG_PREFIX} whisper in-process enabled but unloaded; loading model lazily"
                     );
+                    // Detect GPU at lazy-load time so whisper can use acceleration.
+                    let device = crate::openhuman::local_ai::device::detect_device_profile();
+                    let gpu = device.has_gpu;
+                    let gpu_desc = device.gpu_description.clone();
                     let load_result = tokio::task::spawn_blocking(move || {
-                        whisper_engine::load_engine(&handle, &model)
+                        whisper_engine::load_engine(&handle, &model, gpu, gpu_desc.as_deref())
                     })
                     .await
                     .map_err(|e| format!("whisper load task join error: {e}"))?;
