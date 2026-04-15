@@ -94,6 +94,12 @@ export const FALLBACK_DEFINITIONS: ChannelDefinition[] = [
         fields: [],
         auth_action: 'discord_oauth',
       },
+      {
+        mode: 'managed_dm',
+        description: 'Link your personal Discord account to the OpenHuman bot.',
+        fields: [],
+        auth_action: 'discord_managed_link',
+      },
     ],
     capabilities: ['send_text', 'receive_text', 'typing', 'threaded_replies'],
   },

@@ -113,7 +113,10 @@ const handleOAuthDeepLink = async (parsed: URL) => {
 
   if (path === 'success') {
     const integrationId = parsed.searchParams.get('integrationId');
-    const toolkit = parsed.searchParams.get('toolkit') || parsed.searchParams.get('provider');
+    const toolkit =
+      parsed.searchParams.get('toolkit') ||
+      parsed.searchParams.get('provider') ||
+      parsed.searchParams.get('skillId');
 
     if (!integrationId) {
       // Do not log full URL — query can contain secrets.
@@ -248,6 +251,7 @@ export const setupDesktopDeepLinkListener = async () => {
     if (typeof window !== 'undefined') {
       // window.__simulateDeepLink('openhuman://auth?token=1234567890')
       // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&provider=notion')
+      // window.__simulateDeepLink('openhuman://oauth/success?integrationId=69cafd0b103bd070232d3223&skillId=discord')
       const win = window as Window & { __simulateDeepLink?: (url: string) => Promise<void> };
       win.__simulateDeepLink = (url: string) => handleDeepLinkUrls([url]);
     }

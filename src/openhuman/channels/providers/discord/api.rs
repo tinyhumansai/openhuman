@@ -158,27 +158,56 @@ async fn check_channel_permissions_at_base(
     guild_id: &str,
     channel_id: &str,
 ) -> anyhow::Result<BotPermissionCheck> {
-    // Fetch the bot's guild member info which includes computed permissions
-    let url = format!("{base}/guilds/{guild_id}/members/@me");
     tracing::debug!(
         "[discord-api] checking permissions in channel {channel_id} (guild {guild_id})"
     );
 
-    let resp = build_client()
-        .get(&url)
+    // Resolve bot user id first (`members/@me` is not a valid Discord route).
+    let me_url = format!("{base}/users/@me");
+    let me_resp = build_client()
+        .get(&me_url)
         .header("Authorization", auth_header(token))
         .send()
         .await?;
 
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
+    if !me_resp.status().is_success() {
+        let status = me_resp.status();
+        let body = me_resp.text().await.unwrap_or_default();
+        tracing::debug!(
+            target: "discord-api",
+            endpoint = "check_bot_permissions.me",
+            %guild_id,
+            %channel_id,
+            url = %me_url,
+            %status,
+            body = %body,
+            "[discord-api] non-success response"
+        );
+        anyhow::bail!("Discord get bot user failed ({status}): {body}");
+    }
+    let me: serde_json::Value = me_resp.json().await?;
+    let bot_user_id = me.get("id").and_then(|i| i.as_str()).unwrap_or("").trim();
+    if bot_user_id.is_empty() {
+        anyhow::bail!("Discord get bot user returned empty id");
+    }
+
+    // Fetch the bot's guild member info which includes role ids.
+    let member_url = format!("{base}/guilds/{guild_id}/members/{bot_user_id}");
+    let member_resp = build_client()
+        .get(&member_url)
+        .header("Authorization", auth_header(token))
+        .send()
+        .await?;
+
+    if !member_resp.status().is_success() {
+        let status = member_resp.status();
+        let body = member_resp.text().await.unwrap_or_default();
         tracing::debug!(
             target: "discord-api",
             endpoint = "check_bot_permissions.member",
             %guild_id,
             %channel_id,
-            %url,
+            url = %member_url,
             %status,
             body = %body,
             "[discord-api] non-success response"
@@ -186,7 +215,7 @@ async fn check_channel_permissions_at_base(
         anyhow::bail!("Discord get member info failed ({status}): {body}");
     }
 
-    let member: serde_json::Value = resp.json().await?;
+    let member: serde_json::Value = member_resp.json().await?;
 
     // Fetch guild roles to compute permissions
     let roles_url = format!("{base}/guilds/{guild_id}/roles");
@@ -273,11 +302,14 @@ async fn check_channel_permissions_at_base(
         .get("permission_overwrites")
         .and_then(|o| o.as_array())
     {
+        // Intentional shadowing: prefer the ID returned inside the member
+        // object over the one fetched from /users/@me, because the guild
+        // member record is more authoritative for permission overwrite lookups.
         let bot_user_id = member
             .get("user")
             .and_then(|u| u.get("id"))
             .and_then(|i| i.as_str())
-            .unwrap_or("");
+            .unwrap_or(bot_user_id);
 
         let mut everyone_allow = 0_u64;
         let mut everyone_deny = 0_u64;
@@ -575,9 +607,9 @@ mod tests {
 
     // ── check_channel_permissions ─────────────────────────────────
 
-    /// Build a mock Discord that answers all three endpoints the permissions
-    /// check touches: `/guilds/<id>/members/@me`, `/guilds/<id>/roles`, and
-    /// `/channels/<id>`.
+    /// Build a mock Discord that answers all endpoints the permissions check
+    /// touches: `/users/@me`, `/guilds/<id>/members/<bot_id>`,
+    /// `/guilds/<id>/roles`, and `/channels/<id>`.
     fn permissions_mock(
         member: serde_json::Value,
         roles: serde_json::Value,
@@ -586,8 +618,13 @@ mod tests {
         use axum::extract::Path;
         Router::new()
             .route(
-                "/guilds/{guild_id}/members/@me",
-                get(move |Path(_g): Path<String>| {
+                "/users/@me",
+                get(|| async { Json(json!({ "id": "bot-1" })) }),
+            )
+            .route(
+                "/guilds/{guild_id}/members/{member_id}",
+                get(move |Path((_g, member_id)): Path<(String, String)>| {
+                    assert_eq!(member_id, "bot-1");
                     let m = member.clone();
                     async move { Json(m) }
                 }),
@@ -702,10 +739,17 @@ mod tests {
     #[tokio::test]
     async fn check_channel_permissions_errors_on_member_lookup_failure() {
         use axum::http::StatusCode;
-        let app = Router::new().route(
-            "/guilds/{guild_id}/members/@me",
-            get(|| async { (StatusCode::UNAUTHORIZED, "bad token") }),
-        );
+        let app = Router::new()
+            .route(
+                "/users/@me",
+                get(|| async { Json(json!({ "id": "bot-1" })) }),
+            )
+            .route(
+                "/guilds/{guild_id}/members/{member_id}",
+                get(|Path((_g, _member_id)): Path<(String, String)>| async {
+                    (StatusCode::UNAUTHORIZED, "bad token")
+                }),
+            );
         let base = spawn_mock(app).await;
         let err = check_channel_permissions_at_base(&base, "t", "g", "c")
             .await

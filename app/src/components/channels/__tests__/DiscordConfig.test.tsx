@@ -28,6 +28,6 @@ describe('DiscordConfig', () => {
   it('shows Connect buttons for each auth mode', () => {
     renderWithProviders(<DiscordConfig definition={discordDef} />);
     const connectButtons = screen.getAllByText('Connect');
-    expect(connectButtons.length).toBe(2);
+    expect(connectButtons.length).toBe(3);
   });
 });

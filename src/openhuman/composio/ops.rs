@@ -1007,12 +1007,11 @@ mod tests {
     #[tokio::test]
     async fn fetch_connected_integrations_via_mock_aggregates_tools() {
         // Connections: gmail + notion. Tools: filtered to those toolkits
-        // and prefixed with the uppercased slug.
-        //
-        // `fetch_connected_integrations_uncached` now calls `list_toolkits()`
-        // first — if that fails it returns `None`, the cache is not
-        // populated, and callers see an empty vec. So we need to mock
-        // `/toolkits` too for the test to observe the aggregated result.
+        // and prefixed with the uppercased slug. The toolkits route
+        // backs the `list_toolkits()` allowlist gate that
+        // `fetch_connected_integrations_uncached` calls before touching
+        // connections — without it the function bails out at the first
+        // step and returns an empty vec.
         let app = Router::new()
             .route(
                 "/agent-integrations/composio/toolkits",

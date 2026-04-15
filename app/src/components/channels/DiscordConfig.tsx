@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AUTH_MODE_LABELS } from '../../lib/channels/definitions';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
@@ -23,6 +23,8 @@ import ChannelStatusBadge from './ChannelStatusBadge';
 import DiscordServerChannelPicker from './DiscordServerChannelPicker';
 
 const log = debug('channels:discord');
+const LINK_TIMEOUT_MS = 5 * 60 * 1_000;
+const LINK_POLL_INTERVAL_MS = 3_000;
 
 interface DiscordConfigProps {
   definition: ChannelDefinition;
@@ -35,6 +37,10 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
   const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
   const [error, setError] = useState<string | null>(null);
+  /** Pending link tokens, keyed by compositeKey (discord:managed_dm). Only present while polling. */
+  const [linkToken, setLinkToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const pollAbort = useRef<AbortController | null>(null);
 
   const runBusy = useCallback(async (key: string, task: () => Promise<void>) => {
     setBusyKeys(prev => ({ ...prev, [key]: true }));
@@ -42,8 +48,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
     try {
       await task();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusyKeys(prev => ({ ...prev, [key]: false }));
     }
@@ -55,6 +60,92 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
       [compositeKey]: { ...(prev[compositeKey] ?? {}), [fieldKey]: value },
     }));
   }, []);
+
+  // Stop polling on unmount
+  useEffect(() => {
+    return () => {
+      pollAbort.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleOauthSuccess = (event: Event) => {
+      const customEvent = event as CustomEvent<{ toolkit?: string }>;
+      const toolkit = customEvent.detail?.toolkit?.toLowerCase();
+      if (toolkit !== 'discord') return;
+
+      log('discord oauth success deep link received');
+      dispatch(
+        upsertChannelConnection({
+          channel: 'discord',
+          authMode: 'oauth',
+          patch: { status: 'connected', lastError: undefined, capabilities: ['read', 'write'] },
+        })
+      );
+    };
+
+    window.addEventListener('oauth:success', handleOauthSuccess);
+    return () => {
+      window.removeEventListener('oauth:success', handleOauthSuccess);
+    };
+  }, [dispatch]);
+
+  const startLinkPolling = useCallback(
+    (token: string) => {
+      pollAbort.current?.abort();
+      const controller = new AbortController();
+      pollAbort.current = controller;
+      const startedAt = Date.now();
+
+      void (async () => {
+        while (Date.now() - startedAt < LINK_TIMEOUT_MS) {
+          if (controller.signal.aborted) return;
+
+          try {
+            const check = await channelConnectionsApi.discordLinkCheck(token);
+            if (check.linked) {
+              log('discord managed link completed');
+              setLinkToken(null);
+              dispatch(
+                upsertChannelConnection({
+                  channel: 'discord',
+                  authMode: 'managed_dm',
+                  patch: { status: 'connected', lastError: undefined, capabilities: ['dm'] },
+                })
+              );
+              return;
+            }
+          } catch (err) {
+            log('discord link check failed: %o', err);
+          }
+
+          await new Promise<void>(resolve => {
+            const timer = window.setTimeout(resolve, LINK_POLL_INTERVAL_MS);
+            controller.signal.addEventListener(
+              'abort',
+              () => {
+                window.clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+        }
+
+        if (controller.signal.aborted) return;
+
+        setLinkToken(null);
+        dispatch(
+          upsertChannelConnection({
+            channel: 'discord',
+            authMode: 'managed_dm',
+            patch: { status: 'error', lastError: 'Link token expired. Please try again.' },
+          })
+        );
+      })();
+    },
+    [dispatch]
+  );
 
   const handleConnect = useCallback(
     (spec: AuthModeSpec) => {
@@ -69,7 +160,6 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         );
         log('connecting discord via %s', spec.mode);
 
-        // Build credentials from field values.
         const credentials: Record<string, string> = {};
         for (const field of spec.fields) {
           const val = fieldValues[key]?.[field.key]?.trim() ?? '';
@@ -94,18 +184,26 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         log('connect result: %o', result);
 
         if (result.status === 'pending_auth' && result.auth_action) {
-          dispatch(
-            upsertChannelConnection({
-              channel: 'discord',
-              authMode: spec.mode,
-              patch: {
-                status: 'connecting',
-                lastError: result.message ?? `Initiate ${result.auth_action} flow`,
-              },
-            })
-          );
-
-          if (result.auth_action.includes('oauth')) {
+          if (result.auth_action === 'discord_managed_link') {
+            const linkStart = await channelConnectionsApi.discordLinkStart();
+            log('discord link token issued, length=%d', linkStart.linkToken.length);
+            setLinkToken(linkStart.linkToken);
+            dispatch(
+              upsertChannelConnection({
+                channel: 'discord',
+                authMode: spec.mode,
+                patch: { status: 'connecting', lastError: undefined },
+              })
+            );
+            startLinkPolling(linkStart.linkToken);
+          } else if (result.auth_action.includes('oauth')) {
+            dispatch(
+              upsertChannelConnection({
+                channel: 'discord',
+                authMode: spec.mode,
+                patch: { status: 'connecting', lastError: undefined },
+              })
+            );
             try {
               const oauthResponse = await callCoreRpc<{ result: { oauthUrl?: string } }>({
                 method: 'openhuman.auth.oauth_connect',
@@ -115,18 +213,15 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 await openUrl(oauthResponse.result.oauthUrl);
               }
             } catch {
-              // OAuth URL fetch is best-effort.
+              // best-effort
             }
           }
           return;
         }
 
-        // Credential-based connection succeeded.
         if (result.restart_required) {
-          log('restart required after connect — restarting core process');
           try {
             await restartCoreProcess();
-            log('core process restarted successfully');
             dispatch(
               upsertChannelConnection({
                 channel: 'discord',
@@ -138,9 +233,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 },
               })
             );
-          } catch (restartErr) {
-            const msg = restartErr instanceof Error ? restartErr.message : String(restartErr);
-            log('core restart failed: %s', msg);
+          } catch {
             setError('Channel saved. Restart the app to activate it.');
           }
         } else {
@@ -154,20 +247,29 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         }
       });
     },
-    [dispatch, fieldValues, runBusy]
+    [dispatch, fieldValues, runBusy, startLinkPolling]
   );
 
   const handleDisconnect = useCallback(
     (authMode: ChannelAuthMode) => {
-      const key = `discord:${authMode}`;
-      void runBusy(key, async () => {
+      void runBusy(`discord:${authMode}`, async () => {
         log('disconnecting discord via %s', authMode);
+        pollAbort.current?.abort();
+        setLinkToken(null);
         await channelConnectionsApi.disconnectChannel('discord', authMode);
         dispatch(disconnectChannelConnection({ channel: 'discord', authMode }));
       });
     },
     [dispatch, runBusy]
   );
+
+  const copyToken = useCallback(() => {
+    if (!linkToken) return;
+    void navigator.clipboard.writeText(linkToken).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    });
+  }, [linkToken]);
 
   return (
     <div className="space-y-3">
@@ -181,6 +283,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         const compositeKey = `discord:${spec.mode}`;
         const connection = channelConnections.connections.discord?.[spec.mode];
         const status: ChannelConnectionStatus = connection?.status ?? 'disconnected';
+        const busy = busyKeys[compositeKey] ?? false;
 
         return (
           <div key={spec.mode} className="rounded-lg border border-stone-200 bg-stone-50 p-3">
@@ -197,7 +300,8 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
               <ChannelStatusBadge status={status} />
             </div>
 
-            {spec.fields.length > 0 && (
+            {/* Field inputs — only for non-managed modes */}
+            {spec.fields.length > 0 && status !== 'connected' && (
               <div className="mt-3 space-y-2">
                 {spec.fields.map(field => (
                   <ChannelFieldInput
@@ -205,28 +309,70 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                     field={field}
                     value={fieldValues[compositeKey]?.[field.key] ?? ''}
                     onChange={val => updateField(compositeKey, field.key, val)}
-                    disabled={busyKeys[compositeKey]}
+                    disabled={busy}
                   />
                 ))}
               </div>
             )}
 
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                disabled={busyKeys[compositeKey]}
-                onClick={() => handleConnect(spec)}
-                className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                {status === 'connected' ? 'Reconnect' : 'Connect'}
-              </button>
-              <button
-                type="button"
-                disabled={busyKeys[compositeKey] || status === 'disconnected'}
-                onClick={() => handleDisconnect(spec.mode)}
-                className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
-                Disconnect
-              </button>
-            </div>
+            {/* Token card — managed_dm connecting state */}
+            {spec.mode === 'managed_dm' && linkToken && status === 'connecting' && (
+              <div className="mt-3 rounded-lg border border-primary-200 bg-primary-50/60 p-3 space-y-2">
+                <p className="text-xs font-medium text-primary-700">Your one-time link token</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 rounded bg-white border border-primary-200 px-2 py-1 text-xs font-mono text-stone-800 select-all break-all">
+                    {linkToken}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={copyToken}
+                    className="shrink-0 rounded-lg border border-primary-300 px-2 py-1 text-xs font-medium text-primary-700 hover:bg-primary-100">
+                    {copied ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <p className="text-xs text-stone-500">
+                  In Discord, send <code className="font-mono font-medium">!start {linkToken}</code>{' '}
+                  to the OpenHuman bot. Token expires in 5 minutes.
+                </p>
+                <p className="text-xs text-amber-600 font-medium">
+                  Save this command — this token is shown only once.
+                </p>
+              </div>
+            )}
+
+            {/* Connected state for managed_dm — show only Disconnect */}
+            {spec.mode === 'managed_dm' && status === 'connected' ? (
+              <div className="mt-3 flex items-center justify-between">
+                <p className="text-xs text-sage-700 font-medium">Your Discord account is linked.</p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => handleDisconnect(spec.mode)}
+                  className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
+                  Disconnect
+                </button>
+              </div>
+            ) : /* Connect / Disconnect buttons for all other modes and states */
+            spec.mode !== 'managed_dm' || status !== 'connecting' ? (
+              <div className="mt-3 flex gap-2">
+                {status !== 'connected' && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => handleConnect(spec)}
+                    className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
+                    Connect
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={busy || status === 'disconnected'}
+                  onClick={() => handleDisconnect(spec.mode)}
+                  className="rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:border-stone-300 disabled:opacity-50">
+                  Disconnect
+                </button>
+              </div>
+            ) : null}
 
             {/* Server + Channel picker — shown after successful bot_token connection */}
             {spec.mode === 'bot_token' && status === 'connected' && (
