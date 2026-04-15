@@ -6,7 +6,7 @@
     "dev": "vite",
     "dev:web": "vite",
     "dev:app": "yarn core:stage && source ../scripts/load-dotenv.sh && tauri dev",
-    "dev:cef": "yarn core:stage && source ../scripts/load-dotenv.sh && CEF_PATH=$HOME/.local/share/cef/cef_macos_aarch64 APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev --features cef -- --no-default-features",
+    "dev:cef": "yarn core:stage && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && CEF_PATH=$HOME/.local/share/cef/cef_macos_aarch64 APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev --features cef -- --no-default-features",
     "core:stage": "node ../scripts/stage-core-sidecar.mjs",
     "build": "tsc && vite build",
     "build:app": "tsc && vite build",
