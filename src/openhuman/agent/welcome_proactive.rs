@@ -154,6 +154,32 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
         "[welcome::proactive] pre-built context snapshot"
     );
 
+    // ── Instant draft message (no LLM, appears in ~1-2s) ─────────
+    //
+    // Publish a short template greeting immediately so the user sees
+    // something in the chat while the LLM generates the full welcome.
+    let first_name = snapshot
+        .get("user_profile")
+        .and_then(|u| u.get("firstName"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("there");
+
+    let draft = format!(
+        "Hey {}! Welcome to OpenHuman — give me a sec while I look around your setup...",
+        first_name
+    );
+
+    publish_global(DomainEvent::ProactiveMessageRequested {
+        source: PROACTIVE_WELCOME_SOURCE.to_string(),
+        message: draft,
+        job_name: Some(PROACTIVE_WELCOME_JOB_NAME.to_string()),
+    });
+
+    tracing::info!(
+        "[welcome::proactive] instant draft published for user '{}'",
+        first_name
+    );
+
     // ── Run the welcome agent (single LLM call) ─────────────────
 
     let mut agent = Agent::from_config_for_agent(&config, "welcome").map_err(|e| {
