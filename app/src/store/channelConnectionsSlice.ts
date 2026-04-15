@@ -32,13 +32,15 @@ function touchConnection(
   existing: ChannelConnection | undefined,
   patch: Partial<ChannelConnection> & { channel: ChannelType; authMode: ChannelAuthMode }
 ): ChannelConnection {
+  const hasLastError = Object.prototype.hasOwnProperty.call(patch, 'lastError');
+  const hasCapabilities = Object.prototype.hasOwnProperty.call(patch, 'capabilities');
   return {
     channel: patch.channel,
     authMode: patch.authMode,
     status: patch.status ?? existing?.status ?? 'disconnected',
     selectedDefault: patch.selectedDefault ?? existing?.selectedDefault ?? false,
-    lastError: patch.lastError ?? existing?.lastError,
-    capabilities: patch.capabilities ?? existing?.capabilities ?? [],
+    lastError: hasLastError ? patch.lastError : existing?.lastError,
+    capabilities: hasCapabilities ? patch.capabilities ?? [] : existing?.capabilities ?? [],
     updatedAt: patch.updatedAt ?? new Date().toISOString(),
   };
 }
