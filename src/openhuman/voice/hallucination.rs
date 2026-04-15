@@ -180,7 +180,7 @@ pub fn is_hallucinated_output(text: &str, mode: HallucinationMode) -> bool {
     for w in &clean_words {
         *counts.entry(w.as_str()).or_insert(0) += 1;
     }
-    for (word, count) in &counts {
+    for (_word, count) in &counts {
         let ratio = *count as f64 / total as f64;
         if ratio > 0.6 && *count >= 5 {
             debug!(

@@ -2,7 +2,7 @@ use super::super::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS}
 use super::super::runtime::{process_channel_message, run_message_dispatch_loop};
 use super::super::{traits, Channel};
 use super::common::{use_real_agent_handler, NoopMemory, RecordingChannel, SlowProvider};
-use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
+use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnRequest, AgentTurnResponse};
 use crate::openhuman::providers;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -11,10 +11,17 @@ use std::time::{Duration, Instant};
 
 #[tokio::test]
 async fn message_dispatch_processes_messages_in_parallel() {
-    // Install the real `agent.run_turn` handler and hold the shared bus
-    // lock for the whole test so no parallel stub-installing test can
-    // clobber the handler mid-dispatch.
-    let _bus_guard = use_real_agent_handler().await;
+    // Install a deterministic stub that takes 250ms per turn. Two messages
+    // should complete in ~250ms when processed concurrently (vs ~500ms
+    // sequentially), which keeps this test robust even if the real handler's
+    // latency profile changes.
+    let _bus_guard = mock_agent_run_turn(|_req: AgentTurnRequest| async move {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        Ok(AgentTurnResponse {
+            text: "echo: stub".to_string(),
+        })
+    })
+    .await;
 
     let channel_impl = Arc::new(RecordingChannel::default());
     let channel: Arc<dyn Channel> = channel_impl.clone();
@@ -25,7 +32,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name: Arc::new(channels_by_name),
         provider: Arc::new(SlowProvider {
-            delay: Duration::from_millis(250),
+            delay: Duration::from_millis(5),
         }),
         default_provider: Arc::new("test-provider".to_string()),
         memory: Arc::new(NoopMemory),
