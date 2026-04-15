@@ -29,6 +29,10 @@ const LocalAIDownloadSnackbar = () => {
   const [dismissed, setDismissed] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  // Track previous isDownloading in state so we can reset the dismiss flag on a
+  // not-downloading → downloading transition during render (render-phase update,
+  // the officially recommended React pattern for adjusting state on derived-value changes).
+  const [prevIsDownloading, setPrevIsDownloading] = useState(false);
 
   // Check Tauri availability once at init
   const tauriAvailable = (() => {
@@ -72,17 +76,15 @@ const LocalAIDownloadSnackbar = () => {
     currentState === 'installing' ||
     (downloads?.progress != null && downloads.progress > 0 && downloads.progress < 1);
 
-  // Auto-show when a new download starts: track prior state in a ref and
-  // reset dismissed on the transition edge (not-downloading → downloading).
-  const wasDownloadingRef = useRef(false);
-  useEffect(() => {
-    if (isDownloading && !wasDownloadingRef.current) {
-      // New download cycle started — clear any previous dismiss so the snackbar reappears.
+  // Render-phase update: when a new download cycle starts (not-downloading → downloading),
+  // reset the dismiss/collapsed flags so the snackbar reappears automatically.
+  if (!!isDownloading !== prevIsDownloading) {
+    setPrevIsDownloading(!!isDownloading);
+    if (isDownloading && !prevIsDownloading) {
       setDismissed(false);
       setCollapsed(false);
     }
-    wasDownloadingRef.current = !!isDownloading;
-  }, [isDownloading]);
+  }
 
   const handleDismiss = useCallback(() => setDismissed(true), []);
   const handleToggleCollapse = useCallback(() => setCollapsed(prev => !prev), []);
