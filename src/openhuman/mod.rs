@@ -42,6 +42,7 @@ pub mod migration;
 pub mod overlay;
 pub mod providers;
 pub mod referral;
+pub mod routing;
 pub mod screen_intelligence;
 pub mod security;
 pub mod service;

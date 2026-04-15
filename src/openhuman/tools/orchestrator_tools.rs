@@ -235,6 +235,7 @@ mod tests {
             toolkit: toolkit.into(),
             description: description.into(),
             tools: vec![],
+            connected: true,
         }
     }
 

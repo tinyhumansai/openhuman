@@ -91,6 +91,14 @@ pub struct Agent {
     /// [`ConnectedIntegrationsSection`] so the orchestrator knows which
     /// external services are available.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
+    /// Composio client, built alongside `connected_integrations` and
+    /// shared into [`harness::ParentExecutionContext`] at turn start
+    /// so the sub-agent runner can dynamically construct per-action
+    /// [`crate::openhuman::composio::ComposioActionTool`] instances
+    /// when `skills_agent` is spawned with a `toolkit` argument.
+    /// `None` when the user isn't signed in or the backend is
+    /// unreachable.
+    pub(super) composio_client: Option<crate::openhuman::composio::ComposioClient>,
     /// Mirrors the agent definition's `omit_profile` flag. Threaded into
     /// [`PromptContext::include_profile`] in `turn::build_system_prompt`
     /// so only user-facing agents (welcome, orchestrator, triggers)

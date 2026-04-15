@@ -402,3 +402,69 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_counts_match_and_nonempty() {
+        let s = all_controller_schemas();
+        let h = all_registered_controllers();
+        assert_eq!(s.len(), h.len());
+        assert!(s.len() >= 10);
+    }
+
+    #[test]
+    fn all_schemas_use_accessibility_namespace() {
+        for s in all_controller_schemas() {
+            assert_eq!(
+                s.namespace, "screen_intelligence",
+                "function {}",
+                s.function
+            );
+            assert!(!s.description.is_empty());
+            assert!(!s.outputs.is_empty());
+        }
+    }
+
+    #[test]
+    fn unknown_function_returns_unknown_schema() {
+        let s = schemas("no_such_fn");
+        assert_eq!(s.function, "unknown");
+    }
+
+    #[test]
+    fn every_known_key_resolves_to_non_unknown() {
+        let keys = [
+            "status",
+            "request_permissions",
+            "request_permission",
+            "refresh_permissions",
+            "start_session",
+            "stop_session",
+            "capture_now",
+            "capture_image_ref",
+            "input_action",
+            "vision_recent",
+            "vision_flush",
+            "capture_test",
+            "globe_listener_start",
+            "globe_listener_poll",
+            "globe_listener_stop",
+        ];
+        for k in keys {
+            let s = schemas(k);
+            assert_eq!(s.namespace, "screen_intelligence");
+            assert_ne!(s.function, "unknown", "key `{k}` fell through");
+        }
+    }
+
+    #[test]
+    fn registered_controllers_use_accessibility_namespace() {
+        for h in all_registered_controllers() {
+            assert_eq!(h.schema.namespace, "screen_intelligence");
+            assert!(!h.schema.function.is_empty());
+        }
+    }
+}

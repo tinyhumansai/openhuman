@@ -48,9 +48,15 @@ pub fn new_handle() -> WhisperEngineHandle {
     Arc::new(Mutex::new(None))
 }
 
-/// Attempt to load a whisper model into the engine. Returns an error string
-/// if loading fails (e.g. model file missing, unsupported format).
-pub fn load_engine(handle: &WhisperEngineHandle, model_path: &Path) -> Result<(), String> {
+/// Attempt to load a whisper model into the engine, configuring GPU
+/// acceleration based on the detected hardware profile. Returns an error
+/// string if loading fails (e.g. model file missing, unsupported format).
+pub fn load_engine(
+    handle: &WhisperEngineHandle,
+    model_path: &Path,
+    has_gpu: bool,
+    gpu_description: Option<&str>,
+) -> Result<(), String> {
     info!(
         "{LOG_PREFIX} loading whisper model: {}",
         model_path.display()
@@ -60,7 +66,29 @@ pub fn load_engine(handle: &WhisperEngineHandle, model_path: &Path) -> Result<()
         return Err(format!("whisper model not found: {}", model_path.display()));
     }
 
-    let params = WhisperContextParameters::default();
+    let mut params = WhisperContextParameters::default();
+
+    // Explicitly configure GPU acceleration based on device profile.
+    // The default `use_gpu` is `cfg!(feature = "_gpu")` which is only true
+    // when a GPU backend feature (metal, cuda, etc.) is compiled in.
+    params.use_gpu(has_gpu);
+
+    // Enable flash attention when GPU is available — improves throughput
+    // on both Metal and CUDA backends.
+    if has_gpu {
+        params.flash_attn(true);
+    }
+
+    let backend = if has_gpu {
+        gpu_description.unwrap_or("unknown GPU")
+    } else {
+        "CPU (no GPU acceleration)"
+    };
+    info!(
+        "{LOG_PREFIX} whisper acceleration: use_gpu={}, flash_attn={}, backend={}",
+        has_gpu, has_gpu, backend
+    );
+
     let ctx = WhisperContext::new_with_params(model_path.to_str().unwrap_or(""), params)
         .map_err(|e| format!("failed to load whisper model: {e}"))?;
 
@@ -70,7 +98,7 @@ pub fn load_engine(handle: &WhisperEngineHandle, model_path: &Path) -> Result<()
     };
 
     *handle.lock() = Some(engine);
-    info!("{LOG_PREFIX} whisper model loaded successfully");
+    info!("{LOG_PREFIX} whisper model loaded successfully (backend={backend})");
     Ok(())
 }
 
@@ -421,7 +449,7 @@ mod tests {
     #[test]
     fn load_engine_fails_for_missing_model() {
         let handle = new_handle();
-        let result = load_engine(&handle, Path::new("/nonexistent/model.bin"));
+        let result = load_engine(&handle, Path::new("/nonexistent/model.bin"), false, None);
         assert!(result.is_err());
         assert!(!is_loaded(&handle));
     }

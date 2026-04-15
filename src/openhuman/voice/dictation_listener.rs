@@ -257,4 +257,52 @@ mod tests {
         assert_eq!(json["hotkey"], "fn");
         assert_eq!(json["activation_mode"], "push");
     }
+
+    #[tokio::test]
+    async fn start_if_enabled_returns_early_when_config_disabled() {
+        // Fast path — `enabled=false` → the fn returns without spawning.
+        let mut config = Config::default();
+        config.dictation.enabled = false;
+        start_if_enabled(&config).await;
+        // No panic = pass. The absence of a spawned hotkey task is what
+        // we're verifying; hard to assert directly without internals.
+    }
+
+    #[tokio::test]
+    async fn start_if_enabled_returns_early_when_hotkey_empty() {
+        let mut config = Config::default();
+        config.dictation.enabled = true;
+        config.dictation.hotkey = String::new();
+        start_if_enabled(&config).await;
+    }
+
+    #[tokio::test]
+    async fn start_if_enabled_returns_early_when_hotkey_unparseable() {
+        let mut config = Config::default();
+        config.dictation.enabled = true;
+        config.dictation.hotkey = "not a real hotkey".into();
+        start_if_enabled(&config).await;
+    }
+
+    #[test]
+    fn normalize_maps_shift_and_alt_verbatim() {
+        let result = normalize_hotkey_for_rdev("Shift+Alt+D");
+        assert_eq!(result, "shift+alt+d");
+    }
+
+    #[test]
+    fn normalize_handles_lowercase_input() {
+        assert_eq!(normalize_hotkey_for_rdev("cmd+d"), "cmd+d");
+    }
+
+    #[test]
+    fn normalize_preserves_function_keys() {
+        assert_eq!(normalize_hotkey_for_rdev("F12"), "f12");
+    }
+
+    #[test]
+    fn normalize_trims_whitespace_between_segments() {
+        let result = normalize_hotkey_for_rdev("  cmd  + shift  +  d  ");
+        assert_eq!(result, "cmd+shift+d");
+    }
 }

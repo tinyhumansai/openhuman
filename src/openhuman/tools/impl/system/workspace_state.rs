@@ -126,6 +126,79 @@ impl Tool for WorkspaceStateTool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn make_tool(dir: &TempDir) -> WorkspaceStateTool {
+        WorkspaceStateTool::new(dir.path().to_path_buf())
+    }
+
+    #[test]
+    fn name_is_correct() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(make_tool(&tmp).name(), "read_workspace_state");
+    }
+
+    #[test]
+    fn description_is_non_empty() {
+        let tmp = TempDir::new().unwrap();
+        assert!(!make_tool(&tmp).description().is_empty());
+    }
+
+    #[test]
+    fn schema_is_object_type() {
+        let tmp = TempDir::new().unwrap();
+        let schema = make_tool(&tmp).parameters_schema();
+        assert_eq!(schema["type"], "object");
+    }
+
+    #[test]
+    fn permission_level_is_read_only() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(
+            make_tool(&tmp).permission_level(),
+            PermissionLevel::ReadOnly
+        );
+    }
+
+    #[tokio::test]
+    async fn output_contains_git_status_section() {
+        let tmp = TempDir::new().unwrap();
+        let result = make_tool(&tmp).execute(json!({})).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.output().contains("Git Status"));
+    }
+
+    #[tokio::test]
+    async fn include_tree_false_omits_directory_tree() {
+        let tmp = TempDir::new().unwrap();
+        let result = make_tool(&tmp)
+            .execute(json!({"include_tree": false}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(!result.output().contains("Directory Tree"));
+    }
+
+    #[tokio::test]
+    async fn lists_non_hidden_files_in_tree() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("readme.txt"), "hi").unwrap();
+        std::fs::write(tmp.path().join(".hidden"), "skip").unwrap();
+        let result = make_tool(&tmp)
+            .execute(json!({"include_tree": true, "recent_commits": 0}))
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        let out = result.output();
+        assert!(out.contains("readme.txt"));
+        assert!(!out.contains(".hidden"));
+    }
+}
+
 async fn run_git(dir: &std::path::Path, args: &[&str]) -> anyhow::Result<String> {
     let output = tokio::process::Command::new("git")
         .args(args)

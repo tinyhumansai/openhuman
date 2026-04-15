@@ -48,7 +48,7 @@ pub use fork_context::{
 pub use interrupt::{check_interrupt, InterruptFence, InterruptedError};
 pub use subagent_runner::{run_subagent, SubagentRunError, SubagentRunOptions};
 
-pub(crate) use instructions::{build_tool_instructions, build_tool_instructions_filtered};
+pub(crate) use instructions::build_tool_instructions_filtered;
 pub(crate) use parse::parse_tool_calls;
 pub(crate) use tool_loop::run_tool_call_loop;
 

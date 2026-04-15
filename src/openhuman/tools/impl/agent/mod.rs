@@ -58,16 +58,19 @@ pub(crate) async fn dispatch_subagent(
         prompt.chars().count()
     );
 
-    // Propagate the per-call skill filter into the subagent runner so
+    // Propagate the per-call toolkit scope into the subagent runner so
     // that `SkillDelegationTool`s can narrow `skills_agent` to a single
     // Composio toolkit (e.g. `delegate_gmail` → skills_agent +
-    // skill_filter="gmail"). Previously this argument was hardcoded to
-    // `None`, which meant the toolkit pre-selection never reached the
-    // subagent and skills_agent always saw the full Composio catalog —
-    // the downstream half of the #526 leak.
+    // toolkit="gmail"). Earlier code plumbed this through
+    // `skill_filter_override` (which matches `{skill}__` QuickJS-style
+    // names), but Composio actions are named `GMAIL_*` / `NOTION_*` —
+    // so the filter excluded every Composio tool instead of narrowing
+    // them. `toolkit_override` applies the correct `{TOOLKIT}_` prefix
+    // check, restricted to skill-category tools.
     let options = SubagentRunOptions {
-        skill_filter_override: skill_filter.map(str::to_string),
+        skill_filter_override: None,
         category_filter_override: None,
+        toolkit_override: skill_filter.map(str::to_string),
         context: None,
         task_id: Some(task_id.clone()),
     };
@@ -110,3 +113,40 @@ pub use complete_onboarding::CompleteOnboardingTool;
 pub use delegate::DelegateTool;
 pub use skill_delegation::SkillDelegationTool;
 pub use spawn_subagent::SpawnSubagentTool;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::tools::traits::Tool;
+
+    #[test]
+    fn ask_clarification_tool_re_exported() {
+        let tool = AskClarificationTool::new();
+        assert_eq!(tool.name(), "ask_user_clarification");
+    }
+
+    #[tokio::test]
+    async fn dispatch_subagent_returns_tool_error_when_agent_unknown() {
+        // Exercises the graceful-failure paths of `dispatch_subagent`:
+        // without a global registry we get the "registry not initialised"
+        // branch, and with one (set by another test in the same binary)
+        // a bogus agent id hits the "agent not found" branch. Either way
+        // the function must return `Ok(ToolResult::error(..))` rather than
+        // panicking or returning `Err`.
+        let res = dispatch_subagent(
+            "__definitely_not_a_real_agent__",
+            "test_tool",
+            "irrelevant prompt",
+            None,
+        )
+        .await
+        .expect("dispatch_subagent should not return Err on these inputs");
+
+        assert!(res.is_error, "expected a tool-error ToolResult");
+        let out = res.output();
+        assert!(
+            out.contains("registry not initialised") || out.contains("not found in registry"),
+            "unexpected graceful-failure message: {out}"
+        );
+    }
+}

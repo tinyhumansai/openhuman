@@ -378,4 +378,74 @@ mod tests {
             .to_string()
             .contains("Cannot update expression/tz on a non-cron schedule"));
     }
+
+    // ── parse_delay ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_delay_accepts_seconds_minutes_hours_days() {
+        assert_eq!(parse_delay("5s").unwrap(), chrono::Duration::seconds(5));
+        assert_eq!(parse_delay("10m").unwrap(), chrono::Duration::minutes(10));
+        assert_eq!(parse_delay("2h").unwrap(), chrono::Duration::hours(2));
+        assert_eq!(parse_delay("3d").unwrap(), chrono::Duration::days(3));
+    }
+
+    #[test]
+    fn parse_delay_defaults_to_minutes_when_no_unit() {
+        assert_eq!(parse_delay("15").unwrap(), chrono::Duration::minutes(15));
+    }
+
+    #[test]
+    fn parse_delay_trims_whitespace() {
+        assert_eq!(parse_delay("  7m  ").unwrap(), chrono::Duration::minutes(7));
+    }
+
+    #[test]
+    fn parse_delay_rejects_empty_input() {
+        let err = parse_delay("").unwrap_err();
+        assert!(err.to_string().contains("delay must not be empty"));
+        let err = parse_delay("   ").unwrap_err();
+        assert!(err.to_string().contains("delay must not be empty"));
+    }
+
+    #[test]
+    fn parse_delay_rejects_unsupported_unit() {
+        let err = parse_delay("5x").unwrap_err();
+        assert!(err.to_string().contains("unsupported delay unit"));
+        // Multi-char unit not matched in the parse branch either.
+        let err = parse_delay("5wk").unwrap_err();
+        assert!(err.to_string().contains("unsupported delay unit"));
+    }
+
+    #[test]
+    fn parse_delay_rejects_non_numeric_prefix() {
+        // No ascii-digit prefix at all → empty num, parse() fails.
+        assert!(parse_delay("abc").is_err());
+    }
+
+    // ── add_once ────────────────────────────────────────────────────
+
+    #[test]
+    fn add_once_creates_future_at_schedule() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let before = chrono::Utc::now();
+        let job = add_once(&config, "5m", "echo hello").unwrap();
+        match job.schedule {
+            Schedule::At { at } => {
+                let min = before + chrono::Duration::minutes(5) - chrono::Duration::seconds(2);
+                let max = before + chrono::Duration::minutes(5) + chrono::Duration::seconds(5);
+                assert!(at > min && at < max, "scheduled 'at' should land ~5m out");
+            }
+            other => panic!("expected At schedule, got {other:?}"),
+        }
+        assert_eq!(job.command, "echo hello");
+    }
+
+    #[test]
+    fn add_once_propagates_parse_delay_errors() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        assert!(add_once(&config, "", "cmd").is_err());
+        assert!(add_once(&config, "5x", "cmd").is_err());
+    }
 }

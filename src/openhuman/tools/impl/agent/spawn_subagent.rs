@@ -54,9 +54,12 @@ impl Tool for SpawnSubagentTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a task to a specialised sub-agent. \
-         See the Delegation Guide in the system prompt for \
-         available agent_ids and when to use each."
+        "Delegate a task to a specialised sub-agent. See the Delegation \
+         Guide in the system prompt for available agent_ids and when to \
+         use each. When delegating to `skills_agent`, you MUST also pass \
+         `toolkit=\"<name>\"` naming the Composio integration the \
+         sub-task targets (e.g. `gmail`, `notion`); the sub-agent will \
+         only see that toolkit's actions."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -102,6 +105,10 @@ impl Tool for SpawnSubagentTool {
                     "type": "string",
                     "enum": ["system", "skill"],
                     "description": "Optional tool-category restriction. `skill` scopes the sub-agent to integration tools (for example Composio-backed SaaS actions); `system` scopes it to built-in Rust tools. Overrides the definition's `category_filter` for this single spawn."
+                },
+                "toolkit": {
+                    "type": "string",
+                    "description": "Composio toolkit slug to scope this spawn to — e.g. `gmail`, `notion`, `slack`. REQUIRED when `agent_id = \"skills_agent\"`. Narrows the sub-agent's visible Composio actions AND its Connected Integrations prompt section to only that toolkit's catalogue, so the sub-agent's context window only carries the platform it was asked to operate on. Must match a currently-connected integration (see the Delegation Guide)."
                 },
                 "mode": {
                     "type": "string",
@@ -149,6 +156,12 @@ impl Tool for SpawnSubagentTool {
             None => None,
         };
 
+        let toolkit_override = args
+            .get("toolkit")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("typed");
 
         // ── Validation ─────────────────────────────────────────────────
@@ -190,6 +203,83 @@ impl Tool for SpawnSubagentTool {
             }
         };
 
+        // ── skills_agent toolkit gate ──────────────────────────────────
+        // skills_agent is a platform-parameterised specialist. Every
+        // spawn MUST name a CONNECTED toolkit so the sub-agent only
+        // sees one integration's tool catalogue instead of all of
+        // them. We split validation into three cases so the model
+        // gets a precise, actionable error on every failure mode —
+        // nothing reaches the LLM loop unless the spawn is valid.
+        if definition.id == "skills_agent" {
+            let parent_ctx = current_parent();
+            let allowlist: Vec<&crate::openhuman::context::prompt::ConnectedIntegration> =
+                parent_ctx
+                    .as_ref()
+                    .map(|p| p.connected_integrations.iter().collect())
+                    .unwrap_or_default();
+            let connected_slugs: Vec<String> = allowlist
+                .iter()
+                .filter(|ci| ci.connected)
+                .map(|ci| ci.toolkit.clone())
+                .collect();
+
+            match toolkit_override.as_deref() {
+                None => {
+                    return Ok(ToolResult::error(format!(
+                        "spawn_subagent(skills_agent): the `toolkit` argument is required. \
+                         Pass one of the currently-connected toolkits: [{}]. \
+                         See the Delegation Guide in your system prompt for which toolkit \
+                         matches each task.",
+                        connected_slugs.join(", ")
+                    )));
+                }
+                Some(tk) => {
+                    let entry = allowlist
+                        .iter()
+                        .find(|ci| ci.toolkit.eq_ignore_ascii_case(tk));
+                    match entry {
+                        None => {
+                            // Toolkit isn't even in the backend allowlist.
+                            return Ok(ToolResult::error(format!(
+                                "spawn_subagent(skills_agent): toolkit '{tk}' is not in \
+                                 the backend allowlist. Valid toolkits: [{}]. Check the \
+                                 Delegation Guide in your system prompt for the exact slug.",
+                                allowlist
+                                    .iter()
+                                    .map(|ci| ci.toolkit.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )));
+                        }
+                        Some(ci) if !ci.connected => {
+                            // Toolkit exists in the allowlist but isn't connected.
+                            // This is NOT a tool error — it's an expected condition
+                            // the orchestrator should communicate to the user. We
+                            // return `ToolResult::success` so:
+                            //   1. The agent loop doesn't prepend "Error: " to
+                            //      the result text (which would bias the model
+                            //      toward defensive failure language).
+                            //   2. The web channel emits `success: true` on the
+                            //      `tool_result` socket event, so the frontend
+                            //      doesn't render this as a failed tool call.
+                            // The model still reads the explanation and produces
+                            // an appropriate user-facing response.
+                            return Ok(ToolResult::success(format!(
+                                "Integration '{tk}' is available but the user has not \
+                                 authorized it yet. Do NOT retry this spawn. Tell the user \
+                                 the integration is available and ask them to authorize \
+                                 '{tk}' in Settings → Integrations before retrying the \
+                                 original request."
+                            )));
+                        }
+                        Some(_) => {
+                            // Connected — fall through to spawn.
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Publish SubagentSpawned event ──────────────────────────────
         let parent_session = current_parent()
             .map(|p| p.session_id.clone())
@@ -208,6 +298,7 @@ impl Tool for SpawnSubagentTool {
         let options = SubagentRunOptions {
             skill_filter_override: None,
             category_filter_override,
+            toolkit_override,
             context,
             task_id: Some(task_id.clone()),
         };

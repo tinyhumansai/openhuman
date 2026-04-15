@@ -67,20 +67,60 @@ pub fn detect_device_profile() -> DeviceProfile {
 
 /// Best-effort GPU detection.
 ///
-/// Apple Silicon always has a unified GPU (Metal). On other systems we cannot
-/// reliably detect discrete GPUs without heavy platform-specific dependencies,
-/// so we conservatively report unknown.
+/// Apple Silicon always has a unified GPU (Metal). On Windows/Linux, we probe
+/// for NVIDIA GPUs via `nvidia-smi`. On other systems we conservatively report
+/// no GPU.
 fn detect_gpu(cpu_brand: &str, os_name: &str) -> (bool, Option<String>) {
     let brand_lower = cpu_brand.to_ascii_lowercase();
     let os_lower = os_name.to_ascii_lowercase();
 
-    // Apple Silicon detection: brand contains "apple" or we're on macOS with an ARM chip
+    // Apple Silicon detection: brand contains "apple" or we're on macOS with an ARM chip.
     if brand_lower.contains("apple") || (os_lower.contains("mac") && brand_lower.contains("arm")) {
+        tracing::debug!("GPU detected: Apple Silicon (Metal)");
         return (true, Some("Apple Silicon (Metal)".to_string()));
     }
 
-    // Fallback: cannot reliably detect discrete GPU without platform libraries.
+    // Intel Mac: macOS with Intel CPU — no Metal GPU acceleration for whisper.
+    if os_lower.contains("mac") {
+        tracing::debug!("Intel Mac detected — no GPU acceleration available for whisper");
+        return (false, Some("Intel Mac (no Metal GPU)".to_string()));
+    }
+
+    // Windows / Linux: probe for NVIDIA GPU via nvidia-smi.
+    if let Some(desc) = probe_nvidia_smi() {
+        tracing::debug!("GPU detected via nvidia-smi: {desc}");
+        return (true, Some(desc));
+    }
+
+    tracing::debug!("no GPU detected — voice model will use CPU");
     (false, None)
+}
+
+/// Probe for an NVIDIA GPU by running `nvidia-smi --query-gpu=name --format=csv,noheader`.
+/// Returns `Some("NVIDIA <name> (CUDA)")` on success, `None` if nvidia-smi is not available.
+fn probe_nvidia_smi() -> Option<String> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=name", "--format=csv,noheader"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let name = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()?
+        .trim()
+        .to_string();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    Some(format!("NVIDIA {name} (CUDA)"))
 }
 
 #[cfg(test)]

@@ -1084,4 +1084,162 @@ mod tests {
         assert!(body.get("connected_account_id").is_none());
         assert!(body.get("user_id").is_none());
     }
+
+    // ── ensure_https ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn ensure_https_accepts_https_url() {
+        assert!(ensure_https("https://backend.composio.dev/api/v3/tools").is_ok());
+    }
+
+    #[test]
+    fn ensure_https_rejects_http_url() {
+        let err = ensure_https("http://backend.composio.dev/api/v3/tools").unwrap_err();
+        assert!(err.to_string().contains("non-HTTPS"));
+    }
+
+    #[test]
+    fn ensure_https_rejects_ftp_url() {
+        assert!(ensure_https("ftp://example.com").is_err());
+    }
+
+    // ── sanitize_error_message ────────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_error_message_replaces_sensitive_fields() {
+        let msg = "Invalid connected_account_id value for entity_id: user-123";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains("connected_account_id"));
+        assert!(!sanitized.contains("entity_id"));
+        assert!(sanitized.contains("[redacted]"));
+    }
+
+    #[test]
+    fn sanitize_error_message_replaces_newlines_with_spaces() {
+        let msg = "line1\nline2\nline3";
+        let sanitized = sanitize_error_message(msg);
+        assert!(!sanitized.contains('\n'));
+        assert!(sanitized.contains("line1"));
+        assert!(sanitized.contains("line2"));
+    }
+
+    #[test]
+    fn sanitize_error_message_truncates_long_messages() {
+        let long_msg = "x".repeat(500);
+        let sanitized = sanitize_error_message(&long_msg);
+        assert!(
+            sanitized.chars().count() <= 243,
+            "should be at most 240 chars + '...'"
+        );
+        assert!(
+            sanitized.ends_with("..."),
+            "truncated message should end with '...'"
+        );
+    }
+
+    #[test]
+    fn sanitize_error_message_does_not_truncate_short_messages() {
+        let short = "Something went wrong";
+        let sanitized = sanitize_error_message(short);
+        assert_eq!(sanitized, short);
+    }
+
+    #[test]
+    fn sanitize_error_message_replaces_all_sensitive_variants() {
+        // camelCase variants
+        let msg = "Error for connectedAccountId and entityId and userId";
+        let sanitized = sanitize_error_message(msg);
+        assert!(
+            !sanitized.contains("connectedAccountId"),
+            "camelCase connectedAccountId should be redacted"
+        );
+        assert!(
+            !sanitized.contains("entityId"),
+            "camelCase entityId should be redacted"
+        );
+        assert!(
+            !sanitized.contains("userId"),
+            "camelCase userId should be redacted"
+        );
+    }
+
+    // ── composio_auth_config enabled detection ────────────────────────────────
+
+    #[test]
+    fn auth_config_enabled_by_flag() {
+        let cfg = ComposioAuthConfig {
+            id: "cfg_x".into(),
+            status: None,
+            enabled: Some(true),
+        };
+        assert!(cfg.is_enabled());
+    }
+
+    #[test]
+    fn auth_config_not_enabled_when_both_missing() {
+        let cfg = ComposioAuthConfig {
+            id: "cfg_x".into(),
+            status: None,
+            enabled: None,
+        };
+        assert!(!cfg.is_enabled());
+    }
+
+    // ── map_v3_tools_to_actions: item without slug falls back to name ─────────
+
+    #[test]
+    fn map_v3_tools_uses_name_when_slug_missing() {
+        let items = vec![ComposioV3Tool {
+            slug: None,
+            name: Some("My Tool".into()),
+            description: None,
+            app_name: Some("myapp".into()),
+            toolkit: None,
+        }];
+        let actions = map_v3_tools_to_actions(items);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].name, "My Tool");
+        assert_eq!(actions[0].app_name.as_deref(), Some("myapp"));
+    }
+
+    #[test]
+    fn map_v3_tools_skips_items_without_slug_or_name() {
+        let items = vec![ComposioV3Tool {
+            slug: None,
+            name: None,
+            description: Some("desc".into()),
+            app_name: None,
+            toolkit: None,
+        }];
+        let actions = map_v3_tools_to_actions(items);
+        assert!(
+            actions.is_empty(),
+            "item with no slug or name should be filtered out"
+        );
+    }
+
+    #[test]
+    fn map_v3_tools_prefers_toolkit_slug_over_app_name() {
+        let items = vec![ComposioV3Tool {
+            slug: Some("tool-slug".into()),
+            name: None,
+            description: None,
+            app_name: Some("fallback-app".into()),
+            toolkit: Some(ComposioToolkitRef {
+                slug: Some("preferred-app".into()),
+                name: None,
+            }),
+        }];
+        let actions = map_v3_tools_to_actions(items);
+        assert_eq!(actions[0].app_name.as_deref(), Some("preferred-app"));
+    }
+
+    // ── category ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn composio_tool_category_is_skill() {
+        use crate::openhuman::tools::traits::ToolCategory;
+        let tool = ComposioTool::new("key", None, test_security());
+        assert_eq!(tool.category(), ToolCategory::Skill);
+    }
 }

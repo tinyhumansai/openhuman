@@ -577,7 +577,13 @@ mod tests {
     async fn run_job_command_failure() {
         let tmp = TempDir::new().unwrap();
         let config = test_config(&tmp).await;
-        let job = test_job("ls definitely_missing_file_for_scheduler_test");
+        // Pin the absolute path so `sh -lc` doesn't pick up a
+        // homebrew / PATH-shadowed `ls` that macOS SIP refuses to
+        // execute under an unsigned cargo-test binary. `/bin/ls` is
+        // an Apple-signed system binary on macOS and present on
+        // Linux, so this keeps CI behaviour identical while making
+        // local dev runs deterministic.
+        let job = test_job("/bin/ls definitely_missing_file_for_scheduler_test");
         let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
 
         let (success, output) = run_job_command(&config, &security, &job).await;
@@ -591,7 +597,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut config = test_config(&tmp).await;
         config.autonomy.allowed_commands = vec!["sleep".into()];
-        let job = test_job("sleep 1");
+        // Pin `/bin/sleep` — see note on `run_job_command_failure` for why.
+        let job = test_job("/bin/sleep 1");
         let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
 
         let (success, output) =
@@ -666,13 +673,16 @@ mod tests {
         config.autonomy.allowed_commands = vec!["sh".into()];
         let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
 
+        // Pin absolute paths inside the script too — some dev
+        // environments have a homebrew `touch` on PATH that macOS
+        // SIP refuses to execute under an unsigned cargo-test binary.
         tokio::fs::write(
             config.workspace_dir.join("retry-once.sh"),
-            "#!/bin/sh\nif [ -f retry-ok.flag ]; then\n  echo recovered\n  exit 0\nfi\ntouch retry-ok.flag\nexit 1\n",
+            "#!/bin/sh\nif [ -f retry-ok.flag ]; then\n  echo recovered\n  exit 0\nfi\n/usr/bin/touch retry-ok.flag\nexit 1\n",
         )
         .await
         .unwrap();
-        let job = test_job("sh ./retry-once.sh");
+        let job = test_job("/bin/sh ./retry-once.sh");
 
         let (success, output) = execute_job_with_retry(&config, &security, &job).await;
         assert!(success);
@@ -687,7 +697,8 @@ mod tests {
         config.reliability.provider_backoff_ms = 1;
         let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
 
-        let job = test_job("ls always_missing_for_retry_test");
+        // Pin `/bin/ls` — see note on `run_job_command_failure`.
+        let job = test_job("/bin/ls always_missing_for_retry_test");
 
         let (success, output) = execute_job_with_retry(&config, &security, &job).await;
         assert!(!success);

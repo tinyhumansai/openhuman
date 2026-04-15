@@ -291,4 +291,159 @@ mod tests {
             "Command should contain the output path"
         );
     }
+
+    // ── execute blocked in read-only autonomy ─────────────────────────────────
+
+    #[tokio::test]
+    async fn screenshot_blocked_in_read_only_mode() {
+        use crate::openhuman::security::AutonomyLevel;
+        let readonly = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::ReadOnly,
+            workspace_dir: std::env::temp_dir(),
+            ..SecurityPolicy::default()
+        });
+        let tool = ScreenshotTool::new(readonly);
+        let result = tool.execute(serde_json::json!({})).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.output().contains("read-only"));
+    }
+
+    // ── screenshot_command on unsupported platform returns None ───────────────
+
+    #[test]
+    fn screenshot_command_returns_none_for_unsupported_os() {
+        let result = ScreenshotTool::screenshot_command("/tmp/test.png");
+        if cfg!(any(target_os = "macos", target_os = "linux")) {
+            assert!(
+                result.is_some(),
+                "macOS/Linux must produce a screenshot command"
+            );
+        } else {
+            assert_eq!(
+                result, None,
+                "unsupported platforms must return None (no panic)"
+            );
+        }
+    }
+
+    // ── safe filename that has no shell-unsafe chars is allowed ──────────────
+
+    #[tokio::test]
+    async fn screenshot_accepts_safe_filename() {
+        // On unsupported platforms the tool will return an error about platform
+        // support, not about the filename being unsafe.  We just check there is
+        // no "unsafe for shell execution" error.
+        let tool = ScreenshotTool::new(test_security());
+        let result = tool
+            .execute(serde_json::json!({"filename": "safe_name.png"}))
+            .await
+            .unwrap();
+        if result.is_error {
+            assert!(
+                !result.output().contains("unsafe for shell execution"),
+                "safe filename should not trigger shell-injection guard, got: {}",
+                result.output()
+            );
+        }
+    }
+
+    // ── multiple unsafe chars are all rejected ────────────────────────────────
+
+    #[tokio::test]
+    async fn screenshot_rejects_all_unsafe_chars() {
+        let tool = ScreenshotTool::new(test_security());
+        for ch in ['\'', '"', '`', '$', '\\', ';', '|', '&', '(', ')'] {
+            let filename = format!("test{ch}name.png");
+            let result = tool
+                .execute(serde_json::json!({"filename": filename}))
+                .await
+                .unwrap();
+            assert!(
+                result.is_error,
+                "expected error for filename with char '{ch}', got success"
+            );
+            assert!(
+                result.output().contains("unsafe for shell execution"),
+                "unexpected error message for char '{ch}': {}",
+                result.output()
+            );
+        }
+    }
+
+    // ── read_and_encode: file not found returns error ─────────────────────────
+
+    #[tokio::test]
+    async fn read_and_encode_file_not_found_returns_error() {
+        let result = ScreenshotTool::read_and_encode(std::path::Path::new(
+            "/tmp/openhuman_test_nonexistent_12345.png",
+        ))
+        .await
+        .unwrap();
+        assert!(result.is_error);
+        assert!(result.output().contains("Failed to read screenshot file"));
+    }
+
+    // ── read_and_encode: file within size limit is base64-encoded ─────────────
+
+    #[tokio::test]
+    async fn read_and_encode_small_file_is_encoded() {
+        use tokio::io::AsyncWriteExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("test.png");
+        let mut f = tokio::fs::File::create(&path).await.unwrap();
+        // Minimal valid bytes (not a real PNG but enough for the encoding test)
+        f.write_all(b"\x89PNG\r\n\x1a\n").await.unwrap();
+        drop(f);
+
+        let result = ScreenshotTool::read_and_encode(&path).await.unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.output().contains("data:image/png;base64,"),
+            "output should contain base64 data URL"
+        );
+        assert!(
+            result.output().contains("Screenshot saved to:"),
+            "output should contain saved path"
+        );
+    }
+
+    // ── read_and_encode: JPEG extension picks correct MIME type ───────────────
+
+    #[tokio::test]
+    async fn read_and_encode_jpeg_uses_jpeg_mime() {
+        use tokio::io::AsyncWriteExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("image.jpg");
+        let mut f = tokio::fs::File::create(&path).await.unwrap();
+        f.write_all(b"\xFF\xD8\xFF").await.unwrap();
+        drop(f);
+
+        let result = ScreenshotTool::read_and_encode(&path).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.output().contains("data:image/jpeg;base64,"));
+    }
+
+    // ── read_and_encode: large file returns saved-path-only message ───────────
+
+    #[tokio::test]
+    async fn read_and_encode_large_file_skips_base64() {
+        use tokio::io::AsyncWriteExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("big.png");
+        let mut f = tokio::fs::File::create(&path).await.unwrap();
+        // Write ~1.6 MB to exceed the MAX_RAW_BYTES threshold (1.5 MB)
+        let chunk = vec![0u8; 1024];
+        for _ in 0..1600 {
+            f.write_all(&chunk).await.unwrap();
+        }
+        drop(f);
+
+        let result = ScreenshotTool::read_and_encode(&path).await.unwrap();
+        assert!(!result.is_error, "large file should not be an error result");
+        assert!(
+            result.output().contains("too large to base64-encode"),
+            "large file should skip base64, got: {}",
+            result.output()
+        );
+    }
 }
