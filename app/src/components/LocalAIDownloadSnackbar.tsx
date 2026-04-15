@@ -76,11 +76,8 @@ const LocalAIDownloadSnackbar = () => {
   // reset dismissed on the transition edge (not-downloading → downloading).
   const wasDownloadingRef = useRef(false);
   useEffect(() => {
-    if (isDownloading && !wasDownloadingRef.current && dismissed) {
-      setDismissed(false);
-    }
     wasDownloadingRef.current = !!isDownloading;
-  }, [dismissed, isDownloading]);
+  }, [isDownloading]);
 
   const handleDismiss = useCallback(() => setDismissed(true), []);
   const handleToggleCollapse = useCallback(() => setCollapsed(prev => !prev), []);

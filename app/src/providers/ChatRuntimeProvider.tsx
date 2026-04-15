@@ -12,9 +12,6 @@ import {
   subscribeChatEvents,
 } from '../services/chatService';
 import { store } from '../store';
-import { useAppDispatch, useAppSelector } from '../store/hooks';
-import { selectSocketStatus } from '../store/socketSelectors';
-import { addInferenceResponse, setActiveThread } from '../store/threadSlice';
 import {
   clearInferenceStatusForThread,
   clearStreamingAssistantForThread,
@@ -25,12 +22,17 @@ import {
   type ToolTimelineEntry,
   type ToolTimelineEntryStatus,
 } from '../store/chatRuntimeSlice';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { selectSocketStatus } from '../store/socketSelectors';
+import { addInferenceResponse, setActiveThread } from '../store/threadSlice';
 
 const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useAppDispatch();
   const socketStatus = useAppSelector(selectSocketStatus);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
-  const inferenceStatusByThread = useAppSelector(state => state.chatRuntime.inferenceStatusByThread);
+  const inferenceStatusByThread = useAppSelector(
+    state => state.chatRuntime.inferenceStatusByThread
+  );
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
   );
@@ -249,17 +251,15 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       onSegment: (event: ChatSegmentEvent) => {
         const eventKey = `segment:${event.thread_id}:${event.request_id}:${event.segment_index}`;
         if (!markChatEventSeen(eventKey)) return;
-        void dispatch(addInferenceResponse({ content: segmentText(event), threadId: event.thread_id }));
+        void dispatch(
+          addInferenceResponse({ content: segmentText(event), threadId: event.thread_id })
+        );
       },
       onTextDelta: event => {
         const existing = streamingAssistantRef.current[event.thread_id];
         let streaming: StreamingAssistantState;
         if (existing && existing.requestId !== event.request_id) {
-          streaming = {
-            requestId: event.request_id,
-            content: event.delta,
-            thinking: '',
-          };
+          streaming = { requestId: event.request_id, content: event.delta, thinking: '' };
         } else {
           streaming = {
             requestId: event.request_id,
@@ -267,22 +267,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             thinking: existing?.thinking ?? '',
           };
         }
-        dispatch(
-          setStreamingAssistantForThread({
-            threadId: event.thread_id,
-            streaming,
-          })
-        );
+        dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
       },
       onThinkingDelta: event => {
         const existing = streamingAssistantRef.current[event.thread_id];
         let streaming: StreamingAssistantState;
         if (existing && existing.requestId !== event.request_id) {
-          streaming = {
-            requestId: event.request_id,
-            content: '',
-            thinking: event.delta,
-          };
+          streaming = { requestId: event.request_id, content: '', thinking: event.delta };
         } else {
           streaming = {
             requestId: event.request_id,
@@ -290,12 +281,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             thinking: `${existing?.thinking ?? ''}${event.delta}`,
           };
         }
-        dispatch(
-          setStreamingAssistantForThread({
-            threadId: event.thread_id,
-            streaming,
-          })
-        );
+        dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
       },
       onToolArgsDelta: event => {
         const existing = toolTimelineRef.current[event.thread_id] ?? [];

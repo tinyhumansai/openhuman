@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import type { GraphRelation } from '../../utils/tauriCommands';
 
@@ -161,18 +161,15 @@ function runSimulation(nodes: GraphNode[], edges: GraphEdge[], iterations = 150)
 }
 
 export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
-  const [nodes, setNodes] = useState<GraphNode[]>([]);
-  const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [hoveredEdge, setHoveredEdge] = useState<number | null>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
-  const [namespacePalette, setNamespacePalette] = useState<Map<string, string>>(new Map());
   // Build graph data from relations (synchronous, deterministic)
-  const { initialNodes, initialEdges, palette } = useMemo(() => {
+  const { nodes, edges, namespacePalette } = useMemo(() => {
     if (relations.length === 0) {
       return {
-        initialNodes: [] as GraphNode[],
-        initialEdges: [] as GraphEdge[],
-        palette: new Map<string, string>(),
+        nodes: [] as GraphNode[],
+        edges: [] as GraphEdge[],
+        namespacePalette: new Map<string, string>(),
       };
     }
     const { nodes: rawNodes, edges: rawEdges } = buildGraph(relations);
@@ -182,15 +179,8 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
       p.set(ns, NAMESPACE_COLORS[i % NAMESPACE_COLORS.length]);
     });
     const simulated = runSimulation(rawNodes, rawEdges);
-    return { initialNodes: simulated, initialEdges: rawEdges, palette: p };
+    return { nodes: simulated, edges: rawEdges, namespacePalette: p };
   }, [relations]);
-
-  // Sync memo results into state (needed for interactive selection/hover)
-  useEffect(() => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-    setNamespacePalette(palette);
-  }, [initialNodes, initialEdges, palette]);
 
   const getNodeColor = useCallback(
     (node: GraphNode): string => {

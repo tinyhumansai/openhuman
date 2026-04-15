@@ -19,13 +19,6 @@ const OnboardingOverlay = () => {
   const user = snapshot.currentUser;
   const [userLoadTimedOut, setUserLoadTimedOut] = useState(false);
 
-  // Reset local state on logout so re-login starts fresh.
-  useEffect(() => {
-    if (!token) {
-      setUserLoadTimedOut(false);
-    }
-  }, [token]);
-
   // Timeout: if user profile hasn't loaded after 3s but we have token + bootstrap,
   // proceed anyway so onboarding isn't permanently invisible.
   useEffect(() => {
@@ -36,7 +29,7 @@ const OnboardingOverlay = () => {
   }, [token, isBootstrapping, user?._id]);
 
   // User is ready when profile loaded or timeout elapsed.
-  const userReady = !!user?._id || userLoadTimedOut;
+  const userReady = !!user?._id || (token ? userLoadTimedOut : false);
   const onboardingCompleted = snapshot.onboardingCompleted;
 
   const handleDone = useCallback(async () => {

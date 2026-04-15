@@ -35,11 +35,7 @@ describe('chatRuntimeSlice', () => {
       undefined,
       setStreamingAssistantForThread({
         threadId: 'thread-1',
-        streaming: {
-          requestId: 'req-1',
-          content: 'hello',
-          thinking: 'thinking',
-        },
+        streaming: { requestId: 'req-1', content: 'hello', thinking: 'thinking' },
       })
     );
 
@@ -74,13 +70,7 @@ describe('chatRuntimeSlice', () => {
     );
 
     expect(withTimeline.toolTimelineByThread['thread-1']).toEqual([
-      {
-        id: 'call-1',
-        name: 'search',
-        round: 1,
-        status: 'running',
-        argsBuffer: '{"q":"hello"}',
-      },
+      { id: 'call-1', name: 'search', round: 1, status: 'running', argsBuffer: '{"q":"hello"}' },
     ]);
 
     const cleared = reducer(withTimeline, clearToolTimelineForThread({ threadId: 'thread-1' }));

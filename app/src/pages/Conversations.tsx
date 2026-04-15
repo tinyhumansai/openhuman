@@ -9,6 +9,7 @@ import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDism
 import UsageLimitModal from '../components/upsell/UsageLimitModal';
 import { useUsageState } from '../hooks/useUsageState';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
+import { setToolTimelineForThread } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
@@ -32,7 +33,6 @@ import {
   openhumanVoiceTranscribeBytes,
   openhumanVoiceTts,
 } from '../utils/tauriCommands';
-import { setToolTimelineForThread } from '../store/chatRuntimeSlice';
 
 const DEFAULT_THREAD_ID = 'default-thread';
 const DEFAULT_THREAD_TITLE = 'Conversation';
@@ -167,7 +167,9 @@ const Conversations = () => {
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
   const socketStatus = useAppSelector(selectSocketStatus);
   const toolTimelineByThread = useAppSelector(state => state.chatRuntime.toolTimelineByThread);
-  const inferenceStatusByThread = useAppSelector(state => state.chatRuntime.inferenceStatusByThread);
+  const inferenceStatusByThread = useAppSelector(
+    state => state.chatRuntime.inferenceStatusByThread
+  );
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
   );

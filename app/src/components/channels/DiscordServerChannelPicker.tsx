@@ -39,14 +39,6 @@ const DiscordServerChannelPicker = ({
   const channelsRequestIdRef = useRef(0);
   const permissionsRequestIdRef = useRef(0);
 
-  useEffect(() => {
-    setSelectedGuildId(selectedGuildIdProp ?? '');
-  }, [selectedGuildIdProp]);
-
-  useEffect(() => {
-    setSelectedChannelId(selectedChannelIdProp ?? '');
-  }, [selectedChannelIdProp]);
-
   // Load guilds on mount
   useEffect(() => {
     const loadGuilds = async () => {
