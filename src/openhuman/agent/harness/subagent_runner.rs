@@ -271,7 +271,45 @@ async fn run_typed_mode(
                 .iter()
                 .find(|ci| ci.connected && ci.toolkit.eq_ignore_ascii_case(tk))
             {
-                for action in &integration.tools {
+                // Fuzzy-filter the toolkit's actions against the task prompt
+                // so large catalogues (e.g. github ~500 actions) are narrowed
+                // to the handful actually relevant to this delegation. The
+                // orchestrator's `SkillDelegationTool` schema forces the
+                // prompt to be a clear, context-rich instruction, so it's a
+                // reliable matching target.
+                //
+                // Fallback: if the filter yields fewer than
+                // `MIN_CONFIDENT_HITS` results, register every action. A
+                // too-narrow filter is worse than none — it starves the
+                // sub-agent and forces it to guess.
+                const TOOL_FILTER_TOP_K: usize = 25;
+                let filter_hits = super::tool_filter::filter_actions_by_prompt(
+                    task_prompt,
+                    &integration.tools,
+                    TOOL_FILTER_TOP_K,
+                );
+                let selected: Vec<&crate::openhuman::context::prompt::ConnectedIntegrationTool> =
+                    if filter_hits.len() >= super::tool_filter::MIN_CONFIDENT_HITS {
+                        tracing::info!(
+                            agent_id = %definition.id,
+                            toolkit = %tk,
+                            total = integration.tools.len(),
+                            kept = filter_hits.len(),
+                            "[subagent_runner:typed] fuzzy tool filter narrowed toolkit"
+                        );
+                        filter_hits.iter().map(|&i| &integration.tools[i]).collect()
+                    } else {
+                        tracing::info!(
+                            agent_id = %definition.id,
+                            toolkit = %tk,
+                            total = integration.tools.len(),
+                            filter_hits = filter_hits.len(),
+                            "[subagent_runner:typed] fuzzy filter thin; falling back to full toolkit"
+                        );
+                        integration.tools.iter().collect()
+                    };
+
+                for action in selected {
                     dynamic_tools.push(Box::new(
                         crate::openhuman::composio::ComposioActionTool::new(
                             client.clone(),
