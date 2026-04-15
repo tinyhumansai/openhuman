@@ -21,9 +21,7 @@ use objc2::runtime::{AnyClass, AnyObject};
 #[cfg(target_os = "macos")]
 use objc2::ClassType;
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{
-    NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask,
-};
+use objc2_app_kit::{NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
 /// Tracks the currently registered dictation hotkey string so we can unregister it later.
 struct DictationHotkeyState(Mutex<Vec<String>>);
