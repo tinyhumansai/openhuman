@@ -1,4 +1,7 @@
+import debug from 'debug';
 import { useCallback, useMemo, useState } from 'react';
+
+const log = debug('openhuman:memory-graph');
 
 import type { GraphRelation } from '../../utils/tauriCommands';
 
@@ -165,6 +168,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   // Build graph data from relations (synchronous, deterministic)
   const { nodes, edges, namespacePalette } = useMemo(() => {
+    log('[memory-graph] recomputing graph relations=%d', relations.length);
     if (relations.length === 0) {
       return {
         nodes: [] as GraphNode[],
@@ -179,6 +183,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
       p.set(ns, NAMESPACE_COLORS[i % NAMESPACE_COLORS.length]);
     });
     const simulated = runSimulation(rawNodes, rawEdges);
+    log('[memory-graph] graph built nodes=%d edges=%d', simulated.length, rawEdges.length);
     return { nodes: simulated, edges: rawEdges, namespacePalette: p };
   }, [relations]);
 
@@ -192,15 +197,19 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
 
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
+  // Guard against stale selectedNode — if the node no longer exists in the current
+  // graph (e.g. after a relations refresh), treat it as deselected so no dimming occurs.
+  const activeSelectedNode = selectedNode !== null && nodeMap.has(selectedNode) ? selectedNode : null;
+
   const centerNodeId =
     nodes.find(n => n.id === 'user' || n.id === 'self' || n.id === 'you')?.id ??
     (nodes.length > 0 ? nodes[0].id : null);
 
   // Connected node ids for selected highlight
-  const connectedIds = selectedNode
+  const connectedIds = activeSelectedNode
     ? new Set(
         edges
-          .filter(e => e.source === selectedNode || e.target === selectedNode)
+          .filter(e => e.source === activeSelectedNode || e.target === activeSelectedNode)
           .flatMap(e => [e.source, e.target])
       )
     : null;
@@ -259,7 +268,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
             if (!src || !tgt) return null;
 
             const isHighlighted =
-              selectedNode === null || edge.source === selectedNode || edge.target === selectedNode;
+              activeSelectedNode === null || edge.source === activeSelectedNode || edge.target === activeSelectedNode;
 
             const midX = (src.x + tgt.x) / 2;
             const midY = (src.y + tgt.y) / 2;
@@ -303,8 +312,8 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
             const r = 8 + (node.connectionCount / maxConn) * 18;
             const color = getNodeColor(node);
             const isCenter = node.id === centerNodeId;
-            const isSelected = selectedNode === node.id;
-            const isDimmed = selectedNode !== null && !connectedIds?.has(node.id);
+            const isSelected = activeSelectedNode === node.id;
+            const isDimmed = activeSelectedNode !== null && !connectedIds?.has(node.id);
 
             return (
               <g
@@ -313,7 +322,7 @@ export function MemoryGraphMap({ relations, loading }: MemoryGraphMapProps) {
                 style={{ cursor: 'pointer' }}
                 onClick={e => {
                   e.stopPropagation();
-                  setSelectedNode(selectedNode === node.id ? null : node.id);
+                  setSelectedNode(activeSelectedNode === node.id ? null : node.id);
                 }}>
                 {(isCenter || isSelected) && (
                   <circle r={r + 5} fill="none" stroke={color} strokeWidth={2} opacity={0.4} />

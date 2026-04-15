@@ -76,6 +76,11 @@ const LocalAIDownloadSnackbar = () => {
   // reset dismissed on the transition edge (not-downloading → downloading).
   const wasDownloadingRef = useRef(false);
   useEffect(() => {
+    if (isDownloading && !wasDownloadingRef.current) {
+      // New download cycle started — clear any previous dismiss so the snackbar reappears.
+      setDismissed(false);
+      setCollapsed(false);
+    }
     wasDownloadingRef.current = !!isDownloading;
   }, [isDownloading]);
 

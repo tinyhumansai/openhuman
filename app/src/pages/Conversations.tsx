@@ -380,7 +380,7 @@ const Conversations = () => {
     const normalized = text ?? inputValue;
     const trimmed = normalized.trim();
 
-    if (!trimmed || !selectedThreadId || Boolean(activeThreadId)) return;
+    if (!trimmed || !selectedThreadId || composerBlocked) return;
     if (isAtLimit) {
       setShowLimitModal(true);
       setSendError(
@@ -398,9 +398,7 @@ const Conversations = () => {
       return;
     }
 
-    if (activeThreadId && activeThreadId !== selectedThreadId) {
-      return;
-    }
+    if (composerBlocked) return;
 
     const sendingThreadId = selectedThreadId;
 
@@ -427,6 +425,7 @@ const Conversations = () => {
         )
       );
       dispatch(endInferenceTurn({ threadId: sendingThreadId }));
+      dispatch(setToolTimelineForThread({ threadId: sendingThreadId, entries: [] }));
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
     }, 120_000);
@@ -678,6 +677,9 @@ const Conversations = () => {
     ? (streamingAssistantByThread[selectedThreadId] ?? null)
     : null;
   const inlineCompletionSuffix = getInlineCompletionSuffix(inputValue, inlineSuggestionValue);
+  // composerBlocked: any thread is in-flight (blocks ALL sends/voice actions).
+  // isSending: the *selected* thread is in-flight (drives selected-thread UI only).
+  const composerBlocked = Boolean(activeThreadId);
   const isSending = Boolean(
     selectedThreadId &&
     (inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||

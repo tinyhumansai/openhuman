@@ -138,7 +138,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         );
       },
       onToolCall: (event: ChatToolCallEvent) => {
-        const prev = inferenceStatusRef.current[event.thread_id];
+        const prev = store.getState().chatRuntime.inferenceStatusByThread[event.thread_id];
         dispatch(
           setInferenceStatusForThread({
             threadId: event.thread_id,
@@ -156,7 +156,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         )
           return;
 
-        const existing = toolTimelineRef.current[event.thread_id] ?? [];
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         const existingIdx = event.tool_call_id
           ? existing.findIndex(entry => entry.id === event.tool_call_id)
           : -1;
@@ -192,7 +192,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         )
           return;
 
-        const existing = toolTimelineRef.current[event.thread_id] ?? [];
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
           const nextEntries = [...existing];
           let changed = false;
@@ -228,7 +228,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           }
         }
 
-        const current = inferenceStatusRef.current[event.thread_id];
+        const current = store.getState().chatRuntime.inferenceStatusByThread[event.thread_id];
         if (!current) return;
         dispatch(
           setInferenceStatusForThread({
@@ -238,7 +238,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         );
       },
       onSubagentSpawned: (event: ChatSubagentSpawnedEvent) => {
-        const prev = inferenceStatusRef.current[event.thread_id];
+        const prev = store.getState().chatRuntime.inferenceStatusByThread[event.thread_id];
         dispatch(
           setInferenceStatusForThread({
             threadId: event.thread_id,
@@ -250,7 +250,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           })
         );
 
-        const existing = toolTimelineRef.current[event.thread_id] ?? [];
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         dispatch(
           setToolTimelineForThread({
             threadId: event.thread_id,
@@ -268,7 +268,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       },
       onSubagentDone: (event: ChatSubagentDoneEvent) => {
         const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
-        const existing = toolTimelineRef.current[event.thread_id] ?? [];
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
           const entries = existing.map(entry =>
             entry.id === subagentRowId && entry.status === 'running'
@@ -281,7 +281,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
         }
 
-        const current = inferenceStatusRef.current[event.thread_id];
+        const current = store.getState().chatRuntime.inferenceStatusByThread[event.thread_id];
         if (!current) return;
         dispatch(
           setInferenceStatusForThread({
@@ -387,7 +387,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
 
-        const existing = toolTimelineRef.current[event.thread_id] ?? [];
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
           const entries = existing.map(entry =>
             entry.status === 'running' ? { ...entry, status: 'success' as const } : entry
@@ -419,7 +419,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
 
-        const existing = toolTimelineRef.current[event.thread_id] ?? [];
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         if (existing.length > 0) {
           const entries = existing.map(entry =>
             entry.status === 'running' ? { ...entry, status: 'error' as const } : entry

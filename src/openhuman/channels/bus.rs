@@ -609,12 +609,17 @@ const MAX_THINKING_CHARS: usize = 1500;
 fn format_thinking_summary(thinking: &str) -> String {
     let trimmed = thinking.trim();
     let body = if trimmed.len() > MAX_THINKING_CHARS {
-        // Trim to MAX_THINKING_CHARS and back off to the last whitespace so we
-        // don't cut in the middle of a word or a multi-byte UTF-8 sequence.
-        let slice = &trimmed[..MAX_THINKING_CHARS];
+        // Find a safe char boundary at or before MAX_THINKING_CHARS so we never
+        // slice in the middle of a multi-byte UTF-8 sequence.
+        let safe_end = (0..=MAX_THINKING_CHARS)
+            .rev()
+            .find(|&i| trimmed.is_char_boundary(i))
+            .unwrap_or(0);
+        let slice = &trimmed[..safe_end];
+        // Back off further to the last whitespace to avoid cutting mid-word.
         let boundary = slice
             .rfind(|c: char| c.is_whitespace())
-            .unwrap_or(MAX_THINKING_CHARS);
+            .unwrap_or(safe_end);
         format!("{}…", &slice[..boundary])
     } else {
         trimmed.to_string()
