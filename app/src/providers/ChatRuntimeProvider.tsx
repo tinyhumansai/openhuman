@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useEffect, useRef } from 'react';
 
 import {
@@ -25,6 +26,20 @@ import {
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import { addInferenceResponse, setActiveThread } from '../store/threadSlice';
+
+const logChatRuntime = debug('openhuman:chat-runtime');
+
+function rtLog(message: string, fields?: Record<string, string | number | null | undefined>) {
+  if (import.meta.env.PROD) return;
+  if (fields && Object.keys(fields).length > 0) {
+    const parts = Object.entries(fields)
+      .filter(([, v]) => v !== undefined && v !== '' && v !== null)
+      .map(([k, v]) => `${k}=${v}`);
+    logChatRuntime('[chat-runtime] %s %s', message, parts.join(' '));
+  } else {
+    logChatRuntime('[chat-runtime] %s', message);
+  }
+}
 
 const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   const dispatch = useAppDispatch();
@@ -54,13 +69,23 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     streamingAssistantRef.current = streamingAssistantByThread;
   }, [streamingAssistantByThread]);
 
-  const markChatEventSeen = (key: string): boolean => {
+  const markChatEventSeen = (
+    key: string,
+    meta?: { threadId?: string; requestId?: string }
+  ): boolean => {
     const now = Date.now();
     const cache = seenChatEventsRef.current;
     const ttlMs = 10 * 60_000;
     const maxEntries = 500;
 
-    if (cache.has(key)) return false;
+    if (cache.has(key)) {
+      rtLog('dedupe_drop', {
+        key: key.length > 160 ? `${key.slice(0, 160)}…` : key,
+        thread: meta?.threadId,
+        request: meta?.requestId,
+      });
+      return false;
+    }
     cache.set(key, now);
 
     for (const [existingKey, timestamp] of cache) {
@@ -80,8 +105,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     if (socketStatus !== 'connected') return;
 
+    rtLog('subscribe_chat_events', { socket: socketStatus });
     const cleanup = subscribeChatEvents({
       onInferenceStart: (event: ChatInferenceStartEvent) => {
+        rtLog('inference_start', { thread: event.thread_id, request: event.request_id });
         dispatch(
           setInferenceStatusForThread({
             threadId: event.thread_id,
@@ -91,6 +118,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       },
       onIterationStart: (event: ChatIterationStartEvent) => {
         const prev = inferenceStatusRef.current[event.thread_id];
+        rtLog('iteration_start', {
+          thread: event.thread_id,
+          request: event.request_id,
+          iteration: event.round,
+        });
         dispatch(
           setInferenceStatusForThread({
             threadId: event.thread_id,
@@ -116,7 +148,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         );
 
         const eventKey = `tool_call:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}:${event.tool_call_id ?? ''}`;
-        if (!markChatEventSeen(eventKey)) return;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        )
+          return;
 
         const existing = toolTimelineRef.current[event.thread_id] ?? [];
         const existingIdx = event.tool_call_id
@@ -149,7 +184,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       },
       onToolResult: (event: ChatToolResultEvent) => {
         const eventKey = `tool_result:${event.thread_id}:${event.request_id ?? 'none'}:${event.round}:${event.tool_name}:${event.success}:${event.tool_call_id ?? ''}`;
-        if (!markChatEventSeen(eventKey)) return;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        )
+          return;
 
         const existing = toolTimelineRef.current[event.thread_id] ?? [];
         if (existing.length > 0) {
@@ -226,10 +264,11 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         );
       },
       onSubagentDone: (event: ChatSubagentDoneEvent) => {
+        const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
         const existing = toolTimelineRef.current[event.thread_id] ?? [];
         if (existing.length > 0) {
           const entries = existing.map(entry =>
-            entry.name === `subagent:${event.tool_name}` && entry.status === 'running'
+            entry.id === subagentRowId && entry.status === 'running'
               ? {
                   ...entry,
                   status: (event.success ? 'success' : 'error') as ToolTimelineEntryStatus,
@@ -250,13 +289,17 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       },
       onSegment: (event: ChatSegmentEvent) => {
         const eventKey = `segment:${event.thread_id}:${event.request_id}:${event.segment_index}`;
-        if (!markChatEventSeen(eventKey)) return;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        )
+          return;
         void dispatch(
           addInferenceResponse({ content: segmentText(event), threadId: event.thread_id })
         );
       },
       onTextDelta: event => {
-        const existing = streamingAssistantRef.current[event.thread_id];
+        const cr = store.getState().chatRuntime;
+        const existing = cr.streamingAssistantByThread[event.thread_id];
         let streaming: StreamingAssistantState;
         if (existing && existing.requestId !== event.request_id) {
           streaming = { requestId: event.request_id, content: event.delta, thinking: '' };
@@ -270,7 +313,8 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
       },
       onThinkingDelta: event => {
-        const existing = streamingAssistantRef.current[event.thread_id];
+        const cr = store.getState().chatRuntime;
+        const existing = cr.streamingAssistantByThread[event.thread_id];
         let streaming: StreamingAssistantState;
         if (existing && existing.requestId !== event.request_id) {
           streaming = { requestId: event.request_id, content: '', thinking: event.delta };
@@ -284,7 +328,8 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         dispatch(setStreamingAssistantForThread({ threadId: event.thread_id, streaming }));
       },
       onToolArgsDelta: event => {
-        const existing = toolTimelineRef.current[event.thread_id] ?? [];
+        const cr = store.getState().chatRuntime;
+        const existing = cr.toolTimelineByThread[event.thread_id] ?? [];
         let matchIdx = -1;
         if (event.tool_call_id) {
           matchIdx = existing.findIndex(entry => entry.id === event.tool_call_id);
@@ -325,7 +370,16 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       },
       onDone: event => {
         const eventKey = `done:${event.thread_id}:${event.request_id ?? 'none'}`;
-        if (!markChatEventSeen(eventKey)) return;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        )
+          return;
+
+        rtLog('chat_done', {
+          thread: event.thread_id,
+          request: event.request_id,
+          segments: event.segment_total,
+        });
 
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
@@ -347,7 +401,16 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       },
       onError: event => {
         const eventKey = `error:${event.thread_id}:${event.request_id ?? 'none'}:${event.error_type}:${event.message}`;
-        if (!markChatEventSeen(eventKey)) return;
+        if (
+          !markChatEventSeen(eventKey, { threadId: event.thread_id, requestId: event.request_id })
+        )
+          return;
+
+        rtLog('chat_error', {
+          thread: event.thread_id,
+          request: event.request_id,
+          err: event.error_type,
+        });
 
         dispatch(clearInferenceStatusForThread({ threadId: event.thread_id }));
         dispatch(clearStreamingAssistantForThread({ threadId: event.thread_id }));
@@ -383,7 +446,10 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
       },
     });
 
-    return cleanup;
+    return () => {
+      rtLog('unsubscribe_chat_events');
+      cleanup();
+    };
   }, [dispatch, socketStatus]);
 
   return <>{children}</>;

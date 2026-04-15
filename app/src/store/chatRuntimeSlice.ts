@@ -24,6 +24,12 @@ export interface StreamingAssistantState {
   thinking: string;
 }
 
+/**
+ * Per-thread UI state for an in-flight agent turn (socket events while the user
+ * may navigate away from Conversations). The thread slice keeps `activeThreadId`
+ * set for the whole turn; it is cleared from `ChatRuntimeProvider` on `chat_done` /
+ * `chat_error`, not on each persisted segment.
+ */
 interface ChatRuntimeState {
   inferenceStatusByThread: Record<string, InferenceStatus>;
   streamingAssistantByThread: Record<string, StreamingAssistantState>;

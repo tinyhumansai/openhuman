@@ -333,7 +333,9 @@ const threadSlice = createSlice({
       })
       .addCase(addInferenceResponse.fulfilled, (state, action) => {
         appendMessageToCache(state, action.payload.threadId, action.payload.message);
-        state.activeThreadId = null;
+        // Do not clear activeThreadId here: streaming sends many segment append
+        // thunks; clearing each time would re-enable the composer mid-turn.
+        // ChatRuntimeProvider clears it on chat_done / chat_error.
       })
       .addCase(addInferenceResponse.rejected, (state, action) => {
         state.sendError = action.payload as string;
