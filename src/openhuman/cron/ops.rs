@@ -448,4 +448,146 @@ mod tests {
         assert!(add_once(&config, "", "cmd").is_err());
         assert!(add_once(&config, "5x", "cmd").is_err());
     }
+
+    // ── add_once_at ─────────────────────────────────────────────────
+
+    #[test]
+    fn add_once_at_stores_exact_timestamp() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let when = chrono::Utc::now() + chrono::Duration::hours(1);
+        let job = add_once_at(&config, when, "echo hi").unwrap();
+        match job.schedule {
+            Schedule::At { at } => assert_eq!(at, when),
+            other => panic!("expected At schedule, got {other:?}"),
+        }
+    }
+
+    // ── pause_job / resume_job ──────────────────────────────────────
+
+    #[test]
+    fn pause_and_resume_toggle_enabled_flag() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let job = make_job(&config, "*/5 * * * *", None, "echo test");
+        assert!(job.enabled);
+
+        let paused = pause_job(&config, &job.id).unwrap();
+        assert!(!paused.enabled);
+
+        let resumed = resume_job(&config, &job.id).unwrap();
+        assert!(resumed.enabled);
+    }
+
+    // ── cron_list / cron_update / cron_remove / cron_runs ───────────
+
+    fn disabled_cron_config(tmp: &TempDir) -> Config {
+        let mut config = test_config(tmp);
+        config.cron.enabled = false;
+        config
+    }
+
+    #[tokio::test]
+    async fn cron_list_errors_when_cron_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let config = disabled_cron_config(&tmp);
+        let err = cron_list(&config).await.unwrap_err();
+        assert!(err.contains("cron is disabled"));
+    }
+
+    #[tokio::test]
+    async fn cron_list_returns_jobs_when_enabled() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let job = make_job(&config, "*/5 * * * *", None, "echo test");
+        let out = cron_list(&config).await.unwrap();
+        assert!(out.value.iter().any(|j| j.id == job.id));
+        assert!(out.logs.iter().any(|l| l.contains("cron jobs listed")));
+    }
+
+    #[tokio::test]
+    async fn cron_update_rejects_empty_job_id() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let err = cron_update(&config, "   ", CronJobPatch::default())
+            .await
+            .unwrap_err();
+        assert!(err.contains("Missing 'job_id'"));
+    }
+
+    #[tokio::test]
+    async fn cron_update_errors_when_cron_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let config = disabled_cron_config(&tmp);
+        let err = cron_update(&config, "some-id", CronJobPatch::default())
+            .await
+            .unwrap_err();
+        assert!(err.contains("cron is disabled"));
+    }
+
+    #[tokio::test]
+    async fn cron_update_mutates_existing_job() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let job = make_job(&config, "*/5 * * * *", None, "echo test");
+        let patch = CronJobPatch {
+            name: Some("renamed".to_string()),
+            ..CronJobPatch::default()
+        };
+        let out = cron_update(&config, &job.id, patch).await.unwrap();
+        assert_eq!(out.value.name.as_deref(), Some("renamed"));
+        assert!(out.logs.iter().any(|l| l.contains("cron job updated")));
+    }
+
+    #[tokio::test]
+    async fn cron_remove_rejects_empty_job_id() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let err = cron_remove(&config, "").await.unwrap_err();
+        assert!(err.contains("Missing 'job_id'"));
+    }
+
+    #[tokio::test]
+    async fn cron_remove_errors_when_cron_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let config = disabled_cron_config(&tmp);
+        let err = cron_remove(&config, "abc").await.unwrap_err();
+        assert!(err.contains("cron is disabled"));
+    }
+
+    #[tokio::test]
+    async fn cron_remove_returns_removed_true_on_success() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let job = make_job(&config, "*/5 * * * *", None, "echo test");
+        let out = cron_remove(&config, &job.id).await.unwrap();
+        assert_eq!(out.value["job_id"], json!(job.id));
+        assert_eq!(out.value["removed"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn cron_runs_rejects_empty_job_id() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let err = cron_runs(&config, "", None).await.unwrap_err();
+        assert!(err.contains("Missing 'job_id'"));
+    }
+
+    #[tokio::test]
+    async fn cron_runs_errors_when_cron_disabled() {
+        let tmp = TempDir::new().unwrap();
+        let config = disabled_cron_config(&tmp);
+        let err = cron_runs(&config, "abc", Some(5)).await.unwrap_err();
+        assert!(err.contains("cron is disabled"));
+    }
+
+    #[tokio::test]
+    async fn cron_runs_returns_empty_history_for_new_job() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let job = make_job(&config, "*/5 * * * *", None, "echo test");
+        let out = cron_runs(&config, &job.id, Some(10)).await.unwrap();
+        assert!(out.value.is_empty());
+        assert!(out.logs.iter().any(|l| l.contains("cron run history")));
+    }
 }
