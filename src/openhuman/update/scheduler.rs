@@ -79,3 +79,42 @@ async fn tick() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn min_interval_is_at_least_ten_minutes() {
+        // GitHub's API rate-limits unauthenticated callers — anything
+        // shorter than ~10 minutes will trip the rate limit on a busy
+        // machine. Lock in the floor so a future "let users tick every
+        // minute" change doesn't silently break update visibility.
+        assert!(MIN_INTERVAL_MINUTES >= 10);
+    }
+
+    #[tokio::test]
+    async fn run_returns_immediately_when_disabled() {
+        // Even with `interval_minutes = 0` the disabled config must
+        // short-circuit before the loop. Using tokio's pause/advance
+        // would also work, but a direct .await is enough — if the
+        // function doesn't return promptly the test will hang and
+        // surface the regression.
+        let cfg = UpdateConfig {
+            enabled: false,
+            interval_minutes: 0,
+        };
+        run(cfg).await;
+    }
+
+    #[tokio::test]
+    async fn tick_runs_without_panicking_when_event_bus_is_uninitialised() {
+        // `tick` calls `update_core::check_available` (which may hit
+        // GitHub) and then publishes a HealthChanged event. With no
+        // event bus initialised in the test process, publish_global
+        // must no-op. The HTTP call may succeed or fail depending on
+        // network availability — either branch is acceptable as long
+        // as `tick` returns cleanly.
+        tick().await;
+    }
+}

@@ -152,11 +152,13 @@ mod tests {
         RESTART_IN_PROGRESS.store(previous, Ordering::SeqCst);
     }
 
-    #[test]
-    fn register_restart_subscriber_is_idempotent_and_safe_without_bus() {
-        // When the event bus isn't initialised in the test process the
-        // first call logs a warning and returns; subsequent calls must
-        // also be no-ops rather than registering duplicates.
+    #[tokio::test]
+    async fn register_restart_subscriber_is_idempotent_and_safe_without_bus() {
+        // `subscribe_global` reaches into a tokio broadcast channel, so a
+        // runtime must be present — hence `#[tokio::test]`. When the event
+        // bus isn't initialised in the test process the first call logs a
+        // warning and returns; subsequent calls must also be no-ops rather
+        // than registering duplicates.
         register_restart_subscriber();
         register_restart_subscriber();
     }
