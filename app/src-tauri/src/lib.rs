@@ -550,6 +550,53 @@ pub fn run() {
                 log::error!("[tray] failed to setup tray icon: {err}");
             }
 
+            // Dev convenience: if OPENHUMAN_DEV_AUTO_WHATSAPP=<account-id>
+            // is set, spawn that account's webview at startup so the
+            // CDP/IndexedDB scanner can iterate without manual UI clicks.
+            // The same account-id reuses the persistent data dir, so a
+            // previously-logged-in WhatsApp session stays logged in.
+            if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_WHATSAPP") {
+                let account_id = account_id.trim().to_string();
+                if !account_id.is_empty() {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        // Wait for the window to be fully ready.
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let state = app_handle
+                            .state::<webview_accounts::WebviewAccountsState>();
+                        let args = webview_accounts::OpenArgs {
+                            account_id: account_id.clone(),
+                            provider: "whatsapp".to_string(),
+                            url: None,
+                            bounds: Some(webview_accounts::Bounds {
+                                x: 100.0,
+                                y: 100.0,
+                                width: 900.0,
+                                height: 700.0,
+                            }),
+                        };
+                        match webview_accounts::webview_account_open(
+                            app_handle.clone(),
+                            state,
+                            args,
+                        )
+                        .await
+                        {
+                            Ok(label) => log::info!(
+                                "[dev-auto-whatsapp] spawned label={} account={}",
+                                label,
+                                account_id
+                            ),
+                            Err(e) => log::error!(
+                                "[dev-auto-whatsapp] failed: {} (account={})",
+                                e,
+                                account_id
+                            ),
+                        }
+                    });
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
