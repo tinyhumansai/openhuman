@@ -95,7 +95,10 @@ impl Default for VoiceServerConfig {
 /// The voice server runtime.
 pub struct VoiceServer {
     state: Arc<Mutex<ServerState>>,
-    cancel: CancellationToken,
+    /// Wrapped in `std::sync::Mutex` so that `stop()` can cancel the current
+    /// token and `fresh_cancel()` can swap in a new one — enabling restart
+    /// after logout without recreating the singleton.
+    cancel: std::sync::Mutex<CancellationToken>,
     config: VoiceServerConfig,
     transcription_count: Arc<std::sync::atomic::AtomicU64>,
     session_generation: Arc<std::sync::atomic::AtomicU64>,
@@ -109,13 +112,23 @@ impl VoiceServer {
     pub fn new(config: VoiceServerConfig) -> Self {
         Self {
             state: Arc::new(Mutex::new(ServerState::Stopped)),
-            cancel: CancellationToken::new(),
+            cancel: std::sync::Mutex::new(CancellationToken::new()),
             config,
             transcription_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             session_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
             recent_transcripts: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Replace the internal cancellation token with a fresh one so the server
+    /// can be re-started after a previous `stop()`.  Returns a clone of the
+    /// new token for use in the run loop.
+    fn fresh_cancel(&self) -> CancellationToken {
+        let fresh = CancellationToken::new();
+        // SAFETY: lock held briefly, only swaps a small struct.
+        *self.cancel.lock().expect("cancel lock poisoned") = fresh.clone();
+        fresh
     }
 
     /// Get the current server status.
@@ -133,6 +146,10 @@ impl VoiceServer {
     ///
     /// This is the main entry point for both embedded and standalone modes.
     pub async fn run(&self, app_config: &Config) -> Result<(), String> {
+        // Replace the cancellation token so a previously-stopped server can
+        // be restarted within the same process (e.g. after logout → re-login).
+        let cancel = self.fresh_cancel();
+
         info!(
             "{LOG_PREFIX} starting voice server: hotkey={} mode={:?}",
             self.config.hotkey, self.config.activation_mode
@@ -392,7 +409,7 @@ impl VoiceServer {
                     }
                 }
 
-                _ = self.cancel.cancelled() => {
+                _ = cancel.cancelled() => {
                     debug!("{LOG_PREFIX} cancellation received");
                     break;
                 }
@@ -409,7 +426,7 @@ impl VoiceServer {
     /// Stop the voice server.
     pub async fn stop(&self) {
         info!("{LOG_PREFIX} stopping voice server");
-        self.cancel.cancel();
+        self.cancel.lock().expect("cancel lock poisoned").cancel();
     }
 
     /// Spawn `process_recording` as a background task so the hotkey event
