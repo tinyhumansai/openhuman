@@ -870,4 +870,117 @@ mod tests {
             .expect("serialize");
         assert!(v.get("logs").is_some() || v.get("result").is_some());
     }
+
+    // ── Field builder helpers ────────────────────────────────────
+
+    #[test]
+    fn required_string_builds_required_string_field() {
+        let f = required_string("api_key", "Auth key");
+        assert_eq!(f.name, "api_key");
+        assert_eq!(f.comment, "Auth key");
+        assert!(f.required);
+        assert!(matches!(f.ty, TypeSchema::String));
+    }
+
+    #[test]
+    fn optional_string_builds_option_string_field() {
+        let f = optional_string("model", "model name");
+        assert!(!f.required);
+        match &f.ty {
+            TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::String)),
+            other => panic!("expected Option<String>, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn optional_bool_builds_option_bool_field() {
+        let f = optional_bool("enabled", "Whether enabled");
+        assert!(!f.required);
+        match &f.ty {
+            TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Bool)),
+            other => panic!("expected Option<Bool>, got {other:?}"),
+        }
+    }
+
+    // ── deserialize_params helper ────────────────────────────────
+
+    #[test]
+    fn deserialize_params_parses_model_settings_update() {
+        let mut m = Map::new();
+        m.insert("api_key".into(), Value::String("sk-123".into()));
+        m.insert(
+            "default_temperature".into(),
+            Value::Number(serde_json::Number::from_f64(0.7).unwrap()),
+        );
+        let out: ModelSettingsUpdate = deserialize_params(m).unwrap();
+        assert_eq!(out.api_key.as_deref(), Some("sk-123"));
+        assert_eq!(out.default_temperature, Some(0.7));
+        assert!(out.api_url.is_none());
+        assert!(out.default_model.is_none());
+    }
+
+    #[test]
+    fn deserialize_params_parses_memory_settings_update() {
+        let mut m = Map::new();
+        m.insert("backend".into(), Value::String("sqlite".into()));
+        m.insert("auto_save".into(), Value::Bool(true));
+        m.insert(
+            "embedding_dimensions".into(),
+            Value::Number(serde_json::Number::from(1536)),
+        );
+        let out: MemorySettingsUpdate = deserialize_params(m).unwrap();
+        assert_eq!(out.backend.as_deref(), Some("sqlite"));
+        assert_eq!(out.auto_save, Some(true));
+        assert_eq!(out.embedding_dimensions, Some(1536));
+    }
+
+    #[test]
+    fn deserialize_params_parses_workspace_onboarding_flag_params() {
+        let out: WorkspaceOnboardingFlagParams = deserialize_params(Map::new()).unwrap();
+        assert!(out.flag_name.is_none());
+
+        let mut m = Map::new();
+        m.insert("flag_name".into(), Value::String(".custom_marker".into()));
+        let out: WorkspaceOnboardingFlagParams = deserialize_params(m).unwrap();
+        assert_eq!(out.flag_name.as_deref(), Some(".custom_marker"));
+    }
+
+    #[test]
+    fn deserialize_params_parses_workspace_onboarding_flag_set_params() {
+        let mut m = Map::new();
+        m.insert("value".into(), Value::Bool(true));
+        let out: WorkspaceOnboardingFlagSetParams = deserialize_params(m).unwrap();
+        assert_eq!(out.value, true);
+        assert!(out.flag_name.is_none());
+    }
+
+    #[test]
+    fn deserialize_params_rejects_wrong_types_with_invalid_params_prefix() {
+        let mut m = Map::new();
+        m.insert(
+            "default_temperature".into(),
+            Value::String("not-a-number".into()),
+        );
+        let err = deserialize_params::<ModelSettingsUpdate>(m).unwrap_err();
+        assert!(err.starts_with("invalid params"));
+    }
+
+    #[test]
+    fn deserialize_params_requires_value_on_set_onboarding() {
+        let err = deserialize_params::<OnboardingCompletedSetParams>(Map::new()).unwrap_err();
+        assert!(err.contains("invalid params"));
+    }
+
+    #[test]
+    fn deserialize_params_rejects_missing_required_for_set_browser_allow_all() {
+        let err = deserialize_params::<SetBrowserAllowAllParams>(Map::new()).unwrap_err();
+        assert!(err.contains("invalid params"));
+    }
+
+    #[test]
+    fn default_onboarding_flag_constant_points_to_hidden_marker() {
+        // Keeps the constant's observable value pinned so tool behavior
+        // stays stable across refactors.
+        assert_eq!(DEFAULT_ONBOARDING_FLAG_NAME, ".skip_onboarding");
+    }
 }
