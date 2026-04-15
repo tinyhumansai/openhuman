@@ -186,9 +186,43 @@ impl AgentBuilder {
         self
     }
 
-    /// Sets the human-readable agent definition name used as the
-    /// `{agent}` prefix in session transcript filenames
-    /// (`sessions/DDMMYYYY/{agent}_{index}.md`).
+    /// Sets the agent definition id this session is running
+    /// (`welcome`, `orchestrator`, `skills_agent`, …).
+    ///
+    /// This value is stamped onto the built [`Agent`] and surfaces in
+    /// the following places:
+    ///
+    /// * **Transcript filename on disk** — `transcript::write_transcript`
+    ///   and `transcript::find_latest_transcript` use it as the
+    ///   `{agent}` prefix in `sessions/DDMMYYYY/{agent}_{index}.md`.
+    ///   Both the write path and the resume-lookup path read the same
+    ///   field on `self`, so a session is always self-consistent; the
+    ///   user-visible signal is which filename the transcript lands
+    ///   under. Leaving it at the legacy `"main"` fallback silently
+    ///   misfiles every non-orchestrator session under `main_*.md`.
+    /// * **Transcript metadata header** — `transcript::write_transcript`
+    ///   stamps it into the `<!-- session_transcript\nagent: {name}\n… -->`
+    ///   block at the top of every `.md` file. This is the ground-truth
+    ///   signal for "which agent definition ran this session" when
+    ///   inspecting transcripts after the fact.
+    /// * **[`PromptContext::agent_id`]** at prompt-build time (see
+    ///   `turn.rs`). Today only one prompt section reads this field —
+    ///   the `Connected Integrations` branch in `context/prompt.rs`
+    ///   that special-cases `skills_agent` vs every other agent — so
+    ///   the current user-visible impact of a wrong id is limited to
+    ///   the two bullets above. The stamped `prompt_builder` injected
+    ///   by [`Agent::from_config_for_agent`] is what actually drives
+    ///   prompt flavour per archetype, independent of this field. That
+    ///   said, any future prompt section that branches on a
+    ///   non-`skills_agent` id (e.g. welcome-specific banner, planner-
+    ///   specific rubric) would silently never fire if the field were
+    ///   left at `"main"`, so keeping it correctly stamped closes a
+    ///   latent foot-gun for code that hasn't been written yet.
+    ///
+    /// Callers building via [`Agent::from_config_for_agent`] get this
+    /// wired automatically inside `build_session_agent_inner`; direct
+    /// builder users (tests, CLI) must set it explicitly if they care
+    /// about any of the surfaces above.
     pub fn agent_definition_name(mut self, name: impl Into<String>) -> Self {
         self.agent_definition_name = Some(name.into());
         self
@@ -789,14 +823,32 @@ impl Agent {
         let effective_omit_profile = target_def.map(|def| def.omit_profile).unwrap_or(true);
         let effective_omit_memory_md = target_def.map(|def| def.omit_memory_md).unwrap_or(true);
 
-        // `agent_id` is not stamped onto the returned Agent here — the
-        // `event_channel` field on `Agent` is for transport identity
-        // (which channel the session belongs to: "web_channel", "cli",
-        // etc.), not the agent-definition id. Callers that want to
-        // record which definition they asked for should log it at
-        // call-site. The `[agent::builder]` info trace at the top of
-        // `from_config_for_agent` already captures this.
-        let _ = agent_id; // silence unused-warning if all code paths above move
+        // Stamp the resolved agent definition id onto the Agent via the
+        // builder. Without this call, `agent_definition_name` falls
+        // back to the legacy `"main"` default (see `AgentBuilder::build`)
+        // for every non-orchestrator caller. In the current codebase
+        // that is benign for the orchestrator (which is already aliased
+        // as `"main"` everywhere downstream) but causes two concrete
+        // bugs for the welcome agent, which is the only other id that
+        // reaches this function in practice:
+        //
+        //   1. Its session transcripts are misfiled on disk under
+        //      `sessions/DDMMYYYY/main_*.md` instead of `welcome_*.md`.
+        //   2. The `agent:` line inside each transcript's metadata
+        //      header stamps `agent: main` instead of `agent: welcome`.
+        //
+        // Skills_agent and every other typed sub-agent are unaffected
+        // because they never build via `from_config_for_agent` — they
+        // are spawned through `subagent_runner` which constructs its
+        // prompt and history directly.
+        //
+        // See the docstring on `AgentBuilder::agent_definition_name`
+        // for the full list of surfaces and the latent prompt-section
+        // foot-gun this call also closes.
+        log::debug!(
+            "[agent::builder] stamping agent_definition_name={} onto session agent",
+            agent_id
+        );
 
         Agent::builder()
             .provider(provider)
@@ -818,6 +870,7 @@ impl Agent {
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)
+            .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
             .omit_memory_md(effective_omit_memory_md)
             .build()
