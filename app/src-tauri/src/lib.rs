@@ -448,9 +448,29 @@ pub fn run() {
         // `use-mock-keychain` swaps the Keychain backend for an in-process
         // mock; `password-store=basic` is the equivalent for the password
         // manager. Both are no-ops on Windows/Linux, so safe to always set.
+        //
+        // `remote-debugging-port` exposes Chrome DevTools for every CEF
+        // webview (main window + per-account service views) at
+        //   http://localhost:9222
+        // — open that URL in any browser to pick a target. Right-click
+        // "Inspect" does not work on CEF child webviews on macOS, so this
+        // is the only reliable way to inspect IndexedDB / console / storage
+        // for the embedded WhatsApp/Slack/etc. webviews.
+        //
+        // `disable-web-security` turns off same-origin / CSP enforcement so
+        // our injected recipe scripts can round-trip through Tauri's IPC
+        // from inside third-party origins (web.whatsapp.com ships a strict
+        // `connect-src` that otherwise blocks the IPC fetch, dropping every
+        // api.log/ingest call). Safe here because every child webview is
+        // already a dedicated session we fully control — there's no user
+        // content being served cross-origin into our surface.
         .command_line_args::<&str, &str>([
             ("use-mock-keychain", None),
             ("password-store", Some("basic")),
+            ("remote-debugging-port", Some("9222")),
+            ("remote-allow-origins", Some("*")),
+            ("disable-web-security", None),
+            ("disable-site-isolation-trials", None),
         ]);
 
     builder

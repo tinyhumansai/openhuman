@@ -176,7 +176,8 @@ fn build_init_script(account_id: &str, provider: &str, recipe_js: &str) -> Strin
     // the values so escaping is safe. Order matters:
     //   1. UA spoof (must land BEFORE page JS reads `navigator`)
     //   2. Recipe context
-    //   3. Recipe runtime + per-provider recipe
+    //   3. Recipe runtime
+    //   4. Per-provider recipe
     let ctx = serde_json::json!({
         "accountId": account_id,
         "provider": provider,
@@ -270,6 +271,13 @@ pub async fn webview_account_open<R: Runtime>(
     let mut builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(url))
         .initialization_script(&init_script)
         .data_directory(data_dir);
+
+    // Always enable devtools on child webviews so recipe diagnostics and
+    // IndexedDB state can be inspected. Access on macOS is via
+    //   Safari → Develop → <App name> → <webview label>
+    // (the parent Tauri window's right-click "Inspect" does not propagate
+    // into child webviews on WKWebView).
+    builder = builder.devtools(true);
 
     if let Some(ua) = provider_user_agent(&args.provider) {
         builder = builder.user_agent(ua);

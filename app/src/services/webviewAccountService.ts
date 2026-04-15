@@ -22,15 +22,28 @@ interface RecipeEventPayload {
   ts?: number | null;
 }
 
+interface IngestMessage {
+  id?: string;
+  from?: string | null;
+  to?: string | null;
+  fromMe?: boolean;
+  body?: string | null;
+  type?: string | null;
+  timestamp?: number | null; // seconds since epoch
+  unread?: number;
+}
+
 interface IngestPayload {
-  messages?: Array<{
-    id?: string;
-    from?: string | null;
-    body?: string | null;
-    unread?: number;
-  }>;
+  messages?: IngestMessage[];
+  // Legacy DOM-scrape fields (kept for non-whatsapp providers).
   unread?: number;
   snapshotKey?: string;
+  // WPP-backed WhatsApp payload fields.
+  provider?: string;
+  chatId?: string;
+  chatName?: string | null;
+  day?: string; // YYYY-MM-DD UTC
+  isSeed?: boolean;
 }
 
 let unlisten: UnlistenFn | null = null;
@@ -116,6 +129,14 @@ async function persistIngestToMemory(
 ): Promise<void> {
   if (messages.length === 0) return;
 
+  // WhatsApp (wa-js backed) sends one ingest event per (chatId, day) — a
+  // stable key so repeated flushes of the same day upsert a single memory
+  // doc. All other providers still use the legacy snapshot pattern.
+  if (provider === 'whatsapp' && ingest.chatId && ingest.day) {
+    await persistWhatsappChatDay(accountId, ingest);
+    return;
+  }
+
   const namespace = `webview:${provider}:${accountId}`;
   const key = ingest.snapshotKey
     ? `${namespace}:${hashKey(ingest.snapshotKey)}`
@@ -151,6 +172,78 @@ async function persistIngestToMemory(
     log('memory: ingested %d messages into %s', messages.length, namespace);
   } catch (err) {
     errLog('memory write failed for %s: %o', namespace, err);
+  }
+}
+
+async function persistWhatsappChatDay(
+  accountId: string,
+  ingest: IngestPayload
+): Promise<void> {
+  const chatId = ingest.chatId as string;
+  const day = ingest.day as string;
+  const chatName = ingest.chatName ?? chatId;
+  const raw = ingest.messages ?? [];
+  if (raw.length === 0) return;
+
+  // Stable namespace + key: same (chat, day) always upserts the same doc.
+  const namespace = `whatsapp-web:${accountId}`;
+  const key = `${chatId}:${day}`;
+
+  const sorted = [...raw].sort(
+    (a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0)
+  );
+
+  const transcriptLines = sorted.map(m => {
+    const tsSec = m.timestamp ?? 0;
+    const hhmm = tsSec
+      ? new Date(tsSec * 1000).toISOString().slice(11, 16) + 'Z'
+      : '--:--';
+    const who = m.fromMe ? 'me' : (m.from ?? '?');
+    const body = (m.body ?? '').replace(/\r?\n/g, ' ').trim();
+    const kind = m.type && m.type !== 'chat' ? ` [${m.type}]` : '';
+    return `[${hhmm}] ${who}${kind}: ${body}`;
+  });
+
+  const header = `# WhatsApp — ${chatName} — ${day}\n` +
+    `chat_id: ${chatId}\n` +
+    `account_id: ${accountId}\n` +
+    `messages: ${sorted.length}\n\n`;
+  const content = header + transcriptLines.join('\n');
+
+  const title = `WhatsApp · ${chatName} · ${day}`;
+
+  try {
+    await callCoreRpc({
+      method: 'openhuman.memory_doc_ingest',
+      params: {
+        namespace,
+        key,
+        title,
+        content,
+        source_type: 'whatsapp-web',
+        priority: 'medium',
+        tags: ['whatsapp', 'chat-transcript', day],
+        metadata: {
+          provider: 'whatsapp',
+          account_id: accountId,
+          chat_id: chatId,
+          chat_name: chatName,
+          day,
+          message_count: sorted.length,
+          is_seed: !!ingest.isSeed,
+        },
+        category: 'core',
+      },
+    });
+    log(
+      'whatsapp: ingested %d msgs into %s key=%s (seed=%s)',
+      sorted.length,
+      namespace,
+      key,
+      !!ingest.isSeed
+    );
+  } catch (err) {
+    errLog('whatsapp memory write failed %s key=%s: %o', namespace, key, err);
   }
 }
 
