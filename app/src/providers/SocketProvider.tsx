@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import { useDaemonLifecycle } from '../hooks/useDaemonLifecycle';
+import { chatEventManager } from '../services/chatEventManager';
 import { socketService } from '../services/socketService';
 import { IS_DEV } from '../utils/config';
 import { useCoreState } from './CoreStateProvider';
@@ -42,11 +43,13 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
     if (token && token !== previousToken) {
       previousTokenRef.current = token;
       socketService.connect(token);
+      chatEventManager.init();
     }
 
     // Token was unset - disconnect
     if (!token && previousToken) {
       previousTokenRef.current = null;
+      chatEventManager.teardown();
       socketService.disconnect();
     }
   }, [token]);
@@ -56,6 +59,7 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
     return () => {
       const currentToken = snapshot.sessionToken;
       if (!currentToken) {
+        chatEventManager.teardown();
         socketService.disconnect();
       }
     };

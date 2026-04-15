@@ -14,6 +14,7 @@ import storage from 'redux-persist/lib/storage';
 
 import { IS_DEV } from '../utils/config';
 import channelConnectionsReducer from './channelConnectionsSlice';
+import inferenceReducer from './inferenceSlice';
 import socketReducer from './socketSlice';
 import threadReducer from './threadSlice';
 
@@ -31,6 +32,7 @@ export const store = configureStore({
   reducer: {
     socket: socketReducer,
     thread: threadReducer,
+    inference: inferenceReducer,
     channelConnections: persistedChannelConnectionsReducer,
   },
   middleware: getDefaultMiddleware => {

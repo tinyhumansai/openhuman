@@ -101,6 +101,19 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **UnifiedSkillCard** — All skill types (built-in, channels, 3rd party) use `UnifiedSkillCard` from `app/src/components/skills/SkillCard.tsx`. Secondary actions use an overflow menu. `data-testid` attributes (`skill-sync-button-*`, `skill-debug-button-*`) must be preserved.
 - **SkillSearchBar + SkillCategoryFilter** — New components in `app/src/components/skills/` for search and category filtering on the Skills page.
 
+## Chat Event Manager & Inference State (Issue #577)
+
+- **Problem** — Chat processing stopped when switching tabs. Socket event listeners were mounted inside `Conversations.tsx`, so navigating away removed them mid-inference.
+- **Fix** — Created `app/src/services/chatEventManager.ts` as a global singleton that owns all `chat:*` socket subscriptions. `SocketProvider` now starts/stops the manager alongside the socket connection. `Conversations.tsx` is a pure consumer.
+- **`inferenceSlice`** — `app/src/store/inferenceSlice.ts` holds per-thread sending/tool timeline/inference status/streaming state in Redux so it survives route remounts. Conversations reads from Redux; it does not own socket state.
+- **Do not** add `chat:*` socket listeners anywhere except `chatEventManager.ts`.
+- **Do not** store in-flight inference state in component-local state (`useState`) — it won't survive tab switches.
+
+## E2E / Mac2 Gotchas
+
+- **`browser.execute` is not supported on Mac2/Appium** — Never use `execute`-script in E2E specs. Use element helper flows (`clickNativeButton`, etc.) for all interactions.
+- **XPath text selectors need XML escaping** — Characters like `&` in accessibility labels must be escaped (e.g. `&amp;`) in XPath expressions or selector matching silently fails. The helper in `element-helpers.ts` now handles this.
+
 ## Environment
 
 - **Core sidecar port** — `7788` (default). Check with `lsof -i :7788`.

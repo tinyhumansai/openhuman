@@ -26,20 +26,23 @@ import { isTauriDriver } from './platform';
 // ---------------------------------------------------------------------------
 
 function xpathStringLiteral(text: string): string {
-  if (!text.includes('"')) return `"${text}"`;
-  if (!text.includes("'")) return `'${text}'`;
+  const escapeXml = (value: string) =>
+    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  if (!text.includes('"')) return `"${escapeXml(text)}"`;
+  if (!text.includes("'")) return `'${escapeXml(text)}'`;
   const parts: string[] = [];
   let current = '';
   for (const ch of text) {
     if (ch === '"') {
-      if (current) parts.push(`"${current}"`);
+      if (current) parts.push(`"${escapeXml(current)}"`);
       parts.push("'\"'");
       current = '';
     } else {
       current += ch;
     }
   }
-  if (current) parts.push(`"${current}"`);
+  if (current) parts.push(`"${escapeXml(current)}"`);
   return `concat(${parts.join(',')})`;
 }
 
