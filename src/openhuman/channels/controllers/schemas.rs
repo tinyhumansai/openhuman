@@ -61,6 +61,12 @@ struct TelegramLoginCheckParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct DiscordLinkCheckParams {
+    link_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DiscordListChannelsParams {
     guild_id: String,
 }
@@ -123,6 +129,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("test"),
         schemas("telegram_login_start"),
         schemas("telegram_login_check"),
+        schemas("discord_link_start"),
+        schemas("discord_link_check"),
         schemas("discord_list_guilds"),
         schemas("discord_list_channels"),
         schemas("discord_check_permissions"),
@@ -167,6 +175,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("telegram_login_check"),
             handler: handle_telegram_login_check,
+        },
+        RegisteredController {
+            schema: schemas("discord_link_start"),
+            handler: handle_discord_link_start,
+        },
+        RegisteredController {
+            schema: schemas("discord_link_check"),
+            handler: handle_discord_link_check,
         },
         RegisteredController {
             schema: schemas("discord_list_guilds"),
@@ -298,6 +314,29 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![required_string(
                 "linkToken",
                 "The link token returned by telegram_login_start.",
+            )],
+            outputs: vec![json_output(
+                "result",
+                "Object with linked (bool) and optional details.",
+            )],
+        },
+        "discord_link_start" => ControllerSchema {
+            namespace: "channels",
+            function: "discord_link_start",
+            description: "Create a Discord link token the user pastes into Discord as `!start <token>` to link their account.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "result",
+                "Object with linkToken and instructions.",
+            )],
+        },
+        "discord_link_check" => ControllerSchema {
+            namespace: "channels",
+            function: "discord_link_check",
+            description: "Check whether the Discord managed link has been completed (discordId set on user profile).",
+            inputs: vec![required_string(
+                "linkToken",
+                "The link token returned by discord_link_start.",
             )],
             outputs: vec![json_output(
                 "result",
@@ -486,6 +525,21 @@ fn handle_telegram_login_check(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let p = deserialize_params::<TelegramLoginCheckParams>(params)?;
         to_json(ops::telegram_login_check(&config, p.link_token.trim()).await?)
+    })
+}
+
+fn handle_discord_link_start(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(ops::discord_link_start(&config).await?)
+    })
+}
+
+fn handle_discord_link_check(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let p = deserialize_params::<DiscordLinkCheckParams>(params)?;
+        to_json(ops::discord_link_check(&config, p.link_token.trim()).await?)
     })
 }
 

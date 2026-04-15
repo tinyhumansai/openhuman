@@ -35,6 +35,7 @@ pub(crate) mod self_healing;
 pub mod session;
 pub(crate) mod session_queue;
 pub mod subagent_runner;
+pub(crate) mod tool_filter;
 mod tool_loop;
 
 pub use definition::{

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { useDaemonLifecycle } from '../hooks/useDaemonLifecycle';
 import { chatEventManager } from '../services/chatEventManager';
+import { callCoreRpc } from '../services/coreRpcClient';
 import { socketService } from '../services/socketService';
 import { IS_DEV } from '../utils/config';
 import { useCoreState } from './CoreStateProvider';
@@ -44,6 +45,17 @@ const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       previousTokenRef.current = token;
       socketService.connect(token);
       chatEventManager.init();
+      // Also connect the Rust sidecar to backend-alphahuman so inbound
+      // Discord/Telegram managed-DM messages reach the agent loop.
+      void callCoreRpc({ method: 'openhuman.socket_connect_with_session', params: {} }).catch(
+        (err: unknown) => {
+          // Non-fatal: sidecar may not be running yet or backend unreachable.
+          console.error(
+            '[SocketProvider] openhuman.socket_connect_with_session: RPC connection failed (non-fatal) — sidecar may not be running yet or backend unreachable',
+            err
+          );
+        }
+      );
     }
 
     // Token was unset - disconnect

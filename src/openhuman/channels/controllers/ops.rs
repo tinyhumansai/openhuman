@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::api::config::effective_api_url;
 use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
-use crate::openhuman::config::{Config, TelegramConfig};
+use crate::openhuman::config::{Config, DiscordConfig, TelegramConfig};
 use crate::openhuman::credentials;
 use crate::rpc::RpcOutcome;
 
@@ -92,6 +92,22 @@ fn parse_allowed_users(value: Option<&Value>) -> Vec<String> {
     out
 }
 
+fn parse_optional_bool(value: Option<&Value>) -> Option<bool> {
+    match value {
+        Some(Value::Bool(b)) => Some(*b),
+        Some(Value::Number(n)) => n.as_i64().map(|v| v != 0),
+        Some(Value::String(s)) => {
+            let normalized = s.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// List all available channel definitions.
 pub async fn list_channels() -> Result<RpcOutcome<Vec<ChannelDefinition>>, String> {
     Ok(RpcOutcome::new(all_channel_definitions(), vec![]))
@@ -131,7 +147,7 @@ pub async fn connect_channel(
                 status: "pending_auth".to_string(),
                 restart_required: false,
                 auth_action: Some(action.to_string()),
-                message: Some(format!("Initiate '{}' auth flow on the frontend.", action)),
+                message: Some(format!("Initiate '{}' auth flow on the frontend. Ignore if you are already in the auth flow.", action)),
             },
             vec![],
         ));
@@ -216,6 +232,67 @@ pub async fn connect_channel(
             mention_only,
             "[telegram] connect_channel: wrote channels_config.telegram; restart core for listener to load token"
         );
+    } else if channel_id == "discord" && auth_mode == ChannelAuthMode::BotToken {
+        let bot_token = creds_map
+            .get("bot_token")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "missing required bot_token".to_string())?
+            .to_string();
+
+        let guild_id = creds_map
+            .get("guild_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let discord_channel_id = creds_map
+            .get("channel_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        let mut persisted = config.clone();
+        let existing = persisted.channels_config.discord.as_ref();
+        let parsed_allowed_users = parse_allowed_users(creds_map.get("allowed_users"));
+        let allowed_users = if parsed_allowed_users.is_empty() {
+            existing
+                .map(|cfg| cfg.allowed_users.clone())
+                .unwrap_or_default()
+        } else {
+            parsed_allowed_users
+        };
+        let allowed_users_count = allowed_users.len();
+        let listen_to_bots = parse_optional_bool(creds_map.get("listen_to_bots"))
+            .unwrap_or_else(|| existing.map(|cfg| cfg.listen_to_bots).unwrap_or(false));
+        let mention_only = parse_optional_bool(creds_map.get("mention_only"))
+            .unwrap_or_else(|| existing.map(|cfg| cfg.mention_only).unwrap_or(false));
+
+        persisted.channels_config.discord = Some(DiscordConfig {
+            bot_token,
+            guild_id: guild_id.clone(),
+            channel_id: discord_channel_id.clone(),
+            allowed_users,
+            listen_to_bots,
+            mention_only,
+        });
+
+        persisted
+            .save()
+            .await
+            .map_err(|e| format!("failed to persist discord config.toml: {e}"))?;
+
+        tracing::info!(
+            target: "openhuman::channels",
+            has_guild_id = guild_id.is_some(),
+            has_channel_id = discord_channel_id.is_some(),
+            allowed_users_count,
+            listen_to_bots,
+            mention_only,
+            "[discord] connect_channel: wrote channels_config.discord; restart core for listener to load token"
+        );
     }
 
     Ok(RpcOutcome::single_log(
@@ -246,6 +323,32 @@ pub async fn disconnect_channel(
     credentials::ops::remove_provider_credentials(config, &provider_key, None)
         .await
         .map_err(|e| format!("failed to remove credentials: {e}"))?;
+
+    if channel_id == "telegram" && auth_mode == ChannelAuthMode::BotToken {
+        let mut persisted = config.clone();
+        if persisted.channels_config.telegram.take().is_some() {
+            persisted
+                .save()
+                .await
+                .map_err(|e| format!("failed to clear telegram config.toml: {e}"))?;
+            tracing::info!(
+                target: "openhuman::channels",
+                "[telegram] disconnect_channel: cleared channels_config.telegram"
+            );
+        }
+    } else if channel_id == "discord" && auth_mode == ChannelAuthMode::BotToken {
+        let mut persisted = config.clone();
+        if persisted.channels_config.discord.take().is_some() {
+            persisted
+                .save()
+                .await
+                .map_err(|e| format!("failed to clear discord config.toml: {e}"))?;
+            tracing::info!(
+                target: "openhuman::channels",
+                "[discord] disconnect_channel: cleared channels_config.discord"
+            );
+        }
+    }
 
     Ok(RpcOutcome::single_log(
         json!({
@@ -457,8 +560,8 @@ pub async fn telegram_login_check(
     let linked = telegram_id.is_some();
 
     log::debug!(
-        "[telegram-login] user profile telegramId: {:?}, linked={}",
-        telegram_id,
+        "[telegram-login] user profile has_telegram_id={}, linked={}",
+        telegram_id.is_some(),
         linked
     );
 
@@ -497,6 +600,161 @@ pub async fn telegram_login_check(
 
     Ok(RpcOutcome::new(
         TelegramLoginCheckResult {
+            linked,
+            details: if linked { Some(user_payload) } else { None },
+        },
+        vec![],
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Discord managed link flow
+// ---------------------------------------------------------------------------
+
+/// Result from `discord_link_start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscordLinkStartResult {
+    /// The short-lived link token to paste into Discord.
+    pub link_token: String,
+    /// Human-readable instruction shown to the user.
+    pub instructions: String,
+}
+
+/// Result from `discord_link_check`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscordLinkCheckResult {
+    /// Whether the Discord account has been linked to the app user.
+    pub linked: bool,
+    /// Backend-provided status payload (may include discordId, etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+}
+
+/// Step 1: Create a Discord channel link token.
+///
+/// Returns a short-lived token the user pastes into Discord as `!start <token>`.
+/// Requires an active session JWT.
+pub async fn discord_link_start(
+    config: &Config,
+) -> Result<RpcOutcome<DiscordLinkStartResult>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?
+        .ok_or_else(|| "session JWT required; complete login first".to_string())?;
+
+    log::debug!("[discord-link] creating channel link token via {}", api_url);
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let payload = client
+        .create_channel_link_token("discord", &jwt)
+        .await
+        .map_err(|e| format!("failed to create Discord link token: {e}"))?;
+
+    let link_token = payload
+        .get("linkToken")
+        .or_else(|| payload.get("token"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            format!(
+                "backend response missing linkToken field: {}",
+                serde_json::to_string(&payload).unwrap_or_default()
+            )
+        })?
+        .trim()
+        .to_string();
+
+    if link_token.is_empty() {
+        return Err("backend returned empty link token".to_string());
+    }
+
+    let instructions =
+        format!("In Discord, send this message to the OpenHuman bot: !start {link_token}");
+
+    log::debug!(
+        "[discord-link] link token created, length={}",
+        link_token.len()
+    );
+
+    Ok(RpcOutcome::new(
+        DiscordLinkStartResult {
+            link_token,
+            instructions,
+        },
+        vec![],
+    ))
+}
+
+/// Step 2: Check whether the user has completed the Discord link.
+///
+/// Polls `GET /auth/me` and checks whether the user profile now has a `discordId`.
+/// On success, stores a `channel:discord:managed_dm` credential marker locally.
+pub async fn discord_link_check(
+    config: &Config,
+    _link_token: &str,
+) -> Result<RpcOutcome<DiscordLinkCheckResult>, String> {
+    let api_url = effective_api_url(&config.api_url);
+    let jwt = get_session_token(config)?.ok_or_else(|| "session JWT required".to_string())?;
+
+    log::debug!("[discord-link] checking if user profile has discordId via GET /auth/me");
+
+    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+    let user_payload = client
+        .fetch_current_user(&jwt)
+        .await
+        .map_err(|e| format!("failed to fetch user profile: {e}"))?;
+
+    let discord_id = user_payload
+        .get("discordId")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            user_payload
+                .get("discord_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        });
+
+    let linked = discord_id.is_some();
+
+    log::debug!(
+        "[discord-link] user profile has_discord_id={}, linked={}",
+        discord_id.is_some(),
+        linked
+    );
+
+    if linked {
+        let provider_key = credential_provider("discord", ChannelAuthMode::ManagedDm);
+        let discord_user_id = discord_id.unwrap_or("").to_string();
+
+        let mut fields_map = serde_json::Map::new();
+        fields_map.insert("linked".to_string(), Value::Bool(true));
+        if !discord_user_id.is_empty() {
+            fields_map.insert(
+                "discord_user_id".to_string(),
+                Value::String(discord_user_id),
+            );
+        }
+
+        credentials::ops::store_provider_credentials(
+            config,
+            &provider_key,
+            None,
+            Some("managed".to_string()),
+            Some(Value::Object(fields_map)),
+            Some(true),
+        )
+        .await
+        .map_err(|e| format!("failed to store Discord managed channel credentials: {e}"))?;
+
+        log::info!(
+            "[discord-link] Discord managed DM linked; credentials stored as {}",
+            provider_key
+        );
+    }
+
+    Ok(RpcOutcome::new(
+        DiscordLinkCheckResult {
             linked,
             details: if linked { Some(user_payload) } else { None },
         },
@@ -734,6 +992,16 @@ pub async fn discord_check_permissions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+
+    fn isolated_test_config() -> (tempfile::TempDir, Config) {
+        let tmp = tempdir().expect("failed to create temp dir");
+        let mut config = Config::default();
+        config.workspace_dir = tmp.path().join("workspace");
+        config.config_path = tmp.path().join("config.toml");
+        std::fs::create_dir_all(&config.workspace_dir).expect("failed to create workspace dir");
+        (tmp, config)
+    }
 
     #[tokio::test]
     async fn list_channels_returns_definitions() {
@@ -800,6 +1068,81 @@ mod tests {
         .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("bot_token"));
+    }
+
+    #[tokio::test]
+    async fn connect_discord_bot_token_persists_runtime_config() {
+        let (_tmp, config) = isolated_test_config();
+        let result = connect_channel(
+            &config,
+            "discord",
+            ChannelAuthMode::BotToken,
+            serde_json::json!({
+                "bot_token": "discord-token-123",
+                "guild_id": "guild-1",
+                "channel_id": "channel-2"
+            }),
+        )
+        .await
+        .expect("discord connect should succeed");
+
+        assert_eq!(result.value.status, "connected");
+        assert!(result.value.restart_required);
+
+        let raw = tokio::fs::read_to_string(&config.config_path)
+            .await
+            .expect("saved config should exist");
+        let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+        let discord = parsed
+            .get("channels_config")
+            .and_then(|v| v.get("discord"))
+            .and_then(toml::Value::as_table)
+            .expect("channels_config.discord should be persisted");
+
+        assert_eq!(
+            discord.get("bot_token").and_then(toml::Value::as_str),
+            Some("discord-token-123")
+        );
+        assert_eq!(
+            discord.get("guild_id").and_then(toml::Value::as_str),
+            Some("guild-1")
+        );
+        assert_eq!(
+            discord.get("channel_id").and_then(toml::Value::as_str),
+            Some("channel-2")
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_discord_bot_token_clears_runtime_config() {
+        let (_tmp, mut config) = isolated_test_config();
+        config.channels_config.discord = Some(DiscordConfig {
+            bot_token: "discord-token-abc".to_string(),
+            guild_id: Some("guild-1".to_string()),
+            channel_id: Some("channel-2".to_string()),
+            allowed_users: vec![],
+            listen_to_bots: false,
+            mention_only: false,
+        });
+        config
+            .save()
+            .await
+            .expect("preloaded config should be persisted");
+
+        disconnect_channel(&config, "discord", ChannelAuthMode::BotToken)
+            .await
+            .expect("discord disconnect should succeed");
+
+        let raw = tokio::fs::read_to_string(&config.config_path)
+            .await
+            .expect("saved config should exist");
+        let parsed: toml::Value = toml::from_str(&raw).expect("saved config should parse");
+        let discord = parsed.get("channels_config").and_then(|v| v.get("discord"));
+
+        assert!(
+            discord.is_none(),
+            "channels_config.discord should be removed after disconnect"
+        );
     }
 
     #[tokio::test]
