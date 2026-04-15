@@ -344,7 +344,10 @@ mod tests {
             .await
             .unwrap();
         assert!(out.value.registrations.is_empty());
-        assert!(out.logs.iter().any(|l| l.contains("registered tunnel uuid-1")));
+        assert!(out
+            .logs
+            .iter()
+            .any(|l| l.contains("registered tunnel uuid-1")));
     }
 
     #[tokio::test]
@@ -382,7 +385,9 @@ mod tests {
             Some("application/json")
         );
         assert_eq!(
-            resp.headers.get("x-openhuman-webhook-target").map(String::as_str),
+            resp.headers
+                .get("x-openhuman-webhook-target")
+                .map(String::as_str),
             Some("echo")
         );
         // Decode the body and check the echoed fields survived the round-trip.
@@ -417,8 +422,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = test_config(&tmp);
         for id in ["", "   "] {
-            assert!(get_tunnel(&config, id).await.unwrap_err().contains("id is required"));
-            assert!(delete_tunnel(&config, id).await.unwrap_err().contains("id is required"));
+            assert!(get_tunnel(&config, id)
+                .await
+                .unwrap_err()
+                .contains("id is required"));
+            assert!(delete_tunnel(&config, id)
+                .await
+                .unwrap_err()
+                .contains("id is required"));
             assert!(update_tunnel(&config, id, json!({}))
                 .await
                 .unwrap_err()
@@ -439,7 +450,10 @@ mod tests {
         let config = config_with_backend(&tmp, base);
         let out = list_tunnels(&config).await.unwrap();
         assert_eq!(out.value["tunnels"][0]["id"], json!("t-1"));
-        assert!(out.logs.iter().any(|l| l.contains("webhook tunnels fetched")));
+        assert!(out
+            .logs
+            .iter()
+            .any(|l| l.contains("webhook tunnels fetched")));
     }
 
     #[tokio::test]

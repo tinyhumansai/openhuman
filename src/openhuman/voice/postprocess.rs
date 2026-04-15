@@ -309,9 +309,7 @@ mod tests {
             .unwrap_or_else(|p| p.into_inner());
         let app = Router::new().route(
             "/api/generate",
-            post(|| async {
-                Json(json!({"model":"test","response":"   ","done": true}))
-            }),
+            post(|| async { Json(json!({"model":"test","response":"   ","done": true})) }),
         );
         let base = spawn_mock(app).await;
         let config = Config::default();
@@ -372,8 +370,7 @@ mod tests {
         let config = Config::default();
         let raw = "raw text";
         let result = with_ready_llm(base, &config, || async {
-            cleanup_transcription(&config, raw, Some("previous turn: check the oven"))
-                .await
+            cleanup_transcription(&config, raw, Some("previous turn: check the oven")).await
         })
         .await;
         if result.contains("Conversation context:") {

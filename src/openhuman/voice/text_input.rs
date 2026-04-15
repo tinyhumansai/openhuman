@@ -224,10 +224,7 @@ mod tests {
         assert_eq!(escape_applescript_string(r"a\b"), r"a\\b");
         // Backslash must be escaped BEFORE quotes so the order of
         // substitutions doesn't double-escape already-escaped quotes.
-        assert_eq!(
-            escape_applescript_string(r#"\"mix"#),
-            r#"\\\"mix"#
-        );
+        assert_eq!(escape_applescript_string(r#"\"mix"#), r#"\\\"mix"#);
     }
 
     #[cfg(target_os = "macos")]

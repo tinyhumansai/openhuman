@@ -437,7 +437,11 @@ mod tests {
     #[test]
     fn all_controller_schemas_entries_are_all_under_webhooks_namespace() {
         for s in all_controller_schemas() {
-            assert_eq!(s.namespace, "webhooks", "schema `{}` has wrong namespace", s.function);
+            assert_eq!(
+                s.namespace, "webhooks",
+                "schema `{}` has wrong namespace",
+                s.function
+            );
             assert!(
                 !s.description.trim().is_empty(),
                 "schema `{}` must have a description",
@@ -472,13 +476,21 @@ mod tests {
             clone.dedup();
             clone.len()
         };
-        assert_eq!(unique_count, names.len(), "duplicate function names: {names:?}");
+        assert_eq!(
+            unique_count,
+            names.len(),
+            "duplicate function names: {names:?}"
+        );
     }
 
     // ── schemas(function) per-arm coverage ───────────────────────
 
     fn required_input_names(s: &ControllerSchema) -> Vec<&'static str> {
-        s.inputs.iter().filter(|f| f.required).map(|f| f.name).collect()
+        s.inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect()
     }
 
     #[test]
@@ -519,7 +531,9 @@ mod tests {
                 .find(|f| f.name == optional)
                 .unwrap_or_else(|| panic!("missing optional `{optional}`"));
             assert!(!f.required);
-            assert!(matches!(&f.ty, TypeSchema::Option(inner) if matches!(**inner, TypeSchema::String)));
+            assert!(
+                matches!(&f.ty, TypeSchema::Option(inner) if matches!(**inner, TypeSchema::String))
+            );
         }
     }
 
@@ -538,7 +552,10 @@ mod tests {
     fn create_tunnel_requires_name_and_allows_optional_description() {
         let s = schemas("create_tunnel");
         assert_eq!(required_input_names(&s), vec!["name"]);
-        assert!(s.inputs.iter().any(|f| f.name == "description" && !f.required));
+        assert!(s
+            .inputs
+            .iter()
+            .any(|f| f.name == "description" && !f.required));
     }
 
     #[test]

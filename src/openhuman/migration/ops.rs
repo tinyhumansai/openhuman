@@ -42,7 +42,10 @@ mod tests {
         match result {
             Ok(outcome) => {
                 assert!(
-                    outcome.logs.iter().any(|l| l.contains("migration completed")),
+                    outcome
+                        .logs
+                        .iter()
+                        .any(|l| l.contains("migration completed")),
                     "expected 'migration completed' log, got logs: {:?}",
                     outcome.logs
                 );

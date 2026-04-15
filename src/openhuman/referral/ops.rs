@@ -199,9 +199,7 @@ mod tests {
     async fn claim_referral_posts_trimmed_code_and_drops_whitespace_fingerprint() {
         let app = Router::new().route(
             "/referral/claim",
-            post(|Json(body): Json<Value>| async move {
-                Json(json!({ "echoed": body }))
-            }),
+            post(|Json(body): Json<Value>| async move { Json(json!({ "echoed": body })) }),
         );
         let base = spawn_mock(app).await;
         let tmp = TempDir::new().unwrap();
@@ -226,9 +224,7 @@ mod tests {
     async fn claim_referral_forwards_non_empty_device_fingerprint_trimmed() {
         let app = Router::new().route(
             "/referral/claim",
-            post(|Json(body): Json<Value>| async move {
-                Json(json!({ "echoed": body }))
-            }),
+            post(|Json(body): Json<Value>| async move { Json(json!({ "echoed": body })) }),
         );
         let base = spawn_mock(app).await;
         let tmp = TempDir::new().unwrap();

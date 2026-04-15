@@ -240,7 +240,10 @@ mod tests {
         let s = serde_json::to_string(&resp).unwrap();
         let back: WebhookResponseData = serde_json::from_str(&s).unwrap();
         assert_eq!(back.status_code, 200);
-        assert_eq!(back.headers.get("Content-Type").map(String::as_str), Some("text/plain"));
+        assert_eq!(
+            back.headers.get("Content-Type").map(String::as_str),
+            Some("text/plain")
+        );
         assert_eq!(back.body, "Zm9v");
     }
 

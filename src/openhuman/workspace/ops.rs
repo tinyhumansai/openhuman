@@ -121,8 +121,7 @@ mod tests {
     fn ensure_workspace_file_leaves_existing_file_untouched_without_force() {
         let tmp = tempdir().unwrap();
         std::fs::write(tmp.path().join("B.md"), "original").unwrap();
-        let status =
-            ensure_workspace_file(tmp.path(), "B.md", "new contents", false).expect("ok");
+        let status = ensure_workspace_file(tmp.path(), "B.md", "new contents", false).expect("ok");
         assert_eq!(status, "existing");
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("B.md")).unwrap(),
@@ -135,8 +134,7 @@ mod tests {
     fn ensure_workspace_file_overwrites_when_forced() {
         let tmp = tempdir().unwrap();
         std::fs::write(tmp.path().join("C.md"), "original").unwrap();
-        let status =
-            ensure_workspace_file(tmp.path(), "C.md", "new contents", true).expect("ok");
+        let status = ensure_workspace_file(tmp.path(), "C.md", "new contents", true).expect("ok");
         assert_eq!(status, "overwritten");
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("C.md")).unwrap(),
@@ -243,10 +241,9 @@ mod tests {
         assert!(created.is_empty(), "no files should be re-created");
         assert!(overwritten.is_empty(), "no files should be overwritten");
         assert!(
-            existing.iter().any(|v| v
-                .as_str()
-                .unwrap_or("")
-                .ends_with("SOUL.md")),
+            existing
+                .iter()
+                .any(|v| v.as_str().unwrap_or("").ends_with("SOUL.md")),
             "SOUL.md should appear in the existing list"
         );
 

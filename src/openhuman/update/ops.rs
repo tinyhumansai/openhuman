@@ -142,8 +142,8 @@ mod tests {
 
     #[test]
     fn validate_download_url_rejects_non_https_schemes() {
-        let err =
-            validate_download_url("http://github.com/owner/repo/releases/download/v1/x").unwrap_err();
+        let err = validate_download_url("http://github.com/owner/repo/releases/download/v1/x")
+            .unwrap_err();
         assert!(err.contains("must use HTTPS"), "got: {err}");
     }
 

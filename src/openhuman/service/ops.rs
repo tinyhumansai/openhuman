@@ -102,7 +102,10 @@ mod tests {
         // No assertion on `show_tray` value — defaults vary by build.
         // The contract under test is that the function returns Ok with
         // the canonical log line and a deterministic struct shape.
-        assert!(out.logs.iter().any(|l| l.contains("daemon host config loaded")));
+        assert!(out
+            .logs
+            .iter()
+            .any(|l| l.contains("daemon host config loaded")));
         let _ = out.value.show_tray;
     }
 
@@ -121,7 +124,10 @@ mod tests {
             .any(|l| l.contains("daemon host config saved")));
 
         let loaded = daemon_host_get(&config).await.unwrap();
-        assert!(!loaded.value.show_tray, "set→get round-trip must observe the persisted value");
+        assert!(
+            !loaded.value.show_tray,
+            "set→get round-trip must observe the persisted value"
+        );
 
         // Flip it back and confirm the toggle round-trips too.
         let saved = daemon_host_set(&config, true).await.unwrap();

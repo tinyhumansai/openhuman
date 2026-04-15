@@ -172,7 +172,8 @@ mod tests {
         // key keep working) and preserve the None round-trip.
         let parsed: ReadFieldParams = serde_json::from_value(json!({})).unwrap();
         assert!(parsed.include_bounds.is_none());
-        let parsed: ReadFieldParams = serde_json::from_value(json!({"include_bounds": true})).unwrap();
+        let parsed: ReadFieldParams =
+            serde_json::from_value(json!({"include_bounds": true})).unwrap();
         assert_eq!(parsed.include_bounds, Some(true));
     }
 
