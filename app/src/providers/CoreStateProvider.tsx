@@ -97,11 +97,22 @@ function normalizeSnapshot(
   };
 }
 
+function toSignedOutSnapshot(snapshot: CoreAppSnapshot): CoreAppSnapshot {
+  return {
+    ...snapshot,
+    auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
+    sessionToken: null,
+    currentUser: null,
+    onboardingCompleted: false,
+  };
+}
+
 export default function CoreStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<CoreState>(() => getCoreStateSnapshot());
   const snapshotRequestIdRef = useRef(0);
   const teamsRequestIdRef = useRef(0);
   const memoryTokenRef = useRef<string | null>(state.snapshot.sessionToken);
+  const logoutGuardUntilRef = useRef(0);
   const bootstrapFailCountRef = useRef(0);
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
 
@@ -116,22 +127,31 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   const refreshCore = useCallback(async () => {
     const requestId = ++snapshotRequestIdRef.current;
     const snapshot = normalizeSnapshot(await fetchCoreAppSnapshot());
+    if (!snapshot.sessionToken) {
+      logoutGuardUntilRef.current = 0;
+    }
     commitState(previous => {
       if (requestId !== snapshotRequestIdRef.current) {
         return previous;
       }
 
+      const shouldIgnoreTokenDuringLogout =
+        Date.now() < logoutGuardUntilRef.current &&
+        !previous.snapshot.sessionToken &&
+        Boolean(snapshot.sessionToken);
+      const nextSnapshot = shouldIgnoreTokenDuringLogout ? toSignedOutSnapshot(snapshot) : snapshot;
+
       const previousIdentity = snapshotIdentity(previous.snapshot);
-      const nextIdentity = snapshotIdentity(snapshot);
+      const nextIdentity = snapshotIdentity(nextSnapshot);
       const shouldClearScopedCaches =
         previousIdentity !== nextIdentity ||
-        (previous.snapshot.auth.isAuthenticated && !snapshot.auth.isAuthenticated);
+        (previous.snapshot.auth.isAuthenticated && !nextSnapshot.auth.isAuthenticated);
 
       return {
         ...previous,
         isBootstrapping: false,
         isReady: true,
-        snapshot,
+        snapshot: nextSnapshot,
         teams: shouldClearScopedCaches ? [] : previous.teams,
         teamMembersById: shouldClearScopedCaches ? {} : previous.teamMembersById,
         teamInvitesById: shouldClearScopedCaches ? {} : previous.teamInvitesById,
@@ -269,6 +289,46 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     };
   }, [commitState, refresh, refreshTeams]);
 
+  useEffect(() => {
+    const onSessionTokenUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ sessionToken?: string | null }>;
+      const token = customEvent.detail?.sessionToken;
+      if (!token) {
+        return;
+      }
+
+      snapshotRequestIdRef.current += 1;
+      logoutGuardUntilRef.current = 0;
+
+      memoryTokenRef.current = token;
+      commitState(previous => ({
+        ...previous,
+        isBootstrapping: false,
+        isReady: true,
+        snapshot: {
+          ...previous.snapshot,
+          auth: { ...previous.snapshot.auth, isAuthenticated: true },
+          sessionToken: token,
+        },
+      }));
+
+      void refresh().catch(err => {
+        log('refresh failed after deep-link session update: %O', sanitizeError(err));
+      });
+    };
+
+    window.addEventListener(
+      'core-state:session-token-updated',
+      onSessionTokenUpdated as EventListener
+    );
+    return () => {
+      window.removeEventListener(
+        'core-state:session-token-updated',
+        onSessionTokenUpdated as EventListener
+      );
+    };
+  }, [commitState, refresh]);
+
   const setAnalyticsEnabled = useCallback(
     async (enabled: boolean) => {
       await openhumanUpdateAnalyticsSettings({ enabled });
@@ -312,6 +372,7 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
 
   const storeSessionToken = useCallback(
     async (token: string, user?: object) => {
+      logoutGuardUntilRef.current = 0;
       await storeSession(token, user ?? {});
       try {
         await syncMemoryClientToken(token);
@@ -328,31 +389,17 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   );
 
   const clearSession = useCallback(async () => {
-    // Bump the snapshot request counter before doing anything else so that
-    // any snapshot poll already in flight when the user clicked logout is
-    // invalidated on return — otherwise its stale "authenticated" result
-    // would clobber our cleared state a few hundred ms after logout.
+    logoutGuardUntilRef.current = Date.now() + 5_000;
     snapshotRequestIdRef.current += 1;
-    await tauriLogout();
-    // Optimistic local clear for instant UI response.
     commitState(previous => ({
       ...previous,
       teams: [],
       teamMembersById: {},
       teamInvitesById: {},
-      snapshot: {
-        ...previous.snapshot,
-        auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
-        sessionToken: null,
-        currentUser: null,
-        onboardingCompleted: false,
-      },
+      snapshot: toSignedOutSnapshot(previous.snapshot),
     }));
     memoryTokenRef.current = null;
-    // Re-pull the authoritative snapshot from the core so the frontend
-    // cache matches whatever the core now reports. This mirrors the pattern
-    // used by storeSessionToken and ensures any downstream consumer reading
-    // from the snapshot sees the post-logout state immediately.
+    await tauriLogout();
     await refresh().catch(err => {
       log('refresh failed after clearSession: %O', sanitizeError(err));
     });

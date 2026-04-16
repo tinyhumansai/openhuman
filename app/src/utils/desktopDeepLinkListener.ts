@@ -2,12 +2,19 @@ import { isTauri as coreIsTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link';
 
-import { getCoreStateSnapshot } from '../lib/coreState/store';
+import { getCoreStateSnapshot, patchCoreStateSnapshot } from '../lib/coreState/store';
 import { consumeLoginToken } from '../services/api/authApi';
 import { buildManualSentryEvent, enqueueError } from '../services/errorReportQueue';
+import {
+  beginDeepLinkAuthProcessing,
+  completeDeepLinkAuthProcessing,
+  failDeepLinkAuthProcessing,
+} from '../store/deepLinkAuthState';
 import { evaluateOAuthAppVersionGate } from './oauthAppVersionGate';
 import { openUrl } from './openUrl';
 import { storeSession } from './tauriCommands';
+
+const SESSION_TOKEN_UPDATED_EVENT = 'core-state:session-token-updated';
 
 const focusMainWindow = async () => {
   try {
@@ -36,6 +43,12 @@ const waitForAuthReadiness = async (maxAttempts = 10, delayMs = 150) => {
   console.warn('[DeepLink][auth] readiness timeout; continuing');
 };
 
+const applySessionToken = async (sessionToken: string): Promise<void> => {
+  await storeSession(sessionToken, {});
+  patchCoreStateSnapshot({ snapshot: { sessionToken } });
+  window.dispatchEvent(new CustomEvent(SESSION_TOKEN_UPDATED_EVENT, { detail: { sessionToken } }));
+};
+
 /**
  * Handle an `openhuman://auth?token=...` deep link for login.
  */
@@ -44,26 +57,24 @@ const handleAuthDeepLink = async (parsed: URL) => {
   const key = parsed.searchParams.get('key');
   if (!token) {
     console.warn('[DeepLink] URL did not contain a token query parameter');
+    failDeepLinkAuthProcessing('Sign-in callback was missing a token. Please try again.');
     return;
   }
 
-  console.log('[DeepLink][auth] received', {
-    tokenLength: token.length,
-    keyMode: parsed.searchParams.get('key') ?? 'consume',
-  });
+  beginDeepLinkAuthProcessing();
 
-  await focusMainWindow();
-  await waitForAuthReadiness();
+  try {
+    await focusMainWindow();
+    await waitForAuthReadiness();
 
-  if (key === 'auth') {
-    await storeSession(token, {});
-    console.log('[DeepLink][auth] bypass token applied');
+    const sessionToken = key === 'auth' ? token : await consumeLoginToken(token);
+    await applySessionToken(sessionToken);
+
     window.location.hash = '/home';
-  } else {
-    const jwtToken = await consumeLoginToken(token);
-    await storeSession(jwtToken, {});
-    console.log('[DeepLink][auth] login token consumed');
-    window.location.hash = '/home';
+    completeDeepLinkAuthProcessing();
+  } catch (error) {
+    console.error('[DeepLink][auth] failed to complete login:', error);
+    failDeepLinkAuthProcessing('Sign-in failed. Please try again.');
   }
 };
 
