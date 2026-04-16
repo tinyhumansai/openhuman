@@ -83,3 +83,39 @@ pub(crate) fn compute_max_in_flight_messages(channel_count: usize) -> usize {
             CHANNEL_MAX_IN_FLIGHT_MESSAGES,
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_max_in_flight_messages_zero_channels() {
+        let result = compute_max_in_flight_messages(0);
+        assert_eq!(result, CHANNEL_MIN_IN_FLIGHT_MESSAGES);
+    }
+
+    #[test]
+    fn compute_max_in_flight_messages_one_channel() {
+        let result = compute_max_in_flight_messages(1);
+        assert!(result >= CHANNEL_MIN_IN_FLIGHT_MESSAGES);
+        assert!(result <= CHANNEL_MAX_IN_FLIGHT_MESSAGES);
+    }
+
+    #[test]
+    fn compute_max_in_flight_messages_many_channels() {
+        let result = compute_max_in_flight_messages(100);
+        assert_eq!(result, CHANNEL_MAX_IN_FLIGHT_MESSAGES);
+    }
+
+    #[test]
+    fn compute_max_in_flight_messages_clamps_to_min() {
+        let result = compute_max_in_flight_messages(0);
+        assert!(result >= CHANNEL_MIN_IN_FLIGHT_MESSAGES);
+    }
+
+    #[test]
+    fn compute_max_in_flight_messages_clamps_to_max() {
+        let result = compute_max_in_flight_messages(usize::MAX);
+        assert!(result <= CHANNEL_MAX_IN_FLIGHT_MESSAGES);
+    }
+}
