@@ -188,9 +188,7 @@ async fn build_connection_state_block() -> String {
             return String::new();
         }
         Err(_) => {
-            tracing::debug!(
-                "[dispatch::connection_state] config load timed out — skipping block"
-            );
+            tracing::debug!("[dispatch::connection_state] config load timed out — skipping block");
             return String::new();
         }
     };
@@ -211,9 +209,7 @@ async fn build_connection_state_block() -> String {
     };
 
     if integrations.is_empty() {
-        tracing::debug!(
-            "[dispatch::connection_state] no integrations returned — skipping block"
-        );
+        tracing::debug!("[dispatch::connection_state] no integrations returned — skipping block");
         return String::new();
     }
 
