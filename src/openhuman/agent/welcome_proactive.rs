@@ -82,13 +82,20 @@ pub fn spawn_proactive_welcome(config: Config) {
 
 /// Returns a time-of-day greeting string based on the current UTC hour.
 ///
-/// Uses UTC to avoid a timezone-library dependency; the slight offset
-/// from the user's local time is acceptable for an informal greeting.
-/// Defaults to "Good afternoon" if the system clock is unavailable.
+/// Uses the machine local clock so greetings better match user
+/// expectations in desktop-first usage. Defaults to "Good afternoon"
+/// if the system clock is unavailable.
 fn time_of_day_greeting() -> &'static str {
     let hour = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| ((d.as_secs() / 3600) % 24) as u8)
+        .ok()
+        .and_then(|_| {
+            chrono::Local::now()
+                .format("%H")
+                .to_string()
+                .parse::<u8>()
+                .ok()
+        })
         .unwrap_or(14); // default to afternoon on clock error
     match hour {
         5..=11 => "Good morning",
