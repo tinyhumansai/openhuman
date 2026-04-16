@@ -194,6 +194,18 @@ export default function OverlayApp() {
     setBubble(null);
   }, [clearDismissTimer]);
 
+  /** Click handler for the orb: idle → bring main window to front; active → dismiss bubble. */
+  const handleOrbClick = useCallback(() => {
+    if (mode === 'idle') {
+      console.debug('[overlay] orb clicked while idle — activating main window');
+      invoke('activate_main_window').catch(err => {
+        console.error('[overlay] failed to activate main window:', err);
+      });
+    } else {
+      goIdle();
+    }
+  }, [mode, goIdle]);
+
   // ── Dictation: pressed / released ──────────────────────────────────────
   const handleDictationToggle = useCallback(
     (payload: DictationTogglePayload) => {
@@ -420,22 +432,55 @@ export default function OverlayApp() {
     userDraggedRef.current = false;
   }, []);
 
-  /** Initiate native window drag on mouse-down. */
-  const handleDragStart = useCallback(
+  // NSPanel (non-activating overlay) doesn't deliver synthesized `click`
+  // events to the webview, and calling `startDragging()` eagerly on
+  // mouse-down blocks `mouseup` from firing. We instead arm the drag only
+  // after the pointer moves past a small threshold, so a pure click fires
+  // `mouseup` normally and we can activate the main window there.
+  const pressRef = useRef<{ x: number; y: number; dragStarted: boolean } | null>(null);
+  const CLICK_SLOP_PX = 4;
+
+  /** Record mouse-down position; defer drag until the pointer actually moves. */
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    pressRef.current = { x: e.screenX, y: e.screenY, dragStarted: false };
+  }, []);
+
+  /** If pointer moves past the slop, escalate into a native window drag. */
+  const handleMouseMove = useCallback(
     async (e: React.MouseEvent) => {
-      // Only drag on primary button; ignore if a click handler should fire
-      if (e.button !== 0) return;
-      e.preventDefault();
+      const press = pressRef.current;
+      if (!press || press.dragStarted) return;
+      const dx = Math.abs(e.screenX - press.x);
+      const dy = Math.abs(e.screenY - press.y);
+      if (dx <= CLICK_SLOP_PX && dy <= CLICK_SLOP_PX) return;
+      press.dragStarted = true;
       try {
         const appWindow = getCurrentWindow();
         await appWindow.startDragging();
-        // After the drag completes, persist the new position
         void persistPosition();
       } catch {
         // startDragging can fail if not supported — fall through silently
       }
     },
     [persistPosition]
+  );
+
+  /**
+   * On mouse-up, treat as a click if no drag was initiated. Emulates
+   * `onClick` for the non-activating panel.
+   */
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent) => {
+      const press = pressRef.current;
+      pressRef.current = null;
+      if (e.button !== 0 || !press) return;
+      if (!press.dragStarted) {
+        console.debug('[overlay] orb mouseup → click');
+        handleOrbClick();
+      }
+    },
+    [handleOrbClick]
   );
 
   useEffect(() => {
@@ -549,8 +594,9 @@ export default function OverlayApp() {
                   ? 'Attention message'
                   : 'OpenHuman overlay'
             }
-            onClick={goIdle}
             onMouseDown={handleDragStart}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
             onDoubleClick={resetPosition}
             onMouseEnter={() => {
               setIsHovered(true);
