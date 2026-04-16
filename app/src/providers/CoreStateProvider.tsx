@@ -97,6 +97,16 @@ function normalizeSnapshot(
   };
 }
 
+function toSignedOutSnapshot(snapshot: CoreAppSnapshot): CoreAppSnapshot {
+  return {
+    ...snapshot,
+    auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
+    sessionToken: null,
+    currentUser: null,
+    onboardingCompleted: false,
+  };
+}
+
 export default function CoreStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<CoreState>(() => getCoreStateSnapshot());
   const snapshotRequestIdRef = useRef(0);
@@ -125,30 +135,17 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         return previous;
       }
 
-      const withinLogoutGuardWindow = Date.now() < logoutGuardUntilRef.current;
-      const shouldSuppressTokenRehydrate =
-        withinLogoutGuardWindow &&
+      const shouldIgnoreTokenDuringLogout =
+        Date.now() < logoutGuardUntilRef.current &&
         !previous.snapshot.sessionToken &&
         Boolean(snapshot.sessionToken);
-      const nextSnapshot = shouldSuppressTokenRehydrate
-        ? {
-            ...snapshot,
-            auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
-            sessionToken: null,
-            currentUser: null,
-            onboardingCompleted: false,
-          }
-        : snapshot;
+      const nextSnapshot = shouldIgnoreTokenDuringLogout ? toSignedOutSnapshot(snapshot) : snapshot;
 
       const previousIdentity = snapshotIdentity(previous.snapshot);
       const nextIdentity = snapshotIdentity(nextSnapshot);
       const shouldClearScopedCaches =
         previousIdentity !== nextIdentity ||
         (previous.snapshot.auth.isAuthenticated && !nextSnapshot.auth.isAuthenticated);
-
-      if (shouldSuppressTokenRehydrate) {
-        log('[logout] suppressed stale token during post-logout guard window');
-      }
 
       return {
         ...previous,
@@ -300,10 +297,8 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
         return;
       }
 
-      // Invalidate stale in-flight snapshot refreshes that started pre-login.
       snapshotRequestIdRef.current += 1;
       logoutGuardUntilRef.current = 0;
-      log('[deep-link-auth] optimistic session token sync from deep-link event');
 
       memoryTokenRef.current = token;
       commitState(previous => ({
@@ -394,35 +389,17 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
   );
 
   const clearSession = useCallback(async () => {
-    // Ignore stale auth snapshots for a short window immediately after logout
-    // to prevent token "resurrection" flicker in route guards.
     logoutGuardUntilRef.current = Date.now() + 5_000;
-
-    // Bump the snapshot request counter before doing anything else so that
-    // any snapshot poll already in flight when the user clicked logout is
-    // invalidated on return — otherwise its stale "authenticated" result
-    // would clobber our cleared state a few hundred ms after logout.
     snapshotRequestIdRef.current += 1;
-    // Optimistic local clear for instant UI response.
     commitState(previous => ({
       ...previous,
       teams: [],
       teamMembersById: {},
       teamInvitesById: {},
-      snapshot: {
-        ...previous.snapshot,
-        auth: { isAuthenticated: false, userId: null, user: null, profileId: null },
-        sessionToken: null,
-        currentUser: null,
-        onboardingCompleted: false,
-      },
+      snapshot: toSignedOutSnapshot(previous.snapshot),
     }));
     memoryTokenRef.current = null;
     await tauriLogout();
-    // Re-pull the authoritative snapshot from the core so the frontend
-    // cache matches whatever the core now reports. This mirrors the pattern
-    // used by storeSessionToken and ensures any downstream consumer reading
-    // from the snapshot sees the post-logout state immediately.
     await refresh().catch(err => {
       log('refresh failed after clearSession: %O', sanitizeError(err));
     });

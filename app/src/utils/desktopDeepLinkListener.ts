@@ -14,6 +14,8 @@ import { evaluateOAuthAppVersionGate } from './oauthAppVersionGate';
 import { openUrl } from './openUrl';
 import { storeSession } from './tauriCommands';
 
+const SESSION_TOKEN_UPDATED_EVENT = 'core-state:session-token-updated';
+
 const focusMainWindow = async () => {
   try {
     const window = getCurrentWindow();
@@ -41,6 +43,16 @@ const waitForAuthReadiness = async (maxAttempts = 10, delayMs = 150) => {
   console.warn('[DeepLink][auth] readiness timeout; continuing');
 };
 
+const applySessionToken = async (sessionToken: string): Promise<void> => {
+  await storeSession(sessionToken, {});
+  patchCoreStateSnapshot({ snapshot: { sessionToken } });
+  window.dispatchEvent(
+    new CustomEvent(SESSION_TOKEN_UPDATED_EVENT, {
+      detail: { sessionToken },
+    })
+  );
+};
+
 /**
  * Handle an `openhuman://auth?token=...` deep link for login.
  */
@@ -55,31 +67,12 @@ const handleAuthDeepLink = async (parsed: URL) => {
 
   beginDeepLinkAuthProcessing();
 
-  console.log('[DeepLink][auth] received', {
-    tokenLength: token.length,
-    keyMode: parsed.searchParams.get('key') ?? 'consume',
-  });
-
   try {
     await focusMainWindow();
     await waitForAuthReadiness();
 
-    if (key === 'auth') {
-      await storeSession(token, {});
-      patchCoreStateSnapshot({ snapshot: { sessionToken: token } });
-      window.dispatchEvent(
-        new CustomEvent('core-state:session-token-updated', { detail: { sessionToken: token } })
-      );
-      console.log('[DeepLink][auth] bypass token applied');
-    } else {
-      const jwtToken = await consumeLoginToken(token);
-      await storeSession(jwtToken, {});
-      patchCoreStateSnapshot({ snapshot: { sessionToken: jwtToken } });
-      window.dispatchEvent(
-        new CustomEvent('core-state:session-token-updated', { detail: { sessionToken: jwtToken } })
-      );
-      console.log('[DeepLink][auth] login token consumed');
-    }
+    const sessionToken = key === 'auth' ? token : await consumeLoginToken(token);
+    await applySessionToken(sessionToken);
 
     window.location.hash = '/home';
     completeDeepLinkAuthProcessing();

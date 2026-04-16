@@ -15,14 +15,10 @@ const SettingsHome = () => {
   const [error, setError] = useState<string | null>(null);
 
   const handleLogout = async () => {
-    let logoutSucceeded = true;
     try {
       await clearSession();
     } catch (err) {
-      logoutSucceeded = false;
       console.warn('[Settings] Rust logout failed:', err);
-    }
-    if (!logoutSucceeded) {
       setError('Failed to log out. Please try again.');
     }
   };
@@ -44,8 +40,6 @@ const SettingsHome = () => {
     await persistor.purge();
     window.localStorage.clear();
     window.sessionStorage.clear();
-
-    // Route guards will redirect signed-out users to the public entry route.
   };
 
   const handleLogoutAndClearData = async () => {
