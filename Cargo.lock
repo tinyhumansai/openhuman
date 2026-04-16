@@ -4307,7 +4307,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openhuman"
-version = "0.52.16"
+version = "0.52.17"
 dependencies = [
  "aes-gcm",
  "anyhow",

@@ -161,7 +161,13 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
     // status, `0` as the initial exchange count, and `false` for
     // `ready_to_complete` because this proactive invocation is the
     // opening greeting — no exchanges have happened yet.
-    let snapshot = build_status_snapshot(&config, "pending", 0, false);
+    let snapshot = build_status_snapshot(
+        &config,
+        "pending",
+        0,
+        false,
+        "fewer_than_min_exchanges_and_no_skills_connected",
+    );
     let snapshot_json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| anyhow::anyhow!("serialize status snapshot: {e}"))?;
     tracing::debug!(

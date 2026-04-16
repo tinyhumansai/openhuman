@@ -7,9 +7,9 @@
 //!
 //! 1. Welcome agent calls `check_status` on its first iteration. The
 //!    tool returns a read-only JSON snapshot — **no side effects, no
-//!    flag flips**. The snapshot includes a `ready_to_complete` bool
-//!    and an `exchange_count` uint so the agent knows whether it may
-//!    proceed.
+//!    flag flips**. The snapshot includes a `ready_to_complete` bool,
+//!    a `ready_to_complete_reason` string, and an `exchange_count`
+//!    uint so the agent knows whether it may proceed.
 //! 2. The agent converses with the user until `ready_to_complete` is
 //!    `true` (either ≥ 3 back-and-forth exchanges, or at least one
 //!    Composio integration connected).
@@ -82,6 +82,21 @@ pub(crate) fn engagement_criteria_met(exchange_count: u32, composio_connections:
     exchange_count >= MIN_EXCHANGES_TO_COMPLETE || composio_connections > 0
 }
 
+/// Build the user-facing error string for premature `complete` calls.
+///
+/// Kept as a pure helper so tests can lock wording and dynamic counters
+/// without requiring config/auth/composio setup.
+fn build_not_ready_to_complete_error(exchange_count: u32) -> String {
+    let remaining = MIN_EXCHANGES_TO_COMPLETE.saturating_sub(exchange_count);
+    format!(
+        "Cannot complete onboarding yet: User hasn't connected any skills and \
+         minimum exchanges not reached. Need at least \
+         {MIN_EXCHANGES_TO_COMPLETE} back-and-forth exchanges (currently \
+         {exchange_count}; {remaining} more needed) or at least one connected \
+         Composio integration."
+    )
+}
+
 /// Reset the welcome exchange counter to zero.
 ///
 /// Exposed for tests that need a clean slate. **Do not call in
@@ -137,6 +152,7 @@ impl Tool for CompleteOnboardingTool {
            \"chat_onboarding_completed\": false,          // still false until complete() succeeds\n\
            \"exchange_count\": 1,                         // how many user messages handled so far\n\
            \"ready_to_complete\": false,                  // true when criteria for complete() are met\n\
+           \"ready_to_complete_reason\": \"fewer_than_min_exchanges_and_no_skills_connected\", // reason for readiness state\n\
            \"onboarding_status\": \"pending\"             // \"pending\" | \"already_complete\" | \"unauthenticated\"\n\
          }\n\
          ```\n\
@@ -218,6 +234,8 @@ impl Tool for CompleteOnboardingTool {
 /// * `ready_to_complete` — `true` when either exchange_count ≥
 ///   [`MIN_EXCHANGES_TO_COMPLETE`] or at least one Composio
 ///   integration is connected.
+/// * `ready_to_complete_reason` — machine-friendly reason string that
+///   explains why completion is ready (or blocked).
 /// * `onboarding_status` — discriminator for the current state
 ///   (`"pending"`, `"already_complete"`, or `"unauthenticated"`).
 async fn check_status() -> anyhow::Result<ToolResult> {
@@ -241,7 +259,16 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         .len() as u32;
     let ready_to_complete = is_authenticated
         && !config.chat_onboarding_completed
-        && (exchange_count >= MIN_EXCHANGES_TO_COMPLETE || composio_connections > 0);
+        && engagement_criteria_met(exchange_count, composio_connections);
+    let ready_to_complete_reason = if !is_authenticated {
+        "unauthenticated".to_string()
+    } else if config.chat_onboarding_completed {
+        "already_complete".to_string()
+    } else if ready_to_complete {
+        "criteria_met".to_string()
+    } else {
+        "fewer_than_min_exchanges_and_no_skills_connected".to_string()
+    };
 
     tracing::debug!(
         authenticated = is_authenticated,
@@ -249,6 +276,7 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         exchange_count,
         composio_connections,
         ready_to_complete,
+        ready_to_complete_reason = ready_to_complete_reason.as_str(),
         "[complete_onboarding] check_status snapshot built"
     );
 
@@ -257,6 +285,7 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         onboarding_status,
         exchange_count,
         ready_to_complete,
+        &ready_to_complete_reason,
     );
     let payload = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| anyhow::anyhow!("Failed to serialize status snapshot: {e}"))?;
@@ -308,11 +337,14 @@ pub(crate) fn detect_auth(config: &Config) -> (bool, Value) {
 /// * `onboarding_status` — `"pending"` | `"already_complete"` | `"unauthenticated"`
 /// * `exchange_count` — messages dispatched to welcome agent this session
 /// * `ready_to_complete` — whether the `complete` action would succeed
+/// * `ready_to_complete_reason` — machine-friendly reason string for
+///   the readiness state.
 pub(crate) fn build_status_snapshot(
     config: &Config,
     onboarding_status: &str,
     exchange_count: u32,
     ready_to_complete: bool,
+    ready_to_complete_reason: &str,
 ) -> Value {
     let (is_authenticated, auth_source) = detect_auth(config);
 
@@ -399,6 +431,7 @@ pub(crate) fn build_status_snapshot(
         "chat_onboarding_completed": config.chat_onboarding_completed,
         "exchange_count": exchange_count,
         "ready_to_complete": ready_to_complete,
+        "ready_to_complete_reason": ready_to_complete_reason,
         "onboarding_status": onboarding_status,
     })
 }
@@ -454,7 +487,7 @@ async fn complete() -> anyhow::Result<ToolResult> {
         .await
         .len() as u32;
 
-    let criteria_met = exchange_count >= MIN_EXCHANGES_TO_COMPLETE || composio_connections > 0;
+    let criteria_met = engagement_criteria_met(exchange_count, composio_connections);
 
     tracing::debug!(
         exchange_count,
@@ -464,13 +497,8 @@ async fn complete() -> anyhow::Result<ToolResult> {
     );
 
     if !criteria_met {
-        let remaining = MIN_EXCHANGES_TO_COMPLETE.saturating_sub(exchange_count);
-        return Ok(ToolResult::error(format!(
-            "Cannot complete onboarding yet: the user needs either at least \
-             {MIN_EXCHANGES_TO_COMPLETE} back-and-forth exchanges (currently \
-             {exchange_count}; {remaining} more needed) or at least one connected \
-             Composio integration. Keep conversing to learn more about what the \
-             user wants to accomplish."
+        return Ok(ToolResult::error(build_not_ready_to_complete_error(
+            exchange_count,
         )));
     }
 
@@ -519,11 +547,21 @@ mod tests {
         // agent's prompt.md depends on. Dropping or renaming a field
         // breaks this test loudly.
         let config = Config::default();
-        let snapshot = build_status_snapshot(&config, "pending", 0, false);
+        let snapshot = build_status_snapshot(
+            &config,
+            "pending",
+            0,
+            false,
+            "fewer_than_min_exchanges_and_no_skills_connected",
+        );
 
         assert_eq!(snapshot["onboarding_status"], "pending");
         assert_eq!(snapshot["exchange_count"], 0);
         assert_eq!(snapshot["ready_to_complete"], false);
+        assert_eq!(
+            snapshot["ready_to_complete_reason"],
+            "fewer_than_min_exchanges_and_no_skills_connected"
+        );
         assert_eq!(snapshot["chat_onboarding_completed"], false);
         assert_eq!(snapshot["ui_onboarding_completed"], false);
         assert_eq!(snapshot["active_channel"], "web");
@@ -554,10 +592,21 @@ mod tests {
     #[test]
     fn build_status_snapshot_ready_to_complete_reflected() {
         let config = Config::default();
-        let snapshot = build_status_snapshot(&config, "pending", 5, true);
+        let snapshot = build_status_snapshot(&config, "pending", 5, true, "criteria_met");
         assert_eq!(snapshot["ready_to_complete"], true);
+        assert_eq!(snapshot["ready_to_complete_reason"], "criteria_met");
         assert_eq!(snapshot["exchange_count"], 5);
         assert_eq!(snapshot["onboarding_status"], "pending");
+    }
+
+    #[test]
+    fn build_status_snapshot_unauthenticated_reason_reflected() {
+        let config = Config::default();
+        let snapshot =
+            build_status_snapshot(&config, "unauthenticated", 0, false, "unauthenticated");
+        assert_eq!(snapshot["ready_to_complete"], false);
+        assert_eq!(snapshot["ready_to_complete_reason"], "unauthenticated");
+        assert_eq!(snapshot["onboarding_status"], "unauthenticated");
     }
 
     #[test]
@@ -601,6 +650,23 @@ mod tests {
         assert!(
             desc.contains("ready_to_complete"),
             "description should mention ready_to_complete"
+        );
+        assert!(
+            desc.contains("ready_to_complete_reason"),
+            "description should mention ready_to_complete_reason"
+        );
+    }
+
+    #[test]
+    fn premature_complete_error_mentions_skills_and_exchanges() {
+        let msg = build_not_ready_to_complete_error(1);
+        assert!(
+            msg.contains("User hasn't connected any skills and minimum exchanges not reached"),
+            "expected issue #596 wording in error message, got: {msg}"
+        );
+        assert!(
+            msg.contains("currently 1; 2 more needed"),
+            "expected dynamic exchange counters in error message, got: {msg}"
         );
     }
 
