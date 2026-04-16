@@ -350,6 +350,32 @@ pub async fn webview_account_open<R: Runtime>(
                     log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
                 }
             }
+        } else if args.provider == "discord" {
+            // Discord MITM uses CDP `Network.*` to capture HTTP API calls
+            // and gateway WebSocket frames — see `discord_scanner/mod.rs`
+            // for the event filter and emit shape.
+            if let Some(prefix) = provider_url(&args.provider) {
+                // The CDP target match is by URL prefix only — Discord
+                // navigates within `discord.com/...` so trim the channel
+                // path off the default and match the bare host root.
+                let prefix = prefix
+                    .split_once("/channels")
+                    .map(|(host, _)| host)
+                    .unwrap_or(prefix);
+                let registry = app
+                    .try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+                    .map(|s| s.inner().clone());
+                if let Some(registry) = registry {
+                    let app_clone = app.clone();
+                    let acct = args.account_id.clone();
+                    let prefix = prefix.to_string();
+                    tokio::spawn(async move {
+                        registry.ensure_scanner(app_clone, acct, prefix).await;
+                    });
+                } else {
+                    log::warn!("[webview-accounts] discord ScannerRegistry not in app state");
+                }
+            }
         }
     }
 
@@ -386,6 +412,13 @@ pub async fn webview_account_close<R: Runtime>(
         }
         if let Some(registry) =
             app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
+        if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
         {
             let registry = registry.inner().clone();
             let acct = args.account_id.clone();
@@ -428,6 +461,13 @@ pub async fn webview_account_purge<R: Runtime>(
         }
         if let Some(registry) =
             app.try_state::<std::sync::Arc<crate::slack_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
+        if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
         {
             let registry = registry.inner().clone();
             let acct = args.account_id.clone();
