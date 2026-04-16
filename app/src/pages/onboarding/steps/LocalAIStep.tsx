@@ -70,8 +70,7 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
-              strokeWidth={1.5}
-            >
+              strokeWidth={1.5}>
               <path
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -107,8 +106,8 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
             <p className="text-xs text-stone-700">
               <span className="font-semibold">Requires internet</span>
               <span className="text-stone-600">
-                &nbsp;— AI features need an active connection. You can opt into local AI in
-                Settings if preferred.
+                &nbsp;— AI features need an active connection. You can opt into local AI in Settings
+                if preferred.
               </span>
             </p>
           </div>
@@ -119,8 +118,7 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
         <button
           type="button"
           onClick={handleConsent}
-          className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors"
-        >
+          className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
           Use local AI anyway (not recommended for your device)
         </button>
       </div>
@@ -171,8 +169,7 @@ const LocalAIStep = ({ onNext, onBack: _onBack, onDownloadError }: LocalAIStepPr
       <button
         type="button"
         onClick={handleSkip}
-        className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors"
-      >
+        className="mt-3 w-full text-center text-xs text-stone-400 hover:text-stone-600 transition-colors">
         Skip — use cloud AI instead
       </button>
     </div>

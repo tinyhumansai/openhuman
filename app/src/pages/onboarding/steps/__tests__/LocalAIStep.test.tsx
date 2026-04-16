@@ -6,13 +6,15 @@ import LocalAIStep from '../LocalAIStep';
 
 vi.mock('../../../../utils/localAiBootstrap', () => ({
   bootstrapLocalAiWithRecommendedPreset: vi.fn().mockResolvedValue({} as never),
-  ensureRecommendedLocalAiPresetIfNeeded: vi.fn().mockResolvedValue({
-    presets: { recommend_disabled: false },
-    recommendedTier: 'ram_2_4gb',
-    selectedTier: null,
-    hadSelectedTier: false,
-    appliedTier: null,
-  } as never),
+  ensureRecommendedLocalAiPresetIfNeeded: vi
+    .fn()
+    .mockResolvedValue({
+      presets: { recommend_disabled: false },
+      recommendedTier: 'ram_2_4gb',
+      selectedTier: null,
+      hadSelectedTier: false,
+      appliedTier: null,
+    } as never),
 }));
 
 describe('LocalAIStep', () => {
