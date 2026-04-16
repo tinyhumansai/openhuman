@@ -1,7 +1,6 @@
 import type {
   PurgeResultData,
   Thread,
-  ThreadCreateData,
   ThreadDeleteData,
   ThreadMessage,
   ThreadMessagesData,
@@ -23,34 +22,21 @@ function unwrapEnvelope<T>(response: Envelope<T> | T): T {
 export const threadApi = {
   createNewThread: async (): Promise<Thread> => {
     const response = await callCoreRpc<Envelope<Thread>>({
-      method: 'openhuman.memory_thread_create_new',
+      method: 'openhuman.threads_create_new',
     });
     return unwrapEnvelope(response);
   },
 
   getThreads: async (): Promise<ThreadsListData> => {
     const response = await callCoreRpc<Envelope<ThreadsListData>>({
-      method: 'openhuman.memory_threads_list',
+      method: 'openhuman.threads_list',
     });
     return unwrapEnvelope(response);
   },
 
-  createThread: async (input: {
-    id: string;
-    title: string;
-    createdAt: string;
-  }): Promise<ThreadCreateData> => {
-    const response = await callCoreRpc<Envelope<Thread>>({
-      method: 'openhuman.memory_thread_upsert',
-      params: { id: input.id, title: input.title, created_at: input.createdAt },
-    });
-    const thread = unwrapEnvelope(response);
-    return { id: thread.id };
-  },
-
   getThreadMessages: async (threadId: string): Promise<ThreadMessagesData> => {
     const response = await callCoreRpc<Envelope<ThreadMessagesData>>({
-      method: 'openhuman.memory_messages_list',
+      method: 'openhuman.threads_messages_list',
       params: { thread_id: threadId },
     });
     return unwrapEnvelope(response);
@@ -58,7 +44,7 @@ export const threadApi = {
 
   appendMessage: async (threadId: string, message: ThreadMessage): Promise<ThreadMessage> => {
     const response = await callCoreRpc<Envelope<ThreadMessage>>({
-      method: 'openhuman.memory_message_append',
+      method: 'openhuman.threads_message_append',
       params: { thread_id: threadId, message },
     });
     return unwrapEnvelope(response);
@@ -70,7 +56,7 @@ export const threadApi = {
     extraMetadata: Record<string, unknown>
   ): Promise<ThreadMessage> => {
     const response = await callCoreRpc<Envelope<ThreadMessage>>({
-      method: 'openhuman.memory_message_update',
+      method: 'openhuman.threads_message_update',
       params: { thread_id: threadId, message_id: messageId, extra_metadata: extraMetadata },
     });
     return unwrapEnvelope(response);
@@ -78,7 +64,7 @@ export const threadApi = {
 
   deleteThread: async (threadId: string): Promise<ThreadDeleteData> => {
     const response = await callCoreRpc<Envelope<ThreadDeleteData>>({
-      method: 'openhuman.memory_thread_delete',
+      method: 'openhuman.threads_delete',
       params: { thread_id: threadId, deleted_at: new Date().toISOString() },
     });
     return unwrapEnvelope(response);
@@ -86,7 +72,7 @@ export const threadApi = {
 
   purge: async (): Promise<PurgeResultData> => {
     const response = await callCoreRpc<Envelope<PurgeResultData>>({
-      method: 'openhuman.memory_threads_purge',
+      method: 'openhuman.threads_purge',
     });
     return unwrapEnvelope(response);
   },
