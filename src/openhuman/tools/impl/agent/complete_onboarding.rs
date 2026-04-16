@@ -252,7 +252,12 @@ async fn check_status() -> anyhow::Result<ToolResult> {
         "[complete_onboarding] check_status snapshot built"
     );
 
-    let snapshot = build_status_snapshot(&config, onboarding_status, exchange_count, ready_to_complete);
+    let snapshot = build_status_snapshot(
+        &config,
+        onboarding_status,
+        exchange_count,
+        ready_to_complete,
+    );
     let payload = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| anyhow::anyhow!("Failed to serialize status snapshot: {e}"))?;
 
