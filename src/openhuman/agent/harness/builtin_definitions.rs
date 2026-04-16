@@ -64,6 +64,7 @@ pub fn fork_definition() -> AgentDefinition {
         disallowed_tools: vec![],
         skill_filter: None,
         category_filter: None,
+        extra_tools: vec![],
         // Fork inherits the parent's max iterations from the runtime.
         max_iterations: 15,
         timeout_secs: None,
@@ -116,6 +117,20 @@ mod tests {
         assert!(!def.omit_skills_catalog);
         assert!(!def.omit_profile);
         assert!(!def.omit_memory_md);
+    }
+
+    #[test]
+    fn skills_agent_has_extra_tools_for_export() {
+        let defs = all();
+        let skills = defs.iter().find(|d| d.id == "skills_agent").unwrap();
+        assert!(
+            skills.extra_tools.contains(&"file_write".to_string()),
+            "skills_agent must include file_write in extra_tools"
+        );
+        assert!(
+            skills.extra_tools.contains(&"csv_export".to_string()),
+            "skills_agent must include csv_export in extra_tools"
+        );
     }
 
     #[test]

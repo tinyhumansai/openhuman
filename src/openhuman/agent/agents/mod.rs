@@ -300,6 +300,15 @@ mod tests {
             Some(crate::openhuman::tools::ToolCategory::Skill)
         );
         assert!(!def.omit_safety_preamble);
+        // extra_tools lets file_write + csv_export bypass category_filter
+        assert!(
+            def.extra_tools.contains(&"file_write".to_string()),
+            "skills_agent needs file_write in extra_tools for oversized payload export"
+        );
+        assert!(
+            def.extra_tools.contains(&"csv_export".to_string()),
+            "skills_agent needs csv_export in extra_tools for oversized payload export"
+        );
     }
 
     #[test]

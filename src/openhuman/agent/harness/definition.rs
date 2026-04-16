@@ -117,6 +117,17 @@ pub struct AgentDefinition {
     #[serde(default)]
     pub category_filter: Option<ToolCategory>,
 
+    /// Additional system tool names to include even when `category_filter`
+    /// restricts to a different category. This allows an agent that is
+    /// primarily scoped to `Skill` tools (e.g. `skills_agent`) to also
+    /// access a handful of named system tools (e.g. `file_write`,
+    /// `csv_export`) without removing the category filter entirely.
+    ///
+    /// Tools listed here bypass the `category_filter` check but are still
+    /// subject to `disallowed_tools` and `ToolScope` restrictions.
+    #[serde(default)]
+    pub extra_tools: Vec<String>,
+
     // ── runtime limits ──────────────────────────────────────────────────
     /// Maximum number of tool iterations for this sub-agent's task.
     #[serde(default = "defaults::max_iterations")]
@@ -509,6 +520,7 @@ mod tests {
             disallowed_tools: vec![],
             skill_filter: None,
             category_filter: None,
+            extra_tools: vec![],
             max_iterations: 8,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,

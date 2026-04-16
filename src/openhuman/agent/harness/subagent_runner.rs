@@ -235,6 +235,29 @@ async fn run_typed_mode(
         category_filter,
     );
 
+    // ── Force-include extra_tools that bypass category_filter ──────────
+    //
+    // `extra_tools` lets an agent definition request specific system tools
+    // even when `category_filter` restricts to a different category. For
+    // example, `skills_agent` sets `category_filter = "skill"` but still
+    // needs `file_write` and `csv_export` for exporting oversized payloads.
+    if !definition.extra_tools.is_empty() {
+        let disallow_set: std::collections::HashSet<&str> = definition
+            .disallowed_tools
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        for (i, tool) in parent.all_tools.iter().enumerate() {
+            let name = tool.name();
+            if definition.extra_tools.iter().any(|n| n == name)
+                && !allowed_indices.contains(&i)
+                && !disallow_set.contains(name)
+            {
+                allowed_indices.push(i);
+            }
+        }
+    }
+
     // ── Dynamic per-action toolkit tools (skills_agent + toolkit) ──────
     //
     // When `skills_agent` is spawned with a `toolkit` argument (e.g.
@@ -927,6 +950,7 @@ mod tests {
             disallowed_tools: vec![],
             skill_filter: None,
             category_filter: None,
+            extra_tools: vec![],
             max_iterations: 5,
             timeout_secs: None,
             sandbox_mode: super::super::definition::SandboxMode::None,
