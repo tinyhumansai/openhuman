@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 
@@ -17,26 +17,31 @@ const OnboardingOverlay = () => {
   const { isBootstrapping, snapshot, setOnboardingCompletedFlag } = useCoreState();
   const token = snapshot.sessionToken;
   const user = snapshot.currentUser;
-  const [userLoadTimedOut, setUserLoadTimedOut] = useState(false);
+  /** Which session token the 3s profile-timeout applied to (ref avoids stale boolean across logins). */
+  const profileLoadTimedOutForTokenRef = useRef<string | null>(null);
+  const [, profileTimeoutBump] = useState(0);
 
-  // Reset local state on logout so re-login starts fresh.
-  useEffect(() => {
-    if (!token) {
-      setUserLoadTimedOut(false);
-    }
-  }, [token]);
+  const prevTokenRef = useRef<string | null | undefined>(undefined);
+  if (prevTokenRef.current !== token) {
+    prevTokenRef.current = token;
+    profileLoadTimedOutForTokenRef.current = null;
+  }
 
   // Timeout: if user profile hasn't loaded after 3s but we have token + bootstrap,
   // proceed anyway so onboarding isn't permanently invisible.
   useEffect(() => {
     if (!token || isBootstrapping || user?._id) return;
 
-    const timer = setTimeout(() => setUserLoadTimedOut(true), 3000);
+    const timer = setTimeout(() => {
+      profileLoadTimedOutForTokenRef.current = token;
+      profileTimeoutBump(n => n + 1);
+    }, 3000);
     return () => clearTimeout(timer);
   }, [token, isBootstrapping, user?._id]);
 
-  // User is ready when profile loaded or timeout elapsed.
-  const userReady = !!user?._id || userLoadTimedOut;
+  // User is ready when profile loaded or timeout elapsed for this session token.
+  const userReady =
+    !!user?._id || (token ? profileLoadTimedOutForTokenRef.current === token : false);
   const onboardingCompleted = snapshot.onboardingCompleted;
 
   const handleDone = useCallback(async () => {

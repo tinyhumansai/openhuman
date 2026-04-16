@@ -163,4 +163,66 @@ suiteRunner('Conversations web channel flow', () => {
 
     expect(await textExists('chat_send is not available')).toBe(false);
   });
+
+  it('continues in-flight chat when switching tabs', async () => {
+    clearRequestLog();
+    await navigateToConversations();
+
+    const initialAgentCount = await browser.execute(() => {
+      return document.querySelectorAll('.group\\/msg.flex.justify-start').length;
+    });
+
+    const uniquePayload = `tab-switch-${Date.now()}`;
+    const foundInput = await browser.execute(() => {
+      const textarea = document.querySelector(
+        'textarea[placeholder*="Type a message"]'
+      ) as HTMLTextAreaElement;
+      if (!textarea) return false;
+      textarea.focus();
+      textarea.click();
+      return true;
+    });
+    if (!foundInput) {
+      throw new Error('Chat input textarea not found');
+    }
+
+    await browser.execute((text: string) => {
+      const textarea = document.querySelector(
+        'textarea[placeholder*="Type a message"]'
+      ) as HTMLTextAreaElement;
+      if (!textarea) return;
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value'
+      )?.set;
+      nativeInputValueSetter?.call(textarea, text);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true }));
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })
+      );
+    }, uniquePayload);
+
+    await waitForText(uniquePayload, 20_000);
+    await navigateViaHash('/skills');
+    await browser.pause(1_500);
+    await navigateToConversations();
+
+    await browser.waitUntil(
+      async () => {
+        const n = await browser.execute(() => {
+          return document.querySelectorAll('.group\\/msg.flex.justify-start').length;
+        });
+        return n > initialAgentCount;
+      },
+      {
+        timeout: 30_000,
+        timeoutMsg: 'Expected a new assistant message after returning from another tab',
+      }
+    );
+
+    const chatReq = await waitForRequest('POST', '/openai/v1/chat/completions', 30_000);
+    expect(chatReq).toBeDefined();
+    expect(await textExists('Something went wrong — please try again.')).toBe(false);
+  });
 });

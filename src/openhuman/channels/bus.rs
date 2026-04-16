@@ -138,6 +138,11 @@ impl EventHandler for ChannelInboundSubscriber {
                                         streaming_state.dirty = true;
                                     }
                                 }
+                                "thinking_delta" => {
+                                    if let Some(delta) = ev.delta.as_ref() {
+                                        streaming_state.thinking_accumulator.push_str(delta);
+                                    }
+                                }
                                 "chat_done" | "chat:done" => {
                                     let reply = ev.full_response.unwrap_or_default();
                                     // Even when the agent produced no visible
@@ -159,6 +164,20 @@ impl EventHandler for ChannelInboundSubscriber {
                                         reply_text.len(),
                                         streaming_state.message_id,
                                     );
+                                    // Send the model's thinking summary as a separate
+                                    // message so the user can see the reasoning process.
+                                    if !streaming_state.thinking_accumulator.is_empty() {
+                                        let summary = format_thinking_summary(
+                                            &streaming_state.thinking_accumulator,
+                                        );
+                                        tracing::debug!(
+                                            "[channel-inbound] sending thinking summary to channel='{}' raw_chars={} summary_chars={}",
+                                            channel,
+                                            streaming_state.thinking_accumulator.len(),
+                                            summary.len(),
+                                        );
+                                        send_channel_reply(channel, &summary).await;
+                                    }
                                     // If we've been streaming progressive edits, replace
                                     // the outbound message with the final canonical text.
                                     // Otherwise send a fresh message atomically.
@@ -256,6 +275,9 @@ struct StreamingState {
     /// Latched when the backend doesn't support edits for this channel
     /// — we stop trying and rely on the final atomic send.
     edit_disabled: bool,
+    /// Accumulated model thinking/reasoning text from `thinking_delta` events.
+    /// Sent as a separate message before the main response at turn completion.
+    thinking_accumulator: String,
 }
 
 /// Typing-indicator bookkeeping. One per in-flight turn. Latches
@@ -372,6 +394,20 @@ async fn flush_streaming_edit(channel: &str, state: &mut StreamingState) {
             }
         }
     } else {
+        // Before posting the first visible draft, deliver any accumulated
+        // thinking so it appears above the response bubble in the channel.
+        if !state.thinking_accumulator.is_empty() {
+            let summary = format_thinking_summary(&state.thinking_accumulator);
+            tracing::debug!(
+                "[channel-inbound][stream] sending thinking summary before first draft channel='{}' raw_chars={} summary_chars={}",
+                channel,
+                state.thinking_accumulator.len(),
+                summary.len(),
+            );
+            send_channel_reply(channel, &summary).await;
+            // Clear so the chat_done handler doesn't send it a second time.
+            state.thinking_accumulator.clear();
+        }
         let body = json!({ "text": draft });
         match client.send_channel_message(channel, &jwt, body).await {
             Ok(resp) => {
@@ -560,6 +596,33 @@ async fn send_channel_reply(channel: &str, text: &str) {
             );
         }
     }
+}
+
+/// Maximum characters of raw thinking content included in the summary sent
+/// to the channel. Telegram's hard message limit is 4 096 chars; keeping the
+/// body well below that leaves room for the header and the trailing ellipsis.
+const MAX_THINKING_CHARS: usize = 1500;
+
+/// Format accumulated thinking content into a readable message for delivery
+/// to the channel. Truncates at the last word boundary when the raw content
+/// exceeds [`MAX_THINKING_CHARS`], appending `…` to signal the cut.
+fn format_thinking_summary(thinking: &str) -> String {
+    let trimmed = thinking.trim();
+    let body = if trimmed.len() > MAX_THINKING_CHARS {
+        // Find a safe char boundary at or before MAX_THINKING_CHARS so we never
+        // slice in the middle of a multi-byte UTF-8 sequence.
+        let safe_end = (0..=MAX_THINKING_CHARS)
+            .rev()
+            .find(|&i| trimmed.is_char_boundary(i))
+            .unwrap_or(0);
+        let slice = &trimmed[..safe_end];
+        // Back off further to the last whitespace to avoid cutting mid-word.
+        let boundary = slice.rfind(|c: char| c.is_whitespace()).unwrap_or(safe_end);
+        format!("{}…", &slice[..boundary])
+    } else {
+        trimmed.to_string()
+    };
+    format!("💭 Thinking:\n\n{}", body)
 }
 
 #[cfg(test)]

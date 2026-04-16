@@ -263,6 +263,9 @@ jobs:
             artifact_suffix: windows
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Keep in sync with DEFAULT_TELEGRAM_BOT_USERNAME_* in channels/controllers/ops.rs
+      OPENHUMAN_TELEGRAM_BOT_USERNAME: ${{ inputs.build_target == 'staging' && 'alphahumantest_bot' || 'openhumanaibot' }}
+      VITE_TELEGRAM_BOT_USERNAME: ${{ inputs.build_target == 'staging' && 'alphahumantest_bot' || 'openhumanaibot' }}
     steps:
       - name: Checkout build ref
         uses: actions/checkout@v4
@@ -277,6 +280,8 @@ jobs:
         run: |
           echo "OPENHUMAN_APP_ENV=staging" >> "$GITHUB_ENV"
           echo "VITE_OPENHUMAN_APP_ENV=staging" >> "$GITHUB_ENV"
+          echo "OPENHUMAN_TELEGRAM_BOT_USERNAME=alphahumantest_bot" >> "$GITHUB_ENV"
+          echo "VITE_TELEGRAM_BOT_USERNAME=alphahumantest_bot" >> "$GITHUB_ENV"
 
       - name: Set Xcode version
         if: matrix.settings.platform == 'macos-latest'
