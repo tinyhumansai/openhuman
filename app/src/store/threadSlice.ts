@@ -333,11 +333,15 @@ const threadSlice = createSlice({
       })
       .addCase(addInferenceResponse.fulfilled, (state, action) => {
         appendMessageToCache(state, action.payload.threadId, action.payload.message);
-        state.activeThreadId = null;
+        // Do not clear activeThreadId here: streaming sends many segment append
+        // thunks; clearing each time would re-enable the composer mid-turn.
+        // ChatRuntimeProvider clears it on chat_done / chat_error.
       })
       .addCase(addInferenceResponse.rejected, (state, action) => {
         state.sendError = action.payload as string;
-        state.activeThreadId = null;
+        // Do NOT clear activeThreadId here — ChatRuntimeProvider clears it on
+        // chat_done / chat_error. Clearing on every rejected segment append
+        // would re-enable the composer while the turn is still in-flight.
       })
       .addCase(persistReaction.fulfilled, (state, action) => {
         appendMessageToCache(state, action.payload.threadId, action.payload.message, true);

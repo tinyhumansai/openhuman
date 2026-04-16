@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::api::config::effective_api_url;
+use crate::api::config::{app_env_from_env, effective_api_url, is_staging_app_env};
 use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
 use crate::openhuman::config::{Config, DiscordConfig, TelegramConfig};
@@ -434,14 +434,24 @@ pub async fn test_channel(
 // Managed Telegram login flow
 // ---------------------------------------------------------------------------
 
-/// Default bot username when not configured via env var.
-const DEFAULT_TELEGRAM_BOT_USERNAME: &str = "alphahumantest_bot";
+/// Default managed Telegram bot when `OPENHUMAN_APP_ENV` is staging and no username override is set.
+const DEFAULT_TELEGRAM_BOT_USERNAME_STAGING: &str = "alphahumantest_bot";
+/// Default managed Telegram bot when app env is production (or unset) and no username override is set.
+const DEFAULT_TELEGRAM_BOT_USERNAME_PRODUCTION: &str = "openhumanaibot";
 
-/// Resolve the managed Telegram bot username from env or default.
+/// Resolve the managed Telegram bot username from env, or from staging vs production defaults using
+/// `OPENHUMAN_APP_ENV` / `VITE_OPENHUMAN_APP_ENV` (via `app_env_from_env`).
 fn telegram_bot_username() -> String {
-    std::env::var("OPENHUMAN_TELEGRAM_BOT_USERNAME")
-        .or_else(|_| std::env::var("VITE_TELEGRAM_BOT_USERNAME"))
-        .unwrap_or_else(|_| DEFAULT_TELEGRAM_BOT_USERNAME.to_string())
+    if let Ok(v) = std::env::var("OPENHUMAN_TELEGRAM_BOT_USERNAME") {
+        return v;
+    }
+    if let Ok(v) = std::env::var("VITE_TELEGRAM_BOT_USERNAME") {
+        return v;
+    }
+    if is_staging_app_env(app_env_from_env().as_deref()) {
+        return DEFAULT_TELEGRAM_BOT_USERNAME_STAGING.to_string();
+    }
+    DEFAULT_TELEGRAM_BOT_USERNAME_PRODUCTION.to_string()
 }
 
 /// Result from `telegram_login_start`.

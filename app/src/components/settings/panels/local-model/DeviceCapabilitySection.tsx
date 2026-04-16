@@ -5,8 +5,6 @@ interface DeviceCapabilitySectionProps {
   presetsLoading: boolean;
   presetError: string;
   presetSuccess: ApplyPresetResult | null;
-  isApplyingPreset: boolean;
-  onApplyPreset: (tier: string) => void;
   formatRamGb: (bytes: number) => string;
 }
 
@@ -15,8 +13,6 @@ const DeviceCapabilitySection = ({
   presetsLoading,
   presetError,
   presetSuccess,
-  isApplyingPreset,
-  onApplyPreset,
   formatRamGb,
 }: DeviceCapabilitySectionProps) => {
   return (
@@ -67,35 +63,38 @@ const DeviceCapabilitySection = ({
 
       {presetsData && (
         <div className="space-y-2">
+          <div className="rounded-lg border border-primary-200 bg-primary-50 p-3 text-xs text-primary-700">
+            The local AI model is fixed for the MVP release. Broader model options will be available
+            in a future update.
+          </div>
           {presetsData.presets.map(preset => {
-            const isRecommended = preset.tier === presetsData.recommended_tier;
             const isCurrent = preset.tier === presetsData.current_tier;
+            const isLocked = !isCurrent;
             return (
-              <button
+              <div
                 key={preset.tier}
-                type="button"
-                onClick={() => onApplyPreset(preset.tier)}
-                disabled={isApplyingPreset || isCurrent}
-                className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                className={`w-full text-left rounded-lg border p-3 ${
                   isCurrent
                     ? 'border-primary-400 bg-primary-50'
-                    : 'border-stone-200 bg-white hover:border-stone-300'
-                } ${isApplyingPreset ? 'opacity-60' : ''}`}>
+                    : 'border-stone-200 bg-stone-50 opacity-50'
+                }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-stone-900">{preset.label}</span>
-                    {isRecommended && (
-                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-50 text-emerald-700 uppercase tracking-wide">
-                        Recommended
-                      </span>
-                    )}
                     {isCurrent && (
                       <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-primary-50 text-primary-600 uppercase tracking-wide">
                         Active
                       </span>
                     )}
+                    {isLocked && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium rounded bg-stone-100 text-stone-400 uppercase tracking-wide">
+                        Coming soon
+                      </span>
+                    )}
                   </div>
-                  <span className="text-xs text-stone-500">~{preset.approx_download_gb} GB</span>
+                  <span className="text-xs text-stone-500">
+                    ~{Number(preset.approx_download_gb).toFixed(1)} GB
+                  </span>
                 </div>
                 <div className="text-xs text-stone-400 mt-1">{preset.description}</div>
                 <div className="text-[10px] text-stone-500 mt-1">
@@ -105,7 +104,7 @@ const DeviceCapabilitySection = ({
                     : preset.vision_model_id || preset.vision_mode}{' '}
                   &middot; Target RAM: {preset.target_ram_gb} GB
                 </div>
-              </button>
+              </div>
             );
           })}
 

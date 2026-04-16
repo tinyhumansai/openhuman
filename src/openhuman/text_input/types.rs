@@ -116,3 +116,180 @@ pub struct AcceptGhostTextResult {
     pub inserted: bool,
     pub error: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::openhuman::accessibility::ElementBounds;
+    use serde_json::json;
+
+    // ── FieldBounds ↔ ElementBounds ──────────────────────────────
+
+    #[test]
+    fn field_bounds_from_element_copies_all_fields() {
+        let e = ElementBounds {
+            x: 10,
+            y: 20,
+            width: 300,
+            height: 40,
+        };
+        let b = FieldBounds::from_element(&e);
+        assert_eq!((b.x, b.y, b.width, b.height), (10, 20, 300, 40));
+    }
+
+    #[test]
+    fn field_bounds_round_trips_through_element_bounds() {
+        let original = FieldBounds {
+            x: -5,
+            y: 7,
+            width: 123,
+            height: 456,
+        };
+        let roundtripped = FieldBounds::from_element(&original.to_element());
+        assert_eq!(
+            (
+                roundtripped.x,
+                roundtripped.y,
+                roundtripped.width,
+                roundtripped.height
+            ),
+            (-5, 7, 123, 456)
+        );
+    }
+
+    // ── ReadFieldParams ──────────────────────────────────────────
+
+    #[test]
+    fn read_field_params_default_has_no_include_bounds() {
+        let p = ReadFieldParams::default();
+        assert!(p.include_bounds.is_none());
+    }
+
+    #[test]
+    fn read_field_params_omits_include_bounds_in_wire_json_when_none() {
+        // `Option<bool>` with `#[serde(default)]` must accept JSON that
+        // omits the field entirely (so existing callers without the
+        // key keep working) and preserve the None round-trip.
+        let parsed: ReadFieldParams = serde_json::from_value(json!({})).unwrap();
+        assert!(parsed.include_bounds.is_none());
+        let parsed: ReadFieldParams =
+            serde_json::from_value(json!({"include_bounds": true})).unwrap();
+        assert_eq!(parsed.include_bounds, Some(true));
+    }
+
+    // ── ReadFieldResult ──────────────────────────────────────────
+
+    #[test]
+    fn read_field_result_round_trips_all_optional_fields() {
+        let r = ReadFieldResult {
+            app_name: Some("Editor".into()),
+            role: Some("TextField".into()),
+            text: "hello".into(),
+            selected_text: Some("ell".into()),
+            bounds: Some(FieldBounds {
+                x: 1,
+                y: 2,
+                width: 3,
+                height: 4,
+            }),
+            is_terminal: false,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        let back: ReadFieldResult = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.app_name.as_deref(), Some("Editor"));
+        assert_eq!(back.text, "hello");
+        assert_eq!(back.bounds.as_ref().map(|b| b.width), Some(3));
+        assert!(!back.is_terminal);
+    }
+
+    // ── InsertTextParams / Result ────────────────────────────────
+
+    #[test]
+    fn insert_text_params_defaults_validate_focus_when_absent() {
+        let parsed: InsertTextParams = serde_json::from_value(json!({"text": "hi"})).unwrap();
+        assert_eq!(parsed.text, "hi");
+        assert!(parsed.validate_focus.is_none());
+        assert!(parsed.expected_app.is_none());
+        assert!(parsed.expected_role.is_none());
+    }
+
+    #[test]
+    fn insert_text_result_round_trips_error_field() {
+        let r = InsertTextResult {
+            inserted: false,
+            error: Some("no focus".into()),
+        };
+        let back: InsertTextResult =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert!(!back.inserted);
+        assert_eq!(back.error.as_deref(), Some("no focus"));
+    }
+
+    // ── Ghost text ───────────────────────────────────────────────
+
+    #[test]
+    fn show_ghost_text_params_round_trip_includes_bounds_and_ttl() {
+        let p = ShowGhostTextParams {
+            text: "suggestion".into(),
+            ttl_ms: Some(5000),
+            bounds: Some(FieldBounds {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 20,
+            }),
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["ttl_ms"], json!(5000));
+        let back: ShowGhostTextParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back.text, "suggestion");
+        assert_eq!(back.ttl_ms, Some(5000));
+        assert_eq!(back.bounds.unwrap().width, 100);
+    }
+
+    #[test]
+    fn show_ghost_text_result_shown_and_error_round_trip() {
+        let r = ShowGhostTextResult {
+            shown: true,
+            error: None,
+        };
+        let back: ShowGhostTextResult =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert!(back.shown);
+        assert!(back.error.is_none());
+    }
+
+    #[test]
+    fn dismiss_ghost_text_result_round_trips() {
+        let r = DismissGhostTextResult { dismissed: true };
+        let back: DismissGhostTextResult =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert!(back.dismissed);
+    }
+
+    #[test]
+    fn accept_ghost_text_params_round_trip() {
+        let parsed: AcceptGhostTextParams = serde_json::from_value(json!({
+            "text": "go",
+            "validate_focus": true,
+            "expected_app": "Editor",
+            "expected_role": "TextField"
+        }))
+        .unwrap();
+        assert_eq!(parsed.text, "go");
+        assert_eq!(parsed.validate_focus, Some(true));
+        assert_eq!(parsed.expected_app.as_deref(), Some("Editor"));
+        assert_eq!(parsed.expected_role.as_deref(), Some("TextField"));
+    }
+
+    #[test]
+    fn accept_ghost_text_result_round_trips() {
+        let r = AcceptGhostTextResult {
+            inserted: true,
+            error: None,
+        };
+        let back: AcceptGhostTextResult =
+            serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert!(back.inserted);
+    }
+}

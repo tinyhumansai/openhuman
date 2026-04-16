@@ -188,3 +188,128 @@ pub async fn accept_ghost(
         )),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Guard-clause branches ────────────────────────────────────
+    //
+    // The post-guard paths below these entry-points call into
+    // `accessibility::*`, which requires a focused text field on a
+    // live OS display — not reproducible in a headless unit-test
+    // environment. These tests pin the pure validation logic that
+    // every RPC call must hit before any platform work runs.
+
+    #[tokio::test]
+    async fn insert_text_rejects_empty_text() {
+        let err = insert_text(InsertTextParams {
+            text: String::new(),
+            validate_focus: None,
+            expected_app: None,
+            expected_role: None,
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.contains("text must not be empty"),
+            "expected empty-text error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn show_ghost_rejects_empty_text() {
+        let err = show_ghost(ShowGhostTextParams {
+            text: String::new(),
+            ttl_ms: None,
+            bounds: None,
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.contains("ghost text must not be empty"),
+            "expected empty-ghost error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_ghost_rejects_empty_text() {
+        let err = accept_ghost(AcceptGhostTextParams {
+            text: String::new(),
+            validate_focus: None,
+            expected_app: None,
+            expected_role: None,
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.contains("text must not be empty"),
+            "expected empty-text error, got: {err}"
+        );
+    }
+
+    // ── dismiss_ghost always succeeds ────────────────────────────
+
+    #[tokio::test]
+    async fn dismiss_ghost_always_reports_success_even_without_overlay() {
+        // The implementation discards any hide_overlay() error, so
+        // every call must yield `dismissed: true` — callers rely on
+        // this idempotent contract.
+        let out = dismiss_ghost().await.unwrap();
+        assert!(out.value.dismissed);
+        assert!(out.logs.iter().any(|l| l.contains("dismiss_ghost: ok")));
+    }
+
+    // ── Post-guard paths surface accessibility errors ───────────
+    //
+    // Without a focused text field, `accessibility::*` returns an
+    // Err which the RPC wrappers convert into an `InsertTextResult
+    // { inserted: false, error: Some(..) }` (for insert/accept) or
+    // bubble up as Err for `read_field` / `show_ghost` (when reading
+    // bounds fails). We assert only that these paths do not panic
+    // and return a deterministic shape — the specific error string
+    // depends on the host OS.
+
+    #[tokio::test]
+    async fn insert_text_surfaces_accessibility_failure_as_inserted_false() {
+        // A non-empty payload bypasses the guard and reaches the
+        // `accessibility::apply_text_to_focused_field` call. The contract
+        // of `insert_text` is: any platform failure is wrapped in
+        // `InsertTextResult { inserted: false, error: Some(..) }` and
+        // returned as `Ok` — never propagated as `Err` — so the JSON-RPC
+        // caller always gets a structured result. We pin that contract.
+        //
+        // On a host with a focused text field `inserted` can legitimately
+        // be `true`; in a headless CI runner it will be `false`. Either
+        // way, `inserted` and `error` must be mutually exclusive.
+        let r = insert_text(InsertTextParams {
+            text: "hello".into(),
+            // Keep validation flags off so the test only exercises the
+            // `apply_text_to_focused_field` path; turning them on would
+            // route through `validate_focused_target` first which has its
+            // own OS-specific behaviour.
+            validate_focus: None,
+            expected_app: None,
+            expected_role: None,
+        })
+        .await
+        .expect("insert_text must wrap platform failures as Ok(inserted=false)");
+
+        if r.value.inserted {
+            assert!(
+                r.value.error.is_none(),
+                "inserted=true must not carry an error: {:?}",
+                r.value.error
+            );
+            assert!(r.logs.iter().any(|l| l.contains("insert_text: ok")));
+        } else {
+            let err = r
+                .value
+                .error
+                .as_deref()
+                .expect("inserted=false must carry an error message");
+            assert!(!err.is_empty(), "error message must be non-empty");
+            assert!(r.logs.iter().any(|l| l.contains("insert_text: failed")));
+        }
+    }
+}

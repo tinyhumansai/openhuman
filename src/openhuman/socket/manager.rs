@@ -280,4 +280,36 @@ mod tests {
         emit_server_event(&shared, "any.event", json!({}));
         assert_eq!(*shared.status.read(), ConnectionStatus::Connected);
     }
+
+    #[test]
+    fn set_webhook_router_populates_the_shared_slot() {
+        let mgr = SocketManager::new();
+        assert!(mgr.shared.webhook_router.read().is_none());
+        let router = Arc::new(WebhookRouter::new(None));
+        mgr.set_webhook_router(router);
+        assert!(mgr.shared.webhook_router.read().is_some());
+    }
+
+    #[test]
+    fn set_webhook_router_overwrites_previous_router() {
+        // Replacing the router is allowed so callers can hot-swap during
+        // reconfiguration — this test nails that observable behaviour down.
+        let mgr = SocketManager::new();
+        mgr.set_webhook_router(Arc::new(WebhookRouter::new(None)));
+        let second = Arc::new(WebhookRouter::new(None));
+        let second_ptr = Arc::as_ptr(&second);
+        mgr.set_webhook_router(Arc::clone(&second));
+        let stored = mgr.shared.webhook_router.read().clone().unwrap();
+        assert!(std::ptr::eq(Arc::as_ptr(&stored), second_ptr));
+    }
+
+    #[tokio::test]
+    async fn emit_after_disconnect_errors_not_connected() {
+        // Even without ever calling connect(), the disconnect() call path
+        // leaves the emit channel torn down — and emit() must reject.
+        let mgr = SocketManager::new();
+        mgr.disconnect().await.unwrap();
+        let err = mgr.emit("x", json!({})).await.unwrap_err();
+        assert_eq!(err, "Not connected");
+    }
 }

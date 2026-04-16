@@ -788,6 +788,18 @@ fn handle_local_ai_apply_preset(params: Map<String, Value>) -> ControllerFuture 
             return Err("cannot apply 'custom' tier; set model IDs directly".to_string());
         }
 
+        if !tier.is_mvp_allowed() {
+            tracing::debug!(
+                tier = %tier_str,
+                "[local_ai] apply_preset: rejected — tier exceeds MVP ceiling"
+            );
+            return Err(format!(
+                "model tier '{}' is not available in MVP; only tiers up to {} are allowed",
+                tier_str,
+                crate::openhuman::local_ai::presets::MVP_MAX_TIER.as_str()
+            ));
+        }
+
         let mut config = config_rpc::load_config_with_timeout().await?;
         crate::openhuman::local_ai::presets::apply_preset_to_config(&mut config.local_ai, tier);
         config
@@ -1196,7 +1208,7 @@ mod tests {
         unsafe {
             std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
         }
-        let params = Map::from_iter([("tier".to_string(), serde_json::json!("ram_4_8gb"))]);
+        let params = Map::from_iter([("tier".to_string(), serde_json::json!("ram_2_4gb"))]);
         let result = handle_local_ai_apply_preset(params)
             .await
             .expect("apply ok");

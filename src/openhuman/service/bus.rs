@@ -100,3 +100,66 @@ impl EventHandler for RestartSubscriber {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // NOTE: We deliberately do NOT test the success path of `handle()`
+    // for `SystemRestartRequested` — it spawns a tokio task that calls
+    // `std::process::exit(0)` after 150ms and would terminate the test
+    // runner. We exercise the observable metadata plus the two quick
+    // early-return branches instead.
+
+    #[test]
+    fn restart_subscriber_name_is_namespaced() {
+        assert_eq!(RestartSubscriber.name(), "service::restart");
+    }
+
+    #[test]
+    fn restart_subscriber_domain_filter_is_system() {
+        assert_eq!(RestartSubscriber.domains(), Some(&["system"][..]));
+    }
+
+    #[tokio::test]
+    async fn handle_returns_early_on_non_restart_event() {
+        // A domain event from a different module must be ignored —
+        // `handle()` checks the variant and returns without touching
+        // RESTART_IN_PROGRESS or spawning a restart.
+        RestartSubscriber
+            .handle(&DomainEvent::AgentTurnStarted {
+                session_id: "s".into(),
+                channel: "web".into(),
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn handle_ignores_duplicate_restart_when_gate_is_set() {
+        // Simulate "a restart is already underway" by flipping the
+        // global gate manually. `handle()` must notice this, log, and
+        // return without calling into `trigger_self_restart_now`
+        // (which would spawn a replacement process).
+        let previous = RESTART_IN_PROGRESS.swap(true, Ordering::SeqCst);
+        RestartSubscriber
+            .handle(&DomainEvent::SystemRestartRequested {
+                source: "test".into(),
+                reason: "duplicate-suppression".into(),
+            })
+            .await;
+        // Restore the prior gate value so other tests in the same
+        // binary aren't skewed by this one.
+        RESTART_IN_PROGRESS.store(previous, Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn register_restart_subscriber_is_idempotent_and_safe_without_bus() {
+        // `subscribe_global` reaches into a tokio broadcast channel, so a
+        // runtime must be present — hence `#[tokio::test]`. When the event
+        // bus isn't initialised in the test process the first call logs a
+        // warning and returns; subsequent calls must also be no-ops rather
+        // than registering duplicates.
+        register_restart_subscriber();
+        register_restart_subscriber();
+    }
+}

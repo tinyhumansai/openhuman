@@ -33,6 +33,20 @@ impl Agent {
         &self.event_channel
     }
 
+    /// The agent definition id this session is running
+    /// (`"welcome"`, `"orchestrator"`, `"skills_agent"`, …).
+    ///
+    /// Exposed so callers that build sessions via
+    /// [`Agent::from_config_for_agent`] can stamp the resolved id onto
+    /// correlation logs and progress events without reaching for the
+    /// source `Config`. See [`AgentBuilder::agent_definition_name`]
+    /// for the full list of downstream surfaces (transcript filename,
+    /// transcript metadata header, and `PromptContext::agent_id`) that
+    /// read this field.
+    pub fn agent_definition_name(&self) -> &str {
+        &self.agent_definition_name
+    }
+
     /// Returns a new `AgentBuilder`.
     pub fn builder() -> AgentBuilder {
         AgentBuilder::new()

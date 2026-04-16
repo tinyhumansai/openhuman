@@ -45,6 +45,8 @@ const OVERLAY_IDLE_MARGIN = 10;
 const OVERLAY_ACTIVE_MARGIN = 20;
 const OVERLAY_IDLE_OPACITY = 0.6;
 
+const OVERLAY_POSITION_KEY = 'overlay-position';
+
 /** Default auto-dismiss for an attention bubble when no ttl is supplied. */
 const DEFAULT_ATTENTION_TTL_MS = 6000;
 /** Grace period after STT `released` before returning to idle, giving the
@@ -398,6 +400,43 @@ export default function OverlayApp() {
 
   // ── Window framing: resize / reposition on mode change ────────────────
   const status: 'idle' | 'active' = mode === 'idle' ? 'idle' : 'active';
+  const userDraggedRef = useRef(false);
+
+  /** Save the current window position to localStorage after a drag. */
+  const persistPosition = useCallback(async () => {
+    try {
+      const appWindow = getCurrentWindow();
+      const pos = await appWindow.outerPosition();
+      localStorage.setItem(OVERLAY_POSITION_KEY, JSON.stringify({ x: pos.x, y: pos.y }));
+      userDraggedRef.current = true;
+    } catch {
+      // position read failed — ignore
+    }
+  }, []);
+
+  /** Reset saved position so the overlay snaps back to the default corner. */
+  const resetPosition = useCallback(() => {
+    localStorage.removeItem(OVERLAY_POSITION_KEY);
+    userDraggedRef.current = false;
+  }, []);
+
+  /** Initiate native window drag on mouse-down. */
+  const handleDragStart = useCallback(
+    async (e: React.MouseEvent) => {
+      // Only drag on primary button; ignore if a click handler should fire
+      if (e.button !== 0) return;
+      e.preventDefault();
+      try {
+        const appWindow = getCurrentWindow();
+        await appWindow.startDragging();
+        // After the drag completes, persist the new position
+        void persistPosition();
+      } catch {
+        // startDragging can fail if not supported — fall through silently
+      }
+    },
+    [persistPosition]
+  );
 
   useEffect(() => {
     const appWindow = getCurrentWindow();
@@ -408,24 +447,55 @@ export default function OverlayApp() {
     const size = new LogicalSize(width, height);
 
     const updateWindowFrame = async () => {
+      // Remove all size constraints first, then set the new size, then
+      // re-apply constraints. This avoids the ordering problem where the
+      // old min/max clamps the new size.
+      try {
+        await appWindow.setMinSize(null);
+      } catch {
+        /* ignore */
+      }
+      try {
+        await appWindow.setMaxSize(null);
+      } catch {
+        /* ignore */
+      }
       try {
         await appWindow.setSize(size);
       } catch (error) {
         console.warn('[overlay] failed to resize overlay window', error);
       }
-
+      console.debug(`[overlay] resized to ${width}x${height} (active=${isActive})`);
+      // Lock to exact size so the user can't accidentally resize
       try {
         await appWindow.setMinSize(size);
-      } catch (error) {
-        console.warn('[overlay] failed to set overlay min size', error);
+      } catch {
+        /* ignore */
       }
-
       try {
         await appWindow.setMaxSize(size);
-      } catch (error) {
-        console.warn('[overlay] failed to set overlay max size', error);
+      } catch {
+        /* ignore */
       }
 
+      // Restore saved position from a previous drag
+      const saved = localStorage.getItem(OVERLAY_POSITION_KEY);
+      if (saved) {
+        try {
+          const { x, y } = JSON.parse(saved) as { x: number; y: number };
+          await appWindow.setPosition(new LogicalPosition(x, y));
+          userDraggedRef.current = true;
+          return;
+        } catch {
+          localStorage.removeItem(OVERLAY_POSITION_KEY);
+        }
+      }
+
+      if (userDraggedRef.current) {
+        return;
+      }
+
+      // Default: pin to bottom-right corner
       try {
         const monitor = await currentMonitor();
         if (!monitor) {
@@ -445,8 +515,6 @@ export default function OverlayApp() {
   }, [status]);
 
   // ── Render ────────────────────────────────────────────────────────────
-  const bubbles = useMemo<OverlayBubble[]>(() => (bubble ? [bubble] : []), [bubble]);
-
   const orbClassName = useMemo(() => {
     if (status === 'active') {
       return 'border-blue-950 bg-blue-700';
@@ -463,15 +531,13 @@ export default function OverlayApp() {
     <div className="flex h-screen w-screen items-end justify-end bg-transparent px-0 py-0">
       <div
         className={`relative flex select-none flex-col items-end ${status === 'active' ? 'gap-3' : 'gap-0'}`}>
-        <div
-          className={`flex flex-col items-end gap-2 transition-all duration-200 ${status === 'active' ? 'max-w-[184px] opacity-100' : 'max-w-0 opacity-0'}`}>
-          {bubbles.map(b => (
-            <div key={b.id} className="animate-[overlay-bubble-in_220ms_ease-out]">
-              {/* key on the chip itself remounts the typewriter for each new bubble */}
-              <OverlayBubbleChip key={b.id} bubble={b} />
+        {status === 'active' && bubble && (
+          <div className="max-w-[184px]">
+            <div className="animate-[overlay-bubble-in_220ms_ease-out]">
+              <OverlayBubbleChip key={bubble.id} bubble={bubble} />
             </div>
-          ))}
-        </div>
+          </div>
+        )}
 
         <div className="relative">
           <button
@@ -484,15 +550,17 @@ export default function OverlayApp() {
                   : 'OpenHuman overlay'
             }
             onClick={goIdle}
+            onMouseDown={handleDragStart}
+            onDoubleClick={resetPosition}
             onMouseEnter={() => {
               setIsHovered(true);
             }}
             onMouseLeave={() => {
               setIsHovered(false);
             }}
-            className={`group relative flex cursor-pointer items-center justify-center overflow-hidden rounded-full border transition-all duration-200 ${orbClassName} ${orbSizeClassName}`}
+            className={`group relative flex cursor-grab items-center justify-center overflow-hidden rounded-full border transition-all duration-200 active:cursor-grabbing ${orbClassName} ${orbSizeClassName}`}
             style={orbStyle}
-            title="Click to dismiss">
+            title="Drag to move · Double-click to reset position">
             <div
               className={`pointer-events-none opacity-95 transition-transform duration-300 group-hover:scale-105 ${orbCanvasClassName}`}>
               <RotatingTetrahedronCanvas inverted={tetrahedronInverted} />

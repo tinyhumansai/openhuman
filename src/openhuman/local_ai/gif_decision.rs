@@ -259,4 +259,59 @@ mod tests {
         let d = parse_gif_response("no gif");
         assert!(!d.should_send_gif);
     }
+
+    #[test]
+    fn parse_trims_surrounding_whitespace() {
+        let d = parse_gif_response("   NONE   ");
+        assert!(!d.should_send_gif);
+
+        let d = parse_gif_response("  hello wave  ");
+        assert!(d.should_send_gif);
+        assert_eq!(d.search_query.as_deref(), Some("hello wave"));
+    }
+
+    #[test]
+    fn parse_reject_over_eighty_chars_even_if_word_count_small() {
+        // 8 words but ≥ 80 chars is still rejected — protects against
+        // words that are URL-like or extremely long.
+        let long_word = "x".repeat(90);
+        let d = parse_gif_response(&long_word);
+        assert!(!d.should_send_gif);
+    }
+
+    #[test]
+    fn parse_reject_more_than_eight_words() {
+        let nine_words = "one two three four five six seven eight nine";
+        let d = parse_gif_response(nine_words);
+        assert!(!d.should_send_gif);
+    }
+
+    #[test]
+    fn parse_accepts_boundary_eight_words() {
+        // Exactly 8 words: accepted.
+        let eight = "one two three four five six seven eight";
+        let d = parse_gif_response(eight);
+        assert!(d.should_send_gif);
+    }
+
+    // ── tenor_search guard paths ─────────────────────────────────
+
+    #[tokio::test]
+    async fn tenor_search_rejects_empty_query() {
+        let config = crate::openhuman::config::Config::default();
+        let err = tenor_search(&config, "   ", Some(5)).await.unwrap_err();
+        assert!(err.contains("query is required"));
+    }
+
+    // ── local_ai_should_send_gif early-returns ──────────────────
+
+    #[tokio::test]
+    async fn should_send_gif_returns_false_for_empty_message() {
+        let config = crate::openhuman::config::Config::default();
+        let outcome = local_ai_should_send_gif(&config, "   ", "slack")
+            .await
+            .unwrap();
+        assert!(!outcome.value.should_send_gif);
+        assert!(outcome.logs.iter().any(|l| l.contains("empty message")));
+    }
 }

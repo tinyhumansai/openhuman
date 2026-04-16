@@ -27,6 +27,12 @@ pub enum ModelTier {
     Custom,
 }
 
+/// Maximum tier allowed in the current MVP build. Tiers above this ceiling
+/// are hidden from the UI, rejected by the apply-preset RPC, and clamped at
+/// bootstrap. Bump this constant (or remove the cap) when broader model
+/// selection is re-enabled post-MVP.
+pub const MVP_MAX_TIER: ModelTier = ModelTier::Ram2To4Gb;
+
 impl ModelTier {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -37,6 +43,11 @@ impl ModelTier {
             Self::Ram16PlusGb => "ram_16_plus_gb",
             Self::Custom => "custom",
         }
+    }
+
+    /// Whether this tier is allowed in the current MVP build.
+    pub fn is_mvp_allowed(self) -> bool {
+        matches!(self, Self::Ram2To4Gb)
     }
 
     pub fn from_str_opt(s: &str) -> Option<Self> {
@@ -153,15 +164,26 @@ pub fn all_presets() -> Vec<ModelPreset> {
     ]
 }
 
+/// Return only the presets allowed under the current MVP ceiling.
+pub fn mvp_presets() -> Vec<ModelPreset> {
+    all_presets()
+        .into_iter()
+        .filter(|preset| preset.tier.is_mvp_allowed())
+        .collect()
+}
+
 /// Return the preset for a specific tier, or `None` for `Custom`.
 pub fn preset_for_tier(tier: ModelTier) -> Option<ModelPreset> {
     all_presets().into_iter().find(|preset| preset.tier == tier)
 }
 
 /// Recommend a tier based on device capabilities.
+///
+/// The recommendation is capped at [`MVP_MAX_TIER`] so that auto-provisioning
+/// never selects a model above the MVP ceiling, regardless of available RAM.
 pub fn recommend_tier(device: &DeviceProfile) -> ModelTier {
     let ram_gb = device.total_ram_gb();
-    let tier = if ram_gb >= 16 {
+    let uncapped = if ram_gb >= 16 {
         ModelTier::Ram16PlusGb
     } else if ram_gb >= 8 {
         ModelTier::Ram8To16Gb
@@ -171,6 +193,17 @@ pub fn recommend_tier(device: &DeviceProfile) -> ModelTier {
         ModelTier::Ram2To4Gb
     } else {
         ModelTier::Ram1Gb
+    };
+    let tier = if uncapped.is_mvp_allowed() {
+        uncapped
+    } else {
+        tracing::debug!(
+            ram_gb,
+            ?uncapped,
+            capped_to = ?MVP_MAX_TIER,
+            "[local_ai] capping recommended tier to MVP ceiling"
+        );
+        MVP_MAX_TIER
     };
     tracing::debug!(ram_gb, ?tier, "[local_ai] recommended model tier");
     tier
@@ -285,12 +318,30 @@ mod tests {
     }
 
     #[test]
-    fn recommend_tier_by_ram() {
-        assert_eq!(recommend_tier(&test_device(1)), ModelTier::Ram1Gb);
-        assert_eq!(recommend_tier(&test_device(3)), ModelTier::Ram2To4Gb);
-        assert_eq!(recommend_tier(&test_device(4)), ModelTier::Ram4To8Gb);
-        assert_eq!(recommend_tier(&test_device(8)), ModelTier::Ram8To16Gb);
-        assert_eq!(recommend_tier(&test_device(32)), ModelTier::Ram16PlusGb);
+    fn recommend_tier_by_ram_capped_at_mvp_max() {
+        // All devices are capped at the single MVP tier (Ram2To4Gb).
+        assert_eq!(recommend_tier(&test_device(1)), MVP_MAX_TIER);
+        assert_eq!(recommend_tier(&test_device(3)), MVP_MAX_TIER);
+        assert_eq!(recommend_tier(&test_device(4)), MVP_MAX_TIER);
+        assert_eq!(recommend_tier(&test_device(8)), MVP_MAX_TIER);
+        assert_eq!(recommend_tier(&test_device(32)), MVP_MAX_TIER);
+    }
+
+    #[test]
+    fn mvp_allowed_tiers() {
+        assert!(!ModelTier::Ram1Gb.is_mvp_allowed());
+        assert!(ModelTier::Ram2To4Gb.is_mvp_allowed());
+        assert!(!ModelTier::Ram4To8Gb.is_mvp_allowed());
+        assert!(!ModelTier::Ram8To16Gb.is_mvp_allowed());
+        assert!(!ModelTier::Ram16PlusGb.is_mvp_allowed());
+        assert!(!ModelTier::Custom.is_mvp_allowed());
+    }
+
+    #[test]
+    fn mvp_presets_only_returns_allowed_tiers() {
+        let presets = mvp_presets();
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].tier, ModelTier::Ram2To4Gb);
     }
 
     #[test]

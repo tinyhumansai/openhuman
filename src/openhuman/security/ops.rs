@@ -17,3 +17,60 @@ pub fn security_policy_info() -> RpcOutcome<serde_json::Value> {
     });
     RpcOutcome::single_log(payload, "security_policy_info computed")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn security_policy_info_returns_all_documented_fields() {
+        // Locks in the JSON shape the JSON-RPC clients depend on —
+        // any rename / removal of a field would break the UI.
+        let outcome = security_policy_info();
+        for key in [
+            "autonomy",
+            "workspace_only",
+            "allowed_commands",
+            "max_actions_per_hour",
+            "require_approval_for_medium_risk",
+            "block_high_risk_commands",
+        ] {
+            assert!(
+                outcome.value.get(key).is_some(),
+                "missing `{key}` in security_policy_info payload: {}",
+                outcome.value
+            );
+        }
+        assert!(outcome
+            .logs
+            .iter()
+            .any(|l| l.contains("security_policy_info computed")));
+    }
+
+    #[test]
+    fn security_policy_info_matches_default_policy_values() {
+        let outcome = security_policy_info();
+        let default = SecurityPolicy::default();
+        assert_eq!(outcome.value["autonomy"], json!(default.autonomy));
+        assert_eq!(
+            outcome.value["allowed_commands"],
+            json!(default.allowed_commands)
+        );
+        assert_eq!(
+            outcome.value["max_actions_per_hour"],
+            json!(default.max_actions_per_hour)
+        );
+        assert_eq!(
+            outcome.value["workspace_only"],
+            json!(default.workspace_only)
+        );
+        assert_eq!(
+            outcome.value["block_high_risk_commands"],
+            json!(default.block_high_risk_commands)
+        );
+        assert_eq!(
+            outcome.value["require_approval_for_medium_risk"],
+            json!(default.require_approval_for_medium_risk)
+        );
+    }
+}

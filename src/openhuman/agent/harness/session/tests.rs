@@ -138,6 +138,108 @@ fn _assert_builder_is_exported() -> AgentBuilder {
     Agent::builder()
 }
 
+/// Minimal in-memory `Agent` build that every agent_definition_name
+/// regression test reuses. Spins up a scratch workspace, a `none`
+/// memory backend, a one-response `MockProvider`, and a single
+/// `MockTool`, then feeds those into [`Agent::builder`]. Returns the
+/// built `Agent` so individual tests can assert against the
+/// [`Agent::agent_definition_name`] accessor.
+fn build_minimal_agent_with_definition_name(definition_name: Option<&str>) -> Agent {
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+
+    let provider = Box::new(MockProvider {
+        responses: Mutex::new(vec![]),
+    });
+
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path, None).unwrap(),
+    );
+
+    let mut builder = Agent::builder()
+        .provider(provider)
+        .tools(vec![Box::new(MockTool)])
+        .memory(mem)
+        .tool_dispatcher(Box::new(NativeToolDispatcher))
+        .workspace_dir(workspace_path);
+
+    if let Some(name) = definition_name {
+        builder = builder.agent_definition_name(name);
+    }
+
+    builder.build().expect("minimal agent build should succeed")
+}
+
+/// Regression test for the `build_session_agent_inner` agent-id
+/// threading bug.
+///
+/// Prior to the fix, `build_session_agent_inner` took an `agent_id:
+/// &str` parameter but never threaded it into the `Agent::builder()`
+/// chain. The builder's `.build()` then fell back to the legacy
+/// `"main"` default, and every session built via
+/// `Agent::from_config_for_agent` carried `agent_definition_name =
+/// "main"` at runtime regardless of which id the caller asked for.
+///
+/// In the current codebase only two ids actually reach
+/// `from_config_for_agent` in production: `"orchestrator"` (via the
+/// `Agent::from_config` legacy wrapper and the post-onboarding web
+/// dispatch path) and `"welcome"` (via `welcome_proactive` and the
+/// pre-onboarding web dispatch path). The orchestrator case is
+/// benign — `"main"` is already an alias for orchestrator everywhere
+/// downstream, so the behavior is a no-op. The welcome case is the
+/// one the user sees: welcome sessions were being misfiled on disk
+/// as `sessions/DDMMYYYY/main_*.md` instead of `welcome_*.md`, and
+/// the `agent:` line inside each transcript's `<!-- session_transcript
+/// -->` metadata header stamped `agent: main` instead of
+/// `agent: welcome`. Skills_agent and the other typed sub-agents are
+/// unaffected because they're spawned through `subagent_runner` and
+/// never touch the `from_config_for_agent` / builder fallback path.
+///
+/// This test pins the builder contract the fix relies on: calling
+/// `.agent_definition_name(id)` on the builder chain produces an
+/// `Agent` whose [`Agent::agent_definition_name`] accessor returns
+/// that id verbatim. `"welcome"` and `"orchestrator"` exercise the
+/// two ids that reach `from_config_for_agent` today; `"skills_agent"`
+/// and `"trigger_triage"` are defensive coverage so that if a
+/// future commit adds a new top-level caller for one of those ids
+/// the builder contract is already pinned.
+#[test]
+fn agent_builder_threads_agent_definition_name_when_set() {
+    for expected in ["welcome", "skills_agent", "orchestrator", "trigger_triage"] {
+        let agent = build_minimal_agent_with_definition_name(Some(expected));
+        assert_eq!(
+            agent.agent_definition_name(),
+            expected,
+            "agent.agent_definition_name() should return the value passed to the builder"
+        );
+    }
+}
+
+/// Complementary to [`agent_builder_threads_agent_definition_name_when_set`]:
+/// when a caller builds an `Agent` without ever calling
+/// [`AgentBuilder::agent_definition_name`], the legacy `"main"`
+/// fallback still applies. This pins the fallback contract that
+/// direct builder users (tests, CLI harnesses) rely on, and
+/// documents the exact misbehaviour the threading fix prevents —
+/// `build_session_agent_inner` used to hit this fallback even when
+/// a caller asked for `welcome`, because the `.agent_definition_name`
+/// setter was missing from the builder chain. The result was that
+/// welcome sessions landed on disk as `main_*.md` with `agent: main`
+/// stamped into their transcript metadata header.
+#[test]
+fn agent_builder_falls_back_to_main_when_definition_name_unset() {
+    let agent = build_minimal_agent_with_definition_name(None);
+    assert_eq!(
+        agent.agent_definition_name(),
+        "main",
+        "AgentBuilder::build should default agent_definition_name to \"main\" when unset"
+    );
+}
+
 #[tokio::test]
 async fn turn_without_tools_returns_text() {
     let workspace = tempfile::TempDir::new().expect("temp workspace");

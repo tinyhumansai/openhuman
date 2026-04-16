@@ -17,9 +17,11 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+use objc2::runtime::{AnyClass, AnyObject};
 #[cfg(target_os = "macos")]
-use objc2_core_graphics::CGShieldingWindowLevel;
+use objc2::ClassType;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask};
 
 /// Tracks the currently registered dictation hotkey string so we can unregister it later.
 struct DictationHotkeyState(Mutex<Vec<String>>);
@@ -91,23 +93,79 @@ fn pin_overlay_bottom_right(window: &WebviewWindow) {
 
 #[cfg(target_os = "macos")]
 fn configure_overlay_window_macos(window: &WebviewWindow) {
-    if let Err(err) = window.set_always_on_top(true) {
-        log::warn!("[overlay] failed to set always-on-top: {err}");
-    }
-    if let Err(err) = window.set_visible_on_all_workspaces(true) {
-        log::warn!("[overlay] failed to set visible-on-all-workspaces: {err}");
-    }
+    // Standard NSWindow cannot float above fullscreen apps on macOS because
+    // fullscreen apps run in a separate Space. Only NSPanel can do this.
+    //
+    // Tauri/tao hardcodes NSWindow as the window class, so we use
+    // object_setClass() to reclass the existing NSWindow into an NSPanel
+    // at runtime. This avoids creating a new window (which crashes because
+    // Tao's window delegate is tightly coupled to the original NSWindow).
+    //
+    // After reclassing, we set the NonactivatingPanel style mask and
+    // Transient collection behavior — matching the working Swift overlay
+    // helper (accessibility/helper.rs OverlayController) which is confirmed
+    // to float above fullscreen apps on macOS Sonoma.
+    //
+    // Previous attempts that FAILED:
+    // 1. CGShieldingWindowLevel + CanJoinAllSpaces + FullScreenAuxiliary → hidden
+    // 2. Window level i32::MAX-17 + Stationary → hidden
+    // 3. CGS private API CGSSetWindowTags sticky bit → hidden
+    // 4. object_setClass WITHOUT NonactivatingPanel style mask → hidden
+    // 5. Create new NSPanel + reparent webview → CRASH (Tao delegate panic)
+    //
+    // See: https://github.com/tauri-apps/tauri/issues/11488
 
     match window.ns_window() {
-        Ok(ns_window) => unsafe {
-            let window: &NSWindow = &*ns_window.cast();
-            let mut behavior = window.collectionBehavior();
-            behavior.insert(NSWindowCollectionBehavior::FullScreenAuxiliary);
-            behavior.insert(NSWindowCollectionBehavior::CanJoinAllSpaces);
-            window.setCollectionBehavior(behavior);
-            window.setLevel((CGShieldingWindowLevel() + 1) as isize);
+        Ok(ns_window_raw) => unsafe {
+            let ns_window = ns_window_raw as *mut AnyObject;
+
+            // ── Reclass NSWindow → NSPanel ──────────────────────────
+            let panel_class: *const AnyClass = NSPanel::class();
+            objc2::ffi::object_setClass(ns_window, panel_class);
+            log::info!("[overlay] reclassed NSWindow → NSPanel via object_setClass");
+
+            // Cast to NSPanel for method calls
+            let panel: &NSPanel = &*(ns_window as *const NSPanel);
+
+            // ── Style mask: add NonactivatingPanel ──────────────────
+            // This is the KEY piece the Swift helper uses. Without it,
+            // the panel doesn't behave as a proper non-activating panel
+            // and won't float above fullscreen Spaces.
+            let current_style = panel.styleMask();
+            panel.setStyleMask(current_style | NSWindowStyleMask::NonactivatingPanel);
+
+            // ── Collection behavior ─────────────────────────────────
+            // The Swift helper uses .canJoinAllSpaces + .transient
+            // (NOT .stationary or .fullScreenAuxiliary alone).
+            // Transient means the panel follows the active Space and
+            // appears above fullscreen apps.
+            panel.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::Transient
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | NSWindowCollectionBehavior::IgnoresCycle,
+            );
+
+            // ── Window level: status bar tier ───────────────────────
+            // NSStatusWindowLevel = 25. The Swift helper uses .statusBar
+            // which is the same value.
+            panel.setLevel(25);
+
+            // ── Panel-specific properties ───────────────────────────
+            panel.setFloatingPanel(true);
+            panel.setHidesOnDeactivate(false);
+            panel.setBecomesKeyOnlyIfNeeded(true);
+            panel.setWorksWhenModal(true);
+
+            // Make sure it's ordered front
+            panel.orderFrontRegardless();
+
             log::info!(
-                "[overlay] macOS overlay configured for all spaces/fullscreen auxiliary at shielding+1 level"
+                "[overlay] NSPanel configured — level=25, \
+                 NonactivatingPanel+canJoinAllSpaces+transient, \
+                 floatingPanel={}, hidesOnDeactivate={}",
+                panel.isFloatingPanel(),
+                panel.hidesOnDeactivate(),
             );
         },
         Err(err) => {

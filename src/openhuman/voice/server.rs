@@ -95,10 +95,9 @@ impl Default for VoiceServerConfig {
 /// The voice server runtime.
 pub struct VoiceServer {
     state: Arc<Mutex<ServerState>>,
-    /// Wrapped in `std::sync::Mutex` so that `stop()` can cancel the current
-    /// token and `fresh_cancel()` can swap in a new one — enabling restart
-    /// after logout without recreating the singleton.
-    cancel: std::sync::Mutex<CancellationToken>,
+    /// Wrapped in a Mutex so `run()` can replace it with a fresh token after
+    /// `stop()` — a `CancellationToken` cannot be un-cancelled.
+    cancel: Mutex<CancellationToken>,
     config: VoiceServerConfig,
     transcription_count: Arc<std::sync::atomic::AtomicU64>,
     session_generation: Arc<std::sync::atomic::AtomicU64>,
@@ -112,23 +111,13 @@ impl VoiceServer {
     pub fn new(config: VoiceServerConfig) -> Self {
         Self {
             state: Arc::new(Mutex::new(ServerState::Stopped)),
-            cancel: std::sync::Mutex::new(CancellationToken::new()),
+            cancel: Mutex::new(CancellationToken::new()),
             config,
             transcription_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             session_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
             recent_transcripts: Arc::new(Mutex::new(Vec::new())),
         }
-    }
-
-    /// Replace the internal cancellation token with a fresh one so the server
-    /// can be re-started after a previous `stop()`.  Returns a clone of the
-    /// new token for use in the run loop.
-    fn fresh_cancel(&self) -> CancellationToken {
-        let fresh = CancellationToken::new();
-        // SAFETY: lock held briefly, only swaps a small struct.
-        *self.cancel.lock().expect("cancel lock poisoned") = fresh.clone();
-        fresh
     }
 
     /// Get the current server status.
@@ -146,20 +135,47 @@ impl VoiceServer {
     ///
     /// This is the main entry point for both embedded and standalone modes.
     pub async fn run(&self, app_config: &Config) -> Result<(), String> {
-        // Replace the cancellation token so a previously-stopped server can
-        // be restarted within the same process (e.g. after logout → re-login).
-        let cancel = self.fresh_cancel();
+        // Atomically transition Stopped → Idle to prevent concurrent run() calls.
+        // The globe listener compilation can take several seconds; without this
+        // guard the RPC handler sees "Stopped" and spawns a duplicate run().
+        //
+        // Also replace the cancellation token with a fresh one — a cancelled
+        // token cannot be reused (stop() cancels it permanently).
+        let cancel = {
+            // Lock cancel FIRST, then state — same order as stop() — to
+            // prevent a race where stop() cancels the old token between
+            // setting Idle and swapping the token.
+            let mut cancel_guard = self.cancel.lock().await;
+            let mut state = self.state.lock().await;
+            if *state != ServerState::Stopped {
+                return Err(format!("voice server already running (state={:?})", *state));
+            }
+
+            let fresh = CancellationToken::new();
+            *cancel_guard = fresh.clone();
+            *state = ServerState::Idle;
+            fresh
+        };
 
         info!(
             "{LOG_PREFIX} starting voice server: hotkey={} mode={:?}",
             self.config.hotkey, self.config.activation_mode
         );
 
-        let combo = hotkey::parse_hotkey(&self.config.hotkey)?;
-        let (listener_handle, mut hotkey_rx) =
-            hotkey::start_listener(combo, self.config.activation_mode)?;
-
-        *self.state.lock().await = ServerState::Idle;
+        // On macOS, the Fn/Globe key is intercepted by the system before
+        // rdev's CGEventTap can see it. Use the Swift-based globe listener
+        // instead, which monitors NSEvent.flagsChanged for the .function flag.
+        let (listener_handle, mut hotkey_rx) = match start_hotkey_listener(
+            &self.config.hotkey,
+            self.config.activation_mode,
+            &cancel,
+        ) {
+            Ok(pair) => pair,
+            Err(e) => {
+                *self.state.lock().await = ServerState::Stopped;
+                return Err(e);
+            }
+        };
 
         info!("{LOG_PREFIX} voice server ready, listening for hotkey");
 
@@ -423,10 +439,29 @@ impl VoiceServer {
         Ok(())
     }
 
-    /// Stop the voice server.
+    /// Stop the voice server and wait for it to reach `Stopped` state.
+    ///
+    /// Cancels the run-loop token and polls until the state transitions to
+    /// `Stopped` (or a 5-second timeout expires). This prevents a fast
+    /// logout → login cycle from seeing a stale `Idle`/`Recording` state
+    /// and skipping the restart.
     pub async fn stop(&self) {
         info!("{LOG_PREFIX} stopping voice server");
-        self.cancel.lock().expect("cancel lock poisoned").cancel();
+        self.cancel.lock().await.cancel();
+
+        // Wait for the run-loop to observe cancellation and set Stopped.
+        for _ in 0..50 {
+            if *self.state.lock().await == ServerState::Stopped {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        warn!("{LOG_PREFIX} stop timed out after 5s — state may not be Stopped");
+    }
+
+    /// Record an error message so it can be surfaced via status().
+    pub async fn set_last_error(&self, msg: &str) {
+        *self.last_error.lock().await = Some(msg.to_string());
     }
 
     /// Spawn `process_recording` as a background task so the hotkey event
@@ -469,6 +504,152 @@ impl VoiceServer {
             .await;
         });
     }
+}
+
+// ── Hotkey listener dispatch (rdev vs macOS globe helper) ─────────────
+
+/// Opaque handle that keeps the hotkey listener alive. Drop to stop.
+enum HotkeyListenerKind {
+    Rdev(hotkey::HotkeyListenerHandle),
+    #[cfg(target_os = "macos")]
+    Globe(CancellationToken),
+}
+
+impl HotkeyListenerKind {
+    fn stop(&self) {
+        match self {
+            HotkeyListenerKind::Rdev(handle) => handle.stop(),
+            #[cfg(target_os = "macos")]
+            HotkeyListenerKind::Globe(cancel) => cancel.cancel(),
+        }
+    }
+}
+
+/// Start the appropriate hotkey listener for the current platform and key.
+///
+/// On macOS, the Fn/Globe key cannot be detected by `rdev`'s CGEventTap.
+/// When the configured hotkey is `"fn"` we fall back to the Swift-based
+/// globe listener (`accessibility::globe`) which monitors
+/// `NSEvent.flagsChanged` for the `.function` modifier flag.
+fn start_hotkey_listener(
+    hotkey_str: &str,
+    mode: hotkey::ActivationMode,
+    server_cancel: &CancellationToken,
+) -> Result<
+    (
+        HotkeyListenerKind,
+        tokio::sync::mpsc::UnboundedReceiver<hotkey::HotkeyEvent>,
+    ),
+    String,
+> {
+    #[cfg(target_os = "macos")]
+    {
+        if hotkey_str.trim().eq_ignore_ascii_case("fn") {
+            return start_globe_hotkey_listener(mode, server_cancel);
+        }
+    }
+
+    // Default path: rdev-based listener for all other keys.
+    let combo = hotkey::parse_hotkey(hotkey_str)?;
+    let (handle, rx) = hotkey::start_listener(combo, mode)?;
+    Ok((HotkeyListenerKind::Rdev(handle), rx))
+}
+
+/// macOS-only: start the Swift globe listener and bridge FN_DOWN / FN_UP
+/// events into `HotkeyEvent::Pressed` / `HotkeyEvent::Released`.
+#[cfg(target_os = "macos")]
+fn start_globe_hotkey_listener(
+    mode: hotkey::ActivationMode,
+    server_cancel: &CancellationToken,
+) -> Result<
+    (
+        HotkeyListenerKind,
+        tokio::sync::mpsc::UnboundedReceiver<hotkey::HotkeyEvent>,
+    ),
+    String,
+> {
+    use crate::openhuman::accessibility::{globe_listener_poll, globe_listener_start};
+
+    info!("{LOG_PREFIX} hotkey is Fn on macOS — using Swift globe listener instead of rdev");
+
+    let status = globe_listener_start()?;
+    if !status.running {
+        let err_msg = status
+            .last_error
+            .unwrap_or_else(|| "globe listener failed to start".to_string());
+        return Err(format!("globe listener: {err_msg}"));
+    }
+    info!(
+        "{LOG_PREFIX} globe listener started, permission={:?}",
+        status.input_monitoring_permission
+    );
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let cancel = server_cancel.child_token();
+    let cancel_clone = cancel.clone();
+
+    // Tap mode state: track whether we're currently active.
+    let is_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    tokio::spawn(async move {
+        let mut poll_interval = tokio::time::interval(Duration::from_millis(50));
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                _ = cancel_clone.cancelled() => {
+                    debug!("{LOG_PREFIX} globe poller cancelled");
+                    break;
+                }
+                _ = poll_interval.tick() => {
+                    let poll_result = match globe_listener_poll() {
+                        Ok(r) => r,
+                        Err(e) => {
+                            warn!("{LOG_PREFIX} globe poll error: {e}");
+                            continue;
+                        }
+                    };
+
+                    for event_str in &poll_result.events {
+                        let hotkey_event = match event_str.as_str() {
+                            "FN_DOWN" => match mode {
+                                hotkey::ActivationMode::Push => {
+                                    Some(hotkey::HotkeyEvent::Pressed)
+                                }
+                                hotkey::ActivationMode::Tap => {
+                                    let was_active = is_active.load(std::sync::atomic::Ordering::SeqCst);
+                                    if was_active {
+                                        is_active.store(false, std::sync::atomic::Ordering::SeqCst);
+                                        Some(hotkey::HotkeyEvent::Released)
+                                    } else {
+                                        is_active.store(true, std::sync::atomic::Ordering::SeqCst);
+                                        Some(hotkey::HotkeyEvent::Pressed)
+                                    }
+                                }
+                            },
+                            "FN_UP" => match mode {
+                                hotkey::ActivationMode::Push => {
+                                    Some(hotkey::HotkeyEvent::Released)
+                                }
+                                hotkey::ActivationMode::Tap => None, // tap ignores release
+                            },
+                            _ => None, // ignore modifier events
+                        };
+
+                        if let Some(ev) = hotkey_event {
+                            debug!("{LOG_PREFIX} globe event {event_str} → {ev:?}");
+                            if tx.send(ev).is_err() {
+                                debug!("{LOG_PREFIX} globe poller: receiver dropped, stopping");
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok((HotkeyListenerKind::Globe(cancel), rx))
 }
 
 // ── Background processing (free functions, spawnable) ─────────────────
@@ -830,9 +1011,11 @@ pub async fn start_if_enabled(app_config: &Config) {
 
     let server = global_server(server_config);
     let config_for_run = app_config.clone();
+    let server_for_err = server.clone();
     tokio::spawn(async move {
         if let Err(e) = server.run(&config_for_run).await {
             error!("{LOG_PREFIX} embedded voice server exited with error: {e}");
+            server_for_err.set_last_error(&e).await;
         }
     });
 }
