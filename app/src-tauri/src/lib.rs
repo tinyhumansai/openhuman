@@ -404,6 +404,13 @@ fn is_daemon_mode() -> bool {
     std::env::args().any(|arg| arg == "daemon" || arg == "--daemon")
 }
 
+/// Tauri command: bring the main window to front from any webview (e.g. overlay orb click).
+#[tauri::command]
+fn activate_main_window(app: AppHandle) {
+    log::debug!("[window] activate_main_window called from overlay");
+    show_main_window(&app);
+}
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if let Err(err) = window.show() {
@@ -567,7 +574,8 @@ pub fn run() {
             service_status_direct,
             service_uninstall_direct,
             register_dictation_hotkey,
-            unregister_dictation_hotkey
+            unregister_dictation_hotkey,
+            activate_main_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -13,5 +13,6 @@ allow = [
     "service_uninstall_direct",
     "register_dictation_hotkey",
     "unregister_dictation_hotkey",
+    "activate_main_window",
 ]
 deny = []
