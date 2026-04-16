@@ -11,7 +11,7 @@ import { useUsageState } from '../hooks/useUsageState';
 import { chatCancel, chatSend, useRustChat } from '../services/chatService';
 import {
   beginInferenceTurn,
-  endInferenceTurn,
+  clearRuntimeForThread,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -424,8 +424,7 @@ const Conversations = () => {
           'No response from the assistant after 2 minutes. Try again or check your connection.'
         )
       );
-      dispatch(endInferenceTurn({ threadId: sendingThreadId }));
-      dispatch(setToolTimelineForThread({ threadId: sendingThreadId, entries: [] }));
+      dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
     }, 120_000);
@@ -449,7 +448,7 @@ const Conversations = () => {
       }
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('cloud_send_failed', msg));
-      dispatch(endInferenceTurn({ threadId: sendingThreadId }));
+      dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
       dispatch(setActiveThread(null));
     }
   };
