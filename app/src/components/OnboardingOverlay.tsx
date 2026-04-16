@@ -20,6 +20,8 @@ const OnboardingOverlay = () => {
   /** Which session token the 3s profile-timeout applied to (ref avoids stale boolean across logins). */
   const profileLoadTimedOutForTokenRef = useRef<string | null>(null);
   const [, profileTimeoutBump] = useState(0);
+  // Keep the overlay rendered while navigating away so the home page doesn't flash.
+  const [isDismissing, setIsDismissing] = useState(false);
 
   const prevTokenRef = useRef<string | null | undefined>(undefined);
   if (prevTokenRef.current !== token) {
@@ -45,18 +47,22 @@ const OnboardingOverlay = () => {
   const onboardingCompleted = snapshot.onboardingCompleted;
 
   const handleDone = useCallback(async () => {
+    // Navigate first while the overlay is still covering the screen, then
+    // persist the completed flag. This prevents the home page from flashing
+    // between overlay dismissal and route change.
+    setIsDismissing(true);
+    navigate('/conversations');
     try {
       await setOnboardingCompletedFlag(true);
     } catch {
       console.warn('[onboarding] Failed to persist onboarding_completed');
     }
-    navigate('/conversations');
   }, [setOnboardingCompletedFlag, navigate]);
 
   // Don't show if not logged in, bootstrap not complete, or user not ready
   if (!token || isBootstrapping || !userReady) return null;
 
-  const shouldShow = DEV_FORCE_ONBOARDING || !onboardingCompleted;
+  const shouldShow = isDismissing || DEV_FORCE_ONBOARDING || !onboardingCompleted;
 
   if (!shouldShow) return null;
 
