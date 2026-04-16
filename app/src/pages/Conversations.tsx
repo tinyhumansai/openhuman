@@ -38,7 +38,9 @@ import {
   openhumanVoiceTts,
 } from '../utils/tauriCommands';
 
-const AGENTIC_MODEL_ID = 'agentic-v1';
+// Chat uses the reasoning model; `agentic-v1` is reserved for sub-agents
+// that execute tool calls, not the primary user-facing conversation.
+const CHAT_MODEL_ID = 'reasoning-v1';
 /** Maximum trailing characters rendered in the live-streaming assistant
  *  preview bubble. The full response is revealed via `addInferenceResponse`
  *  on `chat_done` — this is purely a ticker-tape affordance to signal
@@ -453,7 +455,7 @@ const Conversations = () => {
     // Local model (Ollama) is used only for supplementary features
     // (auto-react, autocomplete, etc.) — never as a primary chat path.
     try {
-      await chatSend({ threadId: sendingThreadId, message: trimmed, model: AGENTIC_MODEL_ID });
+      await chatSend({ threadId: sendingThreadId, message: trimmed, model: CHAT_MODEL_ID });
 
       // Active-thread reset happens in the global ChatRuntimeProvider events.
     } catch (err) {
