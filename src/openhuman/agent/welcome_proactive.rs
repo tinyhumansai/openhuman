@@ -79,11 +79,15 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
         config.onboarding_completed
     );
 
-    // The caller (set_onboarding_completed) already flipped
-    // `chat_onboarding_completed`, so the snapshot always reports
-    // `"flipped"` — matches the state the welcome agent's prompt.md
-    // treats as "first run, authenticated, deliver the full welcome".
-    let snapshot = build_status_snapshot(&config, "flipped");
+    // `chat_onboarding_completed` is still `false` at this point —
+    // `set_onboarding_completed` no longer pre-flips it (see
+    // `config/ops.rs`). The flag is only flipped when the welcome
+    // agent calls `complete_onboarding(action="complete")` after
+    // meeting the engagement criteria. We pass `"pending"` as the
+    // status, `0` as the initial exchange count, and `false` for
+    // `ready_to_complete` because this proactive invocation is the
+    // opening greeting — no exchanges have happened yet.
+    let snapshot = build_status_snapshot(&config, "pending", 0, false);
     let snapshot_json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| anyhow::anyhow!("serialize status snapshot: {e}"))?;
     tracing::debug!(
@@ -99,21 +103,24 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
         "proactive",
     );
 
-    // The welcome prompt.md is insistent that iteration 1 must be a
-    // `complete_onboarding` tool call. We bypass that here by
-    // pre-delivering the snapshot inside the user message and
-    // explicitly overriding iteration 1. Capable models comply; if a
-    // model calls the tool anyway, the tool returns
-    // `finalize_action: "already_complete"` (we've pre-flipped the
-    // flag) so the message still lands — just with a slightly
-    // different framing.
+    // The welcome prompt.md normally starts with a `complete_onboarding`
+    // tool call (iteration 1). We bypass that here by pre-delivering the
+    // snapshot — the agent jumps straight to writing the greeting.
+    //
+    // If the model calls the tool anyway, `check_status` will return
+    // `onboarding_status: "pending"` and `ready_to_complete: false`
+    // (no exchanges yet), so the agent will correctly treat this as
+    // the opening greeting without attempting to finalize.
     let prompt = format!(
         "[PROACTIVE INVOCATION — the user just finished the desktop onboarding wizard; \
          this is not a reply to anything they typed, it is your opening message.]\n\n\
          Skip iteration 1. Do NOT call `complete_onboarding` or any other tool. The \
          status snapshot that `complete_onboarding(check_status)` would have returned \
-         is already provided below. Jump straight to iteration 2 and write the \
-         personalised welcome message per your system prompt guidelines.\n\n\
+         is already provided below — `onboarding_status` is `\"pending\"` and \
+         `ready_to_complete` is `false` because no conversation has happened yet. \
+         Jump straight to iteration 2 and write the personalised welcome message per \
+         your system prompt guidelines. Do NOT call `complete` — the user has not \
+         yet had a real conversation.\n\n\
          Status snapshot (treat exactly as if it were the tool return value):\n\
          ```json\n{snapshot_json}\n```\n\n\
          Write iteration 2 now."

@@ -267,6 +267,11 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
     let target_id = if config.chat_onboarding_completed {
         "orchestrator"
     } else {
+        // Increment the process-global exchange counter every time a user
+        // message is routed to the welcome agent. The `complete_onboarding`
+        // tool reads this counter to decide whether `ready_to_complete` is
+        // `true` and to enforce the minimum-engagement guard in `complete`.
+        crate::openhuman::tools::implementations::agent::complete_onboarding::increment_welcome_exchange_count();
         "welcome"
     };
 

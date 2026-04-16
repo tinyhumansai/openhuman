@@ -1,21 +1,96 @@
-//! Tool: complete_onboarding — inspects workspace setup status and (when
-//! the user is authenticated) auto-finalizes the chat welcome flow.
+//! Tool: complete_onboarding — inspects workspace setup status and, when
+//! engagement criteria are met, finalizes the chat welcome flow.
 //!
-//! Used exclusively by the **welcome** agent. There is only one normal
-//! path: call `check_status` once. The tool returns a structured JSON
-//! snapshot of the user's config AND, if the user is authenticated,
-//! flips `chat_onboarding_completed = true` + seeds proactive cron jobs
-//! as a side effect. The welcome agent then drafts a personalised
-//! welcome message based on the JSON in its next iteration. No second
-//! tool call. No race conditions. No way to forget the flip.
+//! Used exclusively by the **welcome** agent.
 //!
-//! The legacy `complete` action is kept as a manual override for admin
-//! tools and tests but the welcome agent should never call it directly.
+//! ## Normal flow
+//!
+//! 1. Welcome agent calls `check_status` on its first iteration. The
+//!    tool returns a read-only JSON snapshot — **no side effects, no
+//!    flag flips**. The snapshot includes a `ready_to_complete` bool
+//!    and an `exchange_count` uint so the agent knows whether it may
+//!    proceed.
+//! 2. The agent converses with the user until `ready_to_complete` is
+//!    `true` (either ≥ 3 back-and-forth exchanges, or at least one
+//!    Composio integration connected).
+//! 3. The agent calls `complete` to finalize. The `complete` action
+//!    enforces the same criteria server-side and **rejects premature
+//!    calls** with a descriptive error so the agent knows to keep
+//!    conversing.
+//!
+//! ## Exchange count tracking
+//!
+//! A process-global [`AtomicU32`] (`WELCOME_EXCHANGE_COUNT`) counts
+//! how many user messages have been dispatched to the welcome agent
+//! this session. The dispatch layer calls
+//! [`increment_welcome_exchange_count`] once per inbound message when
+//! `chat_onboarding_completed` is still `false`. The counter is
+//! intentionally process-local (not persisted) because the welcome
+//! flow runs exactly once per fresh install; after `complete` flips
+//! the flag the counter is never consulted again.
 
 use crate::openhuman::config::Config;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult, ToolScope};
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Process-global exchange counter for the welcome agent.
+///
+/// Incremented by [`increment_welcome_exchange_count`] (called from
+/// the channel dispatch layer) once per inbound user message that
+/// routes to the welcome agent. Used by [`check_status`] to surface
+/// `exchange_count` and `ready_to_complete` to the agent, and by
+/// [`complete`] to enforce the minimum-engagement guard.
+static WELCOME_EXCHANGE_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Minimum number of welcome-agent exchanges required before the
+/// `complete` action will accept a finalization request when no
+/// Composio integrations are connected.
+const MIN_EXCHANGES_TO_COMPLETE: u32 = 3;
+
+/// Increment the welcome-agent exchange counter by one.
+///
+/// Called from the channel dispatch layer every time a user message
+/// is routed to the welcome agent (i.e. when
+/// `chat_onboarding_completed` is `false`). This is the only write
+/// site — tool code and tests use
+/// [`get_welcome_exchange_count`] to read it.
+pub fn increment_welcome_exchange_count() {
+    let prev = WELCOME_EXCHANGE_COUNT.fetch_add(1, Ordering::Relaxed);
+    tracing::debug!(
+        exchange_count = prev + 1,
+        "[complete_onboarding] welcome exchange count incremented"
+    );
+}
+
+/// Return the current welcome-agent exchange count (process-global).
+///
+/// Exposed for tests; production call sites should use the snapshot
+/// fields returned by [`check_status`].
+pub fn get_welcome_exchange_count() -> u32 {
+    WELCOME_EXCHANGE_COUNT.load(Ordering::Relaxed)
+}
+
+/// Pure-logic helper: given an exchange count and the number of connected
+/// Composio integrations, returns whether the engagement criteria for
+/// `complete` are satisfied.
+///
+/// Extracted as a standalone function so tests can verify the criteria
+/// without involving I/O (no config load, no Composio HTTP call).
+pub(crate) fn engagement_criteria_met(exchange_count: u32, composio_connections: u32) -> bool {
+    exchange_count >= MIN_EXCHANGES_TO_COMPLETE || composio_connections > 0
+}
+
+/// Reset the welcome exchange counter to zero.
+///
+/// Exposed for tests that need a clean slate. **Do not call in
+/// production code** — the counter is process-lifetime state and
+/// resetting it would allow premature `complete` calls.
+#[cfg(test)]
+pub fn reset_welcome_exchange_count() {
+    WELCOME_EXCHANGE_COUNT.store(0, Ordering::Relaxed);
+}
 
 pub struct CompleteOnboardingTool;
 
@@ -32,16 +107,14 @@ impl Tool for CompleteOnboardingTool {
     }
 
     fn description(&self) -> &str {
-        "Read the user's OpenHuman config snapshot and auto-finalize the \
-         chat welcome flow when the user is authenticated. The welcome \
-         agent's single tool call.\n\
+        "Read the user's OpenHuman config snapshot and, when engagement \
+         criteria are met, finalize the chat welcome flow.\n\
          \n\
-         **action=\"check_status\"** — returns a JSON object describing \
-         the user's setup state and (as a side effect when the user has \
-         a valid session JWT) flips `chat_onboarding_completed` to true \
-         + seeds proactive agent cron jobs. Call this ONCE on your first \
-         iteration with no other parameters. Use the JSON to draft a \
-         personalised welcome message in your second iteration.\n\
+         **action=\"check_status\"** — read-only. Returns a JSON object \
+         describing the user's setup state. No side effects, no flag \
+         flips. Call this ONCE on your first iteration with no other \
+         parameters. Use the JSON to craft a personalised welcome \
+         message and decide when to call `complete`.\n\
          \n\
          The returned JSON has this shape:\n\
          ```\n\
@@ -49,8 +122,8 @@ impl Tool for CompleteOnboardingTool {
            \"authenticated\": true,                       // bool — JWT present\n\
            \"auth_source\": \"session_token\",            // \"session_token\" | \"legacy_api_key\" | null\n\
            \"default_model\": \"reasoning-v1\",           // string\n\
-           \"channels_connected\": [\"telegram\"],         // string[] — connected messaging platforms\n\
-           \"active_channel\": \"web\",                   // string — preferred channel for proactive messages\n\
+           \"channels_connected\": [\"telegram\"],        // string[] — connected messaging platforms\n\
+           \"active_channel\": \"web\",                   // preferred channel for proactive messages\n\
            \"integrations\": {                             // bool flags for each capability\n\
              \"composio\": true,\n\
              \"browser\": false,\n\
@@ -59,42 +132,36 @@ impl Tool for CompleteOnboardingTool {
              \"local_ai\": true\n\
            },\n\
            \"memory\": { \"backend\": \"sqlite\", \"auto_save\": true },\n\
-           \"delegate_agents\": [\"researcher\", \"coder\"], // configured custom agents\n\
+           \"delegate_agents\": [\"researcher\", \"coder\"],\n\
            \"ui_onboarding_completed\": true,             // React wizard flag\n\
-           \"chat_onboarding_completed\": true,           // POST-finalize value\n\
-           \"finalize_action\": \"flipped\"                // \"flipped\" | \"already_complete\" | \"skipped_no_auth\"\n\
+           \"chat_onboarding_completed\": false,          // still false until complete() succeeds\n\
+           \"exchange_count\": 1,                         // how many user messages handled so far\n\
+           \"ready_to_complete\": false,                  // true when criteria for complete() are met\n\
+           \"onboarding_status\": \"pending\"             // \"pending\" | \"already_complete\" | \"unauthenticated\"\n\
          }\n\
          ```\n\
          \n\
-         The `finalize_action` field tells you what side effect this \
-         call performed:\n\
-         * `\"flipped\"` — the user was authenticated and the chat flow \
-           was previously incomplete. Flag was just flipped to true and \
-           cron jobs were seeded. Welcome the user; the next chat turn \
-           will route to the orchestrator.\n\
-         * `\"already_complete\"` — the user was authenticated and the \
-           chat flow was already complete from a prior call. No state \
-           change. Welcome the user (this is a re-entry case).\n\
-         * `\"skipped_no_auth\"` — the user is not authenticated, so \
-           the flag was NOT flipped. The welcome agent should explain \
-           the auth problem to the user, point them at the desktop \
-           login flow, and stop. The next chat turn will re-route to \
-           welcome (because the flag is still false), so they'll get \
-           another chance once they log in.\n\
+         The `onboarding_status` field describes the current state:\n\
+         * `\"pending\"` — authenticated, conversation in progress. \
+           Check `ready_to_complete` to know if you may call `complete`.\n\
+         * `\"already_complete\"` — `chat_onboarding_completed` is \
+           already `true`. Welcome the user as a returning visitor.\n\
+         * `\"unauthenticated\"` — the user has no valid session. \
+           Explain the auth problem, point them at the desktop login \
+           flow, and stop. They will get routed back to welcome once \
+           they authenticate.\n\
          \n\
-         Use the JSON fields directly when drafting your welcome \
-         message. Don't quote the JSON back to the user — translate \
-         the field values into natural prose tailored to what they \
-         have and don't have. The status fields are a fact source, \
-         not a draft.\n\
+         `ready_to_complete` is `true` when at least one of:\n\
+         * The user has had at least 3 back-and-forth exchanges, or\n\
+         * The user has connected at least one Composio integration.\n\
          \n\
-         **action=\"complete\"** — legacy manual finalize-only path. \
-         Flips `chat_onboarding_completed` to true unconditionally and \
-         seeds cron jobs without producing a status report. Returns \
-         the literal token \"ok\". Welcome agent should never call \
-         this; use `check_status` instead which performs the same \
-         finalize as a side effect under proper auth gating. Kept for \
-         backward compatibility with admin tools and tests."
+         **action=\"complete\"** — finalize the welcome flow. Flips \
+         `chat_onboarding_completed` to `true` and seeds recurring \
+         cron jobs. Returns `\"ok\"` on success. **Rejects** (returns \
+         an error) if called prematurely: the user must have either \
+         ≥ 3 exchanges or at least one connected Composio integration. \
+         Call only when `ready_to_complete` is `true` in the most \
+         recent `check_status` snapshot."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -104,7 +171,7 @@ impl Tool for CompleteOnboardingTool {
                 "action": {
                     "type": "string",
                     "enum": ["check_status", "complete"],
-                    "description": "\"check_status\" → return JSON config snapshot AND auto-finalize the chat welcome flow when authenticated (welcome agent's only call). \"complete\" → legacy manual finalize-only; do not use from welcome agent."
+                    "description": "\"check_status\" → read-only JSON snapshot of the user's setup state. No side effects. \"complete\" → finalize the welcome flow; enforces minimum-engagement criteria and rejects premature calls."
                 }
             },
             "required": ["action"]
@@ -137,76 +204,57 @@ impl Tool for CompleteOnboardingTool {
     }
 }
 
-/// Reads the user's config, builds a structured JSON snapshot, and
-/// (when the user is authenticated) flips `chat_onboarding_completed`
-/// + seeds proactive cron jobs as a side effect of the read.
+/// Reads the user's config and returns a structured JSON snapshot.
 ///
-/// This is the welcome agent's single tool call. The contract is:
+/// **Read-only** — this function has no side effects. It does not flip
+/// `chat_onboarding_completed`, does not seed cron jobs, and does not
+/// call `complete`. The agent must call `complete` explicitly when it
+/// judges the user ready.
 ///
-/// 1. **Read** — load `Config`, check JWT via
-///    `crate::api::jwt::get_session_token`, gather every config flag
-///    the welcome message might mention.
-/// 2. **Auto-finalize** — if the user is authenticated AND
-///    `chat_onboarding_completed` is currently `false`, flip it to
-///    `true` and spawn the proactive agent cron seeder. If the user
-///    is NOT authenticated, leave the flag alone (the welcome agent
-///    will explain the auth problem and the next chat turn will
-///    re-run welcome).
-/// 3. **Return** — JSON object with all the config fields, the
-///    POST-finalize `chat_onboarding_completed` value, and a
-///    `finalize_action` discriminator describing what side effect
-///    happened (`flipped`, `already_complete`, or `skipped_no_auth`).
-///
-/// The welcome agent uses the JSON to draft a personalised welcome
-/// message in the next iteration. No second tool call needed.
+/// The snapshot includes:
+/// * All config flags the welcome message might mention.
+/// * `exchange_count` — how many user messages have been dispatched
+///   to the welcome agent so far (process-global counter).
+/// * `ready_to_complete` — `true` when either exchange_count ≥
+///   [`MIN_EXCHANGES_TO_COMPLETE`] or at least one Composio
+///   integration is connected.
+/// * `onboarding_status` — discriminator for the current state
+///   (`"pending"`, `"already_complete"`, or `"unauthenticated"`).
 async fn check_status() -> anyhow::Result<ToolResult> {
-    let mut config = Config::load_or_init()
+    let config = Config::load_or_init()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
 
     let (is_authenticated, _auth_source) = detect_auth(&config);
 
-    // ── Auto-finalize side effect ─────────────────────────────────
-    //
-    // When the user is authenticated AND the chat welcome flow has
-    // not yet completed, delegate to the legacy `complete()` action
-    // — single source of truth for "what does finalize mean". This
-    // is the welcome → orchestrator handoff: after the flag flips,
-    // the dispatch layer routes future chat turns to the orchestrator
-    // instead of the welcome agent (see
-    // `web.rs::build_session_agent` and
-    // `dispatch.rs::resolve_target_agent`).
-    //
-    // We discard `complete()`'s `ToolResult::success("ok")` return
-    // value because the caller (check_status) is producing its own
-    // JSON snapshot — the side effect is the only thing we want.
-    // After the call we mirror the flip into our local `config`
-    // variable so the JSON snapshot below reflects the post-finalize
-    // state (the disk has been updated, but our in-memory copy was
-    // loaded before the flip).
-    let finalize_action = if !is_authenticated {
-        "skipped_no_auth"
+    let onboarding_status = if !is_authenticated {
+        "unauthenticated"
     } else if config.chat_onboarding_completed {
         "already_complete"
     } else {
-        let _ = complete().await?;
-        config.chat_onboarding_completed = true;
-        tracing::info!(
-            "[complete_onboarding] chat welcome flow auto-finalized via check_status (delegated to complete())"
-        );
-        "flipped"
+        "pending"
     };
 
-    let snapshot = build_status_snapshot(&config, finalize_action);
-    let payload = serde_json::to_string_pretty(&snapshot)
-        .map_err(|e| anyhow::anyhow!("Failed to serialize status snapshot: {e}"))?;
+    let exchange_count = get_welcome_exchange_count();
+    let composio_connections = crate::openhuman::composio::fetch_connected_integrations(&config)
+        .await
+        .len() as u32;
+    let ready_to_complete = is_authenticated
+        && !config.chat_onboarding_completed
+        && (exchange_count >= MIN_EXCHANGES_TO_COMPLETE || composio_connections > 0);
 
     tracing::debug!(
-        "[complete_onboarding] check_status returned authenticated={} finalize_action={} chars={}",
-        is_authenticated,
-        finalize_action,
-        payload.len()
+        authenticated = is_authenticated,
+        onboarding_status,
+        exchange_count,
+        composio_connections,
+        ready_to_complete,
+        "[complete_onboarding] check_status snapshot built"
     );
+
+    let snapshot = build_status_snapshot(&config, onboarding_status, exchange_count, ready_to_complete);
+    let payload = serde_json::to_string_pretty(&snapshot)
+        .map_err(|e| anyhow::anyhow!("Failed to serialize status snapshot: {e}"))?;
 
     Ok(ToolResult::success(payload))
 }
@@ -248,14 +296,19 @@ pub(crate) fn detect_auth(config: &Config) -> (bool, Value) {
 ///
 /// The snapshot describes the user's workspace setup (connected
 /// channels, integrations, delegate agents, memory settings, and
-/// onboarding flags) and embeds a `finalize_action` discriminator so
-/// the agent knows which message framing to use. Shared between
-/// [`check_status`] (reactive, called by the tool) and the proactive
-/// welcome path (fired on `onboarding_completed` false→true).
+/// onboarding flags). Shared between [`check_status`] (reactive,
+/// called by the tool) and the proactive welcome path (fired on
+/// `onboarding_completed` false→true).
 ///
-/// The caller is responsible for computing `finalize_action` —
-/// typically `"flipped"`, `"already_complete"`, or `"skipped_no_auth"`.
-pub(crate) fn build_status_snapshot(config: &Config, finalize_action: &str) -> Value {
+/// * `onboarding_status` — `"pending"` | `"already_complete"` | `"unauthenticated"`
+/// * `exchange_count` — messages dispatched to welcome agent this session
+/// * `ready_to_complete` — whether the `complete` action would succeed
+pub(crate) fn build_status_snapshot(
+    config: &Config,
+    onboarding_status: &str,
+    exchange_count: u32,
+    ready_to_complete: bool,
+) -> Value {
     let (is_authenticated, auth_source) = detect_auth(config);
 
     // ── Connected messaging channels ──────────────────────────────
@@ -339,26 +392,84 @@ pub(crate) fn build_status_snapshot(config: &Config, finalize_action: &str) -> V
         "delegate_agents": delegate_agents,
         "ui_onboarding_completed": config.onboarding_completed,
         "chat_onboarding_completed": config.chat_onboarding_completed,
-        "finalize_action": finalize_action,
+        "exchange_count": exchange_count,
+        "ready_to_complete": ready_to_complete,
+        "onboarding_status": onboarding_status,
     })
 }
 
-/// Legacy manual finalize-only path. Flips `chat_onboarding_completed`
-/// to true unconditionally (no auth check) and seeds proactive cron
-/// jobs. Welcome agent should NOT call this — use `check_status`
-/// instead, which performs the same finalize as a side effect under
-/// proper auth gating. Kept for backward compatibility with admin
-/// tools and tests.
+/// Finalize the welcome flow.
+///
+/// Flips `chat_onboarding_completed` to `true` and seeds recurring
+/// proactive cron jobs. Returns `"ok"` on success.
+///
+/// ## Guard criteria
+///
+/// Rejects (returns a [`ToolResult::error`]) if the user has not yet
+/// met the minimum engagement threshold:
+///
+/// * **Exchange count** — at least [`MIN_EXCHANGES_TO_COMPLETE`] user
+///   messages have been dispatched to the welcome agent, **or**
+/// * **Composio connection** — at least one Composio integration is
+///   connected.
+///
+/// Either criterion is sufficient. The intent is that onboarding
+/// completion reflects a real interaction, not a race between the
+/// welcome agent and an auto-finalizer.
+///
+/// ## Auth requirement
+///
+/// Requires the user to be authenticated. If there is no valid session
+/// JWT or legacy API key, the call is rejected with an explanation so
+/// the agent can instruct the user to log in.
 async fn complete() -> anyhow::Result<ToolResult> {
     let mut config = Config::load_or_init()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to load config: {e}"))?;
 
+    // Idempotent — already done.
     if config.chat_onboarding_completed {
         tracing::debug!("[complete_onboarding] chat welcome flow already completed — no-op");
         return Ok(ToolResult::success("ok"));
     }
 
+    // ── Auth guard ────────────────────────────────────────────────
+    let (is_authenticated, _) = detect_auth(&config);
+    if !is_authenticated {
+        tracing::debug!("[complete_onboarding] complete rejected — user not authenticated");
+        return Ok(ToolResult::error(
+            "Cannot complete onboarding: the user is not authenticated. \
+             Please guide them to log in via the desktop login flow first.",
+        ));
+    }
+
+    // ── Engagement guard ──────────────────────────────────────────
+    let exchange_count = get_welcome_exchange_count();
+    let composio_connections = crate::openhuman::composio::fetch_connected_integrations(&config)
+        .await
+        .len() as u32;
+
+    let criteria_met = exchange_count >= MIN_EXCHANGES_TO_COMPLETE || composio_connections > 0;
+
+    tracing::debug!(
+        exchange_count,
+        composio_connections,
+        criteria_met,
+        "[complete_onboarding] engagement guard check"
+    );
+
+    if !criteria_met {
+        let remaining = MIN_EXCHANGES_TO_COMPLETE.saturating_sub(exchange_count);
+        return Ok(ToolResult::error(format!(
+            "Cannot complete onboarding yet: the user needs either at least \
+             {MIN_EXCHANGES_TO_COMPLETE} back-and-forth exchanges (currently \
+             {exchange_count}; {remaining} more needed) or at least one connected \
+             Composio integration. Keep conversing to learn more about what the \
+             user wants to accomplish."
+        )));
+    }
+
+    // ── Finalize ──────────────────────────────────────────────────
     config.chat_onboarding_completed = true;
     config
         .save()
@@ -373,7 +484,9 @@ async fn complete() -> anyhow::Result<ToolResult> {
     });
 
     tracing::info!(
-        "[complete_onboarding] chat welcome flow marked complete via legacy complete action"
+        exchange_count,
+        composio_connections,
+        "[complete_onboarding] chat welcome flow finalized"
     );
 
     Ok(ToolResult::success("ok"))
@@ -395,17 +508,17 @@ mod tests {
     }
 
     #[test]
-    fn build_status_snapshot_carries_finalize_action_and_core_fields() {
+    fn build_status_snapshot_carries_new_fields() {
         // A default Config is "bare install" — no channels, no
         // integrations. This test locks in the JSON shape the welcome
-        // agent's prompt.md depends on, and is the contract shared
-        // between `check_status` (reactive) and the proactive welcome
-        // path — if a future refactor drops or renames a field, this
-        // fails loudly.
+        // agent's prompt.md depends on. Dropping or renaming a field
+        // breaks this test loudly.
         let config = Config::default();
-        let snapshot = build_status_snapshot(&config, "flipped");
+        let snapshot = build_status_snapshot(&config, "pending", 0, false);
 
-        assert_eq!(snapshot["finalize_action"], "flipped");
+        assert_eq!(snapshot["onboarding_status"], "pending");
+        assert_eq!(snapshot["exchange_count"], 0);
+        assert_eq!(snapshot["ready_to_complete"], false);
         assert_eq!(snapshot["chat_onboarding_completed"], false);
         assert_eq!(snapshot["ui_onboarding_completed"], false);
         assert_eq!(snapshot["active_channel"], "web");
@@ -419,8 +532,6 @@ mod tests {
         );
         assert!(snapshot["integrations"].is_object());
         assert!(snapshot["memory"].is_object());
-        // Every integration flag present so the welcome prompt can
-        // branch on bare-install handling without optional-chain checks.
         for key in [
             "composio",
             "browser",
@@ -436,11 +547,35 @@ mod tests {
     }
 
     #[test]
+    fn build_status_snapshot_ready_to_complete_reflected() {
+        let config = Config::default();
+        let snapshot = build_status_snapshot(&config, "pending", 5, true);
+        assert_eq!(snapshot["ready_to_complete"], true);
+        assert_eq!(snapshot["exchange_count"], 5);
+        assert_eq!(snapshot["onboarding_status"], "pending");
+    }
+
+    #[test]
     fn detect_auth_on_default_config_is_unauthenticated() {
         let config = Config::default();
         let (is_auth, source) = detect_auth(&config);
         assert!(!is_auth);
         assert!(source.is_null());
+    }
+
+    // ── exchange counter ──────────────────────────────────────────────────────
+
+    #[test]
+    fn exchange_counter_increments_and_resets() {
+        reset_welcome_exchange_count();
+        assert_eq!(get_welcome_exchange_count(), 0);
+        increment_welcome_exchange_count();
+        assert_eq!(get_welcome_exchange_count(), 1);
+        increment_welcome_exchange_count();
+        increment_welcome_exchange_count();
+        assert_eq!(get_welcome_exchange_count(), 3);
+        reset_welcome_exchange_count();
+        assert_eq!(get_welcome_exchange_count(), 0);
     }
 
     // ── description ───────────────────────────────────────────────────────────
@@ -457,6 +592,10 @@ mod tests {
         assert!(
             desc.contains("complete"),
             "description should mention complete"
+        );
+        assert!(
+            desc.contains("ready_to_complete"),
+            "description should mention ready_to_complete"
         );
     }
 
@@ -513,14 +652,56 @@ mod tests {
         // but it should not return the "Unknown action" error.
         let tool = CompleteOnboardingTool::new();
         let result = tool.execute(serde_json::json!({})).await;
-        // Either Ok (config loaded) or Err (config failed) — just must not be
-        // the "Unknown action" variant.
         if let Ok(r) = result {
             assert!(
                 !r.output().contains("Unknown action"),
                 "missing action should default to check_status, not 'Unknown action'"
             );
         }
-        // Err from config loading is also acceptable here.
+    }
+
+    // ── guard: engagement_criteria_met ───────────────────────────────────────
+
+    /// Zero exchanges, no composio → criteria NOT met.
+    #[test]
+    fn criteria_not_met_zero_exchanges_no_composio() {
+        assert!(!engagement_criteria_met(0, 0));
+    }
+
+    /// One exchange below threshold, no composio → criteria NOT met.
+    #[test]
+    fn criteria_not_met_below_threshold() {
+        assert!(!engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE - 1, 0));
+    }
+
+    /// Exactly at the exchange threshold, no composio → criteria MET.
+    #[test]
+    fn criteria_met_at_exchange_threshold() {
+        assert!(engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE, 0));
+    }
+
+    /// Above the exchange threshold → criteria MET.
+    #[test]
+    fn criteria_met_above_threshold() {
+        assert!(engagement_criteria_met(MIN_EXCHANGES_TO_COMPLETE + 5, 0));
+    }
+
+    /// Zero exchanges but one composio connection → criteria MET
+    /// (composio is an OR shortcut, not AND).
+    #[test]
+    fn criteria_met_via_composio_zero_exchanges() {
+        assert!(engagement_criteria_met(0, 1));
+    }
+
+    /// One exchange and one composio connection → criteria MET.
+    #[test]
+    fn criteria_met_via_composio_with_exchanges() {
+        assert!(engagement_criteria_met(1, 1));
+    }
+
+    /// Exchange count at u32::MAX — no panic, criteria met.
+    #[test]
+    fn criteria_met_saturating_exchange_count() {
+        assert!(engagement_criteria_met(u32::MAX, 0));
     }
 }
