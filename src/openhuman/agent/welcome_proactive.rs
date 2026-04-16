@@ -18,11 +18,10 @@
 //!
 //! ### Welcome agent inference (parallel path)
 //!
-//!    - Builds the same JSON status snapshot
-//!      `tools::implementations::agent::complete_onboarding`'s
-//!      `check_status` would have returned, with `finalize_action =
-//!      "flipped"` (the caller has already flipped
-//!      `chat_onboarding_completed`).
+//!    - Builds the same JSON status snapshot that
+//!      `complete_onboarding` `check_status` would return (`pending`,
+//!      `ready_to_complete: false` until the user has conversed or
+//!      connected Composio).
 //!    - Loads the `welcome` agent via
 //!      [`crate::openhuman::agent::Agent::from_config_for_agent`] so
 //!      the agent runs with its own `prompt.md`, tool allowlist, and
@@ -188,14 +187,11 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
         "proactive",
     );
 
-    // The welcome prompt.md normally starts with a `complete_onboarding`
-    // tool call (iteration 1). We bypass that here by pre-delivering the
-    // snapshot — the agent jumps straight to writing the greeting.
-    //
-    // If the model calls the tool anyway, `check_status` will return
-    // `onboarding_status: "pending"` and `ready_to_complete: false`
-    // (no exchanges yet), so the agent will correctly treat this as
-    // the opening greeting without attempting to finalize.
+    // The reactive welcome prompt asks for visible prose plus
+    // `complete_onboarding(check_status)` on the first iteration. Here we
+    // pre-inject the snapshot so the model can write the long welcome
+    // without a tool round-trip. If it calls `check_status` anyway, the
+    // result is consistent: pending, not ready to complete.
     //
     // We also tell the agent that two greeting template messages have
     // already been shown so it does not open with a redundant "Good
@@ -210,16 +206,16 @@ async fn run_proactive_welcome(config: Config) -> anyhow::Result<()> {
          2. \"Getting everything ready for you...\" (shown ~4 seconds later).\n\
          Do NOT open with any greeting (\"Good morning\", \"Hey there\", \"Hi!\", etc.). \
          Jump straight into the personalised welcome content about their specific setup.]\n\n\
-         Skip iteration 1. Do NOT call `complete_onboarding` or any other tool. The \
-         status snapshot that `complete_onboarding(check_status)` would have returned \
-         is already provided below — `onboarding_status` is `\"pending\"` and \
-         `ready_to_complete` is `false` because no conversation has happened yet. \
-         Jump straight to iteration 2 and write the personalised welcome message per \
-         your system prompt guidelines. Do NOT call `complete` — the user has not \
-         yet had a real conversation.\n\n\
+         Do NOT call `complete_onboarding` or any other tool in this run. The \
+         status snapshot that `complete_onboarding({{\"action\":\"check_status\"}})` \
+         would have returned is already provided below — `onboarding_status` is \
+         `\"pending\"` and `ready_to_complete` is `false` because no user messages \
+         have been exchanged yet. Write the personalised welcome message per your \
+         system prompt. Do NOT call `complete_onboarding` with `complete` — the user \
+         has not yet had a real conversation.\n\n\
          Status snapshot (treat exactly as if it were the tool return value):\n\
          ```json\n{snapshot_json}\n```\n\n\
-         Write iteration 2 now."
+         Write your welcome message now."
     );
     tracing::debug!(
         prompt_chars = prompt.len(),
