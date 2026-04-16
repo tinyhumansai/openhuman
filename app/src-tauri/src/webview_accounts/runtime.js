@@ -17,7 +17,9 @@
 //   <custom>         arbitrary — recipes can push any kind via api.emit(kind, payload)
 //
 // Browser push notifications are NOT handled here — they're intercepted
-// at the CDP level in `notification_scanner` (feature=cef only).
+// natively in the CEF render process by `cef-helper`'s NotifyV8Handler,
+// which replaces window.Notification + ServiceWorkerRegistration.prototype
+// .showNotification with V8 native bindings (see the tauri-cef fork).
 // Composer autocomplete has been removed; any ghost-text overlay is now
 // the UI host's responsibility.
 (function () {

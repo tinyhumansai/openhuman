@@ -1,4 +1,5 @@
 import { FaLinkedin } from 'react-icons/fa';
+import { TbRobot } from 'react-icons/tb';
 import {
   SiDiscord,
   SiGmail,
@@ -23,6 +24,7 @@ const PROVIDER_COLOR: Record<AccountProvider, string> = {
   slack: '#4A154B',
   discord: '#5865F2',
   'google-meet': '#00897B',
+  browserscan: '#6B7280',
 };
 
 export const AgentIcon = ({ className }: { className?: string }) => (
@@ -53,6 +55,8 @@ export const ProviderIcon = ({
       return <SiDiscord className={className} style={style} />;
     case 'google-meet':
       return <SiGooglemeet className={className} style={style} />;
+    case 'browserscan':
+      return <TbRobot className={className} style={style} />;
     default:
       return null;
   }

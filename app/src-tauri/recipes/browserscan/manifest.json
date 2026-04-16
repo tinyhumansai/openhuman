@@ -1,0 +1,7 @@
+{
+  "id": "browserscan",
+  "name": "BrowserScan (dev)",
+  "version": "0.1.0",
+  "serviceURL": "https://www.browserscan.net/bot-detection",
+  "icon": "icon.svg"
+}

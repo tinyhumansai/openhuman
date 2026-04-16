@@ -1,3 +1,5 @@
+import { IS_DEV } from '../utils/config';
+
 export type AccountProvider =
   | 'whatsapp'
   | 'telegram'
@@ -5,7 +7,8 @@ export type AccountProvider =
   | 'gmail'
   | 'slack'
   | 'discord'
-  | 'google-meet';
+  | 'google-meet'
+  | 'browserscan';
 
 export type AccountStatus = 'pending' | 'open' | 'error' | 'closed';
 
@@ -48,7 +51,7 @@ export interface ProviderDescriptor {
   serviceUrl: string;
 }
 
-export const PROVIDERS: ProviderDescriptor[] = [
+const BASE_PROVIDERS: ProviderDescriptor[] = [
   {
     id: 'whatsapp',
     label: 'WhatsApp Web',
@@ -92,3 +95,16 @@ export const PROVIDERS: ProviderDescriptor[] = [
     serviceUrl: 'https://meet.google.com/',
   },
 ];
+
+const DEV_PROVIDERS: ProviderDescriptor[] = [
+  {
+    id: 'browserscan',
+    label: 'BrowserScan (dev)',
+    description: 'Bot-detection sandbox for sanity-checking our webview fingerprint.',
+    serviceUrl: 'https://www.browserscan.net/bot-detection',
+  },
+];
+
+export const PROVIDERS: ProviderDescriptor[] = IS_DEV
+  ? [...BASE_PROVIDERS, ...DEV_PROVIDERS]
+  : BASE_PROVIDERS;

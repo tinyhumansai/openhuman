@@ -29,6 +29,10 @@ use tauri::{
 };
 #[cfg(feature = "cef")]
 use tauri_plugin_notification::NotificationExt;
+// `ImplBrowser` exposes `Browser::identifier()` — bring the trait into scope
+// so the `with_webview` callback can read the CEF browser id.
+#[cfg(feature = "cef")]
+use cef::ImplBrowser;
 
 const RUNTIME_JS: &str = include_str!("runtime.js");
 const UA_SPOOF_JS: &str = include_str!("ua_spoof.js");
@@ -39,6 +43,10 @@ const GMAIL_RECIPE_JS: &str = include_str!("../../recipes/gmail/recipe.js");
 const SLACK_RECIPE_JS: &str = include_str!("../../recipes/slack/recipe.js");
 const DISCORD_RECIPE_JS: &str = include_str!("../../recipes/discord/recipe.js");
 const GOOGLE_MEET_RECIPE_JS: &str = include_str!("../../recipes/google-meet/recipe.js");
+/// Dev-only bot-detection sandbox. Exposed through the UI only when
+/// `import.meta.env.DEV` is true, but registered here unconditionally so
+/// debug/release test builds behave the same if invoked directly.
+const BROWSERSCAN_RECIPE_JS: &str = include_str!("../../recipes/browserscan/recipe.js");
 
 /// User agent we pretend to be for all external services. Web-app services
 /// (WhatsApp, Gmail, Google's login flow) reject "unknown" WebView UAs with
@@ -58,15 +66,15 @@ fn provider_url(provider: &str) -> Option<&'static str> {
         "slack" => Some("https://app.slack.com/client/"),
         "discord" => Some("https://discord.com/channels/@me"),
         "google-meet" => Some("https://meet.google.com/"),
+        "browserscan" => Some("https://www.browserscan.net/bot-detection"),
         _ => None,
     }
 }
 
 fn provider_user_agent(provider: &str) -> Option<&'static str> {
     match provider {
-        "whatsapp" | "telegram" | "linkedin" | "gmail" | "slack" | "discord" | "google-meet" => {
-            Some(CHROME_UA)
-        }
+        "whatsapp" | "telegram" | "linkedin" | "gmail" | "slack" | "discord" | "google-meet"
+        | "browserscan" => Some(CHROME_UA),
         _ => None,
     }
 }
@@ -80,6 +88,7 @@ fn provider_recipe_js(provider: &str) -> Option<&'static str> {
         "slack" => Some(SLACK_RECIPE_JS),
         "discord" => Some(DISCORD_RECIPE_JS),
         "google-meet" => Some(GOOGLE_MEET_RECIPE_JS),
+        "browserscan" => Some(BROWSERSCAN_RECIPE_JS),
         _ => None,
     }
 }
@@ -91,7 +100,7 @@ fn provider_recipe_js(provider: &str) -> Option<&'static str> {
 fn provider_ua_spoof(provider: &str) -> bool {
     matches!(
         provider,
-        "slack" | "gmail" | "linkedin" | "discord" | "google-meet"
+        "slack" | "gmail" | "linkedin" | "discord" | "google-meet" | "browserscan"
     )
 }
 
@@ -124,6 +133,7 @@ fn provider_allowed_hosts(provider: &str) -> &'static [&'static str] {
             "gstatic.com",
             "googleapis.com",
         ],
+        "browserscan" => &["browserscan.net"],
         _ => &[],
     }
 }
@@ -169,6 +179,7 @@ pub fn provider_display_name(provider: &str) -> &'static str {
         "slack" => "Slack",
         "discord" => "Discord",
         "google-meet" => "Google Meet",
+        "browserscan" => "BrowserScan",
         _ => "OpenHuman",
     }
 }
