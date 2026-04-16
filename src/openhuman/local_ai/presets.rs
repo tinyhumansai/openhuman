@@ -196,12 +196,9 @@ pub fn preset_for_tier(tier: ModelTier) -> Option<ModelPreset> {
 }
 
 /// Recommend a tier based on device capabilities.
-///
-/// The recommendation is capped at [`MVP_MAX_TIER`] so that auto-provisioning
-/// never selects a model above the MVP ceiling, regardless of available RAM.
 pub fn recommend_tier(device: &DeviceProfile) -> ModelTier {
     let ram_gb = device.total_ram_gb();
-    let uncapped = if ram_gb >= 16 {
+    let tier = if ram_gb >= 16 {
         ModelTier::Ram16PlusGb
     } else if ram_gb >= 8 {
         ModelTier::Ram8To16Gb
@@ -211,17 +208,6 @@ pub fn recommend_tier(device: &DeviceProfile) -> ModelTier {
         ModelTier::Ram2To4Gb
     } else {
         ModelTier::Ram1Gb
-    };
-    let tier = if uncapped.is_mvp_allowed() {
-        uncapped
-    } else {
-        tracing::debug!(
-            ram_gb,
-            ?uncapped,
-            capped_to = ?MVP_MAX_TIER,
-            "[local_ai] capping recommended tier to MVP ceiling"
-        );
-        MVP_MAX_TIER
     };
     tracing::debug!(ram_gb, ?tier, "[local_ai] recommended model tier");
     tier
@@ -336,13 +322,12 @@ mod tests {
     }
 
     #[test]
-    fn recommend_tier_by_ram_capped_at_mvp_max() {
-        // All devices are capped at the single MVP tier (Ram2To4Gb).
-        assert_eq!(recommend_tier(&test_device(1)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(3)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(4)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(8)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(32)), MVP_MAX_TIER);
+    fn recommend_tier_scales_with_ram() {
+        assert_eq!(recommend_tier(&test_device(1)), ModelTier::Ram1Gb);
+        assert_eq!(recommend_tier(&test_device(3)), ModelTier::Ram2To4Gb);
+        assert_eq!(recommend_tier(&test_device(4)), ModelTier::Ram4To8Gb);
+        assert_eq!(recommend_tier(&test_device(8)), ModelTier::Ram8To16Gb);
+        assert_eq!(recommend_tier(&test_device(32)), ModelTier::Ram16PlusGb);
     }
 
     #[test]

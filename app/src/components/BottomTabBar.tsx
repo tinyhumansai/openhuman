@@ -1,7 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useCoreState } from '../providers/CoreStateProvider';
-import { useAppSelector } from '../store/hooks';
 
 const tabs = [
   {
@@ -108,16 +107,6 @@ const BottomTabBar = () => {
   const { snapshot } = useCoreState();
   const token = snapshot.sessionToken;
 
-  const conversationsUnreadCount = useAppSelector(state => {
-    const { threads, lastViewedAt } = state.thread;
-    if (threads.length === 0) return 0;
-    return threads.filter(t => {
-      const viewed = lastViewedAt[t.id];
-      const lastMsg = new Date(t.lastMessageAt || t.createdAt).getTime();
-      return viewed == null || lastMsg > viewed;
-    }).length;
-  });
-
   const hiddenPaths = ['/', '/login'];
   if (
     !token ||
@@ -146,7 +135,6 @@ const BottomTabBar = () => {
       <nav className="pointer-events-auto inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
         {tabs.map(tab => {
           const active = isActive(tab.path);
-          const showBadge = tab.id === 'chat' && conversationsUnreadCount > 0;
           return (
             <button
               key={tab.id}
@@ -159,13 +147,6 @@ const BottomTabBar = () => {
               aria-label={tab.label}>
               {tab.icon}
               <span>{tab.label}</span>
-              {showBadge && (
-                <span
-                  className="absolute -top-1 left-5 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-coral-500 text-white text-[9px] font-medium"
-                  aria-label={`${conversationsUnreadCount} unread`}>
-                  {conversationsUnreadCount > 99 ? '99+' : conversationsUnreadCount}
-                </span>
-              )}
             </button>
           );
         })}

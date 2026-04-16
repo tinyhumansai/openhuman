@@ -37,7 +37,7 @@ const LocalModelPanel = () => {
   const [presetsData, setPresetsData] = useState<PresetsResponse | null>(null);
   const [presetsLoading, setPresetsLoading] = useState(true);
   const [presetError, setPresetError] = useState('');
-  const [presetSuccess] = useState<ApplyPresetResult | null>(null);
+  const [presetSuccess, setPresetSuccess] = useState<ApplyPresetResult | null>(null);
 
   const progress = useMemo(() => {
     const downloadProgress = progressFromDownloads(downloads);
@@ -134,6 +134,11 @@ const LocalModelPanel = () => {
           presetError={presetError}
           presetSuccess={presetSuccess}
           formatRamGb={formatRamGb}
+          onPresetApplied={result => {
+            setPresetSuccess(result);
+            void loadPresets();
+            void loadStatus();
+          }}
         />
 
         {/* Simplified download status */}
