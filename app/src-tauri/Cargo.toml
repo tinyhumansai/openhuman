@@ -59,6 +59,13 @@ semver = "1"
 log = "0.4"
 env_logger = "0.11"
 
+# Direct CEF + tauri-runtime-cef dependencies (used only with `--features cef`).
+# `tauri-runtime-cef::notification::register` is how we hook native Web
+# Notification interception per webview, and `cef::Browser` is what we downcast
+# from the boxed handle returned by `Webview::with_webview`.
+tauri-runtime-cef = { version = "0.1.0", optional = true }
+cef = { version = "=146.4.1", default-features = false, optional = true }
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", default-features = false, features = ["signal"] }
 
@@ -74,24 +81,28 @@ objc2-app-kit = "0.3.2"
 # `--no-default-features --features cef`.
 default = ["wry"]
 wry = ["tauri/wry"]
-cef = ["tauri/cef", "tauri/devtools"]
+cef = ["tauri/cef", "tauri/devtools", "dep:tauri-runtime-cef", "dep:cef"]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
 sandbox-bubblewrap = []
 
 [patch.crates-io]
-# CEF support lives on the `feat/cef` branch of tauri-apps/tauri and the
-# matching `feat/cef` branch of tauri-apps/plugins-workspace. The patch is
-# always active (not gated on the `cef` feature) because cargo doesn't support
-# conditional patches — it's a no-op for wry builds since the branch still
-# exposes the wry runtime.
-tauri = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
-tauri-build = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
-tauri-utils = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
-tauri-macros = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
-tauri-runtime = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
-tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
-tauri-plugin = { git = "https://github.com/tauri-apps/tauri", branch = "feat/cef" }
+# CEF support lives on the `feat/cef` branch of tauri-apps/tauri. We carry our
+# own fork at tinyhumansai/tauri-cef on `feat/cef-notification-intercept` which
+# adds native Web Notifications interception — `tauri-runtime-cef::notification`
+# (browser-process callback registry) plus `cef-helper` patching `window.Notification`
+# and `ServiceWorkerRegistration.prototype.showNotification` from the renderer
+# side. Pinned by rev so cargo updates can't silently shift behavior.
+#
+# Plugins still patch from upstream tauri-apps/plugins-workspace@feat/cef — the
+# fork is tauri-only.
+tauri = { git = "https://github.com/tinyhumansai/tauri-cef", rev = "d7cbc251b285366ae573327370096fd781598fdc" }
+tauri-build = { git = "https://github.com/tinyhumansai/tauri-cef", rev = "d7cbc251b285366ae573327370096fd781598fdc" }
+tauri-utils = { git = "https://github.com/tinyhumansai/tauri-cef", rev = "d7cbc251b285366ae573327370096fd781598fdc" }
+tauri-macros = { git = "https://github.com/tinyhumansai/tauri-cef", rev = "d7cbc251b285366ae573327370096fd781598fdc" }
+tauri-runtime = { git = "https://github.com/tinyhumansai/tauri-cef", rev = "d7cbc251b285366ae573327370096fd781598fdc" }
+tauri-runtime-wry = { git = "https://github.com/tinyhumansai/tauri-cef", rev = "d7cbc251b285366ae573327370096fd781598fdc" }
+tauri-plugin = { git = "https://github.com/tinyhumansai/tauri-cef", rev = "d7cbc251b285366ae573327370096fd781598fdc" }
 
 tauri-plugin-opener = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }
 tauri-plugin-deep-link = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "feat/cef" }

@@ -7,8 +7,6 @@ mod whatsapp_scanner;
 mod slack_scanner;
 #[cfg(feature = "cef")]
 mod discord_scanner;
-#[cfg(feature = "cef")]
-mod notification_scanner;
 mod core_process;
 mod core_update;
 mod webview_accounts;
@@ -547,8 +545,6 @@ pub fn run() {
     let builder = builder.manage(slack_scanner::ScannerRegistry::new());
     #[cfg(feature = "cef")]
     let builder = builder.manage(discord_scanner::ScannerRegistry::new());
-    #[cfg(feature = "cef")]
-    let builder = builder.manage(notification_scanner::ScannerRegistry::new());
     builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]

@@ -27,6 +27,8 @@ use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime, Url, WebviewBuilder,
     WebviewUrl, webview::NewWindowResponse,
 };
+#[cfg(feature = "cef")]
+use tauri_plugin_notification::NotificationExt;
 
 const RUNTIME_JS: &str = include_str!("runtime.js");
 const UA_SPOOF_JS: &str = include_str!("ua_spoof.js");
@@ -156,8 +158,7 @@ fn open_in_system_browser(url: &str) {
 
 /// Human-readable label used as the title prefix on native notifications
 /// so users can tell which provider fired the ping. Matches the labels
-/// in the frontend `PROVIDERS` registry. Public because the CDP-based
-/// `notification_scanner` formats the same prefix for its OS notifications.
+/// in the frontend `PROVIDERS` registry.
 #[cfg(feature = "cef")]
 pub fn provider_display_name(provider: &str) -> &'static str {
     match provider {
@@ -176,6 +177,54 @@ pub fn provider_display_name(provider: &str) -> &'static str {
 pub struct WebviewAccountsState {
     /// account_id -> webview label (we use `acct_<id>` as the label).
     inner: Mutex<HashMap<String, String>>,
+    /// account_id -> CEF `Browser::identifier()`. Populated asynchronously
+    /// inside the `with_webview` callback once the renderer hands us the
+    /// browser handle, and consumed at close/purge time so we can call
+    /// `tauri_runtime_cef::notification::unregister` without leaking
+    /// per-browser handler entries across account churn.
+    #[cfg(feature = "cef")]
+    browser_ids: Mutex<HashMap<String, i32>>,
+}
+
+/// Translate a `tauri-runtime-cef` notification payload into a native OS
+/// toast via `tauri-plugin-notification`. Title is prefixed with the
+/// human-readable provider label so a glance tells the user which webview
+/// fired the ping.
+#[cfg(feature = "cef")]
+fn forward_native_notification<R: Runtime>(
+    app: &AppHandle<R>,
+    account_id: &str,
+    provider: &str,
+    payload: &tauri_runtime_cef::notification::NotificationPayload,
+) {
+    let provider_label = provider_display_name(provider);
+    let raw_title = payload.title.as_str();
+    let notify_title = if raw_title.is_empty() {
+        provider_label.to_string()
+    } else {
+        format!("{} — {}", provider_label, raw_title)
+    };
+    let body = payload.body.as_deref().unwrap_or("");
+    log::info!(
+        "[notify-cef][{}] source={:?} tag={:?} silent={} title={:?} body_chars={}",
+        account_id,
+        payload.source,
+        payload.tag,
+        payload.silent,
+        raw_title,
+        body.chars().count()
+    );
+    let mut builder = app.notification().builder().title(&notify_title);
+    if !body.is_empty() {
+        builder = builder.body(body);
+    }
+    if let Err(e) = builder.show() {
+        log::warn!(
+            "[notify-cef][{}] notification show failed: {}",
+            account_id,
+            e
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -483,34 +532,57 @@ pub async fn webview_account_open<R: Runtime>(
             }
         }
 
-        // Browser Notification interception runs for every provider —
-        // the CDP scanner installs a tiny `__openhumanNotify` binding and
-        // patches `window.Notification` at the renderer level, so every
-        // webapp's push pings surface as native OS notifications without
-        // any JS injection from our side.
-        if let Some(prefix) = provider_url(&args.provider) {
-            // Discord's default URL carries `/channels/@me`; strip that so
-            // the scanner matches subsequent in-app navigations too.
-            let prefix = prefix
-                .split_once("/channels")
-                .map(|(host, _)| host)
-                .unwrap_or(prefix);
-            let registry = app
-                .try_state::<std::sync::Arc<crate::notification_scanner::ScannerRegistry>>()
-                .map(|s| s.inner().clone());
-            if let Some(registry) = registry {
-                let app_clone = app.clone();
-                let acct = args.account_id.clone();
-                let provider = args.provider.clone();
-                let prefix = prefix.to_string();
-                tokio::spawn(async move {
-                    registry
-                        .ensure_scanner(app_clone, acct, provider, prefix)
-                        .await;
-                });
-            } else {
-                log::warn!("[webview-accounts] notification ScannerRegistry not in app state");
+        // Browser Notification interception, native CEF path. The renderer
+        // subprocess (cef-helper) has already replaced `window.Notification`
+        // and `ServiceWorkerRegistration.prototype.showNotification` with
+        // V8 native bindings that send a `"openhuman.notify"` ProcessMessage
+        // to the browser process. `tauri-runtime-cef::notification::register`
+        // installs a per-browser callback that the runtime invokes when that
+        // IPC arrives. We need the CEF browser id to key the registration —
+        // hence the `with_webview` downcast hop. The callback is dispatched
+        // from a CEF thread, so keep work inside it short / non-blocking.
+        let app_for_register = app.clone();
+        let acct_for_register = args.account_id.clone();
+        let provider_for_register = args.provider.clone();
+        if let Err(err) = webview.with_webview(move |raw| {
+            let Some(browser) = raw.downcast_ref::<cef::Browser>() else {
+                log::warn!(
+                    "[notify-cef] with_webview returned non-cef::Browser handle for account={} — skipping notification registration",
+                    acct_for_register
+                );
+                return;
+            };
+            let browser_id = browser.identifier();
+            if let Some(state) = app_for_register.try_state::<WebviewAccountsState>() {
+                state
+                    .browser_ids
+                    .lock()
+                    .unwrap()
+                    .insert(acct_for_register.clone(), browser_id);
             }
+            let acct_in_handler = acct_for_register.clone();
+            let provider_in_handler = provider_for_register.clone();
+            let app_in_handler = app_for_register.clone();
+            tauri_runtime_cef::notification::register(browser_id, move |payload| {
+                forward_native_notification(
+                    &app_in_handler,
+                    &acct_in_handler,
+                    &provider_in_handler,
+                    &payload,
+                );
+            });
+            log::info!(
+                "[notify-cef] registered handler account={} provider={} browser_id={}",
+                acct_for_register,
+                provider_for_register,
+                browser_id
+            );
+        }) {
+            log::warn!(
+                "[notify-cef] with_webview dispatch failed for account={}: {}",
+                args.account_id,
+                err
+            );
         }
     }
 
@@ -559,12 +631,18 @@ pub async fn webview_account_close<R: Runtime>(
             let acct = args.account_id.clone();
             tokio::spawn(async move { registry.forget(&acct).await });
         }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::notification_scanner::ScannerRegistry>>()
+        if let Some(browser_id) = state
+            .browser_ids
+            .lock()
+            .unwrap()
+            .remove(&args.account_id)
         {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
+            tauri_runtime_cef::notification::unregister(browser_id);
+            log::debug!(
+                "[notify-cef] unregistered handler account={} browser_id={}",
+                args.account_id,
+                browser_id
+            );
         }
     }
     log::info!("[webview-accounts] closed label={}", label);
@@ -615,12 +693,18 @@ pub async fn webview_account_purge<R: Runtime>(
             let acct = args.account_id.clone();
             tokio::spawn(async move { registry.forget(&acct).await });
         }
-        if let Some(registry) =
-            app.try_state::<std::sync::Arc<crate::notification_scanner::ScannerRegistry>>()
+        if let Some(browser_id) = state
+            .browser_ids
+            .lock()
+            .unwrap()
+            .remove(&args.account_id)
         {
-            let registry = registry.inner().clone();
-            let acct = args.account_id.clone();
-            tokio::spawn(async move { registry.forget(&acct).await });
+            tauri_runtime_cef::notification::unregister(browser_id);
+            log::debug!(
+                "[notify-cef] purge unregistered handler account={} browser_id={}",
+                args.account_id,
+                browser_id
+            );
         }
     }
 
