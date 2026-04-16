@@ -109,13 +109,8 @@ const BottomTabBar = () => {
   const token = snapshot.sessionToken;
 
   const conversationsUnreadCount = useAppSelector(state => {
-    const { threads, lastViewedAt } = state.thread;
-    if (threads.length === 0) return 0;
-    return threads.filter(t => {
-      const viewed = lastViewedAt[t.id];
-      const lastMsg = new Date(t.lastMessageAt || t.createdAt).getTime();
-      return viewed == null || lastMsg > viewed;
-    }).length;
+    const { threads } = state.thread;
+    return threads.length;
   });
 
   const hiddenPaths = ['/', '/login'];

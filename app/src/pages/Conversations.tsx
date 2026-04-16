@@ -35,7 +35,6 @@ import {
   loadThreads,
   persistReaction,
   setActiveThread,
-  setLastViewed,
   setSelectedThread,
 } from '../store/threadSlice';
 import type { ThreadMessage } from '../types/thread';
@@ -337,10 +336,6 @@ const Conversations = () => {
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
-
-  useEffect(() => {
-    if (selectedThreadId) dispatch(setLastViewed(selectedThreadId));
-  }, [selectedThreadId, dispatch]);
 
   useEffect(() => {
     if (selectedThreadId) {
