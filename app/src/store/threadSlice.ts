@@ -94,16 +94,13 @@ export const loadThreads = createAsyncThunk(
   }
 );
 
-export const createThreadLocal = createAsyncThunk(
-  'thread/createThreadLocal',
-  async (
-    payload: { id: string; title: string; createdAt: string },
-    { dispatch, rejectWithValue }
-  ) => {
+export const createNewThread = createAsyncThunk(
+  'thread/createNewThread',
+  async (_, { dispatch, rejectWithValue }) => {
     try {
-      const created = await threadApi.createThread(payload);
+      const thread = await threadApi.createNewThread();
       await dispatch(loadThreads()).unwrap();
-      return created;
+      return thread;
     } catch (error) {
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to create thread');
     }
@@ -320,13 +317,13 @@ const threadSlice = createSlice({
       .addCase(loadThreads.rejected, state => {
         state.isLoadingThreads = false;
       })
-      .addCase(createThreadLocal.pending, state => {
+      .addCase(createNewThread.pending, state => {
         state.isLoadingThreads = true;
       })
-      .addCase(createThreadLocal.fulfilled, state => {
+      .addCase(createNewThread.fulfilled, state => {
         state.isLoadingThreads = false;
       })
-      .addCase(createThreadLocal.rejected, (state, action) => {
+      .addCase(createNewThread.rejected, (state, action) => {
         state.isLoadingThreads = false;
         state.messagesError = action.payload as string;
       })

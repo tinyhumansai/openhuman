@@ -28,7 +28,7 @@ import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
   addMessageLocal,
-  createThreadLocal,
+  createNewThread,
   deleteThread,
   fetchSuggestedQuestions,
   loadThreadMessages,
@@ -53,15 +53,6 @@ import {
 } from '../utils/tauriCommands';
 
 const AGENTIC_MODEL_ID = 'agentic-v1';
-
-function generateThreadId(): string {
-  return `thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function generateThreadTitle(): string {
-  const now = new Date();
-  return `Chat ${now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
-}
 /** Maximum trailing characters rendered in the live-streaming assistant
  *  preview bubble. The full response is revealed via `addInferenceResponse`
  *  on `chat_done` — this is purely a ticker-tape affordance to signal
@@ -326,12 +317,10 @@ const Conversations = () => {
     typeof navigator.mediaDevices !== 'undefined' &&
     typeof navigator.mediaDevices.getUserMedia === 'function';
 
-  const createNewThread = async () => {
-    const id = generateThreadId();
-    const title = generateThreadTitle();
-    await dispatch(createThreadLocal({ id, title, createdAt: new Date().toISOString() })).unwrap();
-    dispatch(setSelectedThread(id));
-    void dispatch(loadThreadMessages(id));
+  const handleCreateNewThread = async () => {
+    const thread = await dispatch(createNewThread()).unwrap();
+    dispatch(setSelectedThread(thread.id));
+    void dispatch(loadThreadMessages(thread.id));
   };
 
   useEffect(() => {
@@ -343,7 +332,7 @@ const Conversations = () => {
           dispatch(setSelectedThread(mostRecent.id));
           void dispatch(loadThreadMessages(mostRecent.id));
         } else {
-          void createNewThread();
+          void handleCreateNewThread();
         }
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -975,7 +964,7 @@ const Conversations = () => {
     const cmd = command.toLowerCase();
     if (cmd === '/new' || cmd === '/clear') {
       setInputValue('');
-      void createNewThread();
+      void handleCreateNewThread();
       return true;
     }
     return false;
@@ -1305,7 +1294,7 @@ const Conversations = () => {
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
             <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
             <button
-              onClick={() => void createNewThread()}
+              onClick={() => void handleCreateNewThread()}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
               title="New thread">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1402,7 +1391,7 @@ const Conversations = () => {
             {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
           </h3>
           <button
-            onClick={() => void createNewThread()}
+            onClick={() => void handleCreateNewThread()}
             className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
             title="New thread (/new)">
             + New

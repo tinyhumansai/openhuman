@@ -21,6 +21,13 @@ function unwrapEnvelope<T>(response: Envelope<T> | T): T {
 }
 
 export const threadApi = {
+  createNewThread: async (): Promise<Thread> => {
+    const response = await callCoreRpc<Envelope<Thread>>({
+      method: 'openhuman.memory_thread_create_new',
+    });
+    return unwrapEnvelope(response);
+  },
+
   getThreads: async (): Promise<ThreadsListData> => {
     const response = await callCoreRpc<Envelope<ThreadsListData>>({
       method: 'openhuman.memory_threads_list',

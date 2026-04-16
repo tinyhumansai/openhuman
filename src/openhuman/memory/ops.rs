@@ -6,26 +6,18 @@
 //! for formatting and filtering memory results.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::conversations::{
-    self, ConversationMessage, ConversationMessagePatch, ConversationThread,
-    CreateConversationThread,
-};
 use crate::openhuman::memory::store::GraphRelationRecord;
 use crate::openhuman::memory::{
-    ApiEnvelope, ApiError, ApiMeta, AppendConversationMessageRequest, ConversationMessageRecord,
-    ConversationMessagesRequest, ConversationMessagesResponse, ConversationThreadSummary,
-    ConversationThreadsListResponse, DeleteConversationThreadRequest,
-    DeleteConversationThreadResponse, DeleteDocumentRequest, DeleteDocumentResponse, EmptyRequest,
+    ApiEnvelope, ApiError, ApiMeta, DeleteDocumentRequest, DeleteDocumentResponse, EmptyRequest,
     ListDocumentsRequest, ListDocumentsResponse, ListMemoryFilesRequest, ListMemoryFilesResponse,
     ListNamespacesResponse, MemoryClient, MemoryClientRef, MemoryDocumentSummary,
     MemoryIngestionConfig, MemoryIngestionRequest, MemoryIngestionResult, MemoryInitRequest,
     MemoryInitResponse, MemoryItemKind, MemoryRecallItem, MemoryRetrievalChunk,
     MemoryRetrievalContext, MemoryRetrievalEntity, MemoryRetrievalRelation, NamespaceDocumentInput,
-    NamespaceMemoryHit, NamespaceRetrievalContext, PaginationMeta,
-    PurgeConversationThreadsResponse, QueryNamespaceRequest, QueryNamespaceResponse,
-    ReadMemoryFileRequest, ReadMemoryFileResponse, RecallContextRequest, RecallContextResponse,
-    RecallMemoriesRequest, RecallMemoriesResponse, UpdateConversationMessageRequest,
-    UpsertConversationThreadRequest, WriteMemoryFileRequest, WriteMemoryFileResponse,
+    NamespaceMemoryHit, NamespaceRetrievalContext, PaginationMeta, QueryNamespaceRequest,
+    QueryNamespaceResponse, ReadMemoryFileRequest, ReadMemoryFileResponse, RecallContextRequest,
+    RecallContextResponse, RecallMemoriesRequest, RecallMemoriesResponse, WriteMemoryFileRequest,
+    WriteMemoryFileResponse,
 };
 use crate::rpc::RpcOutcome;
 use chrono::TimeZone;
@@ -699,40 +691,6 @@ fn default_category() -> String {
     "core".to_string()
 }
 
-fn conversation_thread_to_summary(thread: ConversationThread) -> ConversationThreadSummary {
-    ConversationThreadSummary {
-        id: thread.id,
-        title: thread.title,
-        chat_id: thread.chat_id,
-        is_active: thread.is_active,
-        message_count: thread.message_count,
-        last_message_at: thread.last_message_at,
-        created_at: thread.created_at,
-    }
-}
-
-fn conversation_message_to_record(message: ConversationMessage) -> ConversationMessageRecord {
-    ConversationMessageRecord {
-        id: message.id,
-        content: message.content,
-        message_type: message.message_type,
-        extra_metadata: message.extra_metadata,
-        sender: message.sender,
-        created_at: message.created_at,
-    }
-}
-
-fn conversation_record_to_message(record: ConversationMessageRecord) -> ConversationMessage {
-    ConversationMessage {
-        id: record.id,
-        content: record.content,
-        message_type: record.message_type,
-        extra_metadata: record.extra_metadata,
-        sender: record.sender,
-        created_at: record.created_at,
-    }
-}
-
 /// Lists all namespaces in the memory system.
 pub async fn namespace_list() -> Result<RpcOutcome<Vec<String>>, String> {
     let client = active_memory_client().await?;
@@ -1048,6 +1006,34 @@ pub async fn memory_thread_upsert(
     ))
 }
 
+/// Creates a new conversation thread with an auto-generated ID and title.
+pub async fn memory_thread_create_new(
+    _request: EmptyRequest,
+) -> Result<RpcOutcome<ApiEnvelope<ConversationThreadSummary>>, String> {
+    let workspace_dir = current_workspace_dir().await?;
+    let id = format!("thread-{}", uuid::Uuid::new_v4());
+    let now = chrono::Local::now();
+    let title = format!(
+        "Chat {} {}",
+        now.format("%b %-d"),
+        now.format("%-I:%M %p")
+    );
+    let created_at = chrono::Utc::now().to_rfc3339();
+    let thread = conversations::ensure_thread(
+        workspace_dir,
+        CreateConversationThread {
+            id,
+            title,
+            created_at,
+        },
+    )?;
+    Ok(envelope(
+        conversation_thread_to_summary(thread),
+        Some(memory_counts([("num_threads", 1)])),
+        None,
+    ))
+}
+
 /// Lists persisted messages for a workspace-backed conversation thread.
 pub async fn memory_messages_list(
     request: ConversationMessagesRequest,
@@ -1109,6 +1095,7 @@ pub async fn memory_thread_delete(
     let workspace_dir = current_workspace_dir().await?;
     let deleted = conversations::ConversationStore::new(workspace_dir)
         .delete_thread(&request.thread_id, &request.deleted_at)?;
+    web_channel::invalidate_thread_sessions(&request.thread_id).await;
     Ok(envelope(
         DeleteConversationThreadResponse { deleted },
         None,

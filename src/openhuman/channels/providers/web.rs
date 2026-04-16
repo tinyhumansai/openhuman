@@ -251,6 +251,28 @@ pub async fn start_chat(
     Ok(request_id)
 }
 
+/// Invalidate all cached agent sessions for the given thread ID.
+/// Called when a thread is deleted so stale sessions don't leak
+/// into reused thread IDs.
+pub async fn invalidate_thread_sessions(thread_id: &str) {
+    let mut sessions = THREAD_SESSIONS.lock().await;
+    let keys_to_remove: Vec<String> = sessions
+        .keys()
+        .filter(|k| k.ends_with(&format!("::{thread_id}")))
+        .cloned()
+        .collect();
+    for key in &keys_to_remove {
+        sessions.remove(key);
+    }
+    if !keys_to_remove.is_empty() {
+        log::debug!(
+            "[web-channel] invalidated {} cached session(s) for thread_id={}",
+            keys_to_remove.len(),
+            thread_id
+        );
+    }
+}
+
 pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<String>, String> {
     let client_id = client_id.trim();
     let thread_id = thread_id.trim();

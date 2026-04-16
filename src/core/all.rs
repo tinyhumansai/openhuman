@@ -137,6 +137,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
         .extend(crate::openhuman::tree_summarizer::all_tree_summarizer_registered_controllers());
     // Self-learning and user context enrichment
     controllers.extend(crate::openhuman::learning::all_learning_registered_controllers());
+    // Conversation thread and message management
+    controllers.extend(crate::openhuman::threads::all_threads_registered_controllers());
     controllers
 }
 
@@ -182,6 +184,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::update::all_update_controller_schemas());
     schemas.extend(crate::openhuman::tree_summarizer::all_tree_summarizer_controller_schemas());
     schemas.extend(crate::openhuman::learning::all_learning_controller_schemas());
+    // Conversation thread and message management
+    schemas.extend(crate::openhuman::threads::all_threads_controller_schemas());
     schemas
 }
 
