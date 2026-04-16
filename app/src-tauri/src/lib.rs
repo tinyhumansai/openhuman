@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWindow,
+    AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, WebviewWindow, WindowEvent,
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -573,7 +573,20 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(move |app_handle, event| match event {
             #[cfg(target_os = "macos")]
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::CloseRequested { api, .. },
+                ..
+            } if label == "main" => {
+                log::info!("[window] close requested on main window — hiding instead of destroying");
+                api.prevent_close();
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+            #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => {
+                log::info!("[window] reopen event — showing main window");
                 show_main_window(app_handle);
             }
             RunEvent::Exit => {
