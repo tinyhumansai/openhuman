@@ -1,0 +1,7 @@
+{
+  "id": "google-meet",
+  "name": "Google Meet",
+  "version": "0.1.0",
+  "serviceURL": "https://meet.google.com/",
+  "icon": "icon.svg"
+}

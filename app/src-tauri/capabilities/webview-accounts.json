@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "webview-accounts-recipes",
+  "description": "Permissions for embedded webview-account child webviews. The injected per-provider recipe runtime calls webview_recipe_event from inside untrusted third-party origins (e.g. web.whatsapp.com, meet.google.com), so this capability is intentionally scoped to ONLY that one command, and only on acct_* webview labels. remote.urls lists the third-party origins whose recipes are allowed to invoke the command.",
+  "platforms": ["linux", "macOS", "windows"],
+  "windows": [],
+  "webviews": ["acct_*"],
+  "remote": {
+    "urls": [
+      "https://web.whatsapp.com/*",
+      "https://web.telegram.org/*",
+      "https://www.linkedin.com/*",
+      "https://mail.google.com/*",
+      "https://app.slack.com/*",
+      "https://discord.com/*",
+      "https://meet.google.com/*",
+      "https://accounts.google.com/*",
+      "https://www.browserscan.net/*"
+    ]
+  },
+  "permissions": ["allow-webview-recipe"]
+}

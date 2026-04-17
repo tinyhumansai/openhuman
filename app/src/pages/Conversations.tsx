@@ -156,7 +156,17 @@ function LimitPill({ label, usedPct }: { label: string; usedPct: number }) {
   );
 }
 
-const Conversations = () => {
+interface ConversationsProps {
+  /**
+   * `page` (default) renders the centered max-w-2xl card layout used as
+   * a top-level route at /conversations. `sidebar` drops the centering
+   * and width cap so the panel can be embedded as a right rail inside
+   * another page (e.g. /accounts).
+   */
+  variant?: 'page' | 'sidebar';
+}
+
+const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const {
@@ -761,10 +771,18 @@ const Conversations = () => {
     (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
   );
 
+  const isSidebar = variant === 'sidebar';
+
   return (
-    <div className="h-full relative z-10 flex overflow-hidden p-4 pt-6 gap-3">
-      {/* Thread sidebar */}
-      {showSidebar && (
+    <div
+      className={
+        isSidebar
+          ? 'h-full relative z-10 flex overflow-hidden'
+          : 'h-full relative z-10 flex justify-center overflow-hidden p-4 pt-6 gap-3'
+      }>
+      {/* Thread sidebar — only shown in page mode (when Conversations itself
+          is a top-level route, not embedded as a sidebar in another page). */}
+      {!isSidebar && showSidebar && (
         <div className="w-64 flex-shrink-0 flex flex-col bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100">
             <h2 className="text-sm font-semibold text-stone-700">Threads</h2>
@@ -846,32 +864,40 @@ const Conversations = () => {
       )}
 
       {/* Main chat area */}
-      <div className="flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden">
-        {/* Chat header */}
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100">
-          <button
-            onClick={() => setShowSidebar(prev => !prev)}
-            className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
-            title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 6h16M4 12h16M4 18h16"
-              />
-            </svg>
-          </button>
-          <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
-            {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
-          </h3>
-          <button
-            onClick={() => void handleCreateNewThread()}
-            className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
-            title="New thread (/new)">
-            + New
-          </button>
-        </div>
+      <div
+        className={
+          isSidebar
+            ? 'flex-1 flex flex-col min-w-0 bg-white border-l border-stone-200 overflow-hidden'
+            : 'flex-1 flex flex-col min-w-0 max-w-2xl bg-white rounded-2xl shadow-soft border border-stone-200 overflow-hidden'
+        }>
+        {/* Chat header — only shown in page mode; the sidebar embed uses the
+            parent page's chrome instead. */}
+        {!isSidebar && (
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-stone-100">
+            <button
+              onClick={() => setShowSidebar(prev => !prev)}
+              className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-stone-100 text-stone-500 hover:text-stone-700 transition-colors"
+              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 6h16M4 12h16M4 18h16"
+                />
+              </svg>
+            </button>
+            <h3 className="text-sm font-medium text-stone-700 truncate flex-1">
+              {threads.find(t => t.id === selectedThreadId)?.title ?? 'Select a thread'}
+            </h3>
+            <button
+              onClick={() => void handleCreateNewThread()}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium text-primary-600 hover:bg-primary-50 transition-colors"
+              title="New thread (/new)">
+              + New
+            </button>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto px-5 py-4 bg-stone-50">
           {isLoadingMessages ? (
             <div className="space-y-4">
@@ -1446,3 +1472,9 @@ const Conversations = () => {
 };
 
 export default Conversations;
+
+/**
+ * Embeddable variant — same component, page layout (floating centered
+ * card). Mounted inside /accounts when the Agent entry is selected.
+ */
+export const AgentChatPanel = () => <Conversations variant="page" />;

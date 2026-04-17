@@ -52,8 +52,8 @@ const OnboardingOverlay = () => {
     // persist the completed flag. This prevents the home page from flashing
     // between overlay dismissal and route change.
     setIsDismissing(true);
-    console.debug('[onboarding:overlay] completion finished; navigating to conversations');
-    navigate('/conversations', { replace: true });
+    console.debug('[onboarding:overlay] completion finished; navigating to chat');
+    navigate('/chat', { replace: true });
     try {
       await setOnboardingCompletedFlag(true);
       console.debug('[onboarding:overlay] persisted onboarding_completed=true');
@@ -64,8 +64,8 @@ const OnboardingOverlay = () => {
 
   useEffect(() => {
     if (!isDismissing) return;
-    if (location.pathname === '/conversations') {
-      console.debug('[onboarding:overlay] conversations active; dismissing transition mask');
+    if (location.pathname === '/chat') {
+      console.debug('[onboarding:overlay] chat active; dismissing transition mask');
       setIsDismissing(false);
     }
   }, [isDismissing, location.pathname]);

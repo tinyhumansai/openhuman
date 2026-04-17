@@ -1,0 +1,7 @@
+{
+  "id": "linkedin",
+  "name": "LinkedIn Messaging",
+  "version": "0.1.0",
+  "serviceURL": "https://www.linkedin.com/messaging/",
+  "icon": "icon.svg"
+}

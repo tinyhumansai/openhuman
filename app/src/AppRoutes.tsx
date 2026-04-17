@@ -3,9 +3,9 @@ import { Route, Routes } from 'react-router-dom';
 import DefaultRedirect from './components/DefaultRedirect';
 import ProtectedRoute from './components/ProtectedRoute';
 import PublicRoute from './components/PublicRoute';
+import Accounts from './pages/Accounts';
 import Agents from './pages/Agents';
 import Channels from './pages/Channels';
-import Conversations from './pages/Conversations';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
 import Invites from './pages/Invites';
@@ -56,19 +56,13 @@ const AppRoutes = () => {
         }
       />
 
+      {/* Unified chat = agent + connected web apps. Replaces the old
+          /conversations and /accounts routes. */}
       <Route
-        path="/conversations"
+        path="/chat"
         element={
           <ProtectedRoute requireAuth={true}>
-            <Conversations />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/conversations/:threadId"
-        element={
-          <ProtectedRoute requireAuth={true}>
-            <Conversations />
+            <Accounts />
           </ProtectedRoute>
         }
       />

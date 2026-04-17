@@ -13,6 +13,7 @@ import {
 import storage from 'redux-persist/lib/storage';
 
 import { IS_DEV } from '../utils/config';
+import accountsReducer from './accountsSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
 import chatRuntimeReducer from './chatRuntimeSlice';
 import socketReducer from './socketSlice';
@@ -28,12 +29,22 @@ const persistedChannelConnectionsReducer = persistReducer(
   channelConnectionsReducer
 );
 
+// Persist only the account list (not the live message stream / logs which
+// are re-ingested every time we open an account).
+const accountsPersistConfig = {
+  key: 'accounts',
+  storage,
+  whitelist: ['accounts', 'order', 'activeAccountId'],
+};
+const persistedAccountsReducer = persistReducer(accountsPersistConfig, accountsReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
     thread: threadReducer,
     chatRuntime: chatRuntimeReducer,
     channelConnections: persistedChannelConnectionsReducer,
+    accounts: persistedAccountsReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

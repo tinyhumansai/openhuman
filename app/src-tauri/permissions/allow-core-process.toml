@@ -1,6 +1,6 @@
 [[permission]]
 identifier = "allow-core-process"
-description = "Core RPC URL, sidecar restart, and dictation hotkey commands"
+description = "Core RPC URL, sidecar restart, dictation hotkey, and webview-account commands"
 
 [permission.commands]
 allow = [
@@ -13,6 +13,12 @@ allow = [
     "service_uninstall_direct",
     "register_dictation_hotkey",
     "unregister_dictation_hotkey",
+    "webview_account_open",
+    "webview_account_close",
+    "webview_account_bounds",
+    "webview_account_hide",
+    "webview_account_show",
+    "webview_recipe_event",
     "activate_main_window",
 ]
 deny = []

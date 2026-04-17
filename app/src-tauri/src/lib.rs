@@ -3,6 +3,13 @@ compile_error!("src-tauri host is desktop-only. Non-desktop targets are not supp
 
 mod core_process;
 mod core_update;
+#[cfg(feature = "cef")]
+mod discord_scanner;
+#[cfg(feature = "cef")]
+mod slack_scanner;
+mod webview_accounts;
+#[cfg(feature = "cef")]
+mod whatsapp_scanner;
 
 use std::sync::Mutex;
 
@@ -22,6 +29,18 @@ use objc2::runtime::{AnyClass, AnyObject};
 use objc2::ClassType;
 #[cfg(target_os = "macos")]
 use objc2_app_kit::{NSPanel, NSWindowCollectionBehavior, NSWindowStyleMask};
+
+// Runtime backend alias. `AppHandle`/`WebviewWindow` get their default `R`
+// (the runtime generic) from whichever runtime feature the tauri crate has
+// enabled — and when we drop `tauri/wry` in favor of `tauri/cef`, `Wry`
+// disappears entirely, so plain `AppHandle` (no generic) stops resolving.
+// Every helper that touches an `AppHandle` or `WebviewWindow` threads this
+// alias through its signature; tauri command handlers get the right runtime
+// automatically from the `#[tauri::command]` macro.
+#[cfg(feature = "cef")]
+pub(crate) type AppRuntime = tauri::Cef;
+#[cfg(not(feature = "cef"))]
+pub(crate) type AppRuntime = tauri::Wry;
 
 /// Tracks the currently registered dictation hotkey string so we can unregister it later.
 struct DictationHotkeyState(Mutex<Vec<String>>);
@@ -70,7 +89,7 @@ fn overlay_parent_rpc_url() -> Option<String> {
     Some(trimmed.to_string())
 }
 
-fn pin_overlay_bottom_right(window: &WebviewWindow) {
+fn pin_overlay_bottom_right(window: &WebviewWindow<AppRuntime>) {
     let Ok(Some(monitor)) = window.current_monitor() else {
         log::warn!("[overlay] could not resolve current monitor for positioning");
         return;
@@ -92,7 +111,7 @@ fn pin_overlay_bottom_right(window: &WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
-fn configure_overlay_window_macos(window: &WebviewWindow) {
+fn configure_overlay_window_macos(window: &WebviewWindow<AppRuntime>) {
     // Standard NSWindow cannot float above fullscreen apps on macOS because
     // fullscreen apps run in a separate Space. Only NSPanel can do this.
     //
@@ -269,7 +288,7 @@ async fn check_core_update(
 #[tauri::command]
 async fn apply_core_update(
     state: tauri::State<'_, core_process::CoreProcessHandle>,
-    app: tauri::AppHandle,
+    app: tauri::AppHandle<AppRuntime>,
 ) -> Result<(), String> {
     log::info!("[core-update] manual apply_core_update invoked from frontend");
     core_update::check_and_update_core(state.inner().clone(), Some(app), true).await
@@ -288,7 +307,10 @@ async fn restart_core_process(
 /// Register (or re-register) the global dictation toggle hotkey.
 /// Emits `dictation://toggle` to all webviews when the shortcut is pressed.
 #[tauri::command]
-async fn register_dictation_hotkey(app: AppHandle, shortcut: String) -> Result<(), String> {
+async fn register_dictation_hotkey(
+    app: AppHandle<AppRuntime>,
+    shortcut: String,
+) -> Result<(), String> {
     log::info!("[dictation] register_dictation_hotkey: shortcut={shortcut}");
 
     let old_shortcuts = {
@@ -377,7 +399,7 @@ async fn register_dictation_hotkey(app: AppHandle, shortcut: String) -> Result<(
 
 /// Unregister the global dictation hotkey (if any).
 #[tauri::command]
-async fn unregister_dictation_hotkey(app: AppHandle) -> Result<(), String> {
+async fn unregister_dictation_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::info!("[dictation] unregister_dictation_hotkey: called");
     let state = app.state::<DictationHotkeyState>();
     let mut guard = state.0.lock().unwrap();
@@ -406,12 +428,12 @@ fn is_daemon_mode() -> bool {
 
 /// Tauri command: bring the main window to front from any webview (e.g. overlay orb click).
 #[tauri::command]
-fn activate_main_window(app: AppHandle) -> Result<(), String> {
+fn activate_main_window(app: AppHandle<AppRuntime>) -> Result<(), String> {
     log::debug!("[window] activate_main_window called from overlay");
     show_main_window(&app)
 }
 
-fn show_main_window(app: &AppHandle) -> Result<(), String> {
+fn show_main_window(app: &AppHandle<AppRuntime>) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -427,7 +449,7 @@ fn show_main_window(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+fn setup_tray(app: &AppHandle<AppRuntime>) -> tauri::Result<()> {
     log::info!("[tray] setting up tray icon");
 
     let show_item = MenuItem::with_id(
@@ -488,11 +510,59 @@ pub fn run() {
         .parse_filters(&default_filter)
         .try_init();
 
-    tauri::Builder::default()
+    // Runtime selection: default build uses wry (WKWebView on macOS), the
+    // `cef` feature swaps to Chromium Embedded Framework. The switch is at
+    // Builder construction only — everything downstream (plugins, commands,
+    // events, state, tray, deep links, child webviews) uses the shared
+    // tauri-runtime trait surface and does not care which backend drives it.
+    #[cfg(not(feature = "cef"))]
+    let builder = tauri::Builder::<tauri::Wry>::new();
+    #[cfg(feature = "cef")]
+    let builder = {
+        // Bypass macOS Keychain. Without this, every embedded service that
+        // touches password / cookie / encryption-key storage triggers a
+        // "Allow access to your keychain?" prompt — WhatsApp Web hits it on
+        // every cold start, Chromium's own component-update store also does.
+        // `use-mock-keychain` swaps the Keychain backend for an in-process
+        // mock; `password-store=basic` is the equivalent for the password
+        // manager. Both are no-ops on Windows/Linux, so safe to always set.
+        //
+        // In debug builds we additionally expose the Chrome DevTools
+        // Protocol on localhost:9222 so every CEF webview can be inspected
+        // from a regular browser (right-click "Inspect" does not propagate
+        // to CEF child webviews on macOS). Release builds intentionally do
+        // NOT open the CDP port — it would let any process on the machine
+        // drive the embedded WhatsApp/Slack/etc. webviews.
+        //
+        // NOTE: flags must be prefixed with `--`. The runtime's
+        // `on_before_command_line_processing` dispatch (in
+        // `tauri-runtime-cef/src/cef_impl.rs`) routes value-less args that
+        // don't start with `-` to `append_argument` (positional) instead of
+        // `append_switch`, which means Chromium silently ignores them.
+        let mut args: Vec<(&str, Option<&str>)> = vec![
+            ("--use-mock-keychain", None),
+            ("--password-store", Some("basic")),
+        ];
+        if cfg!(debug_assertions) {
+            args.push(("--remote-debugging-port", Some("9222")));
+        }
+        tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
+    };
+
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(DictationHotkeyState(Mutex::new(Vec::new())))
+        .manage(webview_accounts::WebviewAccountsState::default());
+    #[cfg(feature = "cef")]
+    let builder = builder.manage(whatsapp_scanner::ScannerRegistry::new());
+    #[cfg(feature = "cef")]
+    let builder = builder.manage(slack_scanner::ScannerRegistry::new());
+    #[cfg(feature = "cef")]
+    let builder = builder.manage(discord_scanner::ScannerRegistry::new());
+    builder
         .setup(move |app| {
             #[cfg(any(windows, target_os = "linux"))]
             {
@@ -564,6 +634,154 @@ pub fn run() {
                 log::error!("[tray] failed to setup tray icon: {err}");
             }
 
+            // Dev convenience: if OPENHUMAN_DEV_AUTO_WHATSAPP=<account-id>
+            // is set, spawn that account's webview at startup so the
+            // CDP/IndexedDB scanner can iterate without manual UI clicks.
+            // The same account-id reuses the persistent data dir, so a
+            // previously-logged-in WhatsApp session stays logged in.
+            if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_WHATSAPP") {
+                let account_id = account_id.trim().to_string();
+                if !account_id.is_empty() {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        // Wait for the window to be fully ready.
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let state = app_handle.state::<webview_accounts::WebviewAccountsState>();
+                        let args = webview_accounts::OpenArgs {
+                            account_id: account_id.clone(),
+                            provider: "whatsapp".to_string(),
+                            url: None,
+                            bounds: Some(webview_accounts::Bounds {
+                                x: 100.0,
+                                y: 100.0,
+                                width: 900.0,
+                                height: 700.0,
+                            }),
+                        };
+                        match webview_accounts::webview_account_open(
+                            app_handle.clone(),
+                            state,
+                            args,
+                        )
+                        .await
+                        {
+                            Ok(label) => log::info!(
+                                "[dev-auto-whatsapp] spawned label={} account={}",
+                                label,
+                                account_id
+                            ),
+                            Err(e) => log::error!(
+                                "[dev-auto-whatsapp] failed: {} (account={})",
+                                e,
+                                account_id
+                            ),
+                        }
+                    });
+                }
+            }
+
+            // Same dev helper, Slack flavour. OPENHUMAN_DEV_AUTO_SLACK=<uuid>
+            // opens the Slack account webview on startup so the CDP scanner
+            // can iterate without manual UI clicks.
+            if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_SLACK") {
+                let account_id = account_id.trim().to_string();
+                if !account_id.is_empty() {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let state = app_handle.state::<webview_accounts::WebviewAccountsState>();
+                        let args = webview_accounts::OpenArgs {
+                            account_id: account_id.clone(),
+                            provider: "slack".to_string(),
+                            url: None,
+                            bounds: Some(webview_accounts::Bounds {
+                                x: 100.0,
+                                y: 100.0,
+                                width: 900.0,
+                                height: 700.0,
+                            }),
+                        };
+                        match webview_accounts::webview_account_open(
+                            app_handle.clone(),
+                            state,
+                            args,
+                        )
+                        .await
+                        {
+                            Ok(label) => log::info!(
+                                "[dev-auto-slack] spawned label={} account={}",
+                                label,
+                                account_id
+                            ),
+                            Err(e) => log::error!(
+                                "[dev-auto-slack] failed: {} (account={})",
+                                e,
+                                account_id
+                            ),
+                        }
+                    });
+                }
+            }
+
+            // Same dev helper, Google Meet flavour.
+            // OPENHUMAN_DEV_AUTO_GOOGLE_MEET=<uuid> opens the gmeet account
+            // webview at startup so the caption-capture recipe runs
+            // without manual UI clicks. Use in combination with:
+            //   tail -F /tmp/oh-cef.log | grep -E --line-buffered \
+            //     "\[gmeet\]|memory_doc_ingest|orchestrator"
+            // to verify captions flow → transcript persist → thread handoff.
+            if let Ok(account_id) = std::env::var("OPENHUMAN_DEV_AUTO_GOOGLE_MEET") {
+                let account_id = account_id.trim().to_string();
+                if !account_id.is_empty() {
+                    let app_handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        let state = app_handle.state::<webview_accounts::WebviewAccountsState>();
+                        // Dev mode: size the child webview to the parent
+                        // window's inner bounds so Meet controls (CC toggle,
+                        // mic/cam, leave) are reachable without overflowing.
+                        let (w, h) = app_handle
+                            .get_webview_window("main")
+                            .and_then(|main| {
+                                let scale = main.scale_factor().unwrap_or(1.0);
+                                main.inner_size()
+                                    .ok()
+                                    .map(|s| ((s.width as f64) / scale, (s.height as f64) / scale))
+                            })
+                            .unwrap_or((1100.0, 780.0));
+                        let args = webview_accounts::OpenArgs {
+                            account_id: account_id.clone(),
+                            provider: "google-meet".to_string(),
+                            url: None,
+                            bounds: Some(webview_accounts::Bounds {
+                                x: 0.0,
+                                y: 0.0,
+                                width: w,
+                                height: h,
+                            }),
+                        };
+                        match webview_accounts::webview_account_open(
+                            app_handle.clone(),
+                            state,
+                            args,
+                        )
+                        .await
+                        {
+                            Ok(label) => log::info!(
+                                "[dev-auto-gmeet] spawned label={} account={}",
+                                label,
+                                account_id
+                            ),
+                            Err(e) => log::error!(
+                                "[dev-auto-gmeet] failed: {} (account={})",
+                                e,
+                                account_id
+                            ),
+                        }
+                    });
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -579,6 +797,14 @@ pub fn run() {
             service_uninstall_direct,
             register_dictation_hotkey,
             unregister_dictation_hotkey,
+            webview_accounts::webview_account_open,
+            webview_accounts::webview_account_close,
+            webview_accounts::webview_account_purge,
+            webview_accounts::webview_account_bounds,
+            webview_accounts::webview_account_hide,
+            webview_accounts::webview_account_show,
+            webview_accounts::webview_recipe_event,
+            webview_accounts::webview_account_eval,
             activate_main_window
         ])
         .build(tauri::generate_context!())

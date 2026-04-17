@@ -1,0 +1,7 @@
+[[permission]]
+identifier = "allow-webview-recipe"
+description = "Allow injected per-provider recipe code (running inside the third-party site's origin) to invoke the recipe ingest command back to Rust."
+
+[permission.commands]
+allow = ["webview_recipe_event"]
+deny = []

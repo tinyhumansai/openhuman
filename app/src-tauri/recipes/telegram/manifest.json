@@ -1,0 +1,7 @@
+{
+  "id": "telegram",
+  "name": "Telegram Web",
+  "version": "0.1.0",
+  "serviceURL": "https://web.telegram.org/k/",
+  "icon": "icon.svg"
+}

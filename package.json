@@ -13,6 +13,7 @@
     "core:stage": "yarn workspace openhuman-app core:stage",
     "dev": "yarn workspace openhuman-app dev",
     "dev:app": "yarn workspace openhuman-app dev:app",
+    "dev:cef": "yarn workspace openhuman-app dev:cef",
     "format": "yarn workspace openhuman-app format",
     "format:check": "yarn workspace openhuman-app format:check",
     "knip": "yarn workspace openhuman-app knip",

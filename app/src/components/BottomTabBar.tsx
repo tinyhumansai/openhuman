@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useCoreState } from '../providers/CoreStateProvider';
+import { useAppSelector } from '../store/hooks';
+import { isAccountsFullscreen } from '../utils/accountsFullscreen';
 
 const tabs = [
   {
@@ -21,7 +24,7 @@ const tabs = [
   {
     id: 'chat',
     label: 'Chat',
-    path: '/conversations',
+    path: '/chat',
     icon: (
       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -106,6 +109,9 @@ const BottomTabBar = () => {
   const navigate = useNavigate();
   const { snapshot } = useCoreState();
   const token = snapshot.sessionToken;
+  const [revealed, setRevealed] = useState(false);
+
+  const activeAccountId = useAppSelector(state => state.accounts.activeAccountId);
 
   const hiddenPaths = ['/', '/login'];
   if (
@@ -115,8 +121,16 @@ const BottomTabBar = () => {
     return null;
   }
 
+  // On /accounts we want as much real estate as possible for the embedded
+  // webview — but *only* when a real account (WhatsApp, …) is selected.
+  // The Agent entry keeps the tab bar visible so chatting with the agent
+  // feels like a normal page. A thin hover strip along the bottom lets
+  // the user reveal the bar manually even in fullscreen mode.
+  const fullscreen = isAccountsFullscreen(location.pathname, activeAccountId);
+  const collapsed = fullscreen && !revealed;
+
   const isActive = (path: string) => {
-    if (path === '/conversations') return location.pathname.startsWith('/conversations');
+    if (path === '/chat') return location.pathname.startsWith('/chat');
     if (path === '/settings/cron-jobs') return location.pathname.startsWith('/settings/cron-jobs');
     if (path === '/settings/messaging') return location.pathname.startsWith('/settings/messaging');
     if (path === '/settings')
@@ -131,26 +145,45 @@ const BottomTabBar = () => {
   };
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-4 pb-4 pt-2 z-50">
-      <nav className="pointer-events-auto inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
-        {tabs.map(tab => {
-          const active = isActive(tab.path);
-          return (
-            <button
-              key={tab.id}
-              onClick={() => navigate(tab.path)}
-              className={`relative flex items-center gap-2 px-4 py-2 rounded-sm text-sm transition-colors duration-150 cursor-pointer ${
-                active
-                  ? 'bg-white text-stone-900 font-semibold shadow-sm'
-                  : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
-              }`}
-              aria-label={tab.label}>
-              {tab.icon}
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+    <div className="absolute inset-x-0 bottom-0 z-50">
+      {/* Hover strip — only matters when collapsed; provides a 12px bottom
+          edge the user can mouse into to reveal the bar again. */}
+      {collapsed && (
+        <div
+          className="pointer-events-auto absolute inset-x-0 bottom-0 h-3"
+          onMouseEnter={() => setRevealed(true)}
+          aria-hidden
+        />
+      )}
+      <div
+        className={`pointer-events-none flex justify-center px-4 pb-4 pt-2 transition-transform duration-300 ease-out ${
+          collapsed ? 'translate-y-[calc(100%+8px)]' : 'translate-y-0'
+        }`}
+        onMouseLeave={() => setRevealed(false)}
+        onFocus={() => setRevealed(true)}
+        onBlur={e => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setRevealed(false);
+        }}>
+        <nav className="pointer-events-auto inline-flex items-center gap-2 rounded-sm border border-stone-300 bg-stone-200 shadow-soft px-1 py-1">
+          {tabs.map(tab => {
+            const active = isActive(tab.path);
+            return (
+              <button
+                key={tab.id}
+                onClick={() => navigate(tab.path)}
+                className={`relative flex items-center gap-2 px-4 py-2 rounded-sm text-sm transition-colors duration-150 cursor-pointer ${
+                  active
+                    ? 'bg-white text-stone-900 font-semibold shadow-sm'
+                    : 'bg-transparent text-stone-500 hover:bg-stone-300/50 hover:text-stone-700'
+                }`}
+                aria-label={tab.label}>
+                {tab.icon}
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
     </div>
   );
 };

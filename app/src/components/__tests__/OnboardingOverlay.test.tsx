@@ -107,7 +107,7 @@ describe('OnboardingOverlay', () => {
     expect(screen.queryByText('Complete')).not.toBeInTheDocument();
   });
 
-  it('navigates to conversations and persists onboarding completion on finish', async () => {
+  it('navigates to chat and persists onboarding completion on finish', async () => {
     const coreState = makeCoreState();
     mockUseCoreState.mockReturnValue(coreState);
 
@@ -120,12 +120,12 @@ describe('OnboardingOverlay', () => {
     fireEvent.click(screen.getByText('Complete'));
 
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith('/conversations', { replace: true });
+      expect(mockNavigate).toHaveBeenCalledWith('/chat', { replace: true });
       expect(coreState.setOnboardingCompletedFlag).toHaveBeenCalledWith(true);
     });
   });
 
-  it('drops dismissing mask after conversations route becomes active', async () => {
+  it('drops dismissing mask after chat route becomes active', async () => {
     const coreState = makeCoreState();
     mockUseCoreState.mockReturnValue(coreState);
 
@@ -137,11 +137,11 @@ describe('OnboardingOverlay', () => {
 
     fireEvent.click(screen.getByText('Complete'));
     await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith('/conversations', { replace: true });
+      expect(mockNavigate).toHaveBeenCalledWith('/chat', { replace: true });
     });
     expect(screen.getByText('Complete')).toBeInTheDocument();
 
-    mockPathname = '/conversations';
+    mockPathname = '/chat';
     mockUseCoreState.mockReturnValue(makeCoreState({ onboardingCompleted: true }));
     rerender(
       <MemoryRouter>

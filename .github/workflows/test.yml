@@ -76,6 +76,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          # Required for app/src-tauri/vendor/tauri-cef, which the
+          # [patch.crates-io] block in app/src-tauri/Cargo.toml resolves
+          # every tauri-* crate through (even without --features cef).
+          submodules: recursive
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2

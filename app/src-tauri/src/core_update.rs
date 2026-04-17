@@ -272,7 +272,7 @@ async fn download_binary(url: &str, dest: &PathBuf) -> Result<(), String> {
 /// Emits Tauri events so the frontend can show progress.
 pub async fn check_and_update_core(
     handle: CoreProcessHandle,
-    app: Option<tauri::AppHandle>,
+    app: Option<tauri::AppHandle<crate::AppRuntime>>,
     force: bool,
 ) -> Result<(), String> {
     let rpc_url = handle.rpc_url();
@@ -472,7 +472,7 @@ async fn port_open(port: u16) -> bool {
     )
 }
 
-fn emit_event(app: &Option<tauri::AppHandle>, event: &str, payload: &str) {
+fn emit_event(app: &Option<tauri::AppHandle<crate::AppRuntime>>, event: &str, payload: &str) {
     if let Some(app) = app {
         use tauri::Emitter;
         if let Err(e) = app.emit(event, payload) {

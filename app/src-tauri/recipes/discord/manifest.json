@@ -1,0 +1,7 @@
+{
+  "id": "discord",
+  "name": "Discord",
+  "version": "0.1.0",
+  "serviceURL": "https://discord.com/channels/@me",
+  "icon": "icon.svg"
+}

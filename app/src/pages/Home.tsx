@@ -39,9 +39,9 @@ const Home = () => {
     return 'Good evening';
   };
 
-  // Open in-app conversations window
+  // Open in-app chat.
   const handleStartCooking = async () => {
-    navigate('/conversations');
+    navigate('/chat');
   };
 
   const refreshLocalAiStatus = async () => {

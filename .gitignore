@@ -64,3 +64,4 @@ src-tauri/target/
 workflow
 .fastembed_cache
 overlay/src-tauri/target/
+.claude/*.lock

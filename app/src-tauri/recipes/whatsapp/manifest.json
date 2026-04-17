@@ -1,0 +1,8 @@
+{
+  "id": "whatsapp",
+  "name": "WhatsApp Web",
+  "version": "0.1.0",
+  "serviceURL": "https://web.whatsapp.com/",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "icon": "icon.svg"
+}
