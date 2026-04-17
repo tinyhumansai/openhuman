@@ -51,6 +51,12 @@ pub struct LocalAiConfig {
     pub max_suggestions: usize,
     #[serde(default)]
     pub selected_tier: Option<String>,
+    /// Explicit MVP opt-in marker. Bootstrap disables local AI unless this is
+    /// `true`, regardless of any prior `selected_tier` value. Existing installs
+    /// (upgrading from pre-MVP) default to `false` and must re-opt-in from
+    /// Settings. Set by `apply_preset` on any non-disabled tier.
+    #[serde(default)]
+    pub opt_in_confirmed: bool,
     /// Optional path to a manually-installed Ollama binary.
     #[serde(default)]
     pub ollama_binary_path: Option<String>,
@@ -191,6 +197,7 @@ impl Default for LocalAiConfig {
             context_compaction_threshold_tokens: default_context_compaction_threshold_tokens(),
             max_suggestions: default_max_suggestions(),
             selected_tier: None,
+            opt_in_confirmed: false,
             ollama_binary_path: None,
             whisper_in_process: default_whisper_in_process(),
             voice_llm_cleanup_enabled: default_voice_llm_cleanup_enabled(),
