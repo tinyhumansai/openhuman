@@ -478,6 +478,13 @@ impl Agent {
                         )));
                     self.trim_history();
 
+                    // Mirror the final assistant reply into the transcript
+                    // snapshot so the JSONL persisted below captures the
+                    // response (not just the prompt that was sent).
+                    if let Some(ref mut msgs) = last_provider_messages {
+                        msgs.push(ChatMessage::assistant(final_text.clone()));
+                    }
+
                     if self.auto_save {
                         let summary = truncate_with_ellipsis(&final_text, 100);
                         let _ = self
