@@ -293,36 +293,38 @@ jobs:
               });
             } catch (_) { /* label may already exist */ }
 
-            const body = `## Summary
-
-Track remaining package manager channels. Each tier reflects expected maintenance commitment from the core team.
-
-## Tier 1 — Official (core team maintains)
-
-- [ ] **npx / pnpm dlx** — zero-install via the npm package already published; document the one-liner: \`npx openhuman@latest\`
-- [ ] **Scoop (Windows)** — needs a Windows binary (un-comment the Windows matrix in \`release.yml\` first); add a \`tinyhumansai/scoop-openhuman\` bucket
-
-## Tier 2 — Community-supported (PRs welcome, core team reviews)
-
-- [ ] **AUR (Arch Linux)** — add \`PKGBUILD\` pointing at the GitHub release tarball; list in \`packages/\`
-- [ ] **Nix / nixpkgs** — upstream a \`pkgs/tools/openhuman/default.nix\` derivation; document local flake overlay as interim
-
-## Tier 3 — Planned (no timeline)
-
-- [ ] **Snap / Snapcraft** — \`snapcraft.yaml\`, publish to Snap Store
-- [ ] **Flatpak** — \`org.tinyhumans.Openhuman.yaml\`, publish to Flathub
-- [ ] **WinGet** — manifest in \`microsoft/winget-pkgs\` once Windows binary is stable
-
-## Acceptance criteria
-
-- [ ] Each official channel has a CI smoke test (install + \`openhuman --version\`)
-- [ ] Install commands appear in \`docs/install.md\`
-- [ ] Checksums shipped for all artifacts
-`;
+            const body = [
+              '## Summary',
+              '',
+              'Track remaining package manager channels. Each tier reflects expected maintenance commitment from the core team.',
+              '',
+              '## Tier 1 — Official (core team maintains)',
+              '',
+              '- [ ] **npx / pnpm dlx** — zero-install via the npm package already published; document the one-liner: `npx openhuman@latest`',
+              '- [ ] **Scoop (Windows)** — needs a Windows binary (un-comment the Windows matrix in `release.yml` first); add a `tinyhumansai/scoop-openhuman` bucket',
+              '',
+              '## Tier 2 — Community-supported (PRs welcome, core team reviews)',
+              '',
+              '- [ ] **AUR (Arch Linux)** — add `PKGBUILD` pointing at the GitHub release tarball; list in `packages/`',
+              '- [ ] **Nix / nixpkgs** — upstream a `pkgs/tools/openhuman/default.nix` derivation; document local flake overlay as interim',
+              '',
+              '## Tier 3 — Planned (no timeline)',
+              '',
+              '- [ ] **Snap / Snapcraft** — `snapcraft.yaml`, publish to Snap Store',
+              '- [ ] **Flatpak** — `org.tinyhumans.Openhuman.yaml`, publish to Flathub',
+              '- [ ] **WinGet** — manifest in `microsoft/winget-pkgs` once Windows binary is stable',
+              '',
+              '## Acceptance criteria',
+              '',
+              '- [ ] Each official channel has a CI smoke test (install + `openhuman --version`)',
+              '- [ ] Install commands appear in `docs/install.md`',
+              '- [ ] Checksums shipped for all artifacts',
+              '',
+            ].join('\n');
             const issue = await github.rest.issues.create({
               owner, repo,
               title,
               body,
               labels: [label],
             });
-            core.info(\`Created backlog issue: \${issue.data.html_url}\`);
+            core.info(`Created backlog issue: ${issue.data.html_url}`);
