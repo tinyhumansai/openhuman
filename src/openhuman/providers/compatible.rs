@@ -14,6 +14,118 @@ use reqwest::{
     Client,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Monotonic sequence so multiple requests in the same millisecond sort
+/// deterministically in the dump directory.
+static PROMPT_DUMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// When `OPENHUMAN_PROMPT_DUMP_DIR` is set, write `body` (the exact JSON
+/// payload we're about to POST to the provider) to a timestamped file
+/// under that directory. Best-effort: failures are logged and swallowed
+/// so a dump outage never breaks inference.
+///
+/// Intended for KV-cache debugging — diff consecutive turns to see which
+/// bytes of the prefix drifted and broke the cache hit.
+/// Write raw response bytes to the dump dir paired with the most-recent
+/// prompt file (same `seq` prefix, `.response.json` suffix). `seq` must
+/// be the value returned by `dump_prompt_if_enabled` so request/response
+/// files sort next to each other.
+fn dump_response_if_enabled(provider: &str, model: &str, seq: u64, bytes: &[u8]) {
+    let Ok(dir) = std::env::var("OPENHUMAN_PROMPT_DUMP_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        log::warn!(
+            "[prompt_dump] failed to create dir {}: {err}",
+            dir.display()
+        );
+        return;
+    }
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let safe_model: String = model
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let filename = format!("{ts}_{seq:06}_{provider}_{safe_model}.response.json");
+    let path = dir.join(filename);
+    // Re-pretty-print if it parses as JSON so diffs are stable; otherwise
+    // write raw bytes (SSE fragments, error HTML, etc).
+    let payload: Vec<u8> = match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(v) => serde_json::to_vec_pretty(&v).unwrap_or_else(|_| bytes.to_vec()),
+        Err(_) => bytes.to_vec(),
+    };
+    if let Err(err) = std::fs::write(&path, &payload) {
+        log::warn!(
+            "[prompt_dump] response write failed {}: {err}",
+            path.display()
+        );
+    } else {
+        log::info!(
+            "[prompt_dump] wrote response {} bytes -> {}",
+            payload.len(),
+            path.display()
+        );
+    }
+}
+
+/// Current sequence counter (the value that will be assigned on the next
+/// `dump_prompt_if_enabled` call). Callers that want to pair a response
+/// with its request should read this *before* calling the prompt dumper.
+fn peek_dump_seq() -> u64 {
+    PROMPT_DUMP_SEQ.load(Ordering::Relaxed)
+}
+
+fn dump_prompt_if_enabled<T: Serialize>(provider: &str, model: &str, body: &T) {
+    let Ok(dir) = std::env::var("OPENHUMAN_PROMPT_DUMP_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        log::warn!(
+            "[prompt_dump] failed to create dir {}: {err}",
+            dir.display()
+        );
+        return;
+    }
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let seq = PROMPT_DUMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let safe_model: String = model
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let filename = format!("{ts}_{seq:06}_{provider}_{safe_model}.json");
+    let path = dir.join(filename);
+    match serde_json::to_vec_pretty(body) {
+        Ok(bytes) => {
+            if let Err(err) = std::fs::write(&path, &bytes) {
+                log::warn!("[prompt_dump] write failed {}: {err}", path.display());
+            } else {
+                log::info!(
+                    "[prompt_dump] wrote {} bytes -> {}",
+                    bytes.len(),
+                    path.display()
+                );
+            }
+        }
+        Err(err) => {
+            log::warn!("[prompt_dump] serialize failed: {err}");
+        }
+    }
+}
 
 /// A provider that speaks the OpenAI-compatible chat completions API.
 /// Used by: Venice, Vercel AI Gateway, Cloudflare AI Gateway, Moonshot,
@@ -1182,6 +1294,7 @@ impl OpenAiCompatibleProvider {
         credential: &str,
         native_request: &NativeChatRequest,
         delta_tx: &tokio::sync::mpsc::Sender<crate::openhuman::providers::ProviderDelta>,
+        dump_seq: u64,
     ) -> anyhow::Result<ProviderChatResponse> {
         use futures_util::StreamExt;
 
@@ -1236,7 +1349,10 @@ impl OpenAiCompatibleProvider {
                 "[stream] {} upstream replied with non-SSE content-type; falling back to JSON parse",
                 self.name,
             );
-            let api_resp: ApiChatResponse = response.json().await?;
+            let response_bytes = response.bytes().await?;
+            dump_response_if_enabled(&self.name, &native_request.model, dump_seq, &response_bytes);
+            let api_resp: ApiChatResponse = serde_json::from_slice(&response_bytes)
+                .map_err(|err| anyhow::anyhow!("{} response parse error: {err}", self.name))?;
             return Self::parse_native_response(api_resp, &self.name);
         }
 
@@ -1498,6 +1614,48 @@ impl OpenAiCompatibleProvider {
             usage: last_usage,
             openhuman: last_openhuman,
         };
+
+        // Dump the aggregated final response (structured, diff-friendly,
+        // carries usage + openhuman cache meta from the last chunks).
+        // Hand-build a Value here because `ApiChatResponse` is
+        // Deserialize-only.
+        if std::env::var("OPENHUMAN_PROMPT_DUMP_DIR").is_ok() {
+            let msg = &api_resp.choices[0].message;
+            let aggregated = serde_json::json!({
+                "content": msg.content,
+                "reasoning_content": msg.reasoning_content,
+                "tool_calls": msg.tool_calls.as_ref().map(|calls| {
+                    calls.iter().map(|c| serde_json::json!({
+                        "id": c.id,
+                        "type": c.kind,
+                        "function": c.function.as_ref().map(|f| serde_json::json!({
+                            "name": f.name,
+                            "arguments": f.arguments,
+                        })),
+                    })).collect::<Vec<_>>()
+                }),
+                "usage": api_resp.usage.as_ref().map(|u| serde_json::json!({
+                    "prompt_tokens": u.prompt_tokens,
+                    "completion_tokens": u.completion_tokens,
+                    "total_tokens": u.total_tokens,
+                    "prompt_cached_tokens": u.prompt_tokens_details
+                        .as_ref().map(|d| d.cached_tokens),
+                })),
+                "openhuman": api_resp.openhuman.as_ref().map(|m| serde_json::json!({
+                    "usage": m.usage.as_ref().map(|u| serde_json::json!({
+                        "input_tokens": u.input_tokens,
+                        "output_tokens": u.output_tokens,
+                        "cached_input_tokens": u.cached_input_tokens,
+                    })),
+                    "billing": m.billing.as_ref().map(|b| serde_json::json!({
+                        "charged_amount_usd": b.charged_amount_usd,
+                    })),
+                })),
+            });
+            if let Ok(bytes) = serde_json::to_vec(&aggregated) {
+                dump_response_if_enabled(&self.name, &native_request.model, dump_seq, &bytes);
+            }
+        }
 
         Self::parse_native_response(api_resp, &self.name)
     }
@@ -1900,8 +2058,10 @@ impl Provider for OpenAiCompatibleProvider {
                 tool_choice: tools.as_ref().map(|_| "auto".to_string()),
                 tools: tools.clone(),
             };
+            let stream_dump_seq = peek_dump_seq();
+            dump_prompt_if_enabled(&self.name, model, &native_request);
             match self
-                .stream_native_chat(credential, &native_request, tx)
+                .stream_native_chat(credential, &native_request, tx, stream_dump_seq)
                 .await
             {
                 Ok(resp) => return Ok(resp),
@@ -1924,6 +2084,8 @@ impl Provider for OpenAiCompatibleProvider {
             tool_choice: tools.as_ref().map(|_| "auto".to_string()),
             tools,
         };
+        let dump_seq = peek_dump_seq();
+        dump_prompt_if_enabled(&self.name, model, &native_request);
 
         let url = self.chat_completions_url();
         let response = match self
@@ -1998,7 +2160,10 @@ impl Provider for OpenAiCompatibleProvider {
             anyhow::bail!("{} API error ({status}): {sanitized}", self.name);
         }
 
-        let native_response: ApiChatResponse = response.json().await?;
+        let response_bytes = response.bytes().await?;
+        dump_response_if_enabled(&self.name, model, dump_seq, &response_bytes);
+        let native_response: ApiChatResponse = serde_json::from_slice(&response_bytes)
+            .map_err(|err| anyhow::anyhow!("{} response parse error: {err}", self.name))?;
         Self::parse_native_response(native_response, &self.name)
     }
 

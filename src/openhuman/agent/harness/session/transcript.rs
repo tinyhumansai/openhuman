@@ -1,12 +1,12 @@
 //! Session transcript persistence for KV cache stability.
 //!
-//! **Source of truth**: `sessions/{DDMMYYYY}/{agent}_{index}.jsonl`
+//! **Source of truth**: `session_raw/{DDMMYYYY}/{agent}_{index}.jsonl`
 //!
 //! Each JSONL file starts with a single metadata line (identified by an
 //! `_meta` key) followed by one JSON object per `ChatMessage`. On every
-//! write the companion `.md` file is re-rendered for human readability;
-//! it is **never** read back — all round-trip / resume logic uses the
-//! JSONL.
+//! write the companion `.md` file is re-rendered for human readability
+//! under `sessions/{DDMMYYYY}/{agent}_{index}.md`; it is **never** read
+//! back — all round-trip / resume logic uses the JSONL.
 //!
 //! ## JSONL schema
 //!
@@ -29,8 +29,8 @@
 //! ## Storage layout
 //!
 //! ```text
-//! {workspace}/sessions/DDMMYYYY/{agent}_{index}.jsonl   ← source of truth
-//! {workspace}/sessions/DDMMYYYY/{agent}_{index}.md      ← human-readable view
+//! {workspace}/session_raw/DDMMYYYY/{agent}_{index}.jsonl   ← source of truth
+//! {workspace}/sessions/DDMMYYYY/{agent}_{index}.md         ← human-readable view
 //! ```
 
 use crate::openhuman::providers::ChatMessage;
@@ -167,18 +167,20 @@ pub fn write_transcript(
             charged_amount_usd: meta.charged_amount_usd,
         },
     };
-    let meta_json = serde_json::to_string(&meta_line)
-        .context("serialise transcript meta header")?;
+    let meta_json =
+        serde_json::to_string(&meta_line).context("serialise transcript meta header")?;
     jsonl_buf.push_str(&meta_json);
     jsonl_buf.push('\n');
 
     // Identify the index of the last assistant message so we can attach
     // per-turn usage to it.
-    let last_assistant_idx = messages
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(i, m)| if m.role == "assistant" { Some(i) } else { None });
+    let last_assistant_idx = messages.iter().enumerate().rev().find_map(|(i, m)| {
+        if m.role == "assistant" {
+            Some(i)
+        } else {
+            None
+        }
+    });
 
     for (i, msg) in messages.iter().enumerate() {
         let is_last_assistant =
@@ -205,8 +207,8 @@ pub fn write_transcript(
             }
         };
 
-        let line_json = serde_json::to_string(&line)
-            .with_context(|| format!("serialise message line {i}"))?;
+        let line_json =
+            serde_json::to_string(&line).with_context(|| format!("serialise message line {i}"))?;
         jsonl_buf.push_str(&line_json);
         jsonl_buf.push('\n');
     }
@@ -227,7 +229,11 @@ pub fn write_transcript(
         per_msg_usage.insert(idx, tu);
     }
 
-    let md_path = jsonl_path.with_extension("md");
+    let md_path = md_companion_path(jsonl_path);
+    if let Some(parent) = md_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create md companion dir {}", parent.display()))?;
+    }
     let md = render_markdown(messages, meta, &per_msg_usage);
     fs::write(&md_path, md.as_bytes())
         .with_context(|| format!("write markdown companion {}", md_path.display()))?;
@@ -254,7 +260,10 @@ pub fn read_transcript(path: &Path) -> Result<SessionTranscript> {
     // `find_latest_transcript` when only legacy files exist) must go to
     // the legacy parser, never to the JSONL parser.
     if path.extension().and_then(|s| s.to_str()) == Some("md") {
-        log::debug!("[transcript] reading legacy .md transcript: {}", path.display());
+        log::debug!(
+            "[transcript] reading legacy .md transcript: {}",
+            path.display()
+        );
         return read_transcript_legacy_md(path);
     }
 
@@ -363,30 +372,36 @@ fn read_transcript_jsonl(path: &Path) -> Result<SessionTranscript> {
 // ── Path resolution ──────────────────────────────────────────────────
 
 /// Resolve a new transcript path under
-/// `{workspace}/sessions/DDMMYYYY/{agent}_{index}.jsonl`.
+/// `{workspace}/session_raw/DDMMYYYY/{agent}_{index}.jsonl`.
 ///
 /// Creates the date directory if needed. Index = max existing + 1.
-/// Scans both `.jsonl` **and** `.md` files when computing the next index
-/// so indices don't collide during migration.
+/// Scans both the new `session_raw/` dir (for `.jsonl`) **and** the legacy
+/// `sessions/` dir (for `.md`) so indices stay unique across migration.
 pub fn resolve_new_transcript_path(workspace_dir: &Path, agent_name: &str) -> Result<PathBuf> {
-    let date_dir = today_session_dir(workspace_dir);
-    fs::create_dir_all(&date_dir)
-        .with_context(|| format!("create session dir {}", date_dir.display()))?;
+    let raw_dir = today_raw_session_dir(workspace_dir);
+    fs::create_dir_all(&raw_dir)
+        .with_context(|| format!("create session_raw dir {}", raw_dir.display()))?;
 
     let sanitized = sanitize_agent_name(agent_name);
-    let next_idx = next_index(&date_dir, &sanitized)?;
+    let idx_raw = next_index(&raw_dir, &sanitized)?;
+    // Also consider the legacy sessions/ dir so companion .md (or legacy
+    // standalone .md) files don't cause index collisions.
+    let legacy_dir = today_session_dir(workspace_dir);
+    let idx_legacy = next_index(&legacy_dir, &sanitized)?;
+    let next_idx = idx_raw.max(idx_legacy);
     let filename = format!("{}_{}.jsonl", sanitized, next_idx);
 
-    Ok(date_dir.join(filename))
+    Ok(raw_dir.join(filename))
 }
 
 /// Find the most recent transcript for `agent_name`.
 ///
-/// Searches today's directory first, then yesterday's. Returns the
-/// `.jsonl` with the highest index (or falls back to `.md` when only legacy
-/// files exist).
+/// Searches today's directory first, then yesterday's. Prefers `.jsonl`
+/// under `session_raw/` and falls back to `.md` under `sessions/` when
+/// only legacy files exist.
 pub fn find_latest_transcript(workspace_dir: &Path, agent_name: &str) -> Option<PathBuf> {
     let sanitized = sanitize_agent_name(agent_name);
+    let raw_root = workspace_dir.join("session_raw");
     let sessions_root = workspace_dir.join("sessions");
 
     let today = chrono::Local::now().format("%d%m%Y").to_string();
@@ -395,12 +410,19 @@ pub fn find_latest_transcript(workspace_dir: &Path, agent_name: &str) -> Option<
         .to_string();
 
     for date_str in [&today, &yesterday] {
-        let dir = sessions_root.join(date_str);
-        if !dir.is_dir() {
-            continue;
+        // Prefer the new session_raw/ location.
+        let raw_dir = raw_root.join(date_str);
+        if raw_dir.is_dir() {
+            if let Some(path) = latest_in_dir(&raw_dir, &sanitized) {
+                return Some(path);
+            }
         }
-        if let Some(path) = latest_in_dir(&dir, &sanitized) {
-            return Some(path);
+        // Fall back to legacy sessions/ for pre-migration .md only.
+        let legacy_dir = sessions_root.join(date_str);
+        if legacy_dir.is_dir() {
+            if let Some(path) = latest_in_dir(&legacy_dir, &sanitized) {
+                return Some(path);
+            }
         }
     }
 
@@ -599,6 +621,36 @@ fn today_session_dir(workspace_dir: &Path) -> PathBuf {
     workspace_dir.join("sessions").join(date)
 }
 
+fn today_raw_session_dir(workspace_dir: &Path) -> PathBuf {
+    let date = chrono::Local::now().format("%d%m%Y").to_string();
+    workspace_dir.join("session_raw").join(date)
+}
+
+/// Given a `session_raw/DDMMYYYY/agent_N.jsonl` path, derive the companion
+/// `sessions/DDMMYYYY/agent_N.md` path by swapping the `session_raw`
+/// path component with `sessions` and the extension with `.md`.
+///
+/// If no `session_raw` component is present (e.g. tests using a flat
+/// tempdir), just swap the extension so the companion lives alongside.
+fn md_companion_path(jsonl_path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    let mut swapped = false;
+    for comp in jsonl_path.components() {
+        match comp {
+            std::path::Component::Normal(s) if s == "session_raw" => {
+                out.push("sessions");
+                swapped = true;
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if !swapped {
+        // Fall back to sibling .md in the same directory.
+        return jsonl_path.with_extension("md");
+    }
+    out.with_extension("md")
+}
+
 fn sanitize_agent_name(name: &str) -> String {
     name.chars()
         .map(|c| {
@@ -665,7 +717,10 @@ fn latest_in_dir(dir: &Path, agent_prefix: &str) -> Option<PathBuf> {
         if name_str.ends_with(".jsonl") {
             let idx_str = &name_str[prefix.len()..name_str.len() - 6];
             if let Ok(idx) = idx_str.parse::<usize>() {
-                if best_jsonl.as_ref().is_none_or(|(best_idx, _)| idx > *best_idx) {
+                if best_jsonl
+                    .as_ref()
+                    .is_none_or(|(best_idx, _)| idx > *best_idx)
+                {
                     best_jsonl = Some((idx, entry.path()));
                 }
             }
@@ -827,11 +882,52 @@ mod tests {
 
         let path0 = resolve_new_transcript_path(workspace, "main").unwrap();
         assert!(path0.to_string_lossy().contains("main_0.jsonl"));
+        assert!(
+            path0.to_string_lossy().contains("session_raw"),
+            "jsonl should live under session_raw/, got {}",
+            path0.display()
+        );
         // Write something so the next call sees it.
         fs::write(&path0, "placeholder").unwrap();
 
         let path1 = resolve_new_transcript_path(workspace, "main").unwrap();
         assert!(path1.to_string_lossy().contains("main_1.jsonl"));
+    }
+
+    #[test]
+    fn md_companion_path_swaps_session_raw_to_sessions() {
+        let jsonl = PathBuf::from("/tmp/ws/session_raw/17042026/main_0.jsonl");
+        let md = md_companion_path(&jsonl);
+        assert_eq!(
+            md,
+            PathBuf::from("/tmp/ws/sessions/17042026/main_0.md"),
+            "md companion should live under sessions/ with .md extension"
+        );
+    }
+
+    #[test]
+    fn md_companion_path_falls_back_to_sibling_when_no_session_raw_component() {
+        let jsonl = PathBuf::from("/tmp/flat/main_0.jsonl");
+        let md = md_companion_path(&jsonl);
+        assert_eq!(md, PathBuf::from("/tmp/flat/main_0.md"));
+    }
+
+    #[test]
+    fn resolve_avoids_index_collision_with_legacy_md_in_sessions_dir() {
+        let dir = TempDir::new().unwrap();
+        let workspace = dir.path();
+        let date = chrono::Local::now().format("%d%m%Y").to_string();
+        let legacy = workspace.join("sessions").join(&date);
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("main_0.md"), "legacy").unwrap();
+        fs::write(legacy.join("main_1.md"), "legacy").unwrap();
+
+        let path = resolve_new_transcript_path(workspace, "main").unwrap();
+        assert!(
+            path.to_string_lossy().contains("main_2.jsonl"),
+            "should advance past legacy indices, got {}",
+            path.display()
+        );
     }
 
     #[test]
@@ -845,18 +941,33 @@ mod tests {
     fn find_latest_returns_highest_index() {
         let dir = TempDir::new().unwrap();
         let date = chrono::Local::now().format("%d%m%Y").to_string();
-        let session_dir = dir.path().join("sessions").join(&date);
-        fs::create_dir_all(&session_dir).unwrap();
+        let raw_dir = dir.path().join("session_raw").join(&date);
+        fs::create_dir_all(&raw_dir).unwrap();
 
-        fs::write(session_dir.join("main_0.jsonl"), "a").unwrap();
-        fs::write(session_dir.join("main_2.jsonl"), "c").unwrap();
-        fs::write(session_dir.join("main_1.jsonl"), "b").unwrap();
-        fs::write(session_dir.join("other_0.jsonl"), "x").unwrap();
+        fs::write(raw_dir.join("main_0.jsonl"), "a").unwrap();
+        fs::write(raw_dir.join("main_2.jsonl"), "c").unwrap();
+        fs::write(raw_dir.join("main_1.jsonl"), "b").unwrap();
+        fs::write(raw_dir.join("other_0.jsonl"), "x").unwrap();
 
         let latest = find_latest_transcript(dir.path(), "main");
         assert!(latest.is_some());
         let latest = latest.unwrap();
         assert!(latest.to_string_lossy().contains("main_2.jsonl"));
+        assert!(latest.to_string_lossy().contains("session_raw"));
+    }
+
+    #[test]
+    fn find_latest_falls_back_to_legacy_sessions_md() {
+        let dir = TempDir::new().unwrap();
+        let date = chrono::Local::now().format("%d%m%Y").to_string();
+        let legacy = dir.path().join("sessions").join(&date);
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("main_0.md"), "legacy").unwrap();
+
+        let latest = find_latest_transcript(dir.path(), "main");
+        assert!(latest.is_some());
+        let latest = latest.unwrap();
+        assert!(latest.to_string_lossy().ends_with("main_0.md"));
     }
 
     #[test]
@@ -948,7 +1059,10 @@ mod tests {
         assert!(md_path.exists(), ".md companion should be written");
         let md = fs::read_to_string(&md_path).unwrap();
         assert!(md.contains("# Session transcript — code_executor"));
-        assert!(md.contains("claude-sonnet-4-6"), "model should appear in md");
+        assert!(
+            md.contains("claude-sonnet-4-6"),
+            "model should appear in md"
+        );
         assert!(md.contains("## [system]"), "system section missing");
         assert!(md.contains("## [user]"), "user section missing");
     }
@@ -1000,7 +1114,10 @@ mod tests {
         fs::write(dir.path().join("main_1.jsonl"), "new").unwrap();
 
         let next = next_index(dir.path(), "main").unwrap();
-        assert_eq!(next, 2, "should account for both .md and .jsonl when computing next index");
+        assert_eq!(
+            next, 2,
+            "should account for both .md and .jsonl when computing next index"
+        );
     }
 
     #[test]
