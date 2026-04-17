@@ -1,0 +1,18 @@
+id = "summarizer"
+display_name = "Summarizer"
+when_to_use = "Compresses oversized tool results for the orchestrator. Called automatically by the runtime when a tool returns more than summarizer_payload_threshold_tokens (default 500000). Do NOT call from an LLM — this agent is runtime-dispatched only."
+temperature = 0.2
+max_iterations = 1
+sandbox_mode = "none"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = true
+omit_skills_catalog = true
+omit_profile = true
+omit_memory_md = true
+
+[model]
+hint = "summarization"
+
+[tools]
+named = []

@@ -68,6 +68,20 @@ pub fn collect_orchestrator_tools(
     for entry in &definition.subagents {
         match entry {
             SubagentEntry::AgentId(agent_id) => {
+                // Runtime-only sub-agents — the LLM must never see a
+                // `delegate_*` tool for these because they're dispatched
+                // directly by the runtime, not by an explicit LLM tool
+                // call. Issue #574 introduced `summarizer` as the first
+                // such sub-agent; future runtime-only agents should
+                // join this filter.
+                if agent_id == "summarizer" {
+                    log::debug!(
+                        "[orchestrator_tools] skipping runtime-only sub-agent '{}' \
+                         (no delegation tool synthesised)",
+                        agent_id
+                    );
+                    continue;
+                }
                 let Some(target) = registry.get(agent_id) else {
                     log::warn!(
                         "[orchestrator_tools] subagent '{}' referenced by '{}' is not in the registry — skipping",
@@ -189,6 +203,7 @@ mod tests {
             disallowed_tools: vec![],
             skill_filter: None,
             category_filter: None,
+            extra_tools: vec![],
             max_iterations: 8,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,

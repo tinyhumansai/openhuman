@@ -220,6 +220,10 @@ const Conversations = () => {
   const autocompleteDebounceRef = useRef<number | null>(null);
   const autocompleteRequestSeqRef = useRef(0);
   const sendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Thread id whose send started the current silence timer. Tracked separately
+  // from `selectedThreadId` so switching threads mid-turn doesn't move the
+  // timer's reference point.
+  const sendingThreadIdRef = useRef<string | null>(null);
 
   const getAudioExtension = (mimeType: string): string => {
     const lower = mimeType.toLowerCase();
@@ -309,6 +313,45 @@ const Conversations = () => {
       setSendError(null);
     }
   }, [inputValue, sendError]);
+
+  const armSilenceTimer = (threadId: string) => {
+    if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
+    sendingThreadIdRef.current = threadId;
+    sendingTimeoutRef.current = setTimeout(() => {
+      console.warn('[chat] silence timeout: no inference signal for 120s');
+      setSendError(
+        chatSendError(
+          'safety_timeout',
+          'No response from the assistant after 2 minutes. Try again or check your connection.'
+        )
+      );
+      dispatch(clearRuntimeForThread({ threadId }));
+      dispatch(setActiveThread(null));
+      sendingTimeoutRef.current = null;
+      sendingThreadIdRef.current = null;
+    }, 120_000);
+  };
+
+  // Rearm the silence timer on every inference status change for the
+  // sending thread (tool_call, tool_result, iteration_start, subagent_*
+  // all update inferenceStatusByThread). When the status is cleared
+  // (chat_done / chat_error), drop the timer — the completion handlers
+  // take over UI cleanup.
+  useEffect(() => {
+    const threadId = sendingThreadIdRef.current;
+    if (!threadId || !sendingTimeoutRef.current) return;
+    const status = inferenceStatusByThread[threadId];
+    if (status === undefined) {
+      clearTimeout(sendingTimeoutRef.current);
+      sendingTimeoutRef.current = null;
+      sendingThreadIdRef.current = null;
+      return;
+    }
+    armSilenceTimer(threadId);
+    // armSilenceTimer is stable (refs + dispatch); depending on the
+    // selector reference is enough to rearm on every progress event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inferenceStatusByThread]);
 
   useEffect(() => {
     if (
@@ -449,20 +492,13 @@ const Conversations = () => {
     void dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
     setInputValue('');
     setSendError(null);
-    // Safety: auto-clear isSending if no response arrives within 120s
-    if (sendingTimeoutRef.current) clearTimeout(sendingTimeoutRef.current);
-    sendingTimeoutRef.current = setTimeout(() => {
-      console.warn('[chat] safety timeout: clearing isSending after 120s with no response');
-      setSendError(
-        chatSendError(
-          'safety_timeout',
-          'No response from the assistant after 2 minutes. Try again or check your connection.'
-        )
-      );
-      dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));
-      dispatch(setActiveThread(null));
-      sendingTimeoutRef.current = null;
-    }, 120_000);
+    // Silence timer: fires only if 120s pass without ANY inference progress
+    // (tool call, tool result, iteration start, subagent event, text delta).
+    // The effect below rearms this timer whenever `inferenceStatusByThread`
+    // changes for `sendingThreadId`, so long-running agent turns stay alive
+    // as long as the backend is emitting signals. A truly hung server still
+    // fails fast.
+    armSilenceTimer(sendingThreadId);
     dispatch(setToolTimelineForThread({ threadId: sendingThreadId, entries: [] }));
     dispatch(beginInferenceTurn({ threadId: sendingThreadId }));
     dispatch(setActiveThread(sendingThreadId));
@@ -481,6 +517,7 @@ const Conversations = () => {
         clearTimeout(sendingTimeoutRef.current);
         sendingTimeoutRef.current = null;
       }
+      sendingThreadIdRef.current = null;
       const msg = err instanceof Error ? err.message : String(err);
       setSendError(chatSendError('cloud_send_failed', msg));
       dispatch(clearRuntimeForThread({ threadId: sendingThreadId }));

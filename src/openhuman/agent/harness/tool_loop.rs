@@ -13,6 +13,7 @@ use std::io::Write as _;
 
 use super::credentials::scrub_credentials;
 use super::parse::{build_native_assistant_history, parse_structured_tool_calls, parse_tool_calls};
+use super::payload_summarizer::PayloadSummarizer;
 use crate::openhuman::context::guard::{ContextCheckResult, ContextGuard};
 
 /// Minimum characters per chunk when relaying LLM text to a streaming draft.
@@ -41,6 +42,7 @@ pub(crate) async fn agent_turn(
     silent: bool,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
     max_tool_iterations: usize,
+    payload_summarizer: Option<&dyn PayloadSummarizer>,
 ) -> Result<String> {
     run_tool_call_loop(
         provider,
@@ -58,6 +60,7 @@ pub(crate) async fn agent_turn(
         None,
         &[],
         None,
+        payload_summarizer,
     )
     .await
 }
@@ -107,6 +110,7 @@ pub(crate) async fn run_tool_call_loop(
     visible_tool_names: Option<&HashSet<String>>,
     extra_tools: &[Box<dyn Tool>],
     on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
+    payload_summarizer: Option<&dyn PayloadSummarizer>,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -552,7 +556,43 @@ pub(crate) async fn run_tool_call_loop(
                                 output_len = output.len(),
                                 "[agent_loop] tool succeeded"
                             );
-                            (scrub_credentials(&output), true)
+                            let mut scrubbed = scrub_credentials(&output);
+                            if let Some(summarizer) = payload_summarizer {
+                                log::debug!(
+                                    "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
+                                    call.name,
+                                    scrubbed.len()
+                                );
+                                match summarizer
+                                    .maybe_summarize(&call.name, None, &scrubbed)
+                                    .await
+                                {
+                                    Ok(Some(payload)) => {
+                                        log::info!(
+                                            "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
+                                            call.name,
+                                            payload.original_bytes,
+                                            payload.summary_bytes
+                                        );
+                                        scrubbed = payload.summary;
+                                    }
+                                    Ok(None) => {
+                                        log::debug!(
+                                            "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
+                                            call.name,
+                                            scrubbed.len()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
+                                            call.name,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            (scrubbed, true)
                         } else {
                             tracing::warn!(
                                 iteration,
@@ -779,6 +819,124 @@ mod tests {
         }
     }
 
+    /// Tool that emits a large payload (~150 KB), used to exercise the
+    /// payload-summarizer interception path in the integration test
+    /// below.
+    struct BigPayloadTool;
+
+    #[async_trait]
+    impl Tool for BigPayloadTool {
+        fn name(&self) -> &str {
+            "big_payload"
+        }
+
+        fn description(&self) -> &str {
+            "emits a 150 KB payload to trigger summarization"
+        }
+
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object"})
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+            // 150 KB of payload — well above the 100 KB default threshold.
+            Ok(ToolResult::success("X".repeat(150_000)))
+        }
+    }
+
+    /// Mock summarizer that always returns a fixed compressed string,
+    /// used to verify that [`run_tool_call_loop`] swaps the raw tool
+    /// output for the summary before pushing it into history.
+    struct MockSummarizer {
+        summary: String,
+    }
+
+    #[async_trait]
+    impl super::super::payload_summarizer::PayloadSummarizer for MockSummarizer {
+        async fn maybe_summarize(
+            &self,
+            _tool_name: &str,
+            _parent_task_hint: Option<&str>,
+            raw: &str,
+        ) -> Result<Option<super::super::payload_summarizer::SummarizedPayload>> {
+            Ok(Some(super::super::payload_summarizer::SummarizedPayload {
+                summary: self.summary.clone(),
+                original_bytes: raw.len(),
+                summary_bytes: self.summary.len(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_tool_call_loop_intercepts_oversized_tool_results_via_summarizer() {
+        // Provider scripts a single tool call to `big_payload`, then a
+        // final "done" message after the tool result lands in history.
+        let provider = ScriptedProvider {
+            responses: Mutex::new(vec![
+                Ok(ChatResponse {
+                    text: Some(
+                        "<tool_call>{\"name\":\"big_payload\",\"arguments\":{}}</tool_call>".into(),
+                    ),
+                    tool_calls: vec![],
+                    usage: None,
+                }),
+                Ok(ChatResponse {
+                    text: Some("done".into()),
+                    tool_calls: vec![],
+                    usage: None,
+                }),
+            ]),
+            native_tools: false,
+            vision: false,
+        };
+        let mut history = vec![ChatMessage::user("dump the data")];
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(BigPayloadTool)];
+        let summarizer = MockSummarizer {
+            summary: "compressed-summary-marker".to_string(),
+        };
+
+        let result = run_tool_call_loop(
+            &provider,
+            &mut history,
+            &tools,
+            "test-provider",
+            "model",
+            0.0,
+            true,
+            None,
+            "channel",
+            &crate::openhuman::config::MultimodalConfig::default(),
+            2,
+            None,
+            None,
+            &[],
+            None,
+            Some(&summarizer),
+        )
+        .await
+        .expect("loop with summarizer should succeed");
+
+        assert_eq!(result, "done");
+
+        // The summarized marker should be present in the appended
+        // tool-results message; the raw 150 KB blob of 'X' should NOT.
+        let tool_results = history
+            .iter()
+            .find(|msg| msg.role == "user" && msg.content.contains("[Tool results]"))
+            .expect("tool results should be appended");
+        assert!(
+            tool_results.content.contains("compressed-summary-marker"),
+            "summarizer output should replace the raw payload in history"
+        );
+        // 150 KB of "X" is much larger than the summary; if it slipped
+        // through, the message body would be enormous.
+        assert!(
+            tool_results.content.len() < 10_000,
+            "raw 150 KB payload must not appear in history (got {} bytes)",
+            tool_results.content.len()
+        );
+    }
+
     #[tokio::test]
     async fn run_tool_call_loop_rejects_vision_markers_for_non_vision_provider() {
         let provider = ScriptedProvider {
@@ -803,6 +961,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
         )
         .await
@@ -840,6 +999,7 @@ mod tests {
             Some(tx),
             None,
             &[],
+            None,
             None,
         )
         .await
@@ -892,6 +1052,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
         )
         .await
@@ -947,6 +1108,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
         )
         .await
@@ -1006,6 +1168,7 @@ mod tests {
             None,
             &[],
             None,
+            None,
         )
         .await
         .expect("non-cli channels should auto-approve supervised tools");
@@ -1056,6 +1219,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
         )
         .await
@@ -1112,6 +1276,7 @@ mod tests {
             None,
             &[],
             None,
+            None,
         )
         .await
         .expect("loop should recover after tool errors");
@@ -1151,6 +1316,7 @@ mod tests {
             None,
             &[],
             None,
+            None,
         )
         .await
         .expect_err("provider error path should fail");
@@ -1182,6 +1348,7 @@ mod tests {
             None,
             None,
             &[],
+            None,
             None,
         )
         .await

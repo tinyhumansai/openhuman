@@ -75,6 +75,7 @@ pub fn all_tools_with_runtime(
         Box::new(ShellTool::new(security.clone(), runtime)),
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security.clone())),
+        Box::new(CsvExportTool::new(security.clone())),
         // Sub-agent dispatch — lets the parent agent delegate focused
         // sub-tasks (research, code execution, API specialists, …) by
         // calling `spawn_subagent { agent_id, prompt, … }`. The runner

@@ -35,9 +35,12 @@ use crate::openhuman::context::prompt::{
     extract_cache_boundary, render_subagent_system_prompt, SubagentRenderOptions,
 };
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
-use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
-use std::collections::HashSet;
+use crate::openhuman::tools::{Tool, ToolCategory, ToolResult, ToolSpec};
+use async_trait::async_trait;
+use regex::Regex;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
@@ -235,6 +238,29 @@ async fn run_typed_mode(
         category_filter,
     );
 
+    // ── Force-include extra_tools that bypass category_filter ──────────
+    //
+    // `extra_tools` lets an agent definition request specific system tools
+    // even when `category_filter` restricts to a different category. For
+    // example, `skills_agent` sets `category_filter = "skill"` but still
+    // needs `file_write` and `csv_export` for exporting oversized payloads.
+    if !definition.extra_tools.is_empty() {
+        let disallow_set: std::collections::HashSet<&str> = definition
+            .disallowed_tools
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        for (i, tool) in parent.all_tools.iter().enumerate() {
+            let name = tool.name();
+            if definition.extra_tools.iter().any(|n| n == name)
+                && !allowed_indices.contains(&i)
+                && !disallow_set.contains(name)
+            {
+                allowed_indices.push(i);
+            }
+        }
+    }
+
     // ── Dynamic per-action toolkit tools (skills_agent + toolkit) ──────
     //
     // When `skills_agent` is spawned with a `toolkit` argument (e.g.
@@ -278,15 +304,25 @@ async fn run_typed_mode(
                 // prompt to be a clear, context-rich instruction, so it's a
                 // reliable matching target.
                 //
+                // Heavy-schema toolkits (Gmail, Notion, GitHub, Salesforce,
+                // HubSpot, Google Workspace, Microsoft Teams) ship per-action
+                // JSON schemas so dense that even a moderate top-K blows the
+                // request past Fireworks' 65 535-rule grammar cap in native
+                // mode and the 196 607-token context cap in text mode. Tight
+                // top-K of 12 keeps those toolkits inside both ceilings while
+                // still giving the fuzzy scorer room for adjacent matches.
+                // Lighter toolkits (reddit, slack, linear, telegram, …) keep
+                // the looser top-K of 25.
+                //
                 // Fallback: if the filter yields fewer than
                 // `MIN_CONFIDENT_HITS` results, register every action. A
                 // too-narrow filter is worse than none — it starves the
                 // sub-agent and forces it to guess.
-                const TOOL_FILTER_TOP_K: usize = 25;
+                let top_k = top_k_for_toolkit(tk);
                 let filter_hits = super::tool_filter::filter_actions_by_prompt(
                     task_prompt,
                     &integration.tools,
-                    TOOL_FILTER_TOP_K,
+                    top_k,
                 );
                 let selected: Vec<&crate::openhuman::context::prompt::ConnectedIntegrationTool> =
                     if filter_hits.len() >= super::tool_filter::MIN_CONFIDENT_HITS {
@@ -295,6 +331,7 @@ async fn run_typed_mode(
                             toolkit = %tk,
                             total = integration.tools.len(),
                             kept = filter_hits.len(),
+                            top_k = top_k,
                             "[subagent_runner:typed] fuzzy tool filter narrowed toolkit"
                         );
                         filter_hits.iter().map(|&i| &integration.tools[i]).collect()
@@ -339,6 +376,53 @@ async fn run_typed_mode(
             );
         }
     }
+
+    // ── Progressive-disclosure handoff cache ───────────────────────────
+    //
+    // Built only for skills_agent-with-toolkit because that's the only
+    // typed sub-agent that regularly calls external tools capable of
+    // returning megabyte-scale payloads (Composio actions). Every other
+    // typed sub-agent gets `None` and its tool results stay inline.
+    //
+    // When enabled, oversized tool results get stashed into this cache
+    // and their place in history is taken by a short placeholder (see
+    // `build_handoff_placeholder`). The sub-agent can then call the
+    // companion `extract_from_result` tool below to dispatch the
+    // summarizer sub-agent against the cached payload with a targeted
+    // query. Lazy / pay-per-question, so trivial asks answerable from
+    // the preview don't pay any extra LLM cost.
+    let handoff_cache: Option<Arc<ResultHandoffCache>> = if is_skills_agent_with_toolkit {
+        let cache = Arc::new(ResultHandoffCache::new());
+
+        // Resolve the summarizer definition once and register the
+        // extract_from_result tool alongside the composio action tools.
+        // If the summarizer isn't in the registry (shouldn't happen in
+        // production but can happen in tests), skip the tool — tool
+        // results will still get the placeholder + preview, the
+        // sub-agent just won't be able to drill in.
+        if let Some(reg) =
+            crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
+        {
+            if let Some(summarizer_def) = reg.get("summarizer") {
+                dynamic_tools.push(Box::new(ExtractFromResultTool::new(
+                    cache.clone(),
+                    summarizer_def.clone(),
+                )));
+                tracing::debug!(
+                    agent_id = %definition.id,
+                    "[subagent_runner:typed] registered extract_from_result tool + handoff cache"
+                );
+            } else {
+                tracing::warn!(
+                    agent_id = %definition.id,
+                    "[subagent_runner:typed] summarizer definition missing from registry — extract_from_result disabled (oversized results will still be cached and previewed)"
+                );
+            }
+        }
+        Some(cache)
+    } else {
+        None
+    };
 
     let mut filtered_specs: Vec<ToolSpec> = allowed_indices
         .iter()
@@ -458,6 +542,7 @@ async fn run_typed_mode(
         system_prompt_cache_boundary,
         task_id,
         &definition.id,
+        handoff_cache.as_deref(),
     )
     .await?;
 
@@ -558,6 +643,7 @@ async fn run_fork_mode(
         fork.cache_boundary,
         task_id,
         &definition.id,
+        None,
     )
     .await?;
 
@@ -671,14 +757,63 @@ async fn run_inner_loop(
     system_prompt_cache_boundary: Option<usize>,
     task_id: &str,
     agent_id: &str,
+    handoff_cache: Option<&ResultHandoffCache>,
 ) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
     let max_iterations = max_iterations.max(1);
-    let supports_native = provider.supports_native_tools() && !tool_specs.is_empty();
+
+    // ── Text-mode override for skills_agent ────────────────────────────
+    //
+    // Large Composio toolkits (Notion, Salesforce, HubSpot, GitHub) ship
+    // per-action JSON schemas that are extraordinarily dense — deeply
+    // nested object/block types, recursive refs, huge discriminated
+    // unions. Fireworks-style providers (which the backend forwards to)
+    // auto-compile every entry in `tools: [...]` into a grammar and
+    // index rules with a `uint16_t` — max 65 535 rules. Even with the
+    // upstream fuzzy filter narrowing Notion 48 → 16, a single request
+    // generates 100 000+ rules and the provider rejects it with 400
+    // before generation starts.
+    //
+    // The fuzzy filter can't fix this because the bound is per-action,
+    // not per-toolkit: one Notion schema alone can produce thousands of
+    // rules. The only client-side lever is to **not send `tools: [...]`
+    // at all** — the backend has nothing to compile, so no grammar, so
+    // no ceiling. We then describe the tools in the system prompt as
+    // prose (XmlToolDispatcher format) and parse `<tool_call>` tags out
+    // of the model's free-form response text.
+    //
+    // Scoped to `skills_agent` because that's the only path where we
+    // pass Composio toolkit schemas. Every other typed sub-agent
+    // (welcome, researcher, summarizer, …) uses small built-in tool
+    // sets that stay well under the grammar ceiling and benefit from
+    // native mode's stricter formatting guarantees.
+    let force_text_mode = agent_id == "skills_agent" && !tool_specs.is_empty();
+
+    let supports_native =
+        !force_text_mode && provider.supports_native_tools() && !tool_specs.is_empty();
     let request_tools = if supports_native {
         Some(tool_specs)
     } else {
         None
     };
+
+    if force_text_mode {
+        // Append the XML tool protocol + available-tool list to the
+        // existing system prompt. `history[0]` is the system message
+        // built by `run_typed_mode` / `run_fork_mode` upstream; we
+        // augment it in-place so the model learns the call format for
+        // this session without an extra message round-trip.
+        if let Some(sys) = history.iter_mut().find(|m| m.role == "system") {
+            sys.content.push_str("\n\n");
+            sys.content
+                .push_str(&build_text_mode_tool_instructions(tool_specs));
+        }
+        tracing::info!(
+            task_id = %task_id,
+            agent_id = %agent_id,
+            tool_count = tool_specs.len(),
+            "[subagent_runner:text-mode] omitting tools from API request, injected XML tool protocol into system prompt"
+        );
+    }
 
     let mut usage = AggregatedUsage::default();
 
@@ -712,7 +847,37 @@ async fn run_inner_loop(
         }
 
         let response_text = resp.text.clone().unwrap_or_default();
-        let native_calls: Vec<ToolCall> = resp.tool_calls.clone();
+
+        // In text mode the model emits `<tool_call>{…}</tool_call>` tags
+        // inline inside `resp.text` (and `resp.tool_calls` is empty
+        // because we told the provider not to structure them). Parse
+        // them ourselves via the shared harness helper and synthesise a
+        // `ToolCall` per parsed block so the rest of the loop can stay
+        // uniform.
+        let native_calls: Vec<ToolCall> = if force_text_mode {
+            let (_cleaned, parsed) = super::parse::parse_tool_calls(&response_text);
+            parsed
+                .into_iter()
+                .enumerate()
+                .map(|(i, call)| {
+                    let args_str = if call.arguments.is_null() {
+                        "{}".to_string()
+                    } else {
+                        call.arguments.to_string()
+                    };
+                    ToolCall {
+                        id: call
+                            .id
+                            .clone()
+                            .unwrap_or_else(|| format!("call_text_{iteration}_{i}")),
+                        name: call.name,
+                        arguments: args_str,
+                    }
+                })
+                .collect()
+        } else {
+            resp.tool_calls.clone()
+        };
 
         if native_calls.is_empty() {
             tracing::debug!(
@@ -726,20 +891,27 @@ async fn run_inner_loop(
             return Ok((response_text, iteration + 1, usage));
         }
 
-        // Persist assistant message with the original tool_calls payload so
-        // subsequent role=tool messages can reference call ids correctly.
-        // Uses the canonical serialiser from `parse` — the old inline
-        // `build_native_assistant_payload` used `"text"` instead of
-        // `"content"` and nested `{"type":"function","function":{…}}`
-        // wrappers instead of flat `{id, name, arguments}`, which caused
-        // 400 errors from the backend jinja template ("Message has tool
-        // role, but there was no previous assistant message with a tool
-        // call!").
-        let assistant_history_content =
-            super::parse::build_native_assistant_history(&response_text, &native_calls);
-        history.push(ChatMessage::assistant(assistant_history_content));
+        // Persist the assistant turn. In native mode use the canonical
+        // serialiser (wraps text + structured tool_calls for the
+        // backend's jinja template). In text mode the raw response
+        // already contains the `<tool_call>` tags inline, so persist it
+        // verbatim — on the next turn the model sees its own prior
+        // emissions exactly as it wrote them.
+        if force_text_mode {
+            history.push(ChatMessage::assistant(response_text.clone()));
+        } else {
+            let assistant_history_content =
+                super::parse::build_native_assistant_history(&response_text, &native_calls);
+            history.push(ChatMessage::assistant(assistant_history_content));
+        }
 
-        // Execute each call, append role=tool messages.
+        // Execute each call, collect outputs. Native mode pushes one
+        // `role=tool` message per call with the structured `tool_call_id`
+        // reference. Text mode has no such reference (the model just
+        // emitted tags in prose), so we batch all results into a single
+        // user message formatted with `<tool_result>` tags — mirroring
+        // XmlToolDispatcher's `format_results`.
+        let mut text_mode_result_block = String::new();
         for call in &native_calls {
             let result_text = if !allowed_names.contains(&call.name) {
                 tracing::warn!(
@@ -775,11 +947,89 @@ async fn run_inner_loop(
                 format!("Unknown tool: {}", call.name)
             };
 
-            let tool_msg = serde_json::json!({
-                "tool_call_id": call.id,
-                "content": result_text,
-            });
-            history.push(ChatMessage::tool(tool_msg.to_string()));
+            // Progressive-disclosure handoff: if this spawn has a cache
+            // (skills_agent-with-toolkit path) and the result is large
+            // and not itself an error / not from the extractor tool,
+            // stash the raw payload and replace it in history with a
+            // short placeholder. The sub-agent can drill in with
+            // `extract_from_result(result_id=..., query=...)` on the
+            // next turn. Errors and already-extracted output go through
+            // unchanged — no point handing off a 200-byte error or an
+            // already-compressed summary.
+            //
+            // Cleaning happens before the size check so HTML-heavy tool
+            // outputs (Gmail bodies, HTML-embedded Notion blocks) that
+            // drop below threshold after stripping markup skip the
+            // extract pipeline entirely. For anything still over
+            // threshold, the cache stores the cleaned text — chunks see
+            // real content, not `<div>` soup.
+            let result_text = if let Some(cache) = handoff_cache {
+                let skip_cleaning =
+                    call.name == "extract_from_result" || result_text.starts_with("Error");
+                let cleaned = if skip_cleaning {
+                    result_text
+                } else {
+                    let pre_len = result_text.len();
+                    let cleaned = clean_tool_output(&result_text);
+                    if cleaned.len() < pre_len {
+                        tracing::debug!(
+                            tool = %call.name,
+                            before_bytes = pre_len,
+                            after_bytes = cleaned.len(),
+                            saved_pct = ((pre_len - cleaned.len()) * 100) / pre_len.max(1),
+                            "[subagent_runner:handoff] cleaned tool output (stripped markup/data-uris/whitespace)"
+                        );
+                    }
+                    cleaned
+                };
+                let tokens = cleaned.len().div_ceil(4);
+                if !skip_cleaning && tokens > HANDOFF_OVERSIZE_THRESHOLD_TOKENS {
+                    let id = cache.store(call.name.clone(), cleaned.clone());
+                    let placeholder = build_handoff_placeholder(&call.name, &id, &cleaned);
+                    tracing::info!(
+                        task_id = %task_id,
+                        agent_id = %agent_id,
+                        tool = %call.name,
+                        raw_tokens = tokens,
+                        raw_bytes = cleaned.len(),
+                        threshold_tokens = HANDOFF_OVERSIZE_THRESHOLD_TOKENS,
+                        result_id = %id,
+                        "[subagent_runner:handoff] stashed oversized tool output; substituted placeholder into history"
+                    );
+                    placeholder
+                } else {
+                    cleaned
+                }
+            } else {
+                result_text
+            };
+
+            if force_text_mode {
+                let status = if result_text.starts_with("Error") {
+                    "error"
+                } else {
+                    "ok"
+                };
+                let _ = std::fmt::Write::write_fmt(
+                    &mut text_mode_result_block,
+                    format_args!(
+                        "<tool_result name=\"{}\" status=\"{}\">\n{}\n</tool_result>\n",
+                        call.name, status, result_text
+                    ),
+                );
+            } else {
+                let tool_msg = serde_json::json!({
+                    "tool_call_id": call.id,
+                    "content": result_text,
+                });
+                history.push(ChatMessage::tool(tool_msg.to_string()));
+            }
+        }
+
+        if force_text_mode && !text_mode_result_block.is_empty() {
+            history.push(ChatMessage::user(format!(
+                "[Tool results]\n{text_mode_result_block}"
+            )));
         }
     }
 
@@ -789,6 +1039,608 @@ async fn run_inner_loop(
 fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
     serde_json::from_str(arguments)
         .unwrap_or_else(|_| serde_json::Value::Object(Default::default()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Oversized-tool-result handoff (progressive disclosure)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Typed sub-agents (skills_agent in particular) regularly call tools that
+// return megabyte-scale payloads — `GMAIL_LIST_MESSAGES`, `NOTION_GET_PAGE`,
+// `GOOGLEDRIVE_LIST_FILES`. The default behaviour pushes that raw blob into
+// the sub-agent's history as a tool-result message, and the NEXT iteration
+// then ships the bloated history back to the provider where it hits the
+// model's context-length ceiling (observed: 276k-token prompt against a
+// 196 607-token window → backend 400).
+//
+// The summarizer dispatches to the model with the payload + an extraction
+// contract, but wiring it to fire on EVERY oversized result has two costs:
+// (1) we pay for a summarizer turn even when the sub-agent could answer
+// from a preview, and (2) aggressive compression sometimes drops the exact
+// identifier the agent needs for a follow-up call.
+//
+// Progressive disclosure fixes both: when a tool returns too much data,
+// we stash the full payload in a session-scoped cache, replace it in
+// history with a short placeholder (size + preview + result_id + how to
+// query it), and expose an `extract_from_result` tool that the sub-agent
+// can call with a targeted query. The summarizer only runs when the
+// sub-agent actually asks for a narrower view.
+
+/// Token threshold above which a tool result is routed to the handoff
+/// cache instead of being pushed into history raw. 20 000 tokens keeps
+/// the sub-agent's per-iteration prompt well below the 196 607-token
+/// model ceiling even after many iterations, and leaves comfortable
+/// headroom for the system prompt + tool catalogue. Token count is
+/// estimated at ~4 chars/token (mirrors
+/// [`crate::openhuman::agent::harness::payload_summarizer`] and
+/// [`crate::openhuman::tree_summarizer::types::estimate_tokens`]).
+const HANDOFF_OVERSIZE_THRESHOLD_TOKENS: usize = 20_000;
+
+/// Characters of the raw payload to surface in the placeholder preview.
+/// Enough for the sub-agent to recognise the shape (JSON keys, first
+/// record) and often small enough to answer trivial questions without a
+/// follow-up `extract_from_result` call.
+const HANDOFF_PREVIEW_CHARS: usize = 1500;
+
+/// Maximum entries per session. Bounded to keep memory use predictable
+/// on long-running sub-agents that might call many large tools. When
+/// over capacity we evict the oldest entry (FIFO); callers see "no
+/// cached result" for evicted ids and can either re-run the tool or
+/// ask the user/orchestrator to narrow the request.
+const HANDOFF_MAX_ENTRIES: usize = 8;
+
+/// Per-spawn cache of oversized tool payloads. One instance is built
+/// at the top of [`run_typed_mode`] and shared (via `Arc`) with both
+/// the inner tool-call loop (writes) and the `extract_from_result`
+/// tool (reads).
+#[derive(Default)]
+struct ResultHandoffCache {
+    inner: StdMutex<HandoffInner>,
+}
+
+#[derive(Default)]
+struct HandoffInner {
+    /// FIFO of inserted ids, used for eviction.
+    order: Vec<String>,
+    /// Content by id.
+    entries: HashMap<String, CachedResult>,
+    /// Monotonic counter for id generation within the session.
+    next_id: u64,
+}
+
+struct CachedResult {
+    tool_name: String,
+    content: String,
+}
+
+impl ResultHandoffCache {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Stash a payload and return a stable, short, grep-friendly id.
+    fn store(&self, tool_name: String, content: String) -> String {
+        let mut g = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.next_id = g.next_id.saturating_add(1);
+        let id = format!("res_{:x}", g.next_id);
+        g.order.push(id.clone());
+        g.entries
+            .insert(id.clone(), CachedResult { tool_name, content });
+        while g.order.len() > HANDOFF_MAX_ENTRIES {
+            let evicted = g.order.remove(0);
+            g.entries.remove(&evicted);
+        }
+        id
+    }
+
+    fn get(&self, result_id: &str) -> Option<CachedResult> {
+        let g = self.inner.lock().ok()?;
+        g.entries.get(result_id).map(|r| CachedResult {
+            tool_name: r.tool_name.clone(),
+            content: r.content.clone(),
+        })
+    }
+}
+
+/// Build the placeholder text that replaces an oversized tool result in
+/// the sub-agent's history. Shows the payload size (estimated tokens
+/// and raw bytes), a preview, and a call shape for the
+/// `extract_from_result` tool. The sub-agent decides whether to answer
+/// from the preview or dispatch the extractor.
+///
+/// Token count is estimated at ~4 chars/token (same heuristic as the
+/// trigger threshold in `HANDOFF_OVERSIZE_THRESHOLD_TOKENS`), so the
+/// unit the sub-agent sees matches the unit the runtime used to decide
+/// to hand off in the first place.
+fn build_handoff_placeholder(tool_name: &str, result_id: &str, raw: &str) -> String {
+    let preview: String = raw.chars().take(HANDOFF_PREVIEW_CHARS).collect();
+    let raw_tokens = raw.len().div_ceil(4);
+    format!(
+        "[oversized tool output: {raw_tokens} tokens ({raw_bytes} bytes) — stashed as result_id=\"{result_id}\"]\n\
+         Preview (first {preview_chars} chars):\n{preview}\n\n\
+         If the preview does not answer your task, call:\n\
+         extract_from_result(result_id=\"{result_id}\", query=\"<specific question>\")\n\
+         Good queries name the exact fields/identifiers you need \
+         (e.g. \"subject and sender of the 5 most recent messages\"). \
+         Tool: {tool_name}",
+        raw_bytes = raw.len(),
+        preview_chars = preview.chars().count(),
+    )
+}
+
+/// Sub-agent-side tool that answers a targeted query against a payload
+/// previously stashed via [`build_handoff_placeholder`]. Internally
+/// dispatches the `summarizer` sub-agent with the cached payload + the
+/// caller's query as the extraction contract.
+struct ExtractFromResultTool {
+    cache: Arc<ResultHandoffCache>,
+    summarizer_def: AgentDefinition,
+}
+
+impl ExtractFromResultTool {
+    fn new(cache: Arc<ResultHandoffCache>, summarizer_def: AgentDefinition) -> Self {
+        Self {
+            cache,
+            summarizer_def,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for ExtractFromResultTool {
+    fn name(&self) -> &str {
+        "extract_from_result"
+    }
+
+    fn description(&self) -> &str {
+        "Answer a targeted question against an oversized tool output that was \
+         stashed under a `result_id` handle. Use this when a previous tool call \
+         returned a placeholder like `result_id=\"res_1\"` because its raw output \
+         was too large to show inline. Pass the handle plus a natural-language \
+         `query` naming the exact facts/identifiers you need; returns only the \
+         extracted answer, not the full payload. Multiple queries against the \
+         same `result_id` are allowed — each one is independent."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "result_id": {
+                    "type": "string",
+                    "description": "The handle emitted in the oversized tool output placeholder (e.g. `res_1`)."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Natural-language question naming the exact facts or identifiers to extract. Be specific."
+                }
+            },
+            "required": ["result_id", "query"]
+        })
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::System
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        let result_id = args.get("result_id").and_then(|v| v.as_str()).unwrap_or("");
+        let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+
+        if result_id.is_empty() || query.is_empty() {
+            return Ok(ToolResult::error(
+                "extract_from_result requires non-empty `result_id` and `query`.",
+            ));
+        }
+
+        let cached = match self.cache.get(result_id) {
+            Some(c) => c,
+            None => {
+                return Ok(ToolResult::error(format!(
+                    "No cached result found for id '{result_id}'. The handle may have been evicted (cache holds the {HANDOFF_MAX_ENTRIES} most recent entries). Re-run the original tool to get a fresh handle."
+                )));
+            }
+        };
+
+        // Fast path: payload fits in a single summarizer turn.
+        if cached.content.len() <= SUMMARIZER_CHUNK_CHAR_BUDGET {
+            tracing::debug!(
+                tool = %cached.tool_name,
+                bytes = cached.content.len(),
+                "[extract_from_result] single-shot extraction"
+            );
+            return self
+                .extract_single_shot(&cached.tool_name, &cached.content, query)
+                .await;
+        }
+
+        // Slow path: chunk + parallel map. A single summarizer call on a
+        // payload large enough to need the handoff (hundreds of KB
+        // common for Gmail/Notion list operations) risks either (a)
+        // overflowing the summarizer's own context window, or (b)
+        // getting a low-quality single-pass summary that misses facts
+        // near the tail. Splitting into budgeted chunks and running
+        // them in parallel keeps each summarizer turn under its
+        // context budget and usually finishes faster than a sequential
+        // single-shot call on the whole blob.
+        //
+        // No reduce stage: per-chunk summaries are concatenated in
+        // original chunk order. The reduce LLM call previously used
+        // here added latency (often the slowest single turn of the
+        // whole pipeline) and was the single point of failure when
+        // the upstream provider hung — a hung reduce could burn
+        // minutes before giving up. For listing/extraction queries
+        // concatenation is equivalent; for top-N / global-ordering
+        // queries the caller can post-process.
+        let chunks = chunk_content(&cached.content, SUMMARIZER_CHUNK_CHAR_BUDGET);
+        tracing::info!(
+            tool = %cached.tool_name,
+            total_bytes = cached.content.len(),
+            chunk_count = chunks.len(),
+            chunk_budget = SUMMARIZER_CHUNK_CHAR_BUDGET,
+            "[extract_from_result] chunked extraction"
+        );
+
+        // Map stage: each chunk extracts items matching `query` from
+        // ITS OWN slice only. Dispatched with bounded concurrency —
+        // `buffer_unordered(MAP_CONCURRENCY)` keeps at most N summarizer
+        // calls in flight at any time. Fully parallel `join_all` was
+        // generating 504-gateway-timeout storms from the staging
+        // proxy when 7+ concurrent summarizer calls piled onto the
+        // upstream; batching at 3 trades some wall-clock time for
+        // reliability. `run_subagent` is isolated per call (fresh
+        // history, independent summarizer instance). Callers share
+        // the same parent context.
+        const MAP_CONCURRENCY: usize = 3;
+        let total_chunks = chunks.len();
+
+        // Consume `chunks` with `into_iter` so each async block owns
+        // its `String` — `buffer_unordered` polls the stream lazily
+        // and needs futures with no borrows into the enclosing scope.
+        let map_futures = chunks.into_iter().enumerate().map(|(i, chunk)| {
+            let summarizer_def = self.summarizer_def.clone();
+            let tool_name = cached.tool_name.clone();
+            let query = query.to_string();
+            async move {
+                let prompt = format!(
+                    "Tool name: {tool_name}\nChunk {idx} of {total}\n\n\
+                     Query: {query}\n\n\
+                     This is one slice of a larger tool output. Extract ONLY \
+                     items in THIS slice that match the query. Preserve \
+                     identifiers verbatim (ids, urls, emails, timestamps). \
+                     Return an empty string if nothing in this slice is \
+                     relevant. Be concise — no preamble, no commentary on \
+                     other slices.\n\n\
+                     --- BEGIN SLICE ---\n{chunk}\n--- END SLICE ---",
+                    idx = i + 1,
+                    total = total_chunks,
+                );
+                (
+                    i,
+                    run_subagent(&summarizer_def, &prompt, SubagentRunOptions::default()).await,
+                )
+            }
+        });
+
+        use futures::stream::StreamExt;
+        let mut map_results: Vec<(usize, _)> = futures::stream::iter(map_futures)
+            .buffer_unordered(MAP_CONCURRENCY)
+            .collect()
+            .await;
+        // `buffer_unordered` yields futures in completion order; restore
+        // original chunk order so the concatenated output matches the
+        // natural ordering of the underlying tool result (e.g. Notion's
+        // reverse-chrono page list).
+        map_results.sort_by_key(|(i, _)| *i);
+
+        let partials: Vec<String> = map_results
+            .into_iter()
+            .filter_map(|(i, r)| match r {
+                Ok(outcome) => {
+                    let trimmed = outcome.output.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        chunk_idx = i,
+                        error = %e,
+                        "[extract_from_result] map-stage summarizer call failed; dropping partial"
+                    );
+                    None
+                }
+            })
+            .collect();
+
+        if partials.is_empty() {
+            return Ok(ToolResult::error(
+                "extract_from_result: no matching content found across any chunk",
+            ));
+        }
+
+        // Concatenate per-chunk summaries in original chunk order.
+        // `join` with a single partial yields it unchanged (no trailing
+        // separator), so no special-case is needed.
+        Ok(ToolResult::success(partials.join("\n\n---\n\n")))
+    }
+}
+
+impl ExtractFromResultTool {
+    async fn extract_single_shot(
+        &self,
+        tool_name: &str,
+        content: &str,
+        query: &str,
+    ) -> anyhow::Result<ToolResult> {
+        let prompt = format!(
+            "Tool name: {tool_name}\n\nQuery: {query}\n\n\
+             Raw tool output — extract ONLY the information the query asks for. \
+             Preserve identifiers verbatim (ids, urls, emails, timestamps). \
+             Return a compact, direct answer, no preamble.\n\n\
+             --- BEGIN ---\n{content}\n--- END ---",
+        );
+
+        match run_subagent(&self.summarizer_def, &prompt, SubagentRunOptions::default()).await {
+            Ok(run) => {
+                let trimmed = run.output.trim();
+                if trimmed.is_empty() {
+                    Ok(ToolResult::error(
+                        "extract_from_result: summarizer returned an empty response",
+                    ))
+                } else {
+                    Ok(ToolResult::success(trimmed.to_string()))
+                }
+            }
+            Err(e) => Ok(ToolResult::error(format!(
+                "extract_from_result: summarizer dispatch failed: {e}"
+            ))),
+        }
+    }
+}
+
+/// Char budget per summarizer call. Chosen so a single chunk + prompt
+/// scaffolding + output stays well below the summarization model's
+/// context window (~196k tokens) — at ~4 chars/token that leaves
+/// comfortable headroom for the extraction contract and response.
+const SUMMARIZER_CHUNK_CHAR_BUDGET: usize = 60_000;
+
+/// Split `content` into chunks no larger than `budget` bytes, breaking
+/// at natural boundaries (blank lines, then single newlines) so the
+/// summarizer rarely sees a structure torn mid-record. Falls back to
+/// char-safe slicing for pathological single-line inputs.
+/// Strip common noise from tool outputs before they're stashed or chunked.
+///
+/// Agent tools frequently return raw HTML email bodies, inline SVG, base64
+/// data URIs, CSS/JS blocks, and collapsed whitespace — all of which bloat
+/// the handoff cache and waste summarizer context on tokens that carry
+/// zero semantic value for most extraction queries. Cleaning before the
+/// oversize check means (a) some payloads drop below threshold entirely
+/// and skip the extract pipeline, (b) chunked payloads fit more real
+/// content per chunk, and (c) summarizers see clean text instead of
+/// parsing around markup.
+///
+/// Applied generically to every tool output — no per-tool gating. The
+/// patterns below target universally-noisy markup; non-HTML outputs
+/// (plain JSON, plain text) are left essentially untouched because none
+/// of these regexes match.
+fn clean_tool_output(content: &str) -> String {
+    // Block-level containers with entirely useless payloads — match lazily
+    // across lines, case-insensitive. `(?s)` enables `.` matching `\n`.
+    static SCRIPT_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<script\b[^>]*>.*?</script\s*>").unwrap());
+    static STYLE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<style\b[^>]*>.*?</style\s*>").unwrap());
+    static SVG_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<svg\b[^>]*>.*?</svg\s*>").unwrap());
+    static HTML_COMMENT_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?s)<!--.*?-->").unwrap());
+    // `data:<mime>;base64,<...>` inline payloads — keep the agent aware
+    // an image/asset was there, but drop the bytes.
+    static DATA_URI_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)data:[a-z0-9.+\-/]+;base64,[A-Za-z0-9+/=]+").unwrap());
+    // Everything remaining that still looks like an HTML tag — strip the
+    // tag but keep the text content. Deliberately greedy across attributes
+    // but not across `>` so we don't eat inter-tag content.
+    static HTML_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
+    // Runs of whitespace → single space; collapse vertical bloat.
+    static WS_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t\f\v]+").unwrap());
+    static BLANK_LINE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+
+    let cleaned = SCRIPT_RE.replace_all(content, "");
+    let cleaned = STYLE_RE.replace_all(&cleaned, "");
+    let cleaned = SVG_RE.replace_all(&cleaned, "[svg]");
+    let cleaned = HTML_COMMENT_RE.replace_all(&cleaned, "");
+    let cleaned = DATA_URI_RE.replace_all(&cleaned, "[data-uri]");
+    let cleaned = HTML_TAG_RE.replace_all(&cleaned, "");
+    let cleaned = WS_RE.replace_all(&cleaned, " ");
+    let cleaned = BLANK_LINE_RE.replace_all(&cleaned, "\n\n");
+    cleaned.trim().to_string()
+}
+
+fn chunk_content(content: &str, budget: usize) -> Vec<String> {
+    if content.len() <= budget {
+        return vec![content.to_string()];
+    }
+
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::with_capacity(budget.min(content.len()));
+
+    let flush = |current: &mut String, chunks: &mut Vec<String>| {
+        if !current.is_empty() {
+            chunks.push(std::mem::take(current));
+        }
+    };
+
+    for line in content.lines() {
+        let projected = current.len() + line.len() + 1;
+        if projected > budget && !current.is_empty() {
+            flush(&mut current, &mut chunks);
+        }
+        if line.len() > budget {
+            // Single line exceeds budget (e.g. JSON with no formatting).
+            // Emit any pending content, then slice the line at char
+            // boundaries so we don't panic on multi-byte chars.
+            flush(&mut current, &mut chunks);
+            let mut remaining = line;
+            while !remaining.is_empty() {
+                let mut cut = budget.min(remaining.len());
+                while cut > 0 && !remaining.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                if cut == 0 {
+                    // Degenerate case — shouldn't happen for normal
+                    // text. Take the entire remaining line to avoid
+                    // an infinite loop.
+                    chunks.push(remaining.to_string());
+                    break;
+                }
+                chunks.push(remaining[..cut].to_string());
+                remaining = &remaining[cut..];
+            }
+        } else {
+            current.push_str(line);
+            current.push('\n');
+        }
+    }
+    flush(&mut current, &mut chunks);
+
+    chunks
+}
+
+/// Tight top-K ceiling for toolkits whose per-action JSON schemas are
+/// dense enough to blow through either Fireworks' 65 535-rule grammar
+/// cap (native mode) or the 196 607-token context cap (text mode) even
+/// before any tool results land in history. Determined empirically from
+/// the fixture dumps under `tests/fixtures/composio_*.json` and real
+/// staging failures — see the trace where Gmail at top-K=25 produced
+/// a 276k-token iter-1 prompt.
+const HEAVY_SCHEMA_TOOLKITS: &[&str] = &[
+    "gmail",
+    "notion",
+    "github",
+    "salesforce",
+    "hubspot",
+    "googledrive",
+    "googlesheets",
+    "googledocs",
+    "microsoftteams",
+];
+
+const TOOL_FILTER_TOP_K_DEFAULT: usize = 25;
+const TOOL_FILTER_TOP_K_HEAVY: usize = 12;
+
+/// Pick a top-K budget for the fuzzy filter based on how dense the
+/// toolkit's action schemas tend to be. Match is case-insensitive so
+/// we don't care whether the caller passed `"Gmail"` or `"gmail"`.
+fn top_k_for_toolkit(toolkit: &str) -> usize {
+    if HEAVY_SCHEMA_TOOLKITS
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(toolkit))
+    {
+        TOOL_FILTER_TOP_K_HEAVY
+    } else {
+        TOOL_FILTER_TOP_K_DEFAULT
+    }
+}
+
+/// Format a set of `ToolSpec`s as an XML tool-use protocol block
+/// appended to the system prompt in text mode. Mirrors
+/// [`crate::openhuman::agent::dispatcher::XmlToolDispatcher::prompt_instructions`]
+/// — same `<tool_call>{…}</tool_call>` format so the existing
+/// `parse_tool_calls` helper understands what the model emits.
+///
+/// Per-parameter rendering is intentionally **compact**: name, type, a
+/// "required" marker, and a short one-line description if present. We
+/// do **not** serialise the full JSON schema. Composio/Fireworks action
+/// schemas for toolkits like Gmail or Notion run multiple KB each —
+/// embedding them verbatim blows up the prompt past the model's
+/// context window (282k+ tokens for 26 Gmail tools vs a 196k cap).
+/// The compact listing keeps the model informed enough to call tools
+/// correctly while staying within budget. If the model needs deeper
+/// schema detail it can surface the error and the orchestrator will
+/// clarify on the next turn.
+fn build_text_mode_tool_instructions(specs: &[ToolSpec]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    out.push_str("## Tool Use Protocol\n\n");
+    out.push_str(
+        "To use a tool, wrap a JSON object in <tool_call></tool_call> tags. \
+         Do not nest tags. Emit one tag per call; you can emit multiple tags \
+         in the same response if you need to run calls in parallel.\n\n",
+    );
+    out.push_str(
+        "```\n<tool_call>\n{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n</tool_call>\n```\n\n",
+    );
+    out.push_str("### Available Tools\n\n");
+    for spec in specs {
+        let _ = writeln!(
+            out,
+            "- **{}**: {}",
+            spec.name,
+            first_line_truncated(&spec.description, 120)
+        );
+        let params_line = summarise_parameters(&spec.parameters);
+        if !params_line.is_empty() {
+            let _ = writeln!(out, "  Parameters: {}", params_line);
+        }
+    }
+    out
+}
+
+/// Render a JSON-schema `parameters` object as a single-line,
+/// ultra-compact parameter list — `*name: type, optName: type` for each
+/// top-level property (leading `*` marks required). Deeply nested
+/// shapes, enums, descriptions, and examples are all dropped.
+///
+/// Kept intentionally terse: Composio action schemas routinely contain
+/// per-parameter descriptions several hundred tokens long, so even a
+/// "short description" per param balloons to tens of thousands of
+/// tokens across a 27-tool skills_agent toolkit and pushes the prompt
+/// past the 196 607-token context window. The model can infer usage
+/// from the parameter names + the tool's overall description; any
+/// validation mismatch surfaces at call time and the orchestrator can
+/// course-correct on the next turn.
+fn summarise_parameters(params: &serde_json::Value) -> String {
+    let Some(props) = params.get("properties").and_then(|v| v.as_object()) else {
+        return String::new();
+    };
+    let required: std::collections::HashSet<&str> = params
+        .get("required")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    let mut parts: Vec<String> = Vec::with_capacity(props.len());
+    for (name, schema) in props {
+        let ty = schema.get("type").and_then(|v| v.as_str()).unwrap_or("any");
+        let marker = if required.contains(name.as_str()) {
+            "*"
+        } else {
+            ""
+        };
+        parts.push(format!("{marker}{name}:{ty}"));
+    }
+    parts.join(", ")
+}
+
+/// Return the first line of `s`, trimmed and truncated to `max_chars`
+/// with a trailing ellipsis when it overflows. Used to keep
+/// tool/parameter descriptions on a single grep-friendly line.
+fn first_line_truncated(s: &str, max_chars: usize) -> String {
+    let first = s.lines().next().unwrap_or("").trim();
+    if first.chars().count() <= max_chars {
+        first.to_string()
+    } else {
+        let truncated: String = first.chars().take(max_chars).collect();
+        format!("{truncated}…")
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -927,6 +1779,7 @@ mod tests {
             disallowed_tools: vec![],
             skill_filter: None,
             category_filter: None,
+            extra_tools: vec![],
             max_iterations: 5,
             timeout_secs: None,
             sandbox_mode: super::super::definition::SandboxMode::None,

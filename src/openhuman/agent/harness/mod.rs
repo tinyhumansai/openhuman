@@ -31,6 +31,7 @@ mod instructions;
 pub mod interrupt;
 pub(crate) mod memory_context;
 mod parse;
+pub(crate) mod payload_summarizer;
 pub(crate) mod self_healing;
 pub mod session;
 pub(crate) mod session_queue;

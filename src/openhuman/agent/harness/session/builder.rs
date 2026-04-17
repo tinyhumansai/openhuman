@@ -47,6 +47,7 @@ impl AgentBuilder {
             agent_definition_name: None,
             omit_profile: None,
             omit_memory_md: None,
+            payload_summarizer: None,
         }
     }
 
@@ -245,6 +246,23 @@ impl AgentBuilder {
         self
     }
 
+    /// Wire an oversized-tool-result summarizer into the agent. When
+    /// set, [`Agent::execute_tool_call`] calls
+    /// [`crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer::maybe_summarize`]
+    /// on every successful tool output and replaces the raw payload
+    /// with the compressed summary on success. Currently set only for
+    /// the orchestrator session by
+    /// [`Agent::build_session_agent_inner`].
+    pub fn payload_summarizer(
+        mut self,
+        summarizer: Arc<
+            dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
+        >,
+    ) -> Self {
+        self.payload_summarizer = Some(summarizer);
+        self
+    }
+
     /// Validates the configuration and constructs a new `Agent` instance.
     ///
     /// This method is responsible for wiring together the provided components,
@@ -355,6 +373,7 @@ impl AgentBuilder {
             // `omit_profile = false` through the builder.
             omit_profile: self.omit_profile.unwrap_or(true),
             omit_memory_md: self.omit_memory_md.unwrap_or(true),
+            payload_summarizer: self.payload_summarizer,
         })
     }
 }
@@ -802,9 +821,42 @@ impl Agent {
             // `agent.tool_dispatcher` config to `"xml"` to revert.
             _ => Box::new(PFormatToolDispatcher::new(pformat_registry.clone())),
         };
+
+        // Provider-side grammar decoders (e.g. Fireworks) compile every
+        // tool JSON schema into a grammar and index its rules with a
+        // uint16_t — max 65 535 rules. Large Composio toolkits (Notion,
+        // Salesforce, Gmail) produce per-action schemas dense enough
+        // that even 16–25 of them blow past that ceiling, regardless of
+        // how aggressively the fuzzy filter in `tool_filter.rs` narrows
+        // the list. When that happens the provider rejects the request
+        // with a 400 before any generation starts, so skills_agent can
+        // never actually invoke the toolkit.
+        //
+        // Workaround: if we're building skills_agent and the selected
+        // dispatcher would ship `tools: [...]` in the API payload
+        // (`should_send_tool_specs() == true`, i.e. native mode), swap
+        // to XML mode. XmlToolDispatcher puts the tool catalogue inside
+        // the system prompt as prose instead — the provider never
+        // compiles a grammar for it, so the rule-count ceiling stops
+        // mattering. Downside: slightly looser tool-call formatting
+        // than native; the existing `parse_tool_calls` recovers from
+        // stray formatting and the loop retries on malformed output.
+        let tool_dispatcher: Box<dyn ToolDispatcher> =
+            if agent_id == "skills_agent" && tool_dispatcher.should_send_tool_specs() {
+                log::info!(
+                    "[agent::builder] skills_agent: overriding native tool dispatcher with \
+                     XmlToolDispatcher (native mode hits provider grammar-rule limits on \
+                     large Composio toolkits)"
+                );
+                Box::new(XmlToolDispatcher)
+            } else {
+                tool_dispatcher
+            };
+
         log::debug!(
-            "[agent] tool dispatcher selected: choice={dispatcher_choice} \
-             default_text_format=pformat pformat_registry_entries={}",
+            "[agent] tool dispatcher selected: choice={dispatcher_choice} agent_id={agent_id} \
+             sends_tool_specs={} default_text_format=pformat pformat_registry_entries={}",
+            tool_dispatcher.should_send_tool_specs(),
             pformat_registry.len()
         );
 
@@ -850,7 +902,61 @@ impl Agent {
             agent_id
         );
 
-        Agent::builder()
+        // ── Orchestrator-only: wire the payload summarizer ──────────
+        //
+        // Issue #574 — when a tool returns a huge payload (Composio
+        // dump, long file read, web scrape), it should be compressed
+        // by a dedicated `summarizer` sub-agent before entering the
+        // orchestrator's history. We resolve the summarizer agent
+        // definition from the global registry and construct a
+        // `SubagentPayloadSummarizer` parameterized from the
+        // [`ContextConfig`] thresholds. Every other agent id gets
+        // `None` and their tool results stay untouched (the summarizer
+        // itself MUST be `None` to avoid recursive self-summarization).
+        let payload_summarizer: Option<
+            std::sync::Arc<
+                dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer,
+            >,
+        > = if agent_id == "orchestrator" && config.context.summarizer_payload_threshold_tokens > 0
+        {
+            match crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global() {
+                Some(reg) => match reg.get("summarizer") {
+                    Some(summarizer_def) => {
+                        log::info!(
+                            "[agent::builder] wiring payload_summarizer for orchestrator: \
+                             threshold_tokens={} max_tokens={}",
+                            config.context.summarizer_payload_threshold_tokens,
+                            config.context.summarizer_max_payload_tokens
+                        );
+                        Some(std::sync::Arc::new(
+                            crate::openhuman::agent::harness::payload_summarizer::SubagentPayloadSummarizer::new(
+                                summarizer_def.clone(),
+                                config.context.summarizer_payload_threshold_tokens,
+                                config.context.summarizer_max_payload_tokens,
+                            ),
+                        ))
+                    }
+                    None => {
+                        log::warn!(
+                            "[agent::builder] orchestrator requested payload_summarizer but \
+                             `summarizer` definition is not in the registry — proceeding without it"
+                        );
+                        None
+                    }
+                },
+                None => {
+                    log::warn!(
+                        "[agent::builder] orchestrator requested payload_summarizer but \
+                         AgentDefinitionRegistry is not initialised — proceeding without it"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let mut builder = Agent::builder()
             .provider(provider)
             .tools(tools)
             .visible_tool_names(visible)
@@ -872,7 +978,10 @@ impl Agent {
             .learning_enabled(config.learning.enabled)
             .agent_definition_name(agent_id.to_string())
             .omit_profile(effective_omit_profile)
-            .omit_memory_md(effective_omit_memory_md)
-            .build()
+            .omit_memory_md(effective_omit_memory_md);
+        if let Some(ps) = payload_summarizer {
+            builder = builder.payload_summarizer(ps);
+        }
+        builder.build()
     }
 }

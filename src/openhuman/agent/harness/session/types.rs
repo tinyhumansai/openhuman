@@ -109,6 +109,13 @@ pub struct Agent {
     /// [`PromptContext::include_memory_md`] at prompt-build time. Same
     /// session-freeze contract as `omit_profile`.
     pub(super) omit_memory_md: bool,
+    /// Optional payload-summarizer wired in at agent-build time.
+    /// Currently set only for the orchestrator session
+    /// (see [`super::builder`]). When `Some`, oversized tool results
+    /// produced by [`Agent::execute_tool_call`] are routed through the
+    /// summarizer sub-agent before they enter agent history.
+    pub(super) payload_summarizer:
+        Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.
@@ -143,6 +150,12 @@ pub struct AgentBuilder {
     /// Forwarded to [`Agent::omit_memory_md`]. Same shape as
     /// `omit_profile` — `None` falls back to the "omit" default.
     pub(super) omit_memory_md: Option<bool>,
+    /// Optional payload-summarizer threaded through to [`Agent`] at
+    /// build time. Defaults to `None`; the orchestrator branch in
+    /// [`super::builder::Agent::build_session_agent_inner`] sets this
+    /// to a `SubagentPayloadSummarizer` instance.
+    pub(super) payload_summarizer:
+        Option<Arc<dyn crate::openhuman::agent::harness::payload_summarizer::PayloadSummarizer>>,
 }
 
 impl Default for AgentBuilder {

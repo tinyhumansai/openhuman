@@ -43,6 +43,15 @@ subagents = [
     "code_executor",
     "critic",
     "archivist",
+    # Runtime-dispatched only — the runtime calls the summarizer sub-agent
+    # directly when a tool returns more than
+    # `context.summarizer_payload_threshold_tokens` (default 500000). The LLM must NOT be
+    # able to call this sub-agent itself, so `collect_orchestrator_tools`
+    # filters out `summarizer` and never synthesises a `delegate_summarizer`
+    # tool. Listing it here keeps the registration explicit (so it shows
+    # up in the orchestrator's subagent inventory) while the filter
+    # enforces the runtime-only contract.
+    "summarizer",
     { skills = "*" },
 ]
 

@@ -64,6 +64,7 @@ pub fn fork_definition() -> AgentDefinition {
         disallowed_tools: vec![],
         skill_filter: None,
         category_filter: None,
+        extra_tools: vec![],
         // Fork inherits the parent's max iterations from the runtime.
         max_iterations: 15,
         timeout_secs: None,
@@ -119,6 +120,23 @@ mod tests {
     }
 
     #[test]
+    fn skills_agent_has_extra_tools_for_export() {
+        let defs = all();
+        let skills = defs.iter().find(|d| d.id == "skills_agent").unwrap();
+        assert!(
+            skills.extra_tools.contains(&"file_write".to_string()),
+            "skills_agent must include file_write in extra_tools"
+        );
+        // csv_export was removed from extra_tools — it triggered
+        // superfluous export calls after extraction had already
+        // answered. file_write alone covers the Path B export flow.
+        assert!(
+            !skills.extra_tools.contains(&"csv_export".to_string()),
+            "csv_export should not be present in extra_tools"
+        );
+    }
+
+    #[test]
     fn expected_builtin_ids_are_present() {
         let ids: Vec<String> = all().into_iter().map(|d| d.id).collect();
         for expected in [
@@ -130,6 +148,7 @@ mod tests {
             "researcher",
             "critic",
             "archivist",
+            "summarizer",
             "fork",
         ] {
             assert!(ids.contains(&expected.to_string()), "missing {expected}");
