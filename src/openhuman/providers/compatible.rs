@@ -29,8 +29,9 @@ static PROMPT_DUMP_SEQ: AtomicU64 = AtomicU64::new(0);
 /// bytes of the prefix drifted and broke the cache hit.
 /// Write raw response bytes to the dump dir paired with the most-recent
 /// prompt file (same `seq` prefix, `.response.json` suffix). `seq` must
-/// be the value returned by `dump_prompt_if_enabled` so request/response
-/// files sort next to each other.
+/// be the value reserved via `reserve_dump_seq` and passed to
+/// `dump_prompt_if_enabled` so request/response files sort next to
+/// each other.
 fn dump_response_if_enabled(provider: &str, model: &str, seq: u64, bytes: &[u8]) {
     let Ok(dir) = std::env::var("OPENHUMAN_PROMPT_DUMP_DIR") else {
         return;
@@ -68,7 +69,7 @@ fn dump_response_if_enabled(provider: &str, model: &str, seq: u64, bytes: &[u8])
             path.display()
         );
     } else {
-        log::info!(
+        log::debug!(
             "[prompt_dump] wrote response {} bytes -> {}",
             payload.len(),
             path.display()
@@ -76,14 +77,17 @@ fn dump_response_if_enabled(provider: &str, model: &str, seq: u64, bytes: &[u8])
     }
 }
 
-/// Current sequence counter (the value that will be assigned on the next
-/// `dump_prompt_if_enabled` call). Callers that want to pair a response
-/// with its request should read this *before* calling the prompt dumper.
-fn peek_dump_seq() -> u64 {
-    PROMPT_DUMP_SEQ.load(Ordering::Relaxed)
+/// Atomically reserve the next dump sequence number. This is the single
+/// source of truth for seq allocation — both the prompt dump and its
+/// paired response dump must use the value returned here. A non-atomic
+/// peek-then-increment split would race under concurrent requests (two
+/// callers could reserve the same seq or correlate a request/response
+/// pair across different turns).
+fn reserve_dump_seq() -> u64 {
+    PROMPT_DUMP_SEQ.fetch_add(1, Ordering::Relaxed)
 }
 
-fn dump_prompt_if_enabled<T: Serialize>(provider: &str, model: &str, body: &T) {
+fn dump_prompt_if_enabled<T: Serialize>(provider: &str, model: &str, seq: u64, body: &T) {
     let Ok(dir) = std::env::var("OPENHUMAN_PROMPT_DUMP_DIR") else {
         return;
     };
@@ -96,7 +100,6 @@ fn dump_prompt_if_enabled<T: Serialize>(provider: &str, model: &str, body: &T) {
         return;
     }
     let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
-    let seq = PROMPT_DUMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let safe_model: String = model
         .chars()
         .map(|c| {
@@ -114,7 +117,7 @@ fn dump_prompt_if_enabled<T: Serialize>(provider: &str, model: &str, body: &T) {
             if let Err(err) = std::fs::write(&path, &bytes) {
                 log::warn!("[prompt_dump] write failed {}: {err}", path.display());
             } else {
-                log::info!(
+                log::debug!(
                     "[prompt_dump] wrote {} bytes -> {}",
                     bytes.len(),
                     path.display()
@@ -2058,8 +2061,8 @@ impl Provider for OpenAiCompatibleProvider {
                 tool_choice: tools.as_ref().map(|_| "auto".to_string()),
                 tools: tools.clone(),
             };
-            let stream_dump_seq = peek_dump_seq();
-            dump_prompt_if_enabled(&self.name, model, &native_request);
+            let stream_dump_seq = reserve_dump_seq();
+            dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
             match self
                 .stream_native_chat(credential, &native_request, tx, stream_dump_seq)
                 .await
@@ -2084,8 +2087,8 @@ impl Provider for OpenAiCompatibleProvider {
             tool_choice: tools.as_ref().map(|_| "auto".to_string()),
             tools,
         };
-        let dump_seq = peek_dump_seq();
-        dump_prompt_if_enabled(&self.name, model, &native_request);
+        let dump_seq = reserve_dump_seq();
+        dump_prompt_if_enabled(&self.name, model, dump_seq, &native_request);
 
         let url = self.chat_completions_url();
         let response = match self

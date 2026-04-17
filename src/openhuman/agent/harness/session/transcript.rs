@@ -174,37 +174,29 @@ pub fn write_transcript(
 
     // Identify the index of the last assistant message so we can attach
     // per-turn usage to it.
-    let last_assistant_idx = messages.iter().enumerate().rev().find_map(|(i, m)| {
-        if m.role == "assistant" {
-            Some(i)
-        } else {
-            None
-        }
-    });
+    let last_assistant_idx = messages.iter().rposition(|m| m.role == "assistant");
 
     for (i, msg) in messages.iter().enumerate() {
-        let is_last_assistant =
-            Some(i) == last_assistant_idx && last_assistant_turn_usage.is_some();
-
-        let line = if is_last_assistant {
-            let tu = last_assistant_turn_usage.unwrap();
-            MessageLine {
+        // Only the last assistant message carries usage/model/ts; every
+        // other line has those fields omitted. Pattern-match both
+        // options together so there's no separate unwrap.
+        let line = match (last_assistant_idx, last_assistant_turn_usage) {
+            (Some(idx), Some(tu)) if idx == i => MessageLine {
                 role: msg.role.clone(),
                 content: msg.content.clone(),
                 model: Some(tu.model.clone()),
                 usage: Some(tu.usage.clone()),
                 ts: Some(tu.ts.clone()),
                 _extra: HashMap::new(),
-            }
-        } else {
-            MessageLine {
+            },
+            _ => MessageLine {
                 role: msg.role.clone(),
                 content: msg.content.clone(),
                 model: None,
                 usage: None,
                 ts: None,
                 _extra: HashMap::new(),
-            }
+            },
         };
 
         let line_json =
@@ -229,14 +221,28 @@ pub fn write_transcript(
         per_msg_usage.insert(idx, tu);
     }
 
+    // The .md companion is a *derived* view — the JSONL above is the
+    // source of truth. Failures here must not propagate: a readable-log
+    // hiccup shouldn't take down the session's state persistence. Log
+    // and move on.
     let md_path = md_companion_path(jsonl_path);
     if let Some(parent) = md_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create md companion dir {}", parent.display()))?;
+        if let Err(err) = fs::create_dir_all(parent) {
+            log::warn!(
+                "[transcript] failed to create md companion dir {}: {err}",
+                parent.display()
+            );
+            return Ok(());
+        }
     }
     let md = render_markdown(messages, meta, &per_msg_usage);
-    fs::write(&md_path, md.as_bytes())
-        .with_context(|| format!("write markdown companion {}", md_path.display()))?;
+    if let Err(err) = fs::write(&md_path, md.as_bytes()) {
+        log::warn!(
+            "[transcript] failed to write markdown companion {}: {err}",
+            md_path.display()
+        );
+        return Ok(());
+    }
 
     log::debug!(
         "[transcript] wrote markdown companion to {}",
@@ -292,47 +298,38 @@ fn read_transcript_jsonl(path: &Path) -> Result<SessionTranscript> {
     let mut meta: Option<TranscriptMeta> = None;
     let mut messages: Vec<ChatMessage> = Vec::new();
 
+    // The JSONL format is positional: line 1 (the first non-empty line)
+    // is the `_meta` header; every subsequent non-empty line is a message.
+    // This avoids a substring check that could false-positive if message
+    // content contains `"_meta"`.
     for (line_no, line) in raw.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
 
-        // Attempt to detect meta line cheaply before deserialising the whole thing.
-        if line.contains("\"_meta\"") {
-            match serde_json::from_str::<MetaLine>(line) {
-                Ok(ml) => {
-                    let mp = ml.meta;
-                    meta = Some(TranscriptMeta {
-                        agent_name: mp.agent,
-                        dispatcher: mp.dispatcher,
-                        cache_boundary: mp.cache_boundary,
-                        created: mp.created,
-                        updated: mp.updated,
-                        turn_count: mp.turn_count,
-                        input_tokens: mp.input_tokens,
-                        output_tokens: mp.output_tokens,
-                        cached_input_tokens: mp.cached_input_tokens,
-                        charged_amount_usd: mp.charged_amount_usd,
-                    });
-                    continue;
-                }
-                Err(err) => {
-                    log::warn!(
-                        "[transcript] failed to parse meta line {} in {}: {err}",
-                        line_no + 1,
-                        path.display()
-                    );
-                    // If the very first non-empty line fails to parse as meta, error out.
-                    if meta.is_none() {
-                        return Err(anyhow::anyhow!(
-                            "first non-empty line of {} is not a valid _meta object: {err}",
-                            path.display()
-                        ));
-                    }
-                    continue;
-                }
-            }
+        if meta.is_none() {
+            let ml: MetaLine = serde_json::from_str(line).map_err(|err| {
+                anyhow::anyhow!(
+                    "first non-empty line of {} (line {}) is not a valid _meta object: {err}",
+                    path.display(),
+                    line_no + 1,
+                )
+            })?;
+            let mp = ml.meta;
+            meta = Some(TranscriptMeta {
+                agent_name: mp.agent,
+                dispatcher: mp.dispatcher,
+                cache_boundary: mp.cache_boundary,
+                created: mp.created,
+                updated: mp.updated,
+                turn_count: mp.turn_count,
+                input_tokens: mp.input_tokens,
+                output_tokens: mp.output_tokens,
+                cached_input_tokens: mp.cached_input_tokens,
+                charged_amount_usd: mp.charged_amount_usd,
+            });
+            continue;
         }
 
         // Message line.

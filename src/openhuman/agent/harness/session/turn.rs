@@ -422,6 +422,12 @@ impl Agent {
                                 },
                                 ts: chrono::Utc::now().to_rfc3339(),
                             });
+                        } else {
+                            // Missing usage on this iteration: clear any
+                            // snapshot carried from a prior iteration so
+                            // the transcript doesn't attribute stale
+                            // numbers to the final assistant message.
+                            last_turn_usage = None;
                         }
                         resp
                     }
