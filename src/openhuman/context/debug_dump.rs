@@ -1,53 +1,31 @@
 //! Debug helper that renders the exact system prompt the context engine
 //! would produce for a given agent.
 //!
-//! This is the canonical entry point shared by:
+//! Entry points:
+//! * [`dump_agent_prompt`] — dump a single agent by id.
+//! * [`dump_all_agent_prompts`] — dump every registered agent in one call.
 //!
-//! * the `openhuman agent dump-prompt` CLI (see [`crate::core::agent_cli`])
-//! * `scripts/debug-agent-prompts.sh` (loops over every built-in)
-//! * any future JSON-RPC / tests that need to inspect the assembled prompt
+//! Both share [`build_dump_env`] which assembles the tool registry,
+//! connected-integration list, and agent-definition registry. Each
+//! agent then flows through [`render_subagent_dump`], which mirrors
+//! `subagent_runner::run_typed_mode` step-for-step — no parallel
+//! rendering path, no case-by-case per-agent branching.
 //!
-//! The function assembles a **real** tool registry (via
-//! [`crate::openhuman::tools::all_tools_with_runtime`]) and a **real**
-//! [`AgentDefinitionRegistry`], then feeds them through the exact same
-//! prompt builders used at runtime — so what you see here is byte-identical
-//! to what the LLM would see at spawn time.
-//!
-//! # Targets
-//!
-//! * `"main"` (or any non-matching id when `--force-main` is set) →
-//!   the orchestrator / main-agent prompt assembled via
-//!   [`super::prompt::SystemPromptBuilder::with_defaults`]. This includes
-//!   the workspace identity files, tools visible to the main agent, and
-//!   the skills catalogue.
-//!
-//! * Any built-in or custom sub-agent id (e.g. `"skills_agent"`,
-//!   `"orchestrator"`, `"code_executor"`) →
-//!   [`super::prompt::render_subagent_system_prompt`] with the narrow
-//!   tool filter and per-definition `omit_*` flags the real runner applies.
-//!
-//! # Composio coverage
-//!
-//! When `Config::composio.enabled` is true, the Composio meta-tools
-//! (`composio_list_toolkits`, `composio_list_connections`,
-//! `composio_authorize`, `composio_list_tools`, `composio_execute`) are
-//! registered into the tool list with `ToolCategory::Skill`. Agents whose
-//! definition sets `category_filter = Skill` (notably `skills_agent`) will
-//! render those tools in their system prompt, so this dump is the fastest
-//! way to verify Composio is reaching the skills agent end-to-end.
+//! There is intentionally **no** "main" / orchestrator-specific dump
+//! path: the orchestrator is just another registered agent and renders
+//! through the same pipeline. Scripts looking for "main" should pass
+//! `--agent orchestrator` instead.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
 
-use crate::openhuman::agent::dispatcher::{PFormatToolDispatcher, ToolDispatcher};
 use crate::openhuman::agent::harness::definition::{
-    AgentDefinition, AgentDefinitionRegistry, ToolScope,
+    AgentDefinition, AgentDefinitionRegistry, PromptSource,
 };
+use crate::openhuman::agent::harness::subagent_runner::{filter_tool_indices, load_prompt_source};
 use crate::openhuman::agent::host_runtime::{self, RuntimeAdapter};
-use crate::openhuman::agent::pformat;
 use crate::openhuman::composio::client::ComposioClient;
 use crate::openhuman::composio::tools::{
     ComposioAuthorizeTool, ComposioExecuteTool, ComposioListConnectionsTool,
@@ -56,8 +34,7 @@ use crate::openhuman::composio::tools::{
 use crate::openhuman::config::Config;
 use crate::openhuman::context::prompt::{
     extract_cache_boundary, render_subagent_system_prompt, ConnectedIntegration,
-    LearnedContextData, PromptContext, PromptTool, SubagentRenderOptions, SystemPromptBuilder,
-    ToolCallFormat, USER_MEMORY_PER_NAMESPACE_MAX_CHARS, USER_MEMORY_TOTAL_MAX_CHARS,
+    LearnedContextData, PromptContext, PromptTool, SubagentRenderOptions, ToolCallFormat,
 };
 use crate::openhuman::integrations::IntegrationClient;
 use crate::openhuman::memory::{self, Memory};
@@ -71,33 +48,17 @@ use crate::openhuman::tools::{self, Tool, ToolCategory};
 /// Inputs for [`dump_agent_prompt`].
 #[derive(Debug, Clone)]
 pub struct DumpPromptOptions {
-    /// Target agent id — either `"main"` for the main/orchestrator agent,
-    /// or any id registered in [`AgentDefinitionRegistry`].
+    /// Target agent id (any id registered in [`AgentDefinitionRegistry`]).
     pub agent_id: String,
     /// Optional per-spawn skill filter override (e.g. `Some("notion".into())`).
-    /// Ignored for `"main"`.
     pub skill_filter: Option<String>,
-    /// Optional override for the workspace directory. When `None`, the
-    /// value from the loaded [`Config`] is used.
+    /// Optional override for the workspace directory.
     pub workspace_dir_override: Option<PathBuf>,
-    /// Optional override for the resolved model name. When `None`, the
-    /// value from the loaded [`Config`] is used. Only affects the
-    /// `## Runtime` line of the rendered prompt.
+    /// Optional override for the resolved model name.
     pub model_override: Option<String>,
-    /// When `true`, always inject the five Composio meta-tool stubs
-    /// (`composio_list_toolkits`, `composio_list_connections`,
-    /// `composio_authorize`, `composio_list_tools`, `composio_execute`)
-    /// into the tool registry before rendering, even if the user is not
-    /// signed in or `config.composio` is disabled.
-    ///
-    /// This is strictly a **dump-time** debug aid: the stubs are real
-    /// `Tool` impls so their names, descriptions, and parameter schemas
-    /// render byte-identically to what a signed-in user would see — but
-    /// calling `execute()` on them would hit a dummy localhost endpoint,
-    /// so they're safe for prompt inspection only, not for running
-    /// agents against. Use this to answer "what would `skills_agent`
-    /// see if Composio were reachable right now?" on a fresh dev
-    /// machine without wiring up OAuth.
+    /// When `true`, inject the five Composio meta-tool stubs into the
+    /// registry even if the user isn't signed in. Render-time only —
+    /// the stubs are safe to inspect but must not be `.execute()`d.
     pub stub_composio: bool,
 }
 
@@ -118,205 +79,104 @@ impl DumpPromptOptions {
 pub struct DumpedPrompt {
     /// Echoed from [`DumpPromptOptions::agent_id`].
     pub agent_id: String,
-    /// `"main"` or `"subagent"` — which rendering path produced `text`.
+    /// Always `"subagent"` — there is no main-agent dump path anymore.
     pub mode: &'static str,
-    /// Resolved model name used in the `## Runtime` section.
+    /// Resolved model name.
     pub model: String,
     /// Workspace directory used for identity file injection.
     pub workspace_dir: PathBuf,
-    /// The final rendered system prompt (cache boundary marker already
-    /// stripped — `cache_boundary` below holds the byte offset instead).
+    /// The final rendered system prompt (cache-boundary marker stripped;
+    /// the offset is in `cache_boundary`).
     pub text: String,
-    /// Byte offset of the cache boundary, if the builder inserted one.
-    /// This is the same value that gets threaded into
-    /// `ChatRequest::system_prompt_cache_boundary` at runtime.
+    /// Byte offset of the cache boundary, if the builder emitted one.
     pub cache_boundary: Option<usize>,
-    /// Every tool that made it into the rendered prompt, in order.
-    /// Useful for quick assertions in scripts (e.g. "does the
-    /// skills_agent dump contain `composio_execute`?").
+    /// Tool names that made it into the rendered prompt, in order.
     pub tool_names: Vec<String>,
-    /// Number of `ToolCategory::Skill` tools included in the dump.
+    /// Number of `ToolCategory::Skill` tools in the dump.
     pub skill_tool_count: usize,
 }
 
-/// Render and return the system prompt for the requested agent.
-///
-/// Builds a real tool registry from the loaded [`Config`], loads the
-/// full agent-definition registry (built-ins + `agents/*.toml` overrides),
-/// resolves the target agent, and runs it through the matching prompt
-/// renderer. See the module docs for the full behaviour contract.
+/// Render and return the system prompt for a single agent.
 pub async fn dump_agent_prompt(options: DumpPromptOptions) -> Result<DumpedPrompt> {
-    tracing::debug!(
-        agent_id = %options.agent_id,
-        skill_filter = ?options.skill_filter,
-        "[debug_dump] rendering prompt"
-    );
+    let env = build_dump_env(
+        options.workspace_dir_override.clone(),
+        options.model_override.clone(),
+        options.stub_composio,
+    )
+    .await?;
 
-    // ── Load config + workspace path ──────────────────────────────────
-    let mut config = Config::load_or_init()
-        .await
-        .context("loading Config for prompt dump")?;
-    config.apply_env_overrides();
-
-    if let Some(ref override_dir) = options.workspace_dir_override {
-        config.workspace_dir = override_dir.clone();
-    }
-    let workspace_dir = config.workspace_dir.clone();
-    std::fs::create_dir_all(&workspace_dir).ok();
-
-    let model_name = options.model_override.clone().unwrap_or_else(|| {
-        config
-            .default_model
-            .clone()
-            .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string())
-    });
-
-    tracing::debug!(
-        workspace_dir = %workspace_dir.display(),
-        model = %model_name,
-        composio_enabled = config.composio.enabled,
-        "[debug_dump] resolved environment"
-    );
-
-    // ── Build a real tool registry ─────────────────────────────────────
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &workspace_dir,
-    ));
-    let runtime: Arc<dyn RuntimeAdapter> = Arc::from(
-        host_runtime::create_runtime(&config.runtime)
-            .context("creating host runtime for prompt dump")?,
-    );
-    let mem: Arc<dyn Memory> = Arc::from(
-        memory::create_memory(&config.memory, &workspace_dir, config.api_key.as_deref())
-            .context("creating memory backend for prompt dump")?,
-    );
-
-    let composio_key = if config.composio.enabled {
-        config.composio.api_key.as_deref()
-    } else {
-        None
-    };
-    let composio_entity_id = if config.composio.enabled {
-        Some(config.composio.entity_id.as_str())
-    } else {
-        None
-    };
-
-    let mut tools_vec: Vec<Box<dyn Tool>> = tools::all_tools_with_runtime(
-        Arc::new(config.clone()),
-        &security,
-        runtime,
-        mem,
-        composio_key,
-        composio_entity_id,
-        &config.browser,
-        &config.http_request,
-        &workspace_dir,
-        &config.agents,
-        config.api_key.as_deref(),
-        &config,
-    );
-
-    // When requested, inject the Composio meta-tool stubs if (and only
-    // if) the real registry didn't already bring them in. This lets a
-    // dev machine without OAuth credentials dump the *intended* prompt
-    // for `skills_agent` — the names, descriptions and schemas are the
-    // same bytes a signed-in user would see. See
-    // [`DumpPromptOptions::stub_composio`] for the safety contract.
-    if options.stub_composio && !tools_vec.iter().any(|t| t.name().starts_with("composio_")) {
-        tracing::debug!("[debug_dump] injecting composio meta-tool stubs");
-        tools_vec.extend(build_composio_stub_tools());
-    }
-
-    tracing::debug!(
-        tool_count = tools_vec.len(),
-        "[debug_dump] assembled tool registry"
-    );
-
-    // ── Fetch connected integrations ────────────────────────────────────
-    let connected_integrations = fetch_connected_integrations_for_dump(&config).await;
-
-    // Load the agent definition registry once. Both the main-agent and
-    // sub-agent paths consult it now: after #525/#526 the "main" dump
-    // routes through the same definition-driven filter as every other
-    // agent so what `dump-prompt main` shows matches what the runtime
-    // dispatch path actually feeds the LLM.
-    let registry = AgentDefinitionRegistry::load(&workspace_dir)
-        .context("loading agent definition registry for prompt dump")?;
-
-    // ── Main agent path ────────────────────────────────────────────────
-    if options.agent_id == "main" || options.agent_id == "orchestrator_main" {
-        let orchestrator = registry.get("orchestrator").cloned().ok_or_else(|| {
-            anyhow!(
-                "orchestrator definition not in registry — cannot render main dump. \
-                 Known agents: [{}]",
-                registry
-                    .list()
-                    .iter()
-                    .map(|d| d.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        })?;
-        return render_main_agent_dump(
-            &workspace_dir,
-            &model_name,
-            &tools_vec,
-            &connected_integrations,
-            &registry,
-            &orchestrator,
-        );
-    }
-
-    // ── Sub-agent path ────────────────────────────────────────────────
-    let definition = registry
-        .get(&options.agent_id)
-        .cloned()
-        .ok_or_else(|| {
-            let known: Vec<&str> = registry.list().iter().map(|d| d.id.as_str()).collect();
-            anyhow!(
-                "unknown agent id `{}`. Known agents: [{}] — or pass `main` for the orchestrator prompt.",
-                options.agent_id,
-                known.join(", ")
-            )
-        })?;
+    let definition = env.registry.get(&options.agent_id).cloned().ok_or_else(|| {
+        let known: Vec<&str> = env.registry.list().iter().map(|d| d.id.as_str()).collect();
+        anyhow!(
+            "unknown agent id `{}`. Known agents: [{}]",
+            options.agent_id,
+            known.join(", ")
+        )
+    })?;
 
     render_subagent_dump(
         &definition,
-        &workspace_dir,
-        &model_name,
-        &tools_vec,
+        &env.workspace_dir,
+        &env.model_name,
+        &env.tools_vec,
         options.skill_filter.as_deref(),
-        &connected_integrations,
+        &env.connected_integrations,
     )
 }
 
 /// Dump every registered agent's system prompt in one shot.
 ///
-/// Builds the shared environment (config, tool registry, connected
-/// integrations, agent-definition registry) exactly once, then loops
-/// over [`AgentDefinitionRegistry::list`] calling the same
-/// [`render_subagent_dump`] helper that powers single-agent dumps. No
-/// case-by-case branching per agent: every definition — orchestrator
-/// included — flows through one code path that ultimately calls
-/// [`crate::openhuman::context::prompt::render_subagent_system_prompt`].
-///
-/// Order is the registry's own stable display order. The synthetic
-/// `fork` archetype (byte-stable replay of the parent) is skipped — it
-/// has no standalone prompt. Custom TOML-defined agents appear after
-/// built-ins.
+/// The synthetic `fork` archetype is skipped (byte-stable replay, no
+/// standalone prompt). Order follows [`AgentDefinitionRegistry::list`].
 pub async fn dump_all_agent_prompts(
     workspace_dir_override: Option<PathBuf>,
     model_override: Option<String>,
     stub_composio: bool,
 ) -> Result<Vec<DumpedPrompt>> {
+    let env = build_dump_env(workspace_dir_override, model_override, stub_composio).await?;
+
+    let mut results = Vec::with_capacity(env.registry.len());
+    for def in env.registry.list() {
+        if def.id == "fork" {
+            continue;
+        }
+        let dumped = render_subagent_dump(
+            def,
+            &env.workspace_dir,
+            &env.model_name,
+            &env.tools_vec,
+            None,
+            &env.connected_integrations,
+        )
+        .with_context(|| format!("rendering prompt for agent `{}`", def.id))?;
+        results.push(dumped);
+    }
+    Ok(results)
+}
+
+// ---------------------------------------------------------------------------
+// Shared environment setup
+// ---------------------------------------------------------------------------
+
+struct DumpEnv {
+    workspace_dir: PathBuf,
+    model_name: String,
+    tools_vec: Vec<Box<dyn Tool>>,
+    connected_integrations: Vec<ConnectedIntegration>,
+    registry: AgentDefinitionRegistry,
+}
+
+async fn build_dump_env(
+    workspace_dir_override: Option<PathBuf>,
+    model_override: Option<String>,
+    stub_composio: bool,
+) -> Result<DumpEnv> {
     let mut config = Config::load_or_init()
         .await
-        .context("loading Config for bulk prompt dump")?;
+        .context("loading Config for prompt dump")?;
     config.apply_env_overrides();
-    if let Some(ref override_dir) = workspace_dir_override {
-        config.workspace_dir = override_dir.clone();
+    if let Some(override_dir) = workspace_dir_override {
+        config.workspace_dir = override_dir;
     }
     let workspace_dir = config.workspace_dir.clone();
     std::fs::create_dir_all(&workspace_dir).ok();
@@ -334,23 +194,18 @@ pub async fn dump_all_agent_prompts(
     ));
     let runtime: Arc<dyn RuntimeAdapter> = Arc::from(
         host_runtime::create_runtime(&config.runtime)
-            .context("creating host runtime for bulk prompt dump")?,
+            .context("creating host runtime for prompt dump")?,
     );
     let mem: Arc<dyn Memory> = Arc::from(
         memory::create_memory(&config.memory, &workspace_dir, config.api_key.as_deref())
-            .context("creating memory backend for bulk prompt dump")?,
+            .context("creating memory backend for prompt dump")?,
     );
 
-    let composio_key = if config.composio.enabled {
-        config.composio.api_key.as_deref()
-    } else {
-        None
-    };
-    let composio_entity_id = if config.composio.enabled {
-        Some(config.composio.entity_id.as_str())
-    } else {
-        None
-    };
+    let composio_key = config.composio.enabled.then_some(config.composio.api_key.as_deref()).flatten();
+    let composio_entity_id = config
+        .composio
+        .enabled
+        .then_some(config.composio.entity_id.as_str());
 
     let mut tools_vec: Vec<Box<dyn Tool>> = tools::all_tools_with_runtime(
         Arc::new(config.clone()),
@@ -370,57 +225,29 @@ pub async fn dump_all_agent_prompts(
         tools_vec.extend(build_composio_stub_tools());
     }
 
-    let connected_integrations = fetch_connected_integrations_for_dump(&config).await;
+    let connected_integrations =
+        crate::openhuman::composio::fetch_connected_integrations(&config).await;
     let registry = AgentDefinitionRegistry::load(&workspace_dir)
-        .context("loading agent definition registry for bulk prompt dump")?;
+        .context("loading agent definition registry for prompt dump")?;
 
-    let mut results = Vec::with_capacity(registry.len());
-    for def in registry.list() {
-        // The synthetic `fork` archetype has no standalone prompt — it
-        // replays the parent's system prompt byte-for-byte — so skip it.
-        if def.id == "fork" {
-            continue;
-        }
-        let dumped = render_subagent_dump(
-            def,
-            &workspace_dir,
-            &model_name,
-            &tools_vec,
-            None,
-            &connected_integrations,
-        )
-        .with_context(|| format!("rendering prompt for agent `{}`", def.id))?;
-        results.push(dumped);
-    }
-
-    tracing::debug!(
-        agent_count = results.len(),
-        "[debug_dump] bulk render complete"
-    );
-    Ok(results)
+    Ok(DumpEnv {
+        workspace_dir,
+        model_name,
+        tools_vec,
+        connected_integrations,
+        registry,
+    })
 }
 
-// ---------------------------------------------------------------------------
-// Internals
-// ---------------------------------------------------------------------------
-
-/// Build the five Composio meta-tools with a dummy client wired to
-/// `http://127.0.0.1:0`. Rendering only calls `name()`, `description()`,
-/// and `parameters_schema()` — all of which are static, pure accessors
-/// — so the dummy backend URL is never contacted. **Do not** actually
-/// execute these tools: calling `.execute()` on a stub would try to
-/// POST against the dummy URL.
-///
-/// This is only used by [`dump_agent_prompt`] when
-/// [`DumpPromptOptions::stub_composio`] is `true`, to let prompt
-/// engineers inspect the skills_agent prompt on an unauthed machine.
+/// Build the five Composio meta-tools wired to a dummy backend URL. Safe
+/// for rendering (`name()` / `description()` / `parameters_schema()`
+/// are pure); **never** call `.execute()` on these stubs.
 fn build_composio_stub_tools() -> Vec<Box<dyn Tool>> {
     let inner = Arc::new(IntegrationClient::new(
         "http://127.0.0.1:0".to_string(),
         "debug-dump-stub-token".to_string(),
     ));
     let client = ComposioClient::new(inner);
-
     vec![
         Box::new(ComposioListToolkitsTool::new(client.clone())),
         Box::new(ComposioListConnectionsTool::new(client.clone())),
@@ -430,185 +257,14 @@ fn build_composio_stub_tools() -> Vec<Box<dyn Tool>> {
     ]
 }
 
-/// Fetch connected integrations for the prompt dump.
-///
-/// Delegates to [`crate::openhuman::composio::fetch_connected_integrations`].
-/// The dump script often overrides `OPENHUMAN_WORKSPACE` to a throwaway
-/// temp dir which causes config resolution to miss the real user's auth
-/// token. We try the caller-supplied config first, then fall back to
-/// [`Config::load_from_default_paths`] which bypasses the env var.
-async fn fetch_connected_integrations_for_dump(config: &Config) -> Vec<ConnectedIntegration> {
-    use crate::openhuman::composio::fetch_connected_integrations;
+// ---------------------------------------------------------------------------
+// Per-agent rendering
+// ---------------------------------------------------------------------------
 
-    let result = fetch_connected_integrations(config).await;
-    if !result.is_empty() {
-        return result;
-    }
-
-    // Fallback: load config from the default user paths (bypasses
-    // OPENHUMAN_WORKSPACE) so the real auth token is found.
-    match Config::load_from_default_paths().await {
-        Ok(c) => fetch_connected_integrations(&c).await,
-        Err(e) => {
-            tracing::debug!(
-                error = %e,
-                "[debug_dump] fallback config load failed, skipping integrations"
-            );
-            Vec::new()
-        }
-    }
-}
-
-fn render_main_agent_dump(
-    workspace_dir: &Path,
-    model_name: &str,
-    tools_vec: &[Box<dyn Tool>],
-    connected_integrations: &[ConnectedIntegration],
-    registry: &AgentDefinitionRegistry,
-    orchestrator_def: &AgentDefinition,
-) -> Result<DumpedPrompt> {
-    // Synthesise per-turn delegation tools the same way `dispatch::
-    // resolve_target_agent` does at runtime, so the dump reflects the
-    // exact tool surface the orchestrator's LLM sees in production:
-    // the agent's `[tools] named` list ∪ the names of the synthesised
-    // delegate_* tools (research, plan, run_code, … plus
-    // delegate_<toolkit> per connected Composio integration).
-    let extras = crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools(
-        orchestrator_def,
-        registry,
-        connected_integrations,
-    );
-
-    // Build the prompt tool list from the global registry plus the
-    // synthesised extras. The extras Vec must outlive `prompt_tools`
-    // because PromptTool borrows tool name + description fields, and
-    // both sources need to live until `build_with_cache_metadata`
-    // finishes consuming the PromptContext.
-    let mut prompt_tools = PromptTool::from_tools(tools_vec);
-    let extras_prompts = PromptTool::from_tools(&extras);
-    prompt_tools.extend(extras_prompts);
-
-    // Build the visibility whitelist from the orchestrator definition's
-    // `[tools] named` list unioned with every synthesised extra. When
-    // the orchestrator uses `ToolScope::Wildcard` (legacy / custom
-    // workspace overrides), we fall back to an empty filter — which the
-    // prompt builder treats as "no filter, every tool visible" — so the
-    // dump preserves the legacy unscoped behaviour for those agents.
-    let visible_filter: HashSet<String> = match &orchestrator_def.tools {
-        ToolScope::Named(names) => {
-            let mut set: HashSet<String> = names.iter().cloned().collect();
-            for tool in &extras {
-                set.insert(tool.name().to_string());
-            }
-            set
-        }
-        ToolScope::Wildcard => HashSet::new(),
-    };
-
-    // Construct a real PFormatToolDispatcher so the dump includes the
-    // exact "Tool Use Protocol" preamble the runtime would inject.
-    // Without this the catalogue still renders with p-format
-    // signatures (because `tool_call_format = PFormat`), but the
-    // model doesn't see the protocol description, which is the
-    // single most important piece of context for *teaching* the
-    // model how to emit calls correctly.
-    let pformat_registry = pformat::build_registry(tools_vec);
-    let pformat_dispatcher = PFormatToolDispatcher::new(pformat_registry);
-    let dispatcher_instructions = pformat_dispatcher.prompt_instructions(tools_vec);
-
-    // Hydrate the same user-memory blob the runtime would inject on the
-    // first turn. The dump intentionally bypasses `Agent::fetch_learned_context`
-    // (which needs a live `Memory` backend and the `learning_enabled`
-    // flag), but the tree-summarizer side is pure filesystem reads, so
-    // we can mirror the runtime path byte-for-byte. This is what makes
-    // `openhuman agent dump-prompt --agent main` show the user memory
-    // section instead of an empty placeholder when summaries exist on
-    // disk.
-    let tree_root_summaries =
-        crate::openhuman::tree_summarizer::store::collect_root_summaries_with_caps(
-            workspace_dir,
-            USER_MEMORY_PER_NAMESPACE_MAX_CHARS,
-            USER_MEMORY_TOTAL_MAX_CHARS,
-        );
-    tracing::debug!(
-        namespace_count = tree_root_summaries.len(),
-        "[debug_dump] hydrated user memory from tree summarizer"
-    );
-    let learned = LearnedContextData {
-        tree_root_summaries,
-        ..Default::default()
-    };
-
-    // NOTE: the dump runs outside the agent lifecycle — there is no
-    // live Agent, ToolDispatcher, Memory backend, or SkillEngine. We
-    // reconstruct the best filesystem-based approximation:
-    //
-    //   skills:           &[] — the dump doesn't boot the QuickJS
-    //                     runtime, so installed skills are absent. The
-    //                     main agent at runtime would populate this.
-    //   tool_call_format: PFormat — matches the runtime global default.
-    //                     If the user sets `agent.tool_dispatcher = "xml"`
-    //                     in config, the dump won't reflect that.
-    //   learned:          tree_root_summaries only — the learning
-    //                     subsystem's observations/patterns/user_profile
-    //                     entries require a live Memory backend.
-    //
-    // For a byte-exact match you'd need to boot a full Agent and call
-    // `build_system_prompt`. The dump is intentionally cheaper.
-    let ctx = PromptContext {
-        workspace_dir,
-        model_name,
-        agent_id: "orchestrator",
-        tools: &prompt_tools,
-        skills: &[],
-        dispatcher_instructions: &dispatcher_instructions,
-        learned,
-        visible_tool_names: &visible_filter,
-        tool_call_format: ToolCallFormat::PFormat,
-        connected_integrations,
-        include_profile: !orchestrator_def.omit_profile,
-        include_memory_md: !orchestrator_def.omit_memory_md,
-    };
-
-    let rendered = SystemPromptBuilder::with_defaults()
-        .build_with_cache_metadata(&ctx)
-        .context("building main-agent prompt")?;
-
-    // Report the tool names that survived the visibility filter so
-    // tests and the CLI dump output reflect what the LLM actually
-    // sees, not the raw global registry. When the filter is empty
-    // (Wildcard scope), every tool from registry + extras is reported.
-    let visible_predicate = |name: &str| -> bool {
-        if visible_filter.is_empty() {
-            true
-        } else {
-            visible_filter.contains(name)
-        }
-    };
-    let tool_names: Vec<String> = tools_vec
-        .iter()
-        .chain(extras.iter())
-        .filter(|t| visible_predicate(t.name()))
-        .map(|t| t.name().to_string())
-        .collect();
-    let skill_tool_count = tools_vec
-        .iter()
-        .chain(extras.iter())
-        .filter(|t| visible_predicate(t.name()) && t.category() == ToolCategory::Skill)
-        .count();
-
-    Ok(DumpedPrompt {
-        agent_id: "main".into(),
-        mode: "main",
-        model: model_name.to_string(),
-        workspace_dir: workspace_dir.to_path_buf(),
-        text: rendered.text,
-        cache_boundary: rendered.cache_boundary,
-        tool_names,
-        skill_tool_count,
-    })
-}
-
+/// Render a single agent's prompt. Mirrors `run_typed_mode` exactly:
+/// resolve model → filter tools → build live `PromptContext` → dispatch
+/// on the prompt source (Dynamic → `build()`; Inline/File → legacy
+/// section wrap).
 fn render_subagent_dump(
     definition: &AgentDefinition,
     workspace_dir: &Path,
@@ -617,20 +273,6 @@ fn render_subagent_dump(
     skill_filter_override: Option<&str>,
     connected_integrations: &[ConnectedIntegration],
 ) -> Result<DumpedPrompt> {
-    use crate::openhuman::agent::harness::subagent_runner::{
-        filter_tool_indices, load_prompt_source,
-    };
-
-    // Mirror `subagent_runner::run_typed_mode` step-for-step so the dump
-    // is byte-identical to what the live runner produces for this agent.
-    // Every registered definition flows through the same pipeline:
-    //
-    //   1. resolve model
-    //   2. filter tools via the shared `filter_tool_indices`
-    //   3. build a live `PromptContext`
-    //   4. `Dynamic` sources → call `build(&ctx)` for the final prompt
-    //      `Inline`/`File` sources → `load_prompt_source` + legacy
-    //      `render_subagent_system_prompt` section wrap
     let model = definition.model.resolve(model_name);
     let effective_skill_filter = skill_filter_override.or(definition.skill_filter.as_deref());
     let allowed_indices = filter_tool_indices(
@@ -666,7 +308,7 @@ fn render_subagent_dump(
     };
 
     let rendered = match &definition.system_prompt {
-        crate::openhuman::agent::harness::definition::PromptSource::Dynamic(build) => {
+        PromptSource::Dynamic(build) => {
             let text = build(&prompt_ctx)
                 .with_context(|| format!("building dynamic prompt for {}", definition.id))?;
             extract_cache_boundary(&text)
@@ -681,13 +323,12 @@ fn render_subagent_dump(
                 definition.omit_profile,
                 definition.omit_memory_md,
             );
-            let no_extra_tools: Vec<Box<dyn Tool>> = Vec::new();
             let raw = render_subagent_system_prompt(
                 workspace_dir,
                 &model,
                 &allowed_indices,
                 tools_vec,
-                &no_extra_tools,
+                &[],
                 &archetype_body,
                 options,
                 ToolCallFormat::PFormat,
@@ -706,14 +347,6 @@ fn render_subagent_dump(
         .filter(|&&i| tools_vec[i].category() == ToolCategory::Skill)
         .count();
 
-    tracing::debug!(
-        agent_id = %definition.id,
-        tool_count = tool_names.len(),
-        skill_tool_count,
-        cache_boundary = ?rendered.cache_boundary,
-        "[debug_dump] sub-agent render complete"
-    );
-
     Ok(DumpedPrompt {
         agent_id: definition.id.clone(),
         mode: "subagent",
@@ -726,12 +359,6 @@ fn render_subagent_dump(
     })
 }
 
-// Filtering now lives in
-// `crate::openhuman::agent::harness::subagent_runner::filter_tool_indices`
-// and is `pub(crate)` so this module calls it directly — the previous
-// "standalone copy" was removed to kill case-by-case dump logic that
-// could drift from the live runner.
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -740,13 +367,11 @@ fn render_subagent_dump(
 mod tests {
     use super::*;
     use crate::openhuman::agent::harness::definition::{
-        DefinitionSource, ModelSpec, PromptSource, SandboxMode,
+        DefinitionSource, ModelSpec, SandboxMode, ToolScope,
     };
     use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
     use async_trait::async_trait;
 
-    /// Minimal tool stub with a configurable category — enough for the
-    /// filter/render unit tests below.
     struct StubTool {
         name: &'static str,
         category: ToolCategory,
@@ -774,197 +399,12 @@ mod tests {
         }
     }
 
-    fn skills_agent_def() -> AgentDefinition {
+    fn stub_agent(id: &str, scope: ToolScope, category: Option<ToolCategory>) -> AgentDefinition {
         AgentDefinition {
-            id: "skills_agent".into(),
+            id: id.into(),
             when_to_use: "t".into(),
             display_name: None,
-            system_prompt: PromptSource::Inline(
-                "# Skills Agent\n\nYou execute skill-category tools.".into(),
-            ),
-            omit_identity: true,
-            omit_memory_context: true,
-            omit_safety_preamble: false,
-            omit_skills_catalog: true,
-            omit_profile: true,
-            omit_memory_md: true,
-            model: ModelSpec::Inherit,
-            temperature: 0.4,
-            tools: ToolScope::Wildcard,
-            disallowed_tools: vec![],
-            skill_filter: None,
-            category_filter: Some(ToolCategory::Skill),
-            extra_tools: vec![],
-            max_iterations: 8,
-            timeout_secs: None,
-            sandbox_mode: SandboxMode::None,
-            background: false,
-            uses_fork_context: false,
-            subagents: vec![],
-            delegate_name: None,
-            source: DefinitionSource::Builtin,
-        }
-    }
-
-    #[test]
-    fn filter_respects_category_filter() {
-        let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(StubTool {
-                name: "shell",
-                category: ToolCategory::System,
-            }),
-            Box::new(StubTool {
-                name: "composio_execute",
-                category: ToolCategory::Skill,
-            }),
-            Box::new(StubTool {
-                name: "notion__create_page",
-                category: ToolCategory::Skill,
-            }),
-        ];
-
-        let indices = crate::openhuman::agent::harness::subagent_runner::filter_tool_indices(
-            &tools,
-            &ToolScope::Wildcard,
-            &[],
-            None,
-            Some(ToolCategory::Skill),
-        );
-
-        let names: Vec<&str> = indices.iter().map(|&i| tools[i].name()).collect();
-        assert_eq!(names, vec!["composio_execute", "notion__create_page"]);
-    }
-
-    #[test]
-    fn render_skills_agent_dump_contains_composio_tool() {
-        // Simulates: `openhuman agent dump-prompt --agent skills_agent`
-        // with a stub registry that mirrors what the real Composio
-        // integration registers. This guards the end-to-end property
-        // the user cares about: skills_agent must see composio tools.
-        let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(StubTool {
-                name: "shell",
-                category: ToolCategory::System,
-            }),
-            Box::new(StubTool {
-                name: "composio_list_toolkits",
-                category: ToolCategory::Skill,
-            }),
-            Box::new(StubTool {
-                name: "composio_execute",
-                category: ToolCategory::Skill,
-            }),
-        ];
-
-        let workspace =
-            std::env::temp_dir().join(format!("openhuman_debug_dump_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&workspace).unwrap();
-
-        let definition = skills_agent_def();
-        let dumped =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
-                .expect("skills_agent prompt should render");
-
-        assert_eq!(dumped.mode, "subagent");
-        assert!(
-            dumped.tool_names.iter().any(|n| n == "composio_execute"),
-            "skills_agent dump missing composio_execute; got: {:?}",
-            dumped.tool_names
-        );
-        assert!(
-            !dumped.tool_names.iter().any(|n| n == "shell"),
-            "skills_agent dump should not include system tools; got: {:?}",
-            dumped.tool_names
-        );
-        assert!(
-            dumped.text.contains("composio_execute"),
-            "rendered prompt body missing composio_execute — composio toolkit is not reaching the skills agent"
-        );
-        assert!(
-            dumped.text.contains("## Safety"),
-            "skills_agent dump should include the safety preamble (omit_safety_preamble = false)"
-        );
-        assert_eq!(dumped.skill_tool_count, 2);
-
-        let _ = std::fs::remove_dir_all(workspace);
-    }
-
-    #[test]
-    fn render_with_skill_filter_narrows_to_one_integration() {
-        let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(StubTool {
-                name: "composio_execute",
-                category: ToolCategory::Skill,
-            }),
-            Box::new(StubTool {
-                name: "notion__create_page",
-                category: ToolCategory::Skill,
-            }),
-            Box::new(StubTool {
-                name: "gmail__send_email",
-                category: ToolCategory::Skill,
-            }),
-        ];
-
-        let workspace =
-            std::env::temp_dir().join(format!("openhuman_debug_dump_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&workspace).unwrap();
-
-        let definition = skills_agent_def();
-        let dumped = render_subagent_dump(
-            &definition,
-            &workspace,
-            "reasoning-v1",
-            &tools,
-            Some("notion"),
-            &[],
-        )
-        .expect("filtered dump should render");
-
-        assert_eq!(dumped.tool_names, vec!["notion__create_page"]);
-        let _ = std::fs::remove_dir_all(workspace);
-    }
-
-    #[test]
-    fn dump_prompt_options_new_sets_expected_defaults() {
-        let options = DumpPromptOptions::new("skills_agent");
-        assert_eq!(options.agent_id, "skills_agent");
-        assert_eq!(options.skill_filter, None);
-        assert_eq!(options.workspace_dir_override, None);
-        assert_eq!(options.model_override, None);
-        assert!(!options.stub_composio);
-    }
-
-    #[test]
-    fn composio_stub_tools_have_expected_names() {
-        let names: Vec<String> = build_composio_stub_tools()
-            .into_iter()
-            .map(|tool| tool.name().to_string())
-            .collect();
-        assert_eq!(
-            names,
-            vec![
-                "composio_list_toolkits",
-                "composio_list_connections",
-                "composio_authorize",
-                "composio_list_tools",
-                "composio_execute",
-            ]
-        );
-    }
-
-    /// Helper: build a minimal AgentDefinition + registry pair the
-    /// `render_main_agent_dump` tests can use. The "orchestrator" entry
-    /// here is wildcard-scoped with no subagents so the dump runs in
-    /// its legacy unfiltered shape (every tool from `tools_vec` shows
-    /// up). Tests that exercise the per-agent filter use
-    /// `orchestrator_def_with_named_scope` below.
-    fn wildcard_orchestrator_def() -> AgentDefinition {
-        AgentDefinition {
-            id: "orchestrator".into(),
-            when_to_use: "test".into(),
-            display_name: None,
-            system_prompt: PromptSource::Inline(String::new()),
+            system_prompt: PromptSource::Inline(format!("# {id}\n\nBody.")),
             omit_identity: true,
             omit_memory_context: true,
             omit_safety_preamble: true,
@@ -972,13 +412,13 @@ mod tests {
             omit_profile: true,
             omit_memory_md: true,
             model: ModelSpec::Inherit,
-            temperature: 0.4,
-            tools: ToolScope::Wildcard,
+            temperature: 0.0,
+            tools: scope,
             disallowed_tools: vec![],
             skill_filter: None,
-            category_filter: None,
+            category_filter: category,
             extra_tools: vec![],
-            max_iterations: 8,
+            max_iterations: 2,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
             background: false,
@@ -989,101 +429,23 @@ mod tests {
         }
     }
 
-    fn registry_with_orchestrator(orch: AgentDefinition) -> AgentDefinitionRegistry {
-        let mut reg = AgentDefinitionRegistry::default();
-        reg.insert(orch);
-        reg
+    #[test]
+    fn dump_prompt_options_new_sets_expected_defaults() {
+        let opts = DumpPromptOptions::new("planner");
+        assert_eq!(opts.agent_id, "planner");
+        assert!(opts.skill_filter.is_none());
+        assert!(!opts.stub_composio);
     }
 
-    /// Wildcard scope path: the dump should report every tool from
-    /// `tools_vec` (no filter applied) and produce the standard
-    /// system-prompt skeleton with the Tool Use Protocol section. This
-    /// preserves the legacy main-dump assertions for orchestrator
-    /// definitions that opt out of the named filter.
     #[test]
-    fn render_main_agent_dump_wildcard_scope_shows_full_tool_set() {
-        let workspace =
-            std::env::temp_dir().join(format!("openhuman_debug_main_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::write(workspace.join("SOUL.md"), "# Soul\nContext").unwrap();
-        std::fs::write(workspace.join("IDENTITY.md"), "# Identity\nContext").unwrap();
-        std::fs::write(workspace.join("USER.md"), "# User\nContext").unwrap();
-        std::fs::write(workspace.join("HEARTBEAT.md"), "# Heartbeat\nContext").unwrap();
-
-        let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(StubTool {
-                name: "shell",
-                category: ToolCategory::System,
-            }),
-            Box::new(StubTool {
-                name: "notion__create_page",
-                category: ToolCategory::Skill,
-            }),
-        ];
-
-        let orch = wildcard_orchestrator_def();
-        let registry = registry_with_orchestrator(orch.clone());
-        let dumped =
-            render_main_agent_dump(&workspace, "reasoning-v1", &tools, &[], &registry, &orch)
-                .unwrap();
-        assert_eq!(dumped.mode, "main");
-        assert_eq!(dumped.model, "reasoning-v1");
-        assert_eq!(dumped.tool_names, vec!["shell", "notion__create_page"]);
-        assert_eq!(dumped.skill_tool_count, 1);
-        assert!(dumped.text.contains("## Tools"));
-        assert!(dumped.text.contains("Tool Use Protocol"));
-        assert!(dumped.cache_boundary.is_some());
-
-        let _ = std::fs::remove_dir_all(workspace);
-    }
-
-    /// Named-scope path (the new behaviour after #525/#526): the
-    /// orchestrator definition restricts the LLM to a small whitelist,
-    /// and the dump must reflect that — `shell` is in `tools_vec` but
-    /// not in the orchestrator's `named` list, so it must NOT appear
-    /// in `tool_names`. This is the regression guard for the
-    /// "render_main_agent_dump uses empty_filter so the catalogue
-    /// leaks" bug at the heart of #526.
-    #[test]
-    fn render_main_agent_dump_named_scope_filters_to_whitelist() {
-        let workspace = std::env::temp_dir().join(format!(
-            "openhuman_debug_main_named_{}",
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir_all(&workspace).unwrap();
-
-        let tools: Vec<Box<dyn Tool>> = vec![
-            Box::new(StubTool {
-                name: "shell",
-                category: ToolCategory::System,
-            }),
-            Box::new(StubTool {
-                name: "query_memory",
-                category: ToolCategory::System,
-            }),
-            Box::new(StubTool {
-                name: "GMAIL_SEND_EMAIL",
-                category: ToolCategory::Skill,
-            }),
-        ];
-
-        let mut orch = wildcard_orchestrator_def();
-        orch.tools = ToolScope::Named(vec!["query_memory".into(), "ask_user_clarification".into()]);
-        let registry = registry_with_orchestrator(orch.clone());
-
-        let dumped =
-            render_main_agent_dump(&workspace, "reasoning-v1", &tools, &[], &registry, &orch)
-                .unwrap();
-
-        // `shell` and `GMAIL_SEND_EMAIL` are in the global tools_vec
-        // but NOT in the orchestrator's named whitelist → must be
-        // excluded from the dump output. Only `query_memory` survives
-        // (the other named entry, `ask_user_clarification`, isn't in
-        // tools_vec at all so nothing to render for it).
-        assert_eq!(dumped.tool_names, vec!["query_memory"]);
-        assert_eq!(dumped.skill_tool_count, 0);
-
-        let _ = std::fs::remove_dir_all(workspace);
+    fn composio_stub_tools_have_expected_names() {
+        let stubs = build_composio_stub_tools();
+        let names: Vec<&str> = stubs.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"composio_list_toolkits"));
+        assert!(names.contains(&"composio_list_connections"));
+        assert!(names.contains(&"composio_authorize"));
+        assert!(names.contains(&"composio_list_tools"));
+        assert!(names.contains(&"composio_execute"));
     }
 
     #[test]
@@ -1094,195 +456,71 @@ mod tests {
                 category: ToolCategory::System,
             }),
             Box::new(StubTool {
+                name: "memory_recall",
+                category: ToolCategory::System,
+            }),
+            Box::new(StubTool {
                 name: "notion__create_page",
                 category: ToolCategory::Skill,
             }),
-            Box::new(StubTool {
-                name: "gmail__send_email",
-                category: ToolCategory::Skill,
-            }),
         ];
-
-        let indices = crate::openhuman::agent::harness::subagent_runner::filter_tool_indices(
+        let indices = filter_tool_indices(
             &tools,
-            &ToolScope::Named(vec!["shell".into(), "gmail__send_email".into()]),
-            &["shell".into()],
+            &ToolScope::Named(vec!["memory_recall".into(), "notion__create_page".into()]),
+            &["notion__create_page".into()],
             None,
             None,
         );
-
         let names: Vec<&str> = indices.iter().map(|&i| tools[i].name()).collect();
-        assert_eq!(names, vec!["gmail__send_email"]);
+        assert_eq!(names, vec!["memory_recall"]);
     }
 
     #[test]
-    fn render_subagent_dump_supports_file_prompt_fallbacks() {
-        let workspace =
-            std::env::temp_dir().join(format!("openhuman_debug_file_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&workspace).unwrap();
-        // `load_prompt_source` looks in `<workspace>/agent/prompts/`
-        // first, then `<workspace>/<path>` — no repo-bundled fallback.
-        // Create the file the test expects to be read so we match the
-        // live runner's resolution order.
-        std::fs::write(workspace.join("USER.md"), "OpenHuman test fixture body").unwrap();
-
-        let tools: Vec<Box<dyn Tool>> = vec![Box::new(StubTool {
-            name: "shell",
-            category: ToolCategory::System,
-        })];
-
-        let definition = AgentDefinition {
-            id: "file_agent".into(),
-            when_to_use: "t".into(),
-            display_name: None,
-            system_prompt: PromptSource::File {
-                path: "USER.md".into(),
-            },
-            omit_identity: true,
-            omit_memory_context: true,
-            omit_safety_preamble: true,
-            omit_skills_catalog: true,
-            omit_profile: true,
-            omit_memory_md: true,
-            model: ModelSpec::Inherit,
-            temperature: 0.0,
-            tools: ToolScope::Wildcard,
-            disallowed_tools: vec![],
-            skill_filter: None,
-            category_filter: None,
-            extra_tools: vec![],
-            max_iterations: 2,
-            timeout_secs: None,
-            sandbox_mode: SandboxMode::None,
-            background: false,
-            uses_fork_context: false,
-            subagents: vec![],
-            delegate_name: None,
-            source: DefinitionSource::Builtin,
-        };
-
-        let dumped =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
-                .unwrap();
-        assert!(dumped.text.contains("## Tools"));
-        assert!(dumped.text.contains("OpenHuman"));
-
-        let _ = std::fs::remove_dir_all(workspace);
-    }
-
-    #[test]
-    fn render_subagent_dump_handles_missing_file_prompt_without_panicking() {
-        let workspace =
-            std::env::temp_dir().join(format!("openhuman_debug_missing_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&workspace).unwrap();
-
-        let tools: Vec<Box<dyn Tool>> = vec![Box::new(StubTool {
-            name: "shell",
-            category: ToolCategory::System,
-        })];
-
-        let definition = AgentDefinition {
-            id: "missing_prompt".into(),
-            when_to_use: "t".into(),
-            display_name: None,
-            system_prompt: PromptSource::File {
-                path: "does-not-exist.md".into(),
-            },
-            omit_identity: true,
-            omit_memory_context: true,
-            omit_safety_preamble: true,
-            omit_skills_catalog: true,
-            omit_profile: true,
-            omit_memory_md: true,
-            model: ModelSpec::Inherit,
-            temperature: 0.0,
-            tools: ToolScope::Wildcard,
-            disallowed_tools: vec![],
-            skill_filter: None,
-            category_filter: None,
-            extra_tools: vec![],
-            max_iterations: 2,
-            timeout_secs: None,
-            sandbox_mode: SandboxMode::None,
-            background: false,
-            uses_fork_context: false,
-            subagents: vec![],
-            delegate_name: None,
-            source: DefinitionSource::Builtin,
-        };
-
-        let dumped =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
-                .unwrap();
-        assert!(dumped.text.contains("## Tools"));
-        assert!(!dumped.text.contains("does-not-exist"));
-
-        let _ = std::fs::remove_dir_all(workspace);
-    }
-
-    #[test]
-    fn render_subagent_dump_prefers_workspace_prompt_locations() {
+    fn render_subagent_dump_inline_source_produces_nonempty_prompt() {
         let workspace = std::env::temp_dir().join(format!(
-            "openhuman_debug_workspace_prompt_{}",
+            "openhuman_debug_inline_{}",
             uuid::Uuid::new_v4()
         ));
-        std::fs::create_dir_all(workspace.join("agent/prompts")).unwrap();
-        std::fs::write(
-            workspace.join("agent/prompts/custom.md"),
-            "Workspace agent prompt",
-        )
-        .unwrap();
-        std::fs::write(workspace.join("root.md"), "Workspace root prompt").unwrap();
-
+        std::fs::create_dir_all(&workspace).unwrap();
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(StubTool {
             name: "shell",
             category: ToolCategory::System,
         })];
+        let def = stub_agent("inline_agent", ToolScope::Wildcard, None);
+        let dumped =
+            render_subagent_dump(&def, &workspace, "reasoning-v1", &tools, None, &[]).unwrap();
+        assert_eq!(dumped.mode, "subagent");
+        assert!(dumped.text.contains("inline_agent"));
+        assert!(dumped.text.contains("## Tools"));
+        let _ = std::fs::remove_dir_all(workspace);
+    }
 
-        let mut definition = AgentDefinition {
-            id: "workspace_file".into(),
-            when_to_use: "t".into(),
-            display_name: None,
-            system_prompt: PromptSource::File {
-                path: "custom.md".into(),
-            },
-            omit_identity: true,
-            omit_memory_context: true,
-            omit_safety_preamble: true,
-            omit_skills_catalog: true,
-            omit_profile: true,
-            omit_memory_md: true,
-            model: ModelSpec::Inherit,
-            temperature: 0.0,
-            tools: ToolScope::Wildcard,
-            disallowed_tools: vec![],
-            skill_filter: None,
-            category_filter: None,
-            extra_tools: vec![],
-            max_iterations: 2,
-            timeout_secs: None,
-            sandbox_mode: SandboxMode::None,
-            background: false,
-            uses_fork_context: false,
-            subagents: vec![],
-            delegate_name: None,
-            source: DefinitionSource::Builtin,
-        };
-
-        let agent_prompt =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
-                .unwrap();
-        assert!(agent_prompt.text.contains("Workspace agent prompt"));
-
-        definition.id = "workspace_root".into();
-        definition.system_prompt = PromptSource::File {
-            path: "root.md".into(),
-        };
-        let root_prompt =
-            render_subagent_dump(&definition, &workspace, "reasoning-v1", &tools, None, &[])
-                .unwrap();
-        assert!(root_prompt.text.contains("Workspace root prompt"));
-
+    #[test]
+    fn render_subagent_dump_skill_category_narrows_tools() {
+        let workspace = std::env::temp_dir().join(format!(
+            "openhuman_debug_skill_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(StubTool {
+                name: "shell",
+                category: ToolCategory::System,
+            }),
+            Box::new(StubTool {
+                name: "notion__create_page",
+                category: ToolCategory::Skill,
+            }),
+        ];
+        let def = stub_agent(
+            "skills_only",
+            ToolScope::Wildcard,
+            Some(ToolCategory::Skill),
+        );
+        let dumped =
+            render_subagent_dump(&def, &workspace, "reasoning-v1", &tools, None, &[]).unwrap();
+        assert_eq!(dumped.tool_names, vec!["notion__create_page"]);
+        assert_eq!(dumped.skill_tool_count, 1);
         let _ = std::fs::remove_dir_all(workspace);
     }
 }

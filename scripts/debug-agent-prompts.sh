@@ -228,8 +228,10 @@ for entry in json.load(sys.stdin):
         print(aid)
 ')
 
-# Always include the main / orchestrator prompt as the first dump.
-TARGETS=("main" "${AGENT_IDS[@]}")
+# Every registered agent — orchestrator included. There's no
+# "main" alias anymore: the dumper treats the orchestrator as just
+# another agent, which keeps the per-agent render pipeline uniform.
+TARGETS=("${AGENT_IDS[@]}")
 
 # ── Build common dump-prompt flag list ────────────────────────────────────
 DUMP_FLAGS=(--workspace "${WORKSPACE}")

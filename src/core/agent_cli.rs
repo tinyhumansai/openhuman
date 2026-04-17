@@ -11,7 +11,7 @@
 //!
 //! `dump-prompt` is the main tool: it renders the exact system prompt the
 //! context engine would hand to the LLM when that agent is spawned. Pass
-//! `--agent main` for the orchestrator / main-agent prompt; otherwise pass
+//! `--agent orchestrator` for the orchestrator prompt; otherwise pass
 //! any built-in or workspace-custom agent id (e.g. `skills_agent`,
 //! `orchestrator`, `code_executor`).
 //!
@@ -133,7 +133,9 @@ fn run_dump_prompt(args: &[String]) -> Result<()> {
     let agent = flags
         .agent
         .clone()
-        .ok_or_else(|| anyhow!("--agent <id> is required (use `main` for the orchestrator)"))?;
+        .ok_or_else(|| {
+            anyhow!("--agent <id> is required (e.g. `orchestrator`, `skills_agent`, `welcome`)")
+        })?;
 
     init_quiet_logging(flags.verbose);
 
@@ -378,8 +380,8 @@ fn print_dump_prompt_help() {
     println!("  openhuman agent dump-prompt --agent <id> [options]");
     println!();
     println!("Required:");
-    println!("  --agent, -a <id>     Target agent id — any built-in or workspace-custom id.");
-    println!("                       Use `main` for the orchestrator / main-agent prompt.");
+    println!("  --agent, -a <id>     Target agent id — any built-in or workspace-custom id");
+    println!("                       (e.g. `orchestrator`, `skills_agent`, `welcome`).");
     println!();
     println!("Options:");
     println!("  --skill, -s <id>     Skill filter override — scopes the tool list to");
@@ -404,8 +406,8 @@ fn print_dump_prompt_help() {
     println!("  # Narrow the skills_agent prompt to just the Notion integration.");
     println!("  openhuman agent dump-prompt --agent skills_agent --skill notion");
     println!();
-    println!("  # Main orchestrator prompt, JSON for scripting.");
-    println!("  openhuman agent dump-prompt --agent main --json");
+    println!("  # Orchestrator prompt, JSON for scripting.");
+    println!("  openhuman agent dump-prompt --agent orchestrator --json");
 }
 
 fn is_help(value: &str) -> bool {
