@@ -4,12 +4,12 @@ import { useEffect, useRef } from 'react';
 import {
   type ChatInferenceStartEvent,
   type ChatIterationStartEvent,
-  type ProactiveMessageEvent,
   type ChatSegmentEvent,
   type ChatSubagentDoneEvent,
   type ChatSubagentSpawnedEvent,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
+  type ProactiveMessageEvent,
   segmentText,
   subscribeChatEvents,
 } from '../services/chatService';
@@ -419,10 +419,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             request: event.request_id,
           });
           await dispatch(
-            addInferenceResponse({
-              content: event.full_response,
-              threadId: targetThreadId,
-            })
+            addInferenceResponse({ content: event.full_response, threadId: targetThreadId })
           );
         })();
       },

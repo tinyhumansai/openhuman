@@ -3,8 +3,6 @@ import { useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
 
-import { openUrl } from '../utils/openUrl';
-
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import UpsellBanner from '../components/upsell/UpsellBanner';
 import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDismissState';
@@ -30,6 +28,7 @@ import {
   setSelectedThread,
 } from '../store/threadSlice';
 import type { ThreadMessage } from '../types/thread';
+import { openUrl } from '../utils/openUrl';
 import {
   isTauri,
   notifyOverlaySttState,
@@ -864,150 +863,150 @@ const Conversations = () => {
             </div>
           ) : messages.length > 0 ? (
             <div className="space-y-3">
-              {messages.filter(msg => !msg.extraMetadata?.hidden).map(msg => (
-                <div
-                  key={msg.id}
-                  className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className="relative max-w-[75%]">
-                    <div
-                      className={`rounded-2xl px-4 py-2.5 ${
-                        msg.sender === 'user'
-                          ? 'bg-primary-500 text-white rounded-br-md'
-                          : 'bg-stone-200/80 text-stone-900 rounded-bl-md'
-                      }`}>
-                      {msg.sender === 'agent' ? (
-                        <div className="text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-stone-300/50 prose-pre:rounded-lg prose-code:text-primary-700 prose-code:text-xs prose-a:text-primary-500 prose-headings:text-sm prose-headings:font-semibold prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
-                          <Markdown
-                            components={{
-                              a: ({ href, children }) => (
-                                <a
-                                  href={href}
-                                  onClick={e => {
-                                    e.preventDefault();
-                                    if (href) openUrl(href);
-                                  }}
-                                  className="cursor-pointer underline text-primary-500"
-                                >
-                                  {children}
-                                </a>
-                              ),
-                            }}
-                          >
-                            {msg.content}
-                          </Markdown>
-                        </div>
-                      ) : (
-                        <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
-                      )}
-                      <p
-                        className={`text-[10px] mt-1 ${
-                          msg.sender === 'user' ? 'text-white/60' : 'text-stone-400'
+              {messages
+                .filter(msg => !msg.extraMetadata?.hidden)
+                .map(msg => (
+                  <div
+                    key={msg.id}
+                    className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className="relative max-w-[75%]">
+                      <div
+                        className={`rounded-2xl px-4 py-2.5 ${
+                          msg.sender === 'user'
+                            ? 'bg-primary-500 text-white rounded-br-md'
+                            : 'bg-stone-200/80 text-stone-900 rounded-bl-md'
                         }`}>
-                        {formatRelativeTime(msg.createdAt)}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => handleCopyMessage(msg.id, msg.content)}
-                      className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-all`}
-                      title="Copy message">
-                      {copiedMessageId === msg.id ? (
-                        <svg
-                          className="w-3.5 h-3.5 text-sage-500"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
-                      ) : (
-                        <svg
-                          className="w-3.5 h-3.5"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                          />
-                        </svg>
-                      )}
-                    </button>
-                    {(() => {
-                      const myReactions =
-                        (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
-                      const hasReactions = myReactions.length > 0;
-                      // Show reaction row if there are existing reactions (any sender)
-                      // or if this is an agent message (manual picker available)
-                      if (!hasReactions && msg.sender !== 'agent') return null;
-                      return (
-                        <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
-                          {myReactions.map(emoji => (
-                            <button
-                              key={emoji}
-                              onClick={() =>
-                                selectedThreadId &&
-                                void dispatch(
-                                  persistReaction({
-                                    threadId: selectedThreadId,
-                                    messageId: msg.id,
-                                    emoji,
-                                  })
-                                )
-                              }
-                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
-                              title={`Remove ${emoji}`}>
-                              {emoji}
-                            </button>
-                          ))}
-                          {msg.sender === 'agent' &&
-                            (reactionPickerMsgId === msg.id ? (
-                              <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100">
-                                {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
-                                  <button
-                                    key={emoji}
-                                    onClick={() => {
-                                      if (selectedThreadId) {
-                                        void dispatch(
-                                          persistReaction({
-                                            threadId: selectedThreadId,
-                                            messageId: msg.id,
-                                            emoji,
-                                          })
-                                        );
-                                      }
-                                      setReactionPickerMsgId(null);
+                        {msg.sender === 'agent' ? (
+                          <div className="text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:bg-stone-300/50 prose-pre:rounded-lg prose-code:text-primary-700 prose-code:text-xs prose-a:text-primary-500 prose-headings:text-sm prose-headings:font-semibold prose-ul:my-1 prose-ol:my-1 prose-li:my-0">
+                            <Markdown
+                              components={{
+                                a: ({ href, children }) => (
+                                  <a
+                                    href={href}
+                                    onClick={e => {
+                                      e.preventDefault();
+                                      if (href) openUrl(href);
                                     }}
-                                    className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
-                                    title={emoji}>
-                                    {emoji}
-                                  </button>
-                                ))}
-                                <button
-                                  onClick={() => setReactionPickerMsgId(null)}
-                                  className="ml-0.5 text-stone-600 hover:text-stone-400 text-xs px-0.5">
-                                  ✕
-                                </button>
-                              </div>
-                            ) : (
+                                    className="cursor-pointer underline text-primary-500">
+                                    {children}
+                                  </a>
+                                ),
+                              }}>
+                              {msg.content}
+                            </Markdown>
+                          </div>
+                        ) : (
+                          <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                        )}
+                        <p
+                          className={`text-[10px] mt-1 ${
+                            msg.sender === 'user' ? 'text-white/60' : 'text-stone-400'
+                          }`}>
+                          {formatRelativeTime(msg.createdAt)}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleCopyMessage(msg.id, msg.content)}
+                        className={`absolute -top-1 ${msg.sender === 'user' ? '-left-8' : '-right-8'} p-1 rounded-md opacity-0 group-hover/msg:opacity-100 hover:bg-stone-100 text-stone-400 hover:text-stone-600 transition-all`}
+                        title="Copy message">
+                        {copiedMessageId === msg.id ? (
+                          <svg
+                            className="w-3.5 h-3.5 text-sage-500"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M5 13l4 4L19 7"
+                            />
+                          </svg>
+                        ) : (
+                          <svg
+                            className="w-3.5 h-3.5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                            />
+                          </svg>
+                        )}
+                      </button>
+                      {(() => {
+                        const myReactions =
+                          (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
+                        const hasReactions = myReactions.length > 0;
+                        // Show reaction row if there are existing reactions (any sender)
+                        // or if this is an agent message (manual picker available)
+                        if (!hasReactions && msg.sender !== 'agent') return null;
+                        return (
+                          <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
+                            {myReactions.map(emoji => (
                               <button
-                                onClick={() => setReactionPickerMsgId(msg.id)}
-                                className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 hover:bg-stone-200 text-stone-500 hover:text-stone-300 text-xs transition-all"
-                                title="Add reaction">
-                                +
+                                key={emoji}
+                                onClick={() =>
+                                  selectedThreadId &&
+                                  void dispatch(
+                                    persistReaction({
+                                      threadId: selectedThreadId,
+                                      messageId: msg.id,
+                                      emoji,
+                                    })
+                                  )
+                                }
+                                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-primary-100 border border-primary-200 text-xs transition-colors hover:bg-primary-200"
+                                title={`Remove ${emoji}`}>
+                                {emoji}
                               </button>
                             ))}
-                        </div>
-                      );
-                    })()}
+                            {msg.sender === 'agent' &&
+                              (reactionPickerMsgId === msg.id ? (
+                                <div className="flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-stone-100">
+                                  {['👍', '❤️', '😂', '🔥', '👀', '🎯'].map(emoji => (
+                                    <button
+                                      key={emoji}
+                                      onClick={() => {
+                                        if (selectedThreadId) {
+                                          void dispatch(
+                                            persistReaction({
+                                              threadId: selectedThreadId,
+                                              messageId: msg.id,
+                                              emoji,
+                                            })
+                                          );
+                                        }
+                                        setReactionPickerMsgId(null);
+                                      }}
+                                      className="px-0.5 rounded text-sm hover:scale-125 transition-transform"
+                                      title={emoji}>
+                                      {emoji}
+                                    </button>
+                                  ))}
+                                  <button
+                                    onClick={() => setReactionPickerMsgId(null)}
+                                    className="ml-0.5 text-stone-600 hover:text-stone-400 text-xs px-0.5">
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setReactionPickerMsgId(msg.id)}
+                                  className="opacity-0 group-hover/msg:opacity-100 flex items-center px-1.5 py-0.5 rounded-full bg-stone-50 hover:bg-stone-200 text-stone-500 hover:text-stone-300 text-xs transition-all"
+                                  title="Add reaction">
+                                  +
+                                </button>
+                              ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
               {isSending &&
                 // Suppress the legacy 3-dot placeholder once streaming
                 // output (visible text or thinking) has started — the
