@@ -569,52 +569,36 @@ pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
 
 /// Updates and persists the onboarding completion status.
 ///
-/// On a false→true transition this does three things before returning:
+/// On a false→true transition this does two things before returning:
 ///
-/// 1. Sets `chat_onboarding_completed = true` on the same config save,
-///    so the user's next chat message routes straight to the
-///    orchestrator rather than the welcome agent (which is about to
-///    send its message proactively below). See
-///    [`crate::openhuman::channels::runtime::dispatch::resolve_target_agent`]
-///    for the routing contract.
-///
-/// 2. Seeds the recurring morning-briefing cron job via
+/// 1. Seeds the recurring morning-briefing cron job via
 ///    [`crate::openhuman::cron::seed::seed_proactive_agents`].
 ///
-/// 3. Spawns the welcome agent immediately via
+/// 2. Spawns the welcome agent immediately via
 ///    [`crate::openhuman::agent::welcome_proactive::spawn_proactive_welcome`],
 ///    so the first welcome message arrives the moment the user
 ///    finishes the wizard instead of waiting for them to type.
 ///
-/// All three side-effects are fire-and-forget so the RPC response
-/// lands before any agent work completes.
+/// **`chat_onboarding_completed` is NOT flipped here.** That flag is
+/// the exclusive responsibility of the welcome agent: it is set to
+/// `true` only after the user has had a meaningful onboarding
+/// conversation (via `complete_onboarding(action="complete")`). See
+/// [`crate::openhuman::tools::impl::agent::complete_onboarding`] for
+/// the guard criteria.
+///
+/// All side-effects are fire-and-forget so the RPC response lands
+/// before any agent work completes.
 pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, String> {
     tracing::debug!(value, "[onboarding] set_onboarding_completed called");
     let mut config = load_config_with_timeout().await?;
     let was_completed = config.onboarding_completed;
     config.onboarding_completed = value;
-
-    // On the false→true transition, also flip the chat-side flag so
-    // the welcome agent we're about to invoke proactively is the
-    // *only* place the user hears the welcome copy — their first
-    // typed message routes straight to the orchestrator.
-    let was_chat_completed = config.chat_onboarding_completed;
-    if value && !was_completed && !was_chat_completed {
-        tracing::debug!(
-            "[onboarding] flipping chat_onboarding_completed=true alongside ui onboarding flag"
-        );
-        config.chat_onboarding_completed = true;
-    }
-
     config.save().await.map_err(|e| e.to_string())?;
 
-    // Seed proactive agents (morning briefing) on any UI false→true
-    // transition. The welcome agent fires only when the *chat* flow
-    // hasn't completed yet — otherwise a user whose chat welcome was
-    // already delivered (e.g. via the legacy tool path, or a manual
-    // flip) would get a second welcome.
     if value && !was_completed {
-        tracing::debug!("[onboarding] false→true transition detected — seeding morning briefing");
+        tracing::debug!(
+            "[onboarding] false→true transition detected — seeding morning briefing and firing proactive welcome"
+        );
         let seed_config = config.clone();
         tokio::task::spawn_blocking(move || {
             if let Err(e) = crate::openhuman::cron::seed::seed_proactive_agents(&seed_config) {
@@ -622,7 +606,7 @@ pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, S
             }
         });
 
-        if !was_chat_completed {
+        if !config.chat_onboarding_completed {
             tracing::debug!("[onboarding] chat flow not yet completed — firing proactive welcome");
             crate::openhuman::agent::welcome_proactive::spawn_proactive_welcome(config.clone());
         } else {

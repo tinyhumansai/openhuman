@@ -27,4 +27,4 @@ hint = "agentic"
 [tools]
 # complete_onboarding: check setup status and mark onboarding done.
 # memory_recall: pull additional user details beyond injected context.
-named = ["complete_onboarding", "memory_recall"]
+named = ["complete_onboarding", "memory_recall", "composio_authorize"]
