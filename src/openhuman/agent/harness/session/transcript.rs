@@ -1,54 +1,69 @@
 //! Session transcript persistence for KV cache stability.
 //!
-//! Stores the **exact** `Vec<ChatMessage>` sent to the LLM provider as
-//! a human-readable `.md` file. On session resume the transcript is read
-//! back to produce byte-identical messages, ensuring the inference
-//! backend's KV cache prefix is reused rather than re-prefilled.
+//! **Source of truth**: `sessions/{DDMMYYYY}/{agent}_{index}.jsonl`
 //!
-//! ## File format
+//! Each JSONL file starts with a single metadata line (identified by an
+//! `_meta` key) followed by one JSON object per `ChatMessage`. On every
+//! write the companion `.md` file is re-rendered for human readability;
+//! it is **never** read back — all round-trip / resume logic uses the
+//! JSONL.
 //!
-//! ```text
-//! <!-- session_transcript
-//! agent: code_executor
-//! dispatcher: native
-//! cache_boundary: 1847
-//! created: 2026-04-11T14:30:00Z
-//! updated: 2026-04-11T14:35:22Z
-//! turn_count: 3
-//! -->
+//! ## JSONL schema
 //!
-//! <!--MSG role="system"-->
-//! <exact system prompt bytes>
-//! <!--/MSG-->
-//!
-//! <!--MSG role="user"-->
-//! <exact user message bytes>
-//! <!--/MSG-->
+//! **Line 1 (meta):**
+//! ```json
+//! {"_meta":{"agent":"code_executor","dispatcher":"native","cache_boundary":1847,"created":"...","updated":"...","turn_count":3,"input_tokens":5000,"output_tokens":1200,"cached_input_tokens":3500,"charged_amount_usd":0.0045}}
 //! ```
 //!
-//! Content between `<!--MSG ...-->` and `<!--/MSG-->` is the **exact**
-//! `ChatMessage.content`. The single escape: any literal `<!--/MSG-->`
-//! inside content is written as `<!--\/MSG-->` and reversed on read.
+//! **Message lines:**
+//! ```json
+//! {"role":"system","content":"..."}
+//! {"role":"user","content":"..."}
+//! {"role":"assistant","content":"...","model":"claude-...","usage":{"input":1234,"output":567,"cached_input":1000,"cost_usd":0.0012},"ts":"2026-04-17T..."}
+//! {"role":"tool","content":"..."}
+//! ```
+//!
+//! Only `role` and `content` are required. All other fields are optional.
+//! Unknown fields on read are ignored (forward-compat).
 //!
 //! ## Storage layout
 //!
 //! ```text
-//! {workspace}/sessions/DDMMYYYY/{agent}_{index}.md
+//! {workspace}/sessions/DDMMYYYY/{agent}_{index}.jsonl   ← source of truth
+//! {workspace}/sessions/DDMMYYYY/{agent}_{index}.md      ← human-readable view
 //! ```
 
 use crate::openhuman::providers::ChatMessage;
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MSG_OPEN_PREFIX: &str = "<!--MSG role=\"";
-const MSG_OPEN_SUFFIX: &str = "\"-->";
-const MSG_CLOSE: &str = "<!--/MSG-->";
-const MSG_CLOSE_ESCAPED: &str = "<!--\\/MSG-->";
+// ── Types ────────────────────────────────────────────────────────────
+
+/// Per-message usage figures attributed to the last assistant turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageUsage {
+    pub input: u64,
+    pub output: u64,
+    pub cached_input: u64,
+    pub cost_usd: f64,
+}
+
+/// Usage + provenance for one provider response, attached to the last
+/// assistant message in a turn.
+#[derive(Debug, Clone)]
+pub struct TurnUsage {
+    pub model: String,
+    pub usage: MessageUsage,
+    /// RFC-3339 timestamp of the response.
+    pub ts: String,
+}
 
 /// Metadata header for a session transcript file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptMeta {
     pub agent_name: String,
     pub dispatcher: String,
@@ -73,63 +88,153 @@ pub struct SessionTranscript {
     pub messages: Vec<ChatMessage>,
 }
 
-// ── Write ────────────────────────────────────────────────────────────
+// ── Internal JSONL types ─────────────────────────────────────────────
 
-/// Write a session transcript to `path`. Full rewrite (not append)
-/// because context reduction may have removed earlier messages.
+/// The `_meta` line serialisation shape.
+#[derive(Serialize, Deserialize)]
+struct MetaLine {
+    #[serde(rename = "_meta")]
+    meta: MetaPayload,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MetaPayload {
+    agent: String,
+    dispatcher: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_boundary: Option<usize>,
+    created: String,
+    updated: String,
+    turn_count: usize,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_input_tokens: u64,
+    charged_amount_usd: f64,
+}
+
+/// One message line in the JSONL — only `role` and `content` are required.
+/// All other fields are optional; unknown fields are flattened to preserve
+/// forward-compatibility.
+#[derive(Serialize, Deserialize)]
+struct MessageLine {
+    role: String,
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    usage: Option<MessageUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ts: Option<String>,
+    /// Absorb any unknown fields so forward-compat reads don't error.
+    #[serde(flatten)]
+    _extra: HashMap<String, serde_json::Value>,
+}
+
+// ── Write ─────────────────────────────────────────────────────────────
+
+/// Write JSONL as source of truth **and** re-render the companion `.md`.
+///
+/// `jsonl_path` must end in `.jsonl`; the `.md` companion is derived by
+/// swapping the extension. Full rewrite on every call (not append) so
+/// that context-reduction that removed earlier messages is reflected
+/// immediately.
 pub fn write_transcript(
-    path: &Path,
+    jsonl_path: &Path,
     messages: &[ChatMessage],
     meta: &TranscriptMeta,
+    last_assistant_turn_usage: Option<&TurnUsage>,
 ) -> Result<()> {
-    if let Some(parent) = path.parent() {
+    if let Some(parent) = jsonl_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create transcript dir {}", parent.display()))?;
     }
 
-    let mut buf = String::new();
+    // ── JSONL ────────────────────────────────────────────────────────
+    let mut jsonl_buf = String::new();
 
-    // Header
-    buf.push_str("<!-- session_transcript\n");
-    let _ = writeln!(buf, "agent: {}", meta.agent_name);
-    let _ = writeln!(buf, "dispatcher: {}", meta.dispatcher);
-    if let Some(boundary) = meta.cache_boundary {
-        let _ = writeln!(buf, "cache_boundary: {}", boundary);
-    }
-    let _ = writeln!(buf, "created: {}", meta.created);
-    let _ = writeln!(buf, "updated: {}", meta.updated);
-    let _ = writeln!(buf, "turn_count: {}", meta.turn_count);
-    if meta.input_tokens > 0 || meta.output_tokens > 0 {
-        let _ = writeln!(buf, "input_tokens: {}", meta.input_tokens);
-        let _ = writeln!(buf, "output_tokens: {}", meta.output_tokens);
-        let _ = writeln!(buf, "cached_input_tokens: {}", meta.cached_input_tokens);
-        if meta.input_tokens > 0 {
-            let cache_pct = (meta.cached_input_tokens as f64 / meta.input_tokens as f64) * 100.0;
-            let _ = writeln!(buf, "cache_hit_pct: {:.1}%", cache_pct);
-        }
-        if meta.charged_amount_usd > 0.0 {
-            let _ = writeln!(buf, "charged_usd: ${:.6}", meta.charged_amount_usd);
-        }
-    }
-    buf.push_str("-->\n");
+    // Line 1: meta header.
+    let meta_line = MetaLine {
+        meta: MetaPayload {
+            agent: meta.agent_name.clone(),
+            dispatcher: meta.dispatcher.clone(),
+            cache_boundary: meta.cache_boundary,
+            created: meta.created.clone(),
+            updated: meta.updated.clone(),
+            turn_count: meta.turn_count,
+            input_tokens: meta.input_tokens,
+            output_tokens: meta.output_tokens,
+            cached_input_tokens: meta.cached_input_tokens,
+            charged_amount_usd: meta.charged_amount_usd,
+        },
+    };
+    let meta_json = serde_json::to_string(&meta_line)
+        .context("serialise transcript meta header")?;
+    jsonl_buf.push_str(&meta_json);
+    jsonl_buf.push('\n');
 
-    // Messages
-    for msg in messages {
-        buf.push('\n');
-        let _ = writeln!(buf, "{}{}{}", MSG_OPEN_PREFIX, msg.role, MSG_OPEN_SUFFIX);
-        buf.push_str(&escape_content(&msg.content));
-        buf.push('\n');
-        buf.push_str(MSG_CLOSE);
-        buf.push('\n');
+    // Identify the index of the last assistant message so we can attach
+    // per-turn usage to it.
+    let last_assistant_idx = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(i, m)| if m.role == "assistant" { Some(i) } else { None });
+
+    for (i, msg) in messages.iter().enumerate() {
+        let is_last_assistant =
+            Some(i) == last_assistant_idx && last_assistant_turn_usage.is_some();
+
+        let line = if is_last_assistant {
+            let tu = last_assistant_turn_usage.unwrap();
+            MessageLine {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+                model: Some(tu.model.clone()),
+                usage: Some(tu.usage.clone()),
+                ts: Some(tu.ts.clone()),
+                _extra: HashMap::new(),
+            }
+        } else {
+            MessageLine {
+                role: msg.role.clone(),
+                content: msg.content.clone(),
+                model: None,
+                usage: None,
+                ts: None,
+                _extra: HashMap::new(),
+            }
+        };
+
+        let line_json = serde_json::to_string(&line)
+            .with_context(|| format!("serialise message line {i}"))?;
+        jsonl_buf.push_str(&line_json);
+        jsonl_buf.push('\n');
     }
 
-    fs::write(path, buf.as_bytes())
-        .with_context(|| format!("write transcript {}", path.display()))?;
+    fs::write(jsonl_path, jsonl_buf.as_bytes())
+        .with_context(|| format!("write transcript {}", jsonl_path.display()))?;
 
     log::debug!(
-        "[transcript] wrote {} messages to {}",
+        "[transcript] wrote {} messages (jsonl) to {}",
         messages.len(),
-        path.display()
+        jsonl_path.display()
+    );
+
+    // ── Companion .md ────────────────────────────────────────────────
+    // Build per-message usage index for the renderer (only last assistant).
+    let mut per_msg_usage: HashMap<usize, &TurnUsage> = HashMap::new();
+    if let (Some(idx), Some(tu)) = (last_assistant_idx, last_assistant_turn_usage) {
+        per_msg_usage.insert(idx, tu);
+    }
+
+    let md_path = jsonl_path.with_extension("md");
+    let md = render_markdown(messages, meta, &per_msg_usage);
+    fs::write(&md_path, md.as_bytes())
+        .with_context(|| format!("write markdown companion {}", md_path.display()))?;
+
+    log::debug!(
+        "[transcript] wrote markdown companion to {}",
+        md_path.display()
     );
 
     Ok(())
@@ -137,19 +242,109 @@ pub fn write_transcript(
 
 // ── Read ─────────────────────────────────────────────────────────────
 
-/// Read a session transcript from `path` and return the exact messages.
-pub fn read_transcript(path: &Path) -> Result<SessionTranscript> {
-    let raw =
-        fs::read_to_string(path).with_context(|| format!("read transcript {}", path.display()))?;
+/// Read a session transcript.
+///
+/// **Primary path**: reads the `.jsonl` source of truth.
+/// **Fallback**: if the `.jsonl` does not exist but the legacy `.md` does
+/// (migration path — old sessions), reads it via the legacy HTML-comment
+/// parser and returns a `SessionTranscript` with default meta where the
+/// `.md` format didn't track a field.
+pub fn read_transcript(jsonl_path: &Path) -> Result<SessionTranscript> {
+    if jsonl_path.exists() {
+        read_transcript_jsonl(jsonl_path)
+    } else {
+        // Fallback: try the .md sibling (legacy one-release compat).
+        let md_path = jsonl_path.with_extension("md");
+        if md_path.exists() {
+            log::debug!(
+                "[transcript] .jsonl not found, falling back to legacy .md: {}",
+                md_path.display()
+            );
+            read_transcript_legacy_md(&md_path)
+        } else {
+            // Neither exists — propagate the original jsonl error.
+            read_transcript_jsonl(jsonl_path)
+        }
+    }
+}
 
-    let meta =
-        parse_meta(&raw).with_context(|| format!("parse transcript meta in {}", path.display()))?;
+fn read_transcript_jsonl(path: &Path) -> Result<SessionTranscript> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read transcript jsonl {}", path.display()))?;
 
-    let messages = parse_messages(&raw)
-        .with_context(|| format!("parse transcript messages in {}", path.display()))?;
+    let mut meta: Option<TranscriptMeta> = None;
+    let mut messages: Vec<ChatMessage> = Vec::new();
+
+    for (line_no, line) in raw.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        // Attempt to detect meta line cheaply before deserialising the whole thing.
+        if line.contains("\"_meta\"") {
+            match serde_json::from_str::<MetaLine>(line) {
+                Ok(ml) => {
+                    let mp = ml.meta;
+                    meta = Some(TranscriptMeta {
+                        agent_name: mp.agent,
+                        dispatcher: mp.dispatcher,
+                        cache_boundary: mp.cache_boundary,
+                        created: mp.created,
+                        updated: mp.updated,
+                        turn_count: mp.turn_count,
+                        input_tokens: mp.input_tokens,
+                        output_tokens: mp.output_tokens,
+                        cached_input_tokens: mp.cached_input_tokens,
+                        charged_amount_usd: mp.charged_amount_usd,
+                    });
+                    continue;
+                }
+                Err(err) => {
+                    log::warn!(
+                        "[transcript] failed to parse meta line {} in {}: {err}",
+                        line_no + 1,
+                        path.display()
+                    );
+                    // If the very first non-empty line fails to parse as meta, error out.
+                    if meta.is_none() {
+                        return Err(anyhow::anyhow!(
+                            "first non-empty line of {} is not a valid _meta object: {err}",
+                            path.display()
+                        ));
+                    }
+                    continue;
+                }
+            }
+        }
+
+        // Message line.
+        match serde_json::from_str::<MessageLine>(line) {
+            Ok(ml) => {
+                messages.push(ChatMessage {
+                    role: ml.role,
+                    content: ml.content,
+                });
+            }
+            Err(err) => {
+                log::warn!(
+                    "[transcript] skipping malformed message line {} in {}: {err}",
+                    line_no + 1,
+                    path.display()
+                );
+            }
+        }
+    }
+
+    let meta = meta.with_context(|| {
+        format!(
+            "missing _meta header line in jsonl transcript {}",
+            path.display()
+        )
+    })?;
 
     log::debug!(
-        "[transcript] loaded {} messages from {}",
+        "[transcript] loaded {} messages (jsonl) from {}",
         messages.len(),
         path.display()
     );
@@ -160,17 +355,19 @@ pub fn read_transcript(path: &Path) -> Result<SessionTranscript> {
 // ── Path resolution ──────────────────────────────────────────────────
 
 /// Resolve a new transcript path under
-/// `{workspace}/sessions/DDMMYYYY/{agent}_{index}.md`.
+/// `{workspace}/sessions/DDMMYYYY/{agent}_{index}.jsonl`.
 ///
 /// Creates the date directory if needed. Index = max existing + 1.
+/// Scans both `.jsonl` **and** `.md` files when computing the next index
+/// so indices don't collide during migration.
 pub fn resolve_new_transcript_path(workspace_dir: &Path, agent_name: &str) -> Result<PathBuf> {
     let date_dir = today_session_dir(workspace_dir);
     fs::create_dir_all(&date_dir)
         .with_context(|| format!("create session dir {}", date_dir.display()))?;
 
     let sanitized = sanitize_agent_name(agent_name);
-    let next_index = next_index(&date_dir, &sanitized)?;
-    let filename = format!("{}_{}.md", sanitized, next_index);
+    let next_idx = next_index(&date_dir, &sanitized)?;
+    let filename = format!("{}_{}.jsonl", sanitized, next_idx);
 
     Ok(date_dir.join(filename))
 }
@@ -178,12 +375,12 @@ pub fn resolve_new_transcript_path(workspace_dir: &Path, agent_name: &str) -> Re
 /// Find the most recent transcript for `agent_name`.
 ///
 /// Searches today's directory first, then yesterday's. Returns the
-/// file with the highest index (most recent session).
+/// `.jsonl` with the highest index (or falls back to `.md` when only legacy
+/// files exist).
 pub fn find_latest_transcript(workspace_dir: &Path, agent_name: &str) -> Option<PathBuf> {
     let sanitized = sanitize_agent_name(agent_name);
     let sessions_root = workspace_dir.join("sessions");
 
-    // Search today first, then yesterday
     let today = chrono::Local::now().format("%d%m%Y").to_string();
     let yesterday = (chrono::Local::now() - chrono::Duration::days(1))
         .format("%d%m%Y")
@@ -202,28 +399,101 @@ pub fn find_latest_transcript(workspace_dir: &Path, agent_name: &str) -> Option<
     None
 }
 
-// ── Internals ────────────────────────────────────────────────────────
+// ── Markdown rendering ────────────────────────────────────────────────
 
-/// Escape the closing delimiter so it cannot appear literally in message
-/// content. Replaces `<!--/MSG-->` with `<!--\/MSG-->`.
+/// Render a human-readable markdown representation of the transcript.
 ///
-/// **Known edge case:** if the original content already contains the literal
-/// escape sequence `<!--\/MSG-->`, `unescape_content` will convert it into
-/// `<!--/MSG-->`, corrupting the round-trip. In practice this sequence is
-/// vanishingly unlikely in LLM output. A fully reversible fix would require
-/// a two-pass escaping scheme (e.g. also escaping the backslash), but that
-/// added complexity is not warranted unless the edge case materialises.
-fn escape_content(content: &str) -> String {
-    content.replace(MSG_CLOSE, MSG_CLOSE_ESCAPED)
+/// This output is **for humans only** — it is never read back by the
+/// application. All resume / round-trip logic uses the JSONL source of truth.
+fn render_markdown(
+    messages: &[ChatMessage],
+    meta: &TranscriptMeta,
+    per_message_usage: &HashMap<usize, &TurnUsage>,
+) -> String {
+    let mut buf = String::new();
+
+    let _ = writeln!(buf, "# Session transcript — {}", meta.agent_name);
+    buf.push('\n');
+    let _ = writeln!(buf, "- Dispatcher: {}", meta.dispatcher);
+    if let Some(boundary) = meta.cache_boundary {
+        let _ = writeln!(buf, "- Cache boundary: {}", boundary);
+    }
+    let _ = writeln!(buf, "- Turns: {}", meta.turn_count);
+    if meta.input_tokens > 0 || meta.output_tokens > 0 {
+        let cache_pct = if meta.input_tokens > 0 {
+            (meta.cached_input_tokens as f64 / meta.input_tokens as f64) * 100.0
+        } else {
+            0.0
+        };
+        let _ = writeln!(
+            buf,
+            "- Tokens: {} in / {} out / {} cached ({:.1}% hit)",
+            meta.input_tokens, meta.output_tokens, meta.cached_input_tokens, cache_pct
+        );
+    }
+    if meta.charged_amount_usd > 0.0 {
+        let _ = writeln!(buf, "- Charged: ${:.6}", meta.charged_amount_usd);
+    }
+    let _ = writeln!(buf, "- Updated: {}", meta.updated);
+
+    for (i, msg) in messages.iter().enumerate() {
+        buf.push_str("\n---\n\n");
+
+        if let Some(tu) = per_message_usage.get(&i) {
+            let _ = writeln!(
+                buf,
+                "## [{}] · {} · {} in / {} out / {} cached · ${:.6}",
+                msg.role,
+                tu.model,
+                tu.usage.input,
+                tu.usage.output,
+                tu.usage.cached_input,
+                tu.usage.cost_usd
+            );
+        } else {
+            let _ = writeln!(buf, "## [{}]", msg.role);
+        }
+
+        buf.push('\n');
+        buf.push_str(&msg.content);
+        buf.push('\n');
+    }
+
+    buf
 }
 
-/// Reverse the escaping applied by [`escape_content`]. See that function's
-/// doc comment for the known edge case with pre-existing escape sequences.
-fn unescape_content(content: &str) -> String {
-    content.replace(MSG_CLOSE_ESCAPED, MSG_CLOSE)
+// ── Legacy .md reader (one-release migration compat) ─────────────────
+
+/// Read a legacy HTML-comment `.md` transcript. Used as a fallback when
+/// only a `.md` exists (no `.jsonl` sibling).
+///
+/// Returns a `SessionTranscript` with whatever fields the `.md` tracked;
+/// fields the old format didn't carry are defaulted.
+pub fn read_transcript_legacy_md(path: &Path) -> Result<SessionTranscript> {
+    let raw = fs::read_to_string(path)
+        .with_context(|| format!("read legacy transcript {}", path.display()))?;
+
+    let meta = parse_legacy_meta(&raw)
+        .with_context(|| format!("parse legacy transcript meta in {}", path.display()))?;
+
+    let messages = parse_legacy_messages(&raw)
+        .with_context(|| format!("parse legacy transcript messages in {}", path.display()))?;
+
+    log::debug!(
+        "[transcript] loaded {} messages (legacy md) from {}",
+        messages.len(),
+        path.display()
+    );
+
+    Ok(SessionTranscript { meta, messages })
 }
 
-fn parse_meta(raw: &str) -> Result<TranscriptMeta> {
+const LEGACY_MSG_OPEN_PREFIX: &str = "<!--MSG role=\"";
+const LEGACY_MSG_OPEN_SUFFIX: &str = "\"-->";
+const LEGACY_MSG_CLOSE: &str = "<!--/MSG-->";
+const LEGACY_MSG_CLOSE_ESCAPED: &str = "<!--\\/MSG-->";
+
+fn parse_legacy_meta(raw: &str) -> Result<TranscriptMeta> {
     let header_start = raw
         .find("<!-- session_transcript")
         .context("missing session_transcript header")?;
@@ -265,52 +535,47 @@ fn parse_meta(raw: &str) -> Result<TranscriptMeta> {
     })
 }
 
-fn parse_messages(raw: &str) -> Result<Vec<ChatMessage>> {
+fn parse_legacy_messages(raw: &str) -> Result<Vec<ChatMessage>> {
     let mut messages = Vec::new();
     let mut search_from = 0;
 
     loop {
-        // Find next <!--MSG role="..."--> opening tag
-        let Some(open_start) = raw[search_from..].find(MSG_OPEN_PREFIX) else {
+        let Some(open_start) = raw[search_from..].find(LEGACY_MSG_OPEN_PREFIX) else {
             break;
         };
         let open_start = search_from + open_start;
-        let after_prefix = open_start + MSG_OPEN_PREFIX.len();
+        let after_prefix = open_start + LEGACY_MSG_OPEN_PREFIX.len();
 
-        // Extract role from between the quotes
-        let Some(role_end) = raw[after_prefix..].find(MSG_OPEN_SUFFIX) else {
+        let Some(role_end) = raw[after_prefix..].find(LEGACY_MSG_OPEN_SUFFIX) else {
             break;
         };
         let role = raw[after_prefix..after_prefix + role_end].to_string();
 
-        // Content starts after the opening tag + newline
-        let content_start = after_prefix + role_end + MSG_OPEN_SUFFIX.len();
+        let content_start = after_prefix + role_end + LEGACY_MSG_OPEN_SUFFIX.len();
         let content_start = if raw[content_start..].starts_with('\n') {
             content_start + 1
         } else {
             content_start
         };
 
-        // Find closing tag
-        let close_tag = format!("\n{MSG_CLOSE}");
+        let close_tag = format!("\n{LEGACY_MSG_CLOSE}");
         let Some(content_end_rel) = raw[content_start..].find(&close_tag) else {
-            // Try without leading newline for empty content
-            let Some(content_end_rel) = raw[content_start..].find(MSG_CLOSE) else {
+            let Some(content_end_rel) = raw[content_start..].find(LEGACY_MSG_CLOSE) else {
                 break;
             };
             let content = &raw[content_start..content_start + content_end_rel];
             messages.push(ChatMessage {
                 role,
-                content: unescape_content(content),
+                content: content.replace(LEGACY_MSG_CLOSE_ESCAPED, LEGACY_MSG_CLOSE),
             });
-            search_from = content_start + content_end_rel + MSG_CLOSE.len();
+            search_from = content_start + content_end_rel + LEGACY_MSG_CLOSE.len();
             continue;
         };
 
         let content = &raw[content_start..content_start + content_end_rel];
         messages.push(ChatMessage {
             role,
-            content: unescape_content(content),
+            content: content.replace(LEGACY_MSG_CLOSE_ESCAPED, LEGACY_MSG_CLOSE),
         });
 
         search_from = content_start + content_end_rel + close_tag.len();
@@ -318,6 +583,8 @@ fn parse_messages(raw: &str) -> Result<Vec<ChatMessage>> {
 
     Ok(messages)
 }
+
+// ── Private helpers ───────────────────────────────────────────────────
 
 fn today_session_dir(workspace_dir: &Path) -> PathBuf {
     let date = chrono::Local::now().format("%d%m%Y").to_string();
@@ -336,6 +603,10 @@ fn sanitize_agent_name(name: &str) -> String {
         .collect()
 }
 
+/// Compute the next free index for `agent_prefix` in `dir`.
+///
+/// Considers both `.jsonl` and `.md` files so that indices stay unique
+/// during the one-release migration window when both extensions may exist.
 fn next_index(dir: &Path, agent_prefix: &str) -> Result<usize> {
     let prefix = format!("{}_", agent_prefix);
     let mut max_idx: Option<usize> = None;
@@ -344,11 +615,20 @@ fn next_index(dir: &Path, agent_prefix: &str) -> Result<usize> {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with(&prefix) && name.ends_with(".md") {
-                let idx_str = &name[prefix.len()..name.len() - 3];
-                if let Ok(idx) = idx_str.parse::<usize>() {
-                    max_idx = Some(max_idx.map_or(idx, |m: usize| m.max(idx)));
-                }
+            if !name.starts_with(&prefix) {
+                continue;
+            }
+            // Accept both extensions.
+            let stem_end = if name.ends_with(".jsonl") {
+                name.len() - 6
+            } else if name.ends_with(".md") {
+                name.len() - 3
+            } else {
+                continue;
+            };
+            let idx_str = &name[prefix.len()..stem_end];
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                max_idx = Some(max_idx.map_or(idx, |m: usize| m.max(idx)));
             }
         }
     }
@@ -356,26 +636,58 @@ fn next_index(dir: &Path, agent_prefix: &str) -> Result<usize> {
     Ok(max_idx.map_or(0, |m| m + 1))
 }
 
+/// Find the latest transcript file for `agent_prefix` in `dir`.
+///
+/// Prefers `.jsonl` files; falls back to `.md` if no `.jsonl` exists
+/// (legacy sessions). When both exist for the same index the `.jsonl`
+/// wins.
 fn latest_in_dir(dir: &Path, agent_prefix: &str) -> Option<PathBuf> {
     let prefix = format!("{}_", agent_prefix);
-    let mut best: Option<(usize, PathBuf)> = None;
+    // Track best (index, path) for each extension.
+    let mut best_jsonl: Option<(usize, PathBuf)> = None;
+    let mut best_md: Option<(usize, PathBuf)> = None;
 
     let entries = fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if name_str.starts_with(&prefix) && name_str.ends_with(".md") {
+        if !name_str.starts_with(&prefix) {
+            continue;
+        }
+        if name_str.ends_with(".jsonl") {
+            let idx_str = &name_str[prefix.len()..name_str.len() - 6];
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                if best_jsonl.as_ref().is_none_or(|(best_idx, _)| idx > *best_idx) {
+                    best_jsonl = Some((idx, entry.path()));
+                }
+            }
+        } else if name_str.ends_with(".md") {
             let idx_str = &name_str[prefix.len()..name_str.len() - 3];
             if let Ok(idx) = idx_str.parse::<usize>() {
-                if best.as_ref().is_none_or(|(best_idx, _)| idx > *best_idx) {
-                    best = Some((idx, entry.path()));
+                if best_md.as_ref().is_none_or(|(best_idx, _)| idx > *best_idx) {
+                    best_md = Some((idx, entry.path()));
                 }
             }
         }
     }
 
-    best.map(|(_, path)| path)
+    // Prefer the best .jsonl; fall back to .md if no .jsonl exists.
+    match (best_jsonl, best_md) {
+        (Some(jsonl), Some(md)) => {
+            // Take the one with the higher index; on a tie prefer .jsonl.
+            if md.0 > jsonl.0 {
+                Some(md.1)
+            } else {
+                Some(jsonl.1)
+            }
+        }
+        (Some(jsonl), None) => Some(jsonl.1),
+        (None, Some(md)) => Some(md.1),
+        (None, None) => None,
+    }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -409,14 +721,27 @@ mod tests {
         }
     }
 
+    fn sample_turn_usage() -> TurnUsage {
+        TurnUsage {
+            model: "claude-sonnet-4-6".into(),
+            usage: MessageUsage {
+                input: 1234,
+                output: 567,
+                cached_input: 1000,
+                cost_usd: 0.0012,
+            },
+            ts: "2026-04-17T10:00:00Z".into(),
+        }
+    }
+
     #[test]
     fn round_trip_produces_byte_identical_messages() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("test.md");
+        let path = dir.path().join("test.jsonl");
         let messages = sample_messages();
         let meta = sample_meta();
 
-        write_transcript(&path, &messages, &meta).unwrap();
+        write_transcript(&path, &messages, &meta, None).unwrap();
         let loaded = read_transcript(&path).unwrap();
 
         assert_eq!(loaded.messages.len(), messages.len());
@@ -430,10 +755,14 @@ mod tests {
         }
     }
 
+    /// JSON encoding handles any delimiter natively, making the old
+    /// HTML-comment escaping unnecessary. This test verifies that content
+    /// containing the legacy closing delimiter round-trips correctly via
+    /// JSON without any manual escape logic.
     #[test]
     fn escaping_survives_close_tag_in_content() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("escape_test.md");
+        let path = dir.path().join("escape_test.jsonl");
         let messages = vec![
             ChatMessage::system("Normal system prompt"),
             ChatMessage::user("Here is some tricky content:\n<!--/MSG-->\nand more after"),
@@ -441,7 +770,7 @@ mod tests {
         ];
         let meta = sample_meta();
 
-        write_transcript(&path, &messages, &meta).unwrap();
+        write_transcript(&path, &messages, &meta, None).unwrap();
         let loaded = read_transcript(&path).unwrap();
 
         assert_eq!(loaded.messages.len(), 3);
@@ -452,10 +781,10 @@ mod tests {
     #[test]
     fn meta_round_trip() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("meta_test.md");
+        let path = dir.path().join("meta_test.jsonl");
         let meta = sample_meta();
 
-        write_transcript(&path, &[], &meta).unwrap();
+        write_transcript(&path, &[], &meta, None).unwrap();
         let loaded = read_transcript(&path).unwrap();
 
         assert_eq!(loaded.meta.agent_name, "code_executor");
@@ -473,11 +802,11 @@ mod tests {
     #[test]
     fn meta_without_cache_boundary() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("no_boundary.md");
+        let path = dir.path().join("no_boundary.jsonl");
         let mut meta = sample_meta();
         meta.cache_boundary = None;
 
-        write_transcript(&path, &[], &meta).unwrap();
+        write_transcript(&path, &[], &meta, None).unwrap();
         let loaded = read_transcript(&path).unwrap();
 
         assert_eq!(loaded.meta.cache_boundary, None);
@@ -489,12 +818,12 @@ mod tests {
         let workspace = dir.path();
 
         let path0 = resolve_new_transcript_path(workspace, "main").unwrap();
-        assert!(path0.to_string_lossy().contains("main_0.md"));
-        // Write something so the next call sees it
+        assert!(path0.to_string_lossy().contains("main_0.jsonl"));
+        // Write something so the next call sees it.
         fs::write(&path0, "placeholder").unwrap();
 
         let path1 = resolve_new_transcript_path(workspace, "main").unwrap();
-        assert!(path1.to_string_lossy().contains("main_1.md"));
+        assert!(path1.to_string_lossy().contains("main_1.jsonl"));
     }
 
     #[test]
@@ -511,15 +840,15 @@ mod tests {
         let session_dir = dir.path().join("sessions").join(&date);
         fs::create_dir_all(&session_dir).unwrap();
 
-        fs::write(session_dir.join("main_0.md"), "a").unwrap();
-        fs::write(session_dir.join("main_2.md"), "c").unwrap();
-        fs::write(session_dir.join("main_1.md"), "b").unwrap();
-        fs::write(session_dir.join("other_0.md"), "x").unwrap();
+        fs::write(session_dir.join("main_0.jsonl"), "a").unwrap();
+        fs::write(session_dir.join("main_2.jsonl"), "c").unwrap();
+        fs::write(session_dir.join("main_1.jsonl"), "b").unwrap();
+        fs::write(session_dir.join("other_0.jsonl"), "x").unwrap();
 
         let latest = find_latest_transcript(dir.path(), "main");
         assert!(latest.is_some());
         let latest = latest.unwrap();
-        assert!(latest.to_string_lossy().contains("main_2.md"));
+        assert!(latest.to_string_lossy().contains("main_2.jsonl"));
     }
 
     #[test]
@@ -531,7 +860,7 @@ mod tests {
     #[test]
     fn empty_content_message_round_trips() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("empty.md");
+        let path = dir.path().join("empty.jsonl");
         let messages = vec![
             ChatMessage::system("prompt"),
             ChatMessage::assistant(""),
@@ -539,7 +868,7 @@ mod tests {
         ];
         let meta = sample_meta();
 
-        write_transcript(&path, &messages, &meta).unwrap();
+        write_transcript(&path, &messages, &meta, None).unwrap();
         let loaded = read_transcript(&path).unwrap();
 
         assert_eq!(loaded.messages.len(), 3);
@@ -549,14 +878,134 @@ mod tests {
     #[test]
     fn multiline_content_preserves_exact_whitespace() {
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("whitespace.md");
+        let path = dir.path().join("whitespace.jsonl");
         let content = "  leading spaces\n\n\nmultiple blanks\n  trailing  ";
         let messages = vec![ChatMessage::user(content)];
         let meta = sample_meta();
 
-        write_transcript(&path, &messages, &meta).unwrap();
+        write_transcript(&path, &messages, &meta, None).unwrap();
         let loaded = read_transcript(&path).unwrap();
 
         assert_eq!(loaded.messages[0].content, content);
+    }
+
+    #[test]
+    fn usage_round_trips_on_last_assistant_message() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("usage.jsonl");
+        let messages = sample_messages();
+        let meta = sample_meta();
+        let tu = sample_turn_usage();
+
+        write_transcript(&path, &messages, &meta, Some(&tu)).unwrap();
+
+        // Verify by reading raw JSONL lines: the last assistant line should
+        // carry model + usage + ts fields.
+        let raw = fs::read_to_string(&path).unwrap();
+        let last_assistant_line = raw
+            .lines()
+            .filter(|l| l.contains("\"role\":\"assistant\""))
+            .last()
+            .expect("should have an assistant line");
+
+        assert!(
+            last_assistant_line.contains("claude-sonnet-4-6"),
+            "model missing from last assistant line"
+        );
+        assert!(
+            last_assistant_line.contains("\"cost_usd\""),
+            "cost_usd missing"
+        );
+
+        // Messages themselves still round-trip byte-identically.
+        let loaded = read_transcript(&path).unwrap();
+        assert_eq!(loaded.messages.len(), messages.len());
+        for (orig, got) in messages.iter().zip(loaded.messages.iter()) {
+            assert_eq!(orig.role, got.role);
+            assert_eq!(orig.content, got.content);
+        }
+    }
+
+    #[test]
+    fn md_companion_file_is_written() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("companion.jsonl");
+        let messages = sample_messages();
+        let meta = sample_meta();
+        let tu = sample_turn_usage();
+
+        write_transcript(&path, &messages, &meta, Some(&tu)).unwrap();
+
+        let md_path = path.with_extension("md");
+        assert!(md_path.exists(), ".md companion should be written");
+        let md = fs::read_to_string(&md_path).unwrap();
+        assert!(md.contains("# Session transcript — code_executor"));
+        assert!(md.contains("claude-sonnet-4-6"), "model should appear in md");
+        assert!(md.contains("## [system]"), "system section missing");
+        assert!(md.contains("## [user]"), "user section missing");
+    }
+
+    #[test]
+    fn legacy_md_fallback_reads_old_session() {
+        let dir = TempDir::new().unwrap();
+        // Write a legacy .md file directly (old format).
+        let md_path = dir.path().join("legacy.md");
+        let legacy_content = "<!-- session_transcript\nagent: test_agent\ndispatcher: native\ncache_boundary: 100\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:01:00Z\nturn_count: 1\ninput_tokens: 10\noutput_tokens: 5\ncached_input_tokens: 3\n-->\n\n<!--MSG role=\"system\"-->\nhello\n<!--/MSG-->\n";
+        fs::write(&md_path, legacy_content).unwrap();
+
+        // read_transcript called with a .jsonl path that doesn't exist
+        // should fall back to the .md sibling.
+        let jsonl_path = dir.path().join("legacy.jsonl");
+        let loaded = read_transcript(&jsonl_path).unwrap();
+        assert_eq!(loaded.meta.agent_name, "test_agent");
+        assert_eq!(loaded.meta.cache_boundary, Some(100));
+        assert_eq!(loaded.messages.len(), 1);
+        assert_eq!(loaded.messages[0].role, "system");
+        assert_eq!(loaded.messages[0].content, "hello");
+    }
+
+    #[test]
+    fn unknown_fields_on_jsonl_lines_are_ignored() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("forward_compat.jsonl");
+
+        // Write a JSONL with future unknown fields.
+        let content = concat!(
+            r#"{"_meta":{"agent":"a","dispatcher":"native","created":"t","updated":"t","turn_count":0,"input_tokens":0,"output_tokens":0,"cached_input_tokens":0,"charged_amount_usd":0.0}}"#,
+            "\n",
+            r#"{"role":"user","content":"hello","future_field":"ignored","another":42}"#,
+            "\n"
+        );
+        fs::write(&path, content).unwrap();
+
+        let loaded = read_transcript(&path).unwrap();
+        assert_eq!(loaded.messages.len(), 1);
+        assert_eq!(loaded.messages[0].role, "user");
+        assert_eq!(loaded.messages[0].content, "hello");
+    }
+
+    #[test]
+    fn next_index_counts_both_jsonl_and_md_files() {
+        let dir = TempDir::new().unwrap();
+        // Mix of legacy .md and new .jsonl for the same agent.
+        fs::write(dir.path().join("main_0.md"), "legacy").unwrap();
+        fs::write(dir.path().join("main_1.jsonl"), "new").unwrap();
+
+        let next = next_index(dir.path(), "main").unwrap();
+        assert_eq!(next, 2, "should account for both .md and .jsonl when computing next index");
+    }
+
+    #[test]
+    fn latest_in_dir_prefers_jsonl_over_md() {
+        let dir = TempDir::new().unwrap();
+        // Same index: both .jsonl and .md exist — .jsonl should win.
+        fs::write(dir.path().join("main_0.md"), "legacy").unwrap();
+        fs::write(dir.path().join("main_0.jsonl"), "new").unwrap();
+
+        let latest = latest_in_dir(dir.path(), "main").unwrap();
+        assert!(
+            latest.to_string_lossy().ends_with(".jsonl"),
+            "should prefer .jsonl when both exist at same index"
+        );
     }
 }

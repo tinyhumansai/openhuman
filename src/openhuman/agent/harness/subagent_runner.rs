@@ -618,7 +618,7 @@ fn persist_subagent_transcript(
         charged_amount_usd: usage.charged_amount_usd,
     };
 
-    if let Err(err) = transcript::write_transcript(&path, history, &meta) {
+    if let Err(err) = transcript::write_transcript(&path, history, &meta, None) {
         tracing::debug!(
             agent_id = %agent_id,
             error = %err,
