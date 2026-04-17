@@ -402,11 +402,7 @@ async fn flush_streaming_edit(channel: &str, state: &mut StreamingState) {
                 // one (and thus can't edit it further), we must never
                 // later fall back to sending a second atomic message.
                 state.draft_sent = true;
-                let id = resp
-                    .get("id")
-                    .or_else(|| resp.get("data").and_then(|d| d.get("id")))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                let id = extract_message_id(&resp);
                 if let Some(id) = id {
                     tracing::debug!(
                         "[channel-inbound][stream] initial draft sent channel='{}' msg_id={}",
@@ -435,6 +431,29 @@ async fn flush_streaming_edit(channel: &str, state: &mut StreamingState) {
             }
         }
     }
+}
+
+/// Extract a message id from a backend `send_channel_message` response.
+/// The backend has used at least three shapes: `{"id":"..."}`,
+/// `{"data":{"id":"..."}}`, and `{"messageId":1456,"success":true}` —
+/// the last one returns the id as a JSON number, not a string, so
+/// `as_str()` alone misses it (#600).
+fn extract_message_id(resp: &serde_json::Value) -> Option<String> {
+    let candidate = resp
+        .get("id")
+        .or_else(|| resp.get("messageId"))
+        .or_else(|| resp.get("data").and_then(|d| d.get("id")))
+        .or_else(|| resp.get("data").and_then(|d| d.get("messageId")))?;
+    if let Some(s) = candidate.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(n) = candidate.as_i64() {
+        return Some(n.to_string());
+    }
+    if let Some(n) = candidate.as_u64() {
+        return Some(n.to_string());
+    }
+    None
 }
 
 /// Maximum length of the thinking snippet shown in the ephemeral
@@ -479,11 +498,7 @@ async fn flush_thinking_message(channel: &str, state: &mut StreamingState) {
         match client.send_channel_message(channel, &jwt, body).await {
             Ok(resp) => {
                 state.thinking_sent = true;
-                let id = resp
-                    .get("id")
-                    .or_else(|| resp.get("data").and_then(|d| d.get("id")))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
+                let id = extract_message_id(&resp);
                 if let Some(id) = id {
                     tracing::debug!(
                         "[channel-inbound][thinking] thinking msg sent channel='{}' msg_id={}",
