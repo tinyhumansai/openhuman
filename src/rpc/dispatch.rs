@@ -53,4 +53,24 @@ mod tests {
         let result = try_dispatch("nonexistent.method", json!({})).await;
         assert!(result.is_none(), "unknown methods should return None");
     }
+
+    #[tokio::test]
+    async fn dispatch_security_policy_info_returns_some() {
+        let result = try_dispatch("openhuman.security_policy_info", json!({})).await;
+        assert!(result.is_some(), "security_policy_info should be handled");
+        let inner = result.unwrap();
+        assert!(inner.is_ok(), "security_policy_info should succeed");
+    }
+
+    #[tokio::test]
+    async fn dispatch_empty_method_returns_none() {
+        let result = try_dispatch("", json!({})).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn dispatch_close_but_wrong_method_returns_none() {
+        let result = try_dispatch("openhuman.security_policy", json!({})).await;
+        assert!(result.is_none());
+    }
 }

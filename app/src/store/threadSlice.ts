@@ -7,41 +7,27 @@ import { isTauri, openhumanLocalAiSuggestQuestions } from '../utils/tauriCommand
 interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
-  panelWidth: number;
-  lastViewedAt: Record<string, number>;
   activeThreadId: string | null;
   messagesByThreadId: Record<string, ThreadMessage[]>;
   messages: ThreadMessage[];
   isLoadingThreads: boolean;
   isLoadingMessages: boolean;
   messagesError: string | null;
-  sendStatus: 'idle' | 'loading' | 'success' | 'error';
-  sendError: string | null;
-  deleteStatus: 'idle' | 'loading' | 'success' | 'error';
-  purgeStatus: 'idle' | 'loading' | 'success' | 'error';
   suggestedQuestions: Array<{ text: string; confidence: number }>;
   isLoadingSuggestions: boolean;
-  suggestError: string | null;
 }
 
 const initialState: ThreadState = {
   threads: [],
   selectedThreadId: null,
-  panelWidth: 320,
-  lastViewedAt: {},
   activeThreadId: null,
   messagesByThreadId: {},
   messages: [],
   isLoadingThreads: false,
   isLoadingMessages: false,
   messagesError: null,
-  sendStatus: 'idle',
-  sendError: null,
-  deleteStatus: 'idle',
-  purgeStatus: 'idle',
   suggestedQuestions: [],
   isLoadingSuggestions: false,
-  suggestError: null,
 };
 
 function appendMessageToCache(
@@ -51,37 +37,18 @@ function appendMessageToCache(
   replaceExisting = false
 ) {
   const existing = state.messagesByThreadId[threadId] ?? [];
-  const nextStored = replaceExisting
-    ? existing.map(entry => (entry.id === message.id ? message : entry))
+  const next = replaceExisting
+    ? existing.map(e => (e.id === message.id ? message : e))
     : [...existing, message];
-  state.messagesByThreadId[threadId] = nextStored;
-
+  state.messagesByThreadId[threadId] = next;
   if (threadId === state.selectedThreadId) {
     state.messages = replaceExisting
-      ? state.messages.map(entry => (entry.id === message.id ? message : entry))
+      ? state.messages.map(e => (e.id === message.id ? message : e))
       : [...state.messages, message];
   }
-
-  const thread = state.threads.find(entry => entry.id === threadId);
-  if (thread) {
-    thread.messageCount = nextStored.length;
-    thread.lastMessageAt =
-      nextStored.length > 0 ? nextStored[nextStored.length - 1].createdAt : thread.createdAt;
-  }
 }
 
-function replaceMessagesForThread(state: ThreadState, threadId: string, messages: ThreadMessage[]) {
-  state.messagesByThreadId[threadId] = messages;
-  if (threadId === state.selectedThreadId) {
-    state.messages = messages;
-  }
-  const thread = state.threads.find(entry => entry.id === threadId);
-  if (thread) {
-    thread.messageCount = messages.length;
-    thread.lastMessageAt =
-      messages.length > 0 ? messages[messages.length - 1].createdAt : thread.createdAt;
-  }
-}
+// ── Async thunks (thin RPC wrappers) ──────────────────────────────
 
 export const loadThreads = createAsyncThunk(
   'thread/loadThreads',
@@ -94,18 +61,37 @@ export const loadThreads = createAsyncThunk(
   }
 );
 
-export const createThreadLocal = createAsyncThunk(
-  'thread/createThreadLocal',
-  async (
-    payload: { id: string; title: string; createdAt: string },
-    { dispatch, rejectWithValue }
-  ) => {
+export const createNewThread = createAsyncThunk(
+  'thread/createNewThread',
+  async (_, { dispatch, rejectWithValue }) => {
     try {
-      const created = await threadApi.createThread(payload);
+      const thread = await threadApi.createNewThread();
       await dispatch(loadThreads()).unwrap();
-      return created;
+      return thread;
     } catch (error) {
       return rejectWithValue(error instanceof Error ? error.message : 'Failed to create thread');
+    }
+  }
+);
+
+export const deleteThread = createAsyncThunk(
+  'thread/deleteThread',
+  async (threadId: string, { dispatch, getState, rejectWithValue }) => {
+    try {
+      await threadApi.deleteThread(threadId);
+      const state = getState() as { thread: ThreadState };
+      if (state.thread.selectedThreadId === threadId) {
+        const remaining = state.thread.threads.filter(t => t.id !== threadId);
+        if (remaining.length > 0) {
+          dispatch(setSelectedThread(remaining[0].id));
+        } else {
+          dispatch(clearSelectedThread());
+        }
+      }
+      await dispatch(loadThreads()).unwrap();
+      return { threadId };
+    } catch (error) {
+      return rejectWithValue(error instanceof Error ? error.message : 'Failed to delete thread');
     }
   }
 );
@@ -142,9 +128,7 @@ export const addInferenceResponse = createAsyncThunk(
   ) => {
     const state = getState() as { thread: ThreadState };
     const targetThreadId = payload.threadId ?? state.thread.activeThreadId;
-    if (!targetThreadId) {
-      return rejectWithValue('No target thread for inference response');
-    }
+    if (!targetThreadId) return rejectWithValue('No target thread');
 
     const message: ThreadMessage = {
       id: payload.messageId ?? `inference-${Date.now()}-${Math.random()}`,
@@ -172,15 +156,12 @@ export const persistReaction = createAsyncThunk(
   ) => {
     const state = getState() as { thread: ThreadState };
     const stored = state.thread.messagesByThreadId[payload.threadId] ?? [];
-    const message = stored.find(entry => entry.id === payload.messageId);
-    if (!message) {
-      return rejectWithValue('Message not found for reaction update');
-    }
+    const message = stored.find(e => e.id === payload.messageId);
+    if (!message) return rejectWithValue('Message not found');
 
     const prev = (message.extraMetadata['myReactions'] as string[] | undefined) ?? [];
     const idx = prev.indexOf(payload.emoji);
-    const next =
-      idx >= 0 ? prev.filter(entry => entry !== payload.emoji) : [...prev, payload.emoji];
+    const next = idx >= 0 ? prev.filter(e => e !== payload.emoji) : [...prev, payload.emoji];
     const extraMetadata = { ...message.extraMetadata, myReactions: next };
 
     try {
@@ -214,19 +195,16 @@ export const fetchSuggestedQuestions = createAsyncThunk(
   async (conversationId: string | undefined, { getState, rejectWithValue }) => {
     try {
       const state = getState() as { thread: ThreadState };
-      const selectedThreadId = conversationId ?? state.thread.selectedThreadId ?? undefined;
-      const threadMessages = selectedThreadId
-        ? (state.thread.messagesByThreadId[selectedThreadId] ?? [])
-        : [];
+      const tid = conversationId ?? state.thread.selectedThreadId ?? undefined;
+      const msgs = tid ? (state.thread.messagesByThreadId[tid] ?? []) : [];
 
       if (isTauri()) {
-        const lines = threadMessages
+        const lines = msgs
           .slice(-24)
-          .map(msg => `${msg.sender === 'user' ? 'User' : 'Assistant'}: ${msg.content}`);
+          .map(m => `${m.sender === 'user' ? 'User' : 'Assistant'}: ${m.content}`);
         const local = await openhumanLocalAiSuggestQuestions(undefined, lines);
         return local.result;
       }
-
       return [];
     } catch (error) {
       return rejectWithValue(
@@ -235,6 +213,8 @@ export const fetchSuggestedQuestions = createAsyncThunk(
     }
   }
 );
+
+// ── Slice ─────────────────────────────────────────────────────────
 
 const threadSlice = createSlice({
   name: 'thread',
@@ -245,44 +225,22 @@ const threadSlice = createSlice({
       state.messages = state.messagesByThreadId[action.payload] ?? [];
       state.messagesError = null;
       state.suggestedQuestions = [];
-      state.suggestError = null;
     },
     clearSelectedThread: state => {
       state.selectedThreadId = null;
       state.messages = [];
       state.messagesError = null;
       state.suggestedQuestions = [];
-      state.suggestError = null;
     },
-    clearSuggestedQuestions: state => {
-      state.suggestedQuestions = [];
-      state.suggestError = null;
-    },
-    clearDeleteStatus: state => {
-      state.deleteStatus = 'idle';
-    },
-    clearPurgeStatus: state => {
-      state.purgeStatus = 'idle';
-    },
-    clearSendError: state => {
-      state.sendError = null;
-    },
-    setPanelWidth: (state, action: { payload: number }) => {
-      state.panelWidth = action.payload;
-    },
-    setLastViewed: (state, action: { payload: string }) => {
-      state.lastViewedAt[action.payload] = Date.now();
+    setActiveThread: (state, action: { payload: string | null }) => {
+      state.activeThreadId = action.payload;
     },
     clearAllThreads: state => {
       state.threads = [];
       state.messagesByThreadId = {};
       state.selectedThreadId = null;
       state.messages = [];
-      state.lastViewedAt = {};
       state.activeThreadId = null;
-    },
-    setActiveThread: (state, action: { payload: string | null }) => {
-      state.activeThreadId = action.payload;
     },
   },
   extraReducers: builder => {
@@ -297,39 +255,23 @@ const threadSlice = createSlice({
       .addCase(loadThreads.rejected, state => {
         state.isLoadingThreads = false;
       })
-      .addCase(createThreadLocal.pending, state => {
-        state.isLoadingThreads = true;
-      })
-      .addCase(createThreadLocal.fulfilled, state => {
-        state.isLoadingThreads = false;
-      })
-      .addCase(createThreadLocal.rejected, (state, action) => {
-        state.isLoadingThreads = false;
-        state.messagesError = action.payload as string;
-      })
       .addCase(loadThreadMessages.pending, state => {
         state.isLoadingMessages = true;
         state.messagesError = null;
       })
       .addCase(loadThreadMessages.fulfilled, (state, action) => {
         state.isLoadingMessages = false;
-        replaceMessagesForThread(state, action.payload.threadId, action.payload.messages);
+        state.messagesByThreadId[action.payload.threadId] = action.payload.messages;
+        if (action.payload.threadId === state.selectedThreadId) {
+          state.messages = action.payload.messages;
+        }
       })
       .addCase(loadThreadMessages.rejected, (state, action) => {
         state.isLoadingMessages = false;
         state.messagesError = action.payload as string;
       })
-      .addCase(addMessageLocal.pending, state => {
-        state.sendStatus = 'loading';
-        state.sendError = null;
-      })
       .addCase(addMessageLocal.fulfilled, (state, action) => {
-        state.sendStatus = 'success';
         appendMessageToCache(state, action.payload.threadId, action.payload.message);
-      })
-      .addCase(addMessageLocal.rejected, (state, action) => {
-        state.sendStatus = 'error';
-        state.sendError = action.payload as string;
       })
       .addCase(addInferenceResponse.fulfilled, (state, action) => {
         appendMessageToCache(state, action.payload.threadId, action.payload.message);
@@ -337,8 +279,7 @@ const threadSlice = createSlice({
         // thunks; clearing each time would re-enable the composer mid-turn.
         // ChatRuntimeProvider clears it on chat_done / chat_error.
       })
-      .addCase(addInferenceResponse.rejected, (state, action) => {
-        state.sendError = action.payload as string;
+      .addCase(addInferenceResponse.rejected, () => {
         // Do NOT clear activeThreadId here — ChatRuntimeProvider clears it on
         // chat_done / chat_error. Clearing on every rejected segment append
         // would re-enable the composer while the turn is still in-flight.
@@ -346,42 +287,24 @@ const threadSlice = createSlice({
       .addCase(persistReaction.fulfilled, (state, action) => {
         appendMessageToCache(state, action.payload.threadId, action.payload.message, true);
       })
-      .addCase(purgeThreads.pending, state => {
-        state.purgeStatus = 'loading';
-      })
-      .addCase(purgeThreads.fulfilled, state => {
-        state.purgeStatus = 'success';
-      })
-      .addCase(purgeThreads.rejected, state => {
-        state.purgeStatus = 'error';
+      .addCase(deleteThread.fulfilled, (state, action) => {
+        delete state.messagesByThreadId[action.payload.threadId];
       })
       .addCase(fetchSuggestedQuestions.pending, state => {
         state.isLoadingSuggestions = true;
-        state.suggestError = null;
       })
       .addCase(fetchSuggestedQuestions.fulfilled, (state, action) => {
         state.isLoadingSuggestions = false;
         state.suggestedQuestions = action.payload;
       })
-      .addCase(fetchSuggestedQuestions.rejected, (state, action) => {
+      .addCase(fetchSuggestedQuestions.rejected, state => {
         state.isLoadingSuggestions = false;
-        state.suggestError = action.payload as string;
         state.suggestedQuestions = [];
       });
   },
 });
 
-export const {
-  setSelectedThread,
-  clearSelectedThread,
-  clearDeleteStatus,
-  clearPurgeStatus,
-  clearSendError,
-  clearSuggestedQuestions,
-  setPanelWidth,
-  setLastViewed,
-  clearAllThreads,
-  setActiveThread,
-} = threadSlice.actions;
+export const { setSelectedThread, clearSelectedThread, setActiveThread, clearAllThreads } =
+  threadSlice.actions;
 
 export default threadSlice.reducer;

@@ -93,3 +93,29 @@ pub fn create_memory_for_migration(
 ) -> anyhow::Result<Box<dyn Memory>> {
     anyhow::bail!("memory migration is disabled for the unified namespace memory core")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_memory_backend_name_always_returns_namespace() {
+        assert_eq!(effective_memory_backend_name("sqlite", None), "namespace");
+        assert_eq!(effective_memory_backend_name("anything", None), "namespace");
+        assert_eq!(effective_memory_backend_name("", None), "namespace");
+    }
+
+    #[test]
+    fn create_memory_for_migration_always_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Box<dyn Memory> doesn't impl Debug, so we can't use .unwrap_err().
+        // Use match instead.
+        match create_memory_for_migration("any", tmp.path()) {
+            Ok(_) => panic!("expected error"),
+            Err(e) => assert!(
+                e.to_string().contains("migration is disabled"),
+                "unexpected error: {e}"
+            ),
+        }
+    }
+}

@@ -1,8 +1,11 @@
 import OAuthProviderButton from '../components/oauth/OAuthProviderButton';
 import { oauthProviderConfigs } from '../components/oauth/providerConfigs';
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
+import { useDeepLinkAuthState } from '../store/deepLinkAuthState';
 
 const Welcome = () => {
+  const { isProcessing, errorMessage } = useDeepLinkAuthState();
+
   return (
     <div className="min-h-full flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full">
@@ -25,18 +28,31 @@ const Welcome = () => {
             AI Super Intelligence. Private, Simple and extremely powerful.
           </p>
 
-          {/* OAuth buttons — horizontal row */}
-          <div className="flex items-center justify-center gap-3 mb-5">
-            {oauthProviderConfigs
-              .filter(p => ['google', 'github', 'twitter'].includes(p.id))
-              .map(provider => (
-                <OAuthProviderButton
-                  key={provider.id}
-                  provider={provider}
-                  className="!rounded-full !px-4 !py-2"
-                />
-              ))}
-          </div>
+          {errorMessage ? (
+            <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {errorMessage}
+            </div>
+          ) : null}
+
+          {isProcessing ? (
+            <div className="mb-5 flex flex-col items-center justify-center gap-3 py-2">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-stone-300 border-t-primary-500" />
+              <p className="text-sm font-medium text-stone-700">Signing you in...</p>
+            </div>
+          ) : (
+            /* OAuth buttons — horizontal row */
+            <div className="flex items-center justify-center gap-3 mb-5">
+              {oauthProviderConfigs
+                .filter(p => ['google', 'github', 'twitter'].includes(p.id))
+                .map(provider => (
+                  <OAuthProviderButton
+                    key={provider.id}
+                    provider={provider}
+                    className="!rounded-full !px-4 !py-2"
+                  />
+                ))}
+            </div>
+          )}
 
           {/* Email login — disabled until backend auth flow is implemented
           <div className="flex items-center gap-3 mb-5">

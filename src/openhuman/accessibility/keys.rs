@@ -103,3 +103,32 @@ const KCG_EVENT_SOURCE_STATE_COMBINED_SESSION_STATE: i32 = 0;
 const KVK_TAB: u16 = 48;
 #[cfg(target_os = "macos")]
 const KVK_ESCAPE: u16 = 53;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_tab_key_down_returns_bool() {
+        // Just verify it doesn't panic and returns a bool.
+        let _result: bool = is_tab_key_down();
+    }
+
+    #[test]
+    fn is_escape_key_down_returns_bool() {
+        let _result: bool = is_escape_key_down();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn input_monitoring_recheck_interval_is_positive() {
+        assert!(INPUT_MONITORING_RECHECK_MS > 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn kvk_constants_are_correct() {
+        assert_eq!(KVK_TAB, 48);
+        assert_eq!(KVK_ESCAPE, 53);
+    }
+}

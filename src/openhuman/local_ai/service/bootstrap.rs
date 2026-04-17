@@ -274,28 +274,31 @@ fn config_with_recommended_tier_if_unselected(config: &Config, device: &DevicePr
     let current_tier =
         crate::openhuman::local_ai::presets::current_tier_from_config(&config.local_ai);
 
-    // If a tier is already selected, check whether it exceeds the MVP ceiling.
-    // If so, clamp it down to the recommended (MVP-capped) tier.
+    // When the user has *not* explicitly picked a tier and the device is below
+    // the RAM floor, default to disabled (cloud fallback). The user can still
+    // opt in via Settings. This check runs first so even a "detected" tier from
+    // matching defaults gets overridden on low-RAM hosts.
+    if selected_tier.is_none()
+        && crate::openhuman::local_ai::presets::should_default_to_cloud_fallback(device)
+    {
+        tracing::debug!(
+            total_ram_gb = device.total_ram_gb(),
+            min_required_gb = crate::openhuman::local_ai::presets::MIN_RAM_GB_FOR_LOCAL_AI,
+            "[local_ai] bootstrap: device below RAM floor, defaulting to disabled (cloud fallback)"
+        );
+        let mut effective_config = config.clone();
+        effective_config.local_ai.enabled = false;
+        return effective_config;
+    }
+
+    // If the user has already picked a tier (explicit or matching defaults),
+    // honor it. No MVP ceiling — users can pick any tier.
     if selected_tier.is_some()
         || !matches!(
             current_tier,
             crate::openhuman::local_ai::presets::ModelTier::Custom
         )
     {
-        if !current_tier.is_mvp_allowed() {
-            let recommended = crate::openhuman::local_ai::presets::recommend_tier(device);
-            tracing::warn!(
-                ?current_tier,
-                ?recommended,
-                "[local_ai] bootstrap: selected tier exceeds MVP ceiling, clamping to recommended"
-            );
-            let mut effective_config = config.clone();
-            crate::openhuman::local_ai::presets::apply_preset_to_config(
-                &mut effective_config.local_ai,
-                recommended,
-            );
-            return effective_config;
-        }
         return config.clone();
     }
 
@@ -360,51 +363,88 @@ mod tests {
         assert!(!service.should_run_memory_autosummary(&config));
     }
 
-    #[test]
-    fn bootstrap_clamps_non_mvp_tier_when_selection_missing() {
-        let config = Config::default();
-        // Default config matches Ram8To16Gb which is not MVP-allowed,
-        // so bootstrap clamps it to the MVP-capped recommended tier.
-        let device = DeviceProfile {
-            total_ram_bytes: 4 * 1024 * 1024 * 1024,
+    fn test_device(ram_gb: u64) -> DeviceProfile {
+        DeviceProfile {
+            total_ram_bytes: ram_gb * 1024 * 1024 * 1024,
             cpu_count: 4,
             cpu_brand: String::new(),
             os_name: String::new(),
             os_version: String::new(),
             has_gpu: false,
             gpu_description: None,
-        };
-
-        let effective = config_with_recommended_tier_if_unselected(&config, &device);
-
-        assert_eq!(
-            effective.local_ai.selected_tier.as_deref(),
-            Some("ram_2_4gb")
-        );
-        assert_eq!(effective.local_ai.chat_model_id, "gemma3:1b-it-qat");
+        }
     }
 
     #[test]
-    fn bootstrap_clamps_non_mvp_selected_tier() {
-        let mut config = Config::default();
-        config.local_ai.selected_tier = Some("high".to_string());
-        let device = DeviceProfile {
-            total_ram_bytes: 4 * 1024 * 1024 * 1024,
-            cpu_count: 4,
-            cpu_brand: String::new(),
-            os_name: String::new(),
-            os_version: String::new(),
-            has_gpu: false,
-            gpu_description: None,
-        };
+    fn bootstrap_defaults_to_disabled_on_low_ram_device() {
+        let config = Config::default();
+        let device = test_device(4);
 
         let effective = config_with_recommended_tier_if_unselected(&config, &device);
 
-        // "high" maps to Ram16PlusGb which is not MVP-allowed, so it gets clamped.
-        assert_eq!(
-            effective.local_ai.selected_tier.as_deref(),
-            Some("ram_2_4gb")
+        assert!(
+            !effective.local_ai.enabled,
+            "local_ai.enabled must default to false on <8 GB device"
         );
-        assert_eq!(effective.local_ai.chat_model_id, "gemma3:1b-it-qat");
+    }
+
+    #[test]
+    fn bootstrap_keeps_enabled_on_sufficient_ram_device() {
+        let config = Config::default();
+        let device = test_device(16);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert!(
+            effective.local_ai.enabled,
+            "local_ai.enabled must stay true on >= 8 GB device"
+        );
+    }
+
+    #[test]
+    fn bootstrap_respects_explicit_tier_on_low_ram_device() {
+        let mut config = Config::default();
+        config.local_ai.selected_tier = Some("ram_2_4gb".to_string());
+        crate::openhuman::local_ai::presets::apply_preset_to_config(
+            &mut config.local_ai,
+            crate::openhuman::local_ai::presets::ModelTier::Ram2To4Gb,
+        );
+        let device = test_device(4);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        // User explicitly chose a tier, so local_ai stays enabled.
+        assert!(
+            effective.local_ai.enabled,
+            "explicit tier selection must be honored even on low-RAM device"
+        );
+    }
+
+    #[test]
+    fn bootstrap_keeps_default_tier_when_selection_missing_and_ram_sufficient() {
+        // Default config already matches a preset (Ram8To16Gb) and device has
+        // enough RAM, so bootstrap returns it untouched (no auto-change).
+        let config = Config::default();
+        let device = test_device(8);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        assert!(effective.local_ai.enabled);
+        assert_eq!(
+            effective.local_ai.chat_model_id,
+            config.local_ai.chat_model_id
+        );
+    }
+
+    #[test]
+    fn bootstrap_honors_explicit_non_mvp_tier_selection() {
+        let mut config = Config::default();
+        config.local_ai.selected_tier = Some("high".to_string());
+        let device = test_device(8);
+
+        let effective = config_with_recommended_tier_if_unselected(&config, &device);
+
+        // User explicitly picked a high-tier preset — honor it, no MVP clamp.
+        assert_eq!(effective.local_ai.selected_tier.as_deref(), Some("high"));
     }
 }

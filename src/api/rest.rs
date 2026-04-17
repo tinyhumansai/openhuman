@@ -575,6 +575,29 @@ impl BackendOAuthClient {
         .await
     }
 
+    /// Deletes a message from a communication channel. Used to clean up
+    /// ephemeral messages (e.g. thinking indicators) after the final
+    /// response has been delivered.
+    pub async fn send_channel_delete(
+        &self,
+        channel: &str,
+        message_id: &str,
+        bearer_jwt: &str,
+    ) -> Result<Value> {
+        let channel = channel.trim().trim_matches('/');
+        anyhow::ensure!(!channel.is_empty(), "channel is required");
+        anyhow::ensure!(!message_id.is_empty(), "message_id is required");
+        let encoded_channel = urlencoding::encode(channel);
+        let encoded_id = urlencoding::encode(message_id);
+        self.authed_json(
+            bearer_jwt,
+            Method::DELETE,
+            &format!("channels/{encoded_channel}/messages/{encoded_id}"),
+            None,
+        )
+        .await
+    }
+
     /// Sends a reaction (e.g. emoji) to a message in a channel.
     pub async fn send_channel_reaction(
         &self,

@@ -140,6 +140,14 @@ impl Agent {
         self.event_channel = channel.into();
     }
 
+    /// Override the agent definition name used for session transcript
+    /// file paths. Callers (e.g. the web channel) use this to scope
+    /// transcripts per thread so each conversation thread gets its own
+    /// transcript namespace instead of sharing one by agent type.
+    pub fn set_agent_definition_name(&mut self, name: impl Into<String>) {
+        self.agent_definition_name = name.into();
+    }
+
     /// Attach a progress event sender for real-time turn updates.
     ///
     /// When set, the turn loop emits [`AgentProgress`] events so

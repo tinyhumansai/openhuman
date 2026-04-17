@@ -202,6 +202,55 @@ mod tests {
     }
 
     #[test]
+    fn detect_gpu_no_gpu_on_linux_without_nvidia() {
+        // Linux without nvidia-smi should report no GPU (or NVIDIA if nvidia-smi is present).
+        // Since we can't mock nvidia-smi here, we at least verify the function doesn't panic.
+        let (has, desc) = detect_gpu("AMD Ryzen 9", "Linux");
+        // On CI/dev machines without nvidia-smi, this should be (false, None).
+        // If nvidia-smi is present, it returns (true, Some("NVIDIA ...")), which is also fine.
+        if !has {
+            assert!(desc.is_none());
+        }
+    }
+
+    #[test]
+    fn detect_gpu_windows_without_nvidia() {
+        let (has, desc) = detect_gpu("Intel Core i9", "Windows");
+        // Same as Linux: depends on nvidia-smi availability
+        if !has {
+            assert!(desc.is_none());
+        }
+    }
+
+    #[test]
+    fn total_ram_gb_exact_boundary() {
+        let profile = DeviceProfile {
+            total_ram_bytes: 1024 * 1024 * 1024, // exactly 1 GiB
+            cpu_count: 1,
+            cpu_brand: "x".into(),
+            os_name: "x".into(),
+            os_version: "1".into(),
+            has_gpu: false,
+            gpu_description: None,
+        };
+        assert_eq!(profile.total_ram_gb(), 1);
+    }
+
+    #[test]
+    fn total_ram_gb_zero_bytes() {
+        let profile = DeviceProfile {
+            total_ram_bytes: 0,
+            cpu_count: 1,
+            cpu_brand: "x".into(),
+            os_name: "x".into(),
+            os_version: "1".into(),
+            has_gpu: false,
+            gpu_description: None,
+        };
+        assert_eq!(profile.total_ram_gb(), 0);
+    }
+
+    #[test]
     fn device_profile_serde_round_trip() {
         let original = DeviceProfile {
             total_ram_bytes: 8 * 1024 * 1024 * 1024,

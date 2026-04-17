@@ -8,12 +8,18 @@
 
 use once_cell::sync::Lazy;
 use serde::Serialize;
+use std::sync::Mutex;
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::voice::hotkey::{self, ActivationMode, HotkeyEvent};
 
 const LOG_PREFIX: &str = "[dictation_listener]";
+
+// ── Listener task handle (for stop support) ─────────────────────────
+
+static LISTENER_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
 
 // ── Broadcast channel for dictation events ────────────────────────────
 
@@ -135,7 +141,7 @@ pub async fn start_if_enabled(config: &Config) {
     log::info!("{LOG_PREFIX} dictation hotkey active: {normalized}");
 
     // Forward hotkey events to the broadcast channel.
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         // Keep the listener handle alive for the lifetime of this task.
         let _handle = listener_handle;
 
@@ -156,6 +162,25 @@ pub async fn start_if_enabled(config: &Config) {
 
         log::warn!("{LOG_PREFIX} hotkey event channel closed, listener stopping");
     });
+
+    // Store handle so `stop()` can abort it on logout.
+    if let Ok(mut guard) = LISTENER_HANDLE.lock() {
+        *guard = Some(task);
+    }
+}
+
+/// Stop the dictation hotkey listener if running.
+///
+/// Aborts the spawned forwarder task and drops the `rdev` listener handle,
+/// preventing duplicate hotkey listeners from accumulating across
+/// logout → login cycles.
+pub fn stop() {
+    if let Ok(mut guard) = LISTENER_HANDLE.lock() {
+        if let Some(handle) = guard.take() {
+            handle.abort();
+            log::info!("{LOG_PREFIX} dictation listener stopped");
+        }
+    }
 }
 
 /// Normalize a Tauri-style hotkey string to rdev-compatible format.

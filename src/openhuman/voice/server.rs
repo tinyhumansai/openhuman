@@ -439,10 +439,24 @@ impl VoiceServer {
         Ok(())
     }
 
-    /// Stop the voice server.
+    /// Stop the voice server and wait for it to reach `Stopped` state.
+    ///
+    /// Cancels the run-loop token and polls until the state transitions to
+    /// `Stopped` (or a 5-second timeout expires). This prevents a fast
+    /// logout → login cycle from seeing a stale `Idle`/`Recording` state
+    /// and skipping the restart.
     pub async fn stop(&self) {
         info!("{LOG_PREFIX} stopping voice server");
         self.cancel.lock().await.cancel();
+
+        // Wait for the run-loop to observe cancellation and set Stopped.
+        for _ in 0..50 {
+            if *self.state.lock().await == ServerState::Stopped {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        warn!("{LOG_PREFIX} stop timed out after 5s — state may not be Stopped");
     }
 
     /// Record an error message so it can be surfaced via status().

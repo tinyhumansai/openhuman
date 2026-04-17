@@ -114,3 +114,64 @@ fn handle_apply(params: Map<String, Value>) -> ControllerFuture {
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_schemas_returns_two() {
+        assert_eq!(all_controller_schemas().len(), 2);
+    }
+
+    #[test]
+    fn all_controllers_returns_two() {
+        assert_eq!(all_registered_controllers().len(), 2);
+    }
+
+    #[test]
+    fn check_schema() {
+        let s = schemas("check");
+        assert_eq!(s.namespace, "update");
+        assert_eq!(s.function, "check");
+        assert!(s.inputs.is_empty());
+        assert!(!s.outputs.is_empty());
+    }
+
+    #[test]
+    fn apply_schema_requires_download_url_and_asset_name() {
+        let s = schemas("apply");
+        assert_eq!(s.function, "apply");
+        let required: Vec<&str> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert!(required.contains(&"download_url"));
+        assert!(required.contains(&"asset_name"));
+    }
+
+    #[test]
+    fn apply_schema_has_optional_staging_dir() {
+        let s = schemas("apply");
+        let staging = s.inputs.iter().find(|f| f.name == "staging_dir");
+        assert!(staging.is_some_and(|f| !f.required));
+    }
+
+    #[test]
+    fn unknown_function_returns_unknown() {
+        let s = schemas("nonexistent");
+        assert_eq!(s.function, "unknown");
+        assert_eq!(s.namespace, "update");
+    }
+
+    #[test]
+    fn schemas_and_controllers_match() {
+        let s = all_controller_schemas();
+        let c = all_registered_controllers();
+        for (schema, ctrl) in s.iter().zip(c.iter()) {
+            assert_eq!(schema.function, ctrl.schema.function);
+        }
+    }
+}

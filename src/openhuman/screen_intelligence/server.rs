@@ -67,7 +67,10 @@ impl Default for SiServerConfig {
 /// The screen intelligence server runtime.
 pub struct SiServer {
     state: Arc<Mutex<ServerState>>,
-    cancel: CancellationToken,
+    /// Wrapped in `std::sync::Mutex` so that `stop()` can cancel the current
+    /// token and `fresh_cancel()` can swap in a new one — enabling restart
+    /// after logout without recreating the singleton.
+    cancel: std::sync::Mutex<CancellationToken>,
     config: SiServerConfig,
     engine: Arc<AccessibilityEngine>,
     capture_count: Arc<AtomicU64>,
@@ -79,13 +82,23 @@ impl SiServer {
     pub fn new(config: SiServerConfig) -> Self {
         Self {
             state: Arc::new(Mutex::new(ServerState::Stopped)),
-            cancel: CancellationToken::new(),
+            cancel: std::sync::Mutex::new(CancellationToken::new()),
             config,
             engine: global_engine(),
             capture_count: Arc::new(AtomicU64::new(0)),
             vision_count: Arc::new(AtomicU64::new(0)),
             last_error: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Replace the internal cancellation token with a fresh one so the server
+    /// can be re-started after a previous `stop()`.  Returns a clone of the
+    /// new token for use in the run loop.
+    fn fresh_cancel(&self) -> CancellationToken {
+        let fresh = CancellationToken::new();
+        // SAFETY: lock held briefly, only swaps a small struct.
+        *self.cancel.lock().expect("cancel lock poisoned") = fresh.clone();
+        fresh
     }
 
     /// Get the current server status.
@@ -104,6 +117,10 @@ impl SiServer {
     /// It starts a capture + vision session, then blocks in a monitoring
     /// loop that logs status until the session ends or Ctrl+C is received.
     pub async fn run(&self, app_config: &Config) -> Result<(), String> {
+        // Replace the cancellation token so a previously-stopped server can
+        // be restarted within the same process (e.g. after logout → re-login).
+        let cancel = self.fresh_cancel();
+
         info!(
             "{LOG_PREFIX} starting: ttl={}s vision={} fps={} keep_screenshots={}",
             self.config.ttl_secs,
@@ -157,7 +174,7 @@ impl SiServer {
         loop {
             tokio::select! {
                 _ = tick.tick() => {}
-                _ = self.cancel.cancelled() => {
+                _ = cancel.cancelled() => {
                     debug!("{LOG_PREFIX} cancellation received");
                     break;
                 }
@@ -265,10 +282,24 @@ impl SiServer {
         Ok(())
     }
 
-    /// Stop the server.
+    /// Stop the server and wait for it to reach `Stopped` state.
+    ///
+    /// Cancels the run-loop token and polls until the state transitions to
+    /// `Stopped` (or a 5-second timeout expires). This prevents a fast
+    /// logout → login cycle from seeing a stale `Idle`/`Running` state
+    /// and skipping the restart.
     pub async fn stop(&self) {
         info!("{LOG_PREFIX} stopping screen intelligence server");
-        self.cancel.cancel();
+        self.cancel.lock().expect("cancel lock poisoned").cancel();
+
+        // Wait for the run-loop to observe cancellation and set Stopped.
+        for _ in 0..50 {
+            if *self.state.lock().await == ServerState::Stopped {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        warn!("{LOG_PREFIX} stop timed out after 5s — state may not be Stopped");
     }
 }
 

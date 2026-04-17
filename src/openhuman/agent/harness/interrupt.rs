@@ -95,3 +95,72 @@ pub fn check_interrupt(fence: &InterruptFence) -> Result<(), InterruptedError> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_fence_is_not_interrupted() {
+        let fence = InterruptFence::new();
+        assert!(!fence.is_interrupted());
+    }
+
+    #[test]
+    fn trigger_sets_interrupted() {
+        let fence = InterruptFence::new();
+        fence.trigger();
+        assert!(fence.is_interrupted());
+    }
+
+    #[test]
+    fn reset_clears_interrupted() {
+        let fence = InterruptFence::new();
+        fence.trigger();
+        assert!(fence.is_interrupted());
+        fence.reset();
+        assert!(!fence.is_interrupted());
+    }
+
+    #[test]
+    fn flag_handle_shares_state() {
+        let fence = InterruptFence::new();
+        let handle = fence.flag_handle();
+        handle.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(fence.is_interrupted());
+    }
+
+    #[test]
+    fn clone_shares_state() {
+        let fence = InterruptFence::new();
+        let clone = fence.clone();
+        fence.trigger();
+        assert!(clone.is_interrupted());
+    }
+
+    #[test]
+    fn default_is_not_interrupted() {
+        let fence = InterruptFence::default();
+        assert!(!fence.is_interrupted());
+    }
+
+    #[test]
+    fn check_interrupt_ok_when_not_triggered() {
+        let fence = InterruptFence::new();
+        assert!(check_interrupt(&fence).is_ok());
+    }
+
+    #[test]
+    fn check_interrupt_err_when_triggered() {
+        let fence = InterruptFence::new();
+        fence.trigger();
+        let err = check_interrupt(&fence).unwrap_err();
+        assert_eq!(err.to_string(), "operation interrupted by user");
+    }
+
+    #[test]
+    fn interrupted_error_display() {
+        let err = InterruptedError;
+        assert_eq!(format!("{err}"), "operation interrupted by user");
+    }
+}

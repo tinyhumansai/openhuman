@@ -140,3 +140,109 @@ impl Default for PeripheralBoardConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_config_defaults() {
+        let c = CostConfig::default();
+        assert!(!c.enabled);
+        assert_eq!(c.daily_limit_usd, 10.0);
+        assert_eq!(c.monthly_limit_usd, 100.0);
+        assert_eq!(c.warn_at_percent, 80);
+        assert!(!c.allow_override);
+        assert!(!c.prices.is_empty());
+    }
+
+    #[test]
+    fn cost_config_default_pricing_has_known_models() {
+        let c = CostConfig::default();
+        assert!(c.prices.len() >= 3);
+    }
+
+    #[test]
+    fn cost_config_serde_roundtrip() {
+        let c = CostConfig::default();
+        let json = serde_json::to_string(&c).unwrap();
+        let back: CostConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.daily_limit_usd, 10.0);
+        assert_eq!(back.monthly_limit_usd, 100.0);
+    }
+
+    #[test]
+    fn cost_config_toml_with_custom_values() {
+        let toml = r#"
+            enabled = true
+            daily_limit_usd = 50.0
+            monthly_limit_usd = 500.0
+            warn_at_percent = 90
+            allow_override = true
+        "#;
+        let c: CostConfig = toml::from_str(toml).unwrap();
+        assert!(c.enabled);
+        assert_eq!(c.daily_limit_usd, 50.0);
+        assert_eq!(c.monthly_limit_usd, 500.0);
+        assert_eq!(c.warn_at_percent, 90);
+        assert!(c.allow_override);
+    }
+
+    #[test]
+    fn model_pricing_defaults_to_zero() {
+        let p: ModelPricing = serde_json::from_str("{}").unwrap();
+        assert_eq!(p.input, 0.0);
+        assert_eq!(p.output, 0.0);
+    }
+
+    #[test]
+    fn peripherals_config_defaults() {
+        let p = PeripheralsConfig::default();
+        assert!(!p.enabled);
+        assert!(p.boards.is_empty());
+        assert!(p.datasheet_dir.is_none());
+    }
+
+    #[test]
+    fn peripheral_board_config_defaults() {
+        let b = PeripheralBoardConfig::default();
+        assert_eq!(b.transport, "serial");
+        assert_eq!(b.baud, 115_200);
+        assert!(b.board.is_empty());
+        assert!(b.path.is_none());
+    }
+
+    #[test]
+    fn peripheral_board_config_toml() {
+        let toml = r#"
+            board = "esp32"
+            transport = "usb"
+            path = "/dev/ttyUSB0"
+            baud = 9600
+        "#;
+        let b: PeripheralBoardConfig = toml::from_str(toml).unwrap();
+        assert_eq!(b.board, "esp32");
+        assert_eq!(b.transport, "usb");
+        assert_eq!(b.path.as_deref(), Some("/dev/ttyUSB0"));
+        assert_eq!(b.baud, 9600);
+    }
+
+    #[test]
+    fn peripherals_config_serde_roundtrip() {
+        let p = PeripheralsConfig {
+            enabled: true,
+            boards: vec![PeripheralBoardConfig {
+                board: "arduino".into(),
+                transport: "serial".into(),
+                path: Some("/dev/cu.usbmodem".into()),
+                baud: 115_200,
+            }],
+            datasheet_dir: Some("/tmp/sheets".into()),
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: PeripheralsConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.enabled);
+        assert_eq!(back.boards.len(), 1);
+        assert_eq!(back.boards[0].board, "arduino");
+    }
+}

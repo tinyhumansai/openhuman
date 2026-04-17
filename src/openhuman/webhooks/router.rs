@@ -636,4 +636,210 @@ mod tests {
         assert_eq!(router.clear_logs(), 1);
         assert!(router.list_logs(Some(10)).is_empty());
     }
+
+    #[test]
+    fn register_echo_and_route_returns_none_for_echo_targets() {
+        let router = WebhookRouter::new(None);
+        router
+            .register_echo("uuid-echo", Some("Test Echo".into()), None)
+            .unwrap();
+        // Echo targets are target_kind="echo", route() only returns "skill" targets
+        assert_eq!(router.route("uuid-echo"), None);
+    }
+
+    #[test]
+    fn registration_returns_full_tunnel_info() {
+        let router = WebhookRouter::new(None);
+        router
+            .register(
+                "uuid-1",
+                "gmail",
+                Some("My Tunnel".into()),
+                Some("bt-1".into()),
+            )
+            .unwrap();
+        let reg = router.registration("uuid-1").unwrap();
+        assert_eq!(reg.tunnel_uuid, "uuid-1");
+        assert_eq!(reg.skill_id, "gmail");
+        assert_eq!(reg.tunnel_name.as_deref(), Some("My Tunnel"));
+        assert_eq!(reg.backend_tunnel_id.as_deref(), Some("bt-1"));
+    }
+
+    #[test]
+    fn registration_returns_none_for_missing_uuid() {
+        let router = WebhookRouter::new(None);
+        assert!(router.registration("no-such").is_none());
+    }
+
+    #[test]
+    fn list_all_returns_all_registrations() {
+        let router = WebhookRouter::new(None);
+        router.register("u1", "s1", None, None).unwrap();
+        router.register("u2", "s2", None, None).unwrap();
+        let all = router.list_all();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn list_logs_respects_limit() {
+        let router = WebhookRouter::new(None);
+        for i in 0..5 {
+            router.record_parse_error(
+                format!("corr-{i}"),
+                None,
+                None,
+                None,
+                json!({}),
+                "error".into(),
+            );
+        }
+        let logs = router.list_logs(Some(3));
+        assert_eq!(logs.len(), 3);
+    }
+
+    #[test]
+    fn list_logs_default_limit() {
+        let router = WebhookRouter::new(None);
+        for i in 0..5 {
+            router.record_parse_error(
+                format!("corr-{i}"),
+                None,
+                None,
+                None,
+                json!({}),
+                "err".into(),
+            );
+        }
+        let logs = router.list_logs(None);
+        assert_eq!(logs.len(), 5); // less than default limit of 100
+    }
+
+    #[test]
+    fn record_response_without_prior_request_creates_new_entry() {
+        let router = WebhookRouter::new(None);
+        let request = WebhookRequest {
+            correlation_id: "corr-new".into(),
+            tunnel_id: "tid".into(),
+            tunnel_uuid: "uuid-new".into(),
+            tunnel_name: "Test".into(),
+            method: "POST".into(),
+            path: "/test".into(),
+            headers: HashMap::new(),
+            query: HashMap::new(),
+            body: String::new(),
+        };
+        let response = WebhookResponseData {
+            correlation_id: "corr-new".into(),
+            status_code: 200,
+            headers: HashMap::new(),
+            body: "ok".into(),
+        };
+        // No prior record_request — should still create a log entry
+        router.record_response(&request, &response, None, None);
+        let logs = router.list_logs(Some(10));
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].stage, "completed");
+    }
+
+    #[test]
+    fn record_response_with_error_sets_error_stage() {
+        let router = WebhookRouter::new(None);
+        let request = WebhookRequest {
+            correlation_id: "corr-err".into(),
+            tunnel_id: "tid".into(),
+            tunnel_uuid: "uuid-err".into(),
+            tunnel_name: "Test".into(),
+            method: "POST".into(),
+            path: "/test".into(),
+            headers: HashMap::new(),
+            query: HashMap::new(),
+            body: String::new(),
+        };
+        let response = WebhookResponseData {
+            correlation_id: "corr-err".into(),
+            status_code: 500,
+            headers: HashMap::new(),
+            body: String::new(),
+        };
+        router.record_request(&request, None);
+        router.record_response(&request, &response, None, Some("handler crashed".into()));
+        let logs = router.list_logs(Some(10));
+        assert_eq!(logs[0].stage, "error");
+        assert_eq!(logs[0].error_message.as_deref(), Some("handler crashed"));
+    }
+
+    #[test]
+    fn clear_logs_returns_zero_when_empty() {
+        let router = WebhookRouter::new(None);
+        assert_eq!(router.clear_logs(), 0);
+    }
+
+    #[test]
+    fn subscribe_debug_events_does_not_panic() {
+        let router = WebhookRouter::new(None);
+        let _rx = router.subscribe_debug_events();
+    }
+
+    #[test]
+    fn persist_and_load_roundtrip() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+
+        let router = WebhookRouter::new(Some(path.clone()));
+        router
+            .register("uuid-p1", "skill-a", Some("Tunnel A".into()), None)
+            .unwrap();
+        router
+            .register("uuid-p2", "skill-b", None, Some("bt-2".into()))
+            .unwrap();
+
+        // Load from disk
+        let router2 = WebhookRouter::new(Some(path));
+        assert_eq!(router2.list_all().len(), 2);
+        assert!(router2.registration("uuid-p1").is_some());
+        assert!(router2.registration("uuid-p2").is_some());
+    }
+
+    #[test]
+    fn unregister_nonexistent_tunnel_is_noop() {
+        let router = WebhookRouter::new(None);
+        // Should not error even though tunnel doesn't exist
+        router.unregister("no-such", "any-skill").unwrap();
+    }
+
+    #[test]
+    fn unregister_skill_with_no_tunnels_is_noop() {
+        let router = WebhookRouter::new(None);
+        router.register("u1", "other", None, None).unwrap();
+        router.unregister_skill("nonexistent");
+        assert_eq!(router.list_all().len(), 1);
+    }
+
+    #[test]
+    fn record_parse_error_creates_entry_with_parse_error_stage() {
+        let router = WebhookRouter::new(None);
+        router.record_parse_error(
+            "corr-p".into(),
+            Some("uuid-p".into()),
+            Some("GET".into()),
+            Some("/bad".into()),
+            json!({"raw": true}),
+            "malformed body".into(),
+        );
+        let logs = router.list_logs(Some(1));
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].stage, "parse_error");
+        assert_eq!(logs[0].status_code, Some(400));
+        assert_eq!(logs[0].error_message.as_deref(), Some("malformed body"));
+    }
+
+    #[test]
+    fn truncate_logs_respects_max() {
+        let router = WebhookRouter::new(None);
+        for i in 0..(MAX_DEBUG_LOG_ENTRIES + 10) {
+            router.record_parse_error(format!("c-{i}"), None, None, None, json!({}), "e".into());
+        }
+        let logs = router.list_logs(Some(MAX_DEBUG_LOG_ENTRIES + 100));
+        assert!(logs.len() <= MAX_DEBUG_LOG_ENTRIES);
+    }
 }

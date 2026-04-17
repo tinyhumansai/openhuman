@@ -251,6 +251,28 @@ pub async fn start_chat(
     Ok(request_id)
 }
 
+/// Invalidate all cached agent sessions for the given thread ID.
+/// Called when a thread is deleted so stale sessions don't leak
+/// into reused thread IDs.
+pub async fn invalidate_thread_sessions(thread_id: &str) {
+    let mut sessions = THREAD_SESSIONS.lock().await;
+    let keys_to_remove: Vec<String> = sessions
+        .keys()
+        .filter(|k| k.ends_with(&format!("::{thread_id}")))
+        .cloned()
+        .collect();
+    for key in &keys_to_remove {
+        sessions.remove(key);
+    }
+    if !keys_to_remove.is_empty() {
+        log::debug!(
+            "[web-channel] invalidated {} cached session(s) for thread_id={}",
+            keys_to_remove.len(),
+            thread_id
+        );
+    }
+}
+
 pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<String>, String> {
     let client_id = client_id.trim();
     let thread_id = thread_id.trim();
@@ -826,6 +848,16 @@ fn build_session_agent(
     Agent::from_config_for_agent(&effective, target_agent_id)
         .map(|mut agent| {
             agent.set_event_context(event_session_id_for(client_id, thread_id), "web_channel");
+            // Scope session transcripts per thread so each conversation
+            // gets its own transcript file instead of sharing one by
+            // agent type. Without this, new threads load the latest
+            // transcript for the agent name and inherit prior messages.
+            let short_thread = if thread_id.len() > 12 {
+                &thread_id[..12]
+            } else {
+                thread_id
+            };
+            agent.set_agent_definition_name(format!("{target_agent_id}_{short_thread}"));
             agent
         })
         .map_err(|e| e.to_string())

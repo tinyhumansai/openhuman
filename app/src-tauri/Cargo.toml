@@ -1,6 +1,6 @@
 [package]
 name = "OpenHuman"
-version = "0.52.16"
+version = "0.52.19"
 description = "OpenHuman - AI-powered Super Assistant"
 authors = ["OpenHuman"]
 edition = "2021"

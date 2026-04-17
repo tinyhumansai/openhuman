@@ -205,4 +205,55 @@ mod tests {
 
         handle.cancel();
     }
+
+    #[tokio::test]
+    async fn service_restart_defaults_source_and_reason() {
+        event_bus::init_global(event_bus::DEFAULT_CAPACITY);
+        let outcome = service_restart(None, None)
+            .await
+            .expect("restart should succeed");
+        assert!(outcome.value.accepted);
+        assert_eq!(outcome.value.source, "jsonrpc");
+        assert_eq!(outcome.value.reason, "service.restart");
+    }
+
+    #[tokio::test]
+    async fn service_restart_trims_whitespace() {
+        event_bus::init_global(event_bus::DEFAULT_CAPACITY);
+        let outcome = service_restart(Some("  ui  ".into()), Some("  user request  ".into()))
+            .await
+            .expect("restart should succeed");
+        assert_eq!(outcome.value.source, "ui");
+        assert_eq!(outcome.value.reason, "user request");
+    }
+
+    #[tokio::test]
+    async fn service_restart_empty_strings_use_defaults() {
+        event_bus::init_global(event_bus::DEFAULT_CAPACITY);
+        let outcome = service_restart(Some("".into()), Some("  ".into()))
+            .await
+            .expect("restart should succeed");
+        assert_eq!(outcome.value.source, "jsonrpc");
+        assert_eq!(outcome.value.reason, "service.restart");
+    }
+
+    #[test]
+    fn restart_status_serializes() {
+        let status = RestartStatus {
+            accepted: true,
+            source: "test".into(),
+            reason: "testing".into(),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("\"accepted\":true"));
+        assert!(json.contains("\"source\":\"test\""));
+    }
+
+    #[test]
+    fn apply_startup_restart_delay_from_env_noop_when_unset() {
+        // Ensure the env var is not set, then call — should not block
+        let _prev = std::env::var(RESTART_DELAY_ENV).ok();
+        std::env::remove_var(RESTART_DELAY_ENV);
+        apply_startup_restart_delay_from_env(); // should return immediately
+    }
 }

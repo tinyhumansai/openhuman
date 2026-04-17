@@ -156,6 +156,94 @@ fn log_worker_join_result(result: Result<(), tokio::task::JoinError>) {
     }
 }
 
+/// Build a `[CONNECTION_STATE]...[/CONNECTION_STATE]` block listing the
+/// current Composio connection status for each connected or available
+/// integration.
+///
+/// Fetches integration state at call time so the agent always sees the
+/// up-to-date status for the user's current turn (including connections
+/// that completed mid-conversation via OAuth in a browser). The fetch is
+/// wrapped in a short timeout so Composio API latency never blocks the
+/// channel turn.
+///
+/// Returns an empty string on any failure (API down, not authenticated,
+/// timeout) so the caller can safely append it without branching.
+async fn build_connection_state_block() -> String {
+    // 3-second ceiling — connection state is best-effort context. If the
+    // Composio API is slow, skip the block rather than delaying the turn.
+    const COMPOSIO_FETCH_TIMEOUT_SECS: u64 = 3;
+
+    let config = match tokio::time::timeout(
+        Duration::from_secs(COMPOSIO_FETCH_TIMEOUT_SECS),
+        Config::load_or_init(),
+    )
+    .await
+    {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            tracing::debug!(
+                error = %e,
+                "[dispatch::connection_state] config load failed — skipping block"
+            );
+            return String::new();
+        }
+        Err(_) => {
+            tracing::debug!("[dispatch::connection_state] config load timed out — skipping block");
+            return String::new();
+        }
+    };
+
+    let integrations = match tokio::time::timeout(
+        Duration::from_secs(COMPOSIO_FETCH_TIMEOUT_SECS),
+        fetch_connected_integrations(&config),
+    )
+    .await
+    {
+        Ok(list) => list,
+        Err(_) => {
+            tracing::debug!(
+                "[dispatch::connection_state] Composio fetch timed out — skipping block"
+            );
+            return String::new();
+        }
+    };
+
+    if integrations.is_empty() {
+        tracing::debug!("[dispatch::connection_state] no integrations returned — skipping block");
+        return String::new();
+    }
+
+    let mut lines = Vec::with_capacity(integrations.len());
+    for integration in &integrations {
+        let status = if integration.connected {
+            // Include account identifier if available (first tool name often encodes it,
+            // but the toolkit slug is the clearest label available here).
+            format!("connected (toolkit: {})", integration.toolkit)
+        } else {
+            "not connected".to_string()
+        };
+        // Capitalize the toolkit name for readability (e.g. "gmail" → "Gmail").
+        let display_name = {
+            let mut chars = integration.toolkit.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            }
+        };
+        lines.push(format!("{display_name}: {status}"));
+    }
+
+    tracing::debug!(
+        integration_count = integrations.len(),
+        "[dispatch::connection_state] built connection state block for welcome agent"
+    );
+
+    format!(
+        "\n\n[CONNECTION_STATE]\n{}\n[/CONNECTION_STATE]",
+        lines.join("\n")
+    )
+}
+
 fn spawn_scoped_typing_task(
     channel: Arc<dyn Channel>,
     recipient: String,
@@ -267,6 +355,11 @@ async fn resolve_target_agent(channel: &str) -> AgentScoping {
     let target_id = if config.chat_onboarding_completed {
         "orchestrator"
     } else {
+        // Increment the process-global exchange counter every time a user
+        // message is routed to the welcome agent. The `complete_onboarding`
+        // tool reads this counter to decide whether `ready_to_complete` is
+        // `true` and to enforce the minimum-engagement guard in `complete`.
+        crate::openhuman::tools::implementations::agent::complete_onboarding::increment_welcome_exchange_count();
         "welcome"
     };
 
@@ -776,6 +869,25 @@ pub(crate) async fn process_channel_message(
     // Fresh disk read of `Config::onboarding_completed` happens inside
     // `resolve_target_agent` — see the `[dispatch::routing]` traces.
     let scoping = resolve_target_agent(&msg.channel).await;
+
+    // When routing to the welcome agent, inject up-to-date Composio connection
+    // state into the last user message so the agent always knows which
+    // integrations are live without burning a tool call to check. The block is
+    // appended — not prepended — so it does not interfere with memory context
+    // that was already prepended to `enriched_message`. Scoped strictly to the
+    // welcome agent: orchestrator turns are not annotated.
+    if scoping.target_agent_id.as_deref() == Some("welcome") {
+        let conn_block = build_connection_state_block().await;
+        if !conn_block.is_empty() {
+            if let Some(last_user_msg) = history.iter_mut().rev().find(|m| m.role == "user") {
+                last_user_msg.content.push_str(&conn_block);
+                tracing::debug!(
+                    block_chars = conn_block.len(),
+                    "[dispatch::connection_state] appended CONNECTION_STATE block to welcome-agent turn"
+                );
+            }
+        }
+    }
 
     let turn_request = AgentTurnRequest {
         provider: Arc::clone(&active_provider),

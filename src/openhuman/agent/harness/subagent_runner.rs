@@ -728,8 +728,15 @@ async fn run_inner_loop(
 
         // Persist assistant message with the original tool_calls payload so
         // subsequent role=tool messages can reference call ids correctly.
+        // Uses the canonical serialiser from `parse` — the old inline
+        // `build_native_assistant_payload` used `"text"` instead of
+        // `"content"` and nested `{"type":"function","function":{…}}`
+        // wrappers instead of flat `{id, name, arguments}`, which caused
+        // 400 errors from the backend jinja template ("Message has tool
+        // role, but there was no previous assistant message with a tool
+        // call!").
         let assistant_history_content =
-            build_native_assistant_payload(&response_text, &native_calls);
+            super::parse::build_native_assistant_history(&response_text, &native_calls);
         history.push(ChatMessage::assistant(assistant_history_content));
 
         // Execute each call, append role=tool messages.
@@ -777,31 +784,6 @@ async fn run_inner_loop(
     }
 
     Err(SubagentRunError::MaxIterationsExceeded(max_iterations))
-}
-
-fn build_native_assistant_payload(text: &str, tool_calls: &[ToolCall]) -> String {
-    // Mirror the existing native-tool-call serialisation pattern used by
-    // `agent::loop_::parse::build_native_assistant_history`. We inline a
-    // small subset here to avoid an inter-module dep cycle.
-    let calls_json: Vec<serde_json::Value> = tool_calls
-        .iter()
-        .map(|call| {
-            serde_json::json!({
-                "id": call.id,
-                "type": "function",
-                "function": {
-                    "name": call.name,
-                    "arguments": call.arguments,
-                },
-            })
-        })
-        .collect();
-
-    let payload = serde_json::json!({
-        "text": text,
-        "tool_calls": calls_json,
-    });
-    payload.to_string()
 }
 
 fn parse_tool_arguments(arguments: &str) -> serde_json::Value {

@@ -595,6 +595,7 @@ export default function OverlayApp() {
   }, [status]);
 
   // ── Render ────────────────────────────────────────────────────────────
+  const bubbles = useMemo<OverlayBubble[]>(() => (bubble ? [bubble] : []), [bubble]);
   const orbClassName = useMemo(() => {
     if (status === 'active') {
       return 'border-blue-950 bg-blue-700';
@@ -611,13 +612,14 @@ export default function OverlayApp() {
     <div className="flex h-screen w-screen items-end justify-end bg-transparent px-0 py-0">
       <div
         className={`relative flex select-none flex-col items-end ${status === 'active' ? 'gap-3' : 'gap-0'}`}>
-        {status === 'active' && bubble && (
-          <div className="max-w-[184px]">
-            <div className="animate-[overlay-bubble-in_220ms_ease-out]">
-              <OverlayBubbleChip key={bubble.id} bubble={bubble} />
+        <div
+          className={`flex flex-col items-end gap-2 overflow-hidden transition-all duration-200 ${status === 'active' ? 'max-w-[184px] opacity-100' : 'max-w-0 opacity-0'}`}>
+          {bubbles.map(b => (
+            <div key={b.id} className="animate-[overlay-bubble-in_220ms_ease-out]">
+              <OverlayBubbleChip key={b.id} bubble={b} />
             </div>
-          </div>
-        )}
+          ))}
+        </div>
 
         <div className="relative">
           <button

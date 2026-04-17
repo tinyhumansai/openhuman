@@ -420,6 +420,162 @@ mod tests {
         assert!(result.output().contains("read-only"));
     }
 
+    #[test]
+    fn validate_rejects_empty_url() {
+        let tool = test_tool(vec!["example.com"]);
+        let err = tool.validate_url("").unwrap_err().to_string();
+        assert!(err.contains("empty"));
+    }
+
+    #[test]
+    fn validate_rejects_ipv6_host() {
+        let tool = test_tool(vec!["example.com"]);
+        let err = tool
+            .validate_url("https://[::1]:8080/path")
+            .unwrap_err()
+            .to_string();
+        // Rejected as IPv6 (starts with '[')
+        assert!(
+            err.contains("IPv6")
+                || err.contains("local/private")
+                || err.contains("allowed_domains"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn is_private_or_local_host_detects_local_tld() {
+        assert!(is_private_or_local_host("myhost.local"));
+    }
+
+    #[test]
+    fn is_private_or_local_host_detects_subdomain_localhost() {
+        assert!(is_private_or_local_host("sub.localhost"));
+    }
+
+    #[test]
+    fn is_private_or_local_host_detects_loopback_ipv6() {
+        assert!(is_private_or_local_host("::1"));
+    }
+
+    #[test]
+    fn is_private_or_local_host_detects_10_range() {
+        assert!(is_private_or_local_host("10.0.0.1"));
+    }
+
+    #[test]
+    fn is_private_or_local_host_detects_0_prefix() {
+        assert!(is_private_or_local_host("0.0.0.0"));
+    }
+
+    #[test]
+    fn is_private_or_local_host_detects_link_local() {
+        assert!(is_private_or_local_host("169.254.1.1"));
+    }
+
+    #[test]
+    fn is_private_or_local_host_detects_cgnat() {
+        assert!(is_private_or_local_host("100.64.0.1"));
+    }
+
+    #[test]
+    fn is_private_or_local_host_allows_public() {
+        assert!(!is_private_or_local_host("8.8.8.8"));
+        assert!(!is_private_or_local_host("example.com"));
+    }
+
+    #[test]
+    fn host_matches_allowlist_exact() {
+        let domains = vec!["example.com".to_string()];
+        assert!(host_matches_allowlist("example.com", &domains));
+        assert!(!host_matches_allowlist("other.com", &domains));
+    }
+
+    #[test]
+    fn host_matches_allowlist_subdomain() {
+        let domains = vec!["example.com".to_string()];
+        assert!(host_matches_allowlist("sub.example.com", &domains));
+        assert!(!host_matches_allowlist("notexample.com", &domains));
+    }
+
+    #[test]
+    fn normalize_domain_strips_port() {
+        assert_eq!(
+            normalize_domain("example.com:8080"),
+            Some("example.com".into())
+        );
+    }
+
+    #[test]
+    fn normalize_domain_strips_leading_trailing_dots() {
+        assert_eq!(
+            normalize_domain(".example.com."),
+            Some("example.com".into())
+        );
+    }
+
+    #[test]
+    fn normalize_domain_returns_none_for_empty() {
+        assert_eq!(normalize_domain(""), None);
+        assert_eq!(normalize_domain("   "), None);
+    }
+
+    #[test]
+    fn normalize_domain_strips_http_prefix() {
+        assert_eq!(
+            normalize_domain("http://example.com/path"),
+            Some("example.com".into())
+        );
+    }
+
+    #[test]
+    fn extract_host_rejects_empty_host() {
+        assert!(extract_host("https://").is_err());
+    }
+
+    #[test]
+    fn extract_host_strips_port() {
+        assert_eq!(
+            extract_host("https://example.com:443/path").unwrap(),
+            "example.com"
+        );
+    }
+
+    #[test]
+    fn extract_host_lowercases() {
+        assert_eq!(extract_host("https://EXAMPLE.COM").unwrap(), "example.com");
+    }
+
+    #[test]
+    fn extract_host_strips_trailing_dot() {
+        assert_eq!(
+            extract_host("https://example.com./path").unwrap(),
+            "example.com"
+        );
+    }
+
+    #[test]
+    fn tool_name_and_description() {
+        let tool = test_tool(vec!["example.com"]);
+        assert_eq!(tool.name(), "browser_open");
+        assert!(!tool.description().is_empty());
+    }
+
+    #[test]
+    fn parameters_schema_requires_url() {
+        let tool = test_tool(vec!["example.com"]);
+        let schema = tool.parameters_schema();
+        let required = schema["required"].as_array().unwrap();
+        assert!(required.contains(&json!("url")));
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_missing_url_param() {
+        let tool = test_tool(vec!["example.com"]);
+        let result = tool.execute(json!({})).await;
+        assert!(result.is_err() || result.unwrap().is_error);
+    }
+
     #[tokio::test]
     async fn execute_blocks_when_rate_limited() {
         let security = Arc::new(SecurityPolicy {

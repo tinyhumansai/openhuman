@@ -33,6 +33,24 @@ pub enum ModelTier {
 /// selection is re-enabled post-MVP.
 pub const MVP_MAX_TIER: ModelTier = ModelTier::Ram2To4Gb;
 
+/// Minimum host RAM (in whole GB) below which the **default** is to skip
+/// local inference and use the cloud summarizer instead.  The user can still
+/// override this and opt into local AI via settings.
+pub const MIN_RAM_GB_FOR_LOCAL_AI: u64 = 8;
+
+/// Returns `true` when the device has enough RAM that local AI should be
+/// enabled by default. Below the floor we recommend cloud fallback instead.
+pub fn device_supports_local_ai(device: &DeviceProfile) -> bool {
+    device.total_ram_gb() >= MIN_RAM_GB_FOR_LOCAL_AI
+}
+
+/// Returns `true` when the device is below the RAM floor and local AI should
+/// default to disabled (cloud fallback). This is a **recommendation**, not a
+/// hard gate — the user can still opt in.
+pub fn should_default_to_cloud_fallback(device: &DeviceProfile) -> bool {
+    !device_supports_local_ai(device)
+}
+
 impl ModelTier {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -178,12 +196,9 @@ pub fn preset_for_tier(tier: ModelTier) -> Option<ModelPreset> {
 }
 
 /// Recommend a tier based on device capabilities.
-///
-/// The recommendation is capped at [`MVP_MAX_TIER`] so that auto-provisioning
-/// never selects a model above the MVP ceiling, regardless of available RAM.
 pub fn recommend_tier(device: &DeviceProfile) -> ModelTier {
     let ram_gb = device.total_ram_gb();
-    let uncapped = if ram_gb >= 16 {
+    let tier = if ram_gb >= 16 {
         ModelTier::Ram16PlusGb
     } else if ram_gb >= 8 {
         ModelTier::Ram8To16Gb
@@ -193,17 +208,6 @@ pub fn recommend_tier(device: &DeviceProfile) -> ModelTier {
         ModelTier::Ram2To4Gb
     } else {
         ModelTier::Ram1Gb
-    };
-    let tier = if uncapped.is_mvp_allowed() {
-        uncapped
-    } else {
-        tracing::debug!(
-            ram_gb,
-            ?uncapped,
-            capped_to = ?MVP_MAX_TIER,
-            "[local_ai] capping recommended tier to MVP ceiling"
-        );
-        MVP_MAX_TIER
     };
     tracing::debug!(ram_gb, ?tier, "[local_ai] recommended model tier");
     tier
@@ -318,13 +322,12 @@ mod tests {
     }
 
     #[test]
-    fn recommend_tier_by_ram_capped_at_mvp_max() {
-        // All devices are capped at the single MVP tier (Ram2To4Gb).
-        assert_eq!(recommend_tier(&test_device(1)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(3)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(4)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(8)), MVP_MAX_TIER);
-        assert_eq!(recommend_tier(&test_device(32)), MVP_MAX_TIER);
+    fn recommend_tier_scales_with_ram() {
+        assert_eq!(recommend_tier(&test_device(1)), ModelTier::Ram1Gb);
+        assert_eq!(recommend_tier(&test_device(3)), ModelTier::Ram2To4Gb);
+        assert_eq!(recommend_tier(&test_device(4)), ModelTier::Ram4To8Gb);
+        assert_eq!(recommend_tier(&test_device(8)), ModelTier::Ram8To16Gb);
+        assert_eq!(recommend_tier(&test_device(32)), ModelTier::Ram16PlusGb);
     }
 
     #[test]
@@ -379,6 +382,25 @@ mod tests {
         let config = LocalAiConfig::default();
         assert_eq!(current_tier_from_config(&config), ModelTier::Ram8To16Gb);
         assert_eq!(vision_mode_for_config(&config), VisionMode::Bundled);
+    }
+
+    #[test]
+    fn device_supports_local_ai_honors_min_ram_floor() {
+        assert!(!device_supports_local_ai(&test_device(1)));
+        assert!(!device_supports_local_ai(&test_device(4)));
+        assert!(!device_supports_local_ai(&test_device(7)));
+        assert!(device_supports_local_ai(&test_device(8)));
+        assert!(device_supports_local_ai(&test_device(16)));
+        assert!(device_supports_local_ai(&test_device(64)));
+    }
+
+    #[test]
+    fn should_default_to_cloud_fallback_below_floor() {
+        assert!(should_default_to_cloud_fallback(&test_device(1)));
+        assert!(should_default_to_cloud_fallback(&test_device(4)));
+        assert!(should_default_to_cloud_fallback(&test_device(7)));
+        assert!(!should_default_to_cloud_fallback(&test_device(8)));
+        assert!(!should_default_to_cloud_fallback(&test_device(16)));
     }
 
     #[test]

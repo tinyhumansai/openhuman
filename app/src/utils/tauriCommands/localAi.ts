@@ -184,15 +184,20 @@ export interface PresetsResponse {
   current_tier: string;
   selected_tier?: string | null;
   device: DeviceProfileResult;
+  /** When true the device is below the RAM floor and cloud fallback is the recommended default. */
+  recommend_disabled?: boolean;
+  /** Current value of `config.local_ai.enabled`. When false, cloud fallback is in use. */
+  local_ai_enabled?: boolean;
 }
 
 export interface ApplyPresetResult {
   applied_tier: string;
-  chat_model_id: string;
-  vision_model_id: string;
-  embedding_model_id: string;
-  quantization: string;
+  chat_model_id?: string;
+  vision_model_id?: string;
+  embedding_model_id?: string;
+  quantization?: string;
   vision_mode?: string;
+  local_ai_enabled?: boolean;
 }
 
 export interface LocalAiDiagnostics {

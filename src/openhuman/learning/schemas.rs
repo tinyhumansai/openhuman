@@ -62,6 +62,43 @@ pub fn learning_schemas(function: &str) -> ControllerSchema {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_schemas_returns_one() {
+        assert_eq!(all_learning_controller_schemas().len(), 1);
+    }
+
+    #[test]
+    fn all_controllers_returns_one() {
+        assert_eq!(all_learning_registered_controllers().len(), 1);
+    }
+
+    #[test]
+    fn linkedin_enrichment_schema() {
+        let s = learning_schemas("learning_linkedin_enrichment");
+        assert_eq!(s.namespace, "learning");
+        assert_eq!(s.function, "linkedin_enrichment");
+        assert!(s.inputs.is_empty());
+        assert!(!s.outputs.is_empty());
+    }
+
+    #[test]
+    fn unknown_function_returns_unknown() {
+        let s = learning_schemas("nonexistent");
+        assert_eq!(s.function, "unknown");
+    }
+
+    #[test]
+    fn schemas_and_controllers_match() {
+        let s = all_learning_controller_schemas();
+        let c = all_learning_registered_controllers();
+        assert_eq!(s[0].function, c[0].schema.function);
+    }
+}
+
 fn handle_linkedin_enrichment(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;

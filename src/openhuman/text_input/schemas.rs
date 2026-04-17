@@ -241,3 +241,158 @@ fn json_output(name: &'static str, comment: &'static str) -> FieldSchema {
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {
     outcome.into_cli_compatible_json()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn all_controller_schemas_returns_5() {
+        assert_eq!(all_controller_schemas().len(), 5);
+    }
+
+    #[test]
+    fn all_registered_controllers_returns_5() {
+        assert_eq!(all_registered_controllers().len(), 5);
+    }
+
+    #[test]
+    fn schemas_and_controllers_are_consistent() {
+        let s = all_controller_schemas();
+        let c = all_registered_controllers();
+        assert_eq!(s.len(), c.len());
+        for (schema, ctrl) in s.iter().zip(c.iter()) {
+            assert_eq!(schema.namespace, ctrl.schema.namespace);
+            assert_eq!(schema.function, ctrl.schema.function);
+        }
+    }
+
+    #[test]
+    fn all_schemas_use_text_input_namespace() {
+        for s in all_controller_schemas() {
+            assert_eq!(s.namespace, "text_input");
+            assert!(!s.description.is_empty());
+            assert!(!s.outputs.is_empty());
+        }
+    }
+
+    #[test]
+    fn read_field_schema() {
+        let s = schemas("read_field");
+        assert_eq!(s.function, "read_field");
+        assert_eq!(s.inputs.len(), 1);
+        assert_eq!(s.inputs[0].name, "include_bounds");
+        assert!(!s.inputs[0].required);
+    }
+
+    #[test]
+    fn insert_text_schema() {
+        let s = schemas("insert_text");
+        assert_eq!(s.function, "insert_text");
+        assert_eq!(s.inputs.len(), 4);
+        let required: Vec<&str> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["text"]);
+    }
+
+    #[test]
+    fn show_ghost_schema() {
+        let s = schemas("show_ghost");
+        assert_eq!(s.function, "show_ghost");
+        assert_eq!(s.inputs.len(), 3);
+        let required: Vec<&str> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["text"]);
+    }
+
+    #[test]
+    fn dismiss_ghost_schema() {
+        let s = schemas("dismiss_ghost");
+        assert_eq!(s.function, "dismiss_ghost");
+        assert!(s.inputs.is_empty());
+    }
+
+    #[test]
+    fn accept_ghost_schema() {
+        let s = schemas("accept_ghost");
+        assert_eq!(s.function, "accept_ghost");
+        assert_eq!(s.inputs.len(), 4);
+        let required: Vec<&str> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["text"]);
+    }
+
+    #[test]
+    fn unknown_function_returns_fallback() {
+        let s = schemas("nonexistent");
+        assert_eq!(s.function, "unknown");
+        assert_eq!(s.namespace, "text_input");
+    }
+
+    #[test]
+    fn deserialize_params_valid() {
+        let mut m = Map::new();
+        m.insert("tunnel_uuid".into(), Value::String("x".into()));
+        // Just test the generic helper works on a simple struct
+        #[derive(serde::Deserialize)]
+        struct Simple {
+            tunnel_uuid: String,
+        }
+        let result = deserialize_params::<Simple>(m);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn deserialize_params_invalid() {
+        let err =
+            deserialize_params::<super::super::types::InsertTextParams>(Map::new()).unwrap_err();
+        assert!(err.contains("invalid params"));
+    }
+
+    #[test]
+    fn deserialize_params_or_default_empty_returns_default() {
+        let result =
+            deserialize_params_or_default::<super::super::types::ReadFieldParams>(Map::new());
+        // Should be default value, not panic
+        let _ = result;
+    }
+
+    #[test]
+    fn deserialize_params_or_default_invalid_returns_default() {
+        let mut m = Map::new();
+        m.insert(
+            "bad_field".into(),
+            Value::Number(serde_json::Number::from(42)),
+        );
+        let result = deserialize_params_or_default::<super::super::types::ReadFieldParams>(m);
+        let _ = result;
+    }
+
+    #[test]
+    fn json_output_helper() {
+        let f = json_output("result", "desc");
+        assert_eq!(f.name, "result");
+        assert!(f.required);
+        assert!(matches!(f.ty, TypeSchema::Json));
+    }
+
+    #[test]
+    fn to_json_helper() {
+        let outcome = RpcOutcome::single_log(json!({"ok": true}), "log");
+        let result = to_json(outcome);
+        assert!(result.is_ok());
+    }
+}

@@ -70,9 +70,15 @@ export const ensureRecommendedLocalAiPresetIfNeeded = async (
     return { presets, recommendedTier, selectedTier, hadSelectedTier: true, appliedTier: null };
   }
 
+  // No selected tier yet: persist the recommended tier so the Rust-side
+  // `config_with_recommended_tier_if_unselected()` honors the user's
+  // opt-in instead of defaulting a low-RAM device back to disabled.
+  // The mount-time probe in LocalAIStep uses `openhumanLocalAiPresets()`
+  // directly, so this apply only runs when the user has explicitly
+  // chosen to proceed with local AI (consent flow).
   console.debug(
     `${logPrefix} applying recommended local AI preset`,
-    JSON.stringify({ recommendedTier })
+    JSON.stringify({ recommendedTier, recommendDisabled: presets.recommend_disabled ?? false })
   );
   await retryLocalAiCommand(
     'apply recommended local AI preset',

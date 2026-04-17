@@ -854,4 +854,143 @@ mod tests {
         // Also verify the function itself succeeds.
         assert!(deliver_if_configured(&config, &job, "hello").await.is_ok());
     }
+
+    #[test]
+    fn is_one_shot_auto_delete_true_for_at_schedule_with_flag() {
+        let mut job = test_job("echo hi");
+        job.delete_after_run = true;
+        job.schedule = Schedule::At { at: Utc::now() };
+        assert!(is_one_shot_auto_delete(&job));
+    }
+
+    #[test]
+    fn is_one_shot_auto_delete_false_for_cron_schedule() {
+        let mut job = test_job("echo hi");
+        job.delete_after_run = true;
+        job.schedule = Schedule::Cron {
+            expr: "0 * * * *".into(),
+            tz: None,
+        };
+        assert!(!is_one_shot_auto_delete(&job));
+    }
+
+    #[test]
+    fn is_one_shot_auto_delete_false_when_flag_not_set() {
+        let mut job = test_job("echo hi");
+        job.delete_after_run = false;
+        job.schedule = Schedule::At { at: Utc::now() };
+        assert!(!is_one_shot_auto_delete(&job));
+    }
+
+    #[test]
+    fn is_env_assignment_true() {
+        assert!(is_env_assignment("FOO=bar"));
+        assert!(is_env_assignment("_VAR=1"));
+    }
+
+    #[test]
+    fn is_env_assignment_false() {
+        assert!(!is_env_assignment("echo"));
+        assert!(!is_env_assignment("=bad"));
+        assert!(!is_env_assignment("123=nope"));
+        assert!(!is_env_assignment(""));
+    }
+
+    #[test]
+    fn strip_wrapping_quotes_removes_quotes() {
+        assert_eq!(strip_wrapping_quotes("\"hello\""), "hello");
+        assert_eq!(strip_wrapping_quotes("'world'"), "world");
+        assert_eq!(strip_wrapping_quotes("noquotes"), "noquotes");
+        assert_eq!(strip_wrapping_quotes(""), "");
+    }
+
+    #[test]
+    fn forbidden_path_argument_allows_safe_commands() {
+        let policy = SecurityPolicy::default();
+        assert!(forbidden_path_argument(&policy, "echo hello").is_none());
+        assert!(forbidden_path_argument(&policy, "date").is_none());
+    }
+
+    #[test]
+    fn forbidden_path_argument_skips_flags_and_urls() {
+        let policy = SecurityPolicy::default();
+        assert!(forbidden_path_argument(&policy, "curl https://example.com").is_none());
+        assert!(forbidden_path_argument(&policy, "ls -la").is_none());
+    }
+
+    #[test]
+    fn warn_if_high_frequency_agent_job_does_not_panic_on_non_agent() {
+        let mut job = test_job("echo hi");
+        job.job_type = JobType::Shell;
+        warn_if_high_frequency_agent_job(&job); // should not panic
+    }
+
+    #[test]
+    fn warn_if_high_frequency_agent_job_does_not_panic_on_at_schedule() {
+        let mut job = test_job("echo hi");
+        job.job_type = JobType::Agent;
+        job.schedule = Schedule::At { at: Utc::now() };
+        warn_if_high_frequency_agent_job(&job); // should not panic
+    }
+
+    #[test]
+    fn warn_if_high_frequency_agent_job_handles_every_ms() {
+        let mut job = test_job("echo hi");
+        job.job_type = JobType::Agent;
+        job.schedule = Schedule::Every { every_ms: 60_000 }; // 1 minute — too frequent
+        warn_if_high_frequency_agent_job(&job); // should warn but not panic
+    }
+
+    #[tokio::test]
+    async fn deliver_if_configured_skips_empty_mode() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp).await;
+        let mut job = test_job("echo ok");
+        job.delivery.mode = "".into();
+        assert!(deliver_if_configured(&config, &job, "output").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn deliver_if_configured_announce_missing_channel_errors() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp).await;
+        let mut job = test_job("echo ok");
+        job.delivery = DeliveryConfig {
+            mode: "announce".into(),
+            channel: None,
+            to: Some("target".into()),
+            best_effort: true,
+        };
+        let result = deliver_if_configured(&config, &job, "out").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn deliver_if_configured_announce_missing_target_errors() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp).await;
+        let mut job = test_job("echo ok");
+        job.delivery = DeliveryConfig {
+            mode: "announce".into(),
+            channel: Some("telegram".into()),
+            to: None,
+            best_effort: true,
+        };
+        let result = deliver_if_configured(&config, &job, "out").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn deliver_if_configured_proactive_mode_succeeds() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp).await;
+        let mut job = test_job("echo ok");
+        job.delivery = DeliveryConfig {
+            mode: "proactive".into(),
+            channel: None,
+            to: None,
+            best_effort: true,
+        };
+        assert!(deliver_if_configured(&config, &job, "hello").await.is_ok());
+    }
 }
