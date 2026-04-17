@@ -1690,7 +1690,15 @@ fn first_line_truncated(s: &str, max_chars: usize) -> String {
 /// 2. `category_filter` — restrict to `System` or `Skill` category.
 /// 3. `skill_filter` — restrict to tools named `{skill}__*`.
 /// 4. `scope` — `Wildcard` (everything remaining) or `Named` allowlist.
-fn filter_tool_indices(
+/// Filter a parent's tool registry down to the indices a sub-agent is
+/// allowed to call, given its [`ToolScope`] + disallowed list +
+/// skill/category filters.
+///
+/// Exposed `pub(crate)` so the debug dump path in
+/// [`crate::openhuman::context::debug_dump`] shares the exact same
+/// filter logic as the live runner — previously debug_dump carried a
+/// "standalone copy" which drifted over time.
+pub(crate) fn filter_tool_indices(
     parent_tools: &[Box<dyn Tool>],
     scope: &ToolScope,
     disallowed: &[String],
@@ -1732,9 +1740,14 @@ fn filter_tool_indices(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Resolve a [`PromptSource`] to its raw markdown body. Inline sources
-/// return immediately; file sources are read from disk relative to the
+/// return immediately, `Dynamic` calls the builder with the supplied
+/// [`PromptContext`], `File` sources are read from disk relative to the
 /// workspace `prompts/` directory or the agent crate's bundled prompts.
-fn load_prompt_source(
+///
+/// Exposed `pub(crate)` so the debug dump path in
+/// [`crate::openhuman::context::debug_dump`] loads prompts through the
+/// exact same code the runner uses — no parallel body-loading logic.
+pub(crate) fn load_prompt_source(
     source: &PromptSource,
     ctx: &PromptContext<'_>,
 ) -> Result<String, SubagentRunError> {

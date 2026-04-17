@@ -44,7 +44,7 @@ use anyhow::{anyhow, Context, Result};
 
 use crate::openhuman::agent::dispatcher::{PFormatToolDispatcher, ToolDispatcher};
 use crate::openhuman::agent::harness::definition::{
-    AgentDefinition, AgentDefinitionRegistry, PromptSource, ToolScope,
+    AgentDefinition, AgentDefinitionRegistry, ToolScope,
 };
 use crate::openhuman::agent::host_runtime::{self, RuntimeAdapter};
 use crate::openhuman::agent::pformat;
@@ -292,6 +292,114 @@ pub async fn dump_agent_prompt(options: DumpPromptOptions) -> Result<DumpedPromp
     )
 }
 
+/// Dump every registered agent's system prompt in one shot.
+///
+/// Builds the shared environment (config, tool registry, connected
+/// integrations, agent-definition registry) exactly once, then loops
+/// over [`AgentDefinitionRegistry::list`] calling the same
+/// [`render_subagent_dump`] helper that powers single-agent dumps. No
+/// case-by-case branching per agent: every definition — orchestrator
+/// included — flows through one code path that ultimately calls
+/// [`crate::openhuman::context::prompt::render_subagent_system_prompt`].
+///
+/// Order is the registry's own stable display order. The synthetic
+/// `fork` archetype (byte-stable replay of the parent) is skipped — it
+/// has no standalone prompt. Custom TOML-defined agents appear after
+/// built-ins.
+pub async fn dump_all_agent_prompts(
+    workspace_dir_override: Option<PathBuf>,
+    model_override: Option<String>,
+    stub_composio: bool,
+) -> Result<Vec<DumpedPrompt>> {
+    let mut config = Config::load_or_init()
+        .await
+        .context("loading Config for bulk prompt dump")?;
+    config.apply_env_overrides();
+    if let Some(ref override_dir) = workspace_dir_override {
+        config.workspace_dir = override_dir.clone();
+    }
+    let workspace_dir = config.workspace_dir.clone();
+    std::fs::create_dir_all(&workspace_dir).ok();
+
+    let model_name = model_override.unwrap_or_else(|| {
+        config
+            .default_model
+            .clone()
+            .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string())
+    });
+
+    let security = Arc::new(SecurityPolicy::from_config(
+        &config.autonomy,
+        &workspace_dir,
+    ));
+    let runtime: Arc<dyn RuntimeAdapter> = Arc::from(
+        host_runtime::create_runtime(&config.runtime)
+            .context("creating host runtime for bulk prompt dump")?,
+    );
+    let mem: Arc<dyn Memory> = Arc::from(
+        memory::create_memory(&config.memory, &workspace_dir, config.api_key.as_deref())
+            .context("creating memory backend for bulk prompt dump")?,
+    );
+
+    let composio_key = if config.composio.enabled {
+        config.composio.api_key.as_deref()
+    } else {
+        None
+    };
+    let composio_entity_id = if config.composio.enabled {
+        Some(config.composio.entity_id.as_str())
+    } else {
+        None
+    };
+
+    let mut tools_vec: Vec<Box<dyn Tool>> = tools::all_tools_with_runtime(
+        Arc::new(config.clone()),
+        &security,
+        runtime,
+        mem,
+        composio_key,
+        composio_entity_id,
+        &config.browser,
+        &config.http_request,
+        &workspace_dir,
+        &config.agents,
+        config.api_key.as_deref(),
+        &config,
+    );
+    if stub_composio && !tools_vec.iter().any(|t| t.name().starts_with("composio_")) {
+        tools_vec.extend(build_composio_stub_tools());
+    }
+
+    let connected_integrations = fetch_connected_integrations_for_dump(&config).await;
+    let registry = AgentDefinitionRegistry::load(&workspace_dir)
+        .context("loading agent definition registry for bulk prompt dump")?;
+
+    let mut results = Vec::with_capacity(registry.len());
+    for def in registry.list() {
+        // The synthetic `fork` archetype has no standalone prompt — it
+        // replays the parent's system prompt byte-for-byte — so skip it.
+        if def.id == "fork" {
+            continue;
+        }
+        let dumped = render_subagent_dump(
+            def,
+            &workspace_dir,
+            &model_name,
+            &tools_vec,
+            None,
+            &connected_integrations,
+        )
+        .with_context(|| format!("rendering prompt for agent `{}`", def.id))?;
+        results.push(dumped);
+    }
+
+    tracing::debug!(
+        agent_count = results.len(),
+        "[debug_dump] bulk render complete"
+    );
+    Ok(results)
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
@@ -509,81 +617,46 @@ fn render_subagent_dump(
     skill_filter_override: Option<&str>,
     connected_integrations: &[ConnectedIntegration],
 ) -> Result<DumpedPrompt> {
-    // Resolve the archetype prompt body. Inline sources short-circuit
-    // immediately; file sources walk the workspace override directory
-    // first, mirroring `subagent_runner::load_prompt_source`.
-    let archetype_body = match &definition.system_prompt {
-        PromptSource::Inline(body) => body.clone(),
-        PromptSource::Dynamic(build) => {
-            use crate::openhuman::agent::harness::definition::{PromptContext, ToolSummary};
-            let tool_summaries: Vec<ToolSummary> = tools_vec
-                .iter()
-                .map(|t| ToolSummary {
-                    name: t.name(),
-                    description: t.description(),
-                })
-                .collect();
-            let ctx = PromptContext {
-                agent_id: &definition.id,
-                workspace_dir,
-                parent_model: model_name,
-                available_tools: &tool_summaries,
-                memory_context: None,
-                connected_integrations,
-            };
-            build(&ctx).with_context(|| format!("building dynamic prompt for {}", definition.id))?
-        }
-        PromptSource::File { path } => {
-            let workspace_path = workspace_dir.join("agent").join("prompts").join(path);
-            if workspace_path.is_file() {
-                std::fs::read_to_string(&workspace_path).with_context(|| {
-                    format!("reading archetype prompt at {}", workspace_path.display())
-                })?
-            } else {
-                let workspace_root_path = workspace_dir.join(path);
-                if workspace_root_path.is_file() {
-                    std::fs::read_to_string(&workspace_root_path).with_context(|| {
-                        format!(
-                            "reading archetype prompt at {}",
-                            workspace_root_path.display()
-                        )
-                    })?
-                } else {
-                    // Fall back to the repository-bundled location so the dump
-                    // works on throwaway workspaces (e.g. the script's mktemp
-                    // directory) that haven't had identity files synced yet.
-                    let bundled_path = Path::new("src/openhuman/agent/prompts").join(path);
-                    if bundled_path.is_file() {
-                        std::fs::read_to_string(&bundled_path).with_context(|| {
-                            format!(
-                                "reading bundled archetype prompt at {}",
-                                bundled_path.display()
-                            )
-                        })?
-                    } else {
-                        tracing::warn!(
-                            path = %path,
-                            "[debug_dump] archetype prompt file not found, using empty body"
-                        );
-                        String::new()
-                    }
-                }
-            }
-        }
-    };
+    use crate::openhuman::agent::harness::definition::{PromptContext, ToolSummary};
+    use crate::openhuman::agent::harness::subagent_runner::{filter_tool_indices, load_prompt_source};
 
+    // Mirror `subagent_runner::run_typed_mode` step-for-step so the dump
+    // is byte-identical to what the live runner produces for this agent.
+    // No case-by-case branching per agent id — every registered
+    // definition flows through the exact same pipeline:
+    //
+    //   1. resolve model
+    //   2. filter tools via the shared `filter_tool_indices`
+    //   3. build the archetype body via the shared `load_prompt_source`
+    //      (Inline / Dynamic / File all handled there — no parallel copy)
+    //   4. render via `render_subagent_system_prompt`
     let model = definition.model.resolve(model_name);
     let effective_skill_filter = skill_filter_override.or(definition.skill_filter.as_deref());
-
-    // Apply exactly the same filter the real runner uses so the dump
-    // reflects what the sub-agent actually sees.
-    let allowed_indices = filter_tool_indices_for_dump(
+    let allowed_indices = filter_tool_indices(
         tools_vec,
         &definition.tools,
         &definition.disallowed_tools,
         effective_skill_filter,
         definition.category_filter,
     );
+
+    let tool_summaries: Vec<ToolSummary> = allowed_indices
+        .iter()
+        .map(|&i| ToolSummary {
+            name: tools_vec[i].name(),
+            description: tools_vec[i].description(),
+        })
+        .collect();
+    let prompt_ctx = PromptContext {
+        agent_id: &definition.id,
+        workspace_dir,
+        parent_model: &model,
+        available_tools: &tool_summaries,
+        memory_context: None,
+        connected_integrations,
+    };
+    let archetype_body = load_prompt_source(&definition.system_prompt, &prompt_ctx)
+        .with_context(|| format!("loading prompt for {}", definition.id))?;
 
     let options = SubagentRenderOptions::from_definition_flags(
         definition.omit_identity,
@@ -641,47 +714,11 @@ fn render_subagent_dump(
     })
 }
 
-/// Standalone copy of the filter logic in
-/// [`crate::openhuman::agent::harness::subagent_runner`] so this debug
-/// module does not depend on crate-private items. Kept in lockstep with
-/// the real `filter_tool_indices` — if you change the order or semantics
-/// there, update this function too (and the unit tests below).
-fn filter_tool_indices_for_dump(
-    parent_tools: &[Box<dyn Tool>],
-    scope: &ToolScope,
-    disallowed: &[String],
-    skill_filter: Option<&str>,
-    category_filter: Option<ToolCategory>,
-) -> Vec<usize> {
-    let disallow_set: HashSet<&str> = disallowed.iter().map(|s| s.as_str()).collect();
-    let skill_prefix = skill_filter.map(|s| format!("{s}__"));
-
-    parent_tools
-        .iter()
-        .enumerate()
-        .filter(|(_, tool)| {
-            let name = tool.name();
-            if disallow_set.contains(name) {
-                return false;
-            }
-            if let Some(required) = category_filter {
-                if tool.category() != required {
-                    return false;
-                }
-            }
-            if let Some(prefix) = skill_prefix.as_deref() {
-                if !name.starts_with(prefix) {
-                    return false;
-                }
-            }
-            match scope {
-                ToolScope::Wildcard => true,
-                ToolScope::Named(allowed) => allowed.iter().any(|n| n == name),
-            }
-        })
-        .map(|(i, _)| i)
-        .collect()
-}
+// Filtering now lives in
+// `crate::openhuman::agent::harness::subagent_runner::filter_tool_indices`
+// and is `pub(crate)` so this module calls it directly — the previous
+// "standalone copy" was removed to kill case-by-case dump logic that
+// could drift from the live runner.
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -774,7 +811,7 @@ mod tests {
             }),
         ];
 
-        let indices = filter_tool_indices_for_dump(
+        let indices = crate::openhuman::agent::harness::subagent_runner::filter_tool_indices(
             &tools,
             &ToolScope::Wildcard,
             &[],
@@ -1054,7 +1091,7 @@ mod tests {
             }),
         ];
 
-        let indices = filter_tool_indices_for_dump(
+        let indices = crate::openhuman::agent::harness::subagent_runner::filter_tool_indices(
             &tools,
             &ToolScope::Named(vec!["shell".into(), "gmail__send_email".into()]),
             &["shell".into()],
@@ -1071,6 +1108,11 @@ mod tests {
         let workspace =
             std::env::temp_dir().join(format!("openhuman_debug_file_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
+        // `load_prompt_source` looks in `<workspace>/agent/prompts/`
+        // first, then `<workspace>/<path>` — no repo-bundled fallback.
+        // Create the file the test expects to be read so we match the
+        // live runner's resolution order.
+        std::fs::write(workspace.join("USER.md"), "OpenHuman test fixture body").unwrap();
 
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(StubTool {
             name: "shell",
