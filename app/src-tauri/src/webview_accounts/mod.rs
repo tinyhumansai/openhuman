@@ -521,6 +521,22 @@ pub async fn webview_account_open<R: Runtime>(
                     log::warn!("[webview-accounts] slack ScannerRegistry not in app state");
                 }
             }
+        } else if args.provider == "telegram" {
+            if let Some(prefix) = provider_url(&args.provider) {
+                let registry = app
+                    .try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+                    .map(|s| s.inner().clone());
+                if let Some(registry) = registry {
+                    let app_clone = app.clone();
+                    let acct = args.account_id.clone();
+                    let prefix = prefix.to_string();
+                    tokio::spawn(async move {
+                        registry.ensure_scanner(app_clone, acct, prefix).await;
+                    });
+                } else {
+                    log::warn!("[webview-accounts] telegram ScannerRegistry not in app state");
+                }
+            }
         } else if args.provider == "discord" {
             // Discord MITM uses CDP `Network.*` to capture HTTP API calls
             // and gateway WebSocket frames — see `discord_scanner/mod.rs`
@@ -648,6 +664,13 @@ pub async fn webview_account_close<R: Runtime>(
             let acct = args.account_id.clone();
             tokio::spawn(async move { registry.forget(&acct).await });
         }
+        if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
         if let Some(browser_id) = state.browser_ids.lock().unwrap().remove(&args.account_id) {
             tauri_runtime_cef::notification::unregister(browser_id);
             log::debug!(
@@ -700,6 +723,13 @@ pub async fn webview_account_purge<R: Runtime>(
         }
         if let Some(registry) =
             app.try_state::<std::sync::Arc<crate::discord_scanner::ScannerRegistry>>()
+        {
+            let registry = registry.inner().clone();
+            let acct = args.account_id.clone();
+            tokio::spawn(async move { registry.forget(&acct).await });
+        }
+        if let Some(registry) =
+            app.try_state::<std::sync::Arc<crate::telegram_scanner::ScannerRegistry>>()
         {
             let registry = registry.inner().clone();
             let acct = args.account_id.clone();
