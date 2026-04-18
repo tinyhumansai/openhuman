@@ -45,8 +45,10 @@ pub mod classify;
 pub mod reduce;
 pub mod rules;
 pub mod text;
+pub mod tool_integration;
 pub mod types;
 
 pub use reduce::reduce_execution_with_rules;
 pub use rules::{load_builtin_rules, load_rules, LoadRuleOptions};
+pub use tool_integration::{compact_tool_output, CompactionStats};
 pub use types::{CompactResult, ReduceOptions, ToolExecutionInput};

@@ -556,6 +556,23 @@ pub(crate) async fn run_tool_call_loop(
                                 "[agent_loop] tool succeeded"
                             );
                             let mut scrubbed = scrub_credentials(&output);
+                            let (compacted, tj_stats) =
+                                crate::openhuman::tokenjuice::compact_tool_output(
+                                    &call.name,
+                                    Some(&call.arguments),
+                                    &scrubbed,
+                                    Some(0),
+                                );
+                            if tj_stats.applied {
+                                log::debug!(
+                                    "[agent_loop] tokenjuice applied tool={} rule={} {}->{} bytes",
+                                    call.name,
+                                    tj_stats.rule_id,
+                                    tj_stats.original_bytes,
+                                    tj_stats.compacted_bytes
+                                );
+                                scrubbed = compacted;
+                            }
                             if let Some(summarizer) = payload_summarizer {
                                 log::debug!(
                                     "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
@@ -598,7 +615,14 @@ pub(crate) async fn run_tool_call_loop(
                                 tool = call.name.as_str(),
                                 "[agent_loop] tool returned error: {output}"
                             );
-                            (format!("Error: {output}"), false)
+                            let scrubbed = scrub_credentials(&output);
+                            let (compacted, _) = crate::openhuman::tokenjuice::compact_tool_output(
+                                &call.name,
+                                Some(&call.arguments),
+                                &scrubbed,
+                                Some(1),
+                            );
+                            (format!("Error: {compacted}"), false)
                         }
                     }
                     Ok(Err(e)) => {
