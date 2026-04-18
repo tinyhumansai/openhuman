@@ -35,12 +35,7 @@ impl SystemPromptBuilder {
                 // the tree summarizer has nothing on disk yet.
                 Box::new(UserMemorySection),
                 Box::new(ToolsSection),
-                // Connected integrations sit after tools so the orchestrator
-                // sees which external services are available via the Skills
-                // Agent. Empty when the user has no active Composio connections.
-                Box::new(ConnectedIntegrationsSection),
                 Box::new(SafetySection),
-                Box::new(SkillsSection),
                 Box::new(WorkspaceSection),
                 Box::new(DateTimeSection),
                 Box::new(RuntimeSection),
@@ -74,7 +69,7 @@ impl SystemPromptBuilder {
         archetype_prompt_text: String,
         omit_identity: bool,
         omit_safety_preamble: bool,
-        omit_skills_catalog: bool,
+        _omit_skills_catalog: bool,
     ) -> Self {
         let mut sections: Vec<Box<dyn PromptSection>> =
             vec![Box::new(ArchetypePromptSection::new(archetype_prompt_text))];
@@ -86,10 +81,7 @@ impl SystemPromptBuilder {
         // `omit_identity` so agents that drop the identity preamble (e.g.
         // welcome's `omit_identity = true`) still surface the user's
         // onboarding + archivist context when `omit_profile` /
-        // `omit_memory_md` are opted in. The section builds to an empty
-        // string when both flags are off, so the existing empty-section
-        // skip in `build_with_cache_metadata` keeps the prompt layout
-        // byte-identical for narrow specialists.
+        // `omit_memory_md` are opted in.
         sections.push(Box::new(UserFilesSection));
         // Tools section is always included — the sub-agent needs to see
         // its own (filtered) tool catalogue.
@@ -97,9 +89,12 @@ impl SystemPromptBuilder {
         if !omit_safety_preamble {
             sections.push(Box::new(SafetySection));
         }
-        if !omit_skills_catalog {
-            sections.push(Box::new(SkillsSection));
-        }
+        // Skills catalogue and connected integrations are rendered by
+        // the individual agent's `prompt.rs` when that agent needs
+        // them (skills_agent for the skill-executor voice,
+        // orchestrator/welcome for the delegator voice). The shared
+        // builder intentionally does not emit them — keeping
+        // agent-specific prose scoped to the agent that owns it.
         sections.push(Box::new(WorkspaceSection));
 
         Self { sections }
@@ -173,8 +168,13 @@ impl PromptSection for ArchetypePromptSection {
 pub struct IdentitySection;
 pub struct ToolsSection;
 pub struct SafetySection;
-pub struct SkillsSection;
-pub struct ConnectedIntegrationsSection;
+// `SkillsSection` and `ConnectedIntegrationsSection` previously lived
+// here and branched on `ctx.agent_id` to pick between the skill-
+// executor and delegator voice. They've been removed — each agent's
+// `prompt.rs` now renders its own block inline (skills_agent owns the
+// `## Available Skills` + executor-voice `## Connected Integrations`
+// blocks, orchestrator owns `## Delegation Guide — Integrations`,
+// welcome owns its onboarding-flavoured connected list).
 pub struct WorkspaceSection;
 pub struct RuntimeSection;
 pub struct DateTimeSection;
@@ -377,125 +377,6 @@ impl PromptSection for SafetySection {
     }
 }
 
-impl PromptSection for SkillsSection {
-    fn name(&self) -> &str {
-        "skills"
-    }
-
-    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
-        // When a visible-tool filter is active the main agent delegates
-        // all skill work to sub-agents — skip the skills catalog.
-        if ctx.skills.is_empty() || !ctx.visible_tool_names.is_empty() {
-            return Ok(String::new());
-        }
-
-        let mut prompt = String::from("## Available Skills\n\n<available_skills>\n");
-        for skill in ctx.skills {
-            let location = skill.location.clone().unwrap_or_else(|| {
-                ctx.workspace_dir
-                    .join("skills")
-                    .join(&skill.name)
-                    .join("SKILL.md")
-            });
-            let _ = writeln!(
-                prompt,
-                "  <skill>\n    <name>{}</name>\n    <description>{}</description>\n    <location>{}</location>\n  </skill>",
-                skill.name,
-                skill.description,
-                location.display()
-            );
-        }
-        prompt.push_str("</available_skills>");
-        Ok(prompt)
-    }
-}
-
-impl PromptSection for ConnectedIntegrationsSection {
-    fn name(&self) -> &str {
-        "connected_integrations"
-    }
-
-    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
-        if ctx.connected_integrations.is_empty() {
-            return Ok(String::new());
-        }
-
-        // Skill-executing agents (`skills_agent` and its specialisations)
-        // need the full per-action catalog so they can emit Composio calls
-        // directly. Every other agent (main/orchestrator/welcome/planner/…)
-        // is a delegator — it only needs a Delegation Guide: a toolkit
-        // list + the exact `spawn_subagent` invocation to use. Dumping
-        // the full tool catalog into a delegator's system prompt wastes
-        // thousands of tokens and teaches the model to call actions
-        // that aren't actually in its tool list.
-        let is_skill_executor = ctx.agent_id == "skills_agent";
-
-        if is_skill_executor {
-            // skills_agent only ever sees CONNECTED integrations —
-            // unconnected ones are filtered out by the sub-agent
-            // runner before we get here, but we double-filter for
-            // safety in case some other caller invokes the section
-            // directly.
-            let mut out = String::from(
-                "## Connected Integrations\n\n\
-                 You have direct access to the following external services. \
-                 The corresponding action tools are in your tool list with \
-                 their typed parameter schemas — call them by name.\n\n",
-            );
-            for integration in ctx.connected_integrations.iter().filter(|ci| ci.connected) {
-                let _ = writeln!(
-                    out,
-                    "- **{}** — {}",
-                    integration.toolkit, integration.description,
-                );
-            }
-            out.push('\n');
-            return Ok(out);
-        }
-
-        // Delegating agent path — render a single unified Delegation
-        // Guide. Every integration in the backend allowlist is listed
-        // with the same spawn snippet, regardless of whether the user
-        // has authorized it yet. Auth state is the `spawn_subagent`
-        // pre-flight's responsibility:
-        //
-        //   - Connected toolkit → spawn proceeds normally.
-        //   - In allowlist but not connected → pre-flight returns a
-        //     structured error telling the orchestrator to ask the
-        //     user to authorize it in Settings → Integrations and NOT
-        //     to retry.
-        //   - Not in allowlist → pre-flight returns a different error
-        //     listing the valid toolkits.
-        //
-        // Keeping the prompt small and uniform — one bullet per
-        // integration, no auth-state branching in prose — and
-        // trusting the runtime check as the single source of truth
-        // for which toolkits are actually callable.
-        let mut out = String::from(
-            "## Delegation Guide — Integrations\n\n\
-             For any task that touches one of these external services, \
-             delegate to `skills_agent` with the matching `toolkit` \
-             argument. The sub-agent receives the full action catalogue \
-             for that integration as native tool schemas — do not \
-             attempt to call integration actions directly from this \
-             agent.\n\n\
-             If a spawn returns an authorization error, surface it to \
-             the user and ask them to authorize the integration in \
-             **Settings → Integrations** before retrying.\n\n",
-        );
-        for integration in ctx.connected_integrations {
-            let _ = writeln!(
-                out,
-                "- **{}** — {}\n  Delegate with: `spawn_subagent(agent_id=\"skills_agent\", toolkit=\"{}\", prompt=<task>)`",
-                integration.toolkit, integration.description, integration.toolkit,
-            );
-        }
-        out.push('\n');
-
-        Ok(out)
-    }
-}
-
 impl PromptSection for WorkspaceSection {
     fn name(&self) -> &str {
         "workspace"
@@ -616,18 +497,11 @@ pub fn render_safety() -> String {
         .expect("SafetySection::build is infallible")
 }
 
-/// Render the `## Available Skills` catalogue. Empty when no skills
-/// are registered or when the main-agent tool filter is active.
-pub fn render_skills(ctx: &PromptContext<'_>) -> Result<String> {
-    SkillsSection.build(ctx)
-}
-
-/// Render the `## Connected Integrations` block from
-/// [`PromptContext::connected_integrations`]. Empty when the slice is
-/// empty.
-pub fn render_connected_integrations(ctx: &PromptContext<'_>) -> Result<String> {
-    ConnectedIntegrationsSection.build(ctx)
-}
+// `render_skills` and `render_connected_integrations` helpers are
+// gone — `## Available Skills` lives in `skills_agent/prompt.rs`, and
+// the connected-integrations / delegation-guide blocks each live in
+// their owning agent's `prompt.rs` so no branching-on-agent-id logic
+// needs to exist here.
 
 /// Render the `## Workspace` block (working directory + file listing
 /// bounds) — part of the dynamic, per-request suffix.
@@ -918,61 +792,14 @@ pub fn render_subagent_system_prompt_with_format(
         );
     }
 
-    // 3c. Optional skills catalogue. Off by default because sub-agents
-    //     usually skip skills entirely. Kept here so a custom
-    //     definition can opt in without falling back to the general
-    //     builder. The renderer intentionally takes no `skills` slice
-    //     — the caller would have to extend this helper before
-    //     enabling this flag for real, which keeps the common (narrow)
-    //     path free of extra arguments.
-    if options.include_skills_catalog {
-        out.push_str("## Available Skills\n\n");
-        out.push_str(
-            "Skills are loaded on demand. Use `read` on the skill path to get full instructions.\n\n",
-        );
-    }
-
-    // 3d. Connected integrations — short toolkit header only. The
-    //     per-action catalogue is intentionally NOT rendered here:
-    //     when the sub-agent runner spawns `skills_agent` with a
-    //     `toolkit` argument it dynamically registers per-action
-    //     tools whose JSON schemas travel through the provider's
-    //     native tool-calling channel, making a prose enumeration
-    //     redundant (and a token sink). For sub-agents that can
-    //     delegate (`spawn_subagent` in their tool list), the
-    //     wording instead points them at the Skills Agent.
-    if !connected_integrations.is_empty() {
-        let has_spawn = allowed_indices.iter().any(|&i| {
-            parent_tools
-                .get(i)
-                .map_or(false, |t| t.name() == "spawn_subagent")
-        });
-
-        out.push_str("## Connected Integrations\n\n");
-        if has_spawn {
-            out.push_str(
-                "The user has the following external services connected. \
-                 To interact with any of these, delegate to the **Skills Agent** \
-                 (`skills_agent`) via `spawn_subagent`, passing the matching \
-                 `toolkit` argument.\n\n",
-            );
-        } else {
-            out.push_str(
-                "You have direct access to the following external service. \
-                 Action tools are available in your tool list with their \
-                 typed parameter schemas — call them by name.\n\n",
-            );
-        }
-
-        for integration in connected_integrations {
-            let _ = writeln!(
-                out,
-                "- **{}** — {}",
-                integration.toolkit, integration.description,
-            );
-        }
-        out.push('\n');
-    }
+    // 3c/3d. `## Available Skills` and `## Connected Integrations`
+    //        are no longer emitted here. Each agent that needs them
+    //        renders its own block in its `prompt.rs` (skills_agent
+    //        owns the executor voice, orchestrator/welcome own the
+    //        delegator voice). Legacy Inline/File-sourced TOML agents
+    //        that still route through this helper simply don't get
+    //        either block — which matches the fact that none of them
+    //        currently opt in.
 
     // 4. Workspace so the model knows where it is. Intentionally stable:
     //    no datetime, no hostname, no pid — see the KV-cache note above.

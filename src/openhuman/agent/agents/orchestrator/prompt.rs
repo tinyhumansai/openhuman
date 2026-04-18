@@ -1,15 +1,18 @@
 //! System prompt builder for the `orchestrator` built-in agent.
 //!
-//! Returns the fully-assembled system prompt including the live
-//! connected-integrations block — so the agent sees which Composio
-//! toolkits the user has authorised right now and can make accurate
-//! delegation decisions without relying on a separate delegation guide.
+//! The orchestrator is a pure delegator — it never executes Composio
+//! actions itself. Its integration block is a `## Delegation Guide`
+//! that tells the model to `spawn_subagent(skills_agent, toolkit=…)`
+//! for anything touching an external service. That prose lives here
+//! (not in the shared prompts module) so the skill-executor voice
+//! stays in `skills_agent/prompt.rs` and nobody has to branch on
+//! `agent_id` in a shared section impl.
 
 use crate::openhuman::context::prompt::{
-    render_connected_integrations, render_tools, render_user_files, render_workspace,
-    PromptContext,
+    render_tools, render_user_files, render_workspace, ConnectedIntegration, PromptContext,
 };
 use anyhow::Result;
+use std::fmt::Write;
 
 const ARCHETYPE: &str = include_str!("prompt.md");
 
@@ -24,7 +27,7 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-    let integrations = render_connected_integrations(ctx)?;
+    let integrations = render_delegation_guide(ctx.connected_integrations);
     if !integrations.trim().is_empty() {
         out.push_str(integrations.trim_end());
         out.push_str("\n\n");
@@ -36,7 +39,6 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-
     let workspace = render_workspace(ctx)?;
     if !workspace.trim().is_empty() {
         out.push_str(workspace.trim_end());
@@ -46,16 +48,45 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     Ok(out)
 }
 
+/// Render the delegator-voice `## Delegation Guide — Integrations`
+/// block. Lists every integration (connected or not) with the exact
+/// `spawn_subagent` snippet. Auth state is the spawn pre-flight's
+/// responsibility — the prompt stays uniform and small.
+fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
+    if integrations.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "## Delegation Guide — Integrations\n\n\
+         For any task that touches one of these external services, \
+         delegate to `skills_agent` with the matching `toolkit` \
+         argument. The sub-agent receives the full action catalogue \
+         for that integration as native tool schemas — do not attempt \
+         to call integration actions directly from this agent.\n\n\
+         If a spawn returns an authorization error, surface it to the \
+         user and ask them to authorize the integration in \
+         **Settings → Integrations** before retrying.\n\n",
+    );
+    for ci in integrations {
+        let _ = writeln!(
+            out,
+            "- **{}** — {}\n  Delegate with: `spawn_subagent(agent_id=\"skills_agent\", toolkit=\"{}\", prompt=<task>)`",
+            ci.toolkit, ci.description, ci.toolkit,
+        );
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::context::prompt::{LearnedContextData, ToolCallFormat};
     use std::collections::HashSet;
 
-    #[test]
-    fn build_returns_nonempty_body() {
-        let visible: HashSet<String> = HashSet::new();
-        let ctx = PromptContext {
+    fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
+        use std::sync::OnceLock;
+        static EMPTY_VISIBLE: OnceLock<HashSet<String>> = OnceLock::new();
+        PromptContext {
             workspace_dir: std::path::Path::new("."),
             model_name: "test",
             agent_id: "orchestrator",
@@ -63,13 +94,50 @@ mod tests {
             skills: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
-            visible_tool_names: &visible,
+            visible_tool_names: EMPTY_VISIBLE.get_or_init(HashSet::new),
             tool_call_format: ToolCallFormat::PFormat,
-            connected_integrations: &[],
+            connected_integrations: integrations,
             include_profile: false,
             include_memory_md: false,
-        };
-        let body = build(&ctx).unwrap();
+        }
+    }
+
+    #[test]
+    fn build_returns_nonempty_body() {
+        let body = build(&ctx_with(&[])).unwrap();
         assert!(!body.is_empty());
+        assert!(!body.contains("## Delegation Guide"));
+    }
+
+    #[test]
+    fn build_emits_delegation_guide_with_spawn_snippet() {
+        let integrations = vec![ConnectedIntegration {
+            toolkit: "gmail".into(),
+            description: "Email access.".into(),
+            tools: Vec::new(),
+            connected: true,
+        }];
+        let body = build(&ctx_with(&integrations)).unwrap();
+        assert!(body.contains("## Delegation Guide — Integrations"));
+        assert!(body.contains(
+            "spawn_subagent(agent_id=\"skills_agent\", toolkit=\"gmail\", prompt=<task>)"
+        ));
+        // Delegator voice must NOT use the skill-executor wording.
+        assert!(!body.contains("You have direct access"));
+    }
+
+    #[test]
+    fn build_lists_unconnected_integrations_in_delegation_guide() {
+        // Delegation Guide lists everything in the allowlist — auth
+        // state is the spawn pre-flight's job to enforce, not the
+        // prompt's job to filter out.
+        let integrations = vec![ConnectedIntegration {
+            toolkit: "linear".into(),
+            description: "Tracker.".into(),
+            tools: Vec::new(),
+            connected: false,
+        }];
+        let body = build(&ctx_with(&integrations)).unwrap();
+        assert!(body.contains("- **linear**"));
     }
 }

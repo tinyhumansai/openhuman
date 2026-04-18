@@ -1,15 +1,17 @@
 //! System prompt builder for the `welcome` built-in agent.
 //!
-//! Returns the fully-assembled system prompt including the live
-//! connected-integrations block — so the agent sees which Composio
-//! toolkits the user has authorised right now and can make accurate
-//! delegation decisions without relying on a separate delegation guide.
+//! Welcome runs onboarding — it surfaces which integrations the user
+//! has already connected and pitches the ones that are still pending.
+//! Like the orchestrator, it delegates any integration work rather
+//! than executing Composio actions directly, so it renders the same
+//! delegator-voice block (inlined here rather than shared, so the
+//! skill-executor wording stays scoped to `skills_agent/prompt.rs`).
 
 use crate::openhuman::context::prompt::{
-    render_connected_integrations, render_tools, render_user_files, render_workspace,
-    PromptContext,
+    render_tools, render_user_files, render_workspace, ConnectedIntegration, PromptContext,
 };
 use anyhow::Result;
+use std::fmt::Write;
 
 const ARCHETYPE: &str = include_str!("prompt.md");
 
@@ -24,7 +26,7 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-    let integrations = render_connected_integrations(ctx)?;
+    let integrations = render_connected_integrations(ctx.connected_integrations);
     if !integrations.trim().is_empty() {
         out.push_str(integrations.trim_end());
         out.push_str("\n\n");
@@ -36,7 +38,6 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
-
     let workspace = render_workspace(ctx)?;
     if !workspace.trim().is_empty() {
         out.push_str(workspace.trim_end());
@@ -46,16 +47,33 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
     Ok(out)
 }
 
+/// Render welcome's connected-integrations block — a compact list of
+/// the toolkits the user has already authorised. Unconnected entries
+/// are skipped (welcome's job during onboarding is to pitch them, not
+/// to treat them as usable yet).
+fn render_connected_integrations(integrations: &[ConnectedIntegration]) -> String {
+    let connected: Vec<&ConnectedIntegration> =
+        integrations.iter().filter(|ci| ci.connected).collect();
+    if connected.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("## Connected Integrations\n\n");
+    for ci in connected {
+        let _ = writeln!(out, "- **{}** — {}", ci.toolkit, ci.description);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::openhuman::context::prompt::{LearnedContextData, ToolCallFormat};
     use std::collections::HashSet;
 
-    #[test]
-    fn build_returns_nonempty_body() {
-        let visible: HashSet<String> = HashSet::new();
-        let ctx = PromptContext {
+    fn ctx_with<'a>(integrations: &'a [ConnectedIntegration]) -> PromptContext<'a> {
+        use std::sync::OnceLock;
+        static EMPTY_VISIBLE: OnceLock<HashSet<String>> = OnceLock::new();
+        PromptContext {
             workspace_dir: std::path::Path::new("."),
             model_name: "test",
             agent_id: "welcome",
@@ -63,13 +81,40 @@ mod tests {
             skills: &[],
             dispatcher_instructions: "",
             learned: LearnedContextData::default(),
-            visible_tool_names: &visible,
+            visible_tool_names: EMPTY_VISIBLE.get_or_init(HashSet::new),
             tool_call_format: ToolCallFormat::PFormat,
-            connected_integrations: &[],
+            connected_integrations: integrations,
             include_profile: false,
             include_memory_md: false,
-        };
-        let body = build(&ctx).unwrap();
+        }
+    }
+
+    #[test]
+    fn build_returns_nonempty_body() {
+        let body = build(&ctx_with(&[])).unwrap();
         assert!(!body.is_empty());
+        assert!(!body.contains("## Connected Integrations"));
+    }
+
+    #[test]
+    fn build_lists_only_connected_integrations() {
+        let integrations = vec![
+            ConnectedIntegration {
+                toolkit: "gmail".into(),
+                description: "Email access.".into(),
+                tools: Vec::new(),
+                connected: true,
+            },
+            ConnectedIntegration {
+                toolkit: "notion".into(),
+                description: "Pitch during onboarding.".into(),
+                tools: Vec::new(),
+                connected: false,
+            },
+        ];
+        let body = build(&ctx_with(&integrations)).unwrap();
+        assert!(body.contains("## Connected Integrations"));
+        assert!(body.contains("- **gmail**"));
+        assert!(!body.contains("- **notion**"));
     }
 }
