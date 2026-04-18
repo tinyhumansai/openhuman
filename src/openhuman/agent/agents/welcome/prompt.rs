@@ -5,7 +5,7 @@
 //! Like the orchestrator, it delegates any integration work rather
 //! than executing Composio actions directly, so it renders the same
 //! delegator-voice block (inlined here rather than shared, so the
-//! skill-executor wording stays scoped to `skills_agent/prompt.rs`).
+//! skill-executor wording stays scoped to `integrations_agent/prompt.rs`).
 
 use crate::openhuman::context::prompt::{
     render_tools, render_user_files, render_workspace, ConnectedIntegration, PromptContext,

@@ -2,10 +2,10 @@
 //!
 //! The orchestrator is a pure delegator — it never executes Composio
 //! actions itself. Its integration block is a `## Delegation Guide`
-//! that tells the model to `spawn_subagent(skills_agent, toolkit=…)`
+//! that tells the model to `spawn_subagent(integrations_agent, toolkit=…)`
 //! for anything touching an external service. That prose lives here
 //! (not in the shared prompts module) so the skill-executor voice
-//! stays in `skills_agent/prompt.rs` and nobody has to branch on
+//! stays in `integrations_agent/prompt.rs` and nobody has to branch on
 //! `agent_id` in a shared section impl.
 
 use crate::openhuman::context::prompt::{
@@ -59,7 +59,7 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
     let mut out = String::from(
         "## Delegation Guide — Integrations\n\n\
          For any task that touches one of these external services, \
-         delegate to `skills_agent` with the matching `toolkit` \
+         delegate to `integrations_agent` with the matching `toolkit` \
          argument. The sub-agent receives the full action catalogue \
          for that integration as native tool schemas — do not attempt \
          to call integration actions directly from this agent.\n\n\
@@ -70,7 +70,7 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
     for ci in integrations {
         let _ = writeln!(
             out,
-            "- **{}** — {}\n  Delegate with: `spawn_subagent(agent_id=\"skills_agent\", toolkit=\"{}\", prompt=<task>)`",
+            "- **{}** — {}\n  Delegate with: `spawn_subagent(agent_id=\"integrations_agent\", toolkit=\"{}\", prompt=<task>)`",
             ci.toolkit, ci.description, ci.toolkit,
         );
     }
@@ -120,7 +120,7 @@ mod tests {
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Delegation Guide — Integrations"));
         assert!(body.contains(
-            "spawn_subagent(agent_id=\"skills_agent\", toolkit=\"gmail\", prompt=<task>)"
+            "spawn_subagent(agent_id=\"integrations_agent\", toolkit=\"gmail\", prompt=<task>)"
         ));
         // Delegator voice must NOT use the skill-executor wording.
         assert!(!body.contains("You have direct access"));

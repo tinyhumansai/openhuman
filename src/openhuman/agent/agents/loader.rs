@@ -73,9 +73,14 @@ pub const BUILTINS: &[BuiltinAgent] = &[
         prompt_fn: super::code_executor::prompt::build,
     },
     BuiltinAgent {
-        id: "skills_agent",
-        toml: include_str!("skills_agent/agent.toml"),
-        prompt_fn: super::skills_agent::prompt::build,
+        id: "integrations_agent",
+        toml: include_str!("integrations_agent/agent.toml"),
+        prompt_fn: super::integrations_agent::prompt::build,
+    },
+    BuiltinAgent {
+        id: "tools_agent",
+        toml: include_str!("tools_agent/agent.toml"),
+        prompt_fn: super::tools_agent::prompt::build,
     },
     BuiltinAgent {
         id: "tool_maker",
@@ -167,7 +172,7 @@ mod tests {
     fn all_builtins_parse() {
         let defs = load_builtins().expect("built-in TOML must parse");
         assert_eq!(defs.len(), BUILTINS.len());
-        assert_eq!(defs.len(), 13, "expected 13 built-in agents");
+        assert_eq!(defs.len(), 14, "expected 14 built-in agents");
     }
 
     #[test]
@@ -321,10 +326,16 @@ mod tests {
     }
 
     #[test]
-    fn skills_agent_is_wildcard() {
-        let def = find("skills_agent");
+    fn integrations_agent_is_wildcard() {
+        let def = find("integrations_agent");
         assert!(matches!(def.tools, ToolScope::Wildcard));
         assert!(!def.omit_safety_preamble);
+    }
+
+    #[test]
+    fn tools_agent_is_registered() {
+        let def = find("tools_agent");
+        assert!(matches!(def.tools, ToolScope::Wildcard));
     }
 
     #[test]

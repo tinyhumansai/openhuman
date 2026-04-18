@@ -1,6 +1,6 @@
-id = "skills_agent"
-display_name = "Skills Agent"
-when_to_use = "Service integration specialist — executes skill-category tools that reach external SaaS. This primarily covers Composio (1000+ OAuth integrations: Gmail, Notion, GitHub, Slack, …). Use when the task should be completed via a managed integration rather than raw HTTP/file I/O."
+id = "integrations_agent"
+display_name = "Integrations Agent"
+when_to_use = "Service integration specialist — drives a SINGLE Composio toolkit per spawn (gmail, notion, github, slack, …). The `toolkit` argument is mandatory. Use when a task should be completed via a managed OAuth integration rather than raw HTTP / file I/O."
 temperature = 0.4
 max_iterations = 10
 sandbox_mode = "none"

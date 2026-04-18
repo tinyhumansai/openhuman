@@ -1,0 +1,21 @@
+id = "tools_agent"
+display_name = "Tools Agent"
+when_to_use = "Generalist specialist for ad-hoc work that uses only built-in OpenHuman tools (shell, file I/O, HTTP, web search, memory). Use when a task does NOT require a managed Composio OAuth integration — for external SaaS, spawn `integrations_agent` with a `toolkit` argument instead."
+temperature = 0.4
+max_iterations = 10
+sandbox_mode = "none"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "agentic"
+
+[tools]
+# Wildcard — the agent inherits the orchestrator's full built-in tool
+# surface. Composio meta-tools and dynamic `<TOOLKIT>_*` action tools
+# are stripped at runtime (see `filter_non_composio_indices` in the
+# subagent runner), so the LLM never sees integration-specific tools
+# here; those belong to `integrations_agent`.
+wildcard = {}

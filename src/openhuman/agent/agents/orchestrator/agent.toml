@@ -26,7 +26,7 @@ omit_memory_md = false
 #     LLM-visible tool description.
 #
 #   * `{ skills = "*" }` → one `SkillDelegationTool` per connected
-#     Composio toolkit, all routing to the generic `skills_agent` with
+#     Composio toolkit, all routing to the generic `integrations_agent` with
 #     the toolkit slug pre-filled as `skill_filter`.
 #
 # The orchestrator LLM sees these as first-class entries in its
@@ -41,6 +41,7 @@ subagents = [
     "researcher",
     "planner",
     "code_executor",
+    "tools_agent",
     "critic",
     "archivist",
     # Runtime-dispatched only — the runtime calls the summarizer sub-agent

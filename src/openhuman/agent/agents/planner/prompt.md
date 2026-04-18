@@ -33,7 +33,7 @@ Return **only** valid JSON matching this schema:
 ## Available Agent IDs
 
 - `code_executor` — Writes and runs code. Use for implementation tasks.
-- `skills_agent` — Executes skill tools (Notion, Gmail, etc.). Use for service interactions.
+- `integrations_agent` — Executes skill tools (Notion, Gmail, etc.). Use for service interactions.
 - `tool_maker` — Writes polyfill scripts. Rarely needed in planning.
 - `researcher` — Reads docs, web searches. Use for information gathering.
 - `critic` — Reviews code quality and security. Use after code changes.

@@ -1,6 +1,6 @@
-//! System prompt builder for the `skills_agent` built-in agent.
+//! System prompt builder for the `integrations_agent` built-in agent.
 //!
-//! `skills_agent` is the one sub-agent that executes Composio actions
+//! `integrations_agent` is the one sub-agent that executes Composio actions
 //! directly — every other agent delegates to it via `spawn_subagent`.
 //! That means the prompt owns two blocks nobody else renders:
 //!
@@ -8,10 +8,10 @@
 //!   through the runtime.
 //! * `## Connected Integrations` — the list of Composio toolkits the
 //!   user has connected, framed as "you have direct access to the
-//!   action tools in your tool list" rather than "delegate to skills_agent".
+//!   action tools in your tool list" rather than "delegate to integrations_agent".
 //!
 //! Both blocks live here (not in the shared prompts module) so the
-//! delegator agents stay lean and the skills_agent-specific wording
+//! delegator agents stay lean and the integrations_agent-specific wording
 //! isn't a branch on `agent_id` somewhere else.
 
 use crate::openhuman::context::prompt::{
@@ -97,7 +97,7 @@ fn render_available_skills(skills: &[Skill], workspace_dir: &Path) -> String {
 /// Render the skill-executor-flavoured `## Connected Integrations`
 /// block. Tells the model that the action tools for each toolkit are
 /// already in its tool list and to call them directly — no delegation
-/// wording, because `skills_agent` IS the delegation target.
+/// wording, because `integrations_agent` IS the delegation target.
 fn render_connected_integrations(integrations: &[ConnectedIntegration]) -> String {
     let connected: Vec<&ConnectedIntegration> =
         integrations.iter().filter(|ci| ci.connected).collect();
@@ -133,7 +133,7 @@ mod tests {
         PromptContext {
             workspace_dir: std::path::Path::new("."),
             model_name: "test",
-            agent_id: "skills_agent",
+            agent_id: "integrations_agent",
             tools: &[],
             skills,
             dispatcher_instructions: "",
@@ -166,7 +166,7 @@ mod tests {
         assert!(body.contains("## Connected Integrations"));
         assert!(body.contains("You have direct access"));
         assert!(body.contains("- **gmail** — Email access."));
-        // `skills_agent` must NOT render the delegator spawn snippet —
+        // `integrations_agent` must NOT render the delegator spawn snippet —
         // that belongs on the orchestrator/welcome side.
         assert!(!body.contains("Delegation Guide"));
         assert!(!body.contains("spawn_subagent"));
