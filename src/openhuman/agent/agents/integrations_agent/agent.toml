@@ -13,4 +13,4 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
-named = ["composio_list_tools", "file_read"]
+named = ["composio_list_tools", "file_read", "composio_execute"]

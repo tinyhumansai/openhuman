@@ -407,11 +407,7 @@ export default function ComposioConnectModal({
 
 // ── Scope toggles ───────────────────────────────────────────────────
 
-const SCOPE_ROWS: Array<{
-  key: keyof ComposioUserScopePref;
-  label: string;
-  hint: string;
-}> = [
+const SCOPE_ROWS: Array<{ key: keyof ComposioUserScopePref; label: string; hint: string }> = [
   {
     key: 'read',
     label: 'Read',
