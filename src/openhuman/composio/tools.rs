@@ -28,8 +28,8 @@ use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolR
 
 use super::client::ComposioClient;
 use super::providers::{
-    catalog_for_toolkit, classify_unknown, find_curated, get_provider,
-    load_user_scope_or_default, toolkit_from_slug, ToolScope, UserScopePref,
+    catalog_for_toolkit, classify_unknown, find_curated, get_provider, load_user_scope_or_default,
+    toolkit_from_slug, ToolScope, UserScopePref,
 };
 
 /// Decision returned by [`evaluate_tool_visibility`].
