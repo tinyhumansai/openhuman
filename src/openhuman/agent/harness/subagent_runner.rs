@@ -278,7 +278,8 @@ async fn run_typed_mode(
     // are stripped from the parent-filtered indices in this path so
     // the model only sees one way to call each action.
     let mut dynamic_tools: Vec<Box<dyn Tool>> = Vec::new();
-    let is_integrations_agent_with_toolkit = definition.id == "integrations_agent" && toolkit_filter.is_some();
+    let is_integrations_agent_with_toolkit =
+        definition.id == "integrations_agent" && toolkit_filter.is_some();
 
     // `tools_agent` is the Composio-free counterpart to
     // `integrations_agent`: it inherits the orchestrator's wildcard
@@ -894,19 +895,20 @@ async fn run_inner_loop(
     // runs. Best-effort: write failures are logged at `debug` and the
     // loop continues.
     let persist_transcript = |history: &[ChatMessage], usage: &AggregatedUsage| {
-        let path =
-            match transcript::resolve_keyed_transcript_path(&parent.workspace_dir, &transcript_stem)
-            {
-                Ok(p) => p,
-                Err(err) => {
-                    tracing::debug!(
-                        agent_id = %agent_id,
-                        error = %err,
-                        "[subagent_runner] failed to resolve transcript path"
-                    );
-                    return;
-                }
-            };
+        let path = match transcript::resolve_keyed_transcript_path(
+            &parent.workspace_dir,
+            &transcript_stem,
+        ) {
+            Ok(p) => p,
+            Err(err) => {
+                tracing::debug!(
+                    agent_id = %agent_id,
+                    error = %err,
+                    "[subagent_runner] failed to resolve transcript path"
+                );
+                return;
+            }
+        };
         let now = chrono::Utc::now().to_rfc3339();
         let meta = transcript::TranscriptMeta {
             agent_name: agent_id.to_string(),
@@ -1986,12 +1988,7 @@ mod tests {
         ];
         let mut def = make_def_named_tools(&[]);
         def.tools = ToolScope::Wildcard;
-        let idx = filter_tool_indices(
-            &parent,
-            &def.tools,
-            &def.disallowed_tools,
-            Some("notion"),
-        );
+        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
         let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
         assert_eq!(names, vec!["notion__search", "notion__read"]);
     }
@@ -2006,12 +2003,7 @@ mod tests {
             stub("gmail__send"),
         ];
         let def = make_def_named_tools(&["notion__search", "gmail__send"]);
-        let idx = filter_tool_indices(
-            &parent,
-            &def.tools,
-            &def.disallowed_tools,
-            Some("notion"),
-        );
+        let idx = filter_tool_indices(&parent, &def.tools, &def.disallowed_tools, Some("notion"));
         let names: Vec<&str> = idx.iter().map(|&i| parent[i].name()).collect();
         assert_eq!(names, vec!["notion__search"]);
     }

@@ -158,9 +158,7 @@ pub async fn dump_all_agent_prompts(
         if id == INTEGRATIONS_AGENT_ID {
             let toolkits = connected_toolkits_for(&config).await?;
             if toolkits.is_empty() {
-                log::info!(
-                    "[debug_dump] skipping integrations_agent — no connected toolkits"
-                );
+                log::info!("[debug_dump] skipping integrations_agent — no connected toolkits");
                 continue;
             }
             for toolkit in toolkits {
@@ -278,17 +276,15 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     // than the session-start bulk fetch's snapshot (which can return an
     // empty list for some toolkits even when the per-toolkit endpoint
     // returns actions).
-    integration.tools = crate::openhuman::composio::fetch_toolkit_actions(
-        &composio_client,
-        &integration.toolkit,
-    )
-    .await
-    .with_context(|| {
-        format!(
-            "fetching fresh action catalogue for toolkit `{}`",
-            integration.toolkit
-        )
-    })?;
+    integration.tools =
+        crate::openhuman::composio::fetch_toolkit_actions(&composio_client, &integration.toolkit)
+            .await
+            .with_context(|| {
+                format!(
+                    "fetching fresh action catalogue for toolkit `{}`",
+                    integration.toolkit
+                )
+            })?;
 
     // Build the tool list that subagent_runner would produce for a
     // real spawn. Tool visibility honours the TOML scope on the
@@ -383,7 +379,10 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     let text = build(&ctx)
         .with_context(|| format!("building integrations_agent prompt for toolkit `{toolkit}`"))?;
 
-    let tool_names: Vec<String> = rendered_tools.iter().map(|t| t.name().to_string()).collect();
+    let tool_names: Vec<String> = rendered_tools
+        .iter()
+        .map(|t| t.name().to_string())
+        .collect();
     let skill_tool_count = rendered_tools
         .iter()
         .filter(|t| t.category() == ToolCategory::Skill)

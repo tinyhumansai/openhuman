@@ -384,10 +384,7 @@ impl AgentBuilder {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                let agent_id = self
-                    .agent_definition_name
-                    .as_deref()
-                    .unwrap_or("main");
+                let agent_id = self.agent_definition_name.as_deref().unwrap_or("main");
                 let sanitized: String = agent_id
                     .chars()
                     .map(|c| {

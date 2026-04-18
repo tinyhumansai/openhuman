@@ -125,7 +125,12 @@ fn run_dump_all(args: &[String]) -> Result<()> {
     for (idx, dumped) in dumps.iter().enumerate() {
         let safe_agent = sanitise_filename_component(&dumped.agent_id);
         let stem = match &dumped.toolkit {
-            Some(tk) => format!("{}_{}_{}", idx + 1, safe_agent, sanitise_filename_component(tk)),
+            Some(tk) => format!(
+                "{}_{}_{}",
+                idx + 1,
+                safe_agent,
+                sanitise_filename_component(tk)
+            ),
             None => format!("{}_{}", idx + 1, safe_agent),
         };
         let prompt_path = flags.out.join(format!("{stem}.md"));
@@ -520,7 +525,9 @@ fn print_dump_prompt_help() {
     println!("  openhuman agent dump-prompt --agent orchestrator --json");
     println!();
     println!("  # integrations_agent bound to the user's gmail connection.");
-    println!("  openhuman agent dump-prompt --agent integrations_agent --toolkit gmail --with-tools");
+    println!(
+        "  openhuman agent dump-prompt --agent integrations_agent --toolkit gmail --with-tools"
+    );
 }
 
 fn is_help(value: &str) -> bool {
