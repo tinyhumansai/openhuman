@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          submodules: true
+          submodules: recursive
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -33,6 +33,22 @@ jobs:
             . -> target
             app/src-tauri -> target
           cache-on-failure: true
+
+      # CEF (Chromium Embedded Framework) runtime is downloaded on-demand by
+      # cef-dll-sys + the vendored tauri-cli. Cache it across builds — the
+      # payload is ~400MB per platform and fetching every run is painful.
+      - name: Cache CEF binary distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tauri-cef
+          key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-ubuntu-22.04-
+
+      # Note: the vendored CEF-aware tauri-cli is pre-installed in the
+      # ghcr.io/tinyhumansai/openhuman_ci image (see .github/Dockerfile),
+      # so `cargo tauri build` below resolves to the fork without any
+      # per-run compile step.
 
       - name: Cache node modules
         id: yarn-cache
@@ -59,11 +75,11 @@ jobs:
           cp target/x86_64-unknown-linux-gnu/ci/openhuman-core app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
           chmod +x app/src-tauri/binaries/openhuman-core-x86_64-unknown-linux-gnu
 
-      - name: Build Tauri app
+      - name: Build Tauri app (CEF default)
         working-directory: app
         run: |
           TAURI_CONFIG_OVERRIDE='{"plugins":{"updater":{"active":false}}}'
-          yarn tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
+          cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production
           CARGO_PROFILE_RELEASE_OPT_LEVEL: "1"

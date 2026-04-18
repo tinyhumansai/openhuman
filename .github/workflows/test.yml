@@ -76,9 +76,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          # Required for app/src-tauri/vendor/tauri-cef, which the
-          # [patch.crates-io] block in app/src-tauri/Cargo.toml resolves
-          # every tauri-* crate through (even without --features cef).
+          # Required for app/src-tauri/vendor/tauri-cef — the fork supplies
+          # tauri-runtime-cef (compiled into the default build) and the
+          # cef-aware tauri-cli + tauri-bundler used by release workflows.
           submodules: recursive
 
       - name: Cache Rust build artifacts
@@ -88,6 +88,17 @@ jobs:
             . -> target
             app/src-tauri -> target
           cache-on-failure: true
+
+      # CEF is the default runtime, so `cargo test --manifest-path app/src-tauri/Cargo.toml`
+      # links the Chromium dylib via cef-dll-sys. Cache the download to avoid
+      # re-fetching ~400MB every PR run.
+      - name: Cache CEF binary distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tauri-cef
+          key: cef-ubuntu-22.04-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-ubuntu-22.04-
 
       - name: Install system dependencies (cmake, ALSA, X11)
         run: apt-get update && apt-get install -y --no-install-recommends cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libevdev-dev && rm -rf /var/lib/apt/lists/*

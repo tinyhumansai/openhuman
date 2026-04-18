@@ -7,6 +7,7 @@ on:
       - ".github/Dockerfile"
       - ".github/workflows/docker-ci-image.yml"
       - "e2e/docker-entrypoint.sh"
+      - ".gitmodules"
   workflow_dispatch:
 
 permissions:
@@ -21,6 +22,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # vendored tauri-cef fork is compiled into the image
+          submodules: recursive
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

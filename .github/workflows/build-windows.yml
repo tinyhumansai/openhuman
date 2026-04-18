@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          submodules: true
+          submodules: recursive
 
       - name: Setup Node.js 24.x
         uses: actions/setup-node@v4
@@ -52,6 +52,28 @@ jobs:
           key: Windows-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash }}
           restore-keys: |
             Windows-cargo-registry-
+
+      # CEF runtime auto-downloads via cef-dll-sys / vendored tauri-cli. Cache
+      # it so we don't re-fetch ~400MB every run.
+      - name: Cache CEF binary distribution
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/tauri-cef
+          key: cef-windows-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-windows-
+
+      - name: Cache vendored tauri-cli binary
+        id: tauri-cli-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: vendored-tauri-cli-windows-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+
+      - name: Install vendored tauri-cli (cef-aware bundler)
+        if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
@@ -126,18 +148,17 @@ jobs:
             const config = prepareTauriConfig();
             core.setOutput('json', JSON.stringify(config));
 
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0.6.2
+      - name: Build Tauri app (CEF default, vendored CLI)
         id: tauri-build
+        shell: bash
+        working-directory: app
         env:
           BASE_URL: ${{ vars.BASE_URL }}
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
-        with:
-          projectPath: app
-          args: -c ${{ steps.config-overrides.outputs.json }} --target x86_64-pc-windows-msvc
-          includeDebug: false
-          includeRelease: true
+          TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
+        run: |
+          cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4

@@ -272,7 +272,7 @@ jobs:
         with:
           ref: ${{ needs.prepare-build.outputs.build_ref }}
           fetch-depth: 1
-          submodules: true
+          submodules: recursive
 
       - name: Configure staging app environment
         if: inputs.build_target == 'staging'
@@ -322,6 +322,55 @@ jobs:
           key: ${{ runner.os }}-cargo-registry-${{ steps.cargo-lock-fingerprint.outputs.hash }}
           restore-keys: |
             ${{ runner.os }}-cargo-registry-
+
+      # CEF is now the default runtime — cef-dll-sys + vendored tauri-cli
+      # auto-download the ~400MB Chromium distribution on first build. Cache
+      # it per-OS across runs. Default path is `dirs::cache_dir()/tauri-cef`
+      # (macOS: ~/Library/Caches; Linux: ~/.cache; Windows: %LOCALAPPDATA%).
+      - name: Cache CEF binary distribution (unix)
+        if: matrix.settings.platform != 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/tauri-cef
+            ~/.cache/tauri-cef
+          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-${{ matrix.settings.target }}-
+
+      - name: Cache CEF binary distribution (windows)
+        if: matrix.settings.platform == 'windows-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/tauri-cef
+          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            cef-${{ matrix.settings.target }}-
+
+      # Upstream @tauri-apps/cli (used by tauri-action) doesn't bundle CEF
+      # framework files into the produced installer. Only the fork at
+      # vendor/tauri-cef does. Build and install that CLI so `cargo tauri
+      # build` invokes the cef-aware bundler.
+      - name: Cache vendored tauri-cli binary (unix)
+        if: matrix.settings.platform != 'windows-latest'
+        id: tauri-cli-cache-unix
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+
+      - name: Cache vendored tauri-cli binary (windows)
+        if: matrix.settings.platform == 'windows-latest'
+        id: tauri-cli-cache-windows
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: vendored-tauri-cli-${{ runner.os }}-${{ hashFiles('app/src-tauri/vendor/tauri-cef/crates/tauri-cli/Cargo.toml') }}
+
+      - name: Install vendored tauri-cli (cef-aware bundler)
+        if: (matrix.settings.platform == 'windows-latest' && steps.tauri-cli-cache-windows.outputs.cache-hit != 'true') || (matrix.settings.platform != 'windows-latest' && steps.tauri-cli-cache-unix.outputs.cache-hit != 'true')
+        shell: bash
+        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
@@ -455,16 +504,16 @@ jobs:
           CORE_TARGET_DIR: ${{ steps.core-paths.outputs.core_target_dir }}
           CORE_BIN_NAME: ${{ steps.core-paths.outputs.core_bin_name }}
 
-      - name: Build, package and upload to release
-        if: needs.prepare-build.outputs.release_enabled == 'true'
-        uses: tauri-apps/tauri-action@v0.6.2
+      # CEF is the default runtime — we build via the vendored tauri-cli so
+      # the bundler copies Chromium Embedded Framework files into the .app /
+      # .deb / .AppImage / .msi / NSIS setup. macOS signing is intentionally
+      # skipped here and handled by the dedicated re-sign + notarize step
+      # below (hardened runtime + entitlements are required for notarization).
+      - name: Build and package Tauri app (CEF, vendored CLI)
         id: tauri-build
+        shell: bash
+        working-directory: app
         env:
-          # NOTE: APPLE_CERTIFICATE, APPLE_SIGNING_IDENTITY, APPLE_ID, etc. are
-          # intentionally omitted so tauri-action builds WITHOUT signing.
-          # Signing + notarization are handled in a dedicated step afterwards
-          # where we sign everything with hardened runtime + entitlements
-          # (required by Apple notarization).
           BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
           OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
           VITE_OPENHUMAN_APP_ENV: ${{ inputs.build_target == 'staging' && 'staging' || 'production' }}
@@ -473,36 +522,51 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
           WITH_UPDATER: "true"
-          # Must match standalone "Build frontend" so tauri-action's beforeBuildCommand embeds the gate.
           VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
-        with:
-          projectPath: app
-          args: -c ${{ steps.config-overrides.outputs.json }} ${{ matrix.settings.args }}
-          includeDebug: false
-          includeRelease: true
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          owner: tinyhumansai
-          repo: openhuman
+          TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
+          MATRIX_ARGS: ${{ matrix.settings.args }}
+        run: |
+          cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" $MATRIX_ARGS
 
-      - name: Build and package staging artifacts
-        if: needs.prepare-build.outputs.release_enabled != 'true'
+      # tauri-action previously uploaded non-macOS installer assets directly
+      # to the release. Replicate that for Linux + Windows here (macOS goes
+      # through the re-sign + notarize path below and uploads separately).
+      - name: Upload non-macOS installers to release
+        if: needs.prepare-build.outputs.release_enabled == 'true' && matrix.settings.platform != 'macos-latest'
         shell: bash
         env:
-          BASE_URL: ${{ needs.prepare-build.outputs.base_url }}
-          OPENHUMAN_APP_ENV: staging
-          VITE_OPENHUMAN_APP_ENV: staging
-          VITE_BACKEND_URL: ${{ needs.prepare-build.outputs.base_url }}
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || secrets.UPDATER_PRIVATE_KEY_PASSWORD }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY || secrets.UPDATER_PRIVATE_KEY }}
-          WITH_UPDATER: "true"
-          VITE_MINIMUM_SUPPORTED_APP_VERSION: ${{ vars.VITE_MINIMUM_SUPPORTED_APP_VERSION }}
-          VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare-build.outputs.tag }}
+          MATRIX_TARGET: ${{ matrix.settings.target }}
         run: |
-          yarn --cwd app tauri build \
-            -c '${{ steps.config-overrides.outputs.json }}' \
-            ${{ matrix.settings.args }}
+          set -euo pipefail
+          shopt -s nullglob
+          BUNDLE_ROOTS=(
+            "app/src-tauri/target/${MATRIX_TARGET}/release/bundle"
+            "target/${MATRIX_TARGET}/release/bundle"
+          )
+          UPLOAD=()
+          for root in "${BUNDLE_ROOTS[@]}"; do
+            [ -d "$root" ] || continue
+            for f in \
+              "$root"/deb/*.deb \
+              "$root"/appimage/*.AppImage \
+              "$root"/appimage/*.AppImage.sig \
+              "$root"/msi/*.msi \
+              "$root"/msi/*.msi.sig \
+              "$root"/nsis/*-setup.exe \
+              "$root"/nsis/*-setup.exe.sig; do
+              [ -e "$f" ] && UPLOAD+=("$f")
+            done
+          done
+          if [ ${#UPLOAD[@]} -eq 0 ]; then
+            echo "No installer artifacts found for ${MATRIX_TARGET}"
+            exit 1
+          fi
+          echo "Uploading:"
+          printf '  %s\n' "${UPLOAD[@]}"
+          gh release upload "$TAG" "${UPLOAD[@]}" --repo tinyhumansai/openhuman --clobber
 
       - name: Locate macOS .app bundle
         if: matrix.settings.platform == 'macos-latest'

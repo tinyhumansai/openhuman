@@ -27,13 +27,14 @@ serde_json = "1"
 [dependencies]
 # Tauri core and plugins.
 #
-# Default build uses the stock `wry` backend (WKWebView on macOS, WebView2 on
-# Windows, WebKitGTK on Linux). Passing `--features cef` swaps the runtime to
-# CEF (Chromium Embedded Framework) via `tauri-runtime-cef` — the `[patch.
-# crates-io]` block at the bottom of this file pins every tauri crate and
-# plugin to the `feat/cef` branch on github so CEF symbols are even in scope.
-# Keeping `cef` optional lets contributors without the CEF binaries still run
-# `yarn tauri dev` on the wry backend.
+# Default build uses the CEF (Chromium Embedded Framework) backend via
+# `tauri-runtime-cef` — CI builds, release installers, and local `cargo tauri
+# dev` all run against CEF. The `[patch.crates-io]` block at the bottom of this
+# file pins every tauri crate and plugin to the `feat/cef` branch on github so
+# CEF symbols are in scope, and `cef-dll-sys`'s build script auto-downloads the
+# Chromium runtime for the current target on first build. Contributors who
+# need the stock `wry` backend (WKWebView on macOS, WebView2 on Windows,
+# WebKitGTK on Linux) can opt out with `--no-default-features --features wry`.
 tauri = { version = "2.10", default-features = false, features = [
     "common-controls-v6",
     "macos-private-api",
@@ -76,12 +77,12 @@ objc2 = "0.6"
 objc2-app-kit = "0.3.2"
 
 [features]
-# Default runtime is wry (OS-native webview). The `cef` feature swaps in CEF
-# (bundled Chromium). The two are mutually exclusive — the `feat/cef` branch
-# re-exports `webview_version` from both runtime crates without cfg gates, so
-# enabling both at once fails to compile. Users opt into CEF with
-# `--no-default-features --features cef`.
-default = ["wry"]
+# Default runtime is CEF (bundled Chromium). The `wry` feature swaps in the
+# OS-native webview backend. The two are mutually exclusive — the `feat/cef`
+# branch re-exports `webview_version` from both runtime crates without cfg
+# gates, so enabling both at once fails to compile. Users opt out of CEF with
+# `--no-default-features --features wry`.
+default = ["cef"]
 wry = ["tauri/wry"]
 cef = ["tauri/cef", "tauri/devtools", "dep:tauri-runtime-cef", "dep:cef"]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
