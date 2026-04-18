@@ -625,7 +625,7 @@ pub fn render_subagent_system_prompt_with_format(
     archetype_body: &str,
     options: SubagentRenderOptions,
     tool_call_format: ToolCallFormat,
-    connected_integrations: &[ConnectedIntegration],
+    _connected_integrations: &[ConnectedIntegration],
 ) -> String {
     let mut out = String::new();
 

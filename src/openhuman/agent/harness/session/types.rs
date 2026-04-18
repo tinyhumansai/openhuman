@@ -84,9 +84,9 @@ pub struct Agent {
     /// tool-call and iteration updates to the UI.
     pub(super) on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
     /// Active Composio integrations the user has connected. Populated at
-    /// agent build time; surfaced in the system prompt via
-    /// [`ConnectedIntegrationsSection`] so the orchestrator knows which
-    /// external services are available.
+    /// agent build time and threaded into each agent's `prompt.rs` so
+    /// the delegator / skill-executor voices can render their own
+    /// integration blocks.
     pub(super) connected_integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
     /// Composio client, built alongside `connected_integrations` and
     /// shared into [`harness::ParentExecutionContext`] at turn start

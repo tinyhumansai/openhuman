@@ -47,8 +47,8 @@ pub use microcompact::{
 pub use pipeline::{ContextPipeline, ContextPipelineConfig, PipelineOutcome};
 pub use prompt::{
     ArchetypePromptSection, DateTimeSection, IdentitySection, LearnedContextData, PromptContext,
-    PromptSection, PromptTool, RuntimeSection, SafetySection, SkillsSection, SystemPromptBuilder,
-    ToolsSection, WorkspaceSection,
+    PromptSection, PromptTool, RuntimeSection, SafetySection, SystemPromptBuilder, ToolsSection,
+    WorkspaceSection,
 };
 pub use session_memory::{
     SessionMemoryConfig, SessionMemoryState, ARCHIVIST_EXTRACTION_PROMPT, DEFAULT_MIN_TOKEN_GROWTH,
