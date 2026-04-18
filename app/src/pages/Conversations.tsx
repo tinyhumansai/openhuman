@@ -22,7 +22,6 @@ import {
   createNewThread,
   deleteThread,
   fetchSuggestedQuestions,
-  generateThreadTitleIfNeeded,
   loadThreadMessages,
   loadThreads,
   persistReaction,
@@ -698,8 +697,6 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     if (composerBlocked) return;
 
     const sendingThreadId = selectedThreadId;
-    const shouldGenerateTitleFromFirstMessage = messages.length === 0;
-
     const userMessage: ThreadMessage = {
       id: `msg_${Date.now()}_${Math.random()}`,
       content: trimmed,
@@ -709,12 +706,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
       createdAt: new Date().toISOString(),
     };
 
-    void (async () => {
-      await dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage }));
-      if (shouldGenerateTitleFromFirstMessage) {
-        await dispatch(generateThreadTitleIfNeeded({ threadId: sendingThreadId }));
-      }
-    })();
+    try {
+      await dispatch(addMessageLocal({ threadId: sendingThreadId, message: userMessage })).unwrap();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setSendError(chatSendError('cloud_send_failed', msg));
+      return;
+    }
     setInputValue('');
     setSendError(null);
     // Silence timer: fires only if 120s pass without ANY inference progress

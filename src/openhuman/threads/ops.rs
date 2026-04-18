@@ -18,6 +18,7 @@ use crate::openhuman::providers::{self, ProviderRuntimeOptions};
 use crate::rpc::RpcOutcome;
 use serde::Serialize;
 use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 const THREAD_TITLE_LOG_PREFIX: &str = "[threads:title]";
@@ -33,6 +34,12 @@ fn counts(entries: impl IntoIterator<Item = (&'static str, usize)>) -> BTreeMap<
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect()
+}
+
+fn title_log_fingerprint(title: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    title.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 fn envelope<T: Serialize>(
@@ -239,7 +246,8 @@ pub async fn thread_generate_title(
     if !is_auto_generated_thread_title(&thread.title) {
         tracing::debug!(
             thread_id = %request.thread_id,
-            title = %thread.title,
+            title_len = thread.title.chars().count(),
+            title_hash = %title_log_fingerprint(&thread.title),
             "{THREAD_TITLE_LOG_PREFIX} skipping non-placeholder title"
         );
         return Ok(envelope(
@@ -354,7 +362,8 @@ pub async fn thread_generate_title(
     let Some(title) = sanitize_generated_title(&raw_title) else {
         tracing::warn!(
             thread_id = %request.thread_id,
-            raw = %raw_title,
+            raw_title_len = raw_title.chars().count(),
+            raw_title_hash = %title_log_fingerprint(&raw_title),
             "{THREAD_TITLE_LOG_PREFIX} generated empty title after sanitization"
         );
         return Ok(envelope(
@@ -381,7 +390,8 @@ pub async fn thread_generate_title(
 
     tracing::debug!(
         thread_id = %request.thread_id,
-        title = %updated.title,
+        title_len = updated.title.chars().count(),
+        title_hash = %title_log_fingerprint(&updated.title),
         "{THREAD_TITLE_LOG_PREFIX} updated thread title"
     );
 

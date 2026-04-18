@@ -39,10 +39,13 @@ to a sub-agent wastes a turn. Use these directly:
 | `spawn_subagent`            | Escape hatch for agent ids not listed in the delegation table above.                                      |
 
 **Scheduling rule of thumb.** To "remind me in 10 minutes", call `current_time`
-first, then `cron_add` with `schedule = {kind:"at", at:"<iso-time>"}`,
-`job_type:"agent"`, and a `prompt` that tells a future agent what to deliver
-(e.g. "Send pushover: 'stand up and stretch'"). Do **not** reply "I can't do
-reminders" — you can.
+first. If `cron_add` is available and enabled for this runtime, then call
+`cron_add` with `schedule = {kind:"at", at:"<iso-time>"}`, `job_type:"agent"`,
+and a `prompt` that tells a future agent what to deliver (e.g. "Send pushover:
+'stand up and stretch'"). If `cron_add` is disabled by config, absent from your
+tool list, or returns an error, do not promise the reminder: tell the user you
+can't schedule it in this environment and, if helpful, provide the computed time
+or a manual fallback.
 
 ## Rules
 

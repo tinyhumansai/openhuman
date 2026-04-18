@@ -312,9 +312,10 @@ impl Tool for ExtractFromResultTool {
             .collect();
 
         if partials.is_empty() {
-            return Ok(ToolResult::error(
-                "extract_from_result: no matching content found across any chunk",
-            ));
+            tracing::debug!(
+                "[extract_from_result] no matching content found across any chunk; returning empty extraction"
+            );
+            return Ok(ToolResult::success(String::new()));
         }
 
         // Concatenate per-chunk summaries in original chunk order.
@@ -374,9 +375,10 @@ impl ExtractFromResultTool {
             Ok(text) => {
                 let trimmed = text.trim();
                 if trimmed.is_empty() {
-                    Ok(ToolResult::error(
-                        "extract_from_result: provider returned an empty response",
-                    ))
+                    tracing::debug!(
+                        "[extract_from_result] provider returned an empty response; returning empty extraction"
+                    );
+                    Ok(ToolResult::success(String::new()))
                 } else {
                     Ok(ToolResult::success(trimmed.to_string()))
                 }

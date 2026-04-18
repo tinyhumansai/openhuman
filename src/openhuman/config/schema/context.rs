@@ -77,7 +77,9 @@ pub struct ContextConfig {
     /// compresses the payload into a dense note that preserves
     /// identifiers and key facts, and the compressed summary replaces
     /// the raw payload before it enters agent history. Set to `0` to
-    /// disable summarization entirely. Default: `500_000` tokens.
+    /// disable summarization entirely (the default). Set to any value
+    /// `> 0` to enable summarization once a payload crosses that token
+    /// threshold.
     ///
     /// Token count is estimated as `chars / 4` (the same heuristic used
     /// by `tree_summarizer::estimate_tokens`). Pairs with

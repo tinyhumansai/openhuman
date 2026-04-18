@@ -56,6 +56,7 @@ impl Tool for CurrentTimeTool {
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
+        tracing::debug!(args = %args, "[current_time] execute start");
         let now_utc = Utc::now();
         let now_local = Local::now();
 
@@ -69,17 +70,34 @@ impl Tool for CurrentTimeTool {
 
         if let Some(tz_name) = args.get("timezone").and_then(|v| v.as_str()) {
             let trimmed = tz_name.trim();
+            tracing::debug!(
+                tz_name = tz_name,
+                trimmed = trimmed,
+                now_utc = %now_utc,
+                now_local = %now_local,
+                "[current_time] normalized timezone input"
+            );
             if !trimmed.is_empty() {
                 match trimmed.parse::<Tz>() {
                     Ok(tz) => {
                         let converted = now_utc.with_timezone(&tz);
+                        tracing::debug!(
+                            trimmed = trimmed,
+                            converted = %converted,
+                            "[current_time] timezone conversion succeeded"
+                        );
                         payload["requested_timezone"] = json!({
                             "name": trimmed,
                             "time": converted.to_rfc3339_opts(SecondsFormat::Secs, true),
                             "weekday": converted.format("%A").to_string(),
                         });
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        tracing::debug!(
+                            trimmed = trimmed,
+                            error = %error,
+                            "[current_time] timezone conversion failed"
+                        );
                         payload["requested_timezone_error"] = json!(format!(
                             "Unknown IANA timezone '{trimmed}' — use names like 'America/Los_Angeles'."
                         ));
@@ -114,10 +132,10 @@ mod tests {
     async fn returns_utc_and_local() {
         let result = CurrentTimeTool::new().execute(json!({})).await.unwrap();
         assert!(!result.is_error);
-        let out = result.output();
-        assert!(out.contains("\"utc\""));
-        assert!(out.contains("\"local\""));
-        assert!(out.contains("\"unix_seconds\""));
+        let payload: serde_json::Value = serde_json::from_str(&result.output()).unwrap();
+        assert!(payload["utc"].is_string());
+        assert!(payload["local"].is_string());
+        assert!(payload["unix_seconds"].is_number());
     }
 
     #[tokio::test]
@@ -127,8 +145,15 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.is_error);
-        assert!(result.output().contains("Asia/Kolkata"));
-        assert!(result.output().contains("requested_timezone"));
+        let payload: serde_json::Value = serde_json::from_str(&result.output()).unwrap();
+        assert!(payload["requested_timezone"].is_object());
+        assert!(payload["requested_timezone"]["name"].is_string());
+        assert!(
+            payload["requested_timezone"]["name"]
+                .as_str()
+                .unwrap()
+                .contains("Asia/Kolkata")
+        );
     }
 
     #[tokio::test]
@@ -138,6 +163,7 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.is_error);
-        assert!(result.output().contains("requested_timezone_error"));
+        let payload: serde_json::Value = serde_json::from_str(&result.output()).unwrap();
+        assert!(payload["requested_timezone_error"].is_string());
     }
 }

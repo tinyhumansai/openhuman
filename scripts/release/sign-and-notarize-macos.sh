@@ -72,7 +72,7 @@ if [ -d "$APP_PATH/Contents/Frameworks" ]; then
       [ -L "$item" ] && continue
       case "$item" in
         *.dylib|*.so)
-          echo "[sign]     Signing lib: ${item#$APP_PATH/}"
+          echo "[sign]     Signing lib: \"${item#${APP_PATH}/}\""
           codesign_hardened "$item"
           ;;
       esac

@@ -191,6 +191,12 @@ pub async fn composio_execute(
                 super::providers::init_default_providers();
                 if let Some(toolkit) = super::providers::toolkit_from_slug(tool) {
                     if let Some(provider) = super::providers::get_provider(&toolkit) {
+                        tracing::trace!(
+                            toolkit = toolkit.as_str(),
+                            tool = tool,
+                            has_args = arguments.is_some(),
+                            "[composio] post-processing action result"
+                        );
                         provider.post_process_action_result(
                             tool,
                             arguments.as_ref(),

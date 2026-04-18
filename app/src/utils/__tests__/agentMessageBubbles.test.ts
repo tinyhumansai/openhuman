@@ -12,7 +12,7 @@ describe('splitAgentMessageIntoBubbles', () => {
     expect(splitAgentMessageIntoBubbles(' \n\n ')).toEqual([]);
   });
 
-  it('splits newline-separated lines into distinct bubbles', () => {
+  it('keeps single-paragraph newline-separated lines in one bubble', () => {
     expect(splitAgentMessageIntoBubbles('First line\nSecond line\nThird line')).toEqual([
       'First line\nSecond line\nThird line',
     ]);

@@ -1,3 +1,5 @@
+import debug from 'debug';
+
 import type {
   PurgeResultData,
   Thread,
@@ -18,6 +20,8 @@ function unwrapEnvelope<T>(response: Envelope<T> | T): T {
   }
   return response as T;
 }
+
+const generateTitleLog = debug('threadApi.generateTitleIfNeeded');
 
 export const threadApi = {
   createNewThread: async (): Promise<Thread> => {
@@ -51,11 +55,24 @@ export const threadApi = {
   },
 
   generateTitleIfNeeded: async (threadId: string, assistantMessage?: string): Promise<Thread> => {
-    const response = await callCoreRpc<Envelope<Thread>>({
-      method: 'openhuman.threads_generate_title',
-      params: { thread_id: threadId, assistant_message: assistantMessage },
-    });
-    return unwrapEnvelope(response);
+    generateTitleLog('enter threadId=%s assistantMessage=%o', threadId, assistantMessage);
+    try {
+      const response = await callCoreRpc<Envelope<Thread>>({
+        method: 'openhuman.threads_generate_title',
+        params: { thread_id: threadId, assistant_message: assistantMessage },
+      });
+      const thread = unwrapEnvelope(response);
+      generateTitleLog('success threadId=%s response=%o thread=%o', threadId, response, thread);
+      return thread;
+    } catch (error) {
+      generateTitleLog(
+        'error threadId=%s assistantMessage=%o error=%O',
+        threadId,
+        assistantMessage,
+        error
+      );
+      throw error;
+    }
   },
 
   updateMessage: async (

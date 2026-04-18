@@ -32,6 +32,7 @@ import { selectSocketStatus } from '../store/socketSelectors';
 import {
   addInferenceResponse,
   createNewThread,
+  generateThreadTitleIfNeeded,
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
@@ -510,14 +511,43 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           );
           dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
         }
-
-        void (async () => {
-          if (!event.segment_total) {
-            await dispatch(
-              addInferenceResponse({ content: event.full_response, threadId: event.thread_id })
+        if (!event.segment_total) {
+          void (async () => {
+            try {
+              await dispatch(
+                addInferenceResponse({ content: event.full_response, threadId: event.thread_id })
+              ).unwrap();
+            } catch (error) {
+              rtLog('chat_done_append_failed', {
+                thread: event.thread_id,
+                request: event.request_id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+            void dispatch(
+              generateThreadTitleIfNeeded({
+                threadId: event.thread_id,
+                assistantMessage: event.full_response,
+              })
             );
-          }
-        })();
+            rtLog('refresh_usage_counter', {
+              thread: event.thread_id,
+              request: event.request_id,
+              reason: 'chat_done',
+            });
+            requestUsageRefresh();
+            dispatch(endInferenceTurn({ threadId: event.thread_id }));
+            dispatch(setActiveThread(null));
+          })();
+          return;
+        }
+
+        void dispatch(
+          generateThreadTitleIfNeeded({
+            threadId: event.thread_id,
+            assistantMessage: event.full_response,
+          })
+        );
         rtLog('refresh_usage_counter', {
           thread: event.thread_id,
           request: event.request_id,

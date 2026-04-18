@@ -154,18 +154,27 @@ export const generateThreadTitleIfNeeded = createAsyncThunk(
     payload: { threadId: string; assistantMessage?: string },
     { dispatch, rejectWithValue }
   ) => {
+    let thread: Thread;
     try {
-      const thread = await threadApi.generateTitleIfNeeded(
-        payload.threadId,
-        payload.assistantMessage
-      );
-      await dispatch(loadThreads()).unwrap();
-      return thread;
+      thread = await threadApi.generateTitleIfNeeded(payload.threadId, payload.assistantMessage);
     } catch (error) {
       return rejectWithValue(
         error instanceof Error ? error.message : 'Failed to generate thread title'
       );
     }
+
+    try {
+      await dispatch(loadThreads()).unwrap();
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.debug('[threadSlice] generateThreadTitleIfNeeded refresh failed', {
+          threadId: payload.threadId,
+          error,
+        });
+      }
+    }
+
+    return thread;
   }
 );
 

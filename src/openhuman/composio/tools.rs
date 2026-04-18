@@ -481,8 +481,15 @@ impl Tool for ComposioExecuteTool {
                 // (e.g. gmail HTML → markdown). Only run on successful
                 // responses; errors are passed through verbatim.
                 if resp.successful {
+                    super::providers::init_default_providers();
                     if let Some(toolkit) = toolkit_from_slug(&tool) {
                         if let Some(provider) = get_provider(&toolkit) {
+                            tracing::trace!(
+                                toolkit = toolkit.as_str(),
+                                tool = tool.as_str(),
+                                has_args = arguments.is_some(),
+                                "[composio_execute] post-processing action result"
+                            );
                             provider.post_process_action_result(
                                 &tool,
                                 arguments.as_ref(),

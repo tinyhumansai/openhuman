@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
@@ -16,6 +17,12 @@ const LOG_PREFIX: &str = "[memory:conversations]";
 const THREADS_FILENAME: &str = "threads.jsonl";
 const THREAD_MESSAGES_DIR: &str = "threads";
 static CONVERSATION_STORE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+fn redact_title_for_log(title: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    title.hash(&mut hasher);
+    format!("<redacted len={} hash={:016x}>", title.chars().count(), hasher.finish())
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ConversationPurgeStats {
@@ -135,7 +142,7 @@ impl ConversationStore {
         debug!(
             "{LOG_PREFIX} updated thread title id={} title={} path={}",
             thread_id,
-            title,
+            redact_title_for_log(title),
             threads_path.display()
         );
         self.thread_summary_unlocked(thread_id)?
