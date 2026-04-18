@@ -38,8 +38,10 @@ use crate::openhuman::context::prompt::{
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolResult, ToolSpec};
 use async_trait::async_trait;
+use futures::stream::StreamExt;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
@@ -1371,7 +1373,6 @@ impl Tool for ExtractFromResultTool {
             }
         });
 
-        use futures::stream::StreamExt;
         let mut map_results: Vec<(usize, _)> = futures::stream::iter(map_futures)
             .buffer_unordered(MAP_CONCURRENCY)
             .collect()
@@ -1612,8 +1613,6 @@ fn top_k_for_toolkit(toolkit: &str) -> usize {
 /// schema detail it can surface the error and the orchestrator will
 /// clarify on the next turn.
 fn build_text_mode_tool_instructions(specs: &[ToolSpec]) -> String {
-    use std::fmt::Write as _;
-
     let mut out = String::new();
     out.push_str("## Tool Use Protocol\n\n");
     out.push_str(

@@ -35,6 +35,7 @@ use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage,
 use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
 use anyhow::Result;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 impl Agent {
@@ -100,7 +101,6 @@ impl Agent {
             if self.omit_profile && self.omit_memory_md {
                 log::debug!("[agent_loop] system prompt body:\n{}", rendered_prompt);
             } else {
-                use std::hash::{Hash, Hasher};
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
                 rendered_prompt.hash(&mut hasher);
                 log::debug!(

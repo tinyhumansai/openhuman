@@ -17,6 +17,8 @@ use crate::openhuman::memory::store::segments::{
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use rusqlite::Connection;
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -418,8 +420,6 @@ fn uuid_v4() -> String {
 
 /// Simple random u32 from system entropy.
 fn rand_u32() -> u32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
     let state = RandomState::new();
     let mut hasher = state.build_hasher();
     hasher.write_u64(

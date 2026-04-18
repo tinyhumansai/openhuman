@@ -22,6 +22,7 @@
 //! and serialised straight from disk.
 
 use crate::openhuman::tools::ToolCategory;
+use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -289,7 +290,6 @@ impl std::fmt::Debug for PromptSource {
 
 impl Serialize for PromptSource {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(1))?;
         match self {
             PromptSource::Inline(s) => map.serialize_entry("inline", s)?,

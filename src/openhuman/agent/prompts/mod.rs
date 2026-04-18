@@ -6,7 +6,9 @@ use crate::openhuman::tools::Tool;
 use anyhow::Result;
 use chrono::Local;
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
+use std::sync::OnceLock;
 
 #[derive(Default)]
 pub struct SystemPromptBuilder {
@@ -658,7 +660,6 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
     // SAFETY: the &HashSet reference must outlive the returned context;
     // a leaked OnceLock-style allocation gives us a permanent 'static
     // anchor without adding runtime cost on the hot path.
-    use std::sync::OnceLock;
     static EMPTY_VISIBLE: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
     let visible = EMPTY_VISIBLE.get_or_init(std::collections::HashSet::new);
     PromptContext {
@@ -1007,7 +1008,6 @@ fn sync_workspace_file(workspace_dir: &Path, filename: &str) {
 
     // Compute a simple hash of the current compiled-in content.
     let current_hash = {
-        use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         default_content.hash(&mut hasher);
         format!("{:016x}", hasher.finish())

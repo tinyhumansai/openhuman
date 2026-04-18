@@ -10,6 +10,9 @@ use super::types::{Agent, AgentBuilder};
 use crate::openhuman::agent::dispatcher::{
     NativeToolDispatcher, PFormatToolDispatcher, ToolDispatcher, XmlToolDispatcher,
 };
+use crate::openhuman::agent::harness::definition::{
+    AgentDefinitionRegistry, PromptSource, ToolScope,
+};
 use crate::openhuman::agent::host_runtime;
 use crate::openhuman::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use crate::openhuman::config::{Config, ContextConfig};
@@ -426,8 +429,6 @@ impl Agent {
     /// The welcome agent uses this entry point when routed from the
     /// Tauri web channel (see `channels::providers::web::build_session_agent`).
     pub fn from_config_for_agent(config: &Config, agent_id: &str) -> Result<Self> {
-        use crate::openhuman::agent::harness::definition::{AgentDefinitionRegistry, ToolScope};
-
         // Look up the target definition up front so we can fail fast
         // with a clear error instead of building half an agent and then
         // discovering the id is unknown. The registry is a singleton
@@ -510,7 +511,6 @@ impl Agent {
         agent_id: &str,
         target_def: Option<&crate::openhuman::agent::harness::definition::AgentDefinition>,
     ) -> Result<Self> {
-        use crate::openhuman::agent::harness::definition::{PromptSource, ToolScope};
         let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
             Arc::from(host_runtime::create_runtime(&config.runtime)?);
         let security = Arc::new(SecurityPolicy::from_config(
