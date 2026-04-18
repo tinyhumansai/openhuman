@@ -68,4 +68,11 @@ describe('formatTimelineEntry', () => {
       detail: undefined,
     });
   });
+
+  it('formats composio_list_connections with user-facing copy', () => {
+    expect(formatTimelineEntry(entry({ name: 'composio_list_connections' }))).toEqual({
+      title: 'Viewing your Integrations',
+      detail: undefined,
+    });
+  });
 });

@@ -14,6 +14,7 @@ import {
   clearRuntimeForThread,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
+import type { ToolTimelineEntry } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';
 import {
@@ -149,9 +150,9 @@ function BubbleMarkdown({ content, tone = 'agent' }: { content: string; tone?: '
 
   return (
     <div
-      className={`text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:rounded-lg prose-code:text-xs prose-headings:font-semibold prose-ul:my-1 prose-ol:my-1 prose-li:my-0 ${proseTone} ${
+      className={`text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:rounded-lg prose-code:text-xs prose-headings:font-semibold prose-ul:my-0 prose-ol:my-0 prose-li:my-0 ${proseTone} ${
         tone === 'user' ? 'prose-pre:bg-white/10' : 'prose-pre:bg-stone-300/50'
-      }`}>
+      } [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:my-0 [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0`}>
       <Markdown
         components={{
           a: ({ href, children }) => (
@@ -177,7 +178,7 @@ function BubbleMarkdown({ content, tone = 'agent' }: { content: string; tone?: '
 
 function TableCellMarkdown({ content }: { content: string }) {
   return (
-    <div className="prose prose-sm max-w-none text-sm text-stone-700 prose-p:my-0 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 prose-a:text-primary-500 prose-strong:text-stone-900 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700">
+    <div className="prose prose-sm max-w-none text-sm text-stone-700 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 prose-a:text-primary-500 prose-strong:text-stone-900 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
       <Markdown
         components={{
           a: ({ href, children }) => (
@@ -197,6 +198,91 @@ function TableCellMarkdown({ content }: { content: string }) {
         }}>
         {content}
       </Markdown>
+    </div>
+  );
+}
+
+function ToolTimelineBlock({
+  entries,
+}: {
+  entries: ToolTimelineEntry[];
+}) {
+  const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
+
+  const normalizeToolBody = (value?: string): string | undefined => {
+    if (!value) return undefined;
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return undefined;
+    if (trimmed === '{}' || trimmed === '[]' || trimmed === 'null') return undefined;
+    return value;
+  };
+
+  return (
+    <div className="mb-2 space-y-1 px-1 py-0">
+      {entries.map(entry => {
+        const formatted = formatTimelineEntry(entry);
+        const detailContent =
+          normalizeToolBody(formatted.detail) ?? normalizeToolBody(entry.argsBuffer);
+        const shouldAutoExpand = latestRunningEntryId != null && latestRunningEntryId === entry.id;
+        const statusTone =
+          entry.status === 'running'
+            ? {
+                pill: 'bg-amber-100 text-amber-600',
+                bubble: 'bg-amber-50 text-amber-900',
+                code: 'text-amber-800',
+                chevron: 'text-amber-500',
+              }
+            : entry.status === 'success'
+              ? {
+                  pill: 'bg-sage-100 text-sage-600',
+                  bubble: 'bg-sage-50 text-sage-900',
+                  code: 'text-sage-800',
+                  chevron: 'text-sage-500',
+                }
+              : {
+                  pill: 'bg-coral-100 text-coral-600',
+                  bubble: 'bg-coral-50 text-coral-900',
+                  code: 'text-coral-800',
+                  chevron: 'text-coral-500',
+                };
+
+        return (
+          <div key={entry.id} className="flex flex-col gap-1 text-xs text-stone-400">
+            {detailContent ? (
+              <details open={shouldAutoExpand} className="ml-1 group">
+                <summary className="flex cursor-pointer list-none items-center gap-2 select-none marker:hidden">
+                  <span
+                    className={`text-[10px] transition-transform group-open:rotate-90 ${statusTone.chevron}`}>
+                    ▶
+                  </span>
+                  <span className="font-medium text-stone-600">{formatted.title}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone.pill}`}>
+                    {entry.status}
+                  </span>
+                </summary>
+                {formatted.detail ? (
+                  <div
+                    className={`mt-1 rounded-xl rounded-tl-md px-2.5 py-2 text-[11px] whitespace-pre-wrap break-words ${statusTone.bubble}`}>
+                    {formatted.detail}
+                  </div>
+                ) : (
+                  <pre
+                    className={`mt-1 max-h-24 overflow-y-auto rounded px-2 py-1 font-mono text-[10px] whitespace-pre-wrap break-all ${statusTone.bubble} ${statusTone.code}`}>
+                    {detailContent}
+                  </pre>
+                )}
+              </details>
+            ) : (
+              <div className="ml-1 flex items-center gap-2">
+                <span className="font-medium text-stone-600">{formatted.title}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] ${statusTone.pill}`}>
+                  {entry.status}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -885,6 +971,9 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
   const selectedThreadToolTimeline = selectedThreadId
     ? (toolTimelineByThread[selectedThreadId] ?? [])
     : [];
+  const visibleMessages = messages.filter(msg => !msg.extraMetadata?.hidden);
+  const latestVisibleMessage = visibleMessages[visibleMessages.length - 1] ?? null;
+  const latestVisibleAgentMessage = [...visibleMessages].reverse().find(msg => msg.sender === 'agent');
   const activeSubagentTimelineEntry = selectedThreadToolTimeline.find(
     entry => entry.status === 'running' && entry.name.startsWith('subagent:')
   );
@@ -903,6 +992,8 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
     (inferenceTurnLifecycleByThread[selectedThreadId] === 'started' ||
       inferenceTurnLifecycleByThread[selectedThreadId] === 'streaming')
   );
+  const shouldRenderTimelineBeforeLatestAgentMessage =
+    selectedThreadToolTimeline.length > 0 && !isSending && Boolean(latestVisibleAgentMessage);
 
   const sortedThreads = [...threads].sort(
     (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
@@ -1035,7 +1126,7 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             </button>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto px-5 py-4 bg-stone-50">
+        <div className="flex-1 overflow-y-auto px-5 py-4 bg-[#f6f6f6]">
           {isLoadingMessages ? (
             <div className="space-y-4">
               {Array.from({ length: 4 }).map((_, i) => (
@@ -1072,11 +1163,13 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
             </div>
           ) : messages.length > 0 ? (
             <div className="space-y-3">
-              {messages
-                .filter(msg => !msg.extraMetadata?.hidden)
-                .map(msg => (
+              {visibleMessages.map(msg => (
+                <div key={msg.id}>
+                  {shouldRenderTimelineBeforeLatestAgentMessage &&
+                    latestVisibleAgentMessage?.id === msg.id && (
+                      <ToolTimelineBlock entries={selectedThreadToolTimeline} />
+                    )}
                   <div
-                    key={msg.id}
                     className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className="relative w-full md:max-w-[75%]">
                       {msg.sender === 'agent' ? (
@@ -1099,16 +1192,20 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                               />
                             );
                           })}
-                          <p className="text-[10px] px-1 text-stone-400">
-                            {formatRelativeTime(msg.createdAt)}
-                          </p>
+                          {latestVisibleMessage?.id === msg.id && (
+                            <p className="px-1 text-[10px] text-stone-400">
+                              {formatRelativeTime(msg.createdAt)}
+                            </p>
+                          )}
                         </div>
                       ) : (
                         <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md">
                           <BubbleMarkdown content={msg.content} tone="user" />
-                          <p className="text-[10px] mt-1 text-white/60">
-                            {formatRelativeTime(msg.createdAt)}
-                          </p>
+                          {latestVisibleMessage?.id === msg.id && (
+                            <p className="mt-1 text-[10px] text-white/60">
+                              {formatRelativeTime(msg.createdAt)}
+                            </p>
+                          )}
                         </div>
                       )}
                       <button
@@ -1144,11 +1241,11 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                         )}
                       </button>
                       {(() => {
+                        if (latestVisibleMessage?.id !== msg.id) return null;
                         const myReactions =
                           (msg.extraMetadata?.myReactions as string[] | undefined) ?? [];
                         const hasReactions = myReactions.length > 0;
-                        // Show reaction row if there are existing reactions (any sender)
-                        // or if this is an agent message (manual picker available)
+                        // Show reaction row only for the most recent visible message.
                         if (!hasReactions && msg.sender !== 'agent') return null;
                         return (
                           <div className="mt-1 flex items-center gap-1 flex-wrap min-h-[20px]">
@@ -1212,7 +1309,8 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                       })()}
                     </div>
                   </div>
-                ))}
+                </div>
+              ))}
               {isSending &&
                 // Suppress the legacy 3-dot placeholder once streaming
                 // output (visible text or thinking) has started — the
@@ -1289,42 +1387,10 @@ const Conversations = ({ variant = 'page' }: ConversationsProps = {}) => {
                 </div>
               )}
               {/* Tool call timeline */}
-              {selectedThreadToolTimeline.length > 0 && (
-                <div className="space-y-1 px-1 py-1">
-                  {selectedThreadToolTimeline.map(entry => {
-                    const formatted = formatTimelineEntry(entry);
-                    return (
-                    <div key={entry.id} className="flex flex-col gap-1 text-xs text-stone-400">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-stone-600">{formatted.title}</span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] ${
-                            entry.status === 'running'
-                              ? 'bg-amber-100 text-amber-600'
-                              : entry.status === 'success'
-                                ? 'bg-sage-100 text-sage-600'
-                                : 'bg-coral-100 text-coral-600'
-                          }`}>
-                          {entry.status}
-                        </span>
-                      </div>
-                      {formatted.detail && (
-                        <div className="ml-1 rounded-xl rounded-tl-md bg-stone-100 px-2.5 py-2 text-[11px] text-stone-600 whitespace-pre-wrap break-words">
-                          {formatted.detail}
-                        </div>
-                      )}
-                      {entry.status === 'running' &&
-                        entry.argsBuffer &&
-                        entry.argsBuffer.length > 0 &&
-                        !formatted.detail && (
-                          <pre className="ml-1 mt-0.5 px-2 py-1 bg-stone-100 rounded text-[10px] font-mono text-stone-500 whitespace-pre-wrap break-all max-h-24 overflow-y-auto">
-                            {entry.argsBuffer}
-                          </pre>
-                        )}
-                    </div>
-                  )})}
-                </div>
-              )}
+              {selectedThreadToolTimeline.length > 0 &&
+                !shouldRenderTimelineBeforeLatestAgentMessage && (
+                  <ToolTimelineBlock entries={selectedThreadToolTimeline} />
+                )}
               {isSending && rustChat && (
                 <div className="flex justify-start px-1">
                   <button
