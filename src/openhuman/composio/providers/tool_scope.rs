@@ -57,7 +57,13 @@ pub fn classify_unknown(slug: &str) -> ToolScope {
     // Admin verbs are checked first so e.g. `MODIFY_LABELS` doesn't slip
     // into the Write bucket on the `UPDATE`-substring rule.
     const ADMIN: &[&str] = &[
-        "DELETE", "TRASH", "REMOVE", "MODIFY_LABELS", "SHARE", "REVOKE", "DESTROY",
+        "DELETE",
+        "TRASH",
+        "REMOVE",
+        "MODIFY_LABELS",
+        "SHARE",
+        "REVOKE",
+        "DESTROY",
     ];
     const WRITE: &[&str] = &[
         "SEND", "CREATE", "UPDATE", "REPLY", "APPEND", "INSERT", "ADD", "POST", "PATCH", "WRITE",
@@ -138,7 +144,10 @@ mod tests {
             Some("notion".to_string())
         );
         assert_eq!(toolkit_from_slug(""), None);
-        assert_eq!(toolkit_from_slug("noUnderscore"), Some("nounderscore".into()));
+        assert_eq!(
+            toolkit_from_slug("noUnderscore"),
+            Some("nounderscore".into())
+        );
     }
 
     #[test]
