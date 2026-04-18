@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { billingApi } from '../services/api/billingApi';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import type { CurrentPlanData, PlanTier } from '../types/api';
+import { subscribeUsageRefresh } from './usageRefresh';
 
 export interface UsageState {
   teamUsage: TeamUsage | null;
@@ -49,6 +50,8 @@ export function useUsageState(): UsageState {
     _cache = null;
     setFetchCount(c => c + 1);
   }, []);
+
+  useEffect(() => subscribeUsageRefresh(refresh), [refresh]);
 
   useEffect(() => {
     let cancelled = false;

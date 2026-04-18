@@ -131,4 +131,62 @@ describe('useUsageState', () => {
     expect(result.current.isBudgetExhausted).toBe(false);
     expect(result.current.shouldShowBudgetCompletedMessage).toBe(false);
   });
+
+  it('refetches when a global usage refresh is requested', async () => {
+    const { useUsageState } = await import('./useUsageState');
+    const { requestUsageRefresh } = await import('./usageRefresh');
+
+    mockGetCurrentPlan.mockResolvedValue({
+      plan: 'BASIC',
+      hasActiveSubscription: true,
+      planExpiry: '2026-05-01T00:00:00.000Z',
+      subscription: {
+        id: 'sub_123',
+        status: 'active',
+        currentPeriodEnd: '2026-05-01T00:00:00.000Z',
+        quantity: 1,
+      },
+      monthlyBudgetUsd: 20,
+      weeklyBudgetUsd: 10,
+      fiveHourCapUsd: 3,
+    });
+    mockGetTeamUsage
+      .mockResolvedValueOnce({
+        remainingUsd: 9,
+        cycleBudgetUsd: 10,
+        cycleLimit5hr: 1,
+        cycleLimit7day: 1,
+        fiveHourCapUsd: 3,
+        fiveHourResetsAt: null,
+        cycleStartDate: '2026-04-09T00:00:00.000Z',
+        cycleEndsAt: '2026-04-16T00:00:00.000Z',
+        bypassCycleLimit: false,
+      })
+      .mockResolvedValueOnce({
+        remainingUsd: 7,
+        cycleBudgetUsd: 10,
+        cycleLimit5hr: 2,
+        cycleLimit7day: 3,
+        fiveHourCapUsd: 3,
+        fiveHourResetsAt: null,
+        cycleStartDate: '2026-04-09T00:00:00.000Z',
+        cycleEndsAt: '2026-04-16T00:00:00.000Z',
+        bypassCycleLimit: false,
+      });
+
+    const { result } = renderHook(() => useUsageState());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+    expect(result.current.teamUsage?.remainingUsd).toBe(9);
+
+    requestUsageRefresh();
+
+    await waitFor(() => {
+      expect(result.current.teamUsage?.remainingUsd).toBe(7);
+    });
+    expect(mockGetTeamUsage).toHaveBeenCalledTimes(2);
+    expect(mockGetCurrentPlan).toHaveBeenCalledTimes(2);
+  });
 });

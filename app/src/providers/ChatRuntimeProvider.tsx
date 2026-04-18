@@ -34,6 +34,7 @@ import {
   setActiveThread,
   setSelectedThread,
 } from '../store/threadSlice';
+import { requestUsageRefresh } from '../hooks/usageRefresh';
 import { formatTimelineEntry, promptFromArgsBuffer } from '../utils/toolTimelineFormatting';
 
 const logChatRuntime = debug('openhuman:chat-runtime');
@@ -516,6 +517,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             );
           }
         })();
+        rtLog('refresh_usage_counter', {
+          thread: event.thread_id,
+          request: event.request_id,
+          reason: 'chat_done',
+        });
+        requestUsageRefresh();
         dispatch(endInferenceTurn({ threadId: event.thread_id }));
         dispatch(setActiveThread(null));
       },
@@ -560,6 +567,13 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
               })
             );
           }
+
+          rtLog('refresh_usage_counter', {
+            thread: event.thread_id,
+            request: event.request_id,
+            reason: 'chat_error',
+          });
+          requestUsageRefresh();
         }
 
         dispatch(endInferenceTurn({ threadId: event.thread_id }));
