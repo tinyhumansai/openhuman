@@ -291,14 +291,29 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     })?;
 
     // Build the tool list that subagent_runner would produce for a
-    // real spawn: every non-Skill parent tool + one ComposioActionTool
-    // per action in the target toolkit.
-    let base_tools: Vec<Box<dyn Tool>> = agent
-        .tools()
-        .iter()
-        .filter(|t| t.category() != ToolCategory::Skill)
-        .map(|t| clone_tool_as_prompt_proxy(t.as_ref()))
-        .collect();
+    // real spawn. Tool visibility honours the TOML scope on the
+    // `integrations_agent` definition — `named = [...]` narrows, and
+    // `wildcard = {}` means "every parent tool". The dynamic
+    // ComposioActionTools for the bound toolkit are added after.
+    let definition_snapshot = AgentDefinitionRegistry::global()
+        .and_then(|reg| reg.get(INTEGRATIONS_AGENT_ID).cloned())
+        .ok_or_else(|| anyhow!("integrations_agent definition missing from registry"))?;
+    let base_tools: Vec<Box<dyn Tool>> = match &definition_snapshot.tools {
+        crate::openhuman::agent::harness::definition::ToolScope::Named(names) => {
+            let allow: HashSet<&str> = names.iter().map(|s| s.as_str()).collect();
+            agent
+                .tools()
+                .iter()
+                .filter(|t| allow.contains(t.name()))
+                .map(|t| clone_tool_as_prompt_proxy(t.as_ref()))
+                .collect()
+        }
+        crate::openhuman::agent::harness::definition::ToolScope::Wildcard => agent
+            .tools()
+            .iter()
+            .map(|t| clone_tool_as_prompt_proxy(t.as_ref()))
+            .collect(),
+    };
     let action_tools: Vec<Box<dyn Tool>> = integration
         .tools
         .iter()

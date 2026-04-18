@@ -334,36 +334,23 @@ impl PromptSection for ToolsSection {
                 continue;
             }
 
-            match ctx.tool_call_format {
-                ToolCallFormat::PFormat => {
-                    // P-Format renders a positional signature line:
-                    // `**name[a|b]**: description`. The signature comes
-                    // straight from the parameter schema (alphabetical
-                    // by property name — see `pformat` module docs for
-                    // why), so the model and the parser agree on
-                    // argument ordering. We deliberately do NOT print
-                    // the full JSON schema here: that's exactly the
-                    // ~25-token-per-tool overhead p-format exists to
-                    // eliminate.
-                    let signature = render_pformat_signature_for_prompt(tool);
-                    let _ = writeln!(
-                        out,
-                        "- **{}**: {}\n  Call as: `{}`",
-                        tool.name, tool.description, signature
-                    );
-                }
-                ToolCallFormat::Json | ToolCallFormat::Native => {
-                    if let Some(schema) = &tool.parameters_schema {
-                        let _ = writeln!(
-                            out,
-                            "- **{}**: {}\n  Parameters: `{}`",
-                            tool.name, tool.description, schema
-                        );
-                    } else {
-                        let _ = writeln!(out, "- **{}**: {}", tool.name, tool.description);
-                    }
-                }
-            }
+            // One rendering shape for every dispatcher: a compact
+            // P-Format signature (`name[a|b|c]`). The signature comes
+            // straight from the parameter schema (alphabetical by
+            // property name — see `pformat` module docs for why) so
+            // model and parser agree on argument ordering. For
+            // `Native` dispatchers the provider already has the full
+            // JSON schema in the API request, so repeating it in the
+            // prompt is pure token bloat; for `Json` / `PFormat` text
+            // dispatchers the dispatcher's own `prompt_instructions`
+            // block (appended below) carries whatever schema detail
+            // the wire format needs.
+            let signature = render_pformat_signature_for_prompt(tool);
+            let _ = writeln!(
+                out,
+                "- **{}**: {}\n  Call as: `{}`",
+                tool.name, tool.description, signature
+            );
         }
         if !ctx.dispatcher_instructions.is_empty() {
             out.push('\n');

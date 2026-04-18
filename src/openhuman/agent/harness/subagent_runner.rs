@@ -293,15 +293,15 @@ async fn run_typed_mode(
     }
 
     if is_integrations_agent_with_toolkit {
-        // Drop EVERY skill-category parent tool. In the new
-        // architecture all integration discovery / authorization /
-        // dispatching is the orchestrator's responsibility (via the
-        // Delegation Guide and `spawn_subagent` pre-flight). The
-        // sub-agent's only job is to execute per-action tools for
-        // its bound toolkit, so leftover meta-tools (composio_*,
-        // apify_*, other-toolkit dispatchers) are pure noise that
-        // confuses the model and wastes tokens.
-        allowed_indices.retain(|&i| parent.all_tools[i].category() != ToolCategory::Skill);
+        // Tool visibility is fully governed by the TOML scope
+        // (`agent.tools.named = [...]` on the integrations_agent
+        // definition) plus the dynamic per-action ComposioActionTools
+        // injected below. Anything the agent author explicitly named
+        // in the TOML is kept as-is — no extra stripping here.
+        // Previously we dropped every Skill-category tool at this
+        // point, which also dropped `composio_list_tools` /
+        // `composio_execute` whenever they were declared in the TOML,
+        // making the TOML changes look like no-ops.
 
         if let (Some(tk), Some(client)) = (toolkit_filter, parent.composio_client.as_ref()) {
             // The spawn_subagent pre-flight already verified the
