@@ -672,11 +672,12 @@ fn format_inline(
     summary: &str,
     facts: &HashMap<String, usize>,
 ) -> String {
-    let fact_parts: Vec<String> = facts
+    let mut fact_parts: Vec<String> = facts
         .iter()
         .filter(|(_, &count)| count > 0)
         .map(|(name, &count)| pluralize(count, name))
         .collect();
+    fact_parts.sort_unstable();
 
     let mut lines: Vec<String> = Vec::new();
     if input.exit_code.map(|c| c != 0).unwrap_or(false) {
