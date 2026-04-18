@@ -28,8 +28,8 @@ use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolR
 
 use super::client::ComposioClient;
 use super::providers::{
-    classify_unknown, find_curated, get_provider, load_user_scope_or_default, toolkit_from_slug,
-    ToolScope, UserScopePref,
+    catalog_for_toolkit, classify_unknown, find_curated, get_provider,
+    load_user_scope_or_default, toolkit_from_slug, ToolScope, UserScopePref,
 };
 
 /// Decision returned by [`evaluate_tool_visibility`].
@@ -56,7 +56,13 @@ async fn evaluate_tool_visibility(slug: &str) -> ToolDecision {
         return ToolDecision::Allow;
     };
     let pref = load_user_scope_or_default(&toolkit).await;
-    match get_provider(&toolkit).and_then(|p| p.curated_tools()) {
+    // Prefer a registered provider's curated list; fall back to the
+    // static toolkit→catalog map so toolkits without a native provider
+    // (e.g. github) still get whitelist enforcement.
+    let catalog = get_provider(&toolkit)
+        .and_then(|p| p.curated_tools())
+        .or_else(|| catalog_for_toolkit(&toolkit));
+    match catalog {
         Some(catalog) => match find_curated(catalog, slug) {
             Some(curated) if pref.allows(curated.scope) => ToolDecision::Allow,
             Some(curated) => ToolDecision::BlockedByScope {

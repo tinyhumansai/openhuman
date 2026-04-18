@@ -39,11 +39,27 @@ mod traits;
 mod types;
 pub mod user_scopes;
 
+pub mod github;
 pub mod gmail;
 pub mod notion;
 pub mod profile;
 pub mod registry;
 pub mod sync_state;
+
+/// Static toolkit → curated catalog map.
+///
+/// This is consulted by the meta-tool layer alongside any registered
+/// provider's [`ComposioProvider::curated_tools`]. It lets toolkits
+/// without a full native provider (e.g. `github`, which has no sync
+/// logic yet) still benefit from curated whitelisting.
+pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
+    match toolkit.trim().to_ascii_lowercase().as_str() {
+        "gmail" => Some(gmail::GMAIL_CURATED),
+        "notion" => Some(notion::NOTION_CURATED),
+        "github" => Some(github::GITHUB_CURATED),
+        _ => None,
+    }
+}
 
 pub use descriptions::toolkit_description;
 pub(crate) use helpers::pick_str;
