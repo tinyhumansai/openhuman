@@ -112,6 +112,27 @@ impl SystemPromptBuilder {
         }
     }
 
+    /// Build from a [`PromptSource::Dynamic`] function pointer.
+    ///
+    /// The function is called every time [`Self::build`] runs, with the
+    /// live [`PromptContext`] the call-site supplies — so late-arriving
+    /// state like `connected_integrations` (fetched asynchronously at
+    /// the start of a session) reaches the dynamic renderer instead of
+    /// being frozen into an empty slice at builder-construction time.
+    ///
+    /// KV-cache contract: callers must only invoke `build_system_prompt`
+    /// once per session (after `fetch_connected_integrations`). The
+    /// rendered bytes are then frozen for the rest of the session the
+    /// same way `from_final_body` freezes them — the difference is just
+    /// *when* the freeze happens.
+    pub fn from_dynamic(
+        builder: crate::openhuman::agent::harness::definition::PromptBuilder,
+    ) -> Self {
+        Self {
+            sections: vec![Box::new(DynamicPromptSection::new(builder))],
+        }
+    }
+
     pub fn add_section(mut self, section: Box<dyn PromptSection>) -> Self {
         self.sections.push(section);
         self
@@ -162,6 +183,32 @@ impl PromptSection for ArchetypePromptSection {
             return Ok(String::new());
         }
         Ok(self.body.clone())
+    }
+}
+
+/// Section that defers to a [`crate::openhuman::agent::harness::definition::PromptBuilder`]
+/// every time it renders, so dynamic prompts (orchestrator, welcome,
+/// integrations_agent, …) get to see the live runtime
+/// [`PromptContext`] — including `connected_integrations`, which are
+/// fetched asynchronously after the builder itself has been
+/// constructed.
+pub struct DynamicPromptSection {
+    builder: crate::openhuman::agent::harness::definition::PromptBuilder,
+}
+
+impl DynamicPromptSection {
+    pub fn new(builder: crate::openhuman::agent::harness::definition::PromptBuilder) -> Self {
+        Self { builder }
+    }
+}
+
+impl PromptSection for DynamicPromptSection {
+    fn name(&self) -> &str {
+        "dynamic_prompt"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        (self.builder)(ctx)
     }
 }
 

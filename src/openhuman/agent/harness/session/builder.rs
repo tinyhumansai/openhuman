@@ -16,7 +16,7 @@ use crate::openhuman::agent::harness::definition::{
 use crate::openhuman::agent::host_runtime;
 use crate::openhuman::agent::memory_loader::{DefaultMemoryLoader, MemoryLoader};
 use crate::openhuman::config::{Config, ContextConfig};
-use crate::openhuman::context::prompt::{SystemPromptBuilder, ToolCallFormat};
+use crate::openhuman::context::prompt::SystemPromptBuilder;
 use crate::openhuman::context::{ContextManager, ProviderSummarizer};
 use crate::openhuman::memory::{self, Memory};
 use crate::openhuman::providers::{self, Provider};
@@ -600,106 +600,55 @@ impl Agent {
         // prompt stays byte-identical to the legacy CLI/REPL behaviour
         // except for the tool-scope tightening we already landed in
         // earlier commits.
+        // Every agent with a resolved definition (built-in or workspace
+        // override) goes through the per-agent pipeline — the legacy
+        // `with_defaults()` branch only fires when the registry is
+        // unavailable (pre-startup, tests). `PromptSource::Dynamic`
+        // agents install a [`DynamicPromptSection`] that re-runs the
+        // builder against the live [`PromptContext`] at
+        // `build_system_prompt` time, so `connected_integrations`
+        // fetched asynchronously on session start land in the prompt.
+        // `Inline`/`File` sources still resolve to just the archetype
+        // body and get wrapped by [`SystemPromptBuilder::for_subagent`].
         let mut prompt_builder = match target_def {
-            Some(def) if agent_id != "orchestrator" => {
-                // Resolve the prompt body. For built-in agents,
-                // `system_prompt` is `PromptSource::Inline(...)` populated
-                // at crate-build time from the sibling `prompt.md` via
-                // `include_str!` in `agents/mod.rs`. File-based prompts
-                // (custom workspace overrides) read from disk.
-                // Dynamic prompts return the *final* assembled body.
-                // When a `Dynamic` builder is in play we skip the usual
-                // `SystemPromptBuilder::for_subagent` section-wrapping
-                // and install the full body directly via
-                // `from_final_body`. `Inline`/`File` sources still
-                // resolve to just the archetype body and get wrapped
-                // below.
-                enum PromptResolution {
-                    Body(String),
-                    FinalBody(String),
-                }
-                let body = match &def.system_prompt {
-                    PromptSource::Inline(text) => PromptResolution::Body(text.clone()),
-                    PromptSource::Dynamic(build) => {
-                        use crate::openhuman::context::prompt::{
-                            ConnectedIntegration, LearnedContextData, PromptContext, PromptTool,
-                        };
-                        let prompt_tools: Vec<PromptTool<'_>> = tools
-                            .iter()
-                            .map(|t| PromptTool {
-                                name: t.name(),
-                                description: t.description(),
-                                parameters_schema: Some(t.parameters_schema().to_string()),
-                            })
-                            .collect();
-                        let empty_visible: std::collections::HashSet<String> =
-                            std::collections::HashSet::new();
-                        // NOTE: `connected_integrations` are fetched
-                        // asynchronously on first turn — empty here.
-                        // The per-turn rebuild in `session/turn.rs`
-                        // will supply live integrations once they're
-                        // available.
-                        let empty_integrations: Vec<ConnectedIntegration> = Vec::new();
-                        let ctx = PromptContext {
-                            workspace_dir: &config.workspace_dir,
-                            model_name: &model_name,
-                            agent_id: &def.id,
-                            tools: &prompt_tools,
-                            skills: &[],
-                            dispatcher_instructions: "",
-                            learned: LearnedContextData::default(),
-                            visible_tool_names: &empty_visible,
-                            tool_call_format: ToolCallFormat::PFormat,
-                            connected_integrations: &empty_integrations,
-                            include_profile: !def.omit_profile,
-                            include_memory_md: !def.omit_memory_md,
-                        };
-                        let rendered = build(&ctx).unwrap_or_else(|e| {
+            Some(def) => match &def.system_prompt {
+                PromptSource::Dynamic(build) => SystemPromptBuilder::from_dynamic(*build),
+                PromptSource::Inline(text) => SystemPromptBuilder::for_subagent(
+                    text.clone(),
+                    def.omit_identity,
+                    def.omit_safety_preamble,
+                    def.omit_skills_catalog,
+                ),
+                PromptSource::File { path } => {
+                    let workspace_path = config
+                        .workspace_dir
+                        .join("agent")
+                        .join("prompts")
+                        .join(path);
+                    let body_text = if workspace_path.is_file() {
+                        std::fs::read_to_string(&workspace_path).unwrap_or_else(|e| {
                             log::warn!(
-                                "[agent::builder] dynamic prompt for `{}` failed: {e} — using empty body",
-                                def.id
+                                "[agent::builder] failed to read prompt {}: {e} — using empty body",
+                                workspace_path.display()
                             );
                             String::new()
-                        });
-                        PromptResolution::FinalBody(rendered)
-                    }
-                    PromptSource::File { path } => {
-                        let workspace_path = config
-                            .workspace_dir
-                            .join("agent")
-                            .join("prompts")
-                            .join(path);
-                        let body_text = if workspace_path.is_file() {
-                            std::fs::read_to_string(&workspace_path).unwrap_or_else(|e| {
-                                log::warn!(
-                                    "[agent::builder] failed to read prompt {}: {e} — using empty body",
-                                    workspace_path.display()
-                                );
-                                String::new()
-                            })
-                        } else {
-                            log::warn!(
-                                "[agent::builder] prompt file {} not found — using empty body",
-                                path
-                            );
-                            String::new()
-                        };
-                        PromptResolution::Body(body_text)
-                    }
-                };
-                match body {
-                    PromptResolution::FinalBody(final_text) => {
-                        SystemPromptBuilder::from_final_body(final_text)
-                    }
-                    PromptResolution::Body(archetype) => SystemPromptBuilder::for_subagent(
-                        archetype,
+                        })
+                    } else {
+                        log::warn!(
+                            "[agent::builder] prompt file {} not found — using empty body",
+                            path
+                        );
+                        String::new()
+                    };
+                    SystemPromptBuilder::for_subagent(
+                        body_text,
                         def.omit_identity,
                         def.omit_safety_preamble,
                         def.omit_skills_catalog,
-                    ),
+                    )
                 }
-            }
-            _ => SystemPromptBuilder::with_defaults(),
+            },
+            None => SystemPromptBuilder::with_defaults(),
         };
         if config.learning.enabled {
             prompt_builder = prompt_builder
