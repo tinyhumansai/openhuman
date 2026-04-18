@@ -731,35 +731,66 @@ fn next_index(dir: &Path, agent_prefix: &str) -> Result<usize> {
 /// (legacy sessions). When both exist for the same index the `.jsonl`
 /// wins.
 fn latest_in_dir(dir: &Path, agent_prefix: &str) -> Option<PathBuf> {
-    let prefix = format!("{}_", agent_prefix);
-    // Track best (index, path) for each extension.
-    let mut best_jsonl: Option<(usize, PathBuf)> = None;
-    let mut best_md: Option<(usize, PathBuf)> = None;
+    // Two transcript-naming schemes coexist on disk:
+    //   * Legacy: `{agent}_{index}.jsonl|.md` — strictly increasing
+    //     index, used by the now-removed `resolve_new_transcript_path`.
+    //   * Keyed: `{unix_ts}_{agent}.jsonl` (root session) or
+    //     `{parent_chain}__{unix_ts}_{agent}.jsonl` (sub-agent). The
+    //     root stem starts with `{unix_ts}_{agent}` and has no `__`
+    //     prefix segment.
+    //
+    // For resume we only care about root sessions (sub-agents rebuild
+    // from scratch), so we scan for filenames matching either scheme
+    // and pick the newest. "Newest" is the largest sort key — indices
+    // and unix timestamps both order naturally as integers.
+    let legacy_prefix = format!("{}_", agent_prefix);
+    let keyed_suffix = format!("_{}", agent_prefix);
+    let mut best_jsonl: Option<(u64, PathBuf)> = None;
+    let mut best_md: Option<(u64, PathBuf)> = None;
 
     let entries = fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if !name_str.starts_with(&prefix) {
+        // Extract the stem minus extension.
+        let (stem, is_jsonl) = if let Some(s) = name_str.strip_suffix(".jsonl") {
+            (s, true)
+        } else if let Some(s) = name_str.strip_suffix(".md") {
+            (s, false)
+        } else {
+            continue;
+        };
+        // Skip sub-agent transcripts — they carry at least one `__`
+        // separator in their stem (e.g.
+        // `{orch_key}__{planner_key}`). Root resume never targets a
+        // sub-agent's transcript directly.
+        if stem.contains("__") {
             continue;
         }
-        if name_str.ends_with(".jsonl") {
-            let idx_str = &name_str[prefix.len()..name_str.len() - 6];
-            if let Ok(idx) = idx_str.parse::<usize>() {
-                if best_jsonl
-                    .as_ref()
-                    .is_none_or(|(best_idx, _)| idx > *best_idx)
-                {
-                    best_jsonl = Some((idx, entry.path()));
-                }
+        // Determine sort key. Keyed filenames end with
+        // `_{agent_prefix}`: everything before that is the unix
+        // timestamp. Legacy filenames start with `{agent_prefix}_`:
+        // everything after is the numeric index.
+        let sort_key: u64 = if let Some(ts_part) = stem.strip_suffix(&keyed_suffix) {
+            match ts_part.parse::<u64>() {
+                Ok(ts) => ts,
+                Err(_) => continue,
             }
-        } else if name_str.ends_with(".md") {
-            let idx_str = &name_str[prefix.len()..name_str.len() - 3];
-            if let Ok(idx) = idx_str.parse::<usize>() {
-                if best_md.as_ref().is_none_or(|(best_idx, _)| idx > *best_idx) {
-                    best_md = Some((idx, entry.path()));
-                }
+        } else if let Some(idx_part) = stem.strip_prefix(&legacy_prefix) {
+            match idx_part.parse::<u64>() {
+                Ok(idx) => idx,
+                Err(_) => continue,
             }
+        } else {
+            continue;
+        };
+        let slot = if is_jsonl {
+            &mut best_jsonl
+        } else {
+            &mut best_md
+        };
+        if slot.as_ref().is_none_or(|(best, _)| sort_key > *best) {
+            *slot = Some((sort_key, entry.path()));
         }
     }
 

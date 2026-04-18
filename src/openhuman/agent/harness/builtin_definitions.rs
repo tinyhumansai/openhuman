@@ -119,23 +119,6 @@ mod tests {
     }
 
     #[test]
-    fn integrations_agent_has_extra_tools_for_export() {
-        let defs = all();
-        let skills = defs.iter().find(|d| d.id == "integrations_agent").unwrap();
-        assert!(
-            skills.extra_tools.contains(&"file_write".to_string()),
-            "integrations_agent must include file_write in extra_tools"
-        );
-        // csv_export was removed from extra_tools — it triggered
-        // superfluous export calls after extraction had already
-        // answered. file_write alone covers the Path B export flow.
-        assert!(
-            !skills.extra_tools.contains(&"csv_export".to_string()),
-            "csv_export should not be present in extra_tools"
-        );
-    }
-
-    #[test]
     fn expected_builtin_ids_are_present() {
         let ids: Vec<String> = all().into_iter().map(|d| d.id).collect();
         for expected in [

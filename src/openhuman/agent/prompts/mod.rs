@@ -1162,36 +1162,44 @@ mod tests {
     }
 
     #[test]
-    fn tools_section_json_renders_full_schema() {
-        // The legacy `Json` mode must keep emitting full schemas so
-        // existing prompts that depend on the verbose form are not
-        // silently changed.
+    fn tools_section_uses_pformat_signature_for_every_dispatcher() {
+        // Tool rendering is uniform across dispatchers: always the
+        // compact `Call as: name[args]` signature, never a raw JSON
+        // schema dump. Native tool calls still carry the full schema
+        // in the provider request; the `Json` / `PFormat` text
+        // dispatchers supply any extra framing via
+        // `ctx.dispatcher_instructions`.
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
         let prompt_tools = PromptTool::from_tools(&tools);
-        let ctx = PromptContext {
-            workspace_dir: Path::new("/tmp"),
-            model_name: "test-model",
-            agent_id: "",
-            tools: &prompt_tools,
-            skills: &[],
-            dispatcher_instructions: "",
-            learned: LearnedContextData::default(),
-            visible_tool_names: &NO_FILTER,
-            tool_call_format: ToolCallFormat::Json,
-            connected_integrations: &[],
-            include_profile: false,
-            include_memory_md: false,
-        };
-
-        let rendered = ToolsSection.build(&ctx).unwrap();
-        assert!(
-            rendered.contains("Parameters:"),
-            "JSON mode should still print Parameters lines, got:\n{rendered}"
-        );
-        assert!(
-            rendered.contains("\"type\""),
-            "JSON mode should print the schema body, got:\n{rendered}"
-        );
+        for format in [
+            ToolCallFormat::PFormat,
+            ToolCallFormat::Json,
+            ToolCallFormat::Native,
+        ] {
+            let ctx = PromptContext {
+                workspace_dir: Path::new("/tmp"),
+                model_name: "test-model",
+                agent_id: "",
+                tools: &prompt_tools,
+                skills: &[],
+                dispatcher_instructions: "",
+                learned: LearnedContextData::default(),
+                visible_tool_names: &NO_FILTER,
+                tool_call_format: format,
+                connected_integrations: &[],
+                include_profile: false,
+                include_memory_md: false,
+            };
+            let rendered = ToolsSection.build(&ctx).unwrap();
+            assert!(
+                rendered.contains("Call as:"),
+                "{format:?} must use the signature format, got:\n{rendered}"
+            );
+            assert!(
+                !rendered.contains("Parameters:"),
+                "{format:?} should never emit the JSON `Parameters:` line, got:\n{rendered}"
+            );
+        }
     }
 
     #[test]

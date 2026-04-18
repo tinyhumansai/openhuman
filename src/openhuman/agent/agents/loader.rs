@@ -326,9 +326,17 @@ mod tests {
     }
 
     #[test]
-    fn integrations_agent_is_wildcard() {
+    fn integrations_agent_tool_scope_honours_toml() {
         let def = find("integrations_agent");
-        assert!(matches!(def.tools, ToolScope::Wildcard));
+        // Current TOML: `named = ["composio_list_tools", "file_read"]`.
+        // Sub-agent runner additionally injects per-toolkit
+        // ComposioActionTools at spawn time.
+        match &def.tools {
+            ToolScope::Named(names) => {
+                assert!(names.iter().any(|n| n == "composio_list_tools"));
+            }
+            other => panic!("expected Named scope, got {other:?}"),
+        }
         assert!(!def.omit_safety_preamble);
     }
 
