@@ -574,13 +574,34 @@ async fn run_typed_mode(
     // notes) see exactly what the model sees, rather than an empty set.
     let visible_tool_names: std::collections::HashSet<String> =
         prompt_tools.iter().map(|t| t.name.to_string()).collect();
+    // Match the main-agent turn (`session/turn.rs::build_system_prompt`)
+    // by supplying the dispatcher's protocol instructions here. Dynamic
+    // prompt builders route tools through `render_tools(ctx)`, which
+    // appends `ctx.dispatcher_instructions` after the tool catalogue —
+    // passing an empty string drops the `## Tool Use Protocol` block and
+    // leaves PFormat/Json sub-agents with no call-format guidance.
+    let dispatcher_instructions = {
+        use crate::openhuman::agent::dispatcher::{
+            NativeToolDispatcher, PFormatToolDispatcher, ToolDispatcher, XmlToolDispatcher,
+        };
+        use crate::openhuman::agent::pformat::PFormatRegistry;
+        use crate::openhuman::context::prompt::ToolCallFormat;
+        let empty_tools: Vec<Box<dyn Tool>> = Vec::new();
+        match parent.tool_call_format {
+            ToolCallFormat::PFormat => {
+                PFormatToolDispatcher::new(PFormatRegistry::new()).prompt_instructions(&empty_tools)
+            }
+            ToolCallFormat::Native => NativeToolDispatcher.prompt_instructions(&empty_tools),
+            ToolCallFormat::Json => XmlToolDispatcher.prompt_instructions(&empty_tools),
+        }
+    };
     let prompt_ctx = PromptContext {
         workspace_dir: &parent.workspace_dir,
         model_name: &model,
         agent_id: &definition.id,
         tools: &prompt_tools,
         skills: &parent.skills,
-        dispatcher_instructions: "",
+        dispatcher_instructions: &dispatcher_instructions,
         learned: crate::openhuman::context::prompt::LearnedContextData::default(),
         visible_tool_names: &visible_tool_names,
         tool_call_format: parent.tool_call_format,
@@ -1169,6 +1190,14 @@ async fn run_inner_loop(
                 "[Tool results]\n{text_mode_result_block}"
             )));
         }
+
+        // Persist again after tool results have been appended so the
+        // on-disk transcript reflects each round's complete
+        // assistant-intent + tool-result pair. Without this, a crash
+        // between `persist_transcript` at line ~1044 and the next
+        // iteration's provider call would leave the transcript without
+        // the tool outputs the next turn will be reasoning from.
+        persist_transcript(history, &usage);
     }
 
     Err(SubagentRunError::MaxIterationsExceeded(max_iterations))

@@ -876,22 +876,52 @@ fn sync_workspace_file(workspace_dir: &Path, filename: &str) {
 
     // Read the last-written hash (if any).
     let stored_hash = std::fs::read_to_string(&hash_path).unwrap_or_default();
+    let stored_hash = stored_hash.trim();
 
-    if stored_hash.trim() == current_hash && path.exists() {
+    if stored_hash == current_hash && path.exists() {
         // Built-in hasn't changed and file exists — nothing to do.
         return;
     }
 
-    // Either first install, or the compiled-in default changed → write it.
+    // Decide whether to overwrite the existing file. Two safe cases:
+    //   1. File doesn't exist yet — first install, write the default.
+    //   2. File exists AND its current hash matches the stored builtin
+    //      hash — the user hasn't edited it since we last wrote it, so
+    //      it's safe to ship the new default.
+    // Otherwise the file has been hand-edited between releases; leave
+    // the user's version in place and just update the stored hash so we
+    // stop re-comparing against the old default on every boot.
+    let file_exists = path.exists();
+    let user_unmodified = if file_exists {
+        match std::fs::read_to_string(&path) {
+            Ok(disk) => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                disk.hash(&mut hasher);
+                let disk_hash = format!("{:016x}", hasher.finish());
+                disk_hash == stored_hash
+            }
+            Err(_) => false,
+        }
+    } else {
+        false
+    };
+
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Err(e) = std::fs::write(&path, default_content) {
-        log::warn!("[agent:prompt] failed to write workspace file {filename}: {e}");
-        return;
+
+    if !file_exists || user_unmodified {
+        if let Err(e) = std::fs::write(&path, default_content) {
+            log::warn!("[agent:prompt] failed to write workspace file {filename}: {e}");
+            return;
+        }
+        log::info!("[agent:prompt] updated workspace file {filename} (builtin content changed)");
+    } else {
+        log::info!(
+            "[agent:prompt] keeping user-edited workspace file {filename} (builtin changed but disk contents diverge)"
+        );
     }
     let _ = std::fs::write(&hash_path, &current_hash);
-    log::info!("[agent:prompt] updated workspace file {filename} (builtin content changed)");
 }
 
 /// Inject `filename` from `workspace_dir` into `prompt`, truncated to

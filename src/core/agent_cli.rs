@@ -6,7 +6,8 @@
 //! agent definitions / tool registry and printing something.
 //!
 //! Usage:
-//!   openhuman agent dump-prompt --agent <id> [--workspace <path>] [--json] [--with-tools] [-v]
+//!   openhuman agent dump-prompt --agent <id> [--toolkit <slug>] [--workspace <path>] [--json] [--with-tools] [-v]
+//!     (--toolkit is REQUIRED when --agent is `integrations_agent`.)
 //!   openhuman agent dump-all --out <dir> [--workspace <path>] [--model <name>] [-v]
 //!   openhuman agent list [--json] [-v]
 //!
@@ -112,15 +113,27 @@ fn run_dump_all(args: &[String]) -> Result<()> {
     let flags = parse_dump_all_flags(args)?;
     init_quiet_logging(flags.verbose);
 
+    log::debug!(
+        "[agent-cli] run_dump_all entry: out={} workspace={:?} model={:?}",
+        flags.out.display(),
+        flags.workspace,
+        flags.model
+    );
+
     std::fs::create_dir_all(&flags.out)
         .with_context(|| format!("creating output dir {}", flags.out.display()))?;
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    log::debug!("[agent-cli] run_dump_all: calling dump_all_agent_prompts");
     let dumps = rt.block_on(async {
         dump_all_agent_prompts(flags.workspace.clone(), flags.model.clone()).await
     })?;
+    log::debug!(
+        "[agent-cli] run_dump_all: dump_all_agent_prompts returned {} prompt(s)",
+        dumps.len()
+    );
 
     let mut summary = String::new();
     for (idx, dumped) in dumps.iter().enumerate() {
@@ -137,6 +150,11 @@ fn run_dump_all(args: &[String]) -> Result<()> {
         let prompt_path = flags.out.join(format!("{stem}.md"));
         let meta_path = flags.out.join(format!("{stem}.meta.txt"));
 
+        log::trace!(
+            "[agent-cli] run_dump_all: writing prompt file {} ({} bytes)",
+            prompt_path.display(),
+            dumped.text.len()
+        );
         std::fs::write(&prompt_path, &dumped.text)
             .with_context(|| format!("writing {}", prompt_path.display()))?;
 
@@ -172,6 +190,10 @@ fn run_dump_all(args: &[String]) -> Result<()> {
     std::fs::write(&summary_path, &summary)
         .with_context(|| format!("writing {}", summary_path.display()))?;
     eprintln!("[dump-all] wrote summary → {}", summary_path.display());
+    log::debug!(
+        "[agent-cli] run_dump_all exit: wrote {} prompt(s) + SUMMARY.txt",
+        dumps.len()
+    );
     Ok(())
 }
 
@@ -284,6 +306,14 @@ fn run_dump_prompt(args: &[String]) -> Result<()> {
 
     init_quiet_logging(flags.verbose);
 
+    log::debug!(
+        "[agent-cli] run_dump_prompt entry: agent={} toolkit={:?} workspace={:?} model={:?}",
+        agent,
+        flags.toolkit,
+        flags.workspace,
+        flags.model
+    );
+
     let options = DumpPromptOptions {
         agent_id: agent,
         toolkit: flags.toolkit.clone(),
@@ -294,7 +324,14 @@ fn run_dump_prompt(args: &[String]) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
+    log::debug!("[agent-cli] run_dump_prompt: calling dump_agent_prompt");
     let dumped = rt.block_on(async { dump_agent_prompt(options).await })?;
+    log::debug!(
+        "[agent-cli] run_dump_prompt: dump returned (tools={}, skill_tools={}, prompt_bytes={})",
+        dumped.tool_names.len(),
+        dumped.skill_tool_count,
+        dumped.text.len()
+    );
 
     if flags.json {
         print_json(&dumped, flags.with_tools)?;

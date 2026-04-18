@@ -275,16 +275,30 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
     // time so the dump reflects the **current** backend state rather
     // than the session-start bulk fetch's snapshot (which can return an
     // empty list for some toolkits even when the per-toolkit endpoint
-    // returns actions).
-    integration.tools =
-        crate::openhuman::composio::fetch_toolkit_actions(&composio_client, &integration.toolkit)
-            .await
-            .with_context(|| {
-                format!(
-                    "fetching fresh action catalogue for toolkit `{}`",
-                    integration.toolkit
-                )
-            })?;
+    // returns actions). Mirrors subagent_runner's typed-mode fallback:
+    // an empty fresh list or a network error keeps the cached catalogue
+    // rather than blanking it.
+    match crate::openhuman::composio::fetch_toolkit_actions(&composio_client, &integration.toolkit)
+        .await
+    {
+        Ok(actions) if !actions.is_empty() => {
+            integration.tools = actions;
+        }
+        Ok(_) => {
+            log::debug!(
+                "[debug_dump] fresh list_tools for `{}` returned empty; keeping cached catalogue ({} actions)",
+                integration.toolkit,
+                integration.tools.len()
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "[debug_dump] fresh list_tools for `{}` failed ({e}); keeping cached catalogue ({} actions)",
+                integration.toolkit,
+                integration.tools.len()
+            );
+        }
+    }
 
     // Build the tool list that subagent_runner would produce for a
     // real spawn. Tool visibility honours the TOML scope on the
