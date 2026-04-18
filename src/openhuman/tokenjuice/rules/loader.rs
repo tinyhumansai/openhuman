@@ -102,7 +102,10 @@ fn list_rule_files(root: &Path) -> Vec<PathBuf> {
 fn walk_dir(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return,
+        Err(err) => {
+            log::debug!("[tokenjuice] read_dir failed at {}: {}", dir.display(), err);
+            return;
+        }
     };
     let mut names: Vec<_> = entries.filter_map(|e| e.ok()).collect();
     names.sort_by_key(|e| e.file_name());
@@ -111,7 +114,14 @@ fn walk_dir(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         let ft = match entry.file_type() {
             Ok(ft) => ft,
-            Err(_) => continue,
+            Err(err) => {
+                log::debug!(
+                    "[tokenjuice] file_type failed at {}: {}",
+                    path.display(),
+                    err
+                );
+                continue;
+            }
         };
         if ft.is_symlink() {
             continue;
@@ -136,7 +146,18 @@ fn load_disk_descriptors(root: &Path, source: RuleOrigin) -> Vec<(RuleOrigin, St
     files
         .into_iter()
         .filter_map(|path| {
-            let json = std::fs::read_to_string(&path).ok()?;
+            let json = match std::fs::read_to_string(&path) {
+                Ok(s) => s,
+                Err(err) => {
+                    log::debug!(
+                        "[tokenjuice] read_to_string failed for {:?} rule at {}: {}",
+                        source,
+                        path.display(),
+                        err
+                    );
+                    return None;
+                }
+            };
             match serde_json::from_str::<JsonRule>(&json) {
                 Ok(rule) => {
                     log::debug!(

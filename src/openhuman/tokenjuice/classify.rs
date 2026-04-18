@@ -20,7 +20,16 @@ fn includes_all(argv: &[String], expected: &[String]) -> bool {
 /// Test whether `rule` matches `input`.  Mirrors `matchesRule` in TS.
 pub fn matches_rule(rule: &JsonRule, input: &ToolExecutionInput) -> bool {
     let argv = input.argv.as_deref().unwrap_or(&[]);
-    let command = input.command.as_deref().unwrap_or("");
+    // Fall back to a joined argv when `command` wasn't explicitly set so
+    // `commandIncludes*` rules still match for argv-only callers.
+    let command_fallback: String;
+    let command: &str = match input.command.as_deref() {
+        Some(c) => c,
+        None => {
+            command_fallback = argv.join(" ");
+            &command_fallback
+        }
+    };
     let tool_name = &input.tool_name;
 
     // toolNames filter
