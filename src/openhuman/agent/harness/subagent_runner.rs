@@ -41,7 +41,6 @@ use futures::stream::StreamExt;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
-use std::path::Path;
 use std::sync::{Arc, LazyLock, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -636,7 +635,10 @@ async fn run_typed_mode(
     ];
 
     // ── Run the inner tool-call loop ───────────────────────────────────
-    let (output, iterations, agg_usage) = run_inner_loop(
+    // Transcript persistence lives INSIDE the loop (one write per
+    // provider response), mirroring the main-agent turn loop in
+    // `session/turn.rs`. No post-loop write needed here.
+    let (output, iterations, _agg_usage) = run_inner_loop(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
@@ -649,10 +651,9 @@ async fn run_typed_mode(
         task_id,
         &definition.id,
         handoff_cache.as_deref(),
+        &parent,
     )
     .await?;
-
-    persist_subagent_transcript(&parent.workspace_dir, &definition.id, &history, &agg_usage, &parent);
 
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),
@@ -729,7 +730,9 @@ async fn run_fork_mode(
     // Fork mode replays the parent's exact tool list — no dynamic
     // toolkit-scoped tools, so `extra_tools` is empty.
     let fork_extra_tools: Vec<Box<dyn Tool>> = Vec::new();
-    let (output, iterations, agg_usage) = run_inner_loop(
+    // Transcript persistence happens per-iteration inside
+    // `run_inner_loop`; no post-loop write needed.
+    let (output, iterations, _agg_usage) = run_inner_loop(
         parent.provider.as_ref(),
         &mut history,
         &parent.all_tools,
@@ -742,10 +745,9 @@ async fn run_fork_mode(
         task_id,
         &definition.id,
         None,
+        &parent,
     )
     .await?;
-
-    persist_subagent_transcript(&parent.workspace_dir, &definition.id, &history, &agg_usage, &parent);
 
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),
@@ -755,92 +757,6 @@ async fn run_fork_mode(
         elapsed: started.elapsed(),
         mode: SubagentMode::Fork,
     })
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Session transcript persistence for sub-agents
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Best-effort: persist the sub-agent's conversation as a session transcript
-/// so it can be inspected for debugging and KV cache analysis.
-///
-/// The filename is built from the **parent's** session-key chain
-/// prepended to this sub-agent's own `{unix_ts}_{agent_id}` key —
-/// producing a flat hierarchical name like
-/// `1713000000_orchestrator__1713000123_planner.jsonl`. Nested spawns
-/// chain further prefixes with `__`.
-fn persist_subagent_transcript(
-    workspace_dir: &Path,
-    agent_id: &str,
-    history: &[ChatMessage],
-    usage: &AggregatedUsage,
-    parent: &ParentExecutionContext,
-) {
-    // Generate a fresh session key for this sub-agent. Same format the
-    // main-agent builder uses in `session/builder.rs::build()` so the
-    // two paths agree on what a key looks like.
-    let child_key = {
-        let unix_ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let sanitized: String = agent_id
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        format!("{unix_ts}_{sanitized}")
-    };
-    // Ancestor chain = parent_prefix (if any) + parent's own key.
-    let parent_chain = match parent.session_parent_prefix.as_deref() {
-        Some(prefix) => format!("{}__{}", prefix, parent.session_key),
-        None => parent.session_key.clone(),
-    };
-    let stem = format!("{parent_chain}__{child_key}");
-    let path = match transcript::resolve_keyed_transcript_path(workspace_dir, &stem) {
-        Ok(p) => p,
-        Err(err) => {
-            tracing::debug!(
-                agent_id = %agent_id,
-                error = %err,
-                "[subagent_runner] failed to resolve transcript path"
-            );
-            return;
-        }
-    };
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let meta = transcript::TranscriptMeta {
-        agent_name: agent_id.to_string(),
-        dispatcher: "native".into(),
-        created: now.clone(),
-        updated: now,
-        turn_count: 1,
-        input_tokens: usage.input_tokens,
-        output_tokens: usage.output_tokens,
-        cached_input_tokens: usage.cached_input_tokens,
-        charged_amount_usd: usage.charged_amount_usd,
-    };
-
-    if let Err(err) = transcript::write_transcript(&path, history, &meta, None) {
-        tracing::debug!(
-            agent_id = %agent_id,
-            error = %err,
-            "[subagent_runner] failed to write transcript"
-        );
-    } else {
-        tracing::debug!(
-            agent_id = %agent_id,
-            messages = history.len(),
-            path = %path.display(),
-            "[subagent_runner] transcript written"
-        );
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -880,8 +796,39 @@ async fn run_inner_loop(
     task_id: &str,
     agent_id: &str,
     handoff_cache: Option<&ResultHandoffCache>,
+    parent: &ParentExecutionContext,
 ) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
     let max_iterations = max_iterations.max(1);
+
+    // Sub-agent transcript stem — mirrors what
+    // `persist_subagent_transcript` used to compute on one-shot
+    // post-loop writes. We compute it once up front so **every
+    // iteration's** persist call resolves to the same file on disk:
+    //   `{parent_chain}__{unix_ts}_{agent_id}.jsonl`.
+    let child_session_key = {
+        let unix_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let sanitized: String = agent_id
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        format!("{unix_ts}_{sanitized}")
+    };
+    let transcript_stem = {
+        let parent_chain = match parent.session_parent_prefix.as_deref() {
+            Some(prefix) => format!("{}__{}", prefix, parent.session_key),
+            None => parent.session_key.clone(),
+        };
+        format!("{parent_chain}__{child_session_key}")
+    };
 
     // ── Text-mode override for integrations_agent ────────────────────────────
     //
@@ -938,6 +885,48 @@ async fn run_inner_loop(
     }
 
     let mut usage = AggregatedUsage::default();
+
+    // Per-iteration transcript persistence. Mirrors the main-agent
+    // turn loop: right after each provider response lands (and again
+    // after the final response is pushed) we flush the full history
+    // to disk. A crash during tool execution no longer erases the
+    // sub-agent's response — the bytes are on disk before any tool
+    // runs. Best-effort: write failures are logged at `debug` and the
+    // loop continues.
+    let persist_transcript = |history: &[ChatMessage], usage: &AggregatedUsage| {
+        let path =
+            match transcript::resolve_keyed_transcript_path(&parent.workspace_dir, &transcript_stem)
+            {
+                Ok(p) => p,
+                Err(err) => {
+                    tracing::debug!(
+                        agent_id = %agent_id,
+                        error = %err,
+                        "[subagent_runner] failed to resolve transcript path"
+                    );
+                    return;
+                }
+            };
+        let now = chrono::Utc::now().to_rfc3339();
+        let meta = transcript::TranscriptMeta {
+            agent_name: agent_id.to_string(),
+            dispatcher: "native".into(),
+            created: now.clone(),
+            updated: now,
+            turn_count: 1,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cached_input_tokens: usage.cached_input_tokens,
+            charged_amount_usd: usage.charged_amount_usd,
+        };
+        if let Err(err) = transcript::write_transcript(&path, history, &meta, None) {
+            tracing::debug!(
+                agent_id = %agent_id,
+                error = %err,
+                "[subagent_runner] failed to write transcript"
+            );
+        }
+    };
 
     for iteration in 0..max_iterations {
         tracing::debug!(
@@ -1009,6 +998,9 @@ async fn run_inner_loop(
                 "[subagent_runner] no tool calls — returning final response"
             );
             history.push(ChatMessage::assistant(response_text.clone()));
+            // Persist the final response before returning so the
+            // transcript always captures the last provider reply.
+            persist_transcript(history, &usage);
             return Ok((response_text, iteration + 1, usage));
         }
 
@@ -1025,6 +1017,11 @@ async fn run_inner_loop(
                 super::parse::build_native_assistant_history(&response_text, &native_calls);
             history.push(ChatMessage::assistant(assistant_history_content));
         }
+
+        // Persist the assistant response + tool-call intents **before**
+        // executing tools. If the session crashes mid-tool-call we
+        // still have what the model emitted on disk.
+        persist_transcript(history, &usage);
 
         // Execute each call, collect outputs. Native mode pushes one
         // `role=tool` message per call with the structured `tool_call_id`
