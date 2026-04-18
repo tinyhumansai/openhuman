@@ -1,0 +1,41 @@
+{
+  "id": "tests/cargo-test",
+  "family": "test-results",
+  "description": "Compact cargo test output while preserving failures and final summary.",
+  "match": {
+    "toolNames": ["exec"],
+    "argv0": ["cargo"],
+    "argvIncludes": [["test"]]
+  },
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "filters": {
+    "skipPatterns": [
+      "^\\s*Compiling .+",
+      "^\\s*Finished .+",
+      "^\\s*Running .+"
+    ]
+  },
+  "summarize": {
+    "head": 12,
+    "tail": 10
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 18,
+    "tail": 18
+  },
+  "counters": [
+    {
+      "name": "failed test",
+      "pattern": "FAILED"
+    },
+    {
+      "name": "passed test",
+      "pattern": "ok"
+    }
+  ]
+}

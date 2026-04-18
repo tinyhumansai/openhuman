@@ -1,0 +1,29 @@
+{
+  "id": "git/branch",
+  "family": "git-branches",
+  "description": "Compact git branch output while preserving branch names and current branch context.",
+  "match": {
+    "argv0": ["git"],
+    "argvIncludes": [["branch"]]
+  },
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "summarize": {
+    "head": 14,
+    "tail": 4
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 16,
+    "tail": 12
+  },
+  "counters": [
+    {
+      "name": "branch",
+      "pattern": ".+"
+    }
+  ]
+}

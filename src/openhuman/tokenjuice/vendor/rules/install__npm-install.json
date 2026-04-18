@@ -1,0 +1,49 @@
+{
+  "id": "install/npm-install",
+  "family": "dependency-install",
+  "description": "Compact npm install output while preserving warnings and audit summaries.",
+  "onEmpty": "npm install: ok",
+  "matchOutput": [
+    {
+      "pattern": "up to date, audited \\d+ package",
+      "message": "npm install: up to date",
+      "flags": "i"
+    }
+  ],
+  "match": {
+    "toolNames": ["exec"],
+    "argv0": ["npm"],
+    "argvIncludes": [["install"]]
+  },
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "filters": {
+    "skipPatterns": [
+      "^npm notice .+"
+    ]
+  },
+  "summarize": {
+    "head": 10,
+    "tail": 8
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 14,
+    "tail": 14
+  },
+  "counters": [
+    {
+      "name": "warning",
+      "pattern": "warn",
+      "flags": "i"
+    },
+    {
+      "name": "vulnerability",
+      "pattern": "vulnerabilit",
+      "flags": "i"
+    }
+  ]
+}

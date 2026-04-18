@@ -52,6 +52,7 @@ pub mod subconscious;
 pub mod team;
 pub mod text_input;
 pub mod threads;
+pub mod tokenjuice;
 pub mod tool_timeout;
 pub mod tools;
 pub mod tree_summarizer;

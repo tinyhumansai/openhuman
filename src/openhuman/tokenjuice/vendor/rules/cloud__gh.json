@@ -1,0 +1,30 @@
+{
+  "id": "cloud/gh",
+  "family": "developer-cli",
+  "description": "Compact GitHub CLI output while preserving issue, PR, and workflow result lines.",
+  "match": {
+    "toolNames": ["exec"],
+    "argv0": ["gh"]
+  },
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "summarize": {
+    "head": 10,
+    "tail": 8
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 14,
+    "tail": 14
+  },
+  "counters": [
+    {
+      "name": "error",
+      "pattern": "error|failed|not found|forbidden",
+      "flags": "i"
+    }
+  ]
+}

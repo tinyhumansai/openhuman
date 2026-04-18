@@ -1,0 +1,9 @@
+{
+  "description": "Long generic output (20 lines) gets head=8 tail=8 summarised by fallback rule",
+  "input": {
+    "toolName": "bash",
+    "argv": ["some_tool"],
+    "stdout": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20"
+  },
+  "expectedOutput": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\n... 4 lines omitted ...\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20"
+}

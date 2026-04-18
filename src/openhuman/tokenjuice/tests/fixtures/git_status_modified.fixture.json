@@ -1,0 +1,9 @@
+{
+  "description": "git status with a modified file rewrites to compact M: notation; hint lines are preserved when indented (Rust port behavior)",
+  "input": {
+    "toolName": "bash",
+    "argv": ["git", "status"],
+    "stdout": "On branch main\n\nChanges not staged for commit:\n\tmodified:   src/foo.rs\n\nno changes added to commit (use \"git add\" and/or \"git commit -a\")\n"
+  },
+  "expectedOutput": "Changes not staged:\nM: src/foo.rs"
+}

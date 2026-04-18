@@ -1,0 +1,53 @@
+{
+  "id": "git/status",
+  "family": "git-status",
+  "description": "Compact human-readable git status output.",
+  "match": {
+    "argv0": ["git"],
+    "argvIncludes": [["status"]]
+  },
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "filters": {
+    "skipPatterns": [
+      "^On branch ",
+      "^Your branch is ",
+      "^and have \\d+ and \\d+ different commits each.*$",
+      "^\\(use \"git .+\" to .+\\)$",
+      "^no changes added to commit.*$",
+      "^nothing added to commit but untracked files present.*$",
+      "^nothing to commit, working tree clean$",
+      "^use \"git .+\" to .+"
+    ]
+  },
+  "summarize": {
+    "head": 10,
+    "tail": 4
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 12,
+    "tail": 12
+  },
+  "counters": [
+    {
+      "name": "modified file",
+      "pattern": "^(?:M:|\\s*modified:|[ MTRU][MTRU]\\s+|[MTRU][ MTRU]\\s+)"
+    },
+    {
+      "name": "new file",
+      "pattern": "^(?:A:|\\s*new file:|A.\\s+|.A\\s+)"
+    },
+    {
+      "name": "deleted file",
+      "pattern": "^(?:D:|\\s*deleted:|D.\\s+|.D\\s+)"
+    },
+    {
+      "name": "untracked file",
+      "pattern": "^(?:\\?\\?:|\\?\\?\\s+|\\s*untracked files:)"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "description": "cargo test failure: exit code + facts header + preserved output",
+  "input": {
+    "toolName": "exec",
+    "argv": ["cargo", "test"],
+    "exitCode": 1,
+    "stdout": "   Compiling mylib v0.1.0\n   Finished test [unoptimized + debuginfo] target(s) in 2.50s\n    Running unittests src/lib.rs\nrunning 3 tests\ntest tests::test_a ... ok\ntest tests::test_b ... FAILED\ntest tests::test_c ... ok\n\nfailures:\n\n---- tests::test_b stdout ----\nthread 'tests::test_b' panicked at 'assertion failed', src/lib.rs:42:5\n\nfailures:\n    tests::test_b\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored\n"
+  },
+  "expectedOutput": "exit 1\n2 failed tests, 2 passed tests\nrunning 3 tests\ntest tests::test_a ... ok\ntest tests::test_b ... FAILED\ntest tests::test_c ... ok\n\nfailures:\n\n---- tests::test_b stdout ----\nthread 'tests::test_b' panicked at 'assertion failed', src/lib.rs:42:5\n\nfailures:\n    tests::test_b\n\ntest result: FAILED. 2 passed; 1 failed; 0 ignored"
+}

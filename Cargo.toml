@@ -60,6 +60,8 @@ dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 dotenvy = "0.15"
 console = "0.16"
 regex = "1.10"
+unicode-segmentation = "1"
+unicode-width = "0.2"
 hostname = "0.4.2"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-pki-types = "1.14.0"

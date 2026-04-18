@@ -1,0 +1,37 @@
+{
+  "id": "git/diff-stat",
+  "family": "git-diff",
+  "description": "Compact git diff --stat output.",
+  "match": {
+    "argv0": ["git"],
+    "argvIncludes": [["diff"], ["--stat"]]
+  },
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "summarize": {
+    "head": 12,
+    "tail": 6
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 16,
+    "tail": 12
+  },
+  "counters": [
+    {
+      "name": "file",
+      "pattern": "\\|"
+    },
+    {
+      "name": "insertion",
+      "pattern": "insertions?\\(\\+\\)"
+    },
+    {
+      "name": "deletion",
+      "pattern": "deletions?\\(-\\)"
+    }
+  ]
+}

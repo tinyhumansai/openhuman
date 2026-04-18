@@ -1,0 +1,32 @@
+{
+  "id": "generic/fallback",
+  "family": "generic",
+  "description": "Generic fallback reducer for line-oriented output.",
+  "match": {},
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "summarize": {
+    "head": 8,
+    "tail": 8
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 12,
+    "tail": 20
+  },
+  "counters": [
+    {
+      "name": "error",
+      "pattern": "error",
+      "flags": "i"
+    },
+    {
+      "name": "warning",
+      "pattern": "warning",
+      "flags": "i"
+    }
+  ]
+}

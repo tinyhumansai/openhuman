@@ -1,0 +1,29 @@
+{
+  "id": "git/diff-name-only",
+  "family": "git-diff",
+  "description": "Compact git diff --name-only output.",
+  "match": {
+    "argv0": ["git"],
+    "argvIncludes": [["diff"], ["--name-only"]]
+  },
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "summarize": {
+    "head": 16,
+    "tail": 4
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 16,
+    "tail": 12
+  },
+  "counters": [
+    {
+      "name": "file",
+      "pattern": ".+"
+    }
+  ]
+}
