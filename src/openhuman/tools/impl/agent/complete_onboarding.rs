@@ -419,7 +419,7 @@ pub(crate) fn build_status_snapshot(
             "composio": composio_enabled,
             "browser": config.browser.enabled,
             "web_search": true,
-            "http_request": config.http_request.enabled,
+            "http_request": true,
             "local_ai": config.local_ai.enabled,
         },
         "memory": {
