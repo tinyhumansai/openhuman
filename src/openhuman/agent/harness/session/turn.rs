@@ -26,9 +26,7 @@ use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::progress::AgentProgress;
-use crate::openhuman::context::prompt::{
-    LearnedContextData, PromptContext, PromptTool,
-};
+use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::memory::MemoryCategory;
 use crate::openhuman::providers::{ChatMessage, ChatRequest, ConversationMessage, ProviderDelta};

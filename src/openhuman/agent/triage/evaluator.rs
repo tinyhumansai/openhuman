@@ -326,8 +326,7 @@ fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
             };
             let empty_tools: Vec<PromptTool<'_>> = Vec::new();
             let empty_integrations: Vec<ConnectedIntegration> = Vec::new();
-            let empty_visible: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let empty_visible: std::collections::HashSet<String> = std::collections::HashSet::new();
             let ctx = PromptContext {
                 workspace_dir: std::path::Path::new("."),
                 model_name: "",

@@ -32,8 +32,7 @@ use super::definition::{AgentDefinition, PromptSource, ToolScope};
 use super::fork_context::{current_fork, current_parent, ForkContext, ParentExecutionContext};
 use super::session::transcript;
 use crate::openhuman::context::prompt::{
-    render_subagent_system_prompt, PromptContext, PromptTool,
-    SubagentRenderOptions,
+    render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
 use crate::openhuman::providers::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::tools::{Tool, ToolCategory, ToolResult, ToolSpec};
@@ -602,12 +601,7 @@ async fn run_typed_mode(
     )
     .await?;
 
-    persist_subagent_transcript(
-        &parent.workspace_dir,
-        &definition.id,
-        &history,
-        &agg_usage,
-    );
+    persist_subagent_transcript(&parent.workspace_dir, &definition.id, &history, &agg_usage);
 
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),
@@ -700,12 +694,7 @@ async fn run_fork_mode(
     )
     .await?;
 
-    persist_subagent_transcript(
-        &parent.workspace_dir,
-        &definition.id,
-        &history,
-        &agg_usage,
-    );
+    persist_subagent_transcript(&parent.workspace_dir, &definition.id, &history, &agg_usage);
 
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),

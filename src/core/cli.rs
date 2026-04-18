@@ -47,6 +47,8 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
     // Print the welcome banner to stderr to keep stdout clean for JSON output.
     eprint!("{CLI_BANNER}");
 
+    load_dotenv_for_cli()?;
+
     let grouped = grouped_schemas();
     if args.is_empty() || is_help(&args[0]) {
         print_general_help(&grouped);
@@ -81,13 +83,14 @@ pub fn run_from_cli_args(args: &[String]) -> Result<()> {
 
 /// Loads key/value pairs from a `.env` file into the process environment.
 ///
-/// This is used during the `run` command to load sensitive configurations.
+/// This is used for all CLI entrypoints so direct namespace commands pick up
+/// the same repo-local configuration as `run` / `serve`.
 ///
 /// Precedence:
 /// 1. Variables already set in the process environment are **not** overwritten.
 /// 2. If `OPENHUMAN_DOTENV_PATH` is set, that file is loaded.
 /// 3. Otherwise, it searches for `.env` in the current working directory.
-fn load_dotenv_for_server() -> Result<()> {
+fn load_dotenv_for_cli() -> Result<()> {
     match std::env::var("OPENHUMAN_DOTENV_PATH") {
         Ok(path) if !path.trim().is_empty() => {
             dotenvy::from_path(&path).map_err(|e| {
@@ -110,8 +113,6 @@ fn load_dotenv_for_server() -> Result<()> {
 ///
 /// * `args` - Command-line arguments for the `run` command (e.g., `--port`).
 fn run_server_command(args: &[String]) -> Result<()> {
-    load_dotenv_for_server()?;
-
     let mut port: Option<u16> = None;
     let mut host: Option<String> = None;
     let mut socketio_enabled = true;
@@ -564,8 +565,19 @@ fn is_help(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{grouped_schemas, parse_function_params, parse_input_value};
+    use super::{grouped_schemas, load_dotenv_for_cli, parse_function_params, parse_input_value};
     use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    static CLI_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        CLI_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn grouped_schemas_contains_migrated_namespaces() {
@@ -611,5 +623,57 @@ mod tests {
         let err = parse_input_value(&TypeSchema::Bool, "not-a-bool")
             .expect_err("invalid bool should fail");
         assert!(err.contains("expected bool"));
+    }
+
+    #[test]
+    fn load_dotenv_for_cli_reads_cwd_dotenv_without_overwriting_existing_env() {
+        let _guard = env_lock();
+        let tmp = tempdir().expect("tempdir");
+        let env_path = tmp.path().join(".env");
+        std::fs::write(
+            &env_path,
+            "BACKEND_URL=https://staging-api.example.test\nOPENHUMAN_APP_ENV=staging\n",
+        )
+        .expect("write .env");
+
+        let original_dir = std::env::current_dir().expect("current dir");
+        let prior_backend = std::env::var("BACKEND_URL").ok();
+        let prior_app_env = std::env::var("OPENHUMAN_APP_ENV").ok();
+        let prior_dotenv_path = std::env::var("OPENHUMAN_DOTENV_PATH").ok();
+
+        unsafe {
+            std::env::remove_var("BACKEND_URL");
+            std::env::set_var("OPENHUMAN_APP_ENV", "production");
+            std::env::remove_var("OPENHUMAN_DOTENV_PATH");
+        }
+        std::env::set_current_dir(tmp.path()).expect("set current dir");
+
+        let result = load_dotenv_for_cli();
+
+        let loaded_backend = std::env::var("BACKEND_URL").ok();
+        let loaded_app_env = std::env::var("OPENHUMAN_APP_ENV").ok();
+
+        std::env::set_current_dir(&original_dir).expect("restore current dir");
+        unsafe {
+            match prior_backend {
+                Some(value) => std::env::set_var("BACKEND_URL", value),
+                None => std::env::remove_var("BACKEND_URL"),
+            }
+            match prior_app_env {
+                Some(value) => std::env::set_var("OPENHUMAN_APP_ENV", value),
+                None => std::env::remove_var("OPENHUMAN_APP_ENV"),
+            }
+            match prior_dotenv_path {
+                Some(value) => std::env::set_var("OPENHUMAN_DOTENV_PATH", value),
+                None => std::env::remove_var("OPENHUMAN_DOTENV_PATH"),
+            }
+        }
+
+        result.expect("dotenv load should succeed");
+        assert_eq!(
+            loaded_backend.as_deref(),
+            Some("https://staging-api.example.test")
+        );
+        assert_eq!(loaded_app_env.as_deref(), Some("production"));
     }
 }

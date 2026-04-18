@@ -113,12 +113,9 @@ fn parse_dump_flags(args: &[String]) -> Result<DumpFlags> {
 
 fn run_dump_prompt(args: &[String]) -> Result<()> {
     let flags = parse_dump_flags(args)?;
-    let agent = flags
-        .agent
-        .clone()
-        .ok_or_else(|| {
-            anyhow!("--agent <id> is required (e.g. `orchestrator`, `skills_agent`, `welcome`)")
-        })?;
+    let agent = flags.agent.clone().ok_or_else(|| {
+        anyhow!("--agent <id> is required (e.g. `orchestrator`, `skills_agent`, `welcome`)")
+    })?;
 
     init_quiet_logging(flags.verbose);
 
