@@ -74,8 +74,21 @@ hint = "reasoning"
 # / composio_execute directly.
 named = [
     "query_memory",
+    "memory_store",
+    "memory_forget",
     "read_workspace_state",
     "ask_user_clarification",
     "spawn_subagent",
     "composio_list_connections",
+    # Time + scheduling — lets the orchestrator answer "what time is it",
+    # "remind me in 10 minutes", "every morning at 8" directly rather than
+    # delegating or telling the user it can't. `current_time` grounds
+    # relative-time parsing; `cron_add` / `cron_list` / `cron_remove`
+    # manage recurring + one-shot agent/shell jobs; `schedule` is the
+    # simpler shell-only alias for one-shot reminders.
+    "current_time",
+    "cron_add",
+    "cron_list",
+    "cron_remove",
+    "schedule",
 ]

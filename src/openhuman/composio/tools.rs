@@ -29,7 +29,7 @@ use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCategory, ToolR
 use super::client::ComposioClient;
 use super::providers::{
     catalog_for_toolkit, classify_unknown, find_curated, get_provider, load_user_scope_or_default,
-    post_process, toolkit_from_slug, ToolScope, UserScopePref,
+    toolkit_from_slug, ToolScope, UserScopePref,
 };
 
 /// Decision returned by [`evaluate_tool_visibility`].
@@ -482,7 +482,13 @@ impl Tool for ComposioExecuteTool {
                 // responses; errors are passed through verbatim.
                 if resp.successful {
                     if let Some(toolkit) = toolkit_from_slug(&tool) {
-                        post_process::post_process(&toolkit, &tool, &mut resp.data);
+                        if let Some(provider) = get_provider(&toolkit) {
+                            provider.post_process_action_result(
+                                &tool,
+                                arguments.as_ref(),
+                                &mut resp.data,
+                            );
+                        }
                     }
                 }
                 Ok(ToolResult::success(
