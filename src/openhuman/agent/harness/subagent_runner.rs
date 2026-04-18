@@ -441,38 +441,40 @@ async fn run_typed_mode(
     // When enabled, oversized tool results get stashed into this cache
     // and their place in history is taken by a short placeholder (see
     // `build_handoff_placeholder`). The sub-agent can then call the
-    // companion `extract_from_result` tool below to dispatch the
-    // summarizer sub-agent against the cached payload with a targeted
-    // query. Lazy / pay-per-question, so trivial asks answerable from
-    // the preview don't pay any extra LLM cost.
+    // companion `extract_from_result` tool below to run a direct
+    // provider call against the cached payload with a targeted query.
+    // Lazy / pay-per-question, so trivial asks answerable from the
+    // preview don't pay any extra LLM cost.
     let handoff_cache: Option<Arc<ResultHandoffCache>> = if is_integrations_agent_with_toolkit {
         let cache = Arc::new(ResultHandoffCache::new());
 
-        // Resolve the summarizer definition once and register the
-        // extract_from_result tool alongside the composio action tools.
-        // If the summarizer isn't in the registry (shouldn't happen in
-        // production but can happen in tests), skip the tool — tool
-        // results will still get the placeholder + preview, the
-        // sub-agent just won't be able to drill in.
-        if let Some(reg) =
-            crate::openhuman::agent::harness::definition::AgentDefinitionRegistry::global()
-        {
-            if let Some(summarizer_def) = reg.get("summarizer") {
-                dynamic_tools.push(Box::new(ExtractFromResultTool::new(
-                    cache.clone(),
-                    summarizer_def.clone(),
-                )));
-                tracing::debug!(
-                    agent_id = %definition.id,
-                    "[subagent_runner:typed] registered extract_from_result tool + handoff cache"
-                );
-            } else {
-                tracing::warn!(
-                    agent_id = %definition.id,
-                    "[subagent_runner:typed] summarizer definition missing from registry — extract_from_result disabled (oversized results will still be cached and previewed)"
-                );
-            }
-        }
+        // `extract_from_result` is now a pure tool — it takes the
+        // parent's provider and calls `chat_with_system` directly
+        // against the extraction model, instead of spawning the
+        // `summarizer` sub-agent. Removes an entire layer of harness
+        // scaffolding (system prompt assembly, tool-loop, recursion
+        // guards) that this workload never needed.
+        //
+        // Transcript plumbing: the extraction LLM still costs tokens,
+        // so each call writes a self-contained transcript under
+        // `session_raw/DDMMYYYY/` (and its companion `.md`) keyed by
+        // the parent chain, to match the rest of the session tree.
+        let parent_chain = match parent.session_parent_prefix.as_deref() {
+            Some(prefix) => format!("{}__{}", prefix, parent.session_key),
+            None => parent.session_key.clone(),
+        };
+        dynamic_tools.push(Box::new(ExtractFromResultTool::new(
+            cache.clone(),
+            parent.provider.clone(),
+            parent.workspace_dir.clone(),
+            parent_chain,
+            definition.id.clone(),
+        )));
+        tracing::debug!(
+            agent_id = %definition.id,
+            "[subagent_runner:typed] registered extract_from_result tool + handoff cache"
+        );
+
         Some(cache)
     } else {
         None
@@ -1233,14 +1235,20 @@ fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
 // sub-agent actually asks for a narrower view.
 
 /// Token threshold above which a tool result is routed to the handoff
-/// cache instead of being pushed into history raw. 20 000 tokens keeps
-/// the sub-agent's per-iteration prompt well below the 196 607-token
-/// model ceiling even after many iterations, and leaves comfortable
-/// headroom for the system prompt + tool catalogue. Token count is
+/// cache instead of being pushed into history raw. Token count is
 /// estimated at ~4 chars/token (mirrors
 /// [`crate::openhuman::agent::harness::payload_summarizer`] and
 /// [`crate::openhuman::tree_summarizer::types::estimate_tokens`]).
-const HANDOFF_OVERSIZE_THRESHOLD_TOKENS: usize = 20_000;
+///
+/// Raised from the original `20_000` to `50_000` so the clean Gmail /
+/// Notion envelopes emitted by provider post-processing fit through
+/// unchanged for normal workloads — only genuinely oversized results
+/// (bulk fetches, raw thread dumps) are routed through the
+/// `extract_from_result` path. The payload summarizer upstream of this
+/// stays disabled; `extract_from_result` itself still dispatches the
+/// summarizer sub-agent on demand when the sub-agent explicitly asks
+/// for a narrower view.
+const HANDOFF_OVERSIZE_THRESHOLD_TOKENS: usize = 50_000;
 
 /// Characters of the raw payload to surface in the placeholder preview.
 /// Enough for the sub-agent to recognise the shape (JSON keys, first
@@ -1338,20 +1346,194 @@ fn build_handoff_placeholder(tool_name: &str, result_id: &str, raw: &str) -> Str
 }
 
 /// Sub-agent-side tool that answers a targeted query against a payload
-/// previously stashed via [`build_handoff_placeholder`]. Internally
-/// dispatches the `summarizer` sub-agent with the cached payload + the
-/// caller's query as the extraction contract.
+/// previously stashed via [`build_handoff_placeholder`]. Calls the
+/// configured provider directly — no sub-agent spawn — and returns the
+/// extracted answer inline.
+///
+/// We deliberately do **not** dispatch the `summarizer` archetype here:
+/// an agent-level wrapper brings system-prompt scaffolding, tool-loop
+/// plumbing, and an extra inference round that this job doesn't need.
+/// A single `chat_with_system` call is sufficient for the
+/// "extract facts matching a query" workload, gets the same provider
+/// routing (via the `"summarization-v1"` model id) for free, and
+/// removes the last place where the handoff path could trigger
+/// recursive sub-agent dispatch.
 struct ExtractFromResultTool {
     cache: Arc<ResultHandoffCache>,
-    summarizer_def: AgentDefinition,
+    provider: Arc<dyn Provider>,
+    /// Workspace root for transcript writes.
+    workspace_dir: std::path::PathBuf,
+    /// Parent session chain joined with `__`, e.g.
+    /// `"1700000000_orchestrator__1700000005_1234_integrations_agent_abc"`.
+    /// Extract-call transcripts append a unique per-call suffix to this.
+    parent_chain: String,
+    /// Logical agent id that owns the calls (e.g. `"integrations_agent"`).
+    /// Only used to compose a descriptive `agent_name` in transcript meta.
+    owner_agent_id: String,
+    /// Monotonic counter so repeated calls within the same millisecond
+    /// still land on distinct transcript files.
+    call_seq: StdMutex<u64>,
 }
 
 impl ExtractFromResultTool {
-    fn new(cache: Arc<ResultHandoffCache>, summarizer_def: AgentDefinition) -> Self {
+    fn new(
+        cache: Arc<ResultHandoffCache>,
+        provider: Arc<dyn Provider>,
+        workspace_dir: std::path::PathBuf,
+        parent_chain: String,
+        owner_agent_id: String,
+    ) -> Self {
         Self {
             cache,
-            summarizer_def,
+            provider,
+            workspace_dir,
+            parent_chain,
+            owner_agent_id,
+            call_seq: StdMutex::new(0),
         }
+    }
+
+    fn next_call_seq(&self) -> u64 {
+        let mut guard = self
+            .call_seq
+            .lock()
+            .expect("extract_from_result call_seq mutex poisoned");
+        *guard = guard.saturating_add(1);
+        *guard
+    }
+}
+
+/// Model id used for `extract_from_result` LLM calls. Mirrors the
+/// resolution `ModelSpec::Hint("summarization").resolve(...)` would have
+/// produced for the retired summarizer sub-agent so routing table
+/// entries that targeted the summarizer continue to apply.
+const EXTRACT_MODEL_ID: &str = "summarization-v1";
+
+/// Temperature for extraction calls. Low but non-zero so the model can
+/// pick reasonable phrasings when rewriting identifiers into a compact
+/// answer, without straying into creative territory.
+const EXTRACT_TEMPERATURE: f64 = 0.2;
+
+/// System prompt fed to the provider on every `extract_from_result`
+/// call. Lifted in spirit from the old `summarizer` agent's prompt but
+/// trimmed to the core extraction contract — no fluff about iteration
+/// budgets or sub-agent roles because this is a pure tool call.
+const EXTRACT_SYSTEM_PROMPT: &str = "\
+You are an extraction assistant. A larger tool output is provided below. \
+Return ONLY the specific facts the user's query asks for. \
+Preserve identifiers verbatim (ids, urls, emails, timestamps, prices). \
+Be compact: no preamble, no commentary, no apologies, no meta-statements. \
+If the payload contains nothing relevant to the query, reply with an \
+empty string — do not invent information.";
+
+/// Persist a single extract-from-result LLM round-trip as its own
+/// transcript file under `session_raw/DDMMYYYY/{stem}.jsonl` (+ `.md`).
+///
+/// Best-effort: transcript failures are logged and swallowed so a
+/// readable-log hiccup never blocks the extraction itself. Appends a
+/// short suffix to the parent chain so every call lands on a distinct
+/// file (sibling extract calls within the same tool invocation still
+/// get unique stems).
+fn write_extract_transcript(
+    workspace_dir: &std::path::Path,
+    parent_chain: &str,
+    owner_agent_id: &str,
+    call_seq: u64,
+    chunk_label: Option<&str>,
+    system_prompt: &str,
+    user_prompt: &str,
+    assistant_output: Result<&str, &str>,
+    model: &str,
+) {
+    use super::session::transcript::{
+        resolve_keyed_transcript_path, write_transcript, MessageUsage, TranscriptMeta, TurnUsage,
+    };
+    use crate::openhuman::providers::ChatMessage;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let unix_ts = now.as_secs();
+    let nanos = now.subsec_nanos();
+    let chunk_tag = match chunk_label {
+        Some(label) => format!("_{label}"),
+        None => String::new(),
+    };
+    let stem = format!(
+        "{parent_chain}__extract_{unix_ts}_{nanos:09}_{call_seq:04}{chunk_tag}"
+    );
+
+    let path = match resolve_keyed_transcript_path(workspace_dir, &stem) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                stem = %stem,
+                "[extract_from_result] could not resolve transcript path; skipping transcript"
+            );
+            return;
+        }
+    };
+
+    let (assistant_text, is_error) = match assistant_output {
+        Ok(text) => (text.to_string(), false),
+        Err(err) => (format!("[error] {err}"), true),
+    };
+
+    let messages = vec![
+        ChatMessage {
+            role: "system".into(),
+            content: system_prompt.to_string(),
+        },
+        ChatMessage {
+            role: "user".into(),
+            content: user_prompt.to_string(),
+        },
+        ChatMessage {
+            role: "assistant".into(),
+            content: assistant_text,
+        },
+    ];
+
+    // Token counts aren't surfaced by `chat_with_system`; leave cost /
+    // usage fields zeroed and let the backend's own telemetry fill in
+    // the blanks when we wire richer accounting later.
+    let ts_rfc3339 = chrono::Utc::now().to_rfc3339();
+    let turn_usage = TurnUsage {
+        model: model.to_string(),
+        usage: MessageUsage {
+            input: 0,
+            output: 0,
+            cached_input: 0,
+            cost_usd: 0.0,
+        },
+        ts: ts_rfc3339.clone(),
+    };
+
+    let meta = TranscriptMeta {
+        agent_name: format!("{owner_agent_id}::extract_from_result"),
+        dispatcher: "native".into(),
+        created: ts_rfc3339.clone(),
+        updated: ts_rfc3339,
+        turn_count: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_input_tokens: 0,
+        charged_amount_usd: 0.0,
+    };
+
+    if let Err(e) = write_transcript(&path, &messages, &meta, Some(&turn_usage)) {
+        tracing::warn!(
+            error = %e,
+            path = %path.display(),
+            "[extract_from_result] transcript write failed"
+        );
+    } else {
+        tracing::debug!(
+            path = %path.display(),
+            is_error,
+            "[extract_from_result] transcript written"
+        );
     }
 }
 
@@ -1411,7 +1593,7 @@ impl Tool for ExtractFromResultTool {
             }
         };
 
-        // Fast path: payload fits in a single summarizer turn.
+        // Fast path: payload fits in a single provider turn.
         if cached.content.len() <= SUMMARIZER_CHUNK_CHAR_BUDGET {
             tracing::debug!(
                 tool = %cached.tool_name,
@@ -1423,24 +1605,21 @@ impl Tool for ExtractFromResultTool {
                 .await;
         }
 
-        // Slow path: chunk + parallel map. A single summarizer call on a
-        // payload large enough to need the handoff (hundreds of KB
-        // common for Gmail/Notion list operations) risks either (a)
-        // overflowing the summarizer's own context window, or (b)
-        // getting a low-quality single-pass summary that misses facts
-        // near the tail. Splitting into budgeted chunks and running
-        // them in parallel keeps each summarizer turn under its
-        // context budget and usually finishes faster than a sequential
-        // single-shot call on the whole blob.
+        // Slow path: chunk + parallel map. A single call on a payload
+        // large enough to need the handoff (hundreds of KB common for
+        // Gmail / Notion list operations) risks either (a) overflowing
+        // the extraction model's context window, or (b) a low-quality
+        // single-pass answer that misses facts near the tail. Splitting
+        // into budgeted chunks and running them in parallel keeps each
+        // call under its context budget and usually finishes faster
+        // than a sequential single-shot call on the whole blob.
         //
-        // No reduce stage: per-chunk summaries are concatenated in
-        // original chunk order. The reduce LLM call previously used
-        // here added latency (often the slowest single turn of the
-        // whole pipeline) and was the single point of failure when
-        // the upstream provider hung — a hung reduce could burn
-        // minutes before giving up. For listing/extraction queries
-        // concatenation is equivalent; for top-N / global-ordering
-        // queries the caller can post-process.
+        // No reduce stage: per-chunk extracts are concatenated in
+        // original chunk order. A reduce LLM call adds latency (often
+        // the slowest single turn) and becomes a single point of
+        // failure when the upstream provider stalls. For
+        // listing/extraction queries concatenation is equivalent; for
+        // top-N / global-ordering queries the caller can post-process.
         let chunks = chunk_content(&cached.content, SUMMARIZER_CHUNK_CHAR_BUDGET);
         tracing::info!(
             tool = %cached.tool_name,
@@ -1452,42 +1631,76 @@ impl Tool for ExtractFromResultTool {
 
         // Map stage: each chunk extracts items matching `query` from
         // ITS OWN slice only. Dispatched with bounded concurrency —
-        // `buffer_unordered(MAP_CONCURRENCY)` keeps at most N summarizer
-        // calls in flight at any time. Fully parallel `join_all` was
-        // generating 504-gateway-timeout storms from the staging
-        // proxy when 7+ concurrent summarizer calls piled onto the
-        // upstream; batching at 3 trades some wall-clock time for
-        // reliability. `run_subagent` is isolated per call (fresh
-        // history, independent summarizer instance). Callers share
-        // the same parent context.
+        // `buffer_unordered(MAP_CONCURRENCY)` keeps at most N calls in
+        // flight at any time. Fully parallel `join_all` was generating
+        // 504-gateway-timeout storms from the staging proxy when 7+
+        // concurrent calls piled onto the upstream; batching at 3
+        // trades some wall-clock time for reliability.
         const MAP_CONCURRENCY: usize = 3;
         let total_chunks = chunks.len();
+
+        // Each chunk gets its own monotonic call_seq so sibling
+        // transcripts written in parallel still land on distinct files.
+        let call_seq_base = self.next_call_seq();
+        let workspace_dir = self.workspace_dir.clone();
+        let parent_chain = self.parent_chain.clone();
+        let owner_agent_id = self.owner_agent_id.clone();
 
         // Consume `chunks` with `into_iter` so each async block owns
         // its `String` — `buffer_unordered` polls the stream lazily
         // and needs futures with no borrows into the enclosing scope.
         let map_futures = chunks.into_iter().enumerate().map(|(i, chunk)| {
-            let summarizer_def = self.summarizer_def.clone();
+            let provider = self.provider.clone();
             let tool_name = cached.tool_name.clone();
             let query = query.to_string();
+            let workspace_dir = workspace_dir.clone();
+            let parent_chain = parent_chain.clone();
+            let owner_agent_id = owner_agent_id.clone();
             async move {
-                let prompt = format!(
+                let user_prompt = format!(
                     "Tool name: {tool_name}\nChunk {idx} of {total}\n\n\
                      Query: {query}\n\n\
                      This is one slice of a larger tool output. Extract ONLY \
                      items in THIS slice that match the query. Preserve \
-                     identifiers verbatim (ids, urls, emails, timestamps). \
-                     Return an empty string if nothing in this slice is \
-                     relevant. Be concise — no preamble, no commentary on \
-                     other slices.\n\n\
+                     identifiers verbatim. Return an empty string if nothing \
+                     in this slice is relevant.\n\n\
                      --- BEGIN SLICE ---\n{chunk}\n--- END SLICE ---",
                     idx = i + 1,
                     total = total_chunks,
                 );
-                (
-                    i,
-                    run_subagent(&summarizer_def, &prompt, SubagentRunOptions::default()).await,
-                )
+                let result = provider
+                    .chat_with_system(
+                        Some(EXTRACT_SYSTEM_PROMPT),
+                        &user_prompt,
+                        EXTRACT_MODEL_ID,
+                        EXTRACT_TEMPERATURE,
+                    )
+                    .await;
+
+                // Persist this chunk's transcript before returning, so
+                // a partial failure higher up the stream still leaves
+                // an auditable record on disk.
+                let transcript_input: Result<&str, String> = match &result {
+                    Ok(text) => Ok(text.as_str()),
+                    Err(e) => Err(e.to_string()),
+                };
+                let chunk_label = format!("chunk{:03}of{:03}", i + 1, total_chunks);
+                write_extract_transcript(
+                    &workspace_dir,
+                    &parent_chain,
+                    &owner_agent_id,
+                    call_seq_base,
+                    Some(&chunk_label),
+                    EXTRACT_SYSTEM_PROMPT,
+                    &user_prompt,
+                    match &transcript_input {
+                        Ok(s) => Ok(*s),
+                        Err(s) => Err(s.as_str()),
+                    },
+                    EXTRACT_MODEL_ID,
+                );
+
+                (i, result)
             }
         });
 
@@ -1504,8 +1717,8 @@ impl Tool for ExtractFromResultTool {
         let partials: Vec<String> = map_results
             .into_iter()
             .filter_map(|(i, r)| match r {
-                Ok(outcome) => {
-                    let trimmed = outcome.output.trim();
+                Ok(text) => {
+                    let trimmed = text.trim();
                     if trimmed.is_empty() {
                         None
                     } else {
@@ -1516,7 +1729,7 @@ impl Tool for ExtractFromResultTool {
                     tracing::warn!(
                         chunk_idx = i,
                         error = %e,
-                        "[extract_from_result] map-stage summarizer call failed; dropping partial"
+                        "[extract_from_result] map-stage provider call failed; dropping partial"
                     );
                     None
                 }
@@ -1543,27 +1756,58 @@ impl ExtractFromResultTool {
         content: &str,
         query: &str,
     ) -> anyhow::Result<ToolResult> {
-        let prompt = format!(
+        let user_prompt = format!(
             "Tool name: {tool_name}\n\nQuery: {query}\n\n\
-             Raw tool output — extract ONLY the information the query asks for. \
-             Preserve identifiers verbatim (ids, urls, emails, timestamps). \
-             Return a compact, direct answer, no preamble.\n\n\
+             Raw tool output follows. Extract ONLY the information the query \
+             asks for.\n\n\
              --- BEGIN ---\n{content}\n--- END ---",
         );
 
-        match run_subagent(&self.summarizer_def, &prompt, SubagentRunOptions::default()).await {
-            Ok(run) => {
-                let trimmed = run.output.trim();
+        let call_seq = self.next_call_seq();
+        let provider_result = self
+            .provider
+            .chat_with_system(
+                Some(EXTRACT_SYSTEM_PROMPT),
+                &user_prompt,
+                EXTRACT_MODEL_ID,
+                EXTRACT_TEMPERATURE,
+            )
+            .await;
+
+        // Persist the transcript before returning — the LLM call cost
+        // tokens regardless of whether we ultimately return success.
+        let transcript_input: Result<&str, String> = match &provider_result {
+            Ok(text) => Ok(text.as_str()),
+            Err(e) => Err(e.to_string()),
+        };
+        write_extract_transcript(
+            &self.workspace_dir,
+            &self.parent_chain,
+            &self.owner_agent_id,
+            call_seq,
+            None,
+            EXTRACT_SYSTEM_PROMPT,
+            &user_prompt,
+            match &transcript_input {
+                Ok(s) => Ok(*s),
+                Err(s) => Err(s.as_str()),
+            },
+            EXTRACT_MODEL_ID,
+        );
+
+        match provider_result {
+            Ok(text) => {
+                let trimmed = text.trim();
                 if trimmed.is_empty() {
                     Ok(ToolResult::error(
-                        "extract_from_result: summarizer returned an empty response",
+                        "extract_from_result: provider returned an empty response",
                     ))
                 } else {
                     Ok(ToolResult::success(trimmed.to_string()))
                 }
             }
             Err(e) => Ok(ToolResult::error(format!(
-                "extract_from_result: summarizer dispatch failed: {e}"
+                "extract_from_result: provider call failed: {e}"
             ))),
         }
     }
