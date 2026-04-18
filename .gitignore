@@ -33,6 +33,9 @@ prompt-dumps/
 scripts/ci-secrets.json
 scripts/ci-secrets.local.json
 
+# Downloaded python-build-standalone archives cached by stage-python-sidecar.mjs
+.cache/
+
 # Editor directories and files
 .idea
 .DS_Store

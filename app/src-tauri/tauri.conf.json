@@ -4,9 +4,9 @@
   "version": "0.52.20",
   "identifier": "com.openhuman.app",
   "build": {
-    "beforeDevCommand": "npm run core:stage && npm run dev",
+    "beforeDevCommand": "npm run core:stage && npm run python:stage && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build:app && npm run core:stage",
+    "beforeBuildCommand": "npm run build:app && npm run core:stage && npm run python:stage",
     "frontendDist": "../dist"
   },
   "app": {
@@ -60,7 +60,8 @@
     ],
     "resources": [
       "../../src/openhuman/agent/prompts",
-      "recipes/**/*"
+      "recipes/**/*",
+      "python/**/*"
     ],
     "externalBin": [
       "binaries/openhuman-core"

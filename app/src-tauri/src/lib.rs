@@ -5,6 +5,7 @@ mod core_process;
 mod core_update;
 #[cfg(feature = "cef")]
 mod discord_scanner;
+mod python;
 #[cfg(feature = "cef")]
 mod slack_scanner;
 mod webview_accounts;
@@ -805,7 +806,8 @@ pub fn run() {
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,
             webview_accounts::webview_account_eval,
-            activate_main_window
+            activate_main_window,
+            python::python_info
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

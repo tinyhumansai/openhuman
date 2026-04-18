@@ -5,10 +5,11 @@
   "scripts": {
     "dev": "vite",
     "dev:web": "vite",
-    "dev:app": "yarn tauri:ensure && yarn core:stage && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
+    "dev:app": "yarn tauri:ensure && yarn core:stage && yarn python:stage && bash ../scripts/setup-chromium-safe-storage.sh && source ../scripts/load-dotenv.sh && APPLE_SIGNING_IDENTITY='OpenHuman Dev Signer' cargo tauri dev",
     "dev:cef": "yarn dev:app",
-    "dev:wry": "yarn tauri:ensure && yarn core:stage && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
+    "dev:wry": "yarn tauri:ensure && yarn core:stage && yarn python:stage && source ../scripts/load-dotenv.sh && cargo tauri dev --no-default-features --features wry",
     "core:stage": "node ../scripts/stage-core-sidecar.mjs",
+    "python:stage": "node ../scripts/stage-python-sidecar.mjs",
     "tauri:ensure": "bash ../scripts/ensure-tauri-cli.sh",
     "build": "tsc && vite build",
     "build:app": "tsc && vite build",
