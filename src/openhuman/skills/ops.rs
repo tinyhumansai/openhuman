@@ -49,8 +49,13 @@ impl Default for SkillScope {
 
 /// Parsed frontmatter of a `SKILL.md` file.
 ///
-/// Only `name` and `description` are required by the agentskills.io spec.
-/// Everything else is optional and defaults to empty.
+/// Matches the agentskills.io SKILL.md spec: `name` and `description` are
+/// required; `license`, `compatibility`, `metadata`, and `allowed-tools` are
+/// optional. Spec additions land in [`Self::extra`] via `#[serde(flatten)]`.
+///
+/// Version, author, tags, and other non-required fields belong under
+/// [`Self::metadata`]. Writers that still put them at the top level are
+/// accepted with a migration warning.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SkillFrontmatter {
     #[serde(default)]
@@ -58,21 +63,77 @@ pub struct SkillFrontmatter {
     #[serde(default)]
     pub description: String,
     #[serde(default)]
-    pub version: String,
-    #[serde(default)]
-    pub author: Option<String>,
-    #[serde(default)]
     pub license: Option<String>,
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub compatibility: Option<String>,
+    /// Spec-compliant metadata map. Version, author, tags, and other
+    /// non-required fields live here.
+    #[serde(default)]
+    pub metadata: HashMap<String, serde_yaml::Value>,
     /// Tools the skill author asserts their instructions rely on
     /// (non-binding hint; the host decides what to expose).
     #[serde(default, rename = "allowed-tools", alias = "allowed_tools")]
     pub allowed_tools: Vec<String>,
-    /// Free-form extra keys so we can display them without failing parse
-    /// when skill authors add new fields.
+    /// Forward-compat hatch for spec additions. Non-spec top-level keys
+    /// (including legacy `version`, `author`, `tags`) land here and trigger
+    /// a migration warning when read.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_yaml::Value>,
+}
+
+fn metadata_string(fm: &SkillFrontmatter, key: &str) -> Option<String> {
+    fm.metadata
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+fn metadata_string_seq(value: &serde_yaml::Value) -> Vec<String> {
+    value
+        .as_sequence()
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|t| t.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_version(fm: &SkillFrontmatter, warnings: &mut Vec<String>) -> String {
+    if let Some(v) = metadata_string(fm, "version") {
+        return v;
+    }
+    if let Some(v) = fm.extra.get("version").and_then(|v| v.as_str()) {
+        log::warn!("[skills] top-level 'version' is deprecated; move under 'metadata.version'");
+        warnings
+            .push("top-level 'version' is deprecated; move under 'metadata.version'".to_string());
+        return v.to_string();
+    }
+    String::new()
+}
+
+fn extract_author(fm: &SkillFrontmatter, warnings: &mut Vec<String>) -> Option<String> {
+    if let Some(v) = metadata_string(fm, "author") {
+        return Some(v);
+    }
+    if let Some(v) = fm.extra.get("author").and_then(|v| v.as_str()) {
+        log::warn!("[skills] top-level 'author' is deprecated; move under 'metadata.author'");
+        warnings.push("top-level 'author' is deprecated; move under 'metadata.author'".to_string());
+        return Some(v.to_string());
+    }
+    None
+}
+
+fn extract_tags(fm: &SkillFrontmatter, warnings: &mut Vec<String>) -> Vec<String> {
+    if let Some(v) = fm.metadata.get("tags") {
+        return metadata_string_seq(v);
+    }
+    if let Some(v) = fm.extra.get("tags") {
+        log::warn!("[skills] top-level 'tags' is deprecated; move under 'metadata.tags'");
+        warnings.push("top-level 'tags' is deprecated; move under 'metadata.tags'".to_string());
+        return metadata_string_seq(v);
+    }
+    Vec::new()
 }
 
 /// A discovered skill.
@@ -195,10 +256,7 @@ pub fn discover_skills(
 /// Looks for `<workspace>/.openhuman/trust`. The marker file's contents are
 /// ignored — presence is sufficient.
 pub fn is_workspace_trusted(workspace_dir: &Path) -> bool {
-    workspace_dir
-        .join(".openhuman")
-        .join(TRUST_MARKER)
-        .exists()
+    workspace_dir.join(".openhuman").join(TRUST_MARKER).exists()
 }
 
 fn discover_skills_inner(
@@ -225,7 +283,10 @@ fn discover_skills_inner(
         // Legacy `<workspace>/skills/` is always scanned so existing setups
         // keep working without requiring users to move files or add the trust
         // marker. Flagged with `legacy = true` so the UI can nudge migration.
-        absorb(&mut by_name, scan_root(&ws.join("skills"), SkillScope::Legacy));
+        absorb(
+            &mut by_name,
+            scan_root(&ws.join("skills"), SkillScope::Legacy),
+        );
     }
 
     let mut out: Vec<Skill> = by_name.into_values().collect();
@@ -367,7 +428,8 @@ fn load_from_skill_md(skill_md: &Path, dir: &Path, dir_name: &str, scope: SkillS
     };
 
     let description = if frontmatter.description.trim().is_empty() {
-        warnings.push("frontmatter missing 'description'; falling back to first body line".to_string());
+        warnings
+            .push("frontmatter missing 'description'; falling back to first body line".to_string());
         first_body_line(&body).unwrap_or_else(|| "No description provided".to_string())
     } else {
         if frontmatter.description.len() > MAX_DESCRIPTION_LEN {
@@ -380,13 +442,18 @@ fn load_from_skill_md(skill_md: &Path, dir: &Path, dir_name: &str, scope: SkillS
         frontmatter.description.clone()
     };
 
+    let version = extract_version(&frontmatter, &mut warnings);
+    let author = extract_author(&frontmatter, &mut warnings);
+    let tags = extract_tags(&frontmatter, &mut warnings);
+    let tools = frontmatter.allowed_tools.clone();
+
     Skill {
         name,
         description,
-        version: frontmatter.version.clone(),
-        author: frontmatter.author.clone(),
-        tags: frontmatter.tags.clone(),
-        tools: frontmatter.allowed_tools.clone(),
+        version,
+        author,
+        tags,
+        tools,
         prompts: Vec::new(),
         location: Some(skill_md.to_path_buf()),
         frontmatter,
@@ -434,7 +501,8 @@ fn load_from_legacy_manifest(
 
     let skill_md = dir.join(SKILL_MD);
     let description = if manifest.description.is_empty() {
-        read_skill_md_description(&skill_md).unwrap_or_else(|| "No description provided".to_string())
+        read_skill_md_description(&skill_md)
+            .unwrap_or_else(|| "No description provided".to_string())
     } else {
         manifest.description
     };
@@ -607,7 +675,7 @@ mod tests {
         let skill_dir = ws.join(".openhuman").join("skills").join("hello-world");
         write(
             &skill_dir.join("SKILL.md"),
-            "---\nname: hello-world\ndescription: Say hi\nversion: 0.1.0\ntags: [demo, greeting]\n---\n\nSay hello to the user.\n",
+            "---\nname: hello-world\ndescription: Say hi\nmetadata:\n  version: 0.1.0\n  tags: [demo, greeting]\n---\n\nSay hello to the user.\n",
         );
         let skills = load_skills(ws);
         assert_eq!(skills.len(), 1);
@@ -619,6 +687,50 @@ mod tests {
         assert_eq!(s.scope, SkillScope::Project);
         assert!(!s.legacy);
         assert!(s.warnings.is_empty(), "warnings: {:?}", s.warnings);
+    }
+
+    #[test]
+    fn deprecated_top_level_fields_load_with_migration_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(&ws.join(".openhuman").join("trust"), "");
+        let skill_dir = ws.join(".openhuman").join("skills").join("legacy-fm");
+        write(
+            &skill_dir.join("SKILL.md"),
+            "---\nname: legacy-fm\ndescription: uses deprecated top-level fields\nversion: 0.2.0\nauthor: Jane\ntags: [old, school]\n---\n",
+        );
+        let skills = load_skills(ws);
+        assert_eq!(skills.len(), 1);
+        let s = &skills[0];
+        assert_eq!(s.version, "0.2.0");
+        assert_eq!(s.author.as_deref(), Some("Jane"));
+        assert_eq!(s.tags, vec!["old", "school"]);
+        let warnings = s.warnings.join("\n");
+        assert!(warnings.contains("'version' is deprecated"), "{}", warnings);
+        assert!(warnings.contains("'author' is deprecated"), "{}", warnings);
+        assert!(warnings.contains("'tags' is deprecated"), "{}", warnings);
+    }
+
+    #[test]
+    fn spec_compliant_fields_parse_into_metadata_map() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("SKILL.md");
+        write(
+            &path,
+            "---\nname: s\ndescription: d\nlicense: MIT\ncompatibility: \"node>=18\"\nmetadata:\n  version: 1.0.0\n  author: Alice\n  tags: [a, b]\n---\n",
+        );
+        let (fm, _body) = parse_skill_md(&path).unwrap();
+        assert_eq!(fm.license.as_deref(), Some("MIT"));
+        assert_eq!(fm.compatibility.as_deref(), Some("node>=18"));
+        assert_eq!(
+            fm.metadata.get("version").and_then(|v| v.as_str()),
+            Some("1.0.0")
+        );
+        assert_eq!(
+            fm.metadata.get("author").and_then(|v| v.as_str()),
+            Some("Alice")
+        );
+        assert!(fm.extra.is_empty(), "extras leaked: {:?}", fm.extra);
     }
 
     #[test]
@@ -693,7 +805,11 @@ mod tests {
         let ws_dir = tempfile::tempdir().unwrap();
         write(&ws_dir.path().join(".openhuman").join("trust"), "");
 
-        let user_skill = user_dir.path().join(".openhuman").join("skills").join("greet");
+        let user_skill = user_dir
+            .path()
+            .join(".openhuman")
+            .join("skills")
+            .join("greet");
         write(
             &user_skill.join("SKILL.md"),
             "---\nname: greet\ndescription: USER COPY\n---\n",
@@ -712,17 +828,17 @@ mod tests {
         let skills = discover_skills(Some(user_dir.path()), Some(ws_dir.path()), true);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "PROJECT COPY");
-        assert!(skills[0]
-            .warnings
-            .iter()
-            .any(|w| w.contains("shadowed")));
+        assert!(skills[0].warnings.iter().any(|w| w.contains("shadowed")));
     }
 
     #[test]
     fn inventory_resources_lists_scripts_and_assets() {
         let dir = tempfile::tempdir().unwrap();
         let skill = dir.path().join("s");
-        write(&skill.join("SKILL.md"), "---\nname: s\ndescription: d\n---\n");
+        write(
+            &skill.join("SKILL.md"),
+            "---\nname: s\ndescription: d\n---\n",
+        );
         write(&skill.join("scripts").join("run.sh"), "echo hi");
         write(&skill.join("references").join("notes.md"), "notes");
         write(&skill.join("assets").join("logo.png"), "");
