@@ -19,7 +19,14 @@ const TOOL_ID_TO_RUST_NAMES: &[(&str, &[&str])] = &[
     ("memory_forget", &["memory_forget"]),
     (
         "cron",
-        &["cron_add", "cron_list", "cron_remove", "cron_update", "cron_run", "cron_runs"],
+        &[
+            "cron_add",
+            "cron_list",
+            "cron_remove",
+            "cron_update",
+            "cron_run",
+            "cron_runs",
+        ],
     ),
     ("schedule", &["schedule"]),
 ];
