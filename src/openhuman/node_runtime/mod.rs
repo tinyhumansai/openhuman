@@ -11,7 +11,9 @@
 //! binary paths for `node_exec` / `npm_exec` tools.
 
 pub mod downloader;
+pub mod extractor;
 pub mod resolver;
 
 pub use downloader::{download_distribution, fetch_shasums, NodeDistribution};
+pub use extractor::{atomic_install, extract_distribution};
 pub use resolver::{detect_system_node, parse_node_version, SystemNode};
