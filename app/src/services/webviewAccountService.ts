@@ -3,7 +3,12 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
 
 import { store } from '../store';
-import { appendLog, appendMessages, setAccountStatus } from '../store/accountsSlice';
+import {
+  appendLog,
+  appendMessages,
+  setAccountStatus,
+  setActiveAccount,
+} from '../store/accountsSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
 import { threadApi } from './api/threadApi';
 import { chatSend } from './chatService';
@@ -46,8 +51,15 @@ interface IngestPayload {
   isSeed?: boolean;
 }
 
+interface NotificationClickPayload {
+  account_id: string;
+  provider: string;
+}
+
 let unlisten: UnlistenFn | null = null;
+let unlistenNotifyClick: UnlistenFn | null = null;
 let started = false;
+let permissionChecked = false;
 
 export function startWebviewAccountService(): void {
   if (started) return;
@@ -66,6 +78,16 @@ export function startWebviewAccountService(): void {
     } catch (err) {
       errLog('failed to attach listener', err);
     }
+    try {
+      // Dormant until the platform click hook (UNUserNotificationCenter /
+      // notify-rust on_response) emits `notification:click` from Rust.
+      unlistenNotifyClick = await listen<NotificationClickPayload>('notification:click', evt => {
+        handleNotificationClick(evt.payload);
+      });
+      log('notification:click listener attached');
+    } catch (err) {
+      errLog('failed to attach notification:click listener', err);
+    }
   })();
 }
 
@@ -74,7 +96,42 @@ export function stopWebviewAccountService(): void {
     unlisten();
     unlisten = null;
   }
+  if (unlistenNotifyClick) {
+    unlistenNotifyClick();
+    unlistenNotifyClick = null;
+  }
   started = false;
+}
+
+function handleNotificationClick(payload: NotificationClickPayload) {
+  const accountId = payload?.account_id;
+  const provider = payload?.provider;
+  if (!accountId) {
+    errLog('notification:click missing account_id — ignoring: %o', payload);
+    return;
+  }
+  log('notification:click → account=%s provider=%s', accountId, provider);
+  store.dispatch(setActiveAccount(accountId));
+  invoke('activate_main_window').catch(err => {
+    errLog('activate_main_window failed after notification click: %o', err);
+  });
+}
+
+// Round-trip the OS notification permission once per session on first
+// account open. Desktop plugin auto-grants today, but the shape matches
+// the web API so future platform prompts slot in without UI change.
+async function ensureNotificationPermission(): Promise<void> {
+  if (permissionChecked) return;
+  permissionChecked = true;
+  try {
+    const state = await invoke<string>('webview_notification_permission_state');
+    log('notification permission state=%s', state);
+    if (state === 'granted') return;
+    const next = await invoke<string>('webview_notification_permission_request');
+    log('notification permission after request=%s', next);
+  } catch (err) {
+    errLog('notification permission check failed: %o', err);
+  }
 }
 
 function handleRecipeEvent(evt: RecipeEventPayload) {
@@ -611,6 +668,7 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
   if (!isTauri()) throw new Error('webview accounts require the desktop app');
   log('open account=%s provider=%s', args.accountId, args.provider);
   store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'pending' }));
+  void ensureNotificationPermission();
   try {
     await invoke('webview_account_open', {
       args: { account_id: args.accountId, provider: args.provider, bounds: args.bounds },
