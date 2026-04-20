@@ -38,6 +38,12 @@ rand = "0.9"
 dirs = "5"
 sha2 = "0.10"
 hmac = "0.12"
+# Archive extraction for the Node.js runtime bootstrap. Unix Node
+# distributions ship as .tar.xz, Windows as .zip. `xz2` with `static`
+# bundles liblzma so we don't need it as a system dependency.
+tar = "0.4"
+xz2 = { version = "0.1", features = ["static"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1.0"
 async-trait = "0.1"
