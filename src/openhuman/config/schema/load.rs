@@ -793,6 +793,36 @@ impl Config {
             }
         }
 
+        // Node runtime overrides
+        if let Ok(flag) = std::env::var("OPENHUMAN_NODE_ENABLED") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.node.enabled = true,
+                "0" | "false" | "no" | "off" => self.node.enabled = false,
+                _ => {}
+            }
+        }
+        if let Ok(version) = std::env::var("OPENHUMAN_NODE_VERSION") {
+            let trimmed = version.trim();
+            if !trimmed.is_empty() {
+                self.node.version = trimmed.to_string();
+            }
+        }
+        if let Ok(dir) = std::env::var("OPENHUMAN_NODE_CACHE_DIR") {
+            let trimmed = dir.trim();
+            if !trimmed.is_empty() {
+                self.node.cache_dir = trimmed.to_string();
+            }
+        }
+        if let Ok(flag) = std::env::var("OPENHUMAN_NODE_PREFER_SYSTEM") {
+            let normalized = flag.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "1" | "true" | "yes" | "on" => self.node.prefer_system = true,
+                "0" | "false" | "no" | "off" => self.node.prefer_system = false,
+                _ => {}
+            }
+        }
+
         let dsn_value = std::env::var("OPENHUMAN_SENTRY_DSN")
             .ok()
             .or_else(|| option_env!("OPENHUMAN_SENTRY_DSN").map(|s| s.to_string()));
