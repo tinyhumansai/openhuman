@@ -807,6 +807,8 @@ pub fn run() {
             webview_accounts::webview_account_show,
             webview_accounts::webview_recipe_event,
             webview_accounts::webview_account_eval,
+            webview_accounts::webview_notification_permission_state,
+            webview_accounts::webview_notification_permission_request,
             activate_main_window
         ])
         .build(tauri::generate_context!())

@@ -23,6 +23,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "cef")]
+use tauri::plugin::PermissionState;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Runtime,
     Url, WebviewBuilder, WebviewUrl,
@@ -184,6 +186,15 @@ pub fn provider_display_name(provider: &str) -> &'static str {
     }
 }
 
+#[cfg(feature = "cef")]
+#[derive(Debug, Clone)]
+pub struct NotificationRoute {
+    pub account_id: String,
+    // Read by the click-dispatch emit path; kept until that wires up.
+    #[allow(dead_code)]
+    pub provider: String,
+}
+
 #[derive(Default)]
 pub struct WebviewAccountsState {
     /// account_id -> webview label (we use `acct_<id>` as the label).
@@ -195,12 +206,38 @@ pub struct WebviewAccountsState {
     /// per-browser handler entries across account churn.
     #[cfg(feature = "cef")]
     browser_ids: Mutex<HashMap<String, i32>>,
+    /// Routes OS-notification clicks back to the firing account. Key:
+    /// `{provider}:{account_id}:{tag_or_uuid}`. Cleared per-account on
+    /// close/purge to bound growth across an app lifetime.
+    #[cfg(feature = "cef")]
+    notification_routes: Mutex<HashMap<String, NotificationRoute>>,
+}
+
+#[cfg(feature = "cef")]
+fn notification_route_key(provider: &str, account_id: &str, tag: &str) -> String {
+    format!("{}:{}:{}", provider, account_id, tag)
+}
+
+#[cfg(feature = "cef")]
+fn clear_notification_routes(state: &WebviewAccountsState, account_id: &str) {
+    let mut routes = state.notification_routes.lock().unwrap();
+    let before = routes.len();
+    routes.retain(|_, route| route.account_id != account_id);
+    let removed = before - routes.len();
+    if removed > 0 {
+        log::debug!(
+            "[notify-cef] dropped {} notification route entries for account={}",
+            removed,
+            account_id
+        );
+    }
 }
 
 /// Translate a `tauri-runtime-cef` notification payload into a native OS
 /// toast via `tauri-plugin-notification`. Title is prefixed with the
-/// human-readable provider label so a glance tells the user which webview
-/// fired the ping.
+/// provider label so the user can see which webview fired it. Silent
+/// payloads skip the toast but still record a route entry so a later
+/// click still resolves back to the source account.
 #[cfg(feature = "cef")]
 fn forward_native_notification<R: Runtime>(
     app: &AppHandle<R>,
@@ -216,18 +253,56 @@ fn forward_native_notification<R: Runtime>(
         format!("{} — {}", provider_label, raw_title)
     };
     let body = payload.body.as_deref().unwrap_or("");
+    // Tag is the app's dedup key per the web Notifications API; fall back
+    // to a monotonic timestamp so untagged payloads each route uniquely.
+    let tag_or_uuid = payload.tag.clone().unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| format!("{}", d.as_nanos()))
+            .unwrap_or_else(|_| "unknown".to_string())
+    });
+    let route_key = notification_route_key(provider, account_id, &tag_or_uuid);
     log::info!(
-        "[notify-cef][{}] source={:?} tag={:?} silent={} title={:?} body_chars={}",
+        "[notify-cef][{}] source={:?} tag={:?} silent={} icon={:?} route_key={} title={:?} body_chars={}",
         account_id,
         payload.source,
         payload.tag,
         payload.silent,
+        payload.icon,
+        route_key,
         raw_title,
         body.chars().count()
     );
+    if let Some(state) = app.try_state::<WebviewAccountsState>() {
+        state.notification_routes.lock().unwrap().insert(
+            route_key.clone(),
+            NotificationRoute {
+                account_id: account_id.to_string(),
+                provider: provider.to_string(),
+            },
+        );
+    } else {
+        log::warn!(
+            "[notify-cef][{}] WebviewAccountsState missing, route not stored",
+            account_id
+        );
+    }
+    if payload.silent {
+        log::debug!(
+            "[notify-cef][{}] silent payload — skipping OS toast (route recorded: {})",
+            account_id,
+            route_key
+        );
+        return;
+    }
     let mut builder = app.notification().builder().title(&notify_title);
     if !body.is_empty() {
         builder = builder.body(body);
+    }
+    if let Some(icon) = payload.icon.as_deref() {
+        if !icon.is_empty() {
+            builder = builder.icon(icon);
+        }
     }
     if let Err(e) = builder.show() {
         log::warn!(
@@ -681,6 +756,7 @@ pub async fn webview_account_close<R: Runtime>(
                 browser_id
             );
         }
+        clear_notification_routes(&state, &args.account_id);
     }
     log::info!("[webview-accounts] closed label={}", label);
     Ok(())
@@ -738,6 +814,7 @@ pub async fn webview_account_purge<R: Runtime>(
                 browser_id
             );
         }
+        clear_notification_routes(&state, &args.account_id);
     }
 
     let data_dir = data_directory_for(&app, &args.account_id)?;
@@ -989,4 +1066,62 @@ pub async fn webview_recipe_event<R: Runtime>(
     app.emit("webview:event", &event)
         .map_err(|e| format!("emit failed: {e}"))?;
     Ok(())
+}
+
+/// Map Tauri's `PermissionState` onto the web Notification API triple
+/// (`"granted"` / `"denied"` / `"default"`). Both `Prompt` variants
+/// collapse to `"default"` — the web API has no rationale slot.
+#[cfg(feature = "cef")]
+fn permission_state_str(state: PermissionState) -> &'static str {
+    match state {
+        PermissionState::Granted => "granted",
+        PermissionState::Denied => "denied",
+        PermissionState::Prompt | PermissionState::PromptWithRationale => "default",
+    }
+}
+
+/// Read the current OS notification permission, normalized to the web-API triple.
+#[cfg(feature = "cef")]
+#[tauri::command]
+pub async fn webview_notification_permission_state<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<String, String> {
+    let state = app
+        .notification()
+        .permission_state()
+        .map_err(|e| format!("permission_state: {e}"))?;
+    Ok(permission_state_str(state).to_string())
+}
+
+/// Trigger the OS notification permission prompt. The desktop plugin
+/// returns `Granted` unconditionally today; the command exists so the
+/// frontend flow matches the web API surface.
+#[cfg(feature = "cef")]
+#[tauri::command]
+pub async fn webview_notification_permission_request<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<String, String> {
+    let state = app
+        .notification()
+        .request_permission()
+        .map_err(|e| format!("request_permission: {e}"))?;
+    Ok(permission_state_str(state).to_string())
+}
+
+// Wry build has no notification interception path; stubs return
+// `"default"` so the frontend can call the same invoke names on both runtimes.
+#[cfg(not(feature = "cef"))]
+#[tauri::command]
+pub async fn webview_notification_permission_state<R: Runtime>(
+    _app: AppHandle<R>,
+) -> Result<String, String> {
+    Ok("default".to_string())
+}
+
+#[cfg(not(feature = "cef"))]
+#[tauri::command]
+pub async fn webview_notification_permission_request<R: Runtime>(
+    _app: AppHandle<R>,
+) -> Result<String, String> {
+    Ok("default".to_string())
 }
