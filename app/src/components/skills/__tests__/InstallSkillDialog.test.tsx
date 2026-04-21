@@ -8,7 +8,8 @@
  * - Rejects timeout outside 1–600.
  * - Submit forwards timeoutSecs to skillsApi.installSkillFromUrl.
  * - Success panel renders newSkills list + calls onInstalled.
- * - Error panel renders verbatim on failure and submit re-enables.
+ * - Error panel categorizes known prefixes and shows the raw error in
+ *   a details expander; unknown errors fall back to a generic title.
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -43,13 +44,13 @@ describe('InstallSkillDialog', () => {
     expect(submit.disabled).toBe(true);
 
     fireEvent.change(screen.getByLabelText(/Skill URL/), {
-      target: { value: 'http://example.com/pkg.tgz' },
+      target: { value: 'http://example.com/SKILL.md' },
     });
     expect(submit.disabled).toBe(true);
     expect(screen.getByText(/must be a well-formed/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText(/Skill URL/), {
-      target: { value: 'https://example.com/pkg.tgz' },
+      target: { value: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md' },
     });
     expect(submit.disabled).toBe(false);
   });
@@ -57,7 +58,7 @@ describe('InstallSkillDialog', () => {
   it('rejects out-of-range timeout values', () => {
     render(<InstallSkillDialog onClose={vi.fn()} onInstalled={vi.fn()} />);
     fireEvent.change(screen.getByLabelText(/Skill URL/), {
-      target: { value: 'https://example.com/pkg.tgz' },
+      target: { value: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md' },
     });
 
     const submit = screen.getByRole('button', { name: /Install/ }) as HTMLButtonElement;
@@ -74,7 +75,7 @@ describe('InstallSkillDialog', () => {
   it('forwards timeoutSecs to skillsApi and fires onInstalled on success', async () => {
     const { skillsApi } = await import('../../../services/api/skillsApi');
     vi.mocked(skillsApi.installSkillFromUrl).mockResolvedValueOnce({
-      url: 'https://example.com/pkg.tgz',
+      url: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md',
       stdout: 'added my-skill',
       stderr: '',
       newSkills: ['my-skill'],
@@ -84,7 +85,7 @@ describe('InstallSkillDialog', () => {
     render(<InstallSkillDialog onClose={vi.fn()} onInstalled={onInstalled} />);
 
     fireEvent.change(screen.getByLabelText(/Skill URL/), {
-      target: { value: 'https://example.com/pkg.tgz' },
+      target: { value: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md' },
     });
     fireEvent.change(screen.getByLabelText(/Timeout/), { target: { value: '120' } });
 
@@ -93,7 +94,7 @@ describe('InstallSkillDialog', () => {
     });
 
     expect(vi.mocked(skillsApi.installSkillFromUrl)).toHaveBeenCalledWith({
-      url: 'https://example.com/pkg.tgz',
+      url: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md',
       timeoutSecs: 120,
     });
     await waitFor(() => {
@@ -108,7 +109,7 @@ describe('InstallSkillDialog', () => {
   it('omits timeoutSecs when field is blank', async () => {
     const { skillsApi } = await import('../../../services/api/skillsApi');
     vi.mocked(skillsApi.installSkillFromUrl).mockResolvedValueOnce({
-      url: 'https://example.com/pkg.tgz',
+      url: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md',
       stdout: '',
       stderr: '',
       newSkills: [],
@@ -116,7 +117,7 @@ describe('InstallSkillDialog', () => {
 
     render(<InstallSkillDialog onClose={vi.fn()} onInstalled={vi.fn()} />);
     fireEvent.change(screen.getByLabelText(/Skill URL/), {
-      target: { value: 'https://example.com/pkg.tgz' },
+      target: { value: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md' },
     });
 
     await act(async () => {
@@ -124,19 +125,19 @@ describe('InstallSkillDialog', () => {
     });
 
     expect(vi.mocked(skillsApi.installSkillFromUrl)).toHaveBeenCalledWith({
-      url: 'https://example.com/pkg.tgz',
+      url: 'https://raw.githubusercontent.com/owner/repo/main/SKILL.md',
     });
   });
 
-  it('surfaces error verbatim and re-enables submit', async () => {
+  it('shows generic title with raw error text on unknown error and re-enables submit', async () => {
     const { skillsApi } = await import('../../../services/api/skillsApi');
     vi.mocked(skillsApi.installSkillFromUrl).mockRejectedValueOnce(
-      new Error('host blocked: localhost')
+      new Error('unexpected: something weird happened')
     );
 
     render(<InstallSkillDialog onClose={vi.fn()} onInstalled={vi.fn()} />);
     fireEvent.change(screen.getByLabelText(/Skill URL/), {
-      target: { value: 'https://localhost/pkg.tgz' },
+      target: { value: 'https://example.com/SKILL.md' },
     });
 
     const submit = screen.getByRole('button', { name: /Install/ }) as HTMLButtonElement;
@@ -145,8 +146,54 @@ describe('InstallSkillDialog', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('host blocked: localhost');
+      expect(screen.getByRole('alert')).toHaveTextContent('Could not install skill');
     });
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'unexpected: something weird happened'
+    );
     expect(submit.disabled).toBe(false);
+  });
+
+  it('categorizes "invalid SKILL.md:" errors with a friendly title and hint', async () => {
+    const { skillsApi } = await import('../../../services/api/skillsApi');
+    vi.mocked(skillsApi.installSkillFromUrl).mockRejectedValueOnce(
+      new Error('invalid SKILL.md: missing required field `description`')
+    );
+
+    render(<InstallSkillDialog onClose={vi.fn()} onInstalled={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/Skill URL/), {
+      target: { value: 'https://example.com/SKILL.md' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Install/ }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('SKILL.md did not parse');
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(/frontmatter must be valid YAML/i);
+    expect(screen.getByRole('alert')).toHaveTextContent('missing required field');
+  });
+
+  it('categorizes "unsupported url form:" errors', async () => {
+    const { skillsApi } = await import('../../../services/api/skillsApi');
+    vi.mocked(skillsApi.installSkillFromUrl).mockRejectedValueOnce(
+      new Error('unsupported url form: path must end in .md, got "https://example.com/foo"')
+    );
+
+    render(<InstallSkillDialog onClose={vi.fn()} onInstalled={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/Skill URL/), {
+      target: { value: 'https://example.com/SKILL.md' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Install/ }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('URL form not supported');
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent(/direct `?\.md`? links/i);
   });
 });
