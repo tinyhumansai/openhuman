@@ -157,6 +157,7 @@ pub fn all_channel_definitions() -> Vec<ChannelDefinition> {
         telegram_definition(),
         discord_definition(),
         web_definition(),
+        imessage_definition(),
     ]
 }
 
@@ -285,6 +286,28 @@ fn web_definition() -> ChannelDefinition {
             ChannelCapability::SendRichText,
             ChannelCapability::ReceiveText,
         ],
+    }
+}
+
+fn imessage_definition() -> ChannelDefinition {
+    ChannelDefinition {
+        id: "imessage",
+        display_name: "iMessage",
+        description: "Send and receive via macOS Messages (local, AppleScript bridge).",
+        icon: "imessage",
+        auth_modes: vec![AuthModeSpec {
+            mode: ChannelAuthMode::ManagedDm,
+            description: "Local-only — no credentials. Grant Full Disk Access to OpenHuman.",
+            fields: vec![FieldRequirement {
+                key: "allowed_contacts",
+                label: "Allowed Contacts",
+                field_type: "string",
+                required: false,
+                placeholder: "Comma-separated phone numbers or emails; * to allow any",
+            }],
+            auth_action: None,
+        }],
+        capabilities: vec![ChannelCapability::SendText, ChannelCapability::ReceiveText],
     }
 }
 
