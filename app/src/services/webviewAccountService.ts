@@ -112,6 +112,7 @@ function handleNotificationClick(payload: NotificationClickPayload) {
   }
   log('notification:click → account=%s provider=%s', accountId, provider);
   store.dispatch(setActiveAccount(accountId));
+  void setFocusedAccount(accountId);
   invoke('activate_main_window').catch(err => {
     errLog('activate_main_window failed after notification click: %o', err);
   });
@@ -674,6 +675,7 @@ export async function openWebviewAccount(args: OpenAccountArgs): Promise<void> {
       args: { account_id: args.accountId, provider: args.provider, bounds: args.bounds },
     });
     store.dispatch(setAccountStatus({ accountId: args.accountId, status: 'open' }));
+    void setFocusedAccount(args.accountId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errLog('open failed: %s', msg);
@@ -740,6 +742,69 @@ export async function purgeWebviewAccount(accountId: string): Promise<void> {
   } catch (err) {
     errLog('purge failed: %o', err);
     throw err;
+  }
+}
+
+// ────────────────────────── Notification bypass helpers ─────────────────────
+
+/**
+ * Mute or unmute OS notification toasts for a specific embedded account.
+ * When muted, toasts from that account are suppressed regardless of focus state.
+ */
+export async function setAccountMuted(accountId: string, muted: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('webview_notification_mute_account', { accountId, muted });
+    log('notify-bypass: account=%s muted=%s', accountId, muted);
+  } catch (e) {
+    log('notify-bypass: setAccountMuted error %o', e);
+  }
+}
+
+/**
+ * Enable or disable global Do Not Disturb mode for embedded webview notifications.
+ * When enabled, all OS notification toasts from embedded accounts are suppressed.
+ */
+export async function setGlobalDnd(enabled: boolean): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('webview_notification_set_dnd', { enabled });
+    log('notify-bypass: global DND set to %s', enabled);
+  } catch (e) {
+    log('notify-bypass: setGlobalDnd error %o', e);
+  }
+}
+
+/**
+ * Fetch the current notification bypass preferences from the Rust side.
+ * Returns `null` when not running in Tauri or on any invoke error.
+ */
+export async function getBypassPrefs(): Promise<{
+  global_dnd: boolean;
+  muted_accounts: string[];
+  bypass_when_focused: boolean;
+} | null> {
+  if (!isTauri()) return null;
+  try {
+    return await invoke('webview_notification_get_bypass_prefs');
+  } catch (e) {
+    log('notify-bypass: getBypassPrefs error %o', e);
+    return null;
+  }
+}
+
+/**
+ * Tell Rust which account (if any) the user is currently viewing.
+ * Rust uses this together with the window-focus state to suppress
+ * notifications while the user is actively looking at that account.
+ */
+export async function setFocusedAccount(accountId: string | null): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('webview_set_focused_account', { accountId });
+    log('notify-bypass: focused account set to %s', accountId);
+  } catch (e) {
+    log('notify-bypass: setFocusedAccount error %o', e);
   }
 }
 

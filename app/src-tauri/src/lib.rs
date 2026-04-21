@@ -636,6 +636,22 @@ pub fn run() {
                 log::error!("[tray] failed to setup tray icon: {err}");
             }
 
+            // Track window focus for notification bypass — the focused-bypass
+            // condition needs to know whether the main window has OS focus.
+            {
+                let accounts_state = app.state::<webview_accounts::WebviewAccountsState>();
+                let focus_flag = accounts_state.window_is_focused.clone();
+                if let Some(window) = app.get_webview_window("main") {
+                    let flag = focus_flag.clone();
+                    window.on_window_event(move |event| {
+                        if let tauri::WindowEvent::Focused(focused) = event {
+                            flag.store(*focused, std::sync::atomic::Ordering::Relaxed);
+                            log::debug!("[notify-bypass] window focused={}", focused);
+                        }
+                    });
+                }
+            }
+
             // Dev convenience: if OPENHUMAN_DEV_AUTO_WHATSAPP=<account-id>
             // is set, spawn that account's webview at startup so the
             // CDP/IndexedDB scanner can iterate without manual UI clicks.
@@ -809,6 +825,10 @@ pub fn run() {
             webview_accounts::webview_account_eval,
             webview_accounts::webview_notification_permission_state,
             webview_accounts::webview_notification_permission_request,
+            webview_accounts::webview_notification_set_dnd,
+            webview_accounts::webview_notification_mute_account,
+            webview_accounts::webview_notification_get_bypass_prefs,
+            webview_accounts::webview_set_focused_account,
             activate_main_window
         ])
         .build(tauri::generate_context!())

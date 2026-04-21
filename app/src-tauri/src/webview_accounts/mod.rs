@@ -18,9 +18,12 @@
 //! cookies and storage don't bleed between accounts (best-effort on
 //! WKWebView — see Tauri docs on `data_store_identifier` for the macOS path).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "cef")]
@@ -195,6 +198,29 @@ pub struct NotificationRoute {
     pub provider: String,
 }
 
+/// User-configurable preferences for suppressing native OS notification toasts
+/// from embedded webview accounts.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NotificationBypassPrefs {
+    /// When `true`, all OS notification toasts from embedded webviews are suppressed.
+    pub global_dnd: bool,
+    /// Set of account IDs whose notifications are individually muted.
+    pub muted_accounts: HashSet<String>,
+    /// When `true`, suppress notifications while the app window is focused AND
+    /// the user is actively viewing that exact account.
+    pub bypass_when_focused: bool,
+}
+
+impl Default for NotificationBypassPrefs {
+    fn default() -> Self {
+        Self {
+            global_dnd: false,
+            muted_accounts: HashSet::new(),
+            bypass_when_focused: true,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct WebviewAccountsState {
     /// account_id -> webview label (we use `acct_<id>` as the label).
@@ -211,6 +237,14 @@ pub struct WebviewAccountsState {
     /// close/purge to bound growth across an app lifetime.
     #[cfg(feature = "cef")]
     notification_routes: Mutex<HashMap<String, NotificationRoute>>,
+    /// User-controlled preferences for suppressing OS notification toasts.
+    pub notification_bypass: Mutex<NotificationBypassPrefs>,
+    /// The account ID the user is currently viewing (set by the frontend when
+    /// the active account changes). Used for the focused-bypass check.
+    pub focused_account_id: Mutex<Option<String>>,
+    /// `true` while the main app window has OS focus. Populated by a
+    /// `WindowEvent::Focused` listener wired up in `lib.rs` setup.
+    pub window_is_focused: Arc<AtomicBool>,
 }
 
 #[cfg(feature = "cef")]
@@ -294,6 +328,38 @@ fn forward_native_notification<R: Runtime>(
             route_key
         );
         return;
+    }
+    // Evaluate bypass conditions before showing the toast.
+    if let Some(state) = app.try_state::<WebviewAccountsState>() {
+        let bypass = state.notification_bypass.lock().unwrap();
+        if bypass.global_dnd {
+            log::debug!(
+                "[notify-bypass][{}][{}] suppressed: global DND active",
+                provider,
+                account_id
+            );
+            return;
+        }
+        if bypass.muted_accounts.contains(account_id) {
+            log::debug!(
+                "[notify-bypass][{}][{}] suppressed: account is muted",
+                provider,
+                account_id
+            );
+            return;
+        }
+        if bypass.bypass_when_focused {
+            let window_focused = state.window_is_focused.load(Ordering::Relaxed);
+            let focused_acct = state.focused_account_id.lock().unwrap();
+            if window_focused && focused_acct.as_deref() == Some(account_id) {
+                log::debug!(
+                    "[notify-bypass][{}][{}] suppressed: account is focused in foreground",
+                    provider,
+                    account_id
+                );
+                return;
+            }
+        }
     }
     let mut builder = app.notification().builder().title(&notify_title);
     if !body.is_empty() {
@@ -1124,4 +1190,54 @@ pub async fn webview_notification_permission_request<R: Runtime>(
     _app: AppHandle<R>,
 ) -> Result<String, String> {
     Ok("default".to_string())
+}
+
+/// Set or clear the global Do Not Disturb flag. When enabled, all OS
+/// notification toasts from embedded webview accounts are suppressed.
+#[tauri::command]
+pub fn webview_notification_set_dnd(
+    state: tauri::State<WebviewAccountsState>,
+    enabled: bool,
+) {
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    prefs.global_dnd = enabled;
+    log::debug!("[notify-bypass] global DND set to {}", enabled);
+}
+
+/// Mute or unmute OS notification toasts for a specific account.
+#[tauri::command]
+pub fn webview_notification_mute_account(
+    state: tauri::State<WebviewAccountsState>,
+    account_id: String,
+    muted: bool,
+) {
+    let mut prefs = state.notification_bypass.lock().unwrap();
+    if muted {
+        prefs.muted_accounts.insert(account_id.clone());
+    } else {
+        prefs.muted_accounts.remove(&account_id);
+    }
+    log::debug!("[notify-bypass] account {} muted={}", account_id, muted);
+}
+
+/// Return the current notification bypass preferences so the frontend can
+/// reflect them in the Settings UI.
+#[tauri::command]
+pub fn webview_notification_get_bypass_prefs(
+    state: tauri::State<WebviewAccountsState>,
+) -> NotificationBypassPrefs {
+    state.notification_bypass.lock().unwrap().clone()
+}
+
+/// Notify Rust which account the user is currently viewing. Used together
+/// with the window-focus state to suppress notifications when the user is
+/// actively looking at that account.
+#[tauri::command]
+pub fn webview_set_focused_account(
+    state: tauri::State<WebviewAccountsState>,
+    account_id: Option<String>,
+) {
+    let mut focused = state.focused_account_id.lock().unwrap();
+    *focused = account_id.clone();
+    log::debug!("[notify-bypass] focused account set to {:?}", account_id);
 }
