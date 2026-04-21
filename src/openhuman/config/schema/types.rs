@@ -124,6 +124,10 @@ pub struct Config {
     #[serde(default)]
     pub local_ai: LocalAiConfig,
 
+    /// Node.js managed runtime configuration (skills that need `node`/`npm`).
+    #[serde(default)]
+    pub node: NodeConfig,
+
     #[serde(default)]
     pub voice_server: VoiceServerConfig,
 
@@ -247,6 +251,7 @@ impl Default for Config {
             peripherals: PeripheralsConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
+            node: NodeConfig::default(),
             voice_server: VoiceServerConfig::default(),
             query_classification: QueryClassificationConfig::default(),
             integrations: IntegrationsConfig::default(),

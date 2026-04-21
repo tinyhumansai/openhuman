@@ -1,4 +1,5 @@
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
+use crate::openhuman::node_runtime::NodeBootstrap;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
@@ -20,11 +21,37 @@ const SAFE_ENV_VARS: &[&str] = &[
 pub struct ShellTool {
     security: Arc<SecurityPolicy>,
     runtime: Arc<dyn RuntimeAdapter>,
+    /// Optional managed Node.js bootstrap. When provided **and** a prior
+    /// `NodeBootstrap::resolve()` has already succeeded, every shell invocation
+    /// transparently prepends the managed `bin/` dir to `PATH` — so skills
+    /// shelling out to `node`/`npm`/`npx`/`corepack` resolve to the managed
+    /// toolchain. Non-blocking: never triggers a download for unrelated
+    /// commands (we use `try_cached()`).
+    node_bootstrap: Option<Arc<NodeBootstrap>>,
 }
 
 impl ShellTool {
     pub fn new(security: Arc<SecurityPolicy>, runtime: Arc<dyn RuntimeAdapter>) -> Self {
-        Self { security, runtime }
+        Self {
+            security,
+            runtime,
+            node_bootstrap: None,
+        }
+    }
+
+    /// Same as `new` but attaches a managed Node.js bootstrap for transparent
+    /// `PATH` injection. The bootstrap is consulted via `try_cached()` on each
+    /// invocation, so calling a non-node shell command never forces a download.
+    pub fn with_node_bootstrap(
+        security: Arc<SecurityPolicy>,
+        runtime: Arc<dyn RuntimeAdapter>,
+        bootstrap: Arc<NodeBootstrap>,
+    ) -> Self {
+        Self {
+            security,
+            runtime,
+            node_bootstrap: Some(bootstrap),
+        }
     }
 }
 
@@ -104,6 +131,28 @@ impl Tool for ShellTool {
         for var in SAFE_ENV_VARS {
             if let Ok(val) = std::env::var(var) {
                 cmd.env(var, val);
+            }
+        }
+
+        // If a managed Node.js install has already been resolved, transparently
+        // prepend its bin dir to PATH so this shell sees the managed toolchain.
+        // `try_cached()` never blocks and never triggers a download — unrelated
+        // commands (e.g. `ls`) stay fast and byte-identical to before.
+        if let Some(bootstrap) = self.node_bootstrap.as_ref() {
+            if let Some(resolved) = bootstrap.try_cached() {
+                let host_path = std::env::var("PATH").unwrap_or_default();
+                let sep = if cfg!(windows) { ";" } else { ":" };
+                let prepended = if host_path.is_empty() {
+                    resolved.bin_dir.to_string_lossy().into_owned()
+                } else {
+                    format!("{}{}{}", resolved.bin_dir.display(), sep, host_path)
+                };
+                tracing::debug!(
+                    bin_dir = %resolved.bin_dir.display(),
+                    version = %resolved.version,
+                    "[shell] prepending managed node bin to PATH"
+                );
+                cmd.env("PATH", prepended);
             }
         }
 

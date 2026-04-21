@@ -6,6 +6,8 @@ icon: '6'
 
 Your team makes decisions in chat and struggles to execute. Commitments dissolve into scroll history. Contradictions between separate conversations go unnoticed until standups.
 
+<figure><img src="../.gitbook/assets/25. Distributed Teams@2x.png" alt=""><figcaption></figcaption></figure>
+
 #### The problem
 
 Chat is fast but ephemeral. Action items live in threads nobody revisits. Accountability depends on individual memory, which fails at scale.

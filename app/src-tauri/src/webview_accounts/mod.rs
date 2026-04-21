@@ -156,6 +156,38 @@ fn url_is_internal(provider: &str, url: &Url) -> bool {
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
 }
 
+/// `true` if the provider needs `window.open(url)` to return a live
+/// window-handle (i.e. the calling site reads the return value and aborts
+/// on falsey). Slack Huddles go through `openManagedChildWindow` which
+/// calls `window.open("about:blank", …)` and then programmatically
+/// navigates the returned popup to the huddle UI. Denying the popup
+/// makes the huddle call fail silently with a `beacon/error`. For these
+/// cases we allow the default popup so CEF spawns an in-app child window
+/// and returns a real handle to the caller.
+///
+/// Match is intentionally narrow — only the popup URLs the provider
+/// actually needs in-app pass. Cmd/Ctrl-click and `target="_blank"`
+/// on ordinary links (which carry a concrete URL) still route out to
+/// the user's default browser.
+fn popup_should_stay_in_app(provider: &str, url: &Url) -> bool {
+    match provider {
+        "slack" => {
+            // Slack's huddle flow opens `about:blank` first, then navigates
+            // the popup to the huddle URL — at popup-creation time there is
+            // no host yet. Also accept same-origin slack.com hosts so direct
+            // `window.open("https://app.slack.com/...")` calls stay in-app.
+            if url.scheme() == "about" {
+                return true;
+            }
+            match url.host_str() {
+                Some(host) => host == "app.slack.com" || host.ends_with(".slack.com"),
+                None => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Fire-and-forget handoff to the OS default URL handler. Any error is
 /// logged but not propagated — we've already cancelled the in-app
 /// navigation so there's nowhere to surface a failure to.
@@ -456,16 +488,31 @@ pub async fn webview_account_open<R: Runtime>(
     });
 
     // Cmd/Ctrl-click and `target="_blank"` / `window.open(...)` trigger a
-    // new-window request. Denying all of them and handing the URL to the
-    // system browser matches user intent: "open in new tab" outside the
-    // app, not "spawn a rootless OpenHuman window".
+    // new-window request. Default policy: deny and hand the URL to the
+    // system browser — matches user intent of "open in new tab outside
+    // the app".
+    //
+    // Exception: some providers (Slack Huddles) spawn popups via
+    // `window.open()` and abort the flow if the return value is falsey.
+    // For those URLs we allow CEF's default popup handling so an in-app
+    // child window opens and the caller gets a real window handle.
+    let popup_provider = args.provider.clone();
     builder = builder.on_new_window(move |url, _features| {
-        log::info!(
-            "[webview-accounts] new-window request {} → system browser",
-            url
-        );
-        open_in_system_browser(url.as_str());
-        NewWindowResponse::Deny
+        if popup_should_stay_in_app(&popup_provider, &url) {
+            log::info!(
+                "[webview-accounts] new-window request {} → in-app popup (provider={})",
+                url,
+                popup_provider
+            );
+            NewWindowResponse::Allow
+        } else {
+            log::info!(
+                "[webview-accounts] new-window request {} → system browser",
+                url
+            );
+            open_in_system_browser(url.as_str());
+            NewWindowResponse::Deny
+        }
     });
 
     // Enable devtools on child webviews in debug builds only so recipe

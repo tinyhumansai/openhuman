@@ -223,6 +223,13 @@ async fn run_core_cli(args: Vec<String>) -> Result<String, String> {
         }
         cmd.args(&args);
 
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         log::info!(
             "[service-direct] running {:?} {}{}",
             bin,
@@ -545,6 +552,14 @@ pub fn run() {
         let mut args: Vec<(&str, Option<&str>)> = vec![
             ("--use-mock-keychain", None),
             ("--password-store", Some("basic")),
+            // Enable SharedArrayBuffer so embedded apps that need WebRTC
+            // audio worklets / Opus encoders (Slack Huddles, Meet
+            // real-time features, Discord voice) can actually initialise.
+            // Chromium gates SharedArrayBuffer behind cross-origin
+            // isolation by default; web apps embedded inside CEF rarely
+            // send COOP/COEP headers, so without this flag the feature
+            // silently disappears and huddle/call buttons no-op.
+            ("--enable-features", Some("SharedArrayBuffer")),
         ];
         if cfg!(debug_assertions) {
             args.push(("--remote-debugging-port", Some("9222")));
