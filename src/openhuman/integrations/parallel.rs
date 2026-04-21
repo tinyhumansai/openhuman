@@ -30,26 +30,21 @@ fn truncate_chars(s: &str, max_chars: usize) -> (&str, bool) {
 // ── Response types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct SearchResponse {
-    #[serde(rename = "searchId", default)]
+pub(crate) struct SearchResponse {
+    #[serde(rename = "searchId")]
     #[allow(dead_code)]
-    search_id: String,
-    #[serde(default)]
-    results: Vec<SearchResultItem>,
-    #[serde(rename = "costUsd", default)]
-    cost_usd: f64,
+    pub(crate) search_id: String,
+    pub(crate) results: Vec<SearchResultItem>,
+    #[serde(rename = "costUsd")]
+    pub(crate) cost_usd: f64,
 }
 
 #[derive(Debug, Deserialize)]
-struct SearchResultItem {
-    #[serde(default)]
-    url: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    publish_date: Option<String>,
-    #[serde(default)]
-    excerpts: Vec<String>,
+pub(crate) struct SearchResultItem {
+    pub(crate) url: String,
+    pub(crate) title: String,
+    pub(crate) publish_date: Option<String>,
+    pub(crate) excerpts: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -134,7 +134,6 @@ pub async fn start_channels(config: Config) -> Result<()> {
         &config.http_request,
         &workspace,
         &config.agents,
-        None,
         &config,
     ));
 

@@ -1,27 +1,10 @@
+use crate::openhuman::integrations::parallel::{SearchResponse, SearchResultItem};
 use crate::openhuman::integrations::IntegrationClient;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
-use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-struct SearchResponse {
-    #[serde(default)]
-    results: Vec<SearchResultItem>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SearchResultItem {
-    #[serde(default)]
-    url: String,
-    #[serde(default)]
-    title: String,
-    #[serde(default)]
-    publish_date: Option<String>,
-    #[serde(default)]
-    excerpts: Vec<String>,
-}
 
 /// Web search tool backed by the server-side Parallel integration proxy.
 pub struct WebSearchTool {
@@ -131,11 +114,13 @@ impl Tool for WebSearchTool {
             )
         })?;
 
-        tracing::info!(
-            "[web_search] backend parallel search query={:?} max_results={} timeout_secs={}",
-            query,
-            self.max_results,
-            self.timeout_secs
+        let query_fingerprint = hex::encode(Sha256::digest(query.as_bytes()));
+        tracing::debug!(
+            query_len = query.chars().count(),
+            query_fingerprint = %query_fingerprint[..16],
+            max_results = self.max_results,
+            timeout_secs = self.timeout_secs,
+            "[web_search] backend parallel search"
         );
 
         let body = json!({
@@ -162,9 +147,21 @@ impl Tool for WebSearchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{extract::State, routing::post, Json, Router};
+    use serde_json::Value;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn tool() -> WebSearchTool {
         WebSearchTool::new(None, 5, 15)
+    }
+
+    async fn start_mock_backend(app: Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://127.0.0.1:{}", addr.port())
     }
 
     #[test]
@@ -281,5 +278,59 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("backend session token"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_posts_to_backend_and_renders_results() {
+        #[derive(Clone)]
+        struct MockState {
+            called: Arc<AtomicBool>,
+        }
+
+        let state = MockState {
+            called: Arc::new(AtomicBool::new(false)),
+        };
+        let called = Arc::clone(&state.called);
+        let app = Router::new()
+            .route(
+                "/agent-integrations/parallel/search",
+                post(
+                    |State(state): State<MockState>, Json(body): Json<Value>| async move {
+                        state.called.store(true, Ordering::SeqCst);
+                        assert_eq!(body["objective"], "test success");
+                        assert_eq!(body["searchQueries"][0], "test success");
+                        Json(json!({
+                            "success": true,
+                            "data": {
+                                "searchId": "search-123",
+                                "results": [
+                                    {
+                                        "url": "https://example.com/result",
+                                        "title": "Backend Search Result",
+                                        "publish_date": "2026-04-20",
+                                        "excerpts": ["Rendered excerpt from backend search."]
+                                    }
+                                ],
+                                "costUsd": 0.01
+                            }
+                        }))
+                    },
+                ),
+            )
+            .with_state(state);
+
+        let base_url = start_mock_backend(app).await;
+        let client = Arc::new(IntegrationClient::new(base_url, "test-token".into()));
+        let result = WebSearchTool::new(Some(client), 5, 15)
+            .execute(json!({"query": "test success"}))
+            .await
+            .expect("execute() should return rendered backend results");
+
+        assert!(called.load(Ordering::SeqCst));
+        assert!(result.output().contains("Backend Search Result"));
+        assert!(result.output().contains("https://example.com/result"));
+        assert!(result
+            .output()
+            .contains("Rendered excerpt from backend search."));
     }
 }

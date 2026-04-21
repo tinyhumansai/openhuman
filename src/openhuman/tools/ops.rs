@@ -37,7 +37,6 @@ pub fn all_tools(
     http_config: &crate::openhuman::config::HttpRequestConfig,
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
-    _fallback_api_key: Option<&str>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
     all_tools_with_runtime(
@@ -51,7 +50,6 @@ pub fn all_tools(
         http_config,
         workspace_dir,
         agents,
-        None,
         root_config,
     )
 }
@@ -69,7 +67,6 @@ pub fn all_tools_with_runtime(
     http_config: &crate::openhuman::config::HttpRequestConfig,
     workspace_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
-    _fallback_api_key: Option<&str>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
     // Build a session-scoped managed Node.js bootstrap once, so ShellTool,
@@ -384,7 +381,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -422,7 +418,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -457,7 +452,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -497,7 +491,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -537,7 +530,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -667,7 +659,6 @@ mod tests {
             &http,
             tmp.path(),
             &agents,
-            Some("delegate-test-credential"),
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -699,7 +690,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -735,7 +725,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -775,7 +764,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -815,7 +803,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
@@ -855,7 +842,6 @@ mod tests {
             &http,
             tmp.path(),
             &HashMap::new(),
-            None,
             &cfg,
         );
         let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();

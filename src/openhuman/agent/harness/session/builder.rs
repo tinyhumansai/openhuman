@@ -576,7 +576,6 @@ impl Agent {
             &config.http_request,
             &config.workspace_dir,
             &config.agents,
-            None,
             config,
         );
 

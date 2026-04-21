@@ -59,7 +59,12 @@ mod tests {
 
     #[test]
     fn build_client_returns_none_when_no_auth_token() {
-        let config = crate::openhuman::config::Config::default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = crate::openhuman::config::Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..crate::openhuman::config::Config::default()
+        };
         assert!(build_client(&config).is_none());
     }
 }

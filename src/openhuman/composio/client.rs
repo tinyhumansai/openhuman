@@ -267,7 +267,9 @@ mod tests {
     /// token — callers treat that as "skip silently" (user not signed in).
     #[test]
     fn build_composio_client_none_without_auth_token() {
-        let config = Config::default();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = Config::default();
+        config.config_path = tmp.path().join("config.toml");
         assert!(build_composio_client(&config).is_none());
     }
 

@@ -191,10 +191,23 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagnosticItem>) {
         ));
     }
 
-    items.push(DiagnosticItem::ok(
-        cat,
-        "auth uses app session JWT from auth profile",
-    ));
+    match crate::api::jwt::get_session_token(config) {
+        Ok(Some(token)) if !token.trim().is_empty() => {
+            items.push(DiagnosticItem::ok(cat, "signed in with app session JWT"));
+        }
+        Ok(_) => {
+            items.push(DiagnosticItem::warn(
+                cat,
+                "no app session JWT — not signed in",
+            ));
+        }
+        Err(err) => {
+            items.push(DiagnosticItem::error(
+                cat,
+                format!("failed to read app session JWT: {err}"),
+            ));
+        }
+    }
 
     // Model configured
     if config.default_model.is_some() {

@@ -447,9 +447,10 @@ pub(crate) fn build_status_snapshot(
 ///
 /// ## Auth requirement
 ///
-/// Requires the user to be authenticated. If there is no valid session
-/// JWT or legacy API key, the call is rejected with an explanation so
-/// the agent can instruct the user to log in.
+/// Requires the user to be authenticated with a valid session JWT.
+/// If `detect_auth()` cannot resolve an active app-session token, the
+/// call is rejected with an explanation so the agent can instruct the
+/// user to log in.
 async fn complete() -> anyhow::Result<ToolResult> {
     let mut config = Config::load_or_init()
         .await

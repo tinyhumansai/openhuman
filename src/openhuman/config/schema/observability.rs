@@ -47,10 +47,7 @@ mod tests {
 
     #[test]
     fn deserialize_missing_optional_fields_uses_defaults() {
-        let cfg: ObservabilityConfig = serde_json::from_value(json!({
-            "analytics_enabled": true
-        }))
-        .unwrap();
+        let cfg: ObservabilityConfig = serde_json::from_value(json!({})).unwrap();
         assert!(cfg.analytics_enabled, "analytics default must be true");
     }
 

@@ -17,8 +17,6 @@ use std::time::Duration;
 pub struct DelegateTool {
     agents: Arc<HashMap<String, DelegateAgentConfig>>,
     security: Arc<SecurityPolicy>,
-    /// Deprecated credential fallback slot retained for constructor compatibility.
-    fallback_credential: Option<String>,
     /// Provider runtime options inherited from root config.
     provider_runtime_options: providers::ProviderRuntimeOptions,
     /// Depth at which this tool instance lives in the delegation chain.
@@ -45,10 +43,14 @@ impl DelegateTool {
         security: Arc<SecurityPolicy>,
         provider_runtime_options: providers::ProviderRuntimeOptions,
     ) -> Self {
+        if fallback_credential.is_some() {
+            tracing::warn!(
+                "[delegate] fallback_credential was supplied but is ignored; backend auth uses the app-session JWT"
+            );
+        }
         Self {
             agents: Arc::new(agents),
             security,
-            fallback_credential,
             provider_runtime_options,
             depth: 0,
         }
@@ -79,10 +81,14 @@ impl DelegateTool {
         depth: u32,
         provider_runtime_options: providers::ProviderRuntimeOptions,
     ) -> Self {
+        if fallback_credential.is_some() {
+            tracing::warn!(
+                "[delegate] fallback_credential was supplied but is ignored; backend auth uses the app-session JWT"
+            );
+        }
         Self {
             agents: Arc::new(agents),
             security,
-            fallback_credential,
             provider_runtime_options,
             depth,
         }
